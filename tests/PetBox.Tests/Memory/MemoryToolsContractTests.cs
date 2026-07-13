@@ -54,7 +54,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "k", description = "d", body = "b" },
 		});
 		// The missing-type validation throws; McpErrorEnvelopeFilter renders {error} on the wire.
-		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries));
+		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries));
 	}
 
 	// A missing key is a not-found ERROR, never a null result: memory_get declares an
@@ -68,12 +68,12 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		// Populate the store first so this isolates key-not-found (the former null-return path)
 		// from store-not-found.
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "present", type = "project", description = "d", body = "b" },
 		}));
 		await Assert.ThrowsAsync<InvalidOperationException>(
-			() => MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes", "no-such-key"));
+			() => MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "no-such-key"));
 	}
 
 	// spec addressed-read-batched: `keys` reads N entries in ONE call, rows in the asked order
@@ -82,14 +82,14 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Get_Batch_ReturnsEveryAddressedEntry()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", description = "da", body = "ba" },
 			new { key = "b", type = "project", description = "db", body = "bb" },
 			new { key = "c", type = "project", description = "dc", body = "bc" },
 		}));
 
-		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes",
+		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes",
 			keys: ["c", "a"]);
 
 		got.Entries.Select(e => e.Key).Should().Equal("c", "a");
@@ -103,16 +103,16 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Get_Batch_MissingKey_IsDroppedNotAnError()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "present", type = "project", description = "d", body = "b" },
 		}));
 
-		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes",
+		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes",
 			keys: ["present", "no-such-key"]);
 		got.Entries.Select(e => e.Key).Should().Equal("present");
 
-		var none = await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes",
+		var none = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes",
 			keys: ["no-such-key", "nor-this"]);
 		none.Entries.Should().BeEmpty();
 	}
@@ -128,18 +128,18 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = new[] { "Go", " STYLE ", "go" } },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
-		var all = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var all = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 		var go = all.Items.Single(e => e.Key == "go-style");
 		go.Tags.Should().Equal("go", "style");
 		go.Type.Should().Be("Reference");
 
 		// Type filter narrows the listing.
-		var feedback = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var feedback = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", type: "feedback");
 		var keys = feedback.Items.Select(e => e.Key).ToList();
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
@@ -156,9 +156,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "auth-scopes", type = "project", description = "API key scopes", body = "scopes are enumerable, not wildcards" },
 			new { key = "go-style", type = "reference", description = "Go conventions", body = "use tabs not spaces" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"scope", scope: "project", store: "notes");
 		var keys = res.Items.Select(e => e.Key).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
@@ -173,7 +173,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// rich input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note).
 		var entries = McpInputs.EntriesJson("""[{"key":"k","type":"project","description":"d","body":"b"}]""");
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "strstore", entries);
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "strstore", entries);
 		res.Added.Should().ContainSingle()
 			.Which.Key.Should().Be("k");
 	}
@@ -186,13 +186,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "temp", type = "project", description = "temp", body = "to be removed" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 
 		var del = McpInputs.Entries(new object[] { new { key = "temp", deleted = true } });
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", del);
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", del);
 		res.Removed.Should().Contain("temp");
 
-		var list = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var list = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 		list.Items.Select(e => e.Key)
 			.Should().NotContain("temp");
@@ -205,19 +205,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_Patch_TagsOnlyEdit_KeepsDescriptionAndBody()
 	{
 		var http = Http("memory:read,memory:write");
-		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = new[] { "t1", "t2" } },
 		}))).Added.Single();
 
 		// The incident payload: only key/type/tags/version — description and body omitted.
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", tags = new[] { "t3" }, version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k")).Entries.Single();
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k")).Entries.Single();
 		after.Description.Should().Be("keep-d");
 		after.Body.Should().Be("keep-b");
 		after.Tags.Should().Equal("t3");
@@ -229,19 +229,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_Patch_ExplicitEmptyClears_OmittedStays()
 	{
 		var http = Http("memory:read,memory:write");
-		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", description = "d", body = "b", tags = new[] { "t" } },
 		}))).Added.Single();
 
 		// body:"" clears the body; omitted description/tags stay.
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", body = "", version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes", "c")).Entries.Single();
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "c")).Entries.Single();
 		after.Body.Should().BeEmpty();
 		after.Description.Should().Be("d");
 		after.Tags.Should().Equal("t");
@@ -253,13 +253,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_NewEntry_PartialFields_OmittedStartEmpty()
 	{
 		var http = Http("memory:read,memory:write");
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "fresh", type = "project", body = "only-body" },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), Proj, "notes", "fresh")).Entries.Single();
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "fresh")).Entries.Single();
 		after.Body.Should().Be("only-body");
 		after.Description.Should().BeEmpty();
 		after.Tags.Should().BeEmpty();
@@ -279,7 +279,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k", type = "project", description = "one-liner", body = big },
 		});
-		var added = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries))
+		var added = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries))
 			.Added.Single();
 		added.Description.Should().Be("one-liner");
 		added.Body.Should().BeNull();
@@ -289,7 +289,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k2", type = "project", description = "d", body = big },
 		});
-		var sliced = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries2, bodyLen: 300))
+		var sliced = (await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries2, bodyLen: 300))
 			.Added.Single(e => e.Key == "k2")
 			.Body!;
 		sliced.Length.Should().Be(301);
@@ -310,15 +310,15 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "b", type = "project", description = "db", body = "alpha short" },
 			new { key = "c", type = "project", description = "dc", body = "alpha scope" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 
 		// listing: limit caps the count.
-		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", limit: 2))
 			.Items.Count.Should().Be(2);
 
 		// listing: bodyLen:100 snippets the body of entry 'a' (the long one, 306 chars).
-		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 100))
 			.Items.Single(e => e.Key == "a")
 			.Body!;
@@ -326,19 +326,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 		aBody.Should().EndWith("…");
 
 		// listing default (omitted): a ~240-char snippet of the long body.
-		var aDefault = (await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var aDefault = (await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes")).Items.Single(e => e.Key == "a").Body!;
 		aDefault.Length.Should().Be(241);
 		aDefault.Should().EndWith("…");
 
 		// -1: the full body; 0: no body (omitted → null).
-		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: -1)).Items.Single(e => e.Key == "a").Body!.Length.Should().Be(306);
-		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 0)).Items.Single(e => e.Key == "a").Body.Should().BeNull();
 
 		// with q: the same limit bounds an FTS sweep ("alpha" hits all three).
-		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"alpha", scope: "project", store: "notes", limit: 2))
 			.Items.Count.Should().Be(2);
 	}
@@ -350,18 +350,18 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_EchoCurrentVersion_IsValidNextBaseline_FutureRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", description = "d", body = "b" },
 		}));                                                                            // v1
-		var second = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var second = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", description = "d", body = "b" },
 		}));                                                                            // v2 -> store cursor
 		var cursor = second.CurrentVersion;
 
 		// Edit 'a' (own version 1) at the store cursor baseline — accepted.
-		var edit = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var edit = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", body = "edited", version = cursor },
 		}));
@@ -369,7 +369,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		edit.Conflicts.Should().BeEmpty();
 
 		// A baseline above the store cursor is a FutureBaseline conflict, Reason surfaced.
-		var future = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var future = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", body = "x", version = cursor + 500 },
 		}));

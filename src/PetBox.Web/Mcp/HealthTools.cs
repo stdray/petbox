@@ -1,10 +1,9 @@
 using System.ComponentModel;
 using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
+using PetBox.Core.Health;
 using PetBox.Core.Models;
 
 namespace PetBox.Web.Mcp;
@@ -27,7 +26,7 @@ public static class HealthTools
 	[Description("Reads the latest health report per running service in a project (status, version, age, stale flag), with time in ISO-8601 UTC. Identity of a service is (svc, canonical tags). Optionally returns per-service history when `window` (seconds) and/or `limit` are supplied. Requires health:read scope; a project-scoped key sees only its own project, a cross-project ('*') key any project.")]
 	public static async Task<HealthSearchResultView> SearchAsync(
 		IHttpContextAccessor http,
-		ICoreDbFactory dbf,
+		IHealthReportService reports,
 		[Description("Project key — must match the calling ApiKey's project claim (a '*' key may name any project).")] string projectKey,
 		[Description("Optional exact service name filter (HealthReport.Svc).")] string? svc = null,
 		[Description("A latest report older than this many seconds is flagged stale. Default 300.")] int staleThresholdSeconds = 300,
@@ -35,7 +34,6 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.HealthRead);
 
@@ -46,23 +44,16 @@ public static class HealthTools
 		var withHistory = window.HasValue || limit.HasValue;
 		var historyLimit = limit ?? 50;
 
-		// Load candidate rows (optionally narrowed by Svc in SQL — a plain string column, safe
-		// to compare). The project tag lives INSIDE the canonical Tags string, so the project
-		// filter is an in-memory pass, mirroring the dashboard.
-		var query = db.HealthReports.AsQueryable();
-		if (!string.IsNullOrWhiteSpace(svc))
-		{
-			var s = svc.Trim();
-			query = query.Where(r => r.Svc == s);
-		}
-		var rows = await query.ToListAsync(ct);
+		// THIS project's reports, optionally narrowed to one service. The project predicate is welded
+		// into IHealthReportService (a report's project is a tag inside the canonical Tags string, so it
+		// cannot be a SQL WHERE) — the tool never sees another project's rows to filter.
+		var rows = await reports.ListForProjectAsync(projectKey, svc, ct);
 
 		var now = DateTime.UtcNow;
 
-		// Keep only this project's rows, then group by the service identity (Svc, canonical Tags).
-		// Id is identity-ascending, so max Id in a group = the newest report.
+		// Group by the service identity (Svc, canonical Tags). Id is identity-ascending, so the max Id
+		// in a group is the newest report.
 		var groups = rows
-			.Where(r => string.Equals(HealthTags.Project(r.Tags), projectKey, StringComparison.Ordinal))
 			.GroupBy(r => (r.Svc, r.Tags))
 			.OrderBy(g => g.Key.Svc, StringComparer.Ordinal)
 			.ThenBy(g => g.Key.Tags, StringComparer.Ordinal);

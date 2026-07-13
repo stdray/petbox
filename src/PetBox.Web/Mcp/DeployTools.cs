@@ -1,14 +1,11 @@
 using System.ComponentModel;
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Models;
 using PetBox.Deploy.Contract;
 using PetBox.Deploy.Data;
+using PetBox.Web.Auth;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -36,7 +33,7 @@ public static class DeployTools
 	[McpServerTool(Name = "deploy_node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
 	[Description("Registers or updates a node. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
 	public static async Task<DeployNodeResult> NodeUpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, ICoreDbFactory dbf,
+		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, AgentKeyAdminService keys,
 		[Description("Node id (slug), e.g. 'vdsina-1'.")] string id,
 		[Description("Display name.")] string? displayName = null,
 		[Description("Capability tags CSV, e.g. 'net.x,disk=nvme'.")] string? tags = null,
@@ -44,7 +41,6 @@ public static class DeployTools
 		[Description("Mint (or rotate) the node agent key and return it once.")] bool mintKey = false,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
 		if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id is required");
@@ -52,20 +48,9 @@ public static class DeployTools
 		var keyRef = $"node:{id.Trim().ToLowerInvariant()}";
 		var node = await svc.UpsertNodeAsync(new NodeInput(id, displayName ?? id, tags ?? "", ephemeral, mintKey ? keyRef : null), ct);
 
-		string? key = null;
-		if (mintKey)
-		{
-			await db.ApiKeys.Where(k => k.Name == keyRef).DeleteAsync(ct);
-			key = $"yb_key_node_{Guid.NewGuid():N}";
-			await db.InsertAsync(new ApiKey
-			{
-				Key = key,
-				ProjectKey = node.Id,
-				Scopes = NodeKeyScopes,
-				Name = keyRef,
-				CreatedAt = DateTime.UtcNow,
-			}, token: ct);
-		}
+		// ApiKeys is core.db, and core.db is opened in the service layer only: the rotate-and-mint
+		// (drop the node's previous key, insert the fresh one) lives in AgentKeyAdminService, not here.
+		var key = mintKey ? await keys.MintNodeKeyAsync(keyRef, node.Id, NodeKeyScopes, ct) : null;
 		return new DeployNodeResult(node, key);
 	}
 

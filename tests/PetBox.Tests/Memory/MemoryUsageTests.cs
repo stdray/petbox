@@ -100,7 +100,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1", "u2");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		var usage = await _memory.GetUsageAsync(Proj, "notes");
@@ -115,7 +115,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes", "u1");
+		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes", "u1");
 		await _recorder.FlushAsync();
 
 		var usage = await _memory.GetUsageAsync(Proj, "notes");
@@ -131,7 +131,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1", "u2");
 
-		var got = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes",
+		var got = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes",
 			keys: ["u1", "u2", "no-such-key"]);
 		await _recorder.FlushAsync();
 
@@ -151,7 +151,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, scope: "project", store: "notes");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
@@ -187,7 +187,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await SeedBig(12, 5_000);
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию",
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию",
 			scope: "project", store: "notes", limit: 20, bodyLen: -1);
 		await _recorder.FlushAsync();
 
@@ -203,15 +203,15 @@ public sealed class MemoryUsageTests : IDisposable
 	public async Task IncludeUsage_SurfacesCounters_DefaultOmitsThem()
 	{
 		await Seed("u1");
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		// memory_search returns the typed record directly (errors throw → McpErrorEnvelopeFilter
 		// renders them on the wire; unit tests read the concrete success value).
-		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		plain.Items[0].Surfaced.Should().BeNull(); // default off — context economy
 
-		var with = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", includeUsage: true);
+		var with = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", includeUsage: true);
 		with.Items[0].Surfaced.Should().BeGreaterThanOrEqualTo(1);
 		with.Items[0].Opened.Should().Be(0);
 	}
@@ -221,7 +221,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию");
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию");
 		res.Items.Should().NotBeEmpty();
 		await _recorder.FlushAsync();
 
@@ -284,11 +284,11 @@ public sealed class MemoryUsageTests : IDisposable
 		_recorder.Surfaced(Proj, "notes", ["u1"]);
 		await _recorder.FlushAsync();
 
-		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj);
+		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj);
 		plain.Stores.Should().ContainSingle();
 		plain.Stores[0].Usage.Should().BeNull(); // default off
 
-		var with = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj, includeUsage: true);
+		var with = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, includeUsage: true);
 		var row = with.Stores.Single(s => s.Name == "notes");
 		row.Usage.Should().NotBeNull();
 		row.Usage!.TotalEntries.Should().Be(2);
@@ -319,7 +319,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
@@ -332,7 +332,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", usageSource: "machine");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", usageSource: "machine");
 		await _recorder.FlushAsync();
 
 		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
