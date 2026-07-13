@@ -15,7 +15,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 // A read-only SQL bar + paged results. The connection is opened ReadOnly so the
 // bar can't mutate data — writes/DDL go through the API (/exec) or admin schema
 // apply. One SQLite open per request — a leaf page, allowed per the perf invariants.
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class TableModel : PageModel
 {
 	const int PageSize = 50;
@@ -61,6 +64,13 @@ public sealed class TableModel : PageModel
 	{
 		using var db = _f.Open();
 		if (!DataEnabled) return Page();
+
+		// Bind the project to the ROUTE workspace (see ProjectHome/Index): WorkspaceViewer proves
+		// membership in {workspaceKey} only, so without this a member of wsA could read the ROWS of
+		// wsB's table via /ui/wsA/proj-of-wsB/databases/db/table.
+		var inWorkspace = await db.Projects.AnyAsync(
+			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		if (!inWorkspace) { DbNotFound = true; return Page(); }
 
 		var exists = await db.DataDbs.AnyAsync(
 			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);

@@ -3,7 +3,10 @@
 	// Unified zone header shared by /ui and admin sidebars: pick a workspace, then a project.
 	// Both are onchange-submit forms posting to the sibling switch endpoints, which validate
 	// access, persist a cookie (yb_ws / yb_project) and LocalRedirect to the zone landing page.
-	var currentWs = Nav.CurrentWorkspaceKey;
+	// No membership at all → the workspace <select> has no options to render; say so instead of
+	// showing an empty, unselectable control (auth-denied-and-empty-state).
+	var currentWs = Nav.CurrentWorkspaceKey ?? string.Empty;
+	var workspaces = Nav.AvailableWorkspaces;
 	var currentProject = Nav.CurrentProjectKey;
 	var projects = Nav.ProjectsInCurrentWorkspace;
 
@@ -18,13 +21,23 @@
 	<div class="flex items-center gap-1">
 		<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1 min-w-0">
 			<input type="hidden" name="zone" value="@zone" data-testid="nav-workspace-zone" />
-			<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
-				class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
-				@foreach (var w in Nav.AvailableWorkspaces)
-				{
-					<option value="@w.Key" selected="@(string.Equals(w.Key, currentWs, StringComparison.Ordinal))">@w.Key</option>
-				}
-			</select>
+			@if (workspaces.Count == 0)
+			{
+				<select disabled aria-label="Select workspace" title="You are not a member of any workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs opacity-60" data-testid="nav-workspace-select">
+					<option>no workspaces</option>
+				</select>
+			}
+			else
+			{
+				<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
+					@foreach (var w in workspaces)
+					{
+						<option value="@w.Key" selected="@(string.Equals(w.Key, currentWs, StringComparison.Ordinal))">@w.Key</option>
+					}
+				</select>
+			}
 		</form>
 		<partial name="_SidebarPin" />
 	</div>

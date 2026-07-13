@@ -1,7 +1,7 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Core.Settings.ISettingsResolver Settings
 @{
-	var currentWs = Nav.CurrentWorkspaceKey;
+	var currentWs = Nav.CurrentWorkspaceKey ?? string.Empty;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	var isSysArea = path.StartsWith("/ui/admin/sys", StringComparison.OrdinalIgnoreCase);
 	var contextLabel = isSysArea

@@ -7,7 +7,9 @@ using PetBox.Deploy.Contract;
 
 namespace PetBox.Web.Pages.Admin;
 
-[Authorize]
+// /ui/admin/sys shows counters across EVERY workspace, project and user — sysadmin only
+// (workspace-admin-gate). A bare [Authorize] exposed it to any signed-in account.
+[Authorize(Policy = "SysAdmin")]
 public sealed class IndexModel : PageModel
 {
 	readonly ICoreDbFactory _f;

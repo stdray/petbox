@@ -3,17 +3,26 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Data;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Web.Pages.Logs;
 
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class TraceModel : PageModel
 {
 	readonly ILogStore _logStore;
+	readonly ICoreDbFactory _f;
 
-	public TraceModel(ILogStore logStore) => _logStore = logStore;
+	public TraceModel(ILogStore logStore, ICoreDbFactory f)
+	{
+		_logStore = logStore;
+		_f = f;
+	}
 
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
@@ -88,6 +97,16 @@ public sealed class TraceModel : PageModel
 		EffectiveWorkspaceKey = WorkspaceKey ?? "";
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { TraceNotFound = true; return; }
+
+		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
+		// {workspaceKey}, so without this a member of wsA could read wsB's spans via
+		// /ui/wsA/proj-of-wsB/traces/{id} (workspace-access-isolation).
+		using (var core = _f.Open())
+		{
+			var inWorkspace = await core.Projects.AnyAsync(
+				p => p.Key == EffectiveProjectKey && p.WorkspaceKey == EffectiveWorkspaceKey, ct);
+			if (!inWorkspace) { TraceNotFound = true; return; }
+		}
 
 		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
 		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)

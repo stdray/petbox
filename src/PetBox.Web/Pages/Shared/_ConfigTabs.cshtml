@@ -1,6 +1,6 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @{
-	var ws = Nav.CurrentWorkspaceKey;
+	var ws = Nav.CurrentWorkspaceKey ?? string.Empty;
 	var key = Nav.CurrentProjectKey ?? string.Empty;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	var manageUrl = Routes.ProjectConfig(ws, key);

@@ -4,7 +4,7 @@
 @{
 	ViewData["Title"] = "Members";
 	Layout = "_AdminLayout";
-	var ws = Nav.CurrentWorkspaceKey;
+	var ws = Nav.CurrentWorkspaceKey ?? string.Empty;
 }
 
 <div class="mb-4">

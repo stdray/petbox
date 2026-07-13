@@ -14,7 +14,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 
 // Per-project dashboard — the project landing (/ui/{ws}/{project}). Logs moved to
 // /ui/{ws}/{project}/logs. Shows cheap counts + this project's latest health.
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
 	readonly ICoreDbFactory _f;
@@ -64,7 +67,10 @@ public sealed class IndexModel : PageModel
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
+		// {workspaceKey}, so a member of wsA could otherwise read wsB's project via /ui/wsA/proj-of-wsB.
+		Project = await db.Projects.FirstOrDefaultAsync(
+			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
 		if (Project is null) return;
 
 		LogCount = await db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);

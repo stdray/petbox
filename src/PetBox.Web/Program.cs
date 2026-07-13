@@ -541,6 +541,10 @@ public partial class Program
 		builder.Services.AddHttpContextAccessor();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
+		// Rebuilds the workspace-membership claims from the DB on every cookie-authenticated
+		// request, so an added/removed membership takes effect without a re-login.
+		builder.Services.AddScoped<Microsoft.AspNetCore.Authentication.IClaimsTransformation,
+			PetBox.Web.Auth.WorkspaceClaimsRefresher>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
 		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();

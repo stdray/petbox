@@ -2,7 +2,12 @@
 @inject PetBox.Core.Settings.ISettingsResolver Settings
 @inject PetBox.Tasks.Contract.ITasksService Tasks
 @{
+	// Null when the user is a member of no workspace at all — the sidebar's workspace/project
+	// sections are then skipped entirely (there is nothing to link to; the old "$system" fallback
+	// rendered links straight into a 403).
 	var currentWs = Nav.CurrentWorkspaceKey;
+	var hasWs = currentWs is not null;
+	var wsKey = currentWs ?? string.Empty;
 	var currentProject = Nav.CurrentProjectKey;
 	// Boards are surfaced as Tasks sub-nav ONLY for the project in context (no global
 	// fan-out): one cheap metadata read, and only when Tasks is on and a project is active.
@@ -17,9 +22,9 @@
 	// True on the URL itself or any descendant path (a board's node pages) — but NOT a
 	// sibling that merely shares a name prefix (roadmap vs roadmap-v2).
 	bool IsUnder(string url) => IsExactly(url) || path.StartsWith(url + "/", StringComparison.OrdinalIgnoreCase);
-	var statusUrl = Routes.Workspace(currentWs);
-	var sharedMemoryUrl = Routes.SharedMemory(currentWs);
-	var sharedConfigUrl = Routes.SharedConfig(currentWs);
+	var statusUrl = hasWs ? Routes.Workspace(wsKey) : Routes.Home();
+	var sharedMemoryUrl = Routes.SharedMemory(wsKey);
+	var sharedConfigUrl = Routes.SharedConfig(wsKey);
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
 }
@@ -105,6 +110,14 @@
 
 					<partial name="_ZoneSelectors" />
 
+					@if (!hasWs)
+					{
+						<div class="px-3 py-4 text-xs opacity-60" data-testid="nav-no-workspaces">
+							You have no workspace access yet.
+						</div>
+					}
+					else
+					{
 					<ul class="menu w-full p-2 gap-1">
 						<li>
 							<a href="@statusUrl" class="@(IsExactly(statusUrl) ? "active" : "")" data-testid="nav-status">
@@ -150,15 +163,15 @@
 						}
 						else
 						{
-							var pDash = Routes.Project(currentWs, currentProject);
-							var pLogs = Routes.ProjectLogs(currentWs, currentProject);
-							var pTraces = Routes.ProjectTraces(currentWs, currentProject);
-							var pConfig = Routes.ProjectConfig(currentWs, currentProject);
-							var pData = Routes.ProjectDatabases(currentWs, currentProject);
-							var pTasks = Routes.ProjectTasks(currentWs, currentProject);
-							var pMemory = Routes.ProjectMemory(currentWs, currentProject);
-							var pSessions = Routes.ProjectSessions(currentWs, currentProject);
-							var pLlm = Routes.ProjectLlmRouter(currentWs, currentProject);
+							var pDash = Routes.Project(wsKey, currentProject);
+							var pLogs = Routes.ProjectLogs(wsKey, currentProject);
+							var pTraces = Routes.ProjectTraces(wsKey, currentProject);
+							var pConfig = Routes.ProjectConfig(wsKey, currentProject);
+							var pData = Routes.ProjectDatabases(wsKey, currentProject);
+							var pTasks = Routes.ProjectTasks(wsKey, currentProject);
+							var pMemory = Routes.ProjectMemory(wsKey, currentProject);
+							var pSessions = Routes.ProjectSessions(wsKey, currentProject);
+							var pLlm = Routes.ProjectLlmRouter(wsKey, currentProject);
 							<li class="hidden" data-testid="nav-project" data-project-key="@currentProject"></li>
 							<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
 							<li data-testid="nav-proj-logs-node">
@@ -192,7 +205,7 @@
 											<ul>
 												@foreach (var board in currentProjectBoards)
 												{
-													var pBoard = Routes.ProjectTaskBoard(currentWs, currentProject, board.Name);
+													var pBoard = Routes.ProjectTaskBoard(wsKey, currentProject, board.Name);
 													<li data-testid="nav-proj-task-board-node" data-board-name="@board.Name">
 														<a href="@pBoard" class="@(IsUnder(pBoard) ? "active" : "")" data-testid="nav-proj-task-board">
 															<span class="font-mono text-xs truncate">@board.Name</span>
@@ -222,6 +235,7 @@
 							}
 						}
 					</ul>
+					}
 
 				}
 			</aside>
