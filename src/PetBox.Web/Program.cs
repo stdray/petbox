@@ -625,6 +625,9 @@ public partial class Program
 		// the reports door on purpose: a caller who finds one finds the other (commit ce12100).
 		builder.Services.AddScoped<PetBox.Core.Health.IHealthEndpointDirectory, PetBox.Core.Health.HealthEndpointDirectory>();
 		builder.Services.AddScoped<PetBox.Core.Data.IWorkspaceMemoryDirectory, PetBox.Core.Data.WorkspaceMemoryDirectory>();
+		// The share-token door: ShareLinks had no owner (Pages.ShareModel's anonymous resolve page and
+		// PetBox.Log.Core.ShareApi's create/TSV endpoints both opened core.db directly for it).
+		builder.Services.AddScoped<PetBox.Core.Data.IShareLinkDirectory, PetBox.Core.Data.ShareLinkDirectory>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

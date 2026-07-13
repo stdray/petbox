@@ -17,6 +17,14 @@ namespace PetBox.Core.Data;
 // rather than in each tool that addresses a container — that is the drift this wave exists to end.
 public interface IWorkspaceMemoryDirectory
 {
+	// Lazy-ensure the Projects row for a workspace's OWN memory container (WorkspaceMemory.ContainerKeyFor),
+	// given the workspace key itself rather than an already-addressed container key. No-op for an invalid
+	// workspace key (never throws — this runs on a page GET). Idempotent under concurrent callers: the
+	// underlying insert races on the container's primary key and swallows only a losing PK conflict (see
+	// WorkspaceMemory.EnsureContainerAsync) — two overlapping requests both return having ensured the same
+	// single row, never two rows and never an unhandled exception on the loser.
+	Task EnsureWorkspaceContainerAsync(string workspaceKey, CancellationToken ct = default);
+
 	// A container addressed DIRECTLY (as a projectKey). Its Projects row is lazy — the first write to a
 	// fresh workspace's shared memory materializes it — but ONLY when it names a workspace that EXISTS:
 	// "$ws-nosuch" must stay a rejection, not become a fresh container row. Returns false when it names
@@ -35,6 +43,12 @@ public interface IWorkspaceMemoryDirectory
 
 public sealed class WorkspaceMemoryDirectory(ICoreDbFactory dbf) : IWorkspaceMemoryDirectory
 {
+	public async Task EnsureWorkspaceContainerAsync(string workspaceKey, CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		await WorkspaceMemory.EnsureContainerAsync(db, workspaceKey, ct);
+	}
+
 	public async Task<bool> EnsureAddressedContainerAsync(string containerKey, CancellationToken ct = default)
 	{
 		using var db = dbf.Open();
