@@ -66,14 +66,14 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	[Fact]
 	public async Task Key_Create_Form_Is_Visible()
 	{
-		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/keys");
 		await Expect(_page.GetByTestId("project-key-create-form")).ToBeVisibleAsync();
 	}
 
 	[Fact]
 	public async Task Key_Create_And_Appears_In_Table()
 	{
-		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/keys");
 
 		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
 		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();
@@ -86,7 +86,7 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	[Fact]
 	public async Task Key_Revoke_Removes_From_Table()
 	{
-		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/keys");
 
 		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
 		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();

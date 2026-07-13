@@ -100,12 +100,19 @@ public static class Routes
 	public static string ProjectAgentDefsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/agent-defs";
 	public static string ProjectConnect(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/connect";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
+	// API-key management, split off the Info page (admin-routes-and-pages item 3): the Info page was
+	// overloaded (health, keys, retention, commit links, danger zone all on one screen). Key
+	// create/list/revoke/edit-scopes now lives here; ProjectConnect (/connect) stays the separate
+	// onboarding-flavored "issue one key + show wiring instructions" flow.
+	public static string ProjectKeys(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/keys";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 	// Generic Project-scope settings page (mirrors SysDefaults/WorkspaceDefaults, at Scope.Project) —
 	// distinct from ProjectSettings() above, which is the bespoke project Info/detail page (route
-	// segment /info) and stays the owner of RepoSettings.CommitUrlTemplate + the log-retention
-	// override. This page is the generic-record carrier for settings whose TopLevel reaches Project
-	// (currently SessionFullScanSettings.ProjectEnabled).
+	// segment /info) and stays the owner of RepoSettings.CommitUrlTemplate + health endpoints + the
+	// danger zone. Log retention (LogSettings.RetentionDays) used to be a bespoke control on Info
+	// too but moved HERE (admin-routes-and-pages item 3) — it is already in
+	// SettingsScopePolicy.Records, so it renders through the same generic engine as every other
+	// cascading setting exposed at Project scope (currently also SessionFullScanSettings.ProjectEnabled).
 	public static string ProjectSettingsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/settings";
 
 

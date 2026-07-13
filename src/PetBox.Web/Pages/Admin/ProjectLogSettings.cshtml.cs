@@ -4,12 +4,13 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Per-project log retention now lives ONLY on the project Info page (/info), which owns the
-// single working override control (card ui-log-retention-settings-fix). At project scope this
-// page had no configurable fields — every LogSettings property caps out at Workspace/System
-// scope, so the form rendered empty yet still reported a false "Log settings saved." on a no-op
-// and re-POSTed on refresh (no PRG). The page is kept only as a redirect so existing
-// links/bookmarks to /log land on the real retention control instead of an empty form.
+// Per-project log retention used to live in a bespoke control on the project Info page (/info,
+// card ui-log-retention-settings-fix); admin-routes-and-pages item 3 moved it to the generic
+// project Settings page (/settings) — LogSettings.RetentionDays is already in
+// SettingsScopePolicy.Records, so it renders there via the same engine as every other cascading
+// setting, instead of a one-off hint UI Info had to maintain. This page is kept only as a redirect
+// so existing links/bookmarks to /log land on the real retention control instead of a 404 or an
+// empty form.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectLogSettingsModel : PageModel
 {
@@ -20,5 +21,5 @@ public sealed class ProjectLogSettingsModel : PageModel
 	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
-	public IActionResult OnGet() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));
+	public IActionResult OnGet() => Redirect(Routes.ProjectSettingsAdmin(WorkspaceKey, ProjectKey));
 }

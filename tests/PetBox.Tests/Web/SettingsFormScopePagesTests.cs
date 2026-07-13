@@ -294,15 +294,17 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	}
 
 	[Fact]
-	public async Task ProjectScopeLogPage_StillRedirectsToInfo_NeverRendersTheOldEmptyForm()
+	public async Task ProjectScopeLogPage_StillRedirectsToSettings_NeverRendersTheOldEmptyForm()
 	{
+		// admin-routes-and-pages item 3: log retention moved from the Info page to the generic
+		// Settings page, so the legacy /log redirect target moved with it.
 		var jar = new CookieJar();
 		await LogInAsync(jar);
 
 		var resp = await GetAsync("/ui/admin/ws/$system/projects/$system/log", jar);
 
 		resp.StatusCode.Should().Be(HttpStatusCode.Found);
-		resp.Headers.Location!.ToString().Should().EndWith("/info");
+		resp.Headers.Location!.ToString().Should().EndWith("/settings");
 	}
 
 	async Task LogInAsync(CookieJar jar)

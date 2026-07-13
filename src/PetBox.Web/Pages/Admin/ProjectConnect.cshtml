@@ -1,7 +1,10 @@
 @page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/connect"
 @model PetBox.Web.Pages.Admin.ProjectConnectModel
 @{
-	ViewData["Title"] = $"{Model.ProjectKey} — Connect agent";
+	// admin-routes-and-pages (item 9): this page only ISSUES an access key — the consumer may be an
+	// agent or a plain REST client, so "Connect Agent" overclaimed what it does. Renamed to say what
+	// actually happens; the route (/connect) is unchanged, only the title/copy moved.
+	ViewData["Title"] = $"{Model.ProjectKey} — Issue access key";
 	Layout = "_AdminLayout";
 	var mcp = Model.McpUrl;
 	var key = Model.NewKey;
@@ -14,7 +17,7 @@
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
-	<h1 class="text-2xl font-semibold">@Model.ProjectKey · connect agent</h1>
+	<h1 class="text-2xl font-semibold" data-testid="project-connect-title">@Model.ProjectKey · issue access key</h1>
 </div>
 
 @if (Model.ProjectNotFound)
@@ -47,7 +50,7 @@
 	<form method="post" asp-page-handler="Mint" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="connect-mint-form">
 		@Html.AntiForgeryToken()
 		<div class="card-body p-4">
-			<h3 class="card-title text-base">Mint an agent key</h3>
+			<h3 class="card-title text-base">Mint an access key</h3>
 			<label class="form-control max-w-sm">
 				<span class="label-text">Key name</span>
 				<input type="text" name="name" required value="agent" class="input input-bordered input-sm font-mono" data-testid="connect-key-name" />

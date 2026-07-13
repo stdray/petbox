@@ -20,15 +20,18 @@
 {
 	<div class="alert alert-error mb-3" data-testid="project-detail-error-msg">@Model.ErrorMessage</div>
 }
-@if (Model.NewKey is not null)
-{
-	<div class="alert alert-success mb-3" data-testid="project-key-created">
-		<div>
-			<div class="font-semibold">New API key — copy now, it will be hidden after refresh:</div>
-			<code class="font-mono text-sm select-all">@Model.NewKey</code>
+
+@* API-key management and Log retention moved off this (overloaded) Info page — admin-routes-and-pages
+   item 3. Keys have their own page; retention lives on the generic project Settings page
+   (SettingsScopePolicy already renders LogSettings there). This card is the only trace left here. *@
+<div class="mb-6">
+	<a href="@Routes.ProjectKeys(Model.WorkspaceKey, Model.ProjectKey)" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors max-w-sm" data-testid="project-detail-manage-keys">
+		<div class="card-body p-3">
+			<div class="text-xs opacity-60 uppercase tracking-wide">API keys</div>
+			<div class="text-sm">@Model.KeyCount issued · Manage &rarr;</div>
 		</div>
-	</div>
-}
+	</a>
+</div>
 
 <section class="mb-6" data-testid="project-health-section">
 	<div class="flex items-center gap-3 mb-3">
@@ -97,187 +100,6 @@
 			</div>
 			<div class="card-actions mt-3">
 				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-health-create-submit">Add endpoint</button>
-			</div>
-		</div>
-	</form>
-</section>
-
-<div class="divider"></div>
-
-<section class="mb-6" data-testid="project-keys-section">
-	<div class="flex items-center gap-3 mb-3">
-		<h2 class="text-lg font-semibold">API keys</h2>
-		<span class="badge badge-ghost">@Model.Keys.Count</span>
-	</div>
-
-	<div class="overflow-x-auto mb-3">
-		<table class="table table-sm" data-testid="project-keys-table">
-			<thead>
-				<tr>
-					<th>Name</th>
-					<th>Key (prefix)</th>
-					<th>Scopes</th>
-					<th class="w-32">Created</th>
-					<th class="w-24"></th>
-				</tr>
-			</thead>
-			<tbody>
-				@if (Model.Keys.Count == 0)
-				{
-					<tr data-testid="project-keys-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No keys issued yet.</td></tr>
-				}
-				else
-				{
-					@foreach (var k in Model.Keys)
-					{
-						<tr data-testid="key-row">
-							<td class="text-sm">@(string.IsNullOrEmpty(k.Name) ? "—" : k.Name)</td>
-							<td class="font-mono text-xs">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
-							<td>
-								@{
-									var keyScopes = (k.Scopes ?? string.Empty)
-										.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-										.ToHashSet(StringComparer.Ordinal);
-								}
-								<div class="flex flex-wrap gap-1">
-									@foreach (var scope in keyScopes)
-									{
-										<span class="badge badge-outline badge-xs font-mono">@scope</span>
-									}
-								</div>
-								<details class="mt-1" data-testid="project-key-edit">
-									<summary class="text-xs opacity-60 cursor-pointer">edit scopes</summary>
-									<form method="post" asp-page-handler="UpdateKeyScopes" asp-route-keyValue="@k.Key"
-										class="mt-2 border border-base-300 rounded p-2 bg-base-200 max-w-md" data-testid="project-key-edit-form">
-										@Html.AntiForgeryToken()
-										@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
-										{
-											<div class="text-xs font-semibold opacity-70 uppercase tracking-wide mt-1">@module.Key</div>
-											@foreach (var scope in module)
-											{
-												<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-1">
-													<input type="checkbox" name="scopes" value="@scope.Value" class="checkbox checkbox-xs"
-														checked="@keyScopes.Contains(scope.Value)"
-														data-testid="project-key-edit-scope-@scope.Value" />
-													<code class="font-mono text-xs">@scope.Value</code>
-												</label>
-											}
-										}
-										<button type="submit" class="btn btn-xs btn-primary mt-2" data-testid="project-key-edit-save">Save scopes</button>
-									</form>
-								</details>
-							</td>
-							<td class="text-xs opacity-70 font-mono">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
-							<td>
-								<form method="post" asp-page-handler="RevokeKey" asp-route-keyValue="@k.Key"
-									onsubmit="return confirm('Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?')" style="display:inline">
-									@Html.AntiForgeryToken()
-									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-key-revoke">Revoke</button>
-								</form>
-							</td>
-						</tr>
-					}
-				}
-			</tbody>
-		</table>
-	</div>
-
-	<form method="post" asp-page-handler="CreateKey" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-key-create-form">
-		@Html.AntiForgeryToken()
-		<div class="card-body p-4">
-			<h3 class="card-title text-sm">New API key</h3>
-
-			<label class="form-control">
-				<span class="label-text">Name <span class="opacity-60 text-xs">(what is this key for?)</span></span>
-				<input type="text" name="name" required maxlength="200"
-					class="input input-bordered input-sm"
-					placeholder="ci pipeline · claude code dev · ..."
-					data-testid="project-key-create-name" />
-			</label>
-
-			<div class="form-control mt-3" data-testid="project-key-create-scopes-group">
-				<div class="flex items-center justify-between">
-					<span class="label-text">Scopes</span>
-					<span class="text-xs opacity-60">Click checkboxes — typed input is not supported.</span>
-				</div>
-				@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
-				{
-					<div class="mt-2">
-						<div class="text-xs font-semibold opacity-70 uppercase tracking-wide">@module.Key</div>
-						<div class="grid gap-1 mt-1">
-							@foreach (var scope in module)
-							{
-								<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-2 py-1">
-									<input type="checkbox" name="scopes" value="@scope.Value"
-										class="checkbox checkbox-xs mt-1"
-										data-testid="project-key-scope-@scope.Value" />
-									<div class="flex-1">
-										<div class="text-sm">
-											<span class="font-medium">@scope.Title</span>
-											<code class="font-mono text-xs opacity-60 ml-2">@scope.Value</code>
-										</div>
-										<div class="text-xs opacity-60">@scope.Description</div>
-									</div>
-								</label>
-							}
-						</div>
-					</div>
-				}
-			</div>
-
-			<div class="card-actions mt-4">
-				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-key-create-submit">Issue key</button>
-			</div>
-		</div>
-	</form>
-</section>
-
-<div class="divider"></div>
-
-<section class="mb-6 max-w-3xl" data-testid="project-retention-section">
-	<div class="flex items-center gap-3 mb-3">
-		<h2 class="text-lg font-semibold">Log retention</h2>
-		@if (Model.RetentionOverrideDays is { } d)
-		{
-			<span class="badge badge-info badge-sm" data-testid="project-retention-override-badge">override: @d days</span>
-		}
-		else
-		{
-			<span class="badge badge-ghost badge-sm" data-testid="project-retention-default-badge">default: @Model.EffectiveRetentionDays days</span>
-		}
-	</div>
-	<p class="text-xs opacity-60 mb-3" data-testid="project-retention-hint">
-		How long to keep log entries before the hourly sweep deletes them.
-		@if (Model.RetentionOverrideDays is { } ov)
-		{
-			<text>This project overrides the
-			<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
-			(@Model.DefaultRetentionDays days) and keeps entries for @ov days. Reset to fall back to the default.</text>
-		}
-		else
-		{
-			<text>Without an override, this project uses the
-			<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
-			(@Model.EffectiveRetentionDays days).</text>
-		}
-	</p>
-
-	<form method="post" asp-page-handler="SetRetention" class="card bg-base-200 border border-base-300" data-testid="project-retention-form">
-		@Html.AntiForgeryToken()
-		<div class="card-body p-4">
-			<label class="form-control">
-				<span class="label-text">Retain for (days)</span>
-				<input type="number" name="retainDays" min="1" max="3650"
-					value="@(Model.RetentionOverrideDays ?? Model.EffectiveRetentionDays)" required
-					class="input input-bordered input-sm w-32"
-					data-testid="project-retention-input" />
-			</label>
-			<div class="card-actions mt-3 flex-wrap">
-				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-retention-save">Set override</button>
-				@if (Model.RetentionOverrideDays is not null)
-				{
-					<button type="submit" formaction="?handler=ClearRetention" class="btn btn-sm btn-ghost" data-testid="project-retention-clear">Reset to default</button>
-				}
 			</div>
 		</div>
 	</form>

@@ -45,7 +45,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		if (_keys.TryGetValue(scopes, out var cached))
 			return cached;
 
-		await _page!.GotoAsync($"/ui/admin/ws/{TestWorkspace.Key}/projects/kpvotes/info");
+		await _page!.GotoAsync($"/ui/admin/ws/{TestWorkspace.Key}/projects/kpvotes/keys");
 		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-{System.Guid.NewGuid():N}");
 		await _page.GetByTestId("project-key-create-scopes-group").ScrollIntoViewIfNeededAsync();
 		foreach (var __s in scopes.Split(',', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries))

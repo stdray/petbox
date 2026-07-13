@@ -9,10 +9,14 @@ using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Onboarding helper: mint a project-scoped API key and show copy-paste config to
+// Onboarding helper: issue a project-scoped API key and show copy-paste config to
 // wire a coding agent's MCP client to this PetBox instance. The key is shown
 // exactly once (only the value lives in the response; only the row is persisted).
 // Boards/stores/sessions are then created by the agent via the MCP tools.
+// The consumer isn't necessarily an agent — a plain REST client works the same way — hence the
+// page's neutral "issue an access key" framing (admin-routes-and-pages item 9); the wiring
+// instructions below are agent-flavored because that's the common case, not because the key itself
+// is agent-only.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectConnectModel : PageModel
 {

@@ -143,12 +143,14 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 	{
 		var authCookie = await LoginAsync("eve2");
 
-		var ownPageReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/ws/wsa/projects/proja/info");
+		// Key creation now lives on the split-off Keys page (admin-routes-and-pages item 3) — not
+		// the Info page anymore.
+		var ownPageReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/ws/wsa/projects/proja/keys");
 		ownPageReq.Headers.Add("Cookie", authCookie);
 		using var ownPage = await _client.SendAsync(ownPageReq);
 		var (token, afCookie) = ExtractAntiforgery(ownPage, await ownPage.Content.ReadAsStringAsync());
 
-		var createKeyReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/ws/wsb/projects/projb/info?handler=CreateKey");
+		var createKeyReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/ws/wsb/projects/projb/keys?handler=CreateKey");
 		createKeyReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["name"] = "intruder-key",
@@ -178,14 +180,14 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 	{
 		var authCookie = await LoginAsync("eve2");
 
-		var ownPageReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/ws/wsa/projects/proja/info");
+		var ownPageReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/ws/wsa/projects/proja/keys");
 		ownPageReq.Headers.Add("Cookie", authCookie);
 		using var ownPage = await _client.SendAsync(ownPageReq);
 		var (token, afCookie) = ExtractAntiforgery(ownPage, await ownPage.Content.ReadAsStringAsync());
 
 		// Route is wsa/proja (policy passes for eve); form body smuggles ProjectKey=projb and
 		// WorkspaceKey=wsb, the workspace/project eve does NOT administer.
-		var createKeyReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/ws/wsa/projects/proja/info?handler=CreateKey");
+		var createKeyReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/ws/wsa/projects/proja/keys?handler=CreateKey");
 		createKeyReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["name"] = "pwn-key",
