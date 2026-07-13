@@ -83,6 +83,7 @@ import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
@@ -1191,7 +1192,11 @@ function cleanupLegacy(dir: string): void {
 
 // ---- step 10: self-smoke ---------------------------------------------------
 
-async function selfSmoke(baseUrl: string, project: string, key: string): Promise<void> {
+// Returns whether the smoke succeeded — the caller (main()) uses this to decide whether "done."
+// is allowed to print (selfsmoke-failure-prints-done: a failed smoke must never be followed by
+// a line that reads like success). Response classification itself lives in self-smoke.ts so it
+// is unit-testable without a network call; this wrapper only owns the fetch + exit-code side effect.
+async function selfSmoke(baseUrl: string, project: string, key: string): Promise<boolean> {
   const uri = `${baseUrl}/api/sessions/${project}/wire-smoke?agent=wire`;
   const body = JSON.stringify({ role: "user", content: "wire.ts self-smoke — verifying the session push pipeline." });
   let resp: Response;
@@ -1205,26 +1210,17 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
   } catch (e) {
     console.error(`[10/10] self-smoke: POST failed — ${(e as Error).message}`);
     process.exitCode = 1;
-    return;
+    return false;
   }
   const text = await resp.text();
-  if (!resp.ok) {
-    console.error(`[10/10] self-smoke: HTTP ${resp.status} — ${text}`);
-    process.exitCode = 1;
-    return;
-  }
-  let parsed: any = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    /* keep raw */
-  }
-  if (typeof parsed?.version === "number") {
-    log(`[10/10] self-smoke: OK — sessionId=${parsed.sessionId}, version=${parsed.version}, messages=${parsed.messageCount}`);
+  const result = classifySelfSmokeResponse(resp.ok, resp.status, text);
+  if (result.ok) {
+    log(result.message);
   } else {
-    console.error(`[10/10] self-smoke: server did not return a numeric version — ${text}`);
+    console.error(result.message);
     process.exitCode = 1;
   }
+  return result.ok;
 }
 
 // ---- main ------------------------------------------------------------------
@@ -1341,15 +1337,19 @@ async function main(): Promise<void> {
   else log(`[9/10] cleanup-legacy not requested — skipped.`);
 
   // 10. self-smoke
-  await selfSmoke(baseUrl, project, key);
+  const smokeOk = await selfSmoke(baseUrl, project, key);
 
-  if (process.env[envVar]) {
-    log(`done.`);
-  } else {
-    log(
-      `done. NOTE: start a NEW terminal${process.platform === "win32" ? "" : " (login shell)"} before launching agents — ` +
-        `their MCP configs read ${envVar} from the environment. The kit hooks work immediately (keys.json).`,
-    );
+  // Terminal message set depends on the smoke outcome — a failure must be the LAST line, in
+  // red, never followed by "done." (selfsmoke-failure-prints-done).
+  const finish = finishWireRun({
+    smokeOk,
+    envVar,
+    envVarPresentInProcess: !!process.env[envVar],
+    platform: process.platform,
+  });
+  for (const line of finish.lines) {
+    if (finish.toStderr) console.error(line);
+    else log(line);
   }
 }
 
