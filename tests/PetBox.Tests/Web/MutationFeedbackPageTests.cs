@@ -130,6 +130,42 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		_db.ApiKeys.Count(k => k.ProjectKey == "proj").Should().Be(1);
 	}
 
+	// agent-key-scopes-miss-agents-read: the checkbox group on this page is pre-checked from
+	// AgentDefaultScopes (see ProjectConnect.cshtml), so this list IS what a new tester actually gets
+	// when they click through without touching a single box. agents:read gates GET
+	// /api/{project}/agent-defs(/{key}) (AgentDefsApi.cs) and the MCP agent_def_list/agent_def_get
+	// tools (AgentDefTools.cs) — without it, both petbox-wire apply and the SessionStart hook fetch
+	// 403 and fall back SILENTLY to the kit's built-in DEFAULT_AGENT_DEFINITION
+	// (agent-def-fetch.ts swallows the failure in a bare catch {}), so a new tester never learns the
+	// server-side definition existed at all.
+	[Fact]
+	public void Connect_default_scopes_include_agents_read()
+	{
+		ProjectConnectModel.AgentDefaultScopes.Should().Contain(ApiKeyScopes.AgentsRead,
+			"a key minted from the pre-checked defaults must be able to fetch the server's agent "
+			+ "definition, or the fetch silently degrades to the kit's built-in default");
+	}
+
+	// The end-to-end shape of the same regression: mint a key with EXACTLY the pre-checked default
+	// scopes (as a click-through-without-editing tester does) and check the scopes that actually land
+	// in the stored row — not just the in-memory constant.
+	[Fact]
+	public async Task Connect_mint_with_default_scopes_grants_agents_read()
+	{
+		_db.Insert(new Project { Key = "proj-defaults", WorkspaceKey = "ws", Name = "P", Description = "" });
+		var page = new ProjectConnectModel(new ProjectDirectory(_db.Factory()), _db.Factory().AgentKeys(), Features())
+		{ WorkspaceKey = "ws", ProjectKey = "proj-defaults" };
+		Wire(page);
+
+		var result = await page.OnPostMintAsync("agent", [.. ProjectConnectModel.AgentDefaultScopes]);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		var row = _db.ApiKeys.Single(k => k.ProjectKey == "proj-defaults");
+		row.Scopes.Split(',').Should().Contain(ApiKeyScopes.AgentsRead,
+			"the minted key must carry agents:read so GET api/PROJECT/agent-defs/KEY and "
+			+ "agent_def_get/agent_def_list do not 403 against a freshly onboarded tester's key");
+	}
+
 	[Fact]
 	public async Task ProjectKeys_create_key_redirects_to_clean_url_and_carries_the_key()
 	{
