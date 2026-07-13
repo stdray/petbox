@@ -393,11 +393,24 @@ function updateBannerCount(): void {
 	if (!banner || !countEl) return;
 	countEl.textContent = String(stagedPayloads.length);
 	banner.classList.toggle("hidden", stagedPayloads.length === 0);
+	syncEmptyStateAlert();
 }
 
 function resetLiveTailStaging(): void {
 	stagedPayloads = [];
 	updateBannerCount();
+}
+
+// The server-rendered "No events match the query." alert describes the QUERY's result. Once the tail
+// delivers rows into the tbody — visibly swapped in, or waiting behind the banner — that alert
+// contradicts what is on screen (a "no events" banner sitting over real events). Keep it in sync with
+// what the tail has actually produced: hide it while any live row is in the body or staged, show it
+// again if the tail is switched off before delivering anything.
+function syncEmptyStateAlert(): void {
+	const alert = document.querySelector<HTMLElement>('[data-testid="events-empty"]');
+	if (!alert) return;
+	const hasRow = !!document.querySelector("#events-body tr[data-event-id]");
+	alert.classList.toggle("hidden", hasRow || stagedPayloads.length > 0);
 }
 
 // Intercept SSE before htmx swaps
@@ -413,6 +426,15 @@ document.addEventListener("htmx:sseBeforeMessage", ((event: CustomEvent) => {
 	stagedPayloads.push(String(event.detail.data));
 	ensureLiveTailBanner();
 	updateBannerCount();
+}) as EventListener);
+
+// A live row swapped straight into the tbody (top visible, not staged) bypasses updateBannerCount, so
+// reconcile the empty-state alert here too. The htmx SSE extension reports the swapped element as
+// detail.elt (detail.target is undefined on that path); a plain swap fills detail.target — read
+// whichever is present.
+document.addEventListener("htmx:afterSwap", ((event: CustomEvent) => {
+	const node = (event.detail?.elt ?? event.detail?.target) as HTMLElement | undefined;
+	if (node?.id === "events-body" || node?.closest?.("#events-body")) syncEmptyStateAlert();
 }) as EventListener);
 
 // Click banner → flush all staged events
