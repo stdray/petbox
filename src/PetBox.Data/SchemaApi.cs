@@ -1,12 +1,8 @@
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
 using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 
@@ -25,7 +21,8 @@ namespace PetBox.Data;
 //
 // GET returns rows from __SchemaVersions in chronological order, so pets and
 // the admin UI can introspect what's been applied without coupling to the
-// internal table layout (the endpoint shape is the contract).
+// internal table layout (the endpoint shape is the contract). The journal read
+// itself lives in IDataDbCatalog.ListMigrationsAsync — no db factory here.
 public static class SchemaApi
 {
 	public static void MapSchemaEndpoints(this IEndpointRouteBuilder app)
@@ -85,39 +82,20 @@ public static class SchemaApi
 		HttpContext ctx,
 		string projectKey,
 		string dbName,
-		ICoreDbFactory dbf,
-		IDataDbFactory factory,
+		IDataDbCatalog dataDbs,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
+		// The catalog proves the (projectKey, dbName) address, opens the quota'd connection
+		// and reads __SchemaVersions; null = not this project's DataDb, [] = no journal yet.
+		var rows = await dataDbs.ListMigrationsAsync(projectKey, dbName, ct);
+		if (rows is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
 
-		await using var conn = await factory.OpenAsync(projectKey, dbName, row.MaxPageCount, ct);
-
-		// __SchemaVersions may not exist yet if no migrations have been applied.
-		await using var existsCmd = conn.CreateCommand();
-		existsCmd.CommandText = $"SELECT name FROM sqlite_master WHERE type='table' AND name='{SchemaRunner.JournalTableName}'";
-		var exists = await existsCmd.ExecuteScalarAsync(ct) is not null;
-		if (!exists) return Results.Ok(Array.Empty<MigrationEntry>());
-
-		await using var cmd = conn.CreateCommand();
-		cmd.CommandText = $"SELECT SchemaVersionID, ScriptName, Applied, Hash FROM {SchemaRunner.JournalTableName} ORDER BY SchemaVersionID";
-		await using var reader = await cmd.ExecuteReaderAsync(ct);
-		var entries = new List<MigrationEntry>();
-		while (await reader.ReadAsync(ct))
-		{
-			entries.Add(new MigrationEntry(
-				Id: reader.GetInt64(0),
-				ScriptName: reader.GetString(1),
-				Applied: reader.GetDateTime(2),
-				Hash: reader.GetString(3)));
-		}
-		return Results.Ok(entries);
+		return Results.Ok(rows
+			.Select(m => new MigrationEntry(m.Id, m.ScriptName, m.Applied, m.Hash))
+			.ToList());
 	}
 }
