@@ -365,8 +365,10 @@ jobs:
           ./build.sh --target=NpmPublish
 
   # ─── petbox-wire (agent-wiring kit) publish to public npmjs on `npm-wire` tag push ───
-  # Own tag by convention (deploy/nuget/npm/pypi are per-package channels too). Raw plain-TS
-  # package: no bun/build — only the GitVersion stamp (needs full history) and `npm publish`.
+  # Own tag by convention (deploy/nuget/npm/pypi are per-package channels too). The package
+  # ships raw TS (no build step), but publishing now runs the kit's tests + typecheck first
+  # (NpmWirePublish depends on them), and those run under bun — so this job needs bun, not
+  # just node. It shipped without it and the first gated publish died on `bun: not found`.
   npm-wire-publish:
     if: github.event_name == 'push' && github.ref == 'refs/tags/npm-wire'
     runs-on: ubuntu-latest
@@ -378,6 +380,10 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - uses: actions/setup-node@v4
         with:
