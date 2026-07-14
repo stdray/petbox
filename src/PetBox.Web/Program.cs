@@ -388,6 +388,43 @@ public partial class Program
 		// served at runtime only in Development (MapOpenApi in Configure).
 		builder.Services.AddOpenApi();
 
+		// static-assets-compression-cache: production served app.css (120,190 B) and site.js
+		// (210,643 B) with NO Content-Encoding at all — curl with `Accept-Encoding: gzip, br` got
+		// the same uncompressed bytes back. Measured on prod against the light /doc page: DOM
+		// phase alone was 3.16 s at ~50 KB/s effective throughput, dwarfing the 25 ms the access
+		// log shows the server actually spent rendering. Brotli + Gzip cover every client; Brotli
+		// is preferred where both are accepted (the default provider order already ranks it
+		// first). EnableForHttps is safe here specifically BECAUSE of the BREACH consideration
+		// below — the classic BREACH oracle needs a fixed secret to sit in a compressed response
+		// alongside attacker-controlled input reflected across MANY same-secret requests; ASP.NET
+		// Core's antiforgery cookie token is stable but the per-response FORM token is randomized
+		// every render (double-submit pattern), so there is no fixed compressed secret to
+		// distinguish-by-length across requests. HTML compression is the one that matters most in
+		// absolute bytes (the tasks board emits megabytes of HTML for 477 nodes).
+		builder.Services.AddResponseCompression(options =>
+		{
+			options.EnableForHttps = true;
+			options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+			options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+			options.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(
+			[
+				"text/css",
+				"application/javascript",
+				"text/javascript",
+				"image/svg+xml",
+				"text/html",
+			]);
+			// The SSE live-tail stream (/api/logs/{p}/{log}/live-tail, text/event-stream) writes one
+			// small chunk per log line and relies on each write reaching the client immediately
+			// (LogApi.cs sets `X-Accel-Buffering: no` and flushes right after the headers for the
+			// same reason). Response compression wraps the body in a buffering compression stream
+			// that only flushes on its own schedule — compressing this response would silently turn
+			// a live tail into a stalled-then-bursty one. text/event-stream is also nowhere near the
+			// MIME types above, but excluding it explicitly makes the intent survive a future
+			// broadening of that list.
+			options.ExcludedMimeTypes = ["text/event-stream"];
+		});
+
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 		builder.Services.Configure<ConfigApiKeyOptions>(builder.Configuration.GetSection("Auth"));
 		builder.Services.AddSingleton<ConfigApiKeyLookup>();
@@ -851,7 +888,30 @@ public partial class Program
 			await next();
 		});
 
-		app.UseStaticFiles();
+		// Must run BEFORE UseStaticFiles so app.css/site.js get compressed too, and before
+		// UseRouting/endpoint dispatch so it also wraps the HTML/JSON responses further down the
+		// pipeline. text/event-stream (SSE live-tail) is excluded above at registration time.
+		app.UseResponseCompression();
+
+		app.UseStaticFiles(new StaticFileOptions
+		{
+			OnPrepareResponse = ctx =>
+			{
+				// _Layout.cshtml / _PublicLayout.cshtml reference app.css/site.js with
+				// asp-append-version="true", which stamps a content-hash query string (?v=...): a
+				// changed file gets a new URL, so it is safe to tell the browser to cache it forever.
+				// An asset requested WITHOUT ?v= carries no such guarantee (a direct/bookmarked URL,
+				// or any static file that isn't versioned) — marking that immutable for a year would
+				// pin a stale copy across a deploy that changes the file's bytes at the same URL. So
+				// only the versioned request gets the year-long immutable cache; everything else gets
+				// a short max-age that still avoids a revalidation round-trip within one session
+				// without risking staleness across a deploy.
+				var isVersioned = ctx.Context.Request.Query.ContainsKey("v");
+				ctx.Context.Response.Headers.CacheControl = isVersioned
+					? "public, max-age=31536000, immutable"
+					: "public, max-age=600";
+			},
+		});
 		app.UseRouting();
 		app.UseAuthentication();
 
