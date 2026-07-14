@@ -329,6 +329,20 @@ public sealed class CommentService : ICommentService
 		return rows.OrderBy(r => r.Created).Select(r => ToView(r, tags)).ToLookup(v => v.NodeId, StringComparer.Ordinal);
 	}
 
+	public async Task<IReadOnlyDictionary<string, int>> CountForBoardAsync(
+		string projectKey, string board, CancellationToken ct = default)
+	{
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		// GROUP BY NodeId, COUNT(*) — no Body/Author/tags in the SELECT list at all, unlike
+		// ListForBoardAsync above (which the board page used to call for a full thread render).
+		var counts = await ctx.GetTable<CommentRow>()
+			.Where(c => c.Board == board && c.ActiveTo == null)
+			.GroupBy(c => c.NodeId)
+			.Select(g => new { NodeId = g.Key, Count = g.Count() })
+			.ToListAsync(ct);
+		return counts.ToDictionary(x => x.NodeId, x => x.Count, StringComparer.Ordinal);
+	}
+
 	// ── helpers ──────────────────────────────────────────────────────────────
 
 	// Active tags of every comment on a board (or the whole project when `board` is null, for a

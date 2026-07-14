@@ -608,12 +608,39 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- read: tree view ----
 
-	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
+	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var all = ctx.PlanNodes.Where(n => n.Board == board).ToList();
+		// board-read-loads-all-bodies: Body is the fattest column on plan_nodes (full markdown per
+		// node, every revision). A caller that already knows nothing on this render will show a
+		// body (a view mode with Fields.Body off, or Outline in navigate reveal — see
+		// TaskBoardModel.LoadAsync) passes includeBody:false. `includeBody` is a plain closed-over
+		// bool, not a per-row value, so linq2db's expression parser resolves the untaken branch of
+		// `includeBody ? n.Body : ""` BEFORE SQL translation — verified empirically (ToSqlQuery().Sql)
+		// against the alternative "two full Select branches" shape: both compile to the IDENTICAL
+		// SELECT list, `Body` entirely absent from it when includeBody is false, no CASE expression,
+		// nothing evaluated per row. Every other caller (GetNodeAsync, tasks_search, …) keeps
+		// includeBody's default (true), which selects every column exactly as before this change.
+		var all = await ctx.PlanNodes.Where(n => n.Board == board)
+			.Select(n => new PlanNode
+			{
+				Key = n.Key,
+				Version = n.Version,
+				ActiveFrom = n.ActiveFrom,
+				ActiveTo = n.ActiveTo,
+				PrevKey = n.PrevKey,
+				Created = n.Created,
+				Updated = n.Updated,
+				Board = n.Board,
+				NodeId = n.NodeId,
+				Status = n.Status,
+				Type = n.Type,
+				Name = n.Name,
+				Body = includeBody ? n.Body : "",
+				Priority = n.Priority,
+			}).ToListAsync(ct);
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
@@ -639,11 +666,22 @@ public sealed partial class TasksService : ITasksService
 			: FilterVisible(active, includeClosed: true, underId, parentOf, runtime, meta.Kind)
 				.Where(n => statusFilter.Contains(n.Status)).ToList();
 
+		// board-page-cost: was 2 x visible.Count separate ListAsync calls (each opening its OWN
+		// connection — ~954 opens+queries on the 477-node $system `work` board) collapsed into ONE
+		// batched read (RelationStore.ListForNodesAsync — one connection, 1-2 chunked IN queries),
+		// then grouped in memory into the SAME per-node from/to shape ListAsync used to return.
+		// The edge-classification logic below (spec/blockedBy/blocks/linkedTasks/supersedes) is
+		// untouched — only where the edges come from changed.
+		var nodeIds = visible.Where(n => n.NodeId.Length > 0).Select(n => n.NodeId).ToList();
+		var allEdges = await _relations.ListForNodesAsync(projectKey, nodeIds, ct);
+		var fromByNode = allEdges.ToLookup(e => e.FromNodeId, StringComparer.Ordinal);
+		var toByNode = allEdges.ToLookup(e => e.ToNodeId, StringComparer.Ordinal);
+
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
 		{
-			var fromEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "from", ct: ct) : [];
-			var toEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct) : [];
+			var fromEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)fromByNode[n.NodeId] : [];
+			var toEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)toByNode[n.NodeId] : [];
 			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
 			// Symmetric counterpart (kanban-blocked-signal review finding): this node's OWN

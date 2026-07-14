@@ -117,4 +117,23 @@ public sealed class CommentServiceTests : IDisposable
 		byNode["n2"].Should().HaveCount(1);
 		byNode["missing"].Should().BeEmpty();
 	}
+
+	// board-page-cost: the count-only counterpart the board card chip uses instead of loading
+	// (and DFS-flattening) every comment body/thread. A node with zero comments is simply absent
+	// (GetValueOrDefault(0) at the read site), a deleted comment doesn't count, and counts are
+	// scoped to the named board only (a same-numbered node key on another board doesn't bleed in).
+	[Fact]
+	public async Task CountForBoard_CountsOnlyActiveComments_ScopedToTheBoard()
+	{
+		await _svc.AddAsync("p", "ideas", "n1", null, "a", "x", null);
+		var second = await _svc.AddAsync("p", "ideas", "n1", null, "a", "x2", null);
+		await _svc.AddAsync("p", "ideas", "n2", null, "a", "y", null);
+		await _svc.AddAsync("p", "spec", "n1", null, "a", "z", null); // same node key, different board
+
+		await _svc.DeleteAsync("p", "ideas", second.Id!); // n1 drops back to 1 active comment
+
+		var counts = await _svc.CountForBoardAsync("p", "ideas");
+		counts.Should().BeEquivalentTo(new Dictionary<string, int> { ["n1"] = 1, ["n2"] = 1 });
+		counts.GetValueOrDefault("missing").Should().Be(0);
+	}
 }
