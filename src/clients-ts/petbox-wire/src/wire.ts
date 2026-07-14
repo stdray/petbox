@@ -68,11 +68,7 @@ import {
   DEFAULT_DEFINITION_KEY,
   resolveAgentDefinitionWithLkg,
 } from "./agent-def-fetch.ts";
-import {
-  DEFAULT_AGENT_DEFINITION,
-  validateAgentDefinition,
-  type AgentDefinition,
-} from "./agent-definition.ts";
+import { validateAgentDefinition, type AgentDefinition } from "./agent-definition.ts";
 import {
   formatApplyBlocked,
   planApply,
@@ -247,18 +243,31 @@ function isProfileCommand(argv: string[]): boolean {
   return argv[0] === "profile";
 }
 
-// doctor — truthfulness gate for each known harness vs default definition.
+// doctor — truthfulness gate for each known harness vs the SAME definition apply would compile
+// (doctor-gates-wrong-definition): server → LKG cache → built-in DEFAULT, exactly like apply
+// (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
 // Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
-function runDoctor(argv: string[]): void {
+async function runDoctor(argv: string[]): Promise<void> {
+  let offline = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") usage(0);
-    console.error(`doctor: unexpected argument: ${a}`);
-    usage(WIRE_EXIT.usage);
+    else if (a === "--offline") offline = true;
+    else {
+      console.error(`doctor: unexpected argument: ${a}`);
+      usage(WIRE_EXIT.usage);
+    }
   }
 
+  let definition: AgentDefinition;
   try {
-    validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+    definition = await resolveApplyDefinition({
+      offline,
+      definitionKey: DEFAULT_DEFINITION_KEY,
+      cwd: process.cwd(),
+      label: "doctor",
+    });
+    validateAgentDefinition(definition);
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
     process.exit(WIRE_EXIT.hard);
@@ -269,7 +278,7 @@ function runDoctor(argv: string[]): void {
     ? "local binding: (empty — capability gate only; no model ids to check)"
     : `local binding: activeProfile=${roles.activeProfile} (model ids are gated against each harness)`;
 
-  log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
+  log(`doctor: definition="${definition.name}" (${definition.roles.length} roles)`);
   log(`doctor: ${bindingNote}`);
 
   let hadTruthfulnessBlock = false;
@@ -277,7 +286,7 @@ function runDoctor(argv: string[]): void {
     // Same gate apply uses: capabilities + the LOCAL model binding for this harness, so a
     // roles.json holding an id this harness cannot resolve fails here too (not at runtime).
     const violations = checkTruthfulness(
-      DEFAULT_AGENT_DEFINITION,
+      definition,
       harness,
       resolveAgentRoles(roles, harness),
     );
@@ -461,11 +470,15 @@ async function runApply(argv: string[]): Promise<void> {
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
 // Server is authoritative; disk is LKG replica. roles.json polarity is separate (not here).
+// `label` prefixes the log lines: apply and doctor share this resolution so that doctor gates
+// the definition apply would actually compile, and each says so under its own name.
 async function resolveApplyDefinition(opts: {
   offline: boolean;
   definitionKey: string;
   cwd: string;
+  label?: string;
 }): Promise<AgentDefinition> {
+  const label = opts.label ?? "apply";
   const resolved = resolveProject(opts.cwd);
   const got = await resolveAgentDefinitionWithLkg({
     offline: opts.offline,
@@ -476,12 +489,12 @@ async function resolveApplyDefinition(opts: {
   });
 
   if (got.source === "server") {
-    log(`apply: using server definition ${got.key} v${got.version}`);
+    log(`${label}: using server definition ${got.key} v${got.version}`);
   } else if (got.source === "lkg") {
-    log(`apply: ${got.staleMarker ?? "using LKG agent definition cache"}`);
-    log(`apply: using LKG definition ${got.key} v${got.version} (stale)`);
+    log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
   } else {
-    log("apply: offline default definition (no server, no LKG cache)");
+    log(`${label}: offline default definition (no server, no LKG cache)`);
   }
   return got.definition;
 }
@@ -1234,7 +1247,7 @@ async function main(): Promise<void> {
     return;
   }
   if (isDoctorCommand(argv)) {
-    runDoctor(argv);
+    await runDoctor(argv);
     return;
   }
   if (isApplyCommand(argv)) {
