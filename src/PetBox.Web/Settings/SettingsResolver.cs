@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using PetBox.Config;
+using PetBox.Core.Json;
 using PetBox.Core.Settings;
 
 namespace PetBox.Web.Settings;
@@ -109,7 +110,7 @@ public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encr
 				throw new InvalidOperationException("Secret setting requires PETBOX_MASTER_KEY to be configured.");
 
 			var bundle = encryptor.Encrypt((string?)value ?? string.Empty);
-			var blob = JsonSerializer.Serialize(new[] { bundle.Ciphertext, bundle.Iv, bundle.AuthTag });
+			var blob = JsonSerializer.Serialize(new[] { bundle.Ciphertext, bundle.Iv, bundle.AuthTag }, PetBoxJsonEncoder.SharedOptions);
 			return ("secret", blob);
 		}
 
@@ -127,7 +128,7 @@ public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encr
 			return ("enum", Enum.GetName(underlying, value ?? Activator.CreateInstance(underlying)!) ?? string.Empty);
 
 		// Fallback: JSON for complex types.
-		return ("json", JsonSerializer.Serialize(value));
+		return ("json", JsonSerializer.Serialize(value, PetBoxJsonEncoder.SharedOptions));
 	}
 
 	object? Decode(Type clrType, string typeTag, string stored, bool isSecret)
@@ -135,7 +136,7 @@ public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encr
 		if (isSecret && typeTag == "secret")
 		{
 			if (!encryptor.IsAvailable) return string.Empty;
-			var triple = JsonSerializer.Deserialize<string[]>(stored);
+			var triple = JsonSerializer.Deserialize<string[]>(stored, PetBoxJsonEncoder.SharedOptions);
 			if (triple is null || triple.Length != 3) return string.Empty;
 			try { return encryptor.Decrypt(triple[0], triple[1], triple[2]); }
 			catch { return string.Empty; }
@@ -149,7 +150,7 @@ public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encr
 			"long" => long.Parse(stored, CultureInfo.InvariantCulture),
 			"bool" => stored.Equals("true", StringComparison.OrdinalIgnoreCase),
 			"enum" => Enum.Parse(underlying, stored, ignoreCase: true),
-			"json" => JsonSerializer.Deserialize(stored, clrType),
+			"json" => JsonSerializer.Deserialize(stored, clrType, PetBoxJsonEncoder.SharedOptions),
 			_ => stored,
 		};
 	}

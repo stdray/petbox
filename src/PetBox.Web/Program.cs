@@ -383,6 +383,23 @@ public partial class Program
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
 
+		// json-encoder-shared-globally: the MCP path already relaxed its own JsonSerializerOptions
+		// (mcpJson above), and logs/LLM-prompts/the methodology editor got the same treatment
+		// piecemeal — but minimal-API JSON results were never touched, so every NEW minimal-API
+		// surface reintroduced the "Cyrillic -> \uXXXX" bug from scratch. `ConfigureHttpJsonOptions`
+		// is what a minimal-API endpoint's implicit JSON result (a POCO return, `Results.Json`,
+		// `TypedResults.Json`) reads. The Razor Pages/MVC half (`JsonResult`) is wired below, next to
+		// the existing `AddRazorPages` call — `.AddJsonOptions` is what `JsonResult`'s executor reads
+		// (`SystemTextJsonResultExecutor` falls back to `IOptions<Microsoft.AspNetCore.Mvc.JsonOptions>`
+		// whenever `JsonResult.SerializerSettings` is null, which every `new JsonResult(x)` call site
+		// in this repo leaves null). Verified empirically, not just by reading the framework source —
+		// see BoardSearchIndexEncodingTests (TaskBoard's ?handler=SearchIndex, a real HTTP
+		// round-trip) and JsonOptionsWiringTests (an architecture test asserting both IOptions
+		// instances carry this encoder, so a future refactor that drops either wire-up fails loudly
+		// instead of quietly reopening the hole).
+		builder.Services.ConfigureHttpJsonOptions(o =>
+			o.SerializerOptions.Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed);
+
 		// Built-in .NET 10 OpenAPI document generation. The document is materialized at build
 		// time into doc/api/PetBox.Web.json (see OpenApiGenerateDocuments in the csproj) and
 		// served at runtime only in Development (MapOpenApi in Configure).
@@ -707,7 +724,12 @@ public partial class Program
 			// page can forget to copy.
 			options.Conventions.ConfigureFilter(
 				new Microsoft.AspNetCore.Mvc.ServiceFilterAttribute(typeof(PetBox.Web.Auth.ProjectWorkspaceBindingFilter)));
-		});
+		})
+			// json-encoder-shared-globally: see the ConfigureHttpJsonOptions comment above — this is
+			// the other half, read by JsonResult's executor (IOptions<Mvc.JsonOptions>) whenever a
+			// `new JsonResult(x)` call site (e.g. TaskBoard's ?handler=SearchIndex, Config's reveal
+			// endpoint) leaves SerializerSettings null, which is every call site in this repo today.
+			.AddJsonOptions(o => o.JsonSerializerOptions.Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed);
 	}
 
 	// Path prefixes for programmatic (non-browser) surfaces that must keep their raw status

@@ -6,6 +6,7 @@ using Google.Protobuf;
 using OpenTelemetry.Proto.Collector.Logs.V1;
 using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Logs.V1;
+using PetBox.Core.Json;
 using PetBox.Log.Core.Models;
 using BoxLogLevel = PetBox.Log.Core.Models.LogLevel;
 
@@ -139,7 +140,7 @@ static class OtlpLogsParser
 			Message = message,
 			MessageTemplate = messageTemplate,
 			Exception = exception,
-			Properties = JsonSerializer.Serialize(properties),
+			Properties = JsonSerializer.Serialize(properties, PetBoxJsonEncoder.SharedOptions),
 		};
 		return true;
 	}
@@ -242,11 +243,17 @@ static class OtlpLogsParser
 		return builder.ToImmutable();
 	}
 
+	// json-encoder-shared-globally: see OtlpTracesParser.AnyValueWriterOptions — a bare
+	// `new Utf8JsonWriter(buffer)` would bake a Cyrillic attribute/body value into \uXXXX here
+	// (GetRawText() below then hands that already-escaped text straight into LogEntryCandidate.
+	// Message for an array/kvlist body — a directly human-facing field).
+	static readonly JsonWriterOptions AnyValueWriterOptions = new() { Encoder = PetBoxJsonEncoder.Relaxed };
+
 	static JsonElement AnyValueToJson(AnyValue? value)
 	{
 		if (value is null) return JsonNull();
 		var buffer = new ArrayBufferWriter<byte>();
-		using (var writer = new Utf8JsonWriter(buffer))
+		using (var writer = new Utf8JsonWriter(buffer, AnyValueWriterOptions))
 			WriteAnyValue(writer, value);
 		using var doc = JsonDocument.Parse(buffer.WrittenMemory);
 		return doc.RootElement.Clone();
@@ -291,7 +298,7 @@ static class OtlpLogsParser
 		return null;
 	}
 
-	static JsonElement JsonString(string s) => JsonSerializer.SerializeToElement(s);
+	static JsonElement JsonString(string s) => JsonSerializer.SerializeToElement(s, PetBoxJsonEncoder.SharedOptions);
 	static JsonElement JsonNumber(uint n) => JsonSerializer.SerializeToElement(n);
 	static JsonElement JsonNull() => JsonSerializer.SerializeToElement<object?>(null);
 }

@@ -5,6 +5,7 @@ using Google.Protobuf;
 using OpenTelemetry.Proto.Collector.Metrics.V1;
 using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Metrics.V1;
+using PetBox.Core.Json;
 using PetBox.Log.Core.Metrics;
 
 namespace PetBox.Web.Ingestion;
@@ -217,7 +218,7 @@ static class OtlpMetricsParser
 			TimeUnixNs = (long)timeUnixNano,
 			StartUnixNs = startTimeUnixNano != 0 ? (long)startTimeUnixNano : null,
 			Flags = flags != 0 ? (int)flags : null,
-			AttributesJson = JsonSerializer.Serialize(attributes),
+			AttributesJson = JsonSerializer.Serialize(attributes, PetBoxJsonEncoder.SharedOptions),
 		};
 	}
 
@@ -308,11 +309,16 @@ static class OtlpMetricsParser
 		return builder.ToImmutable();
 	}
 
+	// json-encoder-shared-globally: see OtlpTracesParser.AnyValueWriterOptions — a bare
+	// `new Utf8JsonWriter(buffer)` would bake a Cyrillic attribute value into \uXXXX here, before
+	// it ever reaches an outer options-aware Serialize call.
+	static readonly JsonWriterOptions AnyValueWriterOptions = new() { Encoder = PetBoxJsonEncoder.Relaxed };
+
 	static JsonElement AnyValueToJson(AnyValue? value)
 	{
 		if (value is null) return JsonNull();
 		var buffer = new ArrayBufferWriter<byte>();
-		using (var writer = new Utf8JsonWriter(buffer))
+		using (var writer = new Utf8JsonWriter(buffer, AnyValueWriterOptions))
 			WriteAnyValue(writer, value);
 		using var doc = JsonDocument.Parse(buffer.WrittenMemory);
 		return doc.RootElement.Clone();
