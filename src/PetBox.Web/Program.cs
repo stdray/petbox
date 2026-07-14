@@ -921,10 +921,20 @@ public partial class Program
 			await next();
 		});
 
-		// Serve the OpenAPI document (/openapi/v1.json) only in Development. Production exposes
-		// no spec endpoint; the committed doc/api/PetBox.Web.json is the published contract.
-		if (app.Environment.IsDevelopment())
-			app.MapOpenApi();
+		// Serve the OpenAPI document (/openapi/v1.json) in EVERY environment, including
+		// Production (bug openapi-not-served-in-prod). Two ways existed to fix the prod gap:
+		// (a) lift the IsDevelopment gate so the live endpoint always matches the running code, or
+		// (b) serve the build-time-generated doc/api/PetBox.Web.json as a static file. Went with
+		// (a): the committed JSON is a build artifact that can silently drift from the deployed
+		// binary (a merge that forgets to regenerate it, a hotfix that skips the build step), while
+		// MapOpenApi() reflects the actual endpoint metadata of the app that is serving the request
+		// — it cannot lie. Anonymous, matching /health and /version below (and /doc's Razor pages):
+		// the document only describes the API SURFACE (routes/shapes), which the routing table
+		// already discloses to anyone probing it; every endpoint it lists still gates on its own
+		// auth policy (ApiKey/Cookie/etc.) unchanged by this. This is a deliberate decision, not an
+		// oversight — languages with no client SDK need a URL to fetch the schema from with zero
+		// setup (see doc/agent-content overview.md "No SDK for your language").
+		app.MapOpenApi().AllowAnonymous();
 
 		app.MapMethods("/health", ["GET", "HEAD"], () => TypedResults.Ok(new HealthStatusResponse("healthy")))
 			.Produces<HealthStatusResponse>()
