@@ -488,9 +488,13 @@ Task("NpmWirePublish")
 		System.IO.File.WriteAllText(npmrc, $"//registry.npmjs.org/:_authToken={token}\n");
 		try
 		{
+			// --tag latest is REQUIRED, not decorative: GitVersion stamps a prerelease
+			// (0.1.0-ci.N), and npm >= 11 refuses to publish one without an explicit tag.
+			// It must be `latest` specifically — onboarding installs the kit with
+			// `npx petbox-wire@latest`, so any other tag ships a build nobody receives.
 			var exit = StartProcess("npm", new ProcessSettings
 			{
-				Arguments = "publish --access public",
+				Arguments = "publish --access public --tag latest",
 				WorkingDirectory = tsWireDir,
 			});
 			if (exit != 0)
