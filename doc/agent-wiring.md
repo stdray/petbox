@@ -300,8 +300,9 @@ Session start is the **only** point at which the wiring injects context — ther
 injection; within a session an agent pulls what it needs through the MCP tools.
 
 - **Endpoint:** `GET {baseUrl}/api/memory/{project}/canon` with header `X-Api-Key` → 200
-  `{ "project": {body,updatedAt,version}|null, "workspace": {...}|null }`. Best-effort, ~8 s
-  timeout. The block carries a `### Project ({project})` section and/or a `### Workspace`
+  `{ "project": {body,updatedAt,version}|null, "workspace": {...}|null }`. Best-effort, a 2 s
+  wall-clock budget (`SESSION_FETCH_BUDGET_MS` in `pull-memory.ts` / `droid-pull-memory.ts`).
+  The block carries a `### Project ({project})` section and/or a `### Workspace`
   section — a section whose part is `null` is omitted; when both are empty nothing is injected.
 - **Offline cache:** every successful fetch writes the block to
   `~/.petbox/cache/{project}.canon.md`. If a later fetch fails and a cache file exists, the

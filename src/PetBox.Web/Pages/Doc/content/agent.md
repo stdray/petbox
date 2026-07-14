@@ -2,23 +2,25 @@
 
 PetBox exposes a project's **task boards**, **memory stores** and **session plans** over **MCP** (Model Context Protocol) — a shared, durable plan/notes store that survives across sessions and across different agents on a team. Once connected, an agent reads and writes them with the `tasks_*`, `memory_*` and `session_*` tools.
 
+> **Primary path: use `petbox-wire`, not this page's manual steps.** For **Claude Code**, **opencode** and **Factory Droid**, the [wire guide](/doc/wire) — driven by one command copied off the project's **Connect** page — does everything sections 1–3 below describe by hand, plus the session hooks and skill install that hand-registration skips. Follow the [onboarding runbook](/doc/onboarding) for the end-to-end sequence. Sections 1–3 here exist for **`omp`/`pi`** (not yet wired automatically) and for debugging a config `petbox-wire` already generated — they are not a second way to set the same thing up.
+
 ## 1. Get connection details
 
-A workspace admin mints a project-scoped API key on the project's **Connect agent** page (under the admin gear → project → Connect agent). That page shows, once, the three things you need:
+A workspace admin mints a project-scoped API key on the project's **Connect** page (admin gear → project → Connect) — the **only** legal place a project key is minted. That page shows, once, the three things you need:
 
 - MCP endpoint (this instance): `{{mcp}}`
 - Auth header: `X-Api-Key: <your key>`
 - Project key: passed as `projectKey` in every tool call
 
-## 2. Register a project-level MCP server
+## 2. Register a project-level MCP server (manual — `omp`/`pi`, or debugging)
 
 Add a server named `petbox` in the config file *your* agent reads:
 
-- **Claude Code** — `.mcp.json` (`mcpServers.petbox`, type `http`, url + headers)
-- **Factory Droid** — `.factory/mcp.json` (same shape)
-- **opencode** — `opencode.json` (`mcp.petbox`, type `remote`, url + headers, `enabled: true`)
-- **omp** (oh-my-pi) — its native project MCP config (HTTP url + header)
-- **pi** — no native MCP; bridge with `pi-mcp-adapter` against the same url + header
+- **Claude Code** — `.mcp.json` (`mcpServers.petbox`, type `http`, url + headers) — normally written by `petbox-wire`, not by hand.
+- **Factory Droid** — `.factory/mcp.json` (same shape) — also written by `petbox-wire`.
+- **opencode** — `opencode.json` (`mcp.petbox`, type `remote`, url + headers, `enabled: true`) — also written by `petbox-wire`.
+- **omp** (oh-my-pi) — its native project MCP config (HTTP url + header). Not yet covered by `petbox-wire`.
+- **pi** — no native MCP; bridge with `pi-mcp-adapter` against the same url + header. Not yet covered by `petbox-wire`.
 
 Example (Claude Code `.mcp.json`):
 
@@ -36,7 +38,7 @@ Example (Claude Code `.mcp.json`):
 
 ## 3. Keep the key out of version control
 
-Never commit the key. The config references it as an environment variable, which your agent expands from its **process environment**. Name the variable **per project** — `PETBOX_<PROJECT>_API_KEY` (e.g. `PETBOX_KPVOTES_API_KEY`) — so several projects can coexist on one machine; a single shared `PETBOX_API_KEY` can't. The project's **Connect agent** page shows the exact name and ready-to-paste commands. Set it before launching the agent:
+Never commit the key. The config references it as an environment variable, which your agent expands from its **process environment**. Name the variable **per project** — `PETBOX_<PROJECT>_API_KEY` (e.g. `PETBOX_KPVOTES_API_KEY`) — so several projects can coexist on one machine; a single shared `PETBOX_API_KEY` can't. The project's **Connect** page shows the exact name and ready-to-paste commands. `petbox-wire` sets this for you (a new terminal is needed for it to take effect); doing it by hand looks like:
 
 ```
 # macOS / Linux (current shell)
@@ -85,9 +87,9 @@ What belongs in **memory**: durable facts not derivable from code/git/config —
 
 Maintenance: search before you write; update an existing entry rather than duplicating; delete when wrong (history is kept, so deletes are safe). Put prose in `session` content or a task's `body`; when a finished task yields a generalizable lesson, move that lesson to memory as `feedback` — the task's `commits` stay on the node.
 
-## 7. (Optional) add a project skill
+## 7. The project skill
 
-If your agent supports Agent Skills, drop a `SKILL.md` at the right path (Claude Code `.claude/skills/petbox/`; pi/omp `.pi/skills/` or `.agents/skills/`; Droid `.factory/skills/`; opencode `.opencode/skills/`):
+For Claude Code, opencode and Factory Droid, `petbox-wire` already wrote this `SKILL.md` at the right path (Claude Code `.claude/skills/petbox/`; Droid `.factory/skills/petbox/`; opencode reads the Claude Code copy) — nothing to do. For `omp`/`pi`, or any agent not wired automatically, drop it yourself at the right path for that agent (`omp`: `.pi/skills/` or `.agents/skills/`):
 
 ```
 ---
