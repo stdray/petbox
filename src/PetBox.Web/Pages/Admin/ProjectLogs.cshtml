@@ -35,10 +35,16 @@
 					<div class="flex items-baseline justify-between">
 						<a href="@Routes.ProjectLog(Model.WorkspaceKey, Model.ProjectKey, l.Name)"
 							class="font-mono font-semibold link link-hover" data-testid="log-open">@l.Name</a>
-						@if (Model.IsSelfLog(l))
-						{
-							<span class="badge badge-ghost badge-xs">self</span>
-						}
+						<div class="flex items-baseline gap-1">
+							@if (l.RetentionDays is { } days)
+							{
+								<span class="badge badge-outline badge-xs" data-testid="log-retention-days" title="Own retention window — overrides the project/workspace/system default">@days d</span>
+							}
+							@if (Model.IsSelfLog(l))
+							{
+								<span class="badge badge-ghost badge-xs">self</span>
+							}
+						</div>
 					</div>
 					@if (!string.IsNullOrEmpty(l.Description))
 					{

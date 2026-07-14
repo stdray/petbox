@@ -233,6 +233,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		await Ok(failures, "memory_remember", new { text = "a durable fact", projectKey = ProjectKey, store = "notes", type = "Project" });
 		await Ok(failures, "session_upsert", new { projectKey = ProjectKey, sessionId = "s1", agent = "claude-code", content = "# plan" });
 		await Ok(failures, "log_create", new { projectKey = ProjectKey, name = "audit" });
+		await Ok(failures, "log_update", new { projectKey = ProjectKey, name = "audit", retentionDays = 14 });
 		// Portable agent definitions (agent-definition-as-data) — seed + list/get.
 		await Ok(failures, "agent_def_upsert", new
 		{
@@ -431,7 +432,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	static readonly string[] SuccessTools =
 	{
 		"tasks_board_create", "tasks_upsert", "memory_upsert", "memory_store_create", "memory_remember",
-		"session_upsert", "log_create", "comments_upsert", "comments_search", "comments_get", "comments_delta",
+		"session_upsert", "log_create", "log_update", "comments_upsert", "comments_search", "comments_get", "comments_delta",
 		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get",
 		"tasks_methodology_guide",
 		"tasks_methodology_template_list", "tasks_methodology_template_get",
