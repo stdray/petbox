@@ -16,8 +16,7 @@
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, zero deps.
 
-import type { AgentDefinition } from "./agent-definition.ts";
-import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
+import { DEFAULT_AGENT_DEFINITION, emittedRoleName, type AgentDefinition } from "./agent-definition.ts";
 import { hasCapability } from "./harness-capabilities.ts";
 
 export type ToolNamer = (verb: string) => string;
@@ -54,12 +53,19 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     const notes =
       orch?.notes?.trim() ||
       "plan, decompose, delegate, review, triage. Prefer spawning workers over solo implementation.";
+    // The literal spawn target string an orchestrator passes to Agent/Task — MUST be the same
+    // computed, namespaced identity apply actually renders the worker role's file under
+    // (emittedRoleName; chore: petbox-namespaced-agent-names). A hardcoded `worker` here would
+    // be a THIRD source of truth that can drift from the emitted file/frontmatter name, which
+    // is exactly the bug this rename set out to close.
+    const workerRole = definition.roles.find((r) => r.slug === "worker");
+    const workerName = emittedRoleName(workerRole ?? "worker");
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
 \`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`. When spawning workers, write their self-intro into the brief (they never see this).
 
-**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`worker\`; lead with worker preamble.
+**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`; lead with worker preamble.
 
 Orchestrator notes (from definition): ${notes}`;
   }

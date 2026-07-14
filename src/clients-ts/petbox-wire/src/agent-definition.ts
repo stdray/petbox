@@ -41,6 +41,24 @@ export type AgentDefinition = {
 };
 
 /**
+ * The namespaced identity used for every rendered agent artifact: frontmatter `name:`, the
+ * emitted file's basename, and any prose that names a role as a spawn/escalation target
+ * (chore: petbox-namespaced-agent-names). `role.slug` stays the INTERNAL, unprefixed identity
+ * — the definition and `~/.petbox/roles.json` never change — only what apply RENDERS is
+ * namespaced. This is the single computation point: every renderer and prose injector must
+ * call this (or pass a bare slug through it) instead of interpolating role.slug/a slug string
+ * directly into anything user- or harness-facing, or the prefix drifts between call sites.
+ *
+ * Why: generated agents were occupying the most common user-agent names (`worker`, `explore`,
+ * ...) — colliding with a user's own agents, and shadowing Claude Code's built-in `Explore`
+ * agent under `.claude/agents/explore.md`. `petbox-<slug>` moves us into our own namespace.
+ */
+export function emittedRoleName(roleOrSlug: { readonly slug: string } | string): string {
+  const slug = typeof roleOrSlug === "string" ? roleOrSlug : roleOrSlug.slug;
+  return `petbox-${slug}`;
+}
+
+/**
  * Built-in portable roster for offline compile (petbox-wire doctor / apply).
  * Includes `explore` so the roster matches harnesses that ship a built-in explore
  * agent — with an explicit inheritance note (not a global "inheritance forbidden").

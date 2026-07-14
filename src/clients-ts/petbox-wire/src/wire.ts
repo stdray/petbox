@@ -78,6 +78,7 @@ import {
   planApply,
   type ApplyPlan,
 } from "./apply-artifacts.ts";
+import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
@@ -153,9 +154,17 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
     "             <key> selects the server doc (default: default). Writes under project root:\n" +
     "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
+    "             Emitted names are namespaced petbox-<role> (frontmatter name: + file basename) —\n" +
+    "             role.slug and ~/.petbox/roles.json stay unprefixed; only the render is. Every\n" +
+    "             generated file carries a `petbox: managed` origin marker; apply REFUSES (loud,\n" +
+    "             non-zero exit) to overwrite an existing file that lacks it — never clobbers a real\n" +
+    "             user file. An owned pre-rename unprefixed leftover (e.g. worker.md) is removed once\n" +
+    "             its petbox-<role>.md replacement is written; a same-named file without our marker is\n" +
+    "             left alone.\n" +
     "             model: frontmatter only when bound (droid unbound → model: inherit) — never invents\n" +
     "             a concrete model id. Clean roles written; dirty skipped and reported.\n" +
-    "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw); 2 usage/args;\n" +
+    "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw, OR a write was\n" +
+    "             refused to avoid clobbering a non-PetBox file); 2 usage/args;\n" +
     "             3 truthfulness partial/block (policy — distinct from usage).\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
@@ -370,27 +379,65 @@ async function runApply(argv: string[]): Promise<void> {
   const writtenHarnesses: string[] = [];
   const partialHarnesses: string[] = [];
   const blockedHarnesses: string[] = [];
+  // Any writeArtifact refusal (bug: apply-clobbers-user-agent-files) — a real file that is not
+  // ours sat where we needed to write. Distinct from the truthfulness gate: it can happen even
+  // when every role is capability/model-clean, so it needs its own signal into the exit code.
+  let clobberBlocked = false;
+  const clobberedPaths: string[] = [];
   for (const harness of HARNESS_IDS) {
     const roleModels = resolveAgentRoles(rolesData, harness);
     const plan = planApply(definition, harness, roleModels);
 
+    let writtenThisHarness = 0;
+    let clobberedThisHarness = false;
     for (const file of plan.files) {
       const abs = join(root, file.relativePath);
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, file.content, "utf8");
-      log(`apply: wrote ${abs}`);
+      const outcome = writeArtifact(abs, file.content);
+      if (outcome.kind === "blocked") {
+        clobberBlocked = true;
+        clobberedThisHarness = true;
+        clobberedPaths.push(abs);
+        console.error(
+          `apply: REFUSED to overwrite ${abs} — it exists and does not carry the PetBox origin ` +
+            `marker (no \`petbox: managed\` in its frontmatter), so it is a real file, not one apply ` +
+            `wrote before. Nothing was touched. Move it aside (or rename the role) and re-run apply.`,
+        );
+        continue;
+      }
+      log(
+        `apply: wrote ${abs}` + (outcome.reason === "own" ? " (updated in place — ours)" : ""),
+      );
       written++;
+      writtenThisHarness++;
+
+      // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
+      // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
+      // deleting the old file when the new one could not be written. Never touches a path that
+      // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
+      if (file.legacyRelativePath !== file.relativePath) {
+        const legacyAbs = join(root, file.legacyRelativePath);
+        const legacyOutcome = cleanupLegacyArtifact(legacyAbs);
+        if (legacyOutcome === "removed") {
+          log(`apply: removed legacy unprefixed ${legacyAbs} (ours, superseded by ${abs})`);
+        } else if (legacyOutcome === "kept-foreign") {
+          log(
+            `apply: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
+          );
+        }
+      }
     }
 
     for (const w of plan.warnings) {
       console.error(`apply: warn — ${w}`);
     }
 
-    if (plan.violations.length > 0) {
-      console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
-      if (plan.files.length > 0) partialHarnesses.push(plan.harness);
+    if (plan.violations.length > 0 || clobberedThisHarness) {
+      if (plan.violations.length > 0) {
+        console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      }
+      if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
       else blockedHarnesses.push(plan.harness);
-    } else if (plan.files.length > 0) {
+    } else if (writtenThisHarness > 0) {
       writtenHarnesses.push(plan.harness);
     }
   }
@@ -401,19 +448,28 @@ async function runApply(argv: string[]): Promise<void> {
     writtenHarnesses,
     partialHarnesses,
     blockedHarnesses,
+    clobberBlockedPaths: clobberedPaths,
   };
   log(
     `apply: result written=${written} ` +
       `ok=[${writtenHarnesses.join(",")}] ` +
       `partial=[${partialHarnesses.join(",")}] ` +
-      `blocked=[${blockedHarnesses.join(",")}]`,
+      `blocked=[${blockedHarnesses.join(",")}]` +
+      (clobberedPaths.length > 0 ? ` clobber-refused=[${clobberedPaths.join(",")}]` : ""),
   );
 
   const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
-  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  const code = classifyApplyExit({ hardError: clobberBlocked, hadTruthfulnessBlock });
   if (code === WIRE_EXIT.ok) {
     log("apply: done — all known harnesses accepted every role.");
     process.exit(WIRE_EXIT.ok);
+  }
+  if (clobberBlocked) {
+    console.error(
+      `apply: hard failure — refused to overwrite ${clobberedPaths.length} non-PetBox file(s) ` +
+        `(exit ${WIRE_EXIT.hard}). ${JSON.stringify(summary)}`,
+    );
+    process.exit(WIRE_EXIT.hard);
   }
   console.error(
     `apply: truthfulness partial — some roles/harnesses blocked (exit ${WIRE_EXIT.truthfulness}). ${JSON.stringify(summary)}`,
