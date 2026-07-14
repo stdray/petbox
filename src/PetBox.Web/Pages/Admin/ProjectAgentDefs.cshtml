@@ -63,12 +63,7 @@
 
 @if (!string.IsNullOrEmpty(Model.Key))
 {
-	@* The document editor: the SAME wire shape agent_def_get / agent_def_upsert use. Saving
-	   posts the raw JSON, so the `model`-not-allowed reject runs on exactly what was typed. *@
-	<form method="post" asp-page-handler="Save" class="max-w-4xl mb-4" data-testid="agent-defs-editor">
-		@Html.AntiForgeryToken()
-		<input type="hidden" name="key" value="@Model.Key" data-testid="agent-defs-editor-key" />
-		<input type="hidden" name="version" value="@Model.Version" data-testid="agent-defs-version" />
+	<div class="max-w-4xl mb-4" x-data="{ mode: 'form' }" data-testid="agent-defs-editor-modes">
 		<div class="flex items-baseline gap-2 flex-wrap mb-2">
 			<span class="font-semibold">Editing</span>
 			<span class="font-mono" data-testid="agent-defs-editor-slug">@Model.Key</span>
@@ -78,23 +73,202 @@
 				<span class="text-xs opacity-60">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC</span>
 			}
 		</div>
-		<label class="form-control">
-			<span class="label-text">Definition document (JSON)</span>
-			<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
-				class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
-				placeholder='{ "name": "team", "roles": [ { "slug": "worker", "tier": "worker", "requiredCapabilities": [] } ] }'
-				data-testid="agent-defs-json">@Model.DefinitionJson</textarea>
-		</label>
-		<p class="text-xs opacity-60 mt-1" data-testid="agent-defs-schema-note">
-			The server stores your document as written: fields outside the schema below (for example
-			<span class="font-mono">notes</span>) are preserved as-is and come back on reopen — the compilers simply ignore them.
-			A <span class="font-mono">model</span> property is rejected outright, anywhere in the tree.
-		</p>
-		<div class="mt-3 flex gap-2 items-center">
-			<button type="submit" class="btn btn-sm btn-primary" data-testid="agent-defs-save">Save definition</button>
-			<a href="?" class="link link-hover text-sm opacity-70" data-testid="agent-defs-cancel">Cancel</a>
+
+		<div role="tablist" class="tabs tabs-bordered mb-3" data-testid="agent-defs-mode-tabs">
+			<a role="tab" class="tab" :class="{ 'tab-active': mode === 'form' }"
+				@@click.prevent="mode = 'form'" data-testid="agent-defs-mode-form">Roles</a>
+			<a role="tab" class="tab" :class="{ 'tab-active': mode === 'raw' }"
+				@@click.prevent="mode = 'raw'" data-testid="agent-defs-mode-raw">Raw JSON (advanced)</a>
 		</div>
-	</form>
+
+		@* FORM MODE: one card per role, each a self-contained SaveRole/DeleteRole post. Every
+		   field here edits the STORED raw document in place (AgentDefinitionJson.PatchRole) —
+		   properties outside this shape (extra capabilities, extra per-role keys, extra
+		   top-level keys) are preserved, not rebuilt from what's on screen. *@
+		<div x-show="mode === 'form'" data-testid="agent-defs-form-mode">
+			@if (Model.Stored is null)
+			{
+				<p class="text-xs opacity-60 italic">This document did not parse as a valid definition — use Raw JSON to fix it.</p>
+			}
+			else
+			{
+				@for (var i = 0; i < Model.Stored.Definition.Roles.Count; i++)
+				{
+					var role = Model.Stored.Definition.Roles[i];
+					var extraCaps = ProjectAgentDefsModel.ExtraCapabilities(role);
+					var otherSlugs = Model.RosterSlugs.Where(s => s != role.Slug).ToList();
+					<details class="collapse collapse-arrow bg-base-200 border border-base-300 mb-3" open
+						data-testid="agent-defs-role-card" data-role-index="@i">
+						<summary class="collapse-title font-semibold">
+							<span class="font-mono">@role.Slug</span>
+							<span class="badge badge-ghost badge-sm ml-2">@role.Tier</span>
+						</summary>
+						<div class="collapse-content">
+							<form method="post" asp-page-handler="SaveRole" class="flex flex-col gap-3" data-testid="agent-defs-role-form">
+								@Html.AntiForgeryToken()
+								<input type="hidden" name="key" value="@Model.Key" />
+								<input type="hidden" name="version" value="@Model.Version" />
+								<input type="hidden" name="roleIndex" value="@i" />
+
+								<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+									<label class="form-control">
+										<span class="label-text">Slug</span>
+										<input type="text" name="slug" required value="@role.Slug"
+											class="input input-bordered input-sm font-mono" data-testid="agent-defs-role-slug" />
+									</label>
+									<label class="form-control">
+										<span class="label-text">Tier</span>
+										<input type="text" name="tier" required value="@role.Tier" list="agent-defs-tier-options"
+											class="input input-bordered input-sm font-mono" data-testid="agent-defs-role-tier" />
+									</label>
+								</div>
+
+								<div>
+									<span class="label-text">Required capabilities</span>
+									<p class="text-xs opacity-50 mb-1">The checked set REPLACES the current known-catalog selection.</p>
+									<div class="grid grid-cols-1 sm:grid-cols-2 gap-1" data-testid="agent-defs-role-capabilities">
+										@foreach (var cap in Model.KnownCapabilities)
+										{
+											var isChecked = role.RequiredCapabilities.Contains(cap, StringComparer.Ordinal);
+											<label class="flex items-center gap-2 cursor-pointer" data-testid="agent-defs-role-capability-@cap">
+												<input class="checkbox checkbox-sm" type="checkbox" name="capabilities"
+													value="@cap" checked="@isChecked" />
+												<span class="font-mono text-xs">@cap</span>
+											</label>
+										}
+									</div>
+									@if (extraCaps.Count > 0)
+									{
+										<p class="text-xs opacity-60 mt-1" data-testid="agent-defs-role-extra-capabilities">
+											Also carries (outside the known catalog, preserved as-is):
+											@foreach (var extra in extraCaps)
+											{
+												<span class="badge badge-outline badge-xs font-mono">@extra</span>
+											}
+										</p>
+									}
+								</div>
+
+								<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+									<div>
+										<label class="flex items-center gap-2 cursor-pointer">
+											@* Checkbox BEFORE the hidden fallback: ASP.NET model binding takes the FIRST
+												posted value for a repeated key, so "true" must appear first in the body
+												when checked (the hidden "false" only wins when the box is unchecked and
+												the checkbox contributes nothing). *@
+											<input class="checkbox checkbox-sm" type="checkbox" name="spawnAllowed" value="true"
+												checked="@(role.Spawn?.Allowed ?? false)" data-testid="agent-defs-role-spawn-allowed" />
+											<input type="hidden" name="spawnAllowed" value="false" />
+											<span class="label-text">May spawn other roles</span>
+										</label>
+										<div class="grid grid-cols-1 gap-1 mt-1 pl-6" data-testid="agent-defs-role-spawn-allowed-roles">
+											@foreach (var other in otherSlugs)
+											{
+												var isChecked = role.Spawn?.AllowedRoles?.Contains(other, StringComparer.Ordinal) ?? false;
+												<label class="flex items-center gap-2 cursor-pointer text-xs">
+													<input class="checkbox checkbox-xs" type="checkbox" name="spawnAllowedRoles"
+														value="@other" checked="@isChecked" />
+													<span class="font-mono">@other</span>
+												</label>
+											}
+										</div>
+									</div>
+									<div>
+										<label class="flex items-center gap-2 cursor-pointer">
+											<input class="checkbox checkbox-sm" type="checkbox" name="escalationAvailable" value="true"
+												checked="@(role.Escalation?.Available ?? false)" data-testid="agent-defs-role-escalation-available" />
+											<input type="hidden" name="escalationAvailable" value="false" />
+											<span class="label-text">May escalate</span>
+										</label>
+										<div class="grid grid-cols-1 gap-1 mt-1 pl-6" data-testid="agent-defs-role-escalation-targets">
+											@foreach (var other in otherSlugs)
+											{
+												var isChecked = role.Escalation?.Targets?.Contains(other, StringComparer.Ordinal) ?? false;
+												<label class="flex items-center gap-2 cursor-pointer text-xs">
+													<input class="checkbox checkbox-xs" type="checkbox" name="escalationTargets"
+														value="@other" checked="@isChecked" />
+													<span class="font-mono">@other</span>
+												</label>
+											}
+										</div>
+									</div>
+								</div>
+
+								<label class="form-control">
+									<span class="label-text">Notes (markdown, injected into every session for this role)</span>
+									<textarea name="notes" rows="8" class="textarea textarea-bordered text-sm w-full"
+										data-testid="agent-defs-role-notes">@role.Notes</textarea>
+								</label>
+
+								<div class="flex gap-2 items-center">
+									<button type="submit" class="btn btn-sm btn-primary" data-testid="agent-defs-role-save">Save role</button>
+								</div>
+							</form>
+
+							@* Sibling of the edit form, never nested inside it — nested forms are invalid HTML. *@
+							<form method="post" asp-page-handler="DeleteRole"
+								data-confirm="Remove role '@role.Slug' from this definition?"
+								class="mt-2" data-testid="agent-defs-role-delete-form">
+								@Html.AntiForgeryToken()
+								<input type="hidden" name="key" value="@Model.Key" />
+								<input type="hidden" name="version" value="@Model.Version" />
+								<input type="hidden" name="roleIndex" value="@i" />
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="agent-defs-role-delete">Delete role</button>
+							</form>
+						</div>
+					</details>
+				}
+
+				<datalist id="agent-defs-tier-options">
+					<option value="orchestrator" />
+					<option value="worker" />
+					<option value="utility" />
+					<option value="reserve" />
+				</datalist>
+
+				<form method="post" asp-page-handler="AddRole" class="card bg-base-100 border border-base-300 p-3" data-testid="agent-defs-add-role-form">
+					@Html.AntiForgeryToken()
+					<input type="hidden" name="key" value="@Model.Key" />
+					<input type="hidden" name="version" value="@Model.Version" />
+					<div class="flex items-end gap-2 flex-wrap">
+						<label class="form-control">
+							<span class="label-text">New role slug</span>
+							<input type="text" name="newRoleSlug" required placeholder="e.g. researcher"
+								class="input input-bordered input-sm font-mono" data-testid="agent-defs-add-role-slug" />
+						</label>
+						<button type="submit" class="btn btn-sm btn-primary" data-testid="agent-defs-add-role-submit">Add role</button>
+					</div>
+				</form>
+			}
+		</div>
+
+		@* RAW MODE: the SAME wire shape agent_def_get / agent_def_upsert use. Saving posts the raw
+		   JSON, so the `model`-not-allowed reject runs on exactly what was typed. The only way to
+		   reach a field outside the schema above. *@
+		<div x-show="mode === 'raw'" data-testid="agent-defs-raw-mode">
+			<form method="post" asp-page-handler="Save" data-testid="agent-defs-editor">
+				@Html.AntiForgeryToken()
+				<input type="hidden" name="key" value="@Model.Key" data-testid="agent-defs-editor-key" />
+				<input type="hidden" name="version" value="@Model.Version" data-testid="agent-defs-version" />
+				<label class="form-control">
+					<span class="label-text">Definition document (JSON)</span>
+					<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
+						class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
+						placeholder='{ "name": "team", "roles": [ { "slug": "worker", "tier": "worker", "requiredCapabilities": [] } ] }'
+						data-testid="agent-defs-json">@Model.DefinitionJson</textarea>
+				</label>
+				<p class="text-xs opacity-60 mt-1" data-testid="agent-defs-schema-note">
+					The server stores your document as written: fields outside the schema below (for example
+					<span class="font-mono">notes</span>) are preserved as-is and come back on reopen — the compilers simply ignore them.
+					A <span class="font-mono">model</span> property is rejected outright, anywhere in the tree.
+				</p>
+				<div class="mt-3 flex gap-2 items-center">
+					<button type="submit" class="btn btn-sm btn-primary" data-testid="agent-defs-save">Save definition</button>
+					<a href="?" class="link link-hover text-sm opacity-70" data-testid="agent-defs-cancel">Cancel</a>
+				</div>
+			</form>
+		</div>
+	</div>
 }
 
 <form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300 max-w-4xl" data-testid="agent-defs-create-form">

@@ -89,6 +89,20 @@ public sealed class AgentDefsAdminPageTests : IClassFixture<ModuleViewsFixture>
 		return await _client.PostAsync($"{url}?handler={handler}", new FormUrlEncodedContent(form));
 	}
 
+	// Same as PostAuthedAsync, but for a handler with REPEATED keys (checkbox groups like
+	// `capabilities` / `spawnAllowedRoles` / `escalationTargets`) — a Dictionary can't carry
+	// duplicate keys, so this takes the pairs directly.
+	async Task<HttpResponseMessage> PostAuthedFieldsAsync(string url, string handler, List<KeyValuePair<string, string>> fields)
+	{
+		using var page = await GetAuthedAsync(url);
+		var html = await page.Content.ReadAsStringAsync();
+		var form = new List<KeyValuePair<string, string>>(fields)
+		{
+			new("__RequestVerificationToken", ScrapeToken(html)),
+		};
+		return await _client.PostAsync($"{url}?handler={handler}", new FormUrlEncodedContent(form));
+	}
+
 	static string ScrapeToken(string html)
 	{
 		var tokenStart = html.IndexOf("__RequestVerificationToken", StringComparison.Ordinal);
@@ -358,6 +372,178 @@ public sealed class AgentDefsAdminPageTests : IClassFixture<ModuleViewsFixture>
 		using var scope2 = _factory.Services.CreateScope();
 		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
 		(await defs2.GetAsync(project, "squad")).Should().BeNull("the definition is gone");
+	}
+
+	// A document with fields OUTSIDE the schema (a top-level property and a per-role property),
+	// same spirit as SmallDefinition but with the extras the round-trip test needs, and
+	// capabilities already in the catalog's own order (harness-capabilities.ts) so a checkbox
+	// rebuild that only re-selects the same set reproduces the same array.
+	const string DefinitionWithUnknownFields =
+		"""
+		{"name":"core team","ownerNote":"do not delete","roles":[
+		  {"slug":"lead","tier":"orchestrator","requiredCapabilities":["mcp_main_session","spawn_subagents"],
+		   "spawn":{"allowed":true,"allowedRoles":["worker"]},
+		   "escalation":{"available":false},"notes":"runs the show","favoriteColor":"teal"},
+		  {"slug":"worker","tier":"worker","requiredCapabilities":[],
+		   "escalation":{"available":true,"targets":["lead"]}}]}
+		""";
+
+	[Fact]
+	public async Task Get_Editor_RendersCapabilityCheckboxes_FromTheKnownCatalog()
+	{
+		const string project = "agdcaps";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", SmallDefinition, 0);
+		}
+
+		using var resp = await GetAuthedAsync($"{Url(project)}?key=squad");
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"agent-defs-role-card\"");
+		foreach (var cap in PetBox.Core.Contract.AgentDefinitionCapabilities.All)
+			html.Should().Contain($"data-testid=\"agent-defs-role-capability-{cap}\"", "the checkbox catalog is AgentDefinitionCapabilities.All");
+		// The seeded role's own non-catalog capability ("plan") must still be visible, not silently dropped.
+		html.Should().Contain("data-testid=\"agent-defs-role-extra-capabilities\"");
+		html.Should().Contain(">plan<");
+	}
+
+	[Fact]
+	public async Task PostSaveRole_NoOpSave_IsByteForByteIdentical()
+	{
+		const string project = "agdroleroundtrip";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", DefinitionWithUnknownFields, 0);
+		}
+
+		// Post role 0 ("lead") back with EXACTLY the values it already has.
+		var fields = new List<KeyValuePair<string, string>>
+		{
+			new("key", "squad"), new("version", "1"), new("roleIndex", "0"),
+			new("slug", "lead"), new("tier", "orchestrator"),
+			new("capabilities", "mcp_main_session"), new("capabilities", "spawn_subagents"),
+			new("spawnAllowed", "true"), new("spawnAllowed", "false"), // checkbox-then-hidden: FIRST posted value wins
+			new("spawnAllowedRoles", "worker"),
+			new("escalationAvailable", "false"),
+			new("notes", "runs the show"),
+		};
+		using var resp = await PostAuthedFieldsAsync(Url(project), "SaveRole", fields);
+		resp.StatusCode.Should().Be(HttpStatusCode.Found, "a no-op role save still succeeds");
+
+		using var scope2 = _factory.Services.CreateScope();
+		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+		var raw = await defs2.GetJsonAsync(project, "squad");
+		var canonicalOriginal = PetBox.Core.Contract.AgentDefinitionJson.CanonicalizeRaw(DefinitionWithUnknownFields, "squad");
+		raw.Should().Be(canonicalOriginal,
+			"editing role 0 with its own unchanged values must not rewrite a single byte — not role 1, " +
+			"not the top-level ownerNote, not role 0's own favoriteColor");
+	}
+
+	[Fact]
+	public async Task PostSaveRole_ChangesTier_PersistsAndPreservesTheOtherRoleAndUnknownFields()
+	{
+		const string project = "agdroleedit";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", DefinitionWithUnknownFields, 0);
+		}
+
+		var fields = new List<KeyValuePair<string, string>>
+		{
+			new("key", "squad"), new("version", "1"), new("roleIndex", "0"),
+			new("slug", "lead"), new("tier", "principal"), // <-- changed
+			new("capabilities", "mcp_main_session"), new("capabilities", "spawn_subagents"),
+			new("spawnAllowed", "true"), new("spawnAllowed", "false"),
+			new("spawnAllowedRoles", "worker"),
+			new("escalationAvailable", "false"),
+			new("notes", "runs the show"),
+		};
+		using var resp = await PostAuthedFieldsAsync(Url(project), "SaveRole", fields);
+		resp.StatusCode.Should().Be(HttpStatusCode.Found);
+
+		using var scope2 = _factory.Services.CreateScope();
+		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+		var stored = await defs2.GetAsync(project, "squad");
+		stored!.Definition.Roles[0].Tier.Should().Be("principal");
+		var raw = await defs2.GetJsonAsync(project, "squad");
+		using var doc = JsonDocument.Parse(raw!);
+		doc.RootElement.GetProperty("ownerNote").GetString().Should().Be("do not delete", "untouched top-level field survives");
+		doc.RootElement.GetProperty("roles")[0].GetProperty("favoriteColor").GetString().Should().Be("teal", "untouched per-role field survives");
+		doc.RootElement.GetProperty("roles")[1].GetProperty("slug").GetString().Should().Be("worker", "the other role is untouched");
+	}
+
+	[Fact]
+	public async Task PostAddRole_AppendsAStarterRole()
+	{
+		const string project = "agdroleadd";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", SmallDefinition, 0);
+		}
+
+		using var resp = await PostAuthedAsync(Url(project), "AddRole",
+			new() { ["key"] = "squad", ["version"] = "1", ["newRoleSlug"] = "researcher" });
+		resp.StatusCode.Should().Be(HttpStatusCode.Found);
+
+		using var scope2 = _factory.Services.CreateScope();
+		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+		var stored = await defs2.GetAsync(project, "squad");
+		stored!.Definition.Roles.Should().Contain(r => r.Slug == "researcher");
+		stored.Definition.Roles.Should().HaveCount(3, "the two seeded roles survive the append");
+	}
+
+	[Fact]
+	public async Task PostDeleteRole_RemovesTheNamedRole()
+	{
+		const string project = "agdroledelete";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", SmallDefinition, 0);
+		}
+
+		using var resp = await PostAuthedAsync(Url(project), "DeleteRole",
+			new() { ["key"] = "squad", ["version"] = "1", ["roleIndex"] = "1" });
+		resp.StatusCode.Should().Be(HttpStatusCode.Found);
+
+		using var scope2 = _factory.Services.CreateScope();
+		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+		var stored = await defs2.GetAsync(project, "squad");
+		stored!.Definition.Roles.Should().ContainSingle(r => r.Slug == "lead");
+	}
+
+	[Fact]
+	public async Task PostDeleteRole_RefusesToRemoveTheLastRole()
+	{
+		const string project = "agdrolelastguard";
+		await EnsureProjectAsync(project);
+		const string oneRole = """{"name":"solo","roles":[{"slug":"only","tier":"worker","requiredCapabilities":[]}]}""";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var defs = scope.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+			await defs.UpsertJsonAsync(project, "squad", oneRole, 0);
+		}
+
+		using var resp = await PostAuthedAsync(Url(project), "DeleteRole",
+			new() { ["key"] = "squad", ["version"] = "1", ["roleIndex"] = "0" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK, "a refused delete rerenders in place, it does not redirect");
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"agent-defs-errors\"");
+		html.Should().Contain("at least one role");
+
+		using var scope2 = _factory.Services.CreateScope();
+		var defs2 = scope2.ServiceProvider.GetRequiredService<IAgentDefinitionService>();
+		(await defs2.GetAsync(project, "squad"))!.Definition.Roles.Should().ContainSingle();
 	}
 
 	// The page's own starter document (what Create stores) — kept here so the fixtures above
