@@ -115,8 +115,15 @@ public sealed class BoardFilterPersistenceTests : IDisposable
 		second.ContentPartialName.Should().Be("_BoardViewKanban");
 	}
 
+	// board-tag-grouping-disabled: an explicit `?view=tags&by=...` still WRITES the literal
+	// request into the per-(project,board) DB preference (LoadAsync's persistence branch records
+	// whatever ViewMode/By the request carried, unconditionally — it doesn't consult
+	// IsSelectable, only Resolve's RENDERING decision does) — but neither this load nor a later
+	// one that reads the saved preference back can ever RESOLVE to "tags" anymore, since
+	// BoardViewModeRegistry.Resolve refuses a disabled entry at every tier. Renamed from
+	// "...PersistsBothTogether" (which asserted the old "and resolves to tags again" behavior).
 	[Fact]
-	public async Task ExplicitViewModeWithTagBy_PersistsBothTogether()
+	public async Task ExplicitViewModeWithTagBy_Disabled_NeverResolvesEvenAfterPersisting()
 	{
 		await _store.CreateAsync(Proj, "b2", null, "simple");
 		await AddNode("b2", "n1", "N1", 50, "Todo");
@@ -125,10 +132,11 @@ public sealed class BoardFilterPersistenceTests : IDisposable
 		first.ViewMode = BoardViewModeNames.Tags;
 		first.By = "area";
 		await first.OnGetAsync(default);
+		first.ResolvedViewMode.Should().Be(BoardViewModeNames.Tree, "the explicit tier itself is disabled");
 
 		var second = Model("b2");
 		await second.OnGetAsync(default);
-		second.ResolvedViewMode.Should().Be(BoardViewModeNames.Tags);
+		second.ResolvedViewMode.Should().Be(BoardViewModeNames.Tree, "the saved DB preference tier is disabled too — it never leaks through on a later load");
 	}
 
 	[Fact]

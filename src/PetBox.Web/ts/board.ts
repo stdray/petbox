@@ -1,3 +1,4 @@
+import { type BoardSearchIndex, ensureStemmersLoaded, matchingNodeIds } from "./search-index";
 import { readUiState, writeUiState } from "./ui-state";
 
 // Task board view interactivity — collapse / filter / active-only / sort. Imperative (mirrors
@@ -206,6 +207,18 @@ export function initBoardPage(): void {
 	const elSortDir = document.querySelector<HTMLButtonElement>("[data-testid='board-sort-dir']");
 	const boardKey = document.querySelector<HTMLElement>("[data-testid='board-view-meta']")?.dataset["boardKey"];
 
+	// board-search-stem-lookup: the stemmed {stem -> node} search lookup (title+key+body+tags) AND
+	// its TS stemmer (ts/search-index.ts's dynamic import) are both LAZY — see
+	// triggerLazySearchLoad below for the full reasoning (bundle-size review: a static import used
+	// to ship the stemmer in the GLOBAL site.js, +36.7KB gzip on EVERY page, board or not). Neither
+	// loads at page load; both load together, once, on the search box's first `input` event.
+	// `boardKey` is only set on TaskBoard's own page (not the cross-scope Search results page,
+	// which reuses this same apply() over _TaskTable.cshtml but has no single board to index) —
+	// searchIndex simply stays null there, and matchesText below falls back to the pre-existing
+	// `data-search` substring check, exactly as before this card. It also stays null (same
+	// fallback) during the load window, or if the load fails outright.
+	let searchIndex: BoardSearchIndex | null = null;
+
 	// Initial state comes from what the SERVER already rendered — checkbox `checked`, select
 	// `value`, the arrow glyph — never storage, so a toggle always starts from what's actually on
 	// screen (mirrors ts/sidebar.ts's isPinned() reading the DOM instead of a cookie/localStorage).
@@ -276,6 +289,56 @@ export function initBoardPage(): void {
 		}
 	}
 
+	// board-search-stem-lookup: text-query matching. When the stem lookup has loaded, a query word
+	// is stemmed and PREFIX-matched against the lookup (see ts/search-index.ts's matchingNodeIds
+	// for why prefix, not exact-stem-equality — it's what reproduces the server's own FTS recall,
+	// e.g. "деплой" finding a body that says "деплоем"), words ANDed together. Otherwise (index not
+	// loaded yet, or no boardKey — the cross-scope Search page) falls back to the ORIGINAL
+	// substring check against `data-search` (title+key+tags — never the body, board-body-truncate),
+	// unchanged from before this card.
+	function matchesText(id: string, d: DOMStringMap, q: string): boolean {
+		if (searchIndex) {
+			const matched = matchingNodeIds(searchIndex, q);
+			return matched === null || matched.has(id);
+		}
+		return (d["search"] ?? "").includes(q);
+	}
+
+	// board-search-stem-lookup, lazy load: kicks off the `?handler=SearchIndex` fetch AND the
+	// stemmer chunk (search-index.ts's dynamic `import("snowball-stemmers")`) together, exactly
+	// ONCE (searchLoadStarted guards every later keystroke into a no-op) — wired to the search
+	// box's FIRST `input` event below, never to page load. Until this resolves, matchesText keeps
+	// using the data-search substring fallback, so the field never "sticks": every keystroke
+	// already re-filters the board on every call, just less precisely (no stemming, no
+	// cross-wordform match) until the chunk+lookup land.
+	//
+	// Race ("user types faster than the chunk loads"), handled explicitly: apply() always re-reads
+	// the CURRENT `elText.value` (and every other filter control) rather than anything captured at
+	// trigger time, so the ONE re-apply() below — once this resolves — reflects whatever the user
+	// has typed by THEN, not whatever triggered the load. "Last request wins" falls out of that
+	// naturally: there is nothing to compare or discard, because nothing here ever reads a stale
+	// snapshot in the first place.
+	let searchLoadStarted = false;
+	function triggerLazySearchLoad(): void {
+		if (searchLoadStarted || !boardKey) return;
+		searchLoadStarted = true;
+		const indexFetch = fetch(`${window.location.pathname}?handler=SearchIndex`, { credentials: "same-origin" })
+			.then((r) => (r.ok ? (r.json() as Promise<BoardSearchIndex>) : null))
+			.catch(() => null);
+		// Tracks success/failure rather than letting a rejection propagate: matchesText's stemmed
+		// path (matchingNodeIds -> stem()) THROWS if called before the stemmer chunk is actually
+		// ready, so `searchIndex` must only ever go non-null when BOTH legs truly succeeded — a
+		// fetched lookup with a failed stemmer chunk is just as unusable as no lookup at all.
+		const stemmerLoad = ensureStemmersLoaded().then(
+			() => true,
+			() => false,
+		);
+		void Promise.all([indexFetch, stemmerLoad]).then(([data, stemmerReady]) => {
+			searchIndex = stemmerReady ? data : null;
+			apply();
+		});
+	}
+
 	function apply(): void {
 		const q = (elText?.value ?? "").trim().toLowerCase();
 		const fs = elStatus?.value ?? "";
@@ -287,7 +350,7 @@ export function initBoardPage(): void {
 			else if (hiddenByCollapse(id)) show = false;
 			else if (fs && d["status"] !== fs) show = false;
 			else if (ft && d["type"] !== ft) show = false;
-			else if (q && !(d["search"] ?? "").includes(q)) show = false;
+			else if (q && !matchesText(id, d, q)) show = false;
 			// Inline display, NOT the `hidden` attribute: the <li> carries daisyUI's `.card`
 			// (display:flex), an author rule that beats the UA `[hidden]{display:none}` — so
 			// el.hidden wouldn't actually hide anything. Inline style wins the cascade.
@@ -319,7 +382,10 @@ export function initBoardPage(): void {
 		if (boardKey) persistCollapsed(boardKey, collapsed);
 	});
 
-	elText?.addEventListener("input", apply);
+	elText?.addEventListener("input", () => {
+		triggerLazySearchLoad();
+		apply();
+	});
 	elStatus?.addEventListener("change", apply);
 	elType?.addEventListener("change", apply);
 	elActive?.addEventListener("change", () => {

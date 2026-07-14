@@ -59,28 +59,34 @@
 	</form>
 }
 
-@* View switch (board-view-modes): one button per NON-HIDDEN BoardViewModeRegistry entry — a
-   new mode (kanban/outline/table, once its partial ships) needs no edit here, it just appears.
-   Filtering on `!entry.Hidden` (board-tag-grouping-hidden) is how a mode stops offering itself
-   in the switcher without this markup ever naming it — Tags is Hidden today (its presets
-   worked poorly enough to pull from discovery pending a redesign), but `?view=tags&by=...`
-   still resolves/renders exactly as before (BoardViewModeRegistry.Resolve/Find scan the FULL
-   Entries list, hidden or not — only this loop filters).
-   board-view-cross-device: a click is a PLAIN navigation (`<a href>`, never intercepted) —
-   TaskBoardModel.LoadAsync persists the `?view=` it lands with into the per-(project,board) DB
-   preference server-side, so there is nothing left for client JS to save (no more
-   data-view-link/data-view-mode click-to-localStorage handler, no reconcile-redirect). *@
+@* View switch (board-view-modes): one button per BoardViewModeRegistry entry — a new mode
+   (kanban/outline/table, once its partial ships) needs no edit here, it just appears. EVERY entry
+   renders (board-tag-grouping-disabled review: the owner wants a disabled mode still visible in
+   the switcher, not erased from memory) — a DisabledReason entry (Tags today) draws as an inert
+   `<button disabled>` with the reason as its tooltip instead of a navigating `<a>`; Resolve/Find
+   still scan the FULL Entries list either way, but Resolve refuses to LAND a request on a
+   disabled entry (see BoardViewModeRegistry.Resolve), so neither this click nor a hand-typed
+   `?view=tags&by=...` URL renders the grouping pane anymore — it falls back to the tree exactly
+   like an unknown mode name would.
+   board-view-cross-device: an ENABLED button's click is a PLAIN navigation (`<a href>`, never
+   intercepted) — TaskBoardModel.LoadAsync persists the `?view=` it lands with into the per-
+   (project,board) DB preference server-side, so there is nothing left for client JS to save (no
+   more data-view-link/data-view-mode click-to-localStorage handler, no reconcile-redirect). *@
 <div class="mb-3 flex flex-wrap items-center gap-1" data-testid="board-view-controls">
 	<span class="text-xs opacity-60 mr-1">view:</span>
-	@foreach (var entry in PetBox.Web.Rendering.BoardViewModeRegistry.Entries.Where(e => !e.Hidden))
+	@foreach (var entry in PetBox.Web.Rendering.BoardViewModeRegistry.Entries)
 	{
+		if (entry.DisabledReason is not null)
+		{
+			<button type="button" class="btn btn-xs btn-ghost btn-disabled opacity-50" disabled title="@entry.DisabledReason" data-testid="view-@entry.Key">@entry.Label</button>
+			continue;
+		}
 		// Highlight tracks what's ACTUALLY rendered (Model.ContentPartialName), not the
-		// requested/resolved mode name: a resolved mode whose content pane degrades (e.g. tags
-		// with no/invalid `by` — still reachable by direct URL even though hidden from the
-		// switcher) renders a DIFFERENT partial than its own entry, so comparing against
-		// ResolvedViewMode would leave every visible button dark in that case. ContentPartialName
-		// always equals exactly one entry's PartialName (a degrade included — e.g. it becomes
-		// "_BoardViewTree", matching the tree entry here).
+		// requested/resolved mode name: a resolved mode whose content pane degrades (e.g. an
+		// unrecognized `?view=` typo) renders a DIFFERENT partial than its own entry, so comparing
+		// against ResolvedViewMode would leave every visible button dark in that case.
+		// ContentPartialName always equals exactly one entry's PartialName (a degrade included —
+		// e.g. it becomes "_BoardViewTree", matching the tree entry here).
 		var active = entry.PartialName == Model.ContentPartialName;
 		<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key">@entry.Label</a>
 	}

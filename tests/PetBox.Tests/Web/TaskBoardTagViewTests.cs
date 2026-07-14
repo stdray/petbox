@@ -13,7 +13,16 @@ namespace PetBox.Tests.Web;
 
 // The board page's tag-groups projection (board-tag-grouping): ?view=tags&by=<ordered ns list>
 // flattens GetGroupedAsync into header/card rows. The projection is a pure view — the part_of
-// tree is untouched (tag-grouping-is-projection); a bad/empty `by` falls back to the tree.
+// tree is untouched (tag-grouping-is-projection).
+//
+// board-tag-grouping-disabled (owner call 2026-07-14): the mode is now DISABLED end to end —
+// BoardViewModeRegistry.Resolve refuses to land ANY request on "tags" (see that file), so
+// TaskBoardModel.LoadAsync's tags branch (`ResolvedViewMode == Tags && dims.Length > 0`) is now
+// UNREACHABLE from a real request — ResolvedViewMode can no longer BE "tags", valid `by` or not.
+// The tests below that used to assert a working grouping render now assert the opposite: even a
+// well-formed `by` falls back to the tree, exactly like the pre-existing bad/empty-`by` case.
+// GetGroupedAsync/FlattenGroups/_BoardViewTags.cshtml are all still wired and correct — they are
+// simply never reached this way anymore (the code stays for a future re-enable, per the card).
 public sealed class TaskBoardTagViewTests : IDisposable
 {
 	readonly string _dir;
@@ -62,7 +71,7 @@ public sealed class TaskBoardTagViewTests : IDisposable
 	}
 
 	[Fact]
-	public async Task TagView_OrderedMultiKey_FlattensNestedHeadersAndCards()
+	public async Task TagView_OrderedMultiKey_DisabledFallsBackToTree()
 	{
 		await Seed();
 		var m = Model();
@@ -70,28 +79,15 @@ public sealed class TaskBoardTagViewTests : IDisposable
 		m.By = "area, concern";
 		await m.OnGetAsync(default);
 
-		m.IsTagView.Should().BeTrue();
-		m.GroupDims.Should().Equal("area", "concern");
-
-		// Top-level (depth 0) group headers are the area buckets — a is a multimember so it
-		// shows under both. Headers carry no node, only a group key.
-		m.GroupRows.Where(r => r.Node is null && r.Depth == 0).Select(r => r.GroupKey)
-			.Should().Equal("area:llm", "area:ui"); // ordered by key, "(none)" would be last
-
-		// Multimembership: a's card appears twice (once per area), b's once.
-		m.GroupRows.Count(r => r.Node?.Key == "a").Should().Be(2);
-		m.GroupRows.Count(r => r.Node?.Key == "b").Should().Be(1);
-
-		// Inner nesting under area:ui: concern:security {a} then "(none)" {b}; cards sit one
-		// level deeper than their group header.
-		var ui = m.GroupRows.SkipWhile(r => r.GroupKey != "area:ui").Skip(1)
-			.TakeWhile(r => !(r.Node is null && r.Depth == 0)).ToList();
-		ui.Where(r => r.Node is null).Select(r => r.GroupKey).Should().Equal("concern:security", "(none)");
-		ui.Single(r => r.Node?.Key == "a").Depth.Should().Be(2);
+		// board-tag-grouping-disabled: a well-formed multi-dimension `by` no longer matters — the
+		// mode itself is unselectable, so this degrades exactly like an invalid one.
+		m.IsTagView.Should().BeFalse();
+		m.GroupRows.Should().BeEmpty();
+		m.Nodes.Select(n => n.Key).Should().BeEquivalentTo(["a", "b"]); // the part_of tree still renders
 	}
 
 	[Fact]
-	public async Task TagView_SingleKey_LeafGroupsHoldCards()
+	public async Task TagView_SingleKey_DisabledFallsBackToTree()
 	{
 		await Seed();
 		var m = Model();
@@ -99,11 +95,9 @@ public sealed class TaskBoardTagViewTests : IDisposable
 		m.By = "area";
 		await m.OnGetAsync(default);
 
-		m.IsTagView.Should().BeTrue();
-		m.GroupDims.Should().Equal("area");
-		// Single dimension → each area header (depth 0) is followed directly by its node cards (depth 1).
-		m.GroupRows.Where(r => r.Node is null).Select(r => r.GroupKey).Should().Equal("area:llm", "area:ui");
-		m.GroupRows.Where(r => r.Node is not null).Should().OnlyContain(r => r.Depth == 1);
+		m.IsTagView.Should().BeFalse();
+		m.GroupRows.Should().BeEmpty();
+		m.Nodes.Select(n => n.Key).Should().BeEquivalentTo(["a", "b"]);
 	}
 
 	[Fact]

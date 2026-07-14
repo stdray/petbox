@@ -173,8 +173,12 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		(html.Contains("data-testid=\"board-nodes\"") || html.Contains("data-testid=\"board-empty\"")).Should().BeTrue();
 	}
 
+	// board-tag-grouping-disabled (owner call 2026-07-14): the mode is disabled — a well-formed
+	// `?view=tags&by=area` must now DEGRADE to the tree pane, never render the grouping. Renamed
+	// from the old "RendersTagGroupsPane" (inverted assertion) rather than deleted, since it's the
+	// direct URL-reachability regression this card exists to close.
 	[Fact]
-	public async Task TaskBoard_TagsView_RendersTagGroupsPane()
+	public async Task TaskBoard_TagsView_DisabledDegradesToTree()
 	{
 		const string board = "viewmodesmoke";
 		using (var scope = _factory.Services.CreateScope())
@@ -192,7 +196,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags&by=area");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-testid=\"board-tag-groups\"");
+		html.Should().NotContain("data-testid=\"board-tag-groups\"");
+		(html.Contains("data-testid=\"board-nodes\"") || html.Contains("data-testid=\"board-empty\"")).Should().BeTrue();
 	}
 
 	// An unknown mode (typo'd URL) must silently degrade to the tree partial — never a 500.
@@ -240,13 +245,14 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		controls.Should().MatchRegex("btn-active\"[^>]*data-testid=\"view-tree\"");
 	}
 
-	// board-tag-grouping-hidden: the maintainer pulled the tag-grouping presets from the
-	// switcher (BoardViewModeRegistry's Tags entry is now Hidden) — the button never renders —
-	// while `?view=tags&by=...` keeps resolving and rendering exactly as before (Resolve/Find
-	// scan the full, unfiltered Entries list). This is the regression a bare "remove the button"
-	// edit could silently break: hiding from discovery must not also break direct navigation.
+	// board-tag-grouping-disabled (owner call 2026-07-14, supersedes board-tag-grouping-hidden):
+	// the tab STAYS VISIBLE in the switcher — disabled, with a tooltip — instead of being pulled
+	// from discovery entirely; and unlike the old "hidden but still fully resolvable" contract,
+	// `?view=tags&by=...` no longer renders the grouping pane even by direct URL — it degrades to
+	// the tree exactly like an unknown mode name would. This is the exact inverse of what the old
+	// test (TaskBoard_ViewSwitcher_HidesTagsButDirectUrlStillResolvesAndRenders) asserted.
 	[Fact]
-	public async Task TaskBoard_ViewSwitcher_HidesTagsButDirectUrlStillResolvesAndRenders()
+	public async Task TaskBoard_ViewSwitcher_ShowsTagsDisabledAndDirectUrlDegradesToTree()
 	{
 		using var switcherResp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap");
 		switcherResp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -254,20 +260,24 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var controlsStart = switcherHtml.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
 		var controlsEnd = switcherHtml.IndexOf("</div>", controlsStart, StringComparison.Ordinal);
 		var controls = switcherHtml[controlsStart..controlsEnd];
-		controls.Should().NotContain("data-testid=\"view-tags\"", "the tags preset buttons must not appear in the switcher");
-		controls.Should().NotContain("tags:", "the tag-namespace preset fan-out label must not appear either");
-		// The other four modes are unaffected — still offered.
+		// The tab is present — disabled (native `disabled` attribute, not a navigating <a>) — and
+		// carries a tooltip explaining why, not silently absent.
+		controls.Should().Contain("data-testid=\"view-tags\"", "the tab stays visible, per the owner's explicit ask");
+		controls.Should().MatchRegex("<button[^>]*data-testid=\"view-tags\"[^>]*>", "a disabled entry renders as a <button>, not a navigating <a>");
+		controls.Should().MatchRegex("<button[^>]*disabled[^>]*data-testid=\"view-tags\"|<button[^>]*data-testid=\"view-tags\"[^>]*disabled",
+			"the button carries the native `disabled` attribute (attribute order in the markup isn't load-bearing)");
+		// The other four modes are unaffected — still offered as plain navigating links.
 		controls.Should().Contain("data-testid=\"view-tree\"");
 		controls.Should().Contain("data-testid=\"view-kanban\"");
 		controls.Should().Contain("data-testid=\"view-outline\"");
 		controls.Should().Contain("data-testid=\"view-table\"");
 
-		const string board = "viewswitcherhiddentags";
+		const string board = "viewswitcherdisabledtags";
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 			if (!await boards.ExistsAsync("$system", board))
-				await boards.CreateAsync("$system", board, "hidden tags direct-url smoke");
+				await boards.CreateAsync("$system", board, "disabled tags direct-url smoke");
 			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
 			await tasks.UpsertAsync("$system", board,
 			[
@@ -277,7 +287,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var directResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags&by=area");
 		directResp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var directHtml = await directResp.Content.ReadAsStringAsync();
-		directHtml.Should().Contain("data-testid=\"board-tag-groups\"");
+		directHtml.Should().NotContain("data-testid=\"board-tag-groups\"", "direct URL navigation must not render the grouping pane anymore");
+		(directHtml.Contains("data-testid=\"board-nodes\"") || directHtml.Contains("data-testid=\"board-empty\"")).Should().BeTrue();
 	}
 
 	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual

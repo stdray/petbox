@@ -91,15 +91,16 @@ public sealed class TaskBoardViewModeTests : IDisposable
 	}
 
 	[Fact]
-	public async Task NoExplicitChoice_MethodologyDefaultViewApplies()
+	public async Task NoExplicitChoice_MethodologyDefaultView_Tags_IsDisabled_FallsBackToTree()
 	{
+		// board-tag-grouping-disabled: a methodology defaultView of "tags" used to leak through
+		// into ResolvedViewMode even though the content pane degraded to tree (no `by`) — now
+		// BoardViewModeRegistry.Resolve refuses the disabled entry at EVERY tier, so
+		// ResolvedViewMode itself reports "tree", not just the rendered content.
 		var board = await CreateInstanceBoard("inst1", "custom", BoardViewModeNames.Tags);
 		var m = Model(board);
-		// No `by` supplied, so even though defaultView resolves to "tags", the by-validity
-		// fallback (existing tag-grouping behavior) keeps the content pane on tree — but
-		// ResolvedViewMode itself still reports the methodology's choice.
 		await m.OnGetAsync(default);
-		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Tags);
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Tree);
 		m.IsTagView.Should().BeFalse();
 		m.ContentPartialName.Should().Be("_BoardViewTree");
 	}

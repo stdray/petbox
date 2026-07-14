@@ -37,6 +37,12 @@ public sealed record PlanNodeView(
 public sealed record PlanBoardView(
 	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
 
+// board-search-stem-lookup: a SCALAR "has this board changed" probe for a cache/ETag check —
+// see ITasksService.GetBoardChangeStampAsync for why it's TWO numbers, not one. Two boards with
+// the same (NodeVersion, TagStamp) pair are guaranteed to have identical node payloads AND
+// identical active tag sets; either one moving means SOMETHING changed.
+public sealed record BoardChangeStamp(long NodeVersion, DateTime? TagStamp);
+
 // One `[[slug]]` mention resolved to a live project node (node-ref-autolink): the node's
 // CURRENT location (Board + Key — the mention may have named a FORMER slug that renamed) plus
 // its stable NodeId and Title. A mention that is ambiguous (the slug lives on 2+ boards) or a

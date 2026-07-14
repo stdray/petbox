@@ -73,8 +73,10 @@ records**, not the working plan — do not treat them as current state.
    you are).
 3. **Tests:** `./build.ps1 -Target Test` (or `./build.sh --target=Test`) **is the gate** —
    it is what must be green before a commit is pushed / a card moves to Review. The Cake
-   `Test` target depends on `Build`, `FormatVerify`, and `WebTsLint` (`build.cs`), so a
-   green Cake `Test` run already proves formatting and the frontend lint, not just the
+   `Test` target depends on `Build`, `FormatVerify`, `WebTsLint`, and `WebTsTest` (`build.cs`,
+   the last added by board-search-stem-lookup — `bun test` over `src/PetBox.Web/ts/*.test.ts`,
+   closing the same "written but wired into no pipeline" gap `WebTsLint` closed for lint), so a
+   green Cake `Test` run already proves formatting, the frontend lint, and its unit tests, not just the
    .NET suite passing. A filtered `dotnet test` is fine for the FAST INNER LOOP while
    iterating on one failing test — it runs NONE of those dependencies, so being green on
    it proves nothing about mergeability; always finish on the Cake gate before pushing.
