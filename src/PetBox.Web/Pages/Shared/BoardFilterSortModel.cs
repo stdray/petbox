@@ -35,11 +35,17 @@ namespace PetBox.Web.Pages.Shared;
 // record defaults, so a caller that doesn't thread them through (there is none left — every
 // _BoardFilterSort caller passes the resolved values) degrades to the same appearance a first-time
 // visitor already gets.
+// kanban-column-picker: ColumnsDialog is the kanban-only column picker, threaded THROUGH the bar
+// rather than rendered beside it — a partial dropped next to _BoardFilterSort lands outside the
+// bar's flex container and wraps onto its own line. Null for every other mode, which is what keeps
+// the picker kanban-only; its vocabulary (this board's workflow statuses) still isn't part of this
+// record, it rides along as its own model.
 public sealed record BoardFilterSortModel(
 	PetBox.Web.Rendering.BoardFieldConfig Fields,
 	string ViewMode,
 	string SortHint = "sort:",
 	string? By = null,
+	PetBox.Web.Pages.ProjectHome.BoardColumnsDialogModel? ColumnsDialog = null,
 	bool BodyUnavailable = false,
 	bool ActiveOnly = true,
 	string SortBy = "priority",
