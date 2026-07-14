@@ -76,12 +76,13 @@ public static class LogApi
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.Produces<KqlExecutionErrorResponse>(StatusCodes.Status500InternalServerError)
 			.RequireAuthorization("ApiKey");
-		// The ONLY log route a BROWSER opens directly, and the only one on the ApiKeyOrCookie policy: a
-		// browser's EventSource cannot send headers, so it arrives with the session cookie and nothing
+		// The log route a BROWSER opens directly (PetBox.Web's EventDetailsApi is the other one, over
+		// in Pages/Logs — it reuses AuthorizeProjectViewerAsync below rather than a route mapped here):
+		// a browser's EventSource cannot send headers, so it arrives with the session cookie and nothing
 		// else — under the header-only "ApiKey" policy every live tail in the UI 401'd, which is why the
 		// feature never delivered a single event (live-tail-sse-transport-broken). The policy admits BOTH
 		// schemes; which one authenticated then decides which authorization applies — see
-		// AuthorizeLiveTailAsync, where the two principals are kept strictly apart.
+		// AuthorizeProjectViewerAsync, where the two principals are kept strictly apart.
 		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync)
 			.Produces(StatusCodes.Status200OK, contentType: "text/event-stream")
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
@@ -150,9 +151,13 @@ public static class LogApi
 	static bool HasScope(HttpContext ctx, string required) =>
 		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
 
-	// Live-tail's authorization, and the ONE place that knows the two principals are not
-	// interchangeable. The route accepts both schemes (a browser EventSource can only bring a cookie),
-	// but they prove entirely different things and each keeps its own gate:
+	// Authorization for the browser-facing, workspaceKey-less log routes — live-tail and (PetBox.Web's)
+	// EventDetailsApi both call this, since both are the SAME cross-tenant surface: neither route binds
+	// a {workspaceKey}, so this is the ONLY thing standing between a signed-in user and another tenant's
+	// log data. Public so PetBox.Web can reuse it verbatim rather than re-deriving the same two gates.
+	//
+	// The route accepts both schemes (a browser EventSource/fetch can only bring a cookie), but they
+	// prove entirely different things and each keeps its own gate:
 	//
 	//   api key — carries `project` + `scopes`. Unchanged from before this endpoint accepted cookies:
 	//             ProjectScope (project claim + sandbox containment) AND the logs:query scope, exactly
@@ -167,7 +172,7 @@ public static class LogApi
 	// Crossing the two would be the hole: run a cookie session through the scope gate and every browser
 	// is denied (a cookie has no scopes at all); run an api key through the workspace gate and a key
 	// lacking logs:query walks in through a door meant for humans.
-	static async Task<IResult?> AuthorizeLiveTailAsync(
+	public static async Task<IResult?> AuthorizeProjectViewerAsync(
 		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct)
 	{
 		if (IsApiKeyPrincipal(ctx))
@@ -587,7 +592,7 @@ public static class LogApi
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeLiveTailAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
+		if (await AuthorizeProjectViewerAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
 
@@ -735,7 +740,10 @@ public static class LogApi
 		sb.Append('\n');
 		sb.Append("event: event\n");
 		sb.Append("data: ");
-		sb.Append("<tr class=\"event-live\" data-event-id=\"");
+		// data-testid matches _EventRow.cshtml's non-live row (the "data-testid for UI selectors" hard
+		// invariant applies here too) — without it an E2E test has no compliant way to find a live row
+		// at all, only a class/text selector the repo's own rules forbid.
+		sb.Append("<tr class=\"event-live\" data-testid=\"events-row\" data-event-id=\"");
 		sb.Append(record.Id);
 		// data-ms matches every other log/trace row template (_EventRow.cshtml, Traces.cshtml,
 		// Trace.cshtml) — sub-second precision is data here (event ordering within a second),

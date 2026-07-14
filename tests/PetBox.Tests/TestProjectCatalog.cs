@@ -39,8 +39,9 @@ public sealed class TestProjectCatalog : IProjectCatalog
 	// the gate.
 	public Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default) => Task.FromResult(false);
 
-	// Live-tail's cookie path (LogApi.AuthorizeLiveTailAsync) asks this; a test that exercises THAT
-	// gate needs a real catalog, so the stub keeps the same "not supported" posture as the lists.
+	// The live-tail and event-details cookie paths (LogApi.AuthorizeProjectViewerAsync) ask this; a
+	// test that exercises THAT gate needs a real catalog, so the stub keeps the same "not supported"
+	// posture as the lists.
 	public Task<string?> WorkspaceKeyOfAsync(string projectKey, CancellationToken ct = default) =>
 		throw new NotSupportedException($"{nameof(TestProjectCatalog)} is a sandbox-gate DI stub only");
 }

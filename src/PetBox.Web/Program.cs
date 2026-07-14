@@ -506,16 +506,18 @@ public partial class Program
 			.AddPolicy("ApiKey", p => p
 				.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
 				.RequireAuthenticatedUser())
-			// For the ONE endpoint a browser opens directly: the log live-tail (SSE). An EventSource
-			// cannot set headers, so it can never present X-Api-Key — under the header-only "ApiKey"
+			// For the log routes a browser opens directly: the live-tail SSE stream, and the lazy
+			// event-details fetch (Pages/Logs/EventDetails.cshtml.cs) a live row's expand triggers. An
+			// EventSource cannot set headers at all, and the fetch call deliberately does not add one
+			// either (same-origin cookies already carry the session) — under the header-only "ApiKey"
 			// policy every live tail from the UI 401'd. This policy admits the cookie scheme ALONGSIDE
-			// the api-key one; it proves only that ONE of them authenticated, and the endpoint then
-			// authorizes each principal on its own terms (LogApi.AuthorizeLiveTailAsync: an api key by
-			// project claim + logs:query scope, a session by workspace role — a cookie has no scopes and
-			// an api key has no roles, so the two gates never substitute for one another). Do NOT reach
-			// for this policy to "fix a 401" on any other route: a token in a URL was rejected for
-			// live-tail precisely because it leaks into access logs, and a cookie on a header-only API is
-			// a CSRF surface everywhere it is not a read-only stream.
+			// the api-key one; it proves only that ONE of them authenticated, and each endpoint then
+			// authorizes the principal on its own terms via LogApi.AuthorizeProjectViewerAsync (shared by
+			// both): an api key by project claim + logs:query scope, a session by workspace role — a
+			// cookie has no scopes and an api key has no roles, so the two gates never substitute for one
+			// another). Do NOT reach for this policy to "fix a 401" on any other route: a token in a URL
+			// was rejected for live-tail precisely because it leaks into access logs, and a cookie on a
+			// header-only API is a CSRF surface everywhere it is not a read-only stream.
 			.AddPolicy("ApiKeyOrCookie", p => p
 				.AddAuthenticationSchemes(
 					ApiKeyAuthenticationHandler.SchemeName,
