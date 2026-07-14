@@ -90,6 +90,17 @@ records**, not the working plan — do not treat them as current state.
    local check — the Cake gate builds the whole source tree, the image build does not. If
    a change adds a root-level build input (a new props/analyzer file, a new top-level
    directory), build the image (`docker build .`) before moving the deploy tag.
+   **Run the gate in the FOREGROUND and block on its exit code.** A gate started in the
+   background dies with the turn that started it: a subagent that ends its turn saying "the
+   gate is running, I'll report when it finishes" never reports — its process is gone. This
+   happened four times in one session (2026-07-14) across four different workers, twice after
+   an explicit "wait for the gate" instruction, and once the watchdog killed the worker
+   mid-run and left the work uncommitted (intact, in its worktree — check `git status` there
+   before redoing anything). A report that does not carry the gate's actual exit status is
+   not a report, and an orchestrator that believes one is merging on faith: re-run the gate
+   yourself in the worker's worktree (~1.5 min) instead of trading messages about it. The
+   same distrust applies one level up — `gh run watch` misreports CI; confirm a deploy
+   against the live server, not against the tool that says it shipped.
    Pipe test output to `.tmp/test-run.log` and read the log instead of scrolling the
    console. For readable FAILURE detail (a quiet log drops the assertion messages), add
    `--logger "trx;LogFileName=res.trx"` and render it with **`dotnet trx`** (the
