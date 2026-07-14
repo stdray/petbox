@@ -62,6 +62,22 @@ public sealed class ProjectAgentDefsModel : PageModel
 	// Optimistic-concurrency baseline for the next save (0 = create).
 	public long Version { get; private set; }
 
+	// The known requiredCapabilities catalog the form renders as a checkbox group — the same
+	// source that catalog lives in everywhere else (AgentDefinitionCapabilities), not a second
+	// hardcoded copy here.
+	public IReadOnlyList<string> KnownCapabilities => AgentDefinitionCapabilities.All;
+
+	// Every role slug in the CURRENTLY STORED roster — the closed set spawn.allowedRoles /
+	// escalation.targets checkboxes offer (a role may only name a teammate that exists).
+	public IReadOnlyList<string> RosterSlugs =>
+		Stored?.Definition.Roles.Select(r => r.Slug).ToList() ?? [];
+
+	// requiredCapabilities values on this role that are NOT in the known checkbox catalog —
+	// rendered read-only so the form never implies unchecking them would drop them (SaveRole
+	// preserves them regardless of what the checkboxes post).
+	public static IReadOnlyList<string> ExtraCapabilities(AgentDefinitionRole role) =>
+		role.RequiredCapabilities.Where(c => !AgentDefinitionCapabilities.Set.Contains(c)).ToList();
+
 	// A starter document for a freshly created key — the minimal shape the parser accepts.
 	public static string StarterJson(string key) =>
 		$$"""
@@ -135,6 +151,104 @@ public sealed class ProjectAgentDefsModel : PageModel
 			return RedirectToPage(new { WorkspaceKey, ProjectKey });
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+		{
+			if (!await LoadStateAsync(ct)) return Page();
+			PrefillStored();
+			ErrorMessage = ex.Message;
+			return Page();
+		}
+	}
+
+	// FORM MODE: save one role's structured fields (slug/tier/capabilities/spawn/escalation/notes)
+	// by patching the STORED raw document in place — every property outside that shape (on this
+	// role, on other roles, on the root) survives untouched. Fetches the raw document fresh (not
+	// whatever the browser had at page-load) so the patch always starts from the latest content;
+	// `version` still gates the actual write, so a concurrent edit is still caught as a conflict,
+	// just against the freshest base text instead of a stale one.
+	public async Task<IActionResult> OnPostSaveRoleAsync(
+		string? key, long version, int roleIndex,
+		string? slug, string? tier, List<string>? capabilities,
+		bool spawnAllowed, List<string>? spawnAllowedRoles,
+		bool escalationAvailable, List<string>? escalationTargets,
+		string? notes, CancellationToken ct)
+	{
+		var k = (key ?? string.Empty).Trim().ToLowerInvariant();
+		try
+		{
+			var raw = await _defs.GetJsonAsync(ProjectKey, k, ct)
+				?? throw new ArgumentException($"agent definition '{k}' not found");
+
+			// The checkbox group only offers the known catalog — merge back any pre-existing
+			// value outside it so the form can never silently drop a legacy/unrecognized
+			// capability just because it isn't a checkbox.
+			var priorRoles = AgentDefinitionJson.Parse(raw).Roles;
+			var extras = roleIndex >= 0 && roleIndex < priorRoles.Count
+				? priorRoles[roleIndex].RequiredCapabilities.Where(c => !AgentDefinitionCapabilities.Set.Contains(c))
+				: [];
+			var mergedCapabilities = (capabilities ?? []).Where(AgentDefinitionCapabilities.Set.Contains).Concat(extras).ToList();
+
+			var edit = new RoleFormEdit(
+				Slug: (slug ?? string.Empty).Trim(),
+				Tier: (tier ?? string.Empty).Trim(),
+				RequiredCapabilities: mergedCapabilities,
+				SpawnAllowed: spawnAllowed,
+				SpawnAllowedRoles: spawnAllowedRoles ?? [],
+				EscalationAvailable: escalationAvailable,
+				EscalationTargets: escalationTargets ?? [],
+				Notes: notes);
+
+			var patched = AgentDefinitionJson.PatchRole(raw, roleIndex, edit);
+			var ack = await _defs.UpsertJsonAsync(ProjectKey, k, patched, version, ct);
+			this.NotifySuccess($"Role '{edit.Slug}' saved (version {ack.Version}).");
+			return RedirectToPage(new { WorkspaceKey, ProjectKey, Key = ack.Key });
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException)
+		{
+			if (!await LoadStateAsync(ct)) return Page();
+			PrefillStored();
+			ErrorMessage = ex.Message;
+			return Page();
+		}
+	}
+
+	// Append a fresh role (starter shape, no capabilities/spawn/escalation set) to the roster.
+	public async Task<IActionResult> OnPostAddRoleAsync(string? key, long version, string? newRoleSlug, CancellationToken ct)
+	{
+		var k = (key ?? string.Empty).Trim().ToLowerInvariant();
+		try
+		{
+			var raw = await _defs.GetJsonAsync(ProjectKey, k, ct)
+				?? throw new ArgumentException($"agent definition '{k}' not found");
+			var slug = string.IsNullOrWhiteSpace(newRoleSlug) ? "new-role" : newRoleSlug.Trim();
+			var patched = AgentDefinitionJson.AddRole(raw, slug);
+			var ack = await _defs.UpsertJsonAsync(ProjectKey, k, patched, version, ct);
+			this.NotifySuccess($"Role '{slug}' added.");
+			return RedirectToPage(new { WorkspaceKey, ProjectKey, Key = ack.Key });
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException)
+		{
+			if (!await LoadStateAsync(ct)) return Page();
+			PrefillStored();
+			ErrorMessage = ex.Message;
+			return Page();
+		}
+	}
+
+	// Remove one role by its position in the stored array. Refused when it is the last role
+	// (AgentDefinitionJson.RemoveRole) — the message surfaces the same way any other rejection does.
+	public async Task<IActionResult> OnPostDeleteRoleAsync(string? key, long version, int roleIndex, CancellationToken ct)
+	{
+		var k = (key ?? string.Empty).Trim().ToLowerInvariant();
+		try
+		{
+			var raw = await _defs.GetJsonAsync(ProjectKey, k, ct)
+				?? throw new ArgumentException($"agent definition '{k}' not found");
+			var patched = AgentDefinitionJson.RemoveRole(raw, roleIndex);
+			var ack = await _defs.UpsertJsonAsync(ProjectKey, k, patched, version, ct);
+			this.NotifySuccess($"Role removed (version {ack.Version}).");
+			return RedirectToPage(new { WorkspaceKey, ProjectKey, Key = ack.Key });
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException)
 		{
 			if (!await LoadStateAsync(ct)) return Page();
 			PrefillStored();
