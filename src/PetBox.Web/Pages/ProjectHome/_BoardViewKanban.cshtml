@@ -32,7 +32,11 @@ else
 	// board-body-not-for-table-kanban: kanban never renders a body block on a card (below),
 	// regardless of what Fields.Body says — BodyUnavailable disables the dialog checkbox and says
 	// why, same mechanism Outline's Navigate mode already uses.
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
+	// kanban-column-picker: the column picker rides INSIDE the filter/sort bar (ColumnsDialog) so its
+	// button sits next to the fields one — rendered as a sibling partial it landed outside the bar's
+	// flex container and wrapped onto its own line.
+	var columnsDialogModel = new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	// board-terminal-negative-visible review finding: strikethrough scoped to the spec board only
 	// — everywhere else the status is already a displayable property (fields dialog toggle).
 	// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
@@ -41,10 +45,6 @@ else
 	var isSpecBoard = Model.Runtime.IsSpecKind(Model.KindSlug);
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
-	@* kanban-column-picker: kanban-only (never rendered in tree/table/outline) — its own
-	   toggle+modal+form, separate from the shared fields dialog above since its vocabulary
-	   (this board's own workflow statuses) isn't part of BoardFilterSortModel. *@
-	<partial name="_BoardColumnsDialog" model="@(new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By))" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
 		@* kanban-column-picker bullet 6: hiding a column is PRESENTATION only — byStatus/strayCount
 		   above are still computed over every node regardless of the selection, so active-only

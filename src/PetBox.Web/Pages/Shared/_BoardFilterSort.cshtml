@@ -29,4 +29,8 @@
 	</select>
 	<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">@(Model.SortDesc ? "↓" : "↑")</button>
 	<partial name="_BoardFieldsDialog" model="Model" />
+	@if (Model.ColumnsDialog is { } columnsDialog)
+	{
+		<partial name="_BoardColumnsDialog" model="columnsDialog" />
+	}
 </div>

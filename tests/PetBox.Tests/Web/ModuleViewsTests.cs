@@ -423,6 +423,13 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-testid=\"columns-form\"");
 		html.Should().Contain("data-testid=\"columns-apply\"");
 		html.Should().Contain("name=\"columnsSet\" value=\"1\"");
+		// The picker's button belongs INSIDE the filter/sort bar, right after the fields one —
+		// rendered as a sibling partial it lands outside the bar's flex container and wraps onto
+		// its own line. Both toggles must therefore sit within the one board-filter element.
+		var bar = html[html.IndexOf("data-testid=\"board-filter\"", StringComparison.Ordinal)..];
+		bar = bar[..bar.IndexOf("data-testid=\"board-kanban\"", StringComparison.Ordinal)];
+		bar.Should().Contain("data-testid=\"board-fields-toggle\"");
+		bar.Should().Contain("data-testid=\"columns-toggle\"");
 		foreach (var slug in new[] { "Todo", "InProgress", "Blocked", "Done", "Cancelled" })
 		{
 			html.Should().Contain($"data-testid=\"column-{slug}\"");
