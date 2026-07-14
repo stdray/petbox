@@ -29,7 +29,10 @@ else
 	// declares) still needs a home on the board — an extra "other" column rather than a silently
 	// dropped card.
 	var strayCount = Model.Nodes.Count(n => !knownSlugs.Contains(n.Status));
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
+	// board-body-not-for-table-kanban: kanban never renders a body block on a card (below),
+	// regardless of what Fields.Body says — BodyUnavailable disables the dialog checkbox and says
+	// why, same mechanism Outline's Navigate mode already uses.
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	// board-terminal-negative-visible review finding: strikethrough scoped to the spec board only
 	// — everywhere else the status is already a displayable property (fields dialog toggle).
 	// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
@@ -145,10 +148,6 @@ else
 								@if (Model.Fields.BlockedBy)
 								{
 									<partial name="_BlockedByChips" model="new BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
-								}
-								@if (Model.Fields.Body && !string.IsNullOrEmpty(n.Body))
-								{
-									<partial name="_MdBody" model="@(new MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-16 overflow-hidden text-xs", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 								}
 							</div>
 						</li>
