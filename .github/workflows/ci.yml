@@ -385,9 +385,11 @@ jobs:
         with:
           bun-version: latest
 
+      # The kit is raw TS run through Node's native type-stripping — `node --test src/*.ts`
+      # needs Node >= 23.6 (package.json `engines`), and 20 dies with ERR_UNKNOWN_FILE_EXTENSION.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
