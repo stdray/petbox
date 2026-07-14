@@ -528,6 +528,64 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
 	}
 
+	// board-body-not-for-table-kanban (owner decision 2026-07-14): bodies are read on the node's
+	// own page — kanban and table never render one, even when a stale saved preference or an
+	// explicit `?fields=body` requests it, and the dialog disables the Body checkbox (same
+	// BodyUnavailable mechanism outline's Navigate mode already uses) rather than silently
+	// ignoring a selection the user can still make.
+	[Fact]
+	public async Task TaskBoard_KanbanView_NeverShipsTheBody_AndDisablesBodyCheckboxInFieldsDialog()
+	{
+		const string board = "viewmodekanbannobody";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban no-body smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kb1", Title = "KB1", Body = "a card body that must never ship on the kanban board" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban&fieldsSet=1&fields=body");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-kanban\"");
+		html.Should().NotContain("a card body that must never ship on the kanban board");
+		html.Should().NotContain("data-testid=\"node-body\"");
+		html.Should().Contain("data-testid=\"field-body\"");
+		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
+	}
+
+	[Fact]
+	public async Task TaskBoard_TableView_NeverShipsTheBody_AndDisablesBodyCheckboxInFieldsDialog()
+	{
+		const string board = "viewmodetablenobody";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "table no-body smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "tb1", Title = "TB1", Body = "a row body that must never ship on the table board" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table&fieldsSet=1&fields=body");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-table\"");
+		html.Should().NotContain("a row body that must never ship on the table board");
+		html.Should().NotContain("data-testid=\"node-body\"");
+		html.Should().NotContain(">body<"); // no <th>body</th> column header either
+		html.Should().Contain("data-testid=\"field-body\"");
+		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
+	}
+
 	// board-fields-slug-missing: slug (the node key) must be offered in the Board properties
 	// dialog like every other field — this was the missing half of the bug (it also never
 	// rendered on kanban, covered by TaskBoard_KanbanView_ShowsSlugField_OnByDefault_HiddenWhenToggledOff).

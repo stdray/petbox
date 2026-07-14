@@ -21,7 +21,10 @@
 }
 else
 {
-	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
+	// board-body-not-for-table-kanban: table never renders a body cell (below), regardless of what
+	// Fields.Body says — BodyUnavailable disables the dialog checkbox and says why, same mechanism
+	// Outline's Navigate mode already uses for the same "checking it would have zero effect" honesty.
+	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
@@ -41,7 +44,6 @@ else
 					@if (fields.UpdatedAt) { <th>updated</th> }
 					@if (fields.Delivery) { <th>delivery</th> }
 					@if (fields.BlockedBy) { <th>blocked by</th> }
-					@if (fields.Body) { <th>body</th> }
 				</tr>
 			</thead>
 			<tbody data-testid="board-nodes" data-sort-scope>
@@ -117,16 +119,6 @@ else
 						@if (fields.BlockedBy)
 						{
 							<td><partial name="_BlockedByChips" model="@(new BlockedByChipsModel(Model.WorkspaceKey ?? "", Model.ProjectKey ?? "", row.BlockedBy))" /></td>
-						}
-						@if (fields.Body)
-						{
-							<td class="max-w-xs">
-								@if (!string.IsNullOrEmpty(row.Body))
-								{
-									var excerpt = row.Body.Length > 120 ? row.Body[..120] + "…" : row.Body;
-									<span class="text-xs opacity-70" data-testid="node-body">@excerpt</span>
-								}
-							</td>
 						}
 					</tr>
 				}
