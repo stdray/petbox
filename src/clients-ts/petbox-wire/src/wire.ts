@@ -68,23 +68,21 @@ import {
   DEFAULT_DEFINITION_KEY,
   resolveAgentDefinitionWithLkg,
 } from "./agent-def-fetch.ts";
-import {
-  DEFAULT_AGENT_DEFINITION,
-  validateAgentDefinition,
-  type AgentDefinition,
-} from "./agent-definition.ts";
+import { validateAgentDefinition, type AgentDefinition } from "./agent-definition.ts";
 import {
   formatApplyBlocked,
   planApply,
   type ApplyPlan,
 } from "./apply-artifacts.ts";
+import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
-import { readRegistry, resolveProject } from "./registry.ts";
+import { resolveProject } from "./registry.ts";
 import {
   exportRolesBootstrap,
   formatResolvedBinding,
@@ -152,7 +150,11 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             when cwd resolves via ~/.petbox/projects.json; on miss uses LKG cache\n" +
     "             (~/.petbox/cache/<project>.agent-def.json) with a staleness mark, else built-in\n" +
     "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
-    "             <key> selects the server doc (default: default). Writes under project root:\n" +
+    "             <key> selects the server doc (default: default). Writes under the git worktree\n" +
+    "             toplevel for cwd (`git rev-parse --show-toplevel`; falls back to cwd when cwd is not\n" +
+    "             inside a git working tree) — NEVER the registry's project prefix, so apply run from a\n" +
+    "             worktree targets that worktree, not the primary tree it was branched from. Always\n" +
+    "             prints which root it resolved and how (git/cwd). Targets:\n" +
     "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
     "             Emitted names are namespaced petbox-<role> (frontmatter name: + file basename) —\n" +
     "             role.slug and ~/.petbox/roles.json stay unprefixed; only the render is. Every\n" +
@@ -241,42 +243,31 @@ function isProfileCommand(argv: string[]): boolean {
   return argv[0] === "profile";
 }
 
-// Longest registry prefix that covers cwd (no API key required). Falls back to cwd.
-function resolveApplyRoot(cwd: string): { root: string; via: "registry" | "cwd" } {
-  try {
-    const entries = readRegistry();
-    const nd = cwd.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-    const ndCmp = process.platform === "win32" ? nd.toLowerCase() : nd;
-    let best: string | null = null;
-    let bestLen = -1;
-    for (const e of entries) {
-      let np = String(e.prefix).replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-      const npCmp = process.platform === "win32" ? np.toLowerCase() : np;
-      const under = ndCmp === npCmp || ndCmp.startsWith(npCmp + "/");
-      if (under && npCmp.length > bestLen) {
-        best = e.prefix;
-        bestLen = npCmp.length;
-      }
-    }
-    if (best) return { root: best, via: "registry" };
-  } catch {
-    /* fall through */
-  }
-  return { root: cwd, via: "cwd" };
-}
-
-// doctor — truthfulness gate for each known harness vs default definition.
+// doctor — truthfulness gate for each known harness vs the SAME definition apply would compile
+// (doctor-gates-wrong-definition): server → LKG cache → built-in DEFAULT, exactly like apply
+// (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
 // Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
-function runDoctor(argv: string[]): void {
+async function runDoctor(argv: string[]): Promise<void> {
+  let offline = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") usage(0);
-    console.error(`doctor: unexpected argument: ${a}`);
-    usage(WIRE_EXIT.usage);
+    else if (a === "--offline") offline = true;
+    else {
+      console.error(`doctor: unexpected argument: ${a}`);
+      usage(WIRE_EXIT.usage);
+    }
   }
 
+  let definition: AgentDefinition;
   try {
-    validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+    definition = await resolveApplyDefinition({
+      offline,
+      definitionKey: DEFAULT_DEFINITION_KEY,
+      cwd: process.cwd(),
+      label: "doctor",
+    });
+    validateAgentDefinition(definition);
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
     process.exit(WIRE_EXIT.hard);
@@ -287,7 +278,7 @@ function runDoctor(argv: string[]): void {
     ? "local binding: (empty — capability gate only; no model ids to check)"
     : `local binding: activeProfile=${roles.activeProfile} (model ids are gated against each harness)`;
 
-  log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
+  log(`doctor: definition="${definition.name}" (${definition.roles.length} roles)`);
   log(`doctor: ${bindingNote}`);
 
   let hadTruthfulnessBlock = false;
@@ -295,7 +286,7 @@ function runDoctor(argv: string[]): void {
     // Same gate apply uses: capabilities + the LOCAL model binding for this harness, so a
     // roles.json holding an id this harness cannot resolve fails here too (not at runtime).
     const violations = checkTruthfulness(
-      DEFAULT_AGENT_DEFINITION,
+      definition,
       harness,
       resolveAgentRoles(roles, harness),
     );
@@ -479,11 +470,15 @@ async function runApply(argv: string[]): Promise<void> {
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
 // Server is authoritative; disk is LKG replica. roles.json polarity is separate (not here).
+// `label` prefixes the log lines: apply and doctor share this resolution so that doctor gates
+// the definition apply would actually compile, and each says so under its own name.
 async function resolveApplyDefinition(opts: {
   offline: boolean;
   definitionKey: string;
   cwd: string;
+  label?: string;
 }): Promise<AgentDefinition> {
+  const label = opts.label ?? "apply";
   const resolved = resolveProject(opts.cwd);
   const got = await resolveAgentDefinitionWithLkg({
     offline: opts.offline,
@@ -494,12 +489,12 @@ async function resolveApplyDefinition(opts: {
   });
 
   if (got.source === "server") {
-    log(`apply: using server definition ${got.key} v${got.version}`);
+    log(`${label}: using server definition ${got.key} v${got.version}`);
   } else if (got.source === "lkg") {
-    log(`apply: ${got.staleMarker ?? "using LKG agent definition cache"}`);
-    log(`apply: using LKG definition ${got.key} v${got.version} (stale)`);
+    log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
   } else {
-    log("apply: offline default definition (no server, no LKG cache)");
+    log(`${label}: offline default definition (no server, no LKG cache)`);
   }
   return got.definition;
 }
@@ -1210,7 +1205,11 @@ function cleanupLegacy(dir: string): void {
 
 // ---- step 10: self-smoke ---------------------------------------------------
 
-async function selfSmoke(baseUrl: string, project: string, key: string): Promise<void> {
+// Returns whether the smoke succeeded — the caller (main()) uses this to decide whether "done."
+// is allowed to print (selfsmoke-failure-prints-done: a failed smoke must never be followed by
+// a line that reads like success). Response classification itself lives in self-smoke.ts so it
+// is unit-testable without a network call; this wrapper only owns the fetch + exit-code side effect.
+async function selfSmoke(baseUrl: string, project: string, key: string): Promise<boolean> {
   const uri = `${baseUrl}/api/sessions/${project}/wire-smoke?agent=wire`;
   const body = JSON.stringify({ role: "user", content: "wire.ts self-smoke — verifying the session push pipeline." });
   let resp: Response;
@@ -1224,26 +1223,17 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
   } catch (e) {
     console.error(`[10/10] self-smoke: POST failed — ${(e as Error).message}`);
     process.exitCode = 1;
-    return;
+    return false;
   }
   const text = await resp.text();
-  if (!resp.ok) {
-    console.error(`[10/10] self-smoke: HTTP ${resp.status} — ${text}`);
-    process.exitCode = 1;
-    return;
-  }
-  let parsed: any = null;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    /* keep raw */
-  }
-  if (typeof parsed?.version === "number") {
-    log(`[10/10] self-smoke: OK — sessionId=${parsed.sessionId}, version=${parsed.version}, messages=${parsed.messageCount}`);
+  const result = classifySelfSmokeResponse(resp.ok, resp.status, text);
+  if (result.ok) {
+    log(result.message);
   } else {
-    console.error(`[10/10] self-smoke: server did not return a numeric version — ${text}`);
+    console.error(result.message);
     process.exitCode = 1;
   }
+  return result.ok;
 }
 
 // ---- main ------------------------------------------------------------------
@@ -1257,7 +1247,7 @@ async function main(): Promise<void> {
     return;
   }
   if (isDoctorCommand(argv)) {
-    runDoctor(argv);
+    await runDoctor(argv);
     return;
   }
   if (isApplyCommand(argv)) {
@@ -1360,15 +1350,19 @@ async function main(): Promise<void> {
   else log(`[9/10] cleanup-legacy not requested — skipped.`);
 
   // 10. self-smoke
-  await selfSmoke(baseUrl, project, key);
+  const smokeOk = await selfSmoke(baseUrl, project, key);
 
-  if (process.env[envVar]) {
-    log(`done.`);
-  } else {
-    log(
-      `done. NOTE: start a NEW terminal${process.platform === "win32" ? "" : " (login shell)"} before launching agents — ` +
-        `their MCP configs read ${envVar} from the environment. The kit hooks work immediately (keys.json).`,
-    );
+  // Terminal message set depends on the smoke outcome — a failure must be the LAST line, in
+  // red, never followed by "done." (selfsmoke-failure-prints-done).
+  const finish = finishWireRun({
+    smokeOk,
+    envVar,
+    envVarPresentInProcess: !!process.env[envVar],
+    platform: process.platform,
+  });
+  for (const line of finish.lines) {
+    if (finish.toStderr) console.error(line);
+    else log(line);
   }
 }
 
