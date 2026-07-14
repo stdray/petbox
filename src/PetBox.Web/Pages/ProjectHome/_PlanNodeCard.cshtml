@@ -4,7 +4,12 @@
 	var leaf = n.Key;
 	var parent = n.ParentSlug;
 	var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
-	var search = $"{n.Title} {n.Key} {n.Body} {string.Join(' ', n.Tags)}".ToLowerInvariant();
+	// board-search-stem-lookup: BODY dropped from data-search — it used to ship the body TWICE
+	// (rendered HTML + this attribute, 294KB->124KB gzip on the real `work` board). Title+key+tags
+	// stays as an instant substring fallback for the brief window before ts/board.ts's fetched
+	// stem index (?handler=SearchIndex) loads, mirroring the pattern _BoardViewKanban.cshtml /
+	// _BoardViewOutline.cshtml already use for the same reason.
+	var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
 	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the data
 	// (StatusKind.TerminalCancel), not a dialog checkbox — a terminally-cancelled node reads as
 	// dead REGARDLESS of whether Model.Fields.Status is on, so this never consults Fields.

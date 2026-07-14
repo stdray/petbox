@@ -118,16 +118,19 @@ Task("Build")
 // was green on `Test` locally and failed the deploy tag run on whitespace it never saw. A new
 // check goes here, once, and every caller — dev loop, CI, Verify — picks it up.
 //
-// WebTsLint rides along here, not under SdkChecks: SdkChecks is specifically the published-SDK
-// gate (its own CI job, bun+uv toolchains, parallel with this one) — src/PetBox.Web/ts is app
-// code that ships in the Docker image, not an SDK, and Build already needs bun for it (the
-// project's `BuildFrontend` MSBuild target runs `bun install`/`bun run build` on Release build),
-// so the `test` CI job already has the toolchain this needs. Before this, biome only ever ran
-// against src/clients-ts — the browser-shipped frontend had no lint gate anywhere, local or CI.
+// WebTsLint/WebTsTest ride along here, not under SdkChecks: SdkChecks is specifically the
+// published-SDK gate (its own CI job, bun+uv toolchains, parallel with this one) — src/PetBox.Web/
+// ts is app code that ships in the Docker image, not an SDK, and Build already needs bun for it
+// (the project's `BuildFrontend` MSBuild target runs `bun install`/`bun run build` on Release
+// build), so the `test` CI job already has the toolchain this needs. Before this, biome only ever
+// ran against src/clients-ts — the browser-shipped frontend had no lint gate anywhere, local or
+// CI; its own ts/*.test.ts files had no run-anywhere gate either (board-search-stem-lookup) —
+// WebTsTest closes that the same way WebTsLint closed the lint gap.
 Task("Test")
 	.IsDependentOn("Build")
 	.IsDependentOn("FormatVerify")
 	.IsDependentOn("WebTsLint")
+	.IsDependentOn("WebTsTest")
 	.Does(() =>
 	{
 		// Ensure Playwright browser binaries are installed for the E2E suite.
@@ -650,6 +653,19 @@ Task("WebTsInstall")
 Task("WebTsLint")
 	.IsDependentOn("WebTsInstall")
 	.Does(() => RunBun("run lint", webDir));
+
+// board-search-stem-lookup: this app's ts/*.test.ts files (board.test.ts, search-index.test.ts, …)
+// existed before this but ran NOWHERE in the gate — `node --test`/`bun test` was a comment telling
+// a human how to run them by hand, the same class of gap TsSdkTest/TsWireTest already closed for
+// the published SDKs (see SdkChecks' own header comment: "the SDKs shipped to public registries
+// unchecked by anything" before that fix). search-index.test.ts is the TS half of the C#<->TS
+// stemmer fixture-parity gate (tests/fixtures/board-search-stem-fixture.json, asserted from BOTH
+// sides — BoardSearchStemFixtureTests.cs on the .NET side) — a divergence there MUST fail the
+// gate, which is impossible if nothing ever runs this file. `bun test` (not `node --test`)
+// mirrors TsSdkTest/TsWireTest's own invocation and auto-discovers every `*.test.ts` under webDir.
+Task("WebTsTest")
+	.IsDependentOn("WebTsInstall")
+	.Does(() => RunBun("test", webDir));
 
 // `SdkChecks` IS the client-SDK gate — lint + typecheck + test for the TS and Python SDKs we
 // publish to npm/PyPI, and nothing from the .NET chain. It exists as its own target so CI can

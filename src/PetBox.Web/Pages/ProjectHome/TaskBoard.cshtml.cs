@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Caching.Memory;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -9,6 +10,7 @@ using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
 using PetBox.Web.Rendering;
+using PetBox.Web.Search;
 using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -32,14 +34,23 @@ public sealed class TaskBoardModel : PageModel
 	// autolinking may omit it. Null = no memory refs, keys render literal.
 	readonly PetBox.Memory.Contract.IMemoryService? _memory;
 
+	// board-search-stem-lookup: caches OnGetSearchIndexAsync's built BoardSearchIndex keyed by
+	// (project,board,boardVersion) — same optional-DI-param posture as _memory above (IMemoryCache
+	// is registered unconditionally via AddMemoryCache(), so real requests always get the shared
+	// singleton; a bare `new TaskBoardModel(...)` unit test that never calls the handler gets a
+	// throwaway per-instance cache instead of null-ref'ing).
+	readonly IMemoryCache _searchIndexCache;
+
 	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
-		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null)
+		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null,
+		IMemoryCache? searchIndexCache = null)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
 		_settings = settings;
 		_memory = memory;
+		_searchIndexCache = searchIndexCache ?? new MemoryCache(new MemoryCacheOptions());
 	}
 
 	// Memory-key autolinking is a Memory-module affordance: with the feature off there is no store
@@ -307,6 +318,59 @@ public sealed class TaskBoardModel : PageModel
 			NodeRefs = nodeRefs,
 			MemoryRefs = memoryRefs,
 		});
+	}
+
+	// board-search-stem-lookup: the client-fetched {stem -> node index} search lookup ts/board.ts
+	// uses for instant text filtering — replaces the old per-card `data-search` blob that stamped
+	// title+key+FULL BODY+tags onto every card (the body shipped TWICE: rendered HTML + the
+	// attribute; 294KB gzip on the real `work` board). Same door as OnGetNodeBodyAsync above: a
+	// page handler on THIS model reuses the class-level [Authorize(Policy="WorkspaceViewer")] +
+	// the BoardExistsAsync guard — no new auth surface.
+	//
+	// Owner's explicit correction to the first draft of this card: the lookup must NOT ride in the
+	// page's own HTML (stemming ~500 nodes' worth of text on every board render would undo the
+	// 380ms->20-60ms win board-page-cost just bought). So this is its OWN cacheable resource:
+	//   - ETag = ITasksService.GetBoardChangeStampAsync — a SCALAR SQL probe (MAX(Version) over
+	//     plan_nodes UNIONED with the latest node_tag mutation timestamp; see that method's own
+	//     comment for why tags need their own leg), never a node materialization — cheap enough to
+	//     run on EVERY call to this handler, including a 304 revalidation that changed nothing.
+	//     (The first draft called GetAsync(includeBody:false) here, which is body-less but still
+	//     materializes every node row — review finding: wrong cost for "did anything change".)
+	//   - Cache-Control "private, no-cache": a browser caches the body but MUST revalidate with
+	//     If-None-Match before using it — an unchanged board round-trips a 304 (small) instead of
+	//     the ~124KB gzip body, but a changed one is never served stale.
+	//   - A server-side IMemoryCache holds the BUILT index keyed by (project,board,stamp), so a
+	//     given board state is stemmed ONCE regardless of how many browsers/tabs ask for it — the
+	//     bodies needed to build it are read via a SEPARATE, independent GetAsync(includeBody:true)
+	//     call, only on a cache miss; the page's own render is untouched (still skips Body whenever
+	//     its view mode doesn't show it).
+	public async Task<IActionResult> OnGetSearchIndexAsync(CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		var stamp = await _tasks.GetBoardChangeStampAsync(ProjectKey, Board, ct);
+		var etag = $"\"sidx-{stamp.NodeVersion}-{stamp.TagStamp?.Ticks ?? 0}\"";
+		string? ifNoneMatch = null;
+		if (HttpContext is not null)
+		{
+			ifNoneMatch = HttpContext.Request.Headers.IfNoneMatch.ToString();
+			HttpContext.Response.Headers.CacheControl = "private, no-cache";
+			HttpContext.Response.Headers.ETag = etag;
+		}
+		if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
+			return StatusCode(304);
+
+		var cacheKey = $"board-search-index:{ProjectKey}:{Board}:{etag}";
+		if (!_searchIndexCache.TryGetValue(cacheKey, out BoardSearchIndex? index) || index is null)
+		{
+			var full = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: true, ct: ct);
+			index = BoardSearchIndexBuilder.Build(full.Nodes);
+			using var entry = _searchIndexCache.CreateEntry(cacheKey);
+			entry.SlidingExpiration = TimeSpan.FromMinutes(30);
+			entry.Value = index;
+		}
+		return new JsonResult(index);
 	}
 
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under `nodeId` — a

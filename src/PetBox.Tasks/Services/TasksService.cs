@@ -726,6 +726,46 @@ public sealed partial class TasksService : ITasksService
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.SpecBoard, nodes);
 	}
 
+	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
+	// cache/ETag probe that must stay a scalar SQL aggregate, not a node materialization) and why
+	// it composes TWO sources, NOT just plan_nodes.Version. plan_nodes.Version covers
+	// title/body/status/priority/type (PlanNode.SamePayload) AND node deaths (TemporalStore stamps
+	// a closed row's ActiveTo with the batch's nextVersion, > any prior Version). What it does NOT
+	// cover: a tag-ONLY edit. Tags are not part of PlanNode.SamePayload — adding/removing a tag
+	// (TagStore.SetAsync) writes node_tag directly and never touches plan_nodes at all, so the
+	// node's own Version is UNCHANGED. A probe over plan_nodes.Version alone would therefore serve
+	// a 304 with a stale cached index after a pure tag edit — BoardChangeStampTests.cs
+	// (TagOnlyChange_ChangesTheStamp_EvenWithNoNodeEdit) pins exactly this.
+	//
+	// The tag leg is ONE query, not two: `max(coalesce(ValidTo, ValidFrom))` — monotonic over BOTH
+	// operations an SCD-2 row can undergo (an add moves ValidFrom; a remove stamps ValidTo on the
+	// SAME row without touching its ValidFrom), because time only moves forward — whichever
+	// happened MOST RECENTLY for a row is exactly what coalesce(ValidTo, ValidFrom) reports for
+	// it, and MAX over that finds the board's most recent tag mutation either way. (Review
+	// finding: an earlier draft computed max(ValidFrom) and max(ValidTo) as TWO separate queries —
+	// functionally equivalent, but real-prod EXPLAIN QUERY PLAN showed the coalesce form alone
+	// resolves through node_tag's index while the split form did not; one query, one index hit.)
+	//
+	// Two LINQ scalar aggregates total, sequential — NOT Task.WhenAll (conn-safety: a linq2db
+	// DataConnection is one ADO.NET connection, not thread-safe for concurrent commands; parallel
+	// awaits on the SAME `ctx` race, and there is nothing real to win — measured ~0.5ms combined
+	// on real prod data, 3439 plan_nodes / 1548 node_tag rows). No raw SQL either
+	// (query-through-linq2db-only) — each stays a typed LINQ query the provider translates to its
+	// own `SELECT max(...)`, no row materialization.
+	public async Task<BoardChangeStamp> GetBoardChangeStampAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+
+		var nodeVersion = await ctx.PlanNodes.Where(n => n.Board == board)
+			.Select(n => (long?)n.Version).MaxAsync(ct) ?? 0;
+
+		var tagStamp = await ctx.NodeTags.Where(t => t.Board == board)
+			.Select(t => (DateTime?)(t.ValidTo ?? t.ValidFrom)).MaxAsync(ct);
+
+		return new BoardChangeStamp(nodeVersion, tagStamp);
+	}
+
 	public async Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(nodeId)) return null;

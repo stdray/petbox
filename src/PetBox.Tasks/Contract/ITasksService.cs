@@ -151,6 +151,17 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// field off) skip the column in the DB read entirely — every PlanNodeView.Body comes back
 	// "" instead. Callers that need the real body (GetNodeAsync, tasks_search, …) never set this.
 	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default);
+	// board-search-stem-lookup: a SCALAR "has this board changed at all" probe — two independent
+	// SQL aggregates (MAX(Version) over plan_nodes, MAX(ValidFrom/ValidTo) over node_tag), NO row
+	// materialization. Exists specifically for a cache/ETag check that must stay cheap on EVERY
+	// call (including a 304 revalidation) — GetAsync(includeBody:false) is already lean (no Body
+	// column), but it still selects and materializes every node row, which is the wrong cost for
+	// "did anything change" alone. Node tags are the reason this isn't just MAX(Version): they live
+	// in a SEPARATE SCD-2 table (node_tag: ValidFrom/ValidTo) that TagStore.SetAsync never threads
+	// back into the owning PlanNode's own Version column, so a probe over plan_nodes alone would
+	// miss a tag-only edit (add/remove a tag with no other change) and serve a stale cached
+	// lookup after one.
+	Task<BoardChangeStamp> GetBoardChangeStampAsync(string projectKey, string board, CancellationToken ct = default);
 	// One node by its stable NodeId alone (cross-board): the enriched node view + its owning
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).

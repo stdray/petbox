@@ -1,3 +1,4 @@
+import { type BoardSearchIndex, matchingNodeIds } from "./search-index";
 import { readUiState, writeUiState } from "./ui-state";
 
 // Task board view interactivity — collapse / filter / active-only / sort. Imperative (mirrors
@@ -186,6 +187,30 @@ export function initBoardPage(): void {
 	const elSortDir = document.querySelector<HTMLButtonElement>("[data-testid='board-sort-dir']");
 	const boardKey = document.querySelector<HTMLElement>("[data-testid='board-view-meta']")?.dataset["boardKey"];
 
+	// board-search-stem-lookup: the stemmed {stem -> node} search lookup (title+key+body+tags),
+	// fetched ONCE per board load — never per keystroke, so the "search stays instant" promise
+	// holds even though it now depends on a network round trip. TaskBoard.cshtml.cs's
+	// OnGetSearchIndexAsync sets an ETag on the board's own version cursor + Cache-Control:
+	// private, no-cache, so an unchanged board round-trips a cheap 304 (the browser's own HTTP
+	// cache handles the revalidation, no manual ETag bookkeeping needed here). `boardKey` is only
+	// set on TaskBoard's own page (not the cross-scope Search results page, which reuses this same
+	// apply() over _TaskTable.cshtml but has no single board to index) — searchIndex simply stays
+	// null there, and matchesText below falls back to the pre-existing `data-search` substring
+	// check, exactly as before this card. It also stays null (same fallback) during the brief
+	// window before the fetch resolves, or if it fails outright.
+	let searchIndex: BoardSearchIndex | null = null;
+	if (boardKey) {
+		fetch(`${window.location.pathname}?handler=SearchIndex`, { credentials: "same-origin" })
+			.then((r) => (r.ok ? (r.json() as Promise<BoardSearchIndex>) : null))
+			.then((data) => {
+				searchIndex = data;
+				apply();
+			})
+			.catch(() => {
+				/* offline/network hiccup — apply() keeps using the data-search substring fallback */
+			});
+	}
+
 	// Initial state comes from what the SERVER already rendered — checkbox `checked`, select
 	// `value`, the arrow glyph — never storage, so a toggle always starts from what's actually on
 	// screen (mirrors ts/sidebar.ts's isPinned() reading the DOM instead of a cookie/localStorage).
@@ -256,6 +281,21 @@ export function initBoardPage(): void {
 		}
 	}
 
+	// board-search-stem-lookup: text-query matching. When the stem lookup has loaded, a query word
+	// is stemmed and PREFIX-matched against the lookup (see ts/search-index.ts's matchingNodeIds
+	// for why prefix, not exact-stem-equality — it's what reproduces the server's own FTS recall,
+	// e.g. "деплой" finding a body that says "деплоем"), words ANDed together. Otherwise (index not
+	// loaded yet, or no boardKey — the cross-scope Search page) falls back to the ORIGINAL
+	// substring check against `data-search` (title+key+tags — never the body, board-body-truncate),
+	// unchanged from before this card.
+	function matchesText(id: string, d: DOMStringMap, q: string): boolean {
+		if (searchIndex) {
+			const matched = matchingNodeIds(searchIndex, q);
+			return matched === null || matched.has(id);
+		}
+		return (d["search"] ?? "").includes(q);
+	}
+
 	function apply(): void {
 		const q = (elText?.value ?? "").trim().toLowerCase();
 		const fs = elStatus?.value ?? "";
@@ -267,7 +307,7 @@ export function initBoardPage(): void {
 			else if (hiddenByCollapse(id)) show = false;
 			else if (fs && d["status"] !== fs) show = false;
 			else if (ft && d["type"] !== ft) show = false;
-			else if (q && !(d["search"] ?? "").includes(q)) show = false;
+			else if (q && !matchesText(id, d, q)) show = false;
 			// Inline display, NOT the `hidden` attribute: the <li> carries daisyUI's `.card`
 			// (display:flex), an author rule that beats the UA `[hidden]{display:none}` — so
 			// el.hidden wouldn't actually hide anything. Inline style wins the cascade.
