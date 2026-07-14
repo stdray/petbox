@@ -35,8 +35,7 @@
             "match": [{"host": ["petbox.3po.su"]}],
             "handle": [{
               "handler": "reverse_proxy",
-              "upstreams": [{"dial": "localhost:8083"}],
-              "flush_interval": -1
+              "upstreams": [{"dial": "localhost:8083"}]
             }]
           }],
           "errors": {

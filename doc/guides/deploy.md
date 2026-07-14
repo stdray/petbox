@@ -107,8 +107,12 @@ docker run --rm ghcr.io/stdray/petbox:latest --hash-password 'your-strong-passwo
 
 Цепочка для petbox: `:443` → app `layer4` (SNI-мультиплексор, матчит `petbox.3po.su`) →
 `127.0.0.1:8444` → http-сервер `petbox_l7` (TLS) → `reverse_proxy` → `localhost:8083`
-(контейнер petbox). `flush_interval: -1` на этом route — то же, что раньше жило в
-Caddyfile fragment, для SSE live-tail.
+(контейнер petbox).
+
+`flush_interval: -1` на этом route НЕ ставим. Он был в мёртвом Caddyfile fragment, то есть
+на проде не применялся никогда; попытка перенести его в caddy.json — непроверенное изменение
+горячего пути (отключает буферизацию ответа) ради SSE live-tail, который и без него работает.
+Если он всё же понадобится — вводить отдельно и с замерами, а не прицепом.
 
 `petbox_l7` также несёт заглушку на деплой: если backend недоступен (502/504), Caddy
 вместо сырого 502 отдаёт `503` с `Retry-After: 60` — JSON на `/api/*`, `/mcp`, `/health`,

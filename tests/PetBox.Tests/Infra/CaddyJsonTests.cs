@@ -16,11 +16,12 @@ public sealed class CaddyJsonTests
 	}
 
 	[Fact]
-	public void Config_Has_FlushInterval_Minus_One_For_SSE()
+	public void Config_Does_Not_Carry_FlushInterval()
 	{
 		var text = File.ReadAllText(FindCaddyJson());
-		text.Should().Contain("\"flush_interval\": -1",
-			"SSE live-tail relies on Caddy not buffering the reverse-proxy response body");
+		text.Should().NotContain("flush_interval",
+			"it only ever lived in the dead Caddyfile fragment, so prod never ran it — reintroducing it " +
+			"changes the hot path (response buffering off) untested; add it deliberately, with measurements, or not at all");
 	}
 
 	[Fact]
