@@ -194,13 +194,18 @@ records**, not the working plan — do not treat them as current state.
   (`dotnet format --verify-no-changes`) + `Test` + the TS and Python SDK
   lint/typecheck/test targets.
 - **Client publish targets:** `NuGetPush` (.NET → nuget.org), `NpmPublish`
-  (TS → npmjs), `PyPiPublish` (Python → PyPI) — each fired by its own tag.
+  (TS SDK → npmjs), `NpmWirePublish` (the `petbox-wire` kit → npmjs), `PyPiPublish`
+  (Python → PyPI) — each fired by its own tag. The version is stamped by GitVersion at
+  pack time; never bump `package.json` by hand. `NpmWirePublish` DEPENDS on `TsWireTest`
+  + `TsWireTypecheck`, so a red kit cannot reach npm — and until the kit is published,
+  no fix reaches anyone who installs it with `npx petbox-wire@latest`.
 - **Dev loop:** `./build.ps1 -Target Dev` runs `bun run dev` (ts + css watchers) and
   `dotnet watch run` side by side from `src/PetBox.Web`.
 - **CI:** `.github/workflows/ci.yml` on push to `main` runs the `Test` target; a
   parallel job builds and pushes the Docker image to ghcr.io. Tags trigger extra
-  jobs: `deploy` (SSH deploy + post-deploy health smoke), `nuget`/`npm`/`pypi`
-  (client publish).
+  jobs: `deploy` (SSH deploy + post-deploy health smoke), `nuget`/`npm`/`npm-wire`/`pypi`
+  (client publish). Every publishing tag is moved the same way as `deploy`:
+  `git tag -f <tag> <sha> && git push origin <tag> --force`.
 - **Deploy:** manual `deploy` tag only — move the tag to the target commit and push
   it (`git tag -f deploy <sha> && git push origin deploy --force`). The tag run is a
   FULL run of `ci.yml`: it re-runs `test`, rebuilds and pushes the image, and only then
