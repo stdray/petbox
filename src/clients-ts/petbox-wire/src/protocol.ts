@@ -63,9 +63,9 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`. When spawning workers, write their self-intro into the brief (they never see this).
+\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`.
 
-**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`; lead with worker preamble.
+**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`.
 
 Orchestrator notes (from definition): ${notes}`;
   }
