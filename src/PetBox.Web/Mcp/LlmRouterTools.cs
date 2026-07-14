@@ -52,7 +52,9 @@ public static class LlmRouterTools
 		Replace the project's LLM router registry. Requires llm:admin.
 		`config` is a JSON object:
 		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ],
-		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"? } ],
+		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "embedSpaceId"? } ],
+		    // embedSpaceId (embed routes only): the canonical vector-index key. Omit/null = use model.
+		    // Give two embed routes the SAME embedSpaceId to make their vectors share one index space.
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; omit to keep existing }
 		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
 		""")]

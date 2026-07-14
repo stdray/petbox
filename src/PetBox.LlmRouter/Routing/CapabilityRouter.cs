@@ -44,24 +44,30 @@ public sealed partial class CapabilityRouter : ILlmClient
 
 	public async Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
 	{
-		var (vectors, served, model) = await RunChainAsync(projectKey, LlmCapability.Embed, request.Tier,
+		var (vectors, served, route) = await RunChainAsync(projectKey, LlmCapability.Embed, request.Tier,
 			(http, ep, key, route) => _upstream.EmbedAsync(http, ep.BaseUrl, key, route.Model, request.Inputs, ct), ct);
 		var dim = vectors.Count > 0 ? vectors[0].Length : (int?)null;
-		return new EmbedResult(vectors, new ModelIdentity(model, dim), served);
+		// THE decoupling: the provider was called with route.Model (above), but the identity that keys
+		// the vector index is EmbedSpaceId when the route declares one — so a fallback provider whose
+		// Model string differs still lands vectors in the SAME space as the primary. Null EmbedSpaceId
+		// falls back to Model: the pre-existing index (keyed by the home model name) stays valid.
+		return new EmbedResult(vectors, new ModelIdentity(route.EmbedSpaceId ?? route.Model, dim), served);
 	}
 
 	public async Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default)
 	{
-		var (hits, served, model) = await RunChainAsync(projectKey, LlmCapability.Rerank, request.Tier,
+		var (hits, served, route) = await RunChainAsync(projectKey, LlmCapability.Rerank, request.Tier,
 			(http, ep, key, route) => _upstream.RerankAsync(http, ep.BaseUrl, key, route.Model, request.Query, request.Documents, request.TopN, ct), ct);
-		return new RerankResult(hits, new ModelIdentity(model), served);
+		// Rerank identity is the provider model, unchanged — EmbedSpaceId is embed-only.
+		return new RerankResult(hits, new ModelIdentity(route.Model), served);
 	}
 
 	public async Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 	{
-		var (text, served, model) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,
+		var (text, served, route) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,
 			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, ct), ct);
-		return new ChatResult(text, new ModelIdentity(model), served);
+		// Chat identity is the provider model, unchanged — EmbedSpaceId is embed-only.
+		return new ChatResult(text, new ModelIdentity(route.Model), served);
 	}
 
 	public async Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default)
@@ -76,8 +82,10 @@ public sealed partial class CapabilityRouter : ILlmClient
 			});
 	}
 
-	// The shared fallback walk for all three capabilities.
-	async Task<(TRaw Raw, ServedBy Served, string Model)> RunChainAsync<TRaw>(
+	// The shared fallback walk for all three capabilities. Returns the winning LlmRoute (not just its
+	// Model) so each capability can derive its OWN identity from it: Embed keys the index by
+	// EmbedSpaceId ?? Model, Chat/Rerank by Model. ServedBy still reports the concrete provider Model.
+	async Task<(TRaw Raw, ServedBy Served, LlmRoute Route)> RunChainAsync<TRaw>(
 		string projectKey, LlmCapability cap, string? tier,
 		Func<HttpClient, LlmEndpoint, string?, LlmRoute, Task<TRaw>> call,
 		CancellationToken ct)
@@ -125,7 +133,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 				var raw = await call(http, ep, apiKey, route);
 				_breaker.RecordSuccess(ep.Name);
 				LogServed(_log, cap, ep.Name, route.Model, attempt);
-				return (raw, new ServedBy(ep.Name, route.Model, attempt, false), route.Model);
+				return (raw, new ServedBy(ep.Name, route.Model, attempt, false), route);
 			}
 			catch (LlmUpstreamException ux) when (!ux.Transient)
 			{

@@ -64,7 +64,8 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 				r.Model,
 				r.Priority,
 				r.Tier,
-				r.Thinking is null ? null : Enum.Parse<LlmThinking>(r.Thinking, ignoreCase: true))))
+				r.Thinking is null ? null : Enum.Parse<LlmThinking>(r.Thinking, ignoreCase: true),
+				r.EmbedSpaceId)))
 			.ToList();
 
 		return new LlmLevelSnapshot(endpoints, routes);
@@ -170,6 +171,7 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 			Priority = r.Route.Priority,
 			Tier = r.Route.Tier,
 			Thinking = r.Route.Thinking?.ToString(),
+			EmbedSpaceId = r.Route.EmbedSpaceId,
 			UpdatedAt = now,
 			UpdatedBy = updatedBy,
 		}).ToList();

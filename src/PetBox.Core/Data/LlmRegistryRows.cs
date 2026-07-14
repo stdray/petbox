@@ -52,6 +52,11 @@ public sealed record LlmRouteRow
 	[Column, Nullable] public string? Tier { get; init; }
 	[Column, Nullable] public string? Thinking { get; init; }
 
+	// EMBED-ONLY canonical vector-index key, decoupled from the provider Model (see LlmRoute.EmbedSpaceId).
+	// NULL = use Model (the pre-existing behaviour; existing vectors keyed by the home model name stay
+	// valid). Added by M046; older rows read back NULL, which is exactly the backward-compatible default.
+	[Column, Nullable] public string? EmbedSpaceId { get; init; }
+
 	[Column, NotNull] public DateTime UpdatedAt { get; init; }
 	[Column, Nullable] public long? UpdatedBy { get; init; }
 }

@@ -208,6 +208,7 @@ TABLE llm_endpoints
 
 TABLE llm_routes
   COL Capability TEXT NOT NULL
+  COL EmbedSpaceId TEXT NULL
   COL Endpoint TEXT NOT NULL
   COL Id TEXT NOT NULL PK1
   COL Model TEXT NOT NULL
