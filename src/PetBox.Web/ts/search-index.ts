@@ -1,5 +1,3 @@
-import { newStemmer } from "snowball-stemmers";
-
 // board-search-stem-lookup: the client half of the board search stem lookup. Server side
 // (PetBox.Web/Search/BoardSearchIndexBuilder.cs) builds `{stem -> node indices}` from
 // PetBox.Core.Search.TokenStemmer/FtsQuery.Tokens and serves it from TaskBoard.cshtml.cs's
@@ -14,19 +12,53 @@ import { newStemmer } from "snowball-stemmers";
 // silently misses. tests/fixtures/board-search-stem-fixture.json is the ONE fixture both
 // search-index.test.ts (this file) and BoardSearchStemFixtureTests.cs (the C# side) assert
 // against — a divergence fails the gate on both.
+//
+// bundle-size review finding: `snowball-stemmers` bundles ALL 24 languages in one file bun/esbuild
+// cannot tree-shake (it's a single `newStemmer(locale)` switch, not per-language ES modules) — a
+// STATIC `import` here added +36.7KB gzip to `site.js`, the GLOBAL bundle `_Layout.cshtml` loads
+// on every page. So the import is DYNAMIC (`await import(...)`), which bun code-splits into its
+// OWN chunk: zero bytes of it reach `site.js`, and the chunk itself only loads when
+// `ensureStemmersLoaded()` is actually called — board.ts wires that call to the search box's
+// FIRST `input` event, never to page load, and never on any page but the task board. `stem()`
+// stays a SYNCHRONOUS function (the prefix-matching loops in matchingNodeIds below read much
+// cleaner without async threaded through them) — callers MUST await ensureStemmersLoaded() once
+// before the first call; board.ts's apply()/matchesText() enforce that ordering (searchIndex is
+// only ever set, non-null, after the combined load promise resolves — see board.ts).
+type SnowballModule = typeof import("snowball-stemmers");
+let modulePromise: Promise<SnowballModule> | null = null;
+let russian: import("snowball-stemmers").Stemmer | null = null;
+let english: import("snowball-stemmers").Stemmer | null = null;
 
-const russian = newStemmer("russian");
-const english = newStemmer("english");
+// Kicks off (once — memoized in `modulePromise`, safe to call on every keystroke) the dynamic
+// import of the stemmer chunk and builds both stemmer instances. Resolves once `stem()` is safe
+// to call.
+export function ensureStemmersLoaded(): Promise<void> {
+	modulePromise ??= import("snowball-stemmers");
+	return modulePromise.then((mod) => {
+		russian ??= mod.newStemmer("russian");
+		english ??= mod.newStemmer("english");
+	});
+}
 
 // Mirrors PetBox.Core.Search.TokenStemmer.Stem exactly: per-CHARACTER script routing (first
 // Cyrillic character seen -> russian stemmer, first a-z -> english), not per-document — content
 // here is mixed ru/en prose full of English identifiers, so the token itself decides. A token
 // with neither (pure digits, an identifier like "OTLP" after lowercasing still has a-z... digits
 // alone, or another script) passes through unchanged.
+//
+// Requires ensureStemmersLoaded() to have already resolved (see that function's own comment) —
+// throws loudly rather than silently mis-stemming if a caller skips the load, since that would
+// otherwise fail in the much quieter way of "search returns nothing, for no visible reason".
 export function stem(token: string): string {
 	for (const ch of token) {
-		if ((ch >= "а" && ch <= "я") || ch === "ё") return russian.stem(token);
-		if (ch >= "a" && ch <= "z") return english.stem(token);
+		if ((ch >= "а" && ch <= "я") || ch === "ё") {
+			if (!russian) throw new Error("search-index.stem(): called before ensureStemmersLoaded() resolved");
+			return russian.stem(token);
+		}
+		if (ch >= "a" && ch <= "z") {
+			if (!english) throw new Error("search-index.stem(): called before ensureStemmersLoaded() resolved");
+			return english.stem(token);
+		}
 	}
 	return token;
 }

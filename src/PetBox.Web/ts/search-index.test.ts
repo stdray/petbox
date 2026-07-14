@@ -13,7 +13,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { type BoardSearchIndex, matchingNodeIds, stem, tokens } from "./search-index.ts";
+import { type BoardSearchIndex, ensureStemmersLoaded, matchingNodeIds, stem, tokens } from "./search-index.ts";
+
+// board-search-stem-lookup, lazy load: stem() now throws unless ensureStemmersLoaded() already
+// resolved (see search-index.ts's own comment — the dynamic import that keeps the stemmer out of
+// the global site.js bundle). A top-level await here blocks the rest of THIS module's synchronous
+// body — including every test() registration below — until the (real, not test-doubled) stemmer
+// chunk has loaded, so every test body (which runs later, once the runner starts executing
+// registered tests) finds it ready.
+await ensureStemmersLoaded();
 
 interface Fixture {
 	stems: { word: string; stem: string }[];

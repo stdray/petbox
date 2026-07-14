@@ -1,4 +1,4 @@
-import { type BoardSearchIndex, matchingNodeIds } from "./search-index";
+import { type BoardSearchIndex, ensureStemmersLoaded, matchingNodeIds } from "./search-index";
 import { readUiState, writeUiState } from "./ui-state";
 
 // Task board view interactivity — collapse / filter / active-only / sort. Imperative (mirrors
@@ -187,29 +187,17 @@ export function initBoardPage(): void {
 	const elSortDir = document.querySelector<HTMLButtonElement>("[data-testid='board-sort-dir']");
 	const boardKey = document.querySelector<HTMLElement>("[data-testid='board-view-meta']")?.dataset["boardKey"];
 
-	// board-search-stem-lookup: the stemmed {stem -> node} search lookup (title+key+body+tags),
-	// fetched ONCE per board load — never per keystroke, so the "search stays instant" promise
-	// holds even though it now depends on a network round trip. TaskBoard.cshtml.cs's
-	// OnGetSearchIndexAsync sets an ETag on the board's own version cursor + Cache-Control:
-	// private, no-cache, so an unchanged board round-trips a cheap 304 (the browser's own HTTP
-	// cache handles the revalidation, no manual ETag bookkeeping needed here). `boardKey` is only
-	// set on TaskBoard's own page (not the cross-scope Search results page, which reuses this same
-	// apply() over _TaskTable.cshtml but has no single board to index) — searchIndex simply stays
-	// null there, and matchesText below falls back to the pre-existing `data-search` substring
-	// check, exactly as before this card. It also stays null (same fallback) during the brief
-	// window before the fetch resolves, or if it fails outright.
+	// board-search-stem-lookup: the stemmed {stem -> node} search lookup (title+key+body+tags) AND
+	// its TS stemmer (ts/search-index.ts's dynamic import) are both LAZY — see
+	// triggerLazySearchLoad below for the full reasoning (bundle-size review: a static import used
+	// to ship the stemmer in the GLOBAL site.js, +36.7KB gzip on EVERY page, board or not). Neither
+	// loads at page load; both load together, once, on the search box's first `input` event.
+	// `boardKey` is only set on TaskBoard's own page (not the cross-scope Search results page,
+	// which reuses this same apply() over _TaskTable.cshtml but has no single board to index) —
+	// searchIndex simply stays null there, and matchesText below falls back to the pre-existing
+	// `data-search` substring check, exactly as before this card. It also stays null (same
+	// fallback) during the load window, or if the load fails outright.
 	let searchIndex: BoardSearchIndex | null = null;
-	if (boardKey) {
-		fetch(`${window.location.pathname}?handler=SearchIndex`, { credentials: "same-origin" })
-			.then((r) => (r.ok ? (r.json() as Promise<BoardSearchIndex>) : null))
-			.then((data) => {
-				searchIndex = data;
-				apply();
-			})
-			.catch(() => {
-				/* offline/network hiccup — apply() keeps using the data-search substring fallback */
-			});
-	}
 
 	// Initial state comes from what the SERVER already rendered — checkbox `checked`, select
 	// `value`, the arrow glyph — never storage, so a toggle always starts from what's actually on
@@ -296,6 +284,41 @@ export function initBoardPage(): void {
 		return (d["search"] ?? "").includes(q);
 	}
 
+	// board-search-stem-lookup, lazy load: kicks off the `?handler=SearchIndex` fetch AND the
+	// stemmer chunk (search-index.ts's dynamic `import("snowball-stemmers")`) together, exactly
+	// ONCE (searchLoadStarted guards every later keystroke into a no-op) — wired to the search
+	// box's FIRST `input` event below, never to page load. Until this resolves, matchesText keeps
+	// using the data-search substring fallback, so the field never "sticks": every keystroke
+	// already re-filters the board on every call, just less precisely (no stemming, no
+	// cross-wordform match) until the chunk+lookup land.
+	//
+	// Race ("user types faster than the chunk loads"), handled explicitly: apply() always re-reads
+	// the CURRENT `elText.value` (and every other filter control) rather than anything captured at
+	// trigger time, so the ONE re-apply() below — once this resolves — reflects whatever the user
+	// has typed by THEN, not whatever triggered the load. "Last request wins" falls out of that
+	// naturally: there is nothing to compare or discard, because nothing here ever reads a stale
+	// snapshot in the first place.
+	let searchLoadStarted = false;
+	function triggerLazySearchLoad(): void {
+		if (searchLoadStarted || !boardKey) return;
+		searchLoadStarted = true;
+		const indexFetch = fetch(`${window.location.pathname}?handler=SearchIndex`, { credentials: "same-origin" })
+			.then((r) => (r.ok ? (r.json() as Promise<BoardSearchIndex>) : null))
+			.catch(() => null);
+		// Tracks success/failure rather than letting a rejection propagate: matchesText's stemmed
+		// path (matchingNodeIds -> stem()) THROWS if called before the stemmer chunk is actually
+		// ready, so `searchIndex` must only ever go non-null when BOTH legs truly succeeded — a
+		// fetched lookup with a failed stemmer chunk is just as unusable as no lookup at all.
+		const stemmerLoad = ensureStemmersLoaded().then(
+			() => true,
+			() => false,
+		);
+		void Promise.all([indexFetch, stemmerLoad]).then(([data, stemmerReady]) => {
+			searchIndex = stemmerReady ? data : null;
+			apply();
+		});
+	}
+
 	function apply(): void {
 		const q = (elText?.value ?? "").trim().toLowerCase();
 		const fs = elStatus?.value ?? "";
@@ -339,7 +362,10 @@ export function initBoardPage(): void {
 		if (boardKey) persistCollapsed(boardKey, collapsed);
 	});
 
-	elText?.addEventListener("input", apply);
+	elText?.addEventListener("input", () => {
+		triggerLazySearchLoad();
+		apply();
+	});
 	elStatus?.addEventListener("change", apply);
 	elType?.addEventListener("change", apply);
 	elActive?.addEventListener("change", () => {

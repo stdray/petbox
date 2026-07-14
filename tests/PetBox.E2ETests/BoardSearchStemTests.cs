@@ -111,4 +111,38 @@ public sealed class BoardSearchStemTests(WebAppFixture app, ITestOutputHelper ou
 		await Expect(_page.Locator("[data-node-key='and-both']")).ToBeVisibleAsync();
 		await Expect(_page.Locator("[data-node-key='and-log-only']")).ToBeVisibleAsync();
 	}
+
+	// bundle-size review finding (2026-07-14): a STATIC import of `snowball-stemmers` shipped it in
+	// site.js — the GLOBAL bundle every page loads via _Layout.cshtml — adding 36.7KB gzip to
+	// every single page view, board or not. Fixed with a DYNAMIC import (search-index.ts's
+	// ensureStemmersLoaded, bun `--splitting`) wired to the search box's first `input` event. This
+	// test is the empirical proof, not just a code-reading argument: it watches REAL network
+	// responses across a plain page, an untouched board load, and a board search, and asserts the
+	// stemmer chunk (`snowball-stemmers-*.js`) appears in EXACTLY the last one.
+	[Fact]
+	public async Task StemmerChunk_NeverLoadsOnAnyPage_UntilTheFirstSearchKeystroke()
+	{
+		var responses = new List<string>();
+		_page!.Response += (_, response) => responses.Add(response.Url);
+
+		// A plain, non-board page — the chunk must never even be requested.
+		await _page.GotoAsync($"/ui/{Ws}");
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		responses.Should().NotContain(u => u.Contains("snowball-stemmers", StringComparison.OrdinalIgnoreCase),
+			"a page with no search box must never fetch the stemmer chunk");
+
+		// The board page itself, freshly loaded, untouched — still must not request it.
+		responses.Clear();
+		await _page.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{Board}");
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		responses.Should().NotContain(u => u.Contains("snowball-stemmers", StringComparison.OrdinalIgnoreCase),
+			"the board page must not request the chunk on load — only the search box's first input triggers it");
+
+		// The user's first keystroke — NOW it must load, and load successfully.
+		var chunkResponse = _page.WaitForResponseAsync(
+			r => r.Url.Contains("snowball-stemmers", StringComparison.OrdinalIgnoreCase),
+			new PageWaitForResponseOptions { Timeout = 10_000 });
+		await _page.GetByTestId("board-filter-text").FillAsync("д");
+		(await chunkResponse).Status.Should().Be(200);
+	}
 }

@@ -5,10 +5,10 @@
 	"type": "module",
 	"scripts": {
 		"dev": "concurrently -n ts,css -c blue,magenta \"bun run dev:ts\" \"bun run dev:css\"",
-		"dev:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --watch",
+		"dev:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --splitting --watch",
 		"dev:css": "tailwindcss -i ./ts/app.css -o ./wwwroot/css/app.css --watch",
 		"build": "bun run typecheck && bun run build:ts && bun run build:css",
-		"build:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --minify",
+		"build:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --splitting --minify",
 		"build:css": "tailwindcss -i ./ts/app.css -o ./wwwroot/css/app.css --minify",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
