@@ -804,6 +804,19 @@ public partial class Program
 				if (!logStore.ExistsAsync(LogNames.SystemProject, LogNames.SelfLog).GetAwaiter().GetResult())
 					logStore.CreateAsync(LogNames.SystemProject, LogNames.SelfLog, "PetBox self-log")
 						.GetAwaiter().GetResult();
+
+				// The access-line log (self-telemetry-log-routing): the default SelfLogging routing
+				// rule sends RequestLoggingMiddleware's EventId 500-503 here instead of `petbox`. Log
+				// creation forbids public ingest auto-vivifying a log (log-create-before-ingest), so
+				// this must exist before the first request lands, same as `petbox` above. 14-day
+				// window is the owner's call — shorter than the system default because access lines
+				// are high-volume and low-value past ~2 weeks. Idempotent: an operator-adjusted
+				// retention on an existing `access` log is left alone across restarts — only the
+				// ExistsAsync gate decides whether to create, CreateAsync is never called on a log
+				// that already exists.
+				if (!logStore.ExistsAsync(LogNames.SystemProject, LogNames.AccessLog).GetAwaiter().GetResult())
+					logStore.CreateAsync(LogNames.SystemProject, LogNames.AccessLog, "PetBox self-log: access", retentionDays: 14)
+						.GetAwaiter().GetResult();
 			}
 		}
 

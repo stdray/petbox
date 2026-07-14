@@ -40,14 +40,21 @@ public sealed class SystemLogFlusher : BackgroundService
 			if (batch.Count == 0)
 				continue;
 
-			try
+			// Split by destination (self-telemetry-log-routing) and ingest each group on its own
+			// try/catch: one destination's failure must not take the other destination's group
+			// down with it — a mixed batch either lands fully on both logs, or the failing side
+			// alone is dropped and reported, never both.
+			foreach (var group in SelfLogRouter.Split(batch, _provider.Options.Routes))
 			{
-				await _pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, batch, CancellationToken.None).ConfigureAwait(false);
-			}
-			catch (Exception ex)
-			{
-				// Bypass ILogger — recursion would be ours. Console.Error is the safe sink.
-				await Console.Error.WriteLineAsync($"PetBox self-log flush failed: {ex.Message}").ConfigureAwait(false);
+				try
+				{
+					await _pipeline.IngestAsync(LogNames.SystemProject, group.Key, group.ToList(), CancellationToken.None).ConfigureAwait(false);
+				}
+				catch (Exception ex)
+				{
+					// Bypass ILogger — recursion would be ours. Console.Error is the safe sink.
+					await Console.Error.WriteLineAsync($"PetBox self-log flush failed ({group.Key}): {ex.Message}").ConfigureAwait(false);
+				}
 			}
 		}
 	}
