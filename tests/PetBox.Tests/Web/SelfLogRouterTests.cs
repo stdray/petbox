@@ -144,7 +144,7 @@ public sealed class SystemLogFlusherTests
 	sealed class RecordingPipeline : IIngestionPipeline
 	{
 		public readonly List<(string Project, string Log, IReadOnlyList<LogEntryCandidate> Batch)> Calls = [];
-		readonly object _gate = new();
+		readonly Lock _gate = new();
 
 		public ValueTask IngestAsync(string projectKey, string logName, IReadOnlyList<LogEntryCandidate> batch, CancellationToken ct)
 		{
