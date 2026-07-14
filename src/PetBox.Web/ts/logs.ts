@@ -347,6 +347,45 @@ document.addEventListener("click", (event) => {
 })();
 
 // ---------- Expandable event row ----------
+// A row the query path rendered always carries its `.event-details` sibling — baked in server-side by
+// _EventRow.cshtml. A row the live tail delivered (LogApi.RenderEvent, an SSE frame) does NOT: that
+// markup is hand-built for streaming speed and never carried the larger, chip-laden details block, so a
+// plain sibling-toggle was a no-op on it forever, even after live tail was switched off (the row stays
+// in the DOM with no sibling until the next reload). Details on demand: the FIRST click on such a row
+// fetches the very partial a non-live row already has (EventDetailsApi renders _EventDetails, the same
+// template _EventRow.cshtml uses inline) and inserts it as the missing sibling; every later click just
+// toggles what is now in the DOM, no refetch.
+const pendingDetailFetches = new WeakSet<HTMLTableRowElement>();
+
+async function fetchAndInsertDetails(row: HTMLTableRowElement): Promise<HTMLElement | null> {
+	const id = row.dataset["eventId"];
+	// project/log are not on the row itself (the SSE frame never carries them) — the live-tail toggle
+	// is the one element on the page that already knows both, rendered whenever a live row could exist.
+	const toggle = document.getElementById("live-tail-toggle") as HTMLInputElement | null;
+	const project = toggle?.dataset["project"];
+	const log = toggle?.dataset["log"];
+	if (!id || !project || !log) return null;
+
+	try {
+		const resp = await fetch(
+			`/api/logs/${encodeURIComponent(project)}/${encodeURIComponent(log)}/events/${encodeURIComponent(id)}`,
+		);
+		if (!resp.ok) return null;
+		const html = await resp.text();
+		const tmp = document.createElement("tbody");
+		tmp.innerHTML = html;
+		const details = tmp.firstElementChild as HTMLElement | null;
+		if (!details) return null;
+		row.after(details);
+		renderLocalTimes(details);
+		return details;
+	} catch {
+		// A dropped connection or a 404 (the event aged out between the SSE frame and the click) leaves
+		// the row exactly as it was — no broken table, just nothing to expand yet.
+		return null;
+	}
+}
+
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
 	if (!target) return;
@@ -358,7 +397,18 @@ document.addEventListener("click", (event) => {
 	const details = row.nextElementSibling as HTMLElement | null;
 	if (details?.classList.contains("event-details")) {
 		details.classList.toggle("hidden");
+		return;
 	}
+
+	if (pendingDetailFetches.has(row)) return;
+	pendingDetailFetches.add(row);
+	fetchAndInsertDetails(row)
+		.then((inserted) => inserted?.classList.remove("hidden"))
+		.finally(() => pendingDetailFetches.delete(row))
+		.catch(() => {
+			// fetchAndInsertDetails already swallows its own errors; this is belt-and-suspenders against
+			// an unhandled rejection from the .then/.finally chain itself.
+		});
 });
 
 // ---------- Live-tail SSE ----------
