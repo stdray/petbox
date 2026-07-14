@@ -6,6 +6,7 @@ using Google.Protobuf;
 using OpenTelemetry.Proto.Collector.Trace.V1;
 using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Trace.V1;
+using PetBox.Core.Json;
 using PetBox.Log.Core.Tracing;
 using ProtoSpan = OpenTelemetry.Proto.Trace.V1.Span;
 using ProtoSpanKind = OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind;
@@ -95,7 +96,7 @@ static class OtlpTracesParser
 			EndUnixNs = (long)(protoSpan.EndTimeUnixNano > protoSpan.StartTimeUnixNano ? protoSpan.EndTimeUnixNano : protoSpan.StartTimeUnixNano),
 			StatusCode = protoSpan.Status is null ? (int)SpanStatusCode.Unset : (int)MapStatus(protoSpan.Status.Code),
 			StatusDescription = protoSpan.Status?.Message is { Length: > 0 } msg ? msg : null,
-			AttributesJson = JsonSerializer.Serialize(attributes),
+			AttributesJson = JsonSerializer.Serialize(attributes, PetBoxJsonEncoder.SharedOptions),
 			EventsJson = SerializeEvents(protoSpan.Events),
 			LinksJson = SerializeLinks(protoSpan.Links),
 		};
@@ -130,12 +131,12 @@ static class OtlpTracesParser
 			var attrs = FlattenAttributes(e.Attributes);
 			list.Add(new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
-				["timestamp_unix_ns"] = JsonSerializer.SerializeToElement(e.TimeUnixNano),
-				["name"] = JsonSerializer.SerializeToElement(e.Name),
-				["attributes"] = JsonSerializer.SerializeToElement(attrs),
+				["timestamp_unix_ns"] = JsonSerializer.SerializeToElement(e.TimeUnixNano, PetBoxJsonEncoder.SharedOptions),
+				["name"] = JsonSerializer.SerializeToElement(e.Name, PetBoxJsonEncoder.SharedOptions),
+				["attributes"] = JsonSerializer.SerializeToElement(attrs, PetBoxJsonEncoder.SharedOptions),
 			});
 		}
-		return JsonSerializer.Serialize(list);
+		return JsonSerializer.Serialize(list, PetBoxJsonEncoder.SharedOptions);
 	}
 
 	static string SerializeLinks(Google.Protobuf.Collections.RepeatedField<ProtoSpan.Types.Link> links)
@@ -147,12 +148,12 @@ static class OtlpTracesParser
 			var attrs = FlattenAttributes(l.Attributes);
 			list.Add(new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
-				["trace_id"] = JsonSerializer.SerializeToElement(Convert.ToHexStringLower(l.TraceId.Span)),
-				["span_id"] = JsonSerializer.SerializeToElement(Convert.ToHexStringLower(l.SpanId.Span)),
-				["attributes"] = JsonSerializer.SerializeToElement(attrs),
+				["trace_id"] = JsonSerializer.SerializeToElement(Convert.ToHexStringLower(l.TraceId.Span), PetBoxJsonEncoder.SharedOptions),
+				["span_id"] = JsonSerializer.SerializeToElement(Convert.ToHexStringLower(l.SpanId.Span), PetBoxJsonEncoder.SharedOptions),
+				["attributes"] = JsonSerializer.SerializeToElement(attrs, PetBoxJsonEncoder.SharedOptions),
 			});
 		}
-		return JsonSerializer.Serialize(list);
+		return JsonSerializer.Serialize(list, PetBoxJsonEncoder.SharedOptions);
 	}
 
 	static ImmutableDictionary<string, JsonElement> FlattenAttributes(
@@ -175,11 +176,18 @@ static class OtlpTracesParser
 		return builder.ToImmutable();
 	}
 
+	// json-encoder-shared-globally: a bare `new Utf8JsonWriter(buffer)` defaults to the HTML-safe
+	// encoder, so a Cyrillic attribute VALUE (a service/app name) would be baked into \uXXXX HERE,
+	// before it ever reaches the outer JsonSerializer.Serialize(attributes, SharedOptions) calls —
+	// Clone() below carries these already-escaped bytes forward verbatim, so fixing only the outer
+	// call would not have fixed this.
+	static readonly JsonWriterOptions AnyValueWriterOptions = new() { Encoder = PetBoxJsonEncoder.Relaxed };
+
 	static JsonElement AnyValueToJson(AnyValue? value)
 	{
 		if (value is null) return JsonNull();
 		var buffer = new ArrayBufferWriter<byte>();
-		using (var writer = new Utf8JsonWriter(buffer))
+		using (var writer = new Utf8JsonWriter(buffer, AnyValueWriterOptions))
 			WriteAnyValue(writer, value);
 		using var doc = JsonDocument.Parse(buffer.WrittenMemory);
 		return doc.RootElement.Clone();
