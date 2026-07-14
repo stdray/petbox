@@ -349,6 +349,40 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("a body that must not leak into data-search");
 	}
 
+	// board-fields-slug-missing: the node key never rendered on a kanban card at all — this is the
+	// reported bug. Slug defaults ON in kanban (BoardFieldConfig.Default), and turning it off via
+	// the dialog's own selection mechanism (fieldsSet=1, no `fields=slug`) hides it — same
+	// selection-in-any-view-mode contract every other field already has.
+	[Fact]
+	public async Task TaskBoard_KanbanView_ShowsSlugField_OnByDefault_HiddenWhenToggledOff()
+	{
+		const string board = "viewmodekanbanslug";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban slug smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kslug1", Title = "Slug card" },
+			]);
+		}
+
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"node-leaf\">kslug1<");
+			html.Should().Contain("data-copy=\"kslug1\"");
+		}
+
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban&fieldsSet=1&fields=type"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().NotContain("data-testid=\"node-leaf\"");
+		}
+	}
+
 	[Fact]
 	public async Task TaskBoard_OutlineView_NavigateMode_NeverShipsTheBody()
 	{
@@ -492,6 +526,36 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("a wiki-length body that must never ship inline");
 		html.Should().Contain("data-testid=\"field-body\"");
 		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
+	}
+
+	// board-fields-slug-missing: slug (the node key) must be offered in the Board properties
+	// dialog like every other field — this was the missing half of the bug (it also never
+	// rendered on kanban, covered by TaskBoard_KanbanView_ShowsSlugField_OnByDefault_HiddenWhenToggledOff).
+	[Fact]
+	public async Task TaskBoard_FieldsDialog_OffersSlugCheckbox()
+	{
+		const string board = "viewmodefieldsdialogslug";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "fields dialog smoke");
+			// The bar that hosts the dialog only renders on a board with nodes (every view partial
+			// short-circuits to board-empty), so seed one.
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "fds1", Title = "FDS1" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"field-slug\"");
+		// Slug defaults ON everywhere, so the checkbox should be pre-checked here (no explicit
+		// selection made on this request).
+		html.Should().MatchRegex("data-testid=\"field-slug\"[^>]*checked=\"checked\"");
 	}
 
 	[Fact]

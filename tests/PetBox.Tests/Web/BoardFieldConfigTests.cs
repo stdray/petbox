@@ -18,6 +18,17 @@ public sealed class BoardFieldConfigTests
 		cfg.Tags.Should().BeTrue();
 		cfg.Status.Should().BeFalse();
 		cfg.Priority.Should().BeFalse();
+		cfg.Slug.Should().BeFalse();
+	}
+
+	// board-fields-slug-missing: slug (the node key) is a selectable field like any other — this
+	// pins down FromKeys actually recognizing it (BoardFieldNames.IsKnown), not just Default().
+	[Fact]
+	public void FromKeys_RecognizesSlug()
+	{
+		var cfg = BoardFieldConfig.FromKeys([BoardFieldNames.Slug]);
+		cfg.Slug.Should().BeTrue();
+		cfg.Type.Should().BeFalse();
 	}
 
 	[Fact]
@@ -30,13 +41,13 @@ public sealed class BoardFieldConfigTests
 	[Fact]
 	public void FromKeys_IsCaseInsensitive() =>
 		BoardFieldConfig.FromKeys(["STATUS", "Tags"]).Should().Be(new BoardFieldConfig(
-			Type: false, Status: true, Priority: false, Tags: true, UpdatedAt: false,
+			Slug: false, Type: false, Status: true, Priority: false, Tags: true, UpdatedAt: false,
 			Delivery: false, BlockedBy: false, Body: false));
 
 	[Fact]
 	public void ToCsv_RoundTripsThroughFromKeys()
 	{
-		var cfg = new BoardFieldConfig(Type: true, Status: false, Priority: true, Tags: false, UpdatedAt: true, Delivery: false, BlockedBy: true, Body: false);
+		var cfg = new BoardFieldConfig(Slug: true, Type: true, Status: false, Priority: true, Tags: false, UpdatedAt: true, Delivery: false, BlockedBy: true, Body: false);
 		var roundTripped = BoardFieldConfig.FromKeys(cfg.ToCsv().Split(',', StringSplitOptions.RemoveEmptyEntries));
 		roundTripped.Should().Be(cfg);
 	}
@@ -48,7 +59,8 @@ public sealed class BoardFieldConfigTests
 	[Fact]
 	public void Has_ReadsTheMatchingProperty()
 	{
-		var cfg = new BoardFieldConfig(Type: true, Status: false, Priority: true, Tags: false, UpdatedAt: false, Delivery: false, BlockedBy: false, Body: false);
+		var cfg = new BoardFieldConfig(Slug: true, Type: true, Status: false, Priority: true, Tags: false, UpdatedAt: false, Delivery: false, BlockedBy: false, Body: false);
+		cfg.Has(BoardFieldNames.Slug).Should().BeTrue();
 		cfg.Has(BoardFieldNames.Type).Should().BeTrue();
 		cfg.Has(BoardFieldNames.Status).Should().BeFalse();
 		cfg.Has("bogus").Should().BeFalse();
@@ -79,6 +91,19 @@ public sealed class BoardFieldConfigTests
 	public void Default_StatusField_PerMode(string viewMode, bool expected) =>
 		BoardFieldConfig.Default(viewMode, MethodologyRuntime.PresetsOnly, "work", outlineBodyDefault: false)
 			.Status.Should().Be(expected);
+
+	// board-fields-slug-missing: Slug defaults ON in every mode — kanban never showed the node key
+	// at all before this field existed (the reported bug) and the owner asked for it ON there
+	// explicitly; tree/tags, outline and table already rendered it UNCONDITIONALLY before this
+	// config existed, so ON here is "nothing visibly disappears" for them, not a new opinion.
+	[Theory]
+	[InlineData(BoardViewModeNames.Tree)]
+	[InlineData(BoardViewModeNames.Outline)]
+	[InlineData(BoardViewModeNames.Kanban)]
+	[InlineData(BoardViewModeNames.Table)]
+	public void Default_SlugField_OnInEveryMode(string viewMode) =>
+		BoardFieldConfig.Default(viewMode, MethodologyRuntime.PresetsOnly, "work", outlineBodyDefault: false)
+			.Slug.Should().BeTrue();
 
 	// board-view-defaults-not-applied-existing-instances' sibling guard: Default is PURE CODE, not
 	// methodology-definition data — an unrecognized/未 declared kind slug (as a pre-field-existing

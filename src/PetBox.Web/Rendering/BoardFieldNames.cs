@@ -1,7 +1,7 @@
 namespace PetBox.Web.Rendering;
 
 // The node properties a board's view MAY show, and their dialog labels (spec board-view-fields):
-// type, status, priority, tags, updatedAt, delivery, blockedBy, body. Purely a PRESENTATION
+// slug, type, status, priority, tags, updatedAt, delivery, blockedBy, body. Purely a PRESENTATION
 // vocabulary — unlike BoardViewModeNames (PetBox.Tasks.Workflow), nothing here is methodology
 // data: no MethodologyKindDef field stores a per-kind default set, so there is no "materialized at
 // instance-creation, never reaches an existing instance" trap to guard (board-view-defaults-not-
@@ -11,6 +11,7 @@ namespace PetBox.Web.Rendering;
 // existing board, nothing to migrate.
 public static class BoardFieldNames
 {
+	public const string Slug = "slug";
 	public const string Type = "type";
 	public const string Status = "status";
 	public const string Priority = "priority";
@@ -25,6 +26,7 @@ public static class BoardFieldNames
 	// one compare equal when they carry the same set.
 	public static readonly IReadOnlyList<(string Key, string Label)> Options =
 	[
+		(Slug, "Slug"),
 		(Type, "Type"),
 		(Status, "Status"),
 		(Priority, "Priority"),

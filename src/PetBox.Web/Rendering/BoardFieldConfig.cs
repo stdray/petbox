@@ -4,18 +4,19 @@ namespace PetBox.Web.Rendering;
 
 // Which node properties a board's cards/rows/columns show (spec board-view-fields): the ONE
 // config every view partial (Tree/Outline/Kanban's card, Table's row) reads to decide what to
-// render, so the SAME 8-field vocabulary (BoardFieldNames) works identically in every view mode —
+// render, so the SAME 9-field vocabulary (BoardFieldNames) works identically in every view mode —
 // the mode only picks the DEFAULT (below), never a ceiling on what's togglable. Threaded through
 // TaskBoardModel.PlanNodeCard and read directly off TaskBoardModel by the partials that don't go
 // through PlanNodeCard (Kanban/Outline/Table).
 public sealed record BoardFieldConfig(
-	bool Type, bool Status, bool Priority, bool Tags, bool UpdatedAt,
+	bool Slug, bool Type, bool Status, bool Priority, bool Tags, bool UpdatedAt,
 	bool Delivery, bool BlockedBy, bool Body)
 {
-	public static readonly BoardFieldConfig None = new(false, false, false, false, false, false, false, false);
+	public static readonly BoardFieldConfig None = new(false, false, false, false, false, false, false, false, false);
 
 	public bool Has(string key) => key switch
 	{
+		BoardFieldNames.Slug => Slug,
 		BoardFieldNames.Type => Type,
 		BoardFieldNames.Status => Status,
 		BoardFieldNames.Priority => Priority,
@@ -43,7 +44,7 @@ public sealed record BoardFieldConfig(
 	{
 		var set = (keys ?? []).Where(BoardFieldNames.IsKnown).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		return new BoardFieldConfig(
-			set.Contains(BoardFieldNames.Type), set.Contains(BoardFieldNames.Status),
+			set.Contains(BoardFieldNames.Slug), set.Contains(BoardFieldNames.Type), set.Contains(BoardFieldNames.Status),
 			set.Contains(BoardFieldNames.Priority), set.Contains(BoardFieldNames.Tags),
 			set.Contains(BoardFieldNames.UpdatedAt), set.Contains(BoardFieldNames.Delivery),
 			set.Contains(BoardFieldNames.BlockedBy), set.Contains(BoardFieldNames.Body));
@@ -70,14 +71,19 @@ public sealed record BoardFieldConfig(
 		var delivery = runtime.DeliveryOf(kindSlug) is not null;
 		return viewMode switch
 		{
+			// Slug (the node key) defaults ON in every mode below: kanban never showed it before this
+			// field existed (board-fields-slug-missing, the bug this config resolves) and the owner
+			// asked for it ON there explicitly; tree/tags, outline and table already rendered it
+			// UNCONDITIONALLY pre-config, so ON here is "nothing visibly disappears" for them, not a
+			// new opinion.
 			BoardViewModeNames.Kanban => new BoardFieldConfig(
-				Type: true, Status: false, Priority: true, Tags: true, UpdatedAt: false,
+				Slug: true, Type: true, Status: false, Priority: true, Tags: true, UpdatedAt: false,
 				Delivery: delivery, BlockedBy: false, Body: false),
 			BoardViewModeNames.Table => new BoardFieldConfig(
-				Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true,
+				Slug: true, Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true,
 				Delivery: delivery, BlockedBy: false, Body: false),
 			BoardViewModeNames.Outline => new BoardFieldConfig(
-				Type: false, Status: false, Priority: false, Tags: false, UpdatedAt: false,
+				Slug: true, Type: false, Status: false, Priority: false, Tags: false, UpdatedAt: false,
 				Delivery: delivery, BlockedBy: false, Body: outlineBodyDefault),
 			// Tree and Tags (tag-groups is a projection over the tree, same card) — close to the
 			// pre-config tree-card look (status badge, delivery badge, body) plus the two fields
@@ -86,7 +92,7 @@ public sealed record BoardFieldConfig(
 			// there's room for it). Type/Priority/UpdatedAt default off — they read fine as sort/
 			// filter criteria without being restated on every card.
 			_ => new BoardFieldConfig(
-				Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
+				Slug: true, Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
 				Delivery: delivery, BlockedBy: true, Body: true),
 		};
 	}

@@ -39,13 +39,16 @@
 				{
 					<a href="@nodeUrl" class="font-semibold link link-hover @(strikethrough ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 				}
-				<span class="font-mono text-xs opacity-50">
-					@if (parent is not null)
-					{
-						<span>@parent / </span>
-					}
-					<a href="@nodeUrl" class="link link-hover" data-testid="node-leaf">@leaf</a>
-				</span>
+				@if (Model.Fields.Slug)
+				{
+					<span class="font-mono text-xs opacity-50">
+						@if (parent is not null)
+						{
+							<span>@parent / </span>
+						}
+						<a href="@nodeUrl" class="link link-hover" data-testid="node-leaf">@leaf</a>
+					</span>
+				}
 			</div>
 			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
 				@* board-view-fields: type/priority badges are plain, so they render inline here
