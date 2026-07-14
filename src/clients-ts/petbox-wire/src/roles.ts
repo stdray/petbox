@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { classifyModel } from "./harness-models.ts";
 
 export type RoleBinding = {
   readonly model: string;
@@ -215,6 +216,128 @@ export function resolveObservedBinding(
 /** Bootstrap-safe export shape (no secrets — roles.json has none). */
 export function exportRolesBootstrap(data: RolesFile): RolesFile {
   return normalizeRoles(data);
+}
+
+export type SetRoleModelResult =
+  | { readonly ok: true; readonly data: RolesFile; readonly warning?: string }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Set one role's model binding for `agent` (alias-aware) under a profile (default: the
+ * active one; created as an empty shell if new). This is `model set`'s core (spec
+ * binding-set-by-tool) — the only writer of a role→model binding besides a text editor.
+ *
+ * Validated against the SAME three-tier policy `apply`/`doctor` already gate with
+ * (harness-models.ts's classifyModel) — this function does not re-derive that policy, only
+ * calls it. "foreign" (a recognizably different harness's id shape, e.g. droid's `custom:*`
+ * landing in a claude-code binding — the 2026-07-12 incident shape) is refused unless
+ * `allowUnknownModel` is set. "known" and "unknown" (shape-valid, just not on the small
+ * known-alias list) both write; "unknown" (and a forced "foreign") come back with a
+ * non-blocking `warning` for the caller to print (mirrors modelShapeWarning in truthfulness.ts).
+ */
+export function setRoleModel(
+  data: RolesFile,
+  opts: {
+    readonly agent: string;
+    readonly role: string;
+    readonly model: string;
+    readonly profile?: string;
+    readonly allowUnknownModel?: boolean;
+  },
+): SetRoleModelResult {
+  const canon = canonicalAgentId(opts.agent);
+  const role = opts.role.trim();
+  const model = opts.model.trim();
+  if (!role) return { ok: false, reason: "role is required" };
+  if (!model) {
+    return {
+      ok: false,
+      reason: "model is required (use `model unset <role>` to clear a binding)",
+    };
+  }
+
+  const cls = classifyModel(canon, model);
+  if (cls === "foreign" && !opts.allowUnknownModel) {
+    return {
+      ok: false,
+      reason:
+        `model '${model}' looks like another harness's id shape, not one harness '${canon}' would ` +
+        `own — refusing to write it (the 2026-07-12 incident shape: a foreign id landing in the ` +
+        `wrong harness's binding). Pass --allow-unknown-model to force it through if you are certain.`,
+    };
+  }
+
+  const profileName = opts.profile?.trim() || data.activeProfile;
+  const profiles: Record<string, Profile> = { ...data.profiles };
+  const existingProfile = profiles[profileName] ?? { agents: {} };
+  const existingAgent = existingProfile.agents[canon] ?? { roles: {} };
+  profiles[profileName] = {
+    agents: {
+      ...existingProfile.agents,
+      [canon]: { roles: { ...existingAgent.roles, [role]: { model } } },
+    },
+  };
+  const next: RolesFile = { activeProfile: data.activeProfile, profiles };
+
+  if (cls === "foreign") {
+    return {
+      ok: true,
+      data: next,
+      warning:
+        `model '${model}' does not match the id shape for harness '${canon}' — written anyway ` +
+        `because --allow-unknown-model was passed. If '${canon}' cannot resolve it, that fails LOUD ` +
+        `at runtime, not silently.`,
+    };
+  }
+  if (cls === "unknown") {
+    return {
+      ok: true,
+      data: next,
+      warning:
+        `model '${model}' is not on the known-alias list for harness '${canon}' but matches its id ` +
+        `shape — written unverified. If '${canon}' cannot resolve it, that fails LOUD at runtime, ` +
+        `not silently.`,
+    };
+  }
+  return { ok: true, data: next };
+}
+
+export type UnsetRoleModelResult = {
+  readonly data: RolesFile;
+  readonly removed: boolean;
+};
+
+/**
+ * Remove one role's model binding for `agent` (alias-aware) under a profile (default: the
+ * active one). No-op-safe: an absent profile/agent/role returns `removed: false` and the
+ * SAME `data` reference back, never throws. This is `model unset`'s core — a fair-empty
+ * binding a role can hold on purpose (e.g. `reserve`, when the tester's machine lacks
+ * access to the tier the role would otherwise be bound to).
+ */
+export function unsetRoleModel(
+  data: RolesFile,
+  opts: { readonly agent: string; readonly role: string; readonly profile?: string },
+): UnsetRoleModelResult {
+  const canon = canonicalAgentId(opts.agent);
+  const role = opts.role.trim();
+  const profileName = opts.profile?.trim() || data.activeProfile;
+  const existingProfile = data.profiles[profileName];
+  if (!existingProfile) return { data, removed: false };
+  const existingAgent = existingProfile.agents[canon];
+  if (!existingAgent || !(role in existingAgent.roles)) {
+    return { data, removed: false };
+  }
+  const restRoles: Record<string, RoleBinding> = {};
+  for (const [r, b] of Object.entries(existingAgent.roles)) {
+    if (r !== role) restRoles[r] = b;
+  }
+  const profiles: Record<string, Profile> = {
+    ...data.profiles,
+    [profileName]: {
+      agents: { ...existingProfile.agents, [canon]: { roles: restRoles } },
+    },
+  };
+  return { data: { activeProfile: data.activeProfile, profiles }, removed: true };
 }
 
 /** Human-readable dump of the active profile's agent/role/model tree. */

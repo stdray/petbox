@@ -22,11 +22,18 @@ Owner axis is `$HOME`; definitions are portable across machines, models are not.
 
 ## Procedure
 
-1. Inspect / switch local binding as needed:
+1. Inspect / switch / set local binding as needed:
    ```bash
    npx petbox-wire roles
    npx petbox-wire profile use <name>
+   npx petbox-wire model set <role> <model> [--agent <id>] [--profile <name>]
+   npx petbox-wire model unset <role> [--agent <id>] [--profile <name>]
    ```
+   `model set` is the ONLY command-line way to write a binding — validated against the target
+   harness's model-id policy (harness-models.ts) so a foreign-harness id (e.g. a droid `custom:*`
+   id landing in the claude-code block) is refused, not silently written. For claude-code, name a
+   TIER ALIAS (`sonnet|opus|haiku|fable|inherit`), never a concrete id — see "Never invent a
+   model id" below.
 2. Gate:
    ```bash
    npx petbox-wire doctor
