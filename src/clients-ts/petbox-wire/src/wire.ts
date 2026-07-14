@@ -48,6 +48,14 @@
 //       an older kit is pruned
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
+//   11. seed a DEFAULT role→model binding on a fresh machine (~/.petbox/roles.json absent —
+//       never overwrites an operator's own bindings), then apply: compile per-harness startup
+//       artifacts (.claude/agents/*.md, .opencode/agent/*.md, .factory/droids/*.md) from the
+//       roster + local binding (fresh-wire-roster-unusable) — without this, a freshly-wired
+//       project's roster stays empty even though the injected protocol tells the agent to
+//       spawn workers that do not exist on disk. Non-fatal to the overall wire run: a failure
+//       here is reported loudly but does not change the run's exit code — re-run
+//       `petbox-wire apply` to retry.
 //
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
@@ -84,13 +92,19 @@ import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
 import {
+  canonicalAgentId,
   exportRolesBootstrap,
   formatResolvedBinding,
   isEmptyRoles,
   loadRoles,
   resolveAgentRoles,
+  rolesPath,
   saveRoles,
+  setRoleModel,
+  unsetRoleModel,
   useProfile,
+  type RoleBinding,
+  type RolesFile,
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
@@ -129,6 +143,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
+    "       npx petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]\n" +
+    "       npx petbox-wire model unset <role> [--agent <id>] [--profile <name>]\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
     "Wire a project to PetBox: global hooks, MCP configs and skills. (prompt-RAG was removed; wire and\n" +
@@ -177,7 +193,19 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
     "             new machine). Offline.\n" +
     "profile use  Set activeProfile in ~/.petbox/roles.json (creates an empty profile shell if missing).\n" +
-    "             Offline. Re-run apply to rebuild artifacts after changing the active profile.";
+    "             Offline. Re-run apply to rebuild artifacts after changing the active profile.\n" +
+    "model set    Bind one role to a model for --agent (default: claude-code; aliases: cc/claude,\n" +
+    "             factory/factory-droid/droid, opencode). Validated against harness-models.ts's\n" +
+    "             three-tier policy — known/unknown write (unknown warns); a recognizably foreign\n" +
+    "             harness id (e.g. a droid custom:* id in a claude-code binding — the 2026-07-12\n" +
+    "             incident shape) is refused unless --allow-unknown-model forces it through. For\n" +
+    "             claude-code, name a TIER ALIAS (sonnet|opus|haiku|fable|inherit) — the Task tool's\n" +
+    "             model parameter is a closed enum of exactly those. Offline. Prints `next: petbox-\n" +
+    "             wire apply` (this command never compiles artifacts itself).\n" +
+    "model unset  Clear one role's binding for --agent (default: claude-code). A fair-empty binding\n" +
+    "             a role can hold on purpose (e.g. reserve, when the machine lacks access to the\n" +
+    "             tier it would otherwise be bound to) — the role then inherits the session model,\n" +
+    "             and apply warns about that honestly. Offline. Prints `next: petbox-wire apply`.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -251,6 +279,10 @@ function isProfileCommand(argv: string[]): boolean {
   return argv[0] === "profile";
 }
 
+function isModelCommand(argv: string[]): boolean {
+  return argv[0] === "model";
+}
+
 // doctor — truthfulness gate for each known harness vs the SAME definition apply would compile
 // (doctor-gates-wrong-definition): server → LKG cache → built-in DEFAULT, exactly like apply
 // (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
@@ -320,16 +352,176 @@ async function runDoctor(argv: string[]): Promise<void> {
   process.exit(WIRE_EXIT.truthfulness);
 }
 
-// apply — compile per-harness artifacts (distinct from update kit-copy).
+// Result of one apply compile pass — a plain data record so a caller can decide what to do
+// with it (exit with the code, or just log and continue — see performApply below).
+type ApplyRunResult = {
+  readonly code: number;
+  readonly written: number;
+  readonly writtenHarnesses: readonly string[];
+  readonly partialHarnesses: readonly string[];
+  readonly blockedHarnesses: readonly string[];
+  readonly clobberBlockedPaths: readonly string[];
+  readonly hardError: boolean;
+};
+
+// apply's core — compile per-harness artifacts (distinct from update kit-copy). Never calls
+// process.exit: the `apply` subcommand (runApply, below) exits with the returned code; full
+// wire's step 11 logs the result and keeps going regardless — a compile failure there must not
+// abort a wiring run that already validated the key and wrote every other file (see this file's
+// top doc comment on step 11 / fresh-wire-roster-unusable).
 // Definition source: server fetch when registry resolves cwd; else offline default.
 //
 // Per role × harness (definition-truthfulness + wiring-startup-symmetry):
 //   - dirty roles → skip + report (never silent); clean roles still written
-// Exit codes (see WIRE_EXIT / classifyApplyExit — usage must stay distinct from truthfulness):
+// Result codes (see WIRE_EXIT / classifyApplyExit):
 //   0 — full success: every known harness wrote all its roles, no skips
-//   1 — hard failure: invalid definition / unexpected throw (NOT bad args)
-//   2 — usage / bad arguments (via usage())
+//   1 — hard failure: invalid definition / unexpected throw, or a clobber refusal
 //   3 — truthfulness: policy blocked some roles/harnesses (partial write possible)
+async function performApply(opts: {
+  definitionKey: string;
+  offline: boolean;
+  label: string;
+}): Promise<ApplyRunResult> {
+  const { root, via } = resolveApplyRoot(process.cwd());
+  let definition: AgentDefinition;
+  try {
+    definition = await resolveApplyDefinition({
+      offline: opts.offline,
+      definitionKey: opts.definitionKey,
+      cwd: process.cwd(),
+      label: opts.label,
+    });
+    validateAgentDefinition(definition);
+  } catch (e) {
+    console.error(`${opts.label}: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    return {
+      code: WIRE_EXIT.hard,
+      written: 0,
+      writtenHarnesses: [],
+      partialHarnesses: [],
+      blockedHarnesses: [],
+      clobberBlockedPaths: [],
+      hardError: true,
+    };
+  }
+
+  const rolesData = loadRoles();
+  log(`${opts.label}: root=${root} (via ${via})`);
+  log(`${opts.label}: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
+
+  let written = 0;
+  const writtenHarnesses: string[] = [];
+  const partialHarnesses: string[] = [];
+  const blockedHarnesses: string[] = [];
+  // Any writeArtifact refusal (bug: apply-clobbers-user-agent-files) — a real file that is not
+  // ours sat where we needed to write. Distinct from the truthfulness gate: it can happen even
+  // when every role is capability/model-clean, so it needs its own signal into the exit code.
+  let clobberBlocked = false;
+  const clobberedPaths: string[] = [];
+  for (const harness of HARNESS_IDS) {
+    const roleModels = resolveAgentRoles(rolesData, harness);
+    const plan = planApply(definition, harness, roleModels);
+
+    let writtenThisHarness = 0;
+    let clobberedThisHarness = false;
+    for (const file of plan.files) {
+      const abs = join(root, file.relativePath);
+      const outcome = writeArtifact(abs, file.content);
+      if (outcome.kind === "blocked") {
+        clobberBlocked = true;
+        clobberedThisHarness = true;
+        clobberedPaths.push(abs);
+        console.error(
+          `${opts.label}: REFUSED to overwrite ${abs} — it exists and does not carry the PetBox ` +
+            `origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, not ` +
+            `one apply wrote before. Nothing was touched. Move it aside (or rename the role) and ` +
+            `re-run apply.`,
+        );
+        continue;
+      }
+      log(
+        `${opts.label}: wrote ${abs}` +
+          (outcome.reason === "own" ? " (updated in place — ours)" : ""),
+      );
+      written++;
+      writtenThisHarness++;
+
+      // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
+      // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
+      // deleting the old file when the new one could not be written. Never touches a path that
+      // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
+      if (file.legacyRelativePath !== file.relativePath) {
+        const legacyAbs = join(root, file.legacyRelativePath);
+        const legacyOutcome = cleanupLegacyArtifact(legacyAbs);
+        if (legacyOutcome === "removed") {
+          log(`${opts.label}: removed legacy unprefixed ${legacyAbs} (ours, superseded by ${abs})`);
+        } else if (legacyOutcome === "kept-foreign") {
+          log(
+            `${opts.label}: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
+          );
+        }
+      }
+    }
+
+    for (const w of plan.warnings) {
+      console.error(`${opts.label}: warn — ${w}`);
+    }
+
+    if (plan.violations.length > 0 || clobberedThisHarness) {
+      if (plan.violations.length > 0) {
+        console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      }
+      if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
+      else blockedHarnesses.push(plan.harness);
+    } else if (writtenThisHarness > 0) {
+      writtenHarnesses.push(plan.harness);
+    }
+  }
+
+  // Structured summary (machine-readable-ish one line + human detail above).
+  const summary = {
+    writtenFiles: written,
+    writtenHarnesses,
+    partialHarnesses,
+    blockedHarnesses,
+    clobberBlockedPaths: clobberedPaths,
+  };
+  log(
+    `${opts.label}: result written=${written} ` +
+      `ok=[${writtenHarnesses.join(",")}] ` +
+      `partial=[${partialHarnesses.join(",")}] ` +
+      `blocked=[${blockedHarnesses.join(",")}]` +
+      (clobberedPaths.length > 0 ? ` clobber-refused=[${clobberedPaths.join(",")}]` : ""),
+  );
+
+  const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
+  const code = classifyApplyExit({ hardError: clobberBlocked, hadTruthfulnessBlock });
+  if (code === WIRE_EXIT.ok) {
+    log(`${opts.label}: done — all known harnesses accepted every role.`);
+  } else if (clobberBlocked) {
+    console.error(
+      `${opts.label}: hard failure — refused to overwrite ${clobberedPaths.length} non-PetBox ` +
+        `file(s) (exit ${WIRE_EXIT.hard}). ${JSON.stringify(summary)}`,
+    );
+  } else {
+    console.error(
+      `${opts.label}: truthfulness partial — some roles/harnesses blocked (exit ${WIRE_EXIT.truthfulness}). ${JSON.stringify(summary)}`,
+    );
+  }
+
+  return {
+    code,
+    written,
+    writtenHarnesses,
+    partialHarnesses,
+    blockedHarnesses,
+    clobberBlockedPaths: clobberedPaths,
+    hardError: clobberBlocked,
+  };
+}
+
+// `apply` subcommand — parses CLI args, runs performApply, exits with its code (2 on bad args,
+// via usage()). Exit codes: 0 full success; 1 hard failure; 2 usage/args; 3 truthfulness.
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -358,124 +550,8 @@ async function runApply(argv: string[]): Promise<void> {
     }
   }
 
-  const { root, via } = resolveApplyRoot(process.cwd());
-  let definition;
-  try {
-    definition = await resolveApplyDefinition({
-      offline,
-      definitionKey,
-      cwd: process.cwd(),
-    });
-    validateAgentDefinition(definition);
-  } catch (e) {
-    console.error(`apply: hard failure — ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(WIRE_EXIT.hard);
-  }
-
-  const rolesData = loadRoles();
-  log(`apply: root=${root} (via ${via})`);
-  log(`apply: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
-
-  let written = 0;
-  const writtenHarnesses: string[] = [];
-  const partialHarnesses: string[] = [];
-  const blockedHarnesses: string[] = [];
-  // Any writeArtifact refusal (bug: apply-clobbers-user-agent-files) — a real file that is not
-  // ours sat where we needed to write. Distinct from the truthfulness gate: it can happen even
-  // when every role is capability/model-clean, so it needs its own signal into the exit code.
-  let clobberBlocked = false;
-  const clobberedPaths: string[] = [];
-  for (const harness of HARNESS_IDS) {
-    const roleModels = resolveAgentRoles(rolesData, harness);
-    const plan = planApply(definition, harness, roleModels);
-
-    let writtenThisHarness = 0;
-    let clobberedThisHarness = false;
-    for (const file of plan.files) {
-      const abs = join(root, file.relativePath);
-      const outcome = writeArtifact(abs, file.content);
-      if (outcome.kind === "blocked") {
-        clobberBlocked = true;
-        clobberedThisHarness = true;
-        clobberedPaths.push(abs);
-        console.error(
-          `apply: REFUSED to overwrite ${abs} — it exists and does not carry the PetBox origin ` +
-            `marker (no \`petbox: managed\` in its frontmatter), so it is a real file, not one apply ` +
-            `wrote before. Nothing was touched. Move it aside (or rename the role) and re-run apply.`,
-        );
-        continue;
-      }
-      log(
-        `apply: wrote ${abs}` + (outcome.reason === "own" ? " (updated in place — ours)" : ""),
-      );
-      written++;
-      writtenThisHarness++;
-
-      // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
-      // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
-      // deleting the old file when the new one could not be written. Never touches a path that
-      // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
-      if (file.legacyRelativePath !== file.relativePath) {
-        const legacyAbs = join(root, file.legacyRelativePath);
-        const legacyOutcome = cleanupLegacyArtifact(legacyAbs);
-        if (legacyOutcome === "removed") {
-          log(`apply: removed legacy unprefixed ${legacyAbs} (ours, superseded by ${abs})`);
-        } else if (legacyOutcome === "kept-foreign") {
-          log(
-            `apply: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
-          );
-        }
-      }
-    }
-
-    for (const w of plan.warnings) {
-      console.error(`apply: warn — ${w}`);
-    }
-
-    if (plan.violations.length > 0 || clobberedThisHarness) {
-      if (plan.violations.length > 0) {
-        console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
-      }
-      if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
-      else blockedHarnesses.push(plan.harness);
-    } else if (writtenThisHarness > 0) {
-      writtenHarnesses.push(plan.harness);
-    }
-  }
-
-  // Structured summary (machine-readable-ish one line + human detail above).
-  const summary = {
-    writtenFiles: written,
-    writtenHarnesses,
-    partialHarnesses,
-    blockedHarnesses,
-    clobberBlockedPaths: clobberedPaths,
-  };
-  log(
-    `apply: result written=${written} ` +
-      `ok=[${writtenHarnesses.join(",")}] ` +
-      `partial=[${partialHarnesses.join(",")}] ` +
-      `blocked=[${blockedHarnesses.join(",")}]` +
-      (clobberedPaths.length > 0 ? ` clobber-refused=[${clobberedPaths.join(",")}]` : ""),
-  );
-
-  const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
-  const code = classifyApplyExit({ hardError: clobberBlocked, hadTruthfulnessBlock });
-  if (code === WIRE_EXIT.ok) {
-    log("apply: done — all known harnesses accepted every role.");
-    process.exit(WIRE_EXIT.ok);
-  }
-  if (clobberBlocked) {
-    console.error(
-      `apply: hard failure — refused to overwrite ${clobberedPaths.length} non-PetBox file(s) ` +
-        `(exit ${WIRE_EXIT.hard}). ${JSON.stringify(summary)}`,
-    );
-    process.exit(WIRE_EXIT.hard);
-  }
-  console.error(
-    `apply: truthfulness partial — some roles/harnesses blocked (exit ${WIRE_EXIT.truthfulness}). ${JSON.stringify(summary)}`,
-  );
-  process.exit(WIRE_EXIT.truthfulness);
+  const result = await performApply({ definitionKey, offline, label: "apply" });
+  process.exit(result.code);
 }
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
@@ -572,6 +648,122 @@ function runProfile(argv: string[]): void {
       `\n  wrote ${join(homedir(), ".petbox", "roles.json")}` +
       `\n  re-run apply to rebuild artifacts (profile use does not compile).`,
   );
+}
+
+// model set/unset — the tool verb for a role→model binding (spec binding-set-by-tool): before
+// this, ~/.petbox/roles.json could ONLY be written by hand-editing an undocumented JSON format,
+// and hand-editing it wrong is exactly how the 2026-07-12 incident (a droid id in the claude-code
+// block) happened. Validation reuses harness-models.ts's classifyModel via roles.ts's
+// setRoleModel — this file does not re-derive the policy.
+function runModel(argv: string[]): void {
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") usage(0);
+  if (sub === "set") {
+    runModelSet(argv);
+    return;
+  }
+  if (sub === "unset") {
+    runModelUnset(argv);
+    return;
+  }
+  console.error(`model: expected "set <role> <model>" or "unset <role>"${sub ? `, got "${sub}"` : ""}`);
+  usage();
+}
+
+// model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]
+function runModelSet(argv: string[]): void {
+  const role = argv[2];
+  const model = argv[3];
+  if (!role || role.startsWith("-")) {
+    console.error("model set: requires a non-empty <role>");
+    usage();
+  }
+  if (!model || model.startsWith("-")) {
+    console.error("model set: requires a non-empty <model> (use `model unset <role>` to clear a binding)");
+    usage();
+  }
+  let agent = "claude-code";
+  let profile: string | undefined;
+  let allowUnknownModel = false;
+  for (let i = 4; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+    if (a === "--help" || a === "-h") usage(0);
+    else if (a === "--agent") agent = argv[++i] ?? "";
+    else if (a === "--profile") profile = argv[++i];
+    else if (a === "--allow-unknown-model") allowUnknownModel = true;
+    else {
+      console.error(`model set: unexpected argument: ${a}`);
+      usage();
+    }
+  }
+  if (!agent.trim()) {
+    console.error("model set: --agent requires a non-empty value");
+    usage();
+  }
+
+  const before = loadRoles();
+  const result = setRoleModel(before, {
+    agent,
+    role,
+    model,
+    ...(profile !== undefined ? { profile } : {}),
+    allowUnknownModel,
+  });
+  const canon = canonicalAgentId(agent);
+  const profileName = (profile ?? "").trim() || before.activeProfile;
+  if (!result.ok) {
+    console.error(`model set: REFUSED — ${result.reason}`);
+    process.exit(WIRE_EXIT.truthfulness);
+  }
+  saveRoles(result.data);
+  log(`model: set ${canon}/${role} = ${model} (profile "${profileName}")`);
+  if (result.warning) log(`model: warn — ${result.warning}`);
+  log(`  wrote ${rolesPath()}`);
+  log(`next: petbox-wire apply`);
+}
+
+// model unset <role> [--agent <id>] [--profile <name>]
+function runModelUnset(argv: string[]): void {
+  const role = argv[2];
+  if (!role || role.startsWith("-")) {
+    console.error("model unset: requires a non-empty <role>");
+    usage();
+  }
+  let agent = "claude-code";
+  let profile: string | undefined;
+  for (let i = 3; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+    if (a === "--help" || a === "-h") usage(0);
+    else if (a === "--agent") agent = argv[++i] ?? "";
+    else if (a === "--profile") profile = argv[++i];
+    else {
+      console.error(`model unset: unexpected argument: ${a}`);
+      usage();
+    }
+  }
+  if (!agent.trim()) {
+    console.error("model unset: --agent requires a non-empty value");
+    usage();
+  }
+
+  const before = loadRoles();
+  const result = unsetRoleModel(before, {
+    agent,
+    role,
+    ...(profile !== undefined ? { profile } : {}),
+  });
+  saveRoles(result.data);
+  const canon = canonicalAgentId(agent);
+  const profileName = (profile ?? "").trim() || before.activeProfile;
+  if (result.removed) {
+    log(`model: unset ${canon}/${role} (profile "${profileName}") — binding removed.`);
+  } else {
+    log(`model: ${canon}/${role} had no binding in profile "${profileName}" — nothing to remove.`);
+  }
+  log(`  wrote ${rolesPath()}`);
+  log(`next: petbox-wire apply`);
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -1228,6 +1420,46 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
   return result.ok;
 }
 
+// ---- step 11: seed a default role binding + apply --------------------------
+
+// Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
+// aliases only (never a concrete id — see harness-models.ts / the claude-api skill's live
+// finding that the Task tool's `model` param is a closed enum of exactly these four tiers).
+// `reserve` is deliberately ABSENT: the tester's machine may not have access to the `fable`
+// tier, and binding it there would repeat the 2026-07-12 incident shape (a binding the harness
+// cannot actually resolve) — an unbound role inherits the session model instead, and apply
+// already warns about that honestly (see planApply's warnings).
+const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
+  orchestrator: "opus",
+  worker: "sonnet",
+  utility: "haiku",
+  explore: "haiku",
+};
+
+// Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
+// never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
+// empty, every generated .claude/agents/*.md ships with no `model:` key at all, and every role
+// silently rides the session model — the exact silent tier-drift class the 2026-07-12 incident
+// ("worker on Opus for a whole session, nobody noticed") grew from.
+function seedDefaultRoleBindingsIfMissing(label: string): void {
+  if (existsSync(rolesPath())) {
+    log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
+    return;
+  }
+  const roles: Record<string, RoleBinding> = {};
+  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) roles[role] = { model };
+  const data: RolesFile = {
+    activeProfile: "default",
+    profiles: { default: { agents: { "claude-code": { roles } } } },
+  };
+  saveRoles(data);
+  log(
+    `${label} roles: seeded ${rolesPath()} — profile "default", claude-code aliases ` +
+      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku; reserve left unbound — ` +
+      `bind it yourself with \`petbox-wire model set reserve <tier>\` if this machine has access).`,
+  );
+}
+
 // ---- main ------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -1252,6 +1484,10 @@ async function main(): Promise<void> {
   }
   if (isProfileCommand(argv)) {
     runProfile(argv);
+    return;
+  }
+  if (isModelCommand(argv)) {
+    runModel(argv);
     return;
   }
 
@@ -1344,6 +1580,22 @@ async function main(): Promise<void> {
 
   // 10. self-smoke
   const smokeOk = await selfSmoke(baseUrl, project, key);
+
+  // 11. seed a default role→model binding (fresh machine only) + apply — compile per-harness
+  // startup artifacts NOW, so the freshly-wired roster is actually usable. Never aborts the run:
+  // the key is already validated and every other file is already written by this point, so a
+  // compile hiccup here (e.g. a transient agent-defs fetch failure — resolveApplyDefinition
+  // still falls back to LKG/DEFAULT) is reported loudly but does not flip wire's own exit code;
+  // re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
+  seedDefaultRoleBindingsIfMissing("[11/10]");
+  const applyResult = await performApply({
+    definitionKey: DEFAULT_DEFINITION_KEY,
+    offline: false,
+    label: "[11/10]",
+  });
+  if (applyResult.code !== WIRE_EXIT.ok) {
+    console.error(`[11/10] next: petbox-wire apply`);
+  }
 
   // Terminal message set depends on the smoke outcome — a failure must be the LAST line, in
   // red, never followed by "done." (selfsmoke-failure-prints-done).

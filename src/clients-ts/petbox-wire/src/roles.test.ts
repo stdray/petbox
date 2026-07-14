@@ -16,6 +16,8 @@ import {
   resolveObservedBinding,
   rolesPath,
   saveRoles,
+  setRoleModel,
+  unsetRoleModel,
   useProfile,
   type RolesFile,
 } from "./roles.ts";
@@ -218,6 +220,135 @@ test("formatResolvedBinding surfaces empty vs populated", () => {
     assert.match(filled, /claude-code:/);
     assert.match(filled, /orchestrator: claude-opus-4/);
     assert.match(filled, /opencode:/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("setRoleModel: known alias writes clean, no warning", () => {
+  const home = freshHome();
+  try {
+    const data = loadRoles(home);
+    const result = setRoleModel(data, { agent: "claude-code", role: "worker", model: "sonnet" });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.warning, undefined);
+    saveRoles(result.data, home);
+    assert.deepEqual(resolveAgentRoles(loadRoles(home), "claude-code"), { worker: "sonnet" });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// In-memory empty store for setRoleModel/unsetRoleModel cases that never touch disk (no
+// freshHome() needed — these are pure-function tests, not load/save round trips).
+const EMPTY_ROLES: RolesFile = { activeProfile: "default", profiles: {} };
+
+test("setRoleModel: shape-valid-but-unlisted claude id writes with a warning (unknown tier)", () => {
+  const data = EMPTY_ROLES;
+  const result = setRoleModel(data, {
+    agent: "claude-code",
+    role: "orchestrator",
+    model: "claude-opus-9000",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.warning ?? "", /not on the known-alias list/);
+  assert.deepEqual(resolveAgentRoles(result.data, "claude-code"), {
+    orchestrator: "claude-opus-9000",
+  });
+});
+
+test("setRoleModel: foreign-shaped id is REFUSED by default (the 2026-07-12 incident shape)", () => {
+  const data = EMPTY_ROLES;
+  const result = setRoleModel(data, {
+    agent: "claude-code",
+    role: "worker",
+    model: "custom:DeepSeek-V4-Pro-0",
+  });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /looks like another harness's id shape/);
+  assert.match(result.reason, /--allow-unknown-model/);
+  // nothing written — the store is untouched
+  assert.deepEqual(resolveAgentRoles(data, "claude-code"), {});
+});
+
+test("setRoleModel: foreign-shaped id writes anyway with --allow-unknown-model, still warns", () => {
+  const data = EMPTY_ROLES;
+  const result = setRoleModel(data, {
+    agent: "claude-code",
+    role: "worker",
+    model: "custom:DeepSeek-V4-Pro-0",
+    allowUnknownModel: true,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.match(result.warning ?? "", /--allow-unknown-model was passed/);
+  assert.deepEqual(resolveAgentRoles(result.data, "claude-code"), {
+    worker: "custom:DeepSeek-V4-Pro-0",
+  });
+});
+
+test("setRoleModel: open-policy harness (droid) never blocks, never warns", () => {
+  const data = EMPTY_ROLES;
+  const result = setRoleModel(data, {
+    agent: "droid",
+    role: "worker",
+    model: "custom:DeepSeek-V4-Pro-0",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.warning, undefined);
+});
+
+test("setRoleModel: agent alias resolves to the canonical bucket; --profile targets a non-active profile", () => {
+  const data = EMPTY_ROLES;
+  const result = setRoleModel(data, {
+    agent: "factory-droid", // alias for droid
+    role: "worker",
+    model: "deepseek-v4-pro",
+    profile: "work",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // activeProfile is untouched (still "default") — model set does not switch profiles
+  assert.equal(result.data.activeProfile, "default");
+  const workProfile = result.data.profiles["work"];
+  assert.ok(workProfile, "the named profile is created as a shell");
+  assert.equal(workProfile.agents["droid"]?.roles["worker"]?.model, "deepseek-v4-pro");
+});
+
+test("setRoleModel: rejects a blank role or model", () => {
+  const data = EMPTY_ROLES;
+  const blankRole = setRoleModel(data, { agent: "claude-code", role: "  ", model: "sonnet" });
+  assert.equal(blankRole.ok, false);
+  const blankModel = setRoleModel(data, { agent: "claude-code", role: "worker", model: "  " });
+  assert.equal(blankModel.ok, false);
+  if (blankModel.ok) return;
+  assert.match(blankModel.reason, /model unset/);
+});
+
+test("unsetRoleModel: removes an existing binding, no-ops when absent", () => {
+  const home = freshHome();
+  try {
+    saveRoles(SAMPLE, home);
+    const before = loadRoles(home);
+    const result = unsetRoleModel(before, { agent: "claude-code", role: "worker" });
+    assert.equal(result.removed, true);
+    saveRoles(result.data, home);
+    assert.deepEqual(resolveAgentRoles(loadRoles(home), "claude-code"), {
+      orchestrator: "claude-opus-4",
+    });
+
+    // second unset of the same role is a no-op, not an error
+    const again = unsetRoleModel(loadRoles(home), { agent: "claude-code", role: "worker" });
+    assert.equal(again.removed, false);
+
+    // unknown agent / unknown role / no bindings at all — all no-op-safe
+    const emptyResult = unsetRoleModel(EMPTY_ROLES, { agent: "claude-code", role: "worker" });
+    assert.equal(emptyResult.removed, false);
+    assert.equal(emptyResult.data, EMPTY_ROLES); // same reference back — genuinely untouched
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
