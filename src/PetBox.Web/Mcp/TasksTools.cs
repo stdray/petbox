@@ -678,6 +678,8 @@ public static class TasksTools
 		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
 		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
 		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
+		Cyrillic bodies: send raw UTF-8, not \uXXXX escapes (triples the byte size) — an oversized
+		call is silently truncated before the server sees it. Split large batches.
 		[[full]]
 		Declarative PATCH per node (omitted field = unchanged; tags: [] clears, omit leaves
 		as-is) — a temporal upsert of plan nodes. Requires tasks:write.

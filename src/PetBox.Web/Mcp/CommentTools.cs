@@ -35,6 +35,8 @@ public static class CommentTools
 		exactly like tasks_upsert). `body` is GFM markdown — `##` headings and REAL newlines, NOT
 		literal `\n`, NOT `==headings==`. `applied` is the SINGLE source of truth — false = nothing
 		written, see conflicts[]. Requires tasks:write.
+		Cyrillic bodies: send raw UTF-8, not \uXXXX escapes (triples the byte size) — an oversized
+		call is silently truncated before the server sees it. Split large batches.
 		[[full]]
 		Batch declarative upsert of node comments (a discussion thread separate from the plan) —
 		the uniform write verb that replaced comments_create + comments_edit. `items` is a JSON
