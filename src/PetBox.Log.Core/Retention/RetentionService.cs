@@ -56,8 +56,20 @@ public sealed partial class RetentionService(
 		foreach (var log in logs)
 		{
 			var logRef = $"{log.ProjectKey}/{log.Name}";
-			var settings = await resolver.GetAsync<LogSettings>(Scope.Project, log.ProjectKey, ct).ConfigureAwait(false);
-			var retainDays = log.ProjectKey == LogNames.SystemProject ? settings.SystemRetainDays : settings.RetentionDays;
+
+			// spec log-retention-cascade: the log's OWN window wins if it has one; otherwise fall
+			// back to the project → workspace → system cascade exactly as before this column
+			// existed (log.RetentionDays is NULL for every pre-existing log — a true no-op).
+			int retainDays;
+			if (log.RetentionDays is { } ownWindow)
+			{
+				retainDays = ownWindow;
+			}
+			else
+			{
+				var settings = await resolver.GetAsync<LogSettings>(Scope.Project, log.ProjectKey, ct).ConfigureAwait(false);
+				retainDays = log.ProjectKey == LogNames.SystemProject ? settings.SystemRetainDays : settings.RetentionDays;
+			}
 
 			var cutoff = now.AddDays(-retainDays);
 			var cutoffMs = new DateTimeOffset(cutoff, TimeSpan.Zero).ToUnixTimeMilliseconds();

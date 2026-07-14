@@ -24,8 +24,14 @@ public interface ILogStore
 
 	Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default);
 	Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default);
-	Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default);
+	Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, int? retentionDays = null, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string logName, CancellationToken ct = default);
+
+	// Sets (or clears) the log's own retention override. `retentionDays` is the WIRE value, not
+	// the stored one: 0 clears the override (the log reverts to the project/workspace/system
+	// cascade), a positive value sets the window in days. Negative is refused. Returns the
+	// updated row, or null if the log does not exist.
+	Task<LogMeta?> UpdateRetentionDaysAsync(string projectKey, string logName, int retentionDays, CancellationToken ct = default);
 }
 
 public sealed partial class LogStore : ILogStore
@@ -66,12 +72,14 @@ public sealed partial class LogStore : ILogStore
 			.ToListAsync(ct);
 	}
 
-	public async Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default)
+	public async Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, int? retentionDays = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(logName))
 			throw new ArgumentException("log name is required", nameof(logName));
 		if (!LogNameRegex().IsMatch(logName))
 			throw new ArgumentException("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$", nameof(logName));
+		if (retentionDays is <= 0)
+			throw new ArgumentException("retentionDays must be a positive number of days (omit it to use the project/workspace/system cascade)", nameof(retentionDays));
 
 		using var db = _core.Open();
 
@@ -89,6 +97,7 @@ public sealed partial class LogStore : ILogStore
 			ProjectKey = projectKey,
 			Name = logName,
 			Description = description,
+			RetentionDays = retentionDays,
 			CreatedAt = now,
 			UpdatedAt = now,
 		};
@@ -97,6 +106,24 @@ public sealed partial class LogStore : ILogStore
 		// Materialize the file + schema eagerly (no implicit create-on-first-write).
 		_factory.NewEnsuredConnection(projectKey, logName).Dispose();
 		return meta;
+	}
+
+	public async Task<LogMeta?> UpdateRetentionDaysAsync(string projectKey, string logName, int retentionDays, CancellationToken ct = default)
+	{
+		if (retentionDays < 0)
+			throw new ArgumentException("retentionDays must be >= 0 (0 clears the override, reverting to the project/workspace/system cascade)", nameof(retentionDays));
+
+		using var db = _core.Open();
+		var existing = await db.Logs.FirstOrDefaultAsync(l => l.ProjectKey == projectKey && l.Name == logName, ct);
+		if (existing is null) return null;
+
+		var updated = existing with
+		{
+			RetentionDays = retentionDays == 0 ? null : retentionDays,
+			UpdatedAt = DateTime.UtcNow,
+		};
+		await db.UpdateAsync(updated, token: ct);
+		return updated;
 	}
 
 	public async Task<bool> DeleteAsync(string projectKey, string logName, CancellationToken ct = default)

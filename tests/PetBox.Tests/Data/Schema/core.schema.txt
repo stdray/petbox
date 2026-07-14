@@ -61,6 +61,7 @@ TABLE Logs
   COL Description TEXT NULL
   COL Name TEXT NOT NULL PK2
   COL ProjectKey TEXT NOT NULL PK1
+  COL RetentionDays INTEGER NULL
   COL UpdatedAt DATETIME NOT NULL
   INDEX sqlite_autoindex_Logs_1 UNIQUE origin=pk (ProjectKey, Name)
 

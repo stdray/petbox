@@ -79,8 +79,9 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		public LogDb NewEnsuredContext(string projectKey, string logName) => db;
 		public Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default) => Task.FromResult(true);
 		public Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default) => throw new NotSupportedException();
-		public Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default) => throw new NotSupportedException();
+		public Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, int? retentionDays = null, CancellationToken ct = default) => throw new NotSupportedException();
 		public Task<bool> DeleteAsync(string projectKey, string logName, CancellationToken ct = default) => throw new NotSupportedException();
+		public Task<LogMeta?> UpdateRetentionDaysAsync(string projectKey, string logName, int retentionDays, CancellationToken ct = default) => throw new NotSupportedException();
 	}
 
 	async Task<LogQueryResult> RunAsync(string kql) => await _service.QueryAsync("p", "default", kql);

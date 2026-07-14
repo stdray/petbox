@@ -94,8 +94,10 @@ public static class LogApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	public sealed record CreateLogRequest(string Name, string? Description);
-	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt);
+	// spec log-retention-cascade: RetentionDays is OPTIONAL — omitted/null means "no override",
+	// the log is swept by the project/workspace/system cascade exactly as before this field existed.
+	public sealed record CreateLogRequest(string Name, string? Description, int? RetentionDays = null);
+	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt, int? RetentionDays = null);
 
 	static async Task<IResult> CreateLogAsync(
 		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
@@ -107,10 +109,10 @@ public static class LogApi
 
 		try
 		{
-			var meta = await store.CreateAsync(projectKey, req.Name.Trim(), req.Description, ct);
+			var meta = await store.CreateAsync(projectKey, req.Name.Trim(), req.Description, req.RetentionDays, ct);
 			return Results.Created(
 				$"/api/logs/{projectKey}/logs/{meta.Name}",
-				new LogInfo(meta.Name, meta.Description, meta.CreatedAt, meta.UpdatedAt));
+				new LogInfo(meta.Name, meta.Description, meta.CreatedAt, meta.UpdatedAt, meta.RetentionDays));
 		}
 		catch (ArgumentException ex) { return Results.BadRequest(new ErrorResponse(ex.Message)); }
 		catch (InvalidOperationException ex) when (ex.Message.Contains("already exists", StringComparison.Ordinal))
@@ -127,7 +129,7 @@ public static class LogApi
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		var rows = (await store.ListAsync(projectKey, ct))
-			.Select(l => new LogInfo(l.Name, l.Description, l.CreatedAt, l.UpdatedAt))
+			.Select(l => new LogInfo(l.Name, l.Description, l.CreatedAt, l.UpdatedAt, l.RetentionDays))
 			.ToList();
 		return Results.Ok(rows);
 	}

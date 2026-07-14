@@ -160,11 +160,17 @@ public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes);
 
 // ---- log.* lifecycle (replaces entity.* type "log") ----------------------------------
 
-public sealed record LogCreatedResult(string Name, string? Description, DateTime CreatedAt);
+// RetentionDays is the log's OWN override (spec log-retention-cascade) — null means the log has
+// none and is swept by the project/workspace/system cascade.
+public sealed record LogCreatedResult(string Name, string? Description, DateTime CreatedAt, int? RetentionDays = null);
 
-public sealed record LogRow(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt);
+public sealed record LogRow(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt, int? RetentionDays = null);
 
 public sealed record LogListResult(IReadOnlyList<LogRow> Logs);
+
+// log_update patches ONLY the retention override today — RetentionDays null means it was just
+// cleared (0 on the wire), reverting the log to the cascade.
+public sealed record LogUpdatedResult(string Name, int? RetentionDays);
 
 public sealed record LogDeletedResult(bool Deleted, string Name);
 
