@@ -68,12 +68,13 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlySet<string> ClosedWithActiveDescendant { get; private set; }
 		= new HashSet<string>(StringComparer.Ordinal);
 
-	// Per-node discussion thread, DFS-flattened to (comment, depth) so the view renders it
-	// flat with an indent — the same shape as the plan-node list. Empty for nodes with no
-	// comments. Read-only in v1 (writes go through the comments_* MCP tools). Rendered via
-	// the shared _CommentThread partial (same flattener as the node detail page).
-	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
-		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);
+	// board-page-cost: the board card NEVER renders a comment thread (that stayed a node-detail-
+	// page affordance — comments-ui's "visible to humans" promise is satisfied there). Each card
+	// shows only a "💬 N" count chip linking to the node page, sourced from ONE aggregate query
+	// (ICommentService.CountForBoardAsync) instead of loading and DFS-flattening every comment
+	// body/thread on the board (the old CommentThreads dictionary this replaces).
+	public IReadOnlyDictionary<string, int> CommentCounts { get; private set; }
+		= new Dictionary<string, int>(StringComparer.Ordinal);
 
 	// Explicit view-mode request from the URL (board-view-modes/board-view-persistence). Null
 	// = "not specified" — distinct from an explicit `?view=tree`, so the resolver
@@ -277,7 +278,9 @@ public sealed class TaskBoardModel : PageModel
 		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
 		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
-		IReadOnlyList<CommentLine>? Thread, BoardFieldConfig Fields, string? CommitUrlTemplate = null,
+		// board-page-cost: a COUNT only (0 = no chip) — the card never renders the thread itself
+		// (see CommentCounts' own header comment).
+		int CommentCount, BoardFieldConfig Fields, string? CommitUrlTemplate = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null,
 		// board-filters-server-state: server-computed hidden (active-only OR a collapsed ancestor)
@@ -534,29 +537,47 @@ public sealed class TaskBoardModel : PageModel
 			}
 		}
 
+		// board-read-loads-all-bodies (board-page-cost): Body is the fattest column per node —
+		// skip it in the DB read entirely when nothing on THIS render needs it. Outline is NOT the
+		// same rule as every other mode: even with Fields.Body off, _BoardViewOutline.cshtml still
+		// computes `hasBody = !string.IsNullOrEmpty(n.Body)` per node to decide "lazy" (offer a
+		// per-node expand affordance — only meaningful for a node that actually HAS a body) vs the
+		// plain no-affordance row — so outline needs the REAL body whenever it isn't in navigate
+		// reveal, eager or lazy alike (this matches its pre-existing behavior exactly: GetAsync
+		// always loaded every body regardless of Fields.Body — see that partial's own
+		// "board-read-loads-all-bodies" comment — only the HTML emission was gated). Only navigate
+		// reveal (the heading always links out, hasBody is never consulted) and every OTHER view
+		// mode (Tree/Tags/Kanban/Table, which gate purely on Fields.Body with no hasBody-dependent
+		// branch) can skip the load. Both Fields and OutlineRevealMode are already resolved above.
+		var outlineNavigates = string.Equals(OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
+		var needsBody = string.Equals(ResolvedViewMode, BoardViewModeNames.Outline, StringComparison.OrdinalIgnoreCase)
+			? !outlineNavigates
+			: Fields.Body;
+
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side, and now also server-side via ActiveOnly/Hidden — see PlanNodeCard.Hidden);
 		// GetAsync supplies each node's part_of parent + depth.
-		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, ct: ct);
+		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: needsBody, ct: ct);
 		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 		_parentOf = Nodes.ToDictionary(n => n.NodeId, n => n.ParentNodeId, StringComparer.Ordinal);
 
-		// One query for every comment on the board, grouped by owning node; DFS-flatten each
-		// node's thread by parentId so the view just iterates (no per-node N+1).
-		var byNode = await _comments.ListForBoardAsync(ProjectKey, Board, ct);
-		CommentThreads = byNode
-			.ToDictionary(g => g.Key, g => CommentThread.Flatten(g), StringComparer.Ordinal);
+		// board-page-cost: comments are NEVER rendered on the board (a thread is a node-detail-page
+		// affordance) — one aggregate COUNT query replaces what used to be a full board-wide
+		// comment load (bodies, tags, markdown render) DFS-flattened into every card.
+		CommentCounts = await _comments.CountForBoardAsync(ProjectKey, Board, ct);
 
-		// Resolve `[[slug]]` mentions across every card body + every comment body in ONE batch
-		// (node-ref-autolink), so each card's renderer can link resolvable mentions.
-		var bodies = Nodes.Select(n => (string?)n.Body)
-			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body))
-			.ToList();
-		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
-		// Same shape for memory-entry keys (memory-key-mention-link): the whole page's candidate
-		// keys resolve in one batch per container, never per card.
-		MemoryRefs = await BuildMemoryRefsAsync(bodies, ct);
+		// Resolve `[[slug]]` mentions across every card body in ONE batch (node-ref-autolink), so
+		// each card's renderer can link resolvable mentions — skipped entirely when this render
+		// won't show any body (needsBody false: nothing to autolink into).
+		if (needsBody)
+		{
+			var bodies = Nodes.Select(n => (string?)n.Body).ToList();
+			NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
+			// Same shape for memory-entry keys (memory-key-mention-link): the whole page's candidate
+			// keys resolve in one batch per container, never per card.
+			MemoryRefs = await BuildMemoryRefsAsync(bodies, ct);
+		}
 
 		// Tag-groups projection: only when the RESOLVED mode is tags with a valid dimension
 		// list. Bad/empty `by` silently falls back to the tree (the service would reject it)

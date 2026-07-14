@@ -131,9 +131,14 @@
 				}
 			</div>
 		}
-		@* List-view card (tree/tags/kanban/table): show existing comments, but suppress the
-		   root add-comment form (board-comment-form-list-noise) — commenting is a node-detail
-		   operation, not a per-card affordance under every node on the board. *@
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, ShowAddForm: false, MemoryRefs: Model.MemoryRefs))" />
+		@* board-page-cost: a board card never renders the discussion thread (body/markdown per
+		   comment) — that stayed a node-detail-page affordance. A count-only chip (sourced from
+		   ONE aggregate query, Model.CommentCount) links to it instead. *@
+		@if (Model.CommentCount > 0)
+		{
+			<div class="mt-1">
+				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-comment-count">💬 @Model.CommentCount</a>
+			</div>
+		}
 	</div>
 </li>

@@ -146,7 +146,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// `status` (slugs, case-insensitive) filters on top of the selection; a terminal status
 	// named in the filter returns its nodes even when includeClosed is false (an explicit
 	// ask overrides the default hiding); an unknown slug for the board's kind is rejected.
-	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default);
+	// `includeBody` (board-page-cost, default true = the historical behavior): false lets a
+	// caller that already knows nothing on its render shows Body (a board view with the body
+	// field off) skip the column in the DB read entirely — every PlanNodeView.Body comes back
+	// "" instead. Callers that need the real body (GetNodeAsync, tasks_search, …) never set this.
+	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default);
 	// One node by its stable NodeId alone (cross-board): the enriched node view + its owning
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).

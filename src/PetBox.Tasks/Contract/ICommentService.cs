@@ -66,6 +66,13 @@ public interface ICommentService
 	// (no per-node N+1). Mirrors TagStore.BoardTagsAsync.
 	Task<ILookup<string, CommentView>> ListForBoardAsync(
 		string projectKey, string board, CancellationToken ct = default);
+
+	// board-page-cost: the count-only counterpart of ListForBoardAsync — the board page shows a
+	// "💬 N" chip per card, never the thread body/markdown, so this never selects Body/Author/tags
+	// at all: ONE `GROUP BY NodeId, COUNT(*)` query. A node with zero active comments is simply
+	// absent from the map (GetValueOrDefault(0) at the read site).
+	Task<IReadOnlyDictionary<string, int>> CountForBoardAsync(
+		string projectKey, string board, CancellationToken ct = default);
 }
 
 // A comment as seen by callers (MCP/UI) — the Data row stays internal to the service.

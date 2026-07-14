@@ -26,6 +26,12 @@ public interface IRelationStore
 	// All ACTIVE edges of a kind in the project (one query) — for building parent/child
 	// maps (part_of) without an N+1 walk.
 	Task<IReadOnlyList<Relation>> ListByKindAsync(string projectKey, string kind, CancellationToken ct = default);
+	// Every ACTIVE edge touching ANY of `nodeIds`, either end (board-page-cost): ONE connection,
+	// a small number of queries for a whole board render, instead of ListAsync's per-node
+	// (~2 x node count) connections. The caller reproduces ListAsync(nodeId, "from"/"to") for
+	// each id by grouping the result on FromNodeId/ToNodeId — a relation touching id X is
+	// guaranteed present because X itself was in `nodeIds` (matches on FromNodeId OR ToNodeId).
+	Task<IReadOnlyList<Relation>> ListForNodesAsync(string projectKey, IReadOnlyCollection<string> nodeIds, CancellationToken ct = default);
 }
 
 public sealed class RelationStore : IRelationStore
@@ -119,6 +125,36 @@ public sealed class RelationStore : IRelationStore
 		return await ctx.GetTable<Relation>()
 			.Where(r => r.Kind == kind && r.ClosedAt == null)
 			.ToListAsync(ct);
+	}
+
+	// board-page-cost: batches what used to be 2 x nodeIds.Count separate ListAsync calls (each
+	// opening its OWN connection) into ONE connection and a handful of `IN (...)` queries. SQLite
+	// caps bound parameters at 999; Contains() on `chunk` compiles to one IN(...) per side of the
+	// OR, so a chunk of 400 ids stays comfortably under that per query (linq2db logs the exact SQL
+	// it emits — verified in RelationStoreBatchTests). Board sizes here are hundreds of nodes, so
+	// this is 1-2 round trips in practice, not a scheme meant to scale to tens of thousands of ids.
+	public async Task<IReadOnlyList<Relation>> ListForNodesAsync(
+		string projectKey, IReadOnlyCollection<string> nodeIds, CancellationToken ct = default)
+	{
+		var ids = nodeIds.Where(id => !string.IsNullOrEmpty(id)).Distinct(StringComparer.Ordinal).ToList();
+		if (ids.Count == 0) return [];
+
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		var results = new List<Relation>();
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+		const int ChunkSize = 400;
+		for (var i = 0; i < ids.Count; i += ChunkSize)
+		{
+			var chunk = ids.Skip(i).Take(ChunkSize).ToList();
+			// linq2db translates List<string>.Contains(column) to a SQL `column IN (@p0, @p1, …)`;
+			// the OR combines the two IN-lists into one WHERE clause, one round trip per chunk.
+			var rows = await ctx.GetTable<Relation>()
+				.Where(r => r.ClosedAt == null && (chunk.Contains(r.FromNodeId) || chunk.Contains(r.ToNodeId)))
+				.ToListAsync(ct);
+			foreach (var r in rows)
+				if (seen.Add(r.Id)) results.Add(r);
+		}
+		return results;
 	}
 
 	// The registry (plan_node_ids) is the FK parent, and triggers keep it == the set of node

@@ -34,8 +34,8 @@ else
 			var hiddenByActive = Model.ActiveOnly && closed && !keepVisible;
 			var hidden = hiddenByActive || Model.IsHiddenByCollapse(n.ParentNodeId);
 			var collapsedSelf = Model.CollapsedNodeIds.Contains(n.NodeId);
-			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, hidden, collapsedSelf)" />
+			var commentCount = Model.CommentCounts.GetValueOrDefault(n.NodeId);
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, commentCount, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, hidden, collapsedSelf)" />
 		}
 	</ul>
 }
