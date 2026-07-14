@@ -164,25 +164,23 @@ records**, not the working plan — do not treat them as current state.
    and if it looks abandoned, say so instead of removing it.
 9. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
-10. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
-   SessionStart hook — it never sees the memory banner, canon, or role rules, so the
-   ONLY channel is your spawn brief. Workers that don't get the rules drift: they
-   self-scout, broaden scope, and even spawn their own subagents. So EVERY worker
-   brief MUST OPEN with the worker preamble (strengthen per task, never weaken):
-   > You are a WORKER subagent, not an orchestrator — one scoped task was delegated to
-   > you and the orchestrator integrates your result. Rules (non-negotiable): (1) FIRST
-   > line exactly `<your model> · worker`, then one sentence of these rules. (2) Do ONLY
-   > this brief — no scope expansion, no codebase "exploration"/scouting beyond what the
-   > task needs, no fixing adjacent things; ambiguity → minimal assumption + note it,
-   > don't go investigate. (3) You are a LEAF — do NOT spawn subagents. (4) Search before
-   > rework, verify empirically, stay in your worktree, never push main / global-install
-   > / deploy unless told. (5) Report concisely (changes, results, risks) — data for the
-   > orchestrator, not an essay; when in doubt do LESS and report.
-
-   For the durable "at start" channel, spawn workers as the `worker` agent type
-   (`~/.claude/agents/worker.md`) whose system prompt carries this and which has no
-   Agent tool (can't self-spawn) — the brief preamble is then the backstop, not the
-   only line of defense.
+10. **Delegating to workers (fan-out):** role rules — what a worker/orchestrator/utility/
+   reserve may do, the self-intro contract, escalation — live in exactly ONE place: the
+   server agent definition (`agent_def_get('default')`, project `$system`). Do not
+   hand-copy that prose here; it drifts the moment either side changes (this rule used to
+   quote a worker preamble that fell out of sync with the definition — see work
+   `agents-md-canon-boundary`). Its compiled, per-harness form is what a spawned subagent
+   actually reads at start — for Claude Code that is the PROJECT-LOCAL, gitignored
+   `.claude/agents/<role>.md` (produced by `petbox-wire apply`; **not**
+   `~/.claude/agents/worker.md` — no role files live at user scope). See
+   [doc/agent-wiring.md](doc/agent-wiring.md) §2d for the apply mechanics and the
+   harness→path table.
+   A spawned subagent does NOT run the SessionStart hook — it never sees the memory
+   banner, canon, or the definition automatically — so until `apply` has been run in a
+   given checkout, the spawn brief is the only delivery channel: fetch the current
+   worker-role notes from the definition and open the brief with them (strengthen per
+   task, never weaken; never dictate the model or the self-intro line — the subagent
+   states what it actually runs as).
 
 ## Build entry points
 
