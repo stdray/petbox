@@ -1,0 +1,40 @@
+@model PetBox.Web.Pages.ProjectHome.BoardColumnsDialogModel
+@* kanban-column-picker (spec board-view-fields' sibling): the column (status) visibility dialog
+   — modeled exactly on _BoardFieldsDialog's shape (toggle button, modal, GET form, a checkbox
+   per option, an Apply button), but kanban-only and its vocabulary is THIS board's own workflow
+   statuses (Model.Columns, sourced from TaskBoardModel.KanbanColumns — never a hardcoded status
+   list, so a different methodology's own statuses render here too). `columnsSet=1` disambiguates
+   "the dialog submitted a deliberately empty selection" from "no `columns` query param at all"
+   (unchecked checkboxes don't post — TaskBoardModel.ColumnsSetParam), the exact same mechanism
+   `fieldsSet` already gives the fields dialog. `view`/`by` round-trip as hidden fields so
+   applying a column selection never resets the view the user is on. *@
+<button type="button" class="btn btn-ghost btn-xs" data-testid="columns-toggle" title="Choose which columns to show" aria-label="Choose columns">☰ columns</button>
+
+<div class="modal" data-testid="columns-modal" role="dialog" aria-modal="true">
+	<div class="modal-box max-w-sm">
+		<div class="flex items-center justify-between gap-2 mb-3">
+			<h3 class="font-semibold text-lg" data-testid="columns-modal-title">Board columns</h3>
+			<button type="button" class="btn btn-sm btn-circle btn-ghost" data-testid="columns-modal-close" aria-label="Close">✕</button>
+		</div>
+		<form method="get" data-testid="columns-form" class="flex flex-col gap-2">
+			<input type="hidden" name="view" value="@Model.ViewMode" />
+			@if (!string.IsNullOrEmpty(Model.By))
+			{
+				<input type="hidden" name="by" value="@Model.By" />
+			}
+			<input type="hidden" name="columnsSet" value="1" />
+			@foreach (var col in Model.Columns)
+			{
+				<label class="label cursor-pointer justify-start gap-2">
+					<input type="checkbox" name="columns" value="@col.Slug" class="checkbox checkbox-sm" data-testid="column-@col.Slug" checked="@(Model.Visible.Has(col.Slug) ? "checked" : null)" />
+					<span class="label-text">@col.Name</span>
+				</label>
+			}
+			<div class="mt-2 flex items-center gap-2">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="columns-apply">Apply</button>
+				<span class="text-xs opacity-60">a non-empty "other" column (statuses outside this workflow) always stays visible</span>
+			</div>
+		</form>
+	</div>
+	<div class="modal-backdrop" data-testid="columns-modal-backdrop"></div>
+</div>

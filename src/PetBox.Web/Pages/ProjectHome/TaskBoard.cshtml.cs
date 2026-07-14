@@ -110,6 +110,24 @@ public sealed class TaskBoardModel : PageModel
 	// PlanNodeCard (Kanban/Outline/Table).
 	public BoardFieldConfig Fields { get; private set; } = BoardFieldConfig.None;
 
+	// kanban-column-picker: which kanban columns (workflow-status slugs) are visible — the SAME
+	// URL-contract shape as `fields`/`fieldsSet` above (a repeated `columns=` query key plus a
+	// `columnsSet` disambiguator), but the vocabulary is THIS board's own KanbanColumns, not a
+	// fixed BoardFieldNames-style list.
+	[BindProperty(SupportsGet = true, Name = "columns")]
+	public string[]? ColumnsParam { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "columnsSet")]
+	public string? ColumnsSetParam { get; set; }
+
+	// What THIS render actually shows: ColumnsParam when the request explicitly declared a
+	// selection (ColumnsSetParam present — including a deliberately empty one), else the saved
+	// per-board DB preference, else "every column visible" (kanban-column-picker bullet 4 — the
+	// unchanged-until-chosen default). Read by _BoardViewKanban to decide which KanbanColumns to
+	// render; NEVER consulted by active-only filtering/sorting/other view modes (presentation
+	// only, kanban-column-picker bullet 6).
+	public BoardColumnConfig VisibleColumns { get; private set; } = BoardColumnConfig.None;
+
 	// board-filters-server-state: active-only / sort — GLOBAL (board-independent) [Setting]
 	// preferences resolved from BrowserState. Rendered into _BoardFilterSort's controls (checked/
 	// selected/arrow) AND used to compute each row's Hidden flag / DFS sort order server-side, so
@@ -439,6 +457,7 @@ public sealed class TaskBoardModel : PageModel
 			.GroupBy(s => s.Slug, StringComparer.OrdinalIgnoreCase)
 			.Select(g => new KanbanColumn(g.Key, g.First().Name))
 			.ToList();
+		var knownColumnSlugs = KanbanColumns.Select(c => c.Slug).ToList();
 
 		// Outline's reveal mode is DATA on the kind (Runtime.OutlineReveal), not a PresetKind
 		// lookup — PresetKind nulls out for any DEFINED kind (its correct guard for process-role
@@ -462,6 +481,15 @@ public sealed class TaskBoardModel : PageModel
 				? BoardFieldConfig.FromKeys(savedFieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
 				: DefaultFields;
 
+		// kanban-column-picker: the SAME cascade as Fields just above — explicit `?columns=`+
+		// `columnsSet=1` wins (and is what WRITES the preference below) -> the saved per-board DB
+		// preference -> every column visible.
+		VisibleColumns = !string.IsNullOrEmpty(ColumnsSetParam)
+			? BoardColumnConfig.FromKeys(ColumnsParam, knownColumnSlugs)
+			: savedPref?.Columns is { } savedColumnsCsv
+				? BoardColumnConfig.FromKeys(savedColumnsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries), knownColumnSlugs)
+				: BoardColumnConfig.AllVisible(knownColumnSlugs);
+
 		// board-view-cross-device: `?view=`/`?fields=` are the explicit, shareable override AND the
 		// thing that writes the DB preference for next time (and every other device) — a plain
 		// read-modify-write against the ONE per-user ViewPreferences dictionary, skipped entirely
@@ -482,6 +510,15 @@ public sealed class TaskBoardModel : PageModel
 				if (nextPref.Fields != fieldsCsv)
 				{
 					nextPref = nextPref with { Fields = fieldsCsv };
+					changed = true;
+				}
+			}
+			if (!string.IsNullOrEmpty(ColumnsSetParam))
+			{
+				var columnsCsv = VisibleColumns.ToCsv(knownColumnSlugs);
+				if (nextPref.Columns != columnsCsv)
+				{
+					nextPref = nextPref with { Columns = columnsCsv };
 					changed = true;
 				}
 			}

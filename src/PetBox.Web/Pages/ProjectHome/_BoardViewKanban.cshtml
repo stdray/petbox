@@ -41,8 +41,16 @@ else
 	var isSpecBoard = Model.Runtime.IsSpecKind(Model.KindSlug);
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
+	@* kanban-column-picker: kanban-only (never rendered in tree/table/outline) — its own
+	   toggle+modal+form, separate from the shared fields dialog above since its vocabulary
+	   (this board's own workflow statuses) isn't part of BoardFilterSortModel. *@
+	<partial name="_BoardColumnsDialog" model="@(new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By))" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
-		@foreach (var col in Model.KanbanColumns)
+		@* kanban-column-picker bullet 6: hiding a column is PRESENTATION only — byStatus/strayCount
+		   above are still computed over every node regardless of the selection, so active-only
+		   filtering, sorting and per-column counts elsewhere are unaffected; only which <div
+		   data-testid="kanban-column"> elements render is filtered here. *@
+		@foreach (var col in Model.KanbanColumns.Where(c => Model.VisibleColumns.Has(c.Slug)))
 		{
 			var nodesInCol = byStatus.TryGetValue(col.Slug, out var list) ? list : [];
 			<div class="flex-none w-72" data-testid="kanban-column" data-status="@col.Slug">

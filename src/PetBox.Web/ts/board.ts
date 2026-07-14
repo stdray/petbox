@@ -126,6 +126,26 @@ export function initBoardFieldsDialog(): void {
 	});
 }
 
+// kanban-column-picker: the column (status) visibility dialog's open/close — same daisyUI
+// `.modal-open` toggle pattern as initBoardFieldsDialog just above (and initWorkflowViz's "View
+// workflow" modal), just against the columns-* testids instead of fields-*. Kanban-only: the
+// modal/toggle simply aren't in the DOM on any other view mode, so this is a no-op there.
+export function initBoardColumnsDialog(): void {
+	const modal = document.querySelector<HTMLElement>("[data-testid='columns-modal']");
+	const toggle = document.querySelector<HTMLElement>("[data-testid='columns-toggle']");
+	if (!modal || !toggle) return;
+	const closeBtn = modal.querySelector<HTMLElement>("[data-testid='columns-modal-close']");
+	const backdrop = modal.querySelector<HTMLElement>("[data-testid='columns-modal-backdrop']");
+
+	const close = (): void => modal.classList.remove("modal-open");
+	toggle.addEventListener("click", () => modal.classList.add("modal-open"));
+	closeBtn?.addEventListener("click", close);
+	backdrop?.addEventListener("click", close);
+	document.addEventListener("keydown", (evt) => {
+		if (evt.key === "Escape" && modal.classList.contains("modal-open")) close();
+	});
+}
+
 // One independent reorder scope (board-sort): a `[data-sort-scope]` container plus the
 // roots/childrenOf sibling structure computed from ONLY the rows inside it. Kanban renders one
 // of these per column; tree/outline/table render exactly one for the whole pane.
