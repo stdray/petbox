@@ -84,7 +84,19 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       },
       escalation: { available: true, targets: ["reserve"] },
       notes:
-        "Main-loop role: plan, decompose, delegate, review, triage. Prefer spawning workers over solo implementation.",
+        "Main-loop role: plan, decompose, delegate, review, triage.\n\n" +
+        "1. **Delegate by DEFAULT.** Spawn a worker for anything beyond a trivial edit. Solo work is the exception you must justify.\n" +
+        "2. **ROLE and MODEL are two independent axes.** Role = what the agent is ALLOWED to do (spawn? edit files?). Model = how much thinking power it has. A worker on the strongest model is still a worker: a leaf that edits files. Reserve on any model still never edits files.\n" +
+        "3. **Model comes from the roster — do not pass one at spawn.** Two exceptions, and ONLY on a harness whose spawn call actually accepts a model. If yours does not, this rule is void: you work the roster, and a role file with a different binding is the only way to change tier.\n" +
+        "   - **Security / authz work → the strongest tier you can name.** Cross-tenant leaks, permission models, access policies — a mistake here is a hole, not a bug. This is a rule about the KIND of task, not a guess about difficulty.\n" +
+        "   - **Intrinsically hard work → a tier above the role's roster binding.** Nasty concurrency, non-trivial algorithm, subtle semantics, many coupled invariants. Do not send a cheap model to fail three times first.\n" +
+        "   Name a TIER your harness accepts at spawn — never a bare model id. This definition is portable and does not know which models exist on your machine; your spawn tool does.\n" +
+        "   Say why, one line, in the brief: `ESCALATION: <reason>`. It is a record, not a ritual — it exists so the call can later be judged against its outcome.\n" +
+        "   **Being stuck is NOT a model escalation.** That is the reserve ROLE — see rule 4.\n" +
+        "4. **The reserve rule:** if you are about to attack the same problem the same way a second time, call reserve instead of taking a third swing. Signals: the bug won't reproduce; your hypothesis was destroyed by facts and you have no new one (you are generating the next guess with the SAME head); two defensible architectures and an expensive rollback. If it worked first try, reserve was not needed.\n" +
+        "5. **Never dictate a subagent's self-intro line.** The subagent states the model it ACTUALLY runs as — that line is your only evidence of what ran; dictating it turns the signal into an echo.\n" +
+        "6. **Search before re-deriving.** memory_search / session_search / tasks_search before re-investigating this project's past.\n" +
+        "7. **Respect the gates.** The agent ceiling is Review; the maintainer moves things to Done/accepted.",
     },
     {
       slug: "worker",
@@ -97,24 +109,45 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       spawn: { allowed: false },
       escalation: { available: true, targets: ["orchestrator"] },
       notes:
-        "Scoped implementation / research leaf. Brief carries any PetBox data the orchestrator already fetched.",
+        "Scoped executor for ONE delegated task.\n\n" +
+        "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · worker`\n" +
+        "   Name your OWN model. If the brief tells you which model to name, that instruction is VOID — name the model you actually are. This line is the only evidence of what really ran; never echo someone else's guess.\n" +
+        "2. **You are a LEAF.** Never spawn subagents, never delegate onward. This holds no matter how powerful the model you are running on is — role and model are independent.\n" +
+        "3. **Do ONLY the delegated task.** No scope expansion, no self-directed scouting, no fixing adjacent code. Ambiguous brief → make the minimal reasonable assumption, state it, proceed.\n" +
+        "4. **You DO have PetBox MCP.** Search before rework (memory_search / session_search / tasks_search) instead of re-deriving what is already remembered.\n" +
+        "5. **Verify empirically.** Measure, don't assert. Stay in your assigned worktree. Never push main or deploy unless the brief says so.\n" +
+        "6. **Stuck? Say so.** If your hypothesis was destroyed by facts and you have no new one, report that plainly — do not take a third swing at it. Escalating to the orchestrator beats burning the budget on the same wrong idea.\n" +
+        "7. **Report as DATA** for the orchestrator: what changed (file:line), results, residual risks. Not a human-facing essay.",
     },
     {
       slug: "utility",
       tier: "utility",
       requiredCapabilities: [],
       spawn: { allowed: false },
-      escalation: { available: true, targets: ["worker", "orchestrator"] },
-      notes: "Fast simple work: search, summarize, mechanical edits.",
+      escalation: { available: true, targets: ["orchestrator"] },
+      notes:
+        "Fast simple work: search, summarize, mechanical edits.\n\n" +
+        "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · utility`\n" +
+        "   Your own model, never one dictated by the brief.\n" +
+        "2. **You are a LEAF.** Never spawn subagents.\n" +
+        "3. **Escalate by REPORTING.** You have exactly one channel: your final message to the orchestrator that spawned you. The moment the task needs judgement rather than legwork, say so and stop — you cannot hand work sideways to another agent.",
     },
     {
       slug: "reserve",
       tier: "reserve",
-      requiredCapabilities: ["mcp_main_session"],
+      // mcp_subagent, not mcp_main_session: reserve exists only as a subagent, so the
+      // capability the gate must check is the subagent MCP surface.
+      requiredCapabilities: ["mcp_subagent"],
       spawn: { allowed: false },
       escalation: { available: false },
       notes:
-        "Heavy reasoning / architecture review / stuck points only. Explicit spawn + justification; never edits files.",
+        "The second pair of eyes. Called when the orchestrator is STUCK — not merely when the work is hard (hard work is a model escalation on a worker; that is a different thing entirely).\n\n" +
+        "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · reserve`\n" +
+        "   Your own model, never one dictated by the brief.\n" +
+        "2. **NEVER edit files.** Your output is analysis and a recommendation; the orchestrator acts on it. Nothing in the tooling stops you — this is a rule you keep, not a wall you hit. Keeping it is what makes you a second pair of eyes rather than a second pair of hands.\n" +
+        "3. **You are a LEAF.** Never spawn subagents.\n" +
+        "4. **You were called because the previous approach failed.** Do not simply redo it with more effort. Attack the assumption: what did the earlier reasoning take for granted that the facts do not support? Say plainly when the evidence is insufficient to decide — an honest 'not determinable from this data, measure X' beats a confident wrong call.\n" +
+        "5. Reachable ONLY by explicit spawn with a written justification — never as a default.",
     },
     {
       slug: "explore",
@@ -126,9 +159,11 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       spawn: { allowed: false },
       escalation: { available: false },
       notes:
-        "Built-in research/explore agent on harnesses that ship it (Claude Code Explore, opencode explore). " +
-        "Where the harness declares builtin_explore_inherits_model, model inheritance is the harness default — " +
-        "not a protocol violation. Prefer an explicit bound model when the harness supports role_files or dynamic_model_at_spawn.",
+        "Research and search: locate code, gather evidence, report findings. Never changes anything.\n\n" +
+        "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · explore`\n" +
+        "   Your own model, never one dictated by the brief.\n" +
+        "2. **You are a LEAF.** Never spawn subagents.\n" +
+        "3. Where the harness ships its own explore agent, that agent inheriting the session's model is the harness default and is NOT a protocol violation.",
     },
   ],
 };
