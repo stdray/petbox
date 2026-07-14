@@ -10,6 +10,14 @@
 	"engines": {
 		"node": ">=23.6.0"
 	},
+	"scripts": {
+		"test": "node --test src/*.test.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"typescript": "5.7.3"
+	},
 	"keywords": ["petbox", "wiring", "claude-code", "opencode", "factory-droid", "mcp"],
 	"license": "MIT",
 	"repository": {

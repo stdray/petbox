@@ -433,8 +433,22 @@ Task("NpmPublish")
 
 // ─── agent-wiring kit (petbox-wire) — same npm registry, own `npm-wire` tag ───
 
+// Kit source ships unbuilt (native Node TS type-stripping — see package.json's `engines.node`),
+// but its ~86 `node --test` unit tests and its `tsc --noEmit` typecheck DO need `devDependencies`
+// (typescript, @types/node) resolved first — mirrors TsSdkInstall.
+Task("TsWireInstall")
+	.Does(() => RunBun("install --frozen-lockfile", tsWireDir));
+
+Task("TsWireTest")
+	.IsDependentOn("TsWireInstall")
+	.Does(() => RunBun("run test", tsWireDir));
+
+Task("TsWireTypecheck")
+	.IsDependentOn("TsWireInstall")
+	.Does(() => RunBun("run typecheck", tsWireDir));
+
 // Stamp package.json version from GitVersion. The kit is raw plain TS (native type-stripping),
-// so there is no install/build/pack — just the version bump, mirroring TsSdkPack. GitVersion runs
+// so there is no build/pack step beyond the version bump, mirroring TsSdkPack. GitVersion runs
 // standalone (only needs git) so we skip the full Clean→Restore→Version .NET chain.
 Task("TsWirePack")
 	.Does(() =>
@@ -453,7 +467,15 @@ Task("TsWirePack")
 // Publishes the agent-wiring kit (petbox-wire, UNSCOPED public package) to registry.npmjs.org
 // on its own `npm-wire` tag (CI calls `./build.sh --target=NpmWirePublish`). Same NPM_TOKEN +
 // temporary-.npmrc mechanism as NpmPublish.
+//
+// TsWireTest + TsWireTypecheck are REQUIRED dependencies, not optional checks run alongside:
+// the kit had ~86 written tests and a typecheck that ran in NO pipeline anywhere, so a red test
+// or a failing typecheck never stopped `npm publish`. Cake dependencies always run before `Does`,
+// so a failure in either throws before TsWirePack/publish executes — publishing on red is no
+// longer reachable.
 Task("NpmWirePublish")
+	.IsDependentOn("TsWireTest")
+	.IsDependentOn("TsWireTypecheck")
 	.IsDependentOn("TsWirePack")
 	.Does(() =>
 	{
