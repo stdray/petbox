@@ -26,12 +26,16 @@
 // "SessionStart:resume" hook names — the gate is on stdout size, not the hook event.
 export const HARNESS_INLINE_HARD_LIMIT_BYTES = 10_000;
 
-// We target well under the hard edge rather than skating it: the banner's size varies session
-// to session (server/LKG/default agent-def notes text, project name, the resume/compact suffix
-// line), and the canon body can grow between deploys without this kit changing at all. A
-// margin here means ordinary drift never crosses into truncation — only a real regression (or
-// an oversized canon) trips assembleSessionBanner's drop-and-log path below.
-export const SESSION_BANNER_BUDGET_BYTES = 8_000;
+// The budget sits below the hard edge, but not by so much that it throws away context that
+// would physically fit. Measured 2026-07-14 against the live $system server: protocol block
+// 6 276 B + canon payload (project + workspace) 2 893 B = 9 169 B. An 8 000 B budget dropped
+// the canon every session even though it fit inside the harness's 10 000 B edge — the margin
+// cost more than it protected. 9 400 B keeps a 600 B cushion for drift (agent-def notes,
+// project name, the resume/compact suffix), and drift no longer hides: assembleSessionBanner
+// drops the canon and LOGS loudly (stderr + ~/.petbox/wire.log) instead of letting the harness
+// cut mid-sentence. If you need more room, shrink the canon — it is an index of pointers, not
+// a document.
+export const SESSION_BANNER_BUDGET_BYTES = 9_400;
 
 export type SessionBannerResult = {
   /** What actually goes to stdout — always the mandatory protocol block, plus canon iff it fit. */
