@@ -24,6 +24,12 @@ import { fetchCanonBlock } from "./canon.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
+import {
+  assembleSessionBanner,
+  HARNESS_INLINE_HARD_LIMIT_BYTES,
+  logBudgetOverage,
+  SESSION_BANNER_BUDGET_BYTES,
+} from "./session-budget.ts";
 
 // Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
 // module comment above.
@@ -89,14 +95,28 @@ async function main(): Promise<void> {
     const remainingMs = SESSION_FETCH_BUDGET_MS - (Date.now() - budgetStart);
     const canon = await fetchCanonBlock(resolved, { timeoutMs: remainingMs });
 
-    let out = buildProtocol(resolved.project, mcpPetboxTool, {
+    const protocol = buildProtocol(resolved.project, mcpPetboxTool, {
       source,
       harness: "claude-code",
       definition: defResult.definition,
     });
-    // Append the curated memory canon when available (best-effort; degrades to nothing).
-    if (canon) out += `\n\n${canon}`;
-    await writeStdout(out);
+    // Append the curated memory canon only if protocol+canon together still fit the measured
+    // harness inline budget (session-budget.ts) — the mandatory protocol block (gates,
+    // self-intro, search-before-rework) must never be put at risk of the harness's own
+    // byte-offset truncation by an oversized canon riding along after it.
+    const banner = assembleSessionBanner(protocol, canon);
+    if (banner.overBudget) {
+      // A breakage, not an expected absence (wire-silent-failures-invisible taxonomy) — log
+      // loudly rather than silently ship a banner the harness will itself guillotine.
+      await logBudgetOverage(
+        `pull-memory[${resolved.project}]: session banner exceeded budget — ` +
+          `protocol=${banner.protocolBytes}B canon=${banner.canonBytes}B ` +
+          `budget=${SESSION_BANNER_BUDGET_BYTES}B hard-limit=${HARNESS_INLINE_HARD_LIMIT_BYTES}B — ` +
+          `canon ${banner.canonIncluded ? "KEPT (still risks harness truncation)" : "DROPPED from this session's banner"}. ` +
+          `Shrink the canon (memory_upsert store canon key index) or raise the budget deliberately.`,
+      );
+    }
+    await writeStdout(banner.text);
   } catch {
     // best-effort
   }

@@ -21,12 +21,13 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { HARNESS_INLINE_HARD_LIMIT_BYTES } from "./session-budget.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -88,6 +89,36 @@ function startFastFakeServer(): Promise<{ port: number; close: () => Promise<voi
   });
 }
 
+// A fake server whose canon response is deliberately oversized (well past the measured
+// harness inline budget — see session-budget.ts) so the hook's drop-and-log path (the fix for
+// startup-banner-truncated-86-percent) is exercised end to end as a REAL process, not just via
+// the in-process unit tests in session-budget.test.ts.
+function startFatCanonFakeServer(): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const fatBody = "canon-line ".repeat(5000); // ~55KB — far past any reasonable budget
+    const server = http.createServer((req, res) => {
+      if (req.url?.includes("/agent-defs/")) {
+        res.writeHead(404, { "Content-Type": "application/json" }).end("{}");
+        return;
+      }
+      if (req.url?.includes("/memory/") && req.url?.includes("/canon")) {
+        res
+          .writeHead(200, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ project: { body: fatBody, updatedAt: null, version: 1 }, workspace: null }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as { port: number }).port;
+      resolve({
+        port,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
 function setUpIsolatedRegistry(baseUrl: string): { home: string; projectDir: string } {
   const home = mkdtempSync(join(tmpdir(), "petbox-hook-proc-"));
   const projectDir = join(home, "fake-project");
@@ -128,6 +159,53 @@ test("pull-memory.ts as a real process: wall clock stays well under budget again
       result.wallMs < WALL_CLOCK_BUDGET_MS,
       `wall clock ${result.wallMs}ms exceeded the ${WALL_CLOCK_BUDGET_MS}ms budget against a server that never stalls — ` +
         `this is the regression this test exists to catch (an uncleared timer / late-unreffed handle holding the loop open)`,
+    );
+  } finally {
+    await close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("pull-memory.ts as a real process: an oversized canon is dropped, logged loudly (stderr + wire.log), and stdout never risks the harness's own truncation", async () => {
+  const { close, port } = await startFatCanonFakeServer();
+  const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      FAKE_HOOK_TEST_KEY: "fake-key-for-test",
+    };
+    const input = JSON.stringify({
+      session_id: "test",
+      cwd: projectDir,
+      hook_event_name: "SessionStart",
+      source: "startup",
+    });
+
+    const result = await runHook(join(HERE, "pull-memory.ts"), input, env, projectDir);
+
+    assert.equal(result.code, 0, `hook must still exit 0 on a budget overage (best-effort contract), got ${result.code}`);
+    assert.ok(result.stdout.length > 0, "the mandatory protocol block must still ship");
+    assert.ok(
+      Buffer.byteLength(result.stdout, "utf8") <= HARNESS_INLINE_HARD_LIMIT_BYTES,
+      `stdout is ${Buffer.byteLength(result.stdout, "utf8")}B — at/over the harness's own ` +
+        `${HARNESS_INLINE_HARD_LIMIT_BYTES}B hard limit, meaning the harness would itself have ` +
+        `truncated it (the exact bug this test exists to catch)`,
+    );
+    assert.ok(!result.stdout.includes("canon-line "), "the oversized canon must NOT have been inlined");
+    assert.match(
+      result.stderr,
+      /exceeded budget/,
+      `an over-budget banner must complain loudly to stderr; got: ${JSON.stringify(result.stderr)}`,
+    );
+
+    const logPath = join(home, ".petbox", "wire.log");
+    const logContent = readFileSync(logPath, "utf8");
+    assert.match(
+      logContent,
+      /exceeded budget/,
+      "the overage must also leave a durable trace in ~/.petbox/wire.log, not just stderr",
     );
   } finally {
     await close();

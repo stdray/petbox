@@ -110,6 +110,7 @@ PetBox remembers curated facts AND full session history. Start from SEARCH, not 
 
 - **Facts — \`${memorySearch}\`**: \`q\` of confident words (ANDed, prefix-match, stemmed). \`bodyLen\` for snippets. No \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\` (per-hit label). No \`q\` = listing. Full body: \`${memoryGet}\`.
 - **Conversations — \`${sessionSearch}\`**: for HOW something was decided, error text, or detail a fact wouldn't carry — two-stage session-archive search; each hit carries the message ordinal → \`${sessionGet}\` for verbatim source.
+- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget — a large canon or definition can push it out. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace).
 
 **Capture-as-you-go** — don't wait. After a decision, fix, pattern, or preference: \`${memoryRemember}\` (\`text\` = learning; \`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts, else omit). Curated/temporal edits: \`${memoryUpsert}\`.
 
