@@ -4,9 +4,13 @@
 // Per-role truthfulness: clean roles are emitted; dirty roles are skipped and
 // reported in violations/skippedRoles (never silently drop a required line from
 // a role that is emitted — the whole dirty role is blocked). "Dirty" covers BOTH
-// a missing harness capability AND a local model binding the harness cannot resolve
-// (harness-models.ts) — the latter would otherwise be written into frontmatter and
-// silently ignored by the harness, which then falls back to the session model.
+// a missing harness capability AND a local model binding that looks like ANOTHER
+// harness's id shape (harness-models.ts's "foreign" tier) — writing that in would be
+// either rejected loudly by the target harness at runtime or silently satisfy a
+// different harness's config, not this one. A model that is merely unrecognized-but-
+// shape-valid (harness-models.ts's "unknown" tier — e.g. a real `claude-*` id newer
+// than the kit's small known-alias list) is NOT dirty: it is written, with a warning
+// (see ApplyPlan.warnings / modelShapeWarning in truthfulness.ts).
 //
 // Paths (documented harness layouts):
 //   opencode     → .opencode/agent/<role>.md
@@ -26,6 +30,7 @@ import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import {
   checkRoleTruthfulness,
   formatViolations,
+  modelShapeWarning,
   type TruthfulnessViolation,
 } from "./truthfulness.ts";
 
@@ -63,10 +68,13 @@ export type ApplyPlan = {
   /** Role slugs skipped because of violations. */
   readonly skippedRoles: readonly string[];
   /**
-   * Non-blocking notices. A role with NO local model binding is written without a model key
-   * (claude-code/opencode) or with `model: inherit` (droid) — legitimate, but it means the
-   * agent runs on the session/parent model. Warn so that is a choice, not a surprise.
-   * A role bound to an id the harness cannot resolve is NOT a warning — it is a violation.
+   * Non-blocking notices, two kinds:
+   *  - A role with NO local model binding is written without a model key (claude-code/opencode)
+   *    or with `model: inherit` (droid) — legitimate, but it means the agent runs on the
+   *    session/parent model. Warn so that is a choice, not a surprise.
+   *  - A role bound to a model that classifies "unknown" (harness-models.ts) — shape-valid for
+   *    the harness, just not on its small known-alias list — is written as bound, unverified.
+   * A role bound to a "foreign"-shaped id is NOT a warning — it is a violation (see violations).
    */
   readonly warnings: readonly string[];
 };
@@ -271,8 +279,8 @@ export function planApply(
 
   for (const role of definition.roles) {
     const model = roleModels[role.slug];
-    // Gate BEFORE render: a role bound to a model this harness cannot resolve is blocked,
-    // exactly like a missing capability — never write an id the harness would silently ignore.
+    // Gate BEFORE render: a role bound to a "foreign"-shaped model id is blocked, exactly like
+    // a missing capability — never write an id that belongs to a different harness's config.
     const roleViolations = checkRoleTruthfulness(role, harness, model);
     if (roleViolations.length > 0) {
       violations.push(...roleViolations);
@@ -284,6 +292,9 @@ export function planApply(
         `role '${role.slug}' has no model binding for harness '${harness}' — the agent will ` +
           `inherit the session/parent model. Bind it in ~/.petbox/roles.json to pin a tier.`,
       );
+    } else {
+      const shapeWarning = modelShapeWarning(role, harness, model);
+      if (shapeWarning) warnings.push(shapeWarning);
     }
     const fileName =
       harness === "droid" ? `${sanitizeDroidName(emittedRoleName(role))}.md` : `${emittedRoleName(role)}.md`;
