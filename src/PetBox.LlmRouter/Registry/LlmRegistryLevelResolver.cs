@@ -216,7 +216,7 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 				thinking = parsed;
 			}
 
-			routes.Add(new LlmRoute(capability, row.Endpoint, row.Model, row.Priority, row.Tier, thinking));
+			routes.Add(new LlmRoute(capability, row.Endpoint, row.Model, row.Priority, row.Tier, thinking, row.EmbedSpaceId));
 		}
 
 		return routes;

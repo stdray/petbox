@@ -26,6 +26,17 @@ public sealed class CapabilityRouterTests
 				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20),
 			]));
 
+	// The same two providers, but both declaring ONE shared embedding space "home-space". Their
+	// provider Model strings still differ ("mp" vs "ms") — that is the whole point: two providers,
+	// one index key.
+	static ResolvedRegistryLevel TwoEmbedSharedSpace() => Level(
+		new LlmRegistry(
+			[new LlmEndpoint("primary", "https://p"), new LlmEndpoint("secondary", "https://s")],
+			[
+				new LlmRoute(LlmCapability.Embed, "primary", "mp", 10, EmbedSpaceId: "home-space"),
+				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20, EmbedSpaceId: "home-space"),
+			]));
+
 	static CapabilityRouter Build(ILlmRegistryLevelResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
 		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, NullLogger<CapabilityRouter>.Instance);
 
@@ -92,6 +103,88 @@ public sealed class CapabilityRouterTests
 		upstream.EmbedCalls.Should().Equal("https://s");
 	}
 
+	// ---- embed-space identity (llm-embed-space-id): the vector-index key is decoupled from the
+	// provider Model. Two routes sharing an EmbedSpaceId must yield the SAME identity whichever one
+	// serves, so both providers' vectors are comparable in the index. ----
+
+	[Fact]
+	public async Task Embed_identity_is_the_shared_space_when_primary_serves()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => [[1f, 2f, 3f]];
+		var router = Build(new FakeResolver(TwoEmbedSharedSpace()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		res.ServedBy.Endpoint.Should().Be("primary");
+		res.ServedBy.UpstreamModel.Should().Be("mp", "the provider is still called with its own model string");
+		res.Model.Model.Should().Be("home-space", "the index is keyed by the shared space, not the provider model");
+		res.Model.Dim.Should().Be(3);
+	}
+
+	[Fact]
+	public async Task Embed_identity_is_the_same_shared_space_after_fallback_to_secondary()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "down");
+		upstream.EmbedBehaviour["https://s"] = () => [[4f, 5f, 6f]];
+		var router = Build(new FakeResolver(TwoEmbedSharedSpace()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.ServedBy.UpstreamModel.Should().Be("ms", "the fallback provider is called with ITS own model string");
+		// The load-bearing assertion: fallback to a different provider produced the SAME index key as
+		// the primary would have — so vectors from both providers live in one comparable space.
+		res.Model.Model.Should().Be("home-space");
+	}
+
+	[Fact]
+	public async Task Embed_identity_falls_back_to_provider_model_when_no_space_declared()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "down");
+		upstream.EmbedBehaviour["https://s"] = () => [[7f]];
+		// TwoEmbed() declares NO EmbedSpaceId — the backward-compatible default. Identity == provider Model,
+		// exactly as before this feature, so the existing index (keyed by the home model name) stays valid.
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.Model.Model.Should().Be("ms", "null EmbedSpaceId means the identity is the served route's Model");
+	}
+
+	[Fact]
+	public async Task Rerank_identity_is_the_provider_model_unchanged()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("rr", "https://r")],
+				[new LlmRoute(LlmCapability.Rerank, "rr", "reranker-v1", 10)]));
+		var upstream = new FakeUpstream { RerankReply = [new RerankHit(0, 0.9)] };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankAsync("proj", new RerankRequest("q", ["d"]));
+
+		res.Model.Model.Should().Be("reranker-v1", "rerank identity is the provider model — EmbedSpaceId is embed-only");
+	}
+
+	[Fact]
+	public async Task Chat_identity_is_the_provider_model_unchanged()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("ds", "https://d")],
+				[new LlmRoute(LlmCapability.Chat, "ds", "chat-v4", 10)]));
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		res.Model.Model.Should().Be("chat-v4", "chat identity is the provider model — EmbedSpaceId is embed-only");
+	}
+
 	[Fact]
 	public async Task Chat_passes_route_thinking_to_upstream()
 	{
@@ -152,6 +245,7 @@ public sealed class CapabilityRouterTests
 		public List<string> EmbedCalls { get; } = [];
 		public string ChatReply { get; init; } = "";
 		public List<LlmThinking?> ChatThinking { get; } = [];
+		public IReadOnlyList<RerankHit> RerankReply { get; init; } = [];
 
 		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct)
 		{
@@ -160,7 +254,7 @@ public sealed class CapabilityRouterTests
 		}
 
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
-			throw new NotSupportedException();
+			Task.FromResult(RerankReply);
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct)
 		{

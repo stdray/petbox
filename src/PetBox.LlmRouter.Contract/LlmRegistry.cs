@@ -29,13 +29,23 @@ public sealed record LlmEndpoint(
 // a (capability[, tier]) at what priority (lower = tried first). A route with a null Tier is
 // the default and serves any requested tier (llm-fallback-chain). Thinking declares the
 // model's reasoning mode for chat routes (llm-route-reasoning-mode); null = provider default.
+//
+// EmbedSpaceId is EMBED-ONLY and it is the KEY OF THE VECTOR INDEX — the canonical name every
+// vector produced by this route is stored and searched under, decoupled from Model. Model is what
+// goes to the provider as the API parameter; EmbedSpaceId is what the index compares on. Null =
+// fall back to Model (backward compatible: an existing index keyed by the home model name stays
+// valid, no reindex). Two embed routes that name the SAME EmbedSpaceId (e.g. a home model and an
+// OpenRouter fallback whose provider model strings differ) declare their vectors to live in ONE
+// space and therefore be mutually comparable. Ignored for Chat/Rerank (their identity is always
+// Model). Last parameter on purpose: keeps every positional LlmRoute(...) call source-compatible.
 public sealed record LlmRoute(
 	LlmCapability Capability,
 	string Endpoint,
 	string Model,
 	int Priority = 100,
 	string? Tier = null,
-	LlmThinking? Thinking = null);
+	LlmThinking? Thinking = null,
+	string? EmbedSpaceId = null);
 
 // The full router registry: the endpoints and the routes that order them per capability.
 // Persisted as JSON in the Config module (llm-config-driven) — configurable, not hardcoded.
