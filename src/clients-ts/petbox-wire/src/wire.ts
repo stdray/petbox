@@ -40,6 +40,9 @@
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
 //        - .claude/skills/petbox-agent-factory/SKILL.md  (on-demand factory skill)
 //        - .factory/skills/petbox-agent-factory/SKILL.md
+//        - .claude/skills/petbox-methodology/SKILL.md    (thin pointer at the LIVE methodology
+//                                                          this project runs — see skill-files.ts)
+//        - .factory/skills/petbox-methodology/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
 //       all links point at the stable copy (~/.petbox/wire/), and any dead prompt-RAG hook left by
 //       an older kit is pruned
@@ -76,6 +79,7 @@ import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
+import { writeSkillFiles } from "./skill-files.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
@@ -892,16 +896,6 @@ function mergeMcpServer(path: string, name: string, server: unknown): void {
   writeJson(path, data);
 }
 
-// Skill surfaces wire.ts writes the rendered petbox SKILL.md into. opencode is intentionally
-// absent: it discovers the skill through its Claude-compatible path (`.claude/skills/…`), and a
-// second same-name copy under `.opencode/skills/` would be a duplicate whose resolution opencode
-// does not document. Droid reads its own `.factory/skills/` root (its compat path is
-// `.agent/skills/`, NOT `.claude/skills/`), so it needs a dedicated copy.
-const SKILL_SURFACES: string[][] = [
-  [".claude", "skills"], // Claude Code (native) + opencode (Claude-compatible discovery)
-  [".factory", "skills"], // Factory Droid (native)
-];
-
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
   // .mcp.json (Claude Code) — petbox-only file owned by wire.ts, regenerated whole.
   const mcp = {
@@ -943,24 +937,11 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   });
   log(`[7/10] merged petbox MCP server into ${droidMcpPath}`);
 
-  // SKILL.md — render once from the template, then drop a copy into every native skill surface.
-  const tpl = readFileSync(join(HERE, "templates", "SKILL.md"), "utf8");
-  const skill = tpl
-    .replace(/\{\{PROJECT\}\}/g, project)
-    .replace(/\{\{WORKSPACE\}\}/g, workspace);
-  for (const surface of SKILL_SURFACES) {
-    const skillPath = join(dir, ...surface, "petbox", "SKILL.md");
-    mkdirSync(dirname(skillPath), { recursive: true });
-    writeFileSync(skillPath, skill, "utf8");
-    log(`[7/10] wrote ${skillPath}`);
-  }
-
-  // Agent-factory skill — on-demand procedure (no project placeholders). Same surfaces as petbox.
-  const factoryTpl = readFileSync(join(HERE, "templates", "agent-factory", "SKILL.md"), "utf8");
-  for (const surface of SKILL_SURFACES) {
-    const skillPath = join(dir, ...surface, "petbox-agent-factory", "SKILL.md");
-    mkdirSync(dirname(skillPath), { recursive: true });
-    writeFileSync(skillPath, factoryTpl, "utf8");
+  // Skill bodies: `petbox` (project-scoped), `petbox-agent-factory` (on-demand, no
+  // placeholders), and `petbox-methodology` (thin, project-agnostic pointer at the LIVE
+  // methodology this project runs — never this repo's own rules; see skill-files.ts). Rendered
+  // once per skill, then dropped into every native skill surface (writeSkillFiles / skill-files.ts).
+  for (const skillPath of writeSkillFiles(dir, join(HERE, "templates"), project, workspace)) {
     log(`[7/10] wrote ${skillPath}`);
   }
 }
