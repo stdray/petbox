@@ -37,7 +37,10 @@ export function persistKeyForAgentsPosix(homeDir: string): string {
 
   const marker = "# petbox-wire";
   const sourceLine = `[ -f "$HOME/.petbox/env.sh" ] && . "$HOME/.petbox/env.sh" ${marker}`;
-  const profiles = [".profile", ".bashrc", ".zshenv"].map((f) => join(homeDir, f));
+  const profilePath = join(homeDir, ".profile");
+  const bashrcPath = join(homeDir, ".bashrc");
+  const zshenvPath = join(homeDir, ".zshenv");
+  const profiles = [profilePath, bashrcPath, zshenvPath];
   let sourced = false;
   for (const p of profiles) {
     if (!existsSync(p)) continue;
@@ -45,14 +48,13 @@ export function persistKeyForAgentsPosix(homeDir: string): string {
     if (!content.includes(marker)) appendFileSync(p, `\n${sourceLine}\n`, "utf8");
     sourced = true;
   }
-  if (!sourced) writeFileSync(profiles[0], sourceLine + "\n", "utf8");
+  if (!sourced) writeFileSync(profilePath, sourceLine + "\n", "utf8");
 
   // zsh always sources ~/.zshenv for EVERY shell (login or not, interactive or not) — unlike
   // .profile/.bashrc, which bash only sources under specific conditions. macOS ships zsh as the
   // default shell and a fresh account typically has none of the three files, so the fallback
   // above (which only ever creates .profile) would silently leave zsh unwired. Guarantee the
   // marker lands in .zshenv too, independent of whichever profile the loop above touched.
-  const zshenvPath = profiles[2];
   if (!existsSync(zshenvPath)) writeFileSync(zshenvPath, sourceLine + "\n", "utf8");
 
   return envShPath;

@@ -54,7 +54,11 @@ test("resolveWorkspace: neither flag nor server value → usage error, exit 2 (n
 });
 
 test("resolveWorkspace: blank strings count as absent (flag and server alike)", () => {
-  assert.equal(resolveWorkspace("   ", "server-ws").ok && resolveWorkspace("   ", "server-ws").workspace, "server-ws");
+  // Stored to one variable — two independent calls cannot be correlated by the type
+  // checker's control-flow narrowing (each is a fresh, unrelated WorkspaceResolution),
+  // and calling the function twice to check two different things was also wasteful.
+  const blank = resolveWorkspace("   ", "server-ws");
+  assert.equal(blank.ok && blank.workspace, "server-ws");
   assert.equal(resolveWorkspace("", "  ").ok, false);
   const trimmed = resolveWorkspace(" acme ", undefined);
   assert.equal(trimmed.ok && trimmed.workspace, "acme");

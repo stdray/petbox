@@ -21,7 +21,7 @@ const KEY = "pk_live_RESOLVED_SECRET_123";
 
 test("OTLP headers carry the RESOLVED key value, never a ${...} placeholder", () => {
   const { secretEnv } = buildTelemetryOtlpEnv(BASE, PROJECT, KEY, LOG);
-  const headers = secretEnv.OTEL_EXPORTER_OTLP_HEADERS;
+  const headers = secretEnv["OTEL_EXPORTER_OTLP_HEADERS"];
   assert.ok(headers, "OTEL_EXPORTER_OTLP_HEADERS must be present");
   assert.ok(headers.includes(KEY), "header must contain the resolved key value");
   assert.ok(!headers.includes("${"), `header must not contain a \${...} placeholder — got: ${headers}`);
@@ -30,7 +30,8 @@ test("OTLP headers carry the RESOLVED key value, never a ${...} placeholder", ()
 
 test("auth header uses the exact name the server's ApiKey scheme validates (X-Api-Key)", () => {
   const { secretEnv } = buildTelemetryOtlpEnv(BASE, PROJECT, KEY, LOG);
-  const headers = secretEnv.OTEL_EXPORTER_OTLP_HEADERS;
+  const headers = secretEnv["OTEL_EXPORTER_OTLP_HEADERS"];
+  assert.ok(headers, "OTEL_EXPORTER_OTLP_HEADERS must be present");
   assert.equal(OTLP_API_KEY_HEADER, "X-Api-Key");
   assert.ok(
     headers.includes(`${OTLP_API_KEY_HEADER}=${KEY}`),
@@ -42,8 +43,10 @@ test("auth header uses the exact name the server's ApiKey scheme validates (X-Ap
 
 test("service-key header pair is present (IngestLogs 400s without X-Service-Key)", () => {
   const { secretEnv } = buildTelemetryOtlpEnv(BASE, PROJECT, KEY, LOG);
+  const headers = secretEnv["OTEL_EXPORTER_OTLP_HEADERS"];
+  assert.ok(headers, "OTEL_EXPORTER_OTLP_HEADERS must be present");
   assert.ok(
-    secretEnv.OTEL_EXPORTER_OTLP_HEADERS.includes(`${OTLP_SERVICE_KEY_HEADER}=${OTLP_SERVICE_KEY_VALUE}`),
+    headers.includes(`${OTLP_SERVICE_KEY_HEADER}=${OTLP_SERVICE_KEY_VALUE}`),
     "X-Service-Key=claude-code pair must be present",
   );
 });
@@ -57,6 +60,6 @@ test("the secret (key-bearing) env is split out from the committable public env"
 
 test("endpoints are the path-based routes (project + log in the URL path)", () => {
   const { publicEnv } = buildTelemetryOtlpEnv(BASE, PROJECT, KEY, LOG);
-  assert.equal(publicEnv.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, `${BASE}/v1/metrics/${PROJECT}/${LOG}`);
-  assert.equal(publicEnv.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, `${BASE}/v1/logs/${PROJECT}/${LOG}`);
+  assert.equal(publicEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"], `${BASE}/v1/metrics/${PROJECT}/${LOG}`);
+  assert.equal(publicEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"], `${BASE}/v1/logs/${PROJECT}/${LOG}`);
 });

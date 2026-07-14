@@ -82,11 +82,14 @@ test("save/load roundtrip under temp HOME", () => {
     assert.equal(existsSync(rolesPath(home)), true);
     const loaded = loadRoles(home);
     assert.equal(loaded.activeProfile, "default");
-    assert.equal(
-      loaded.profiles.default.agents["claude-code"].roles.orchestrator.model,
-      "claude-opus-4",
-    );
-    assert.equal(loaded.profiles.default.agents.opencode.roles.worker.model, "deepseek-coder");
+    const defaultProfile = loaded.profiles["default"];
+    assert.ok(defaultProfile, "the 'default' profile must round-trip");
+    const claudeCode = defaultProfile.agents["claude-code"];
+    assert.ok(claudeCode, "claude-code agent bindings must round-trip");
+    assert.equal(claudeCode.roles["orchestrator"]?.model, "claude-opus-4");
+    const opencode = defaultProfile.agents["opencode"];
+    assert.ok(opencode, "opencode agent bindings must round-trip");
+    assert.equal(opencode.roles["worker"]?.model, "deepseek-coder");
     // file is pretty-printed JSON
     const raw = JSON.parse(readFileSync(rolesPath(home), "utf8"));
     assert.equal(raw.activeProfile, "default");
@@ -101,19 +104,20 @@ test("profile use: set activeProfile and create shell if missing", () => {
     let data = loadRoles(home);
     data = useProfile(data, "work");
     assert.equal(data.activeProfile, "work");
-    assert.ok(data.profiles.work);
-    assert.deepEqual(data.profiles.work.agents, {});
+    const workProfile = data.profiles["work"];
+    assert.ok(workProfile);
+    assert.deepEqual(workProfile.agents, {});
     saveRoles(data, home);
 
     // switching again keeps the shell and updates active
     data = useProfile(loadRoles(home), "default");
     assert.equal(data.activeProfile, "default");
-    assert.ok(data.profiles.work, "prior profile shell retained");
+    assert.ok(data.profiles["work"], "prior profile shell retained");
     saveRoles(data, home);
 
     const reloaded = loadRoles(home);
     assert.equal(reloaded.activeProfile, "default");
-    assert.ok(reloaded.profiles.work);
+    assert.ok(reloaded.profiles["work"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -122,8 +126,12 @@ test("profile use: set activeProfile and create shell if missing", () => {
 test("export shape is bootstrap-safe RolesFile (no secrets field)", () => {
   const exported = exportRolesBootstrap(SAMPLE);
   assert.equal(exported.activeProfile, "default");
+  const defaultProfile = exported.profiles["default"];
+  assert.ok(defaultProfile, "the 'default' profile must round-trip through export");
+  const claudeCode = defaultProfile.agents["claude-code"];
+  assert.ok(claudeCode, "claude-code agent bindings must round-trip through export");
   assert.equal(
-    exported.profiles.default.agents["claude-code"].roles.worker.model,
+    claudeCode.roles["worker"]?.model,
     "claude-sonnet-4",
   );
   // no accidental secret-looking top-level keys

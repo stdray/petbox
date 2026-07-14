@@ -69,11 +69,7 @@ import {
   resolveAgentDefinitionWithLkg,
 } from "./agent-def-fetch.ts";
 import { validateAgentDefinition, type AgentDefinition } from "./agent-definition.ts";
-import {
-  formatApplyBlocked,
-  planApply,
-  type ApplyPlan,
-} from "./apply-artifacts.ts";
+import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
@@ -192,29 +188,37 @@ function parseArgs(argv: string[]): Args {
   let telemetryLog = DEFAULT_TELEMETRY_LOG;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     else if (a === "--env") env = argv[++i];
     else if (a === "--key") key = argv[++i];
     else if (a === "--workspace") workspace = argv[++i];
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
     else if (a === "--telemetry") telemetry = true;
-    else if (a === "--telemetry-log") telemetryLog = argv[++i];
+    // Missing value falls through to "" so the empty-log check below reports it as usage
+    // error, same as every other required-value flag here.
+    else if (a === "--telemetry-log") telemetryLog = argv[++i] ?? "";
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
     } else positionals.push(a);
   }
-  if (positionals.length < 2) usage();
   if (!telemetryLog || !telemetryLog.trim()) {
     console.error("--telemetry-log requires a non-empty log name");
     usage();
   }
+  const dir = positionals[0];
+  const projectKey = positionals[1];
+  if (dir === undefined || projectKey === undefined) {
+    console.error("usage: <dir> and <projectKey> are both required");
+    usage();
+  }
   return {
-    dir: positionals[0],
-    projectKey: positionals[1],
-    env,
-    key,
-    workspace,
+    dir,
+    projectKey,
+    ...(env !== undefined ? { env } : {}),
+    ...(key !== undefined ? { key } : {}),
+    ...(workspace !== undefined ? { workspace } : {}),
     cleanupLegacy,
     telemetry,
     telemetryLog: telemetryLog.trim(),
@@ -251,6 +255,7 @@ async function runDoctor(argv: string[]): Promise<void> {
   let offline = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     else if (a === "--offline") offline = true;
     else {
@@ -326,6 +331,7 @@ async function runApply(argv: string[]): Promise<void> {
   let offline = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     else if (a === "--offline") offline = true;
     else if (a === "--definition") {
@@ -483,9 +489,9 @@ async function resolveApplyDefinition(opts: {
   const got = await resolveAgentDefinitionWithLkg({
     offline: opts.offline,
     definitionKey: opts.definitionKey,
-    projectKey: resolved?.project,
-    baseUrl: resolved?.baseUrl,
-    apiKey: resolved?.apiKey,
+    ...(resolved?.project !== undefined ? { projectKey: resolved.project } : {}),
+    ...(resolved?.baseUrl !== undefined ? { baseUrl: resolved.baseUrl } : {}),
+    ...(resolved?.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
   });
 
   if (got.source === "server") {
@@ -507,6 +513,7 @@ function runRoles(argv: string[]): void {
   if (sub === "export") {
     for (let i = 2; i < argv.length; i++) {
       const a = argv[i];
+      if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
       if (a === "--help" || a === "-h") usage(0);
       console.error(`roles export: unexpected argument: ${a}`);
       usage();
@@ -546,6 +553,7 @@ function runProfile(argv: string[]): void {
   }
   for (let i = 3; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     console.error(`profile use: unexpected argument: ${a}`);
     usage();
@@ -714,10 +722,12 @@ async function validateKey(
     log(`[3/10] validate: 200 without a project field; continuing with a warning.`);
   }
   const ws = body?.workspace ?? body?.Workspace;
+  const projectValue = typeof proj === "string" ? proj : undefined;
+  const workspaceValue = typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined;
   return {
-    project: typeof proj === "string" ? proj : undefined,
+    ...(projectValue !== undefined ? { project: projectValue } : {}),
     scopes: body?.scopes ?? body?.Scopes,
-    workspace: typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined,
+    ...(workspaceValue !== undefined ? { workspace: workspaceValue } : {}),
   };
 }
 
@@ -818,6 +828,7 @@ function runUpdate(argv: string[]): void {
   // `update` takes no flags other than help; reject extras so typos don't silently no-op.
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     console.error(`update: unexpected argument: ${a}`);
     usage();

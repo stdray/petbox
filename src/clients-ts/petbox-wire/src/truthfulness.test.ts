@@ -122,8 +122,14 @@ test("gate still fires: role needing undeclared cap on a harness that lacks it",
   };
   const v = checkTruthfulness(def, "opencode");
   assert.equal(v.length, 1);
-  assert.equal(v[0]!.capability, "dynamic_model_at_spawn");
-  assert.equal(v[0]!.harness, "opencode");
+  const [violation] = v;
+  assert.ok(violation);
+  // Narrow to CapabilityViolation: this def has no model binding, so the only possible
+  // violation kind is the missing-capability one — assert that explicitly rather than
+  // reading `.capability` off the union type (that field does not exist on ModelViolation).
+  assert.ok(!isModelViolation(violation), "expected a capability violation, not a model one");
+  assert.equal(violation.capability, "dynamic_model_at_spawn");
+  assert.equal(violation.harness, "opencode");
 });
 
 test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () => {
