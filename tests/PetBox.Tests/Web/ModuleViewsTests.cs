@@ -383,6 +383,107 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		}
 	}
 
+	// kanban-column-picker: the column (status) visibility dialog — twin of the fields dialog's
+	// own coverage above. The board's simple-kind workflow has 5 statuses (Todo/InProgress/
+	// Blocked/Done/Cancelled — MethodologyPresets.Simple); the dialog offers a checkbox per
+	// status regardless of whether any node currently sits in it (KanbanColumns is workflow-
+	// derived, not node-derived), and every kanban column renders by default (bullet 4).
+	[Fact]
+	public async Task TaskBoard_KanbanView_ColumnsDialog_OffersACheckboxPerStatus_AllVisibleByDefault()
+	{
+		const string board = "viewmodekanbancolumns1";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban columns smoke"); // simple kind
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kc1", Title = "KC1" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"columns-toggle\"");
+		html.Should().Contain("data-testid=\"columns-modal\"");
+		html.Should().Contain("data-testid=\"columns-form\"");
+		html.Should().Contain("data-testid=\"columns-apply\"");
+		html.Should().Contain("name=\"columnsSet\" value=\"1\"");
+		foreach (var slug in new[] { "Todo", "InProgress", "Blocked", "Done", "Cancelled" })
+		{
+			html.Should().Contain($"data-testid=\"column-{slug}\"");
+			html.Should().Contain($"data-testid=\"column-{slug}\" checked=\"checked\"");
+			html.Should().Contain($"data-testid=\"kanban-column\" data-status=\"{slug}\"");
+		}
+	}
+
+	// kanban-column-picker: an explicit `?columns=`+`columnsSet=1` selection hides the columns
+	// NOT named — repeated query params (columns=Todo&columns=Done), never a comma-joined value
+	// (a comma-joined value silently resolves to the empty set — the same ASP.NET binding gotcha
+	// the fields dialog already has to respect).
+	[Fact]
+	public async Task TaskBoard_KanbanView_ColumnsDialog_SelectionHidesUnselectedColumns()
+	{
+		const string board = "viewmodekanbancolumns2";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban columns hide smoke"); // simple kind
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kc2", Title = "KC2" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban&columnsSet=1&columns=Todo&columns=Done");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"kanban-column\" data-status=\"Todo\"");
+		html.Should().Contain("data-testid=\"kanban-column\" data-status=\"Done\"");
+		html.Should().NotContain("data-testid=\"kanban-column\" data-status=\"InProgress\"");
+		html.Should().NotContain("data-testid=\"kanban-column\" data-status=\"Blocked\"");
+		html.Should().NotContain("data-testid=\"kanban-column\" data-status=\"Cancelled\"");
+		// The dialog itself still offers every status as a checkbox — only checked state differs:
+		// Todo/Done are checked, the unselected InProgress checkbox renders WITHOUT `checked`.
+		html.Should().Contain("data-testid=\"column-Todo\" checked=\"checked\"");
+		html.Should().Contain("data-testid=\"column-Done\" checked=\"checked\"");
+		html.Should().Contain("data-testid=\"column-InProgress\"");
+		html.Should().NotContain("data-testid=\"column-InProgress\" checked=\"checked\"");
+	}
+
+	// kanban-column-picker bullet 7: the picker is a KANBAN thing — it must not render on the
+	// other view modes, which share nothing with kanban's per-board workflow-column vocabulary.
+	[Fact]
+	public async Task TaskBoard_NonKanbanViews_NeverRenderTheColumnsDialog()
+	{
+		const string board = "viewmodekanbancolumns3";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban columns non-kanban smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kc3", Title = "KC3" },
+			]);
+		}
+
+		foreach (var view in new[] { "tree", "table", "outline" })
+		{
+			using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view={view}");
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().NotContain("data-testid=\"columns-toggle\"");
+			html.Should().NotContain("data-testid=\"columns-modal\"");
+		}
+	}
+
 	[Fact]
 	public async Task TaskBoard_OutlineView_NavigateMode_NeverShipsTheBody()
 	{

@@ -19,6 +19,13 @@ public sealed record BoardViewPreference
 	// BoardFieldNames.Options order) — a plain string, not a nested object, so this record stays
 	// JSON-trivial to encode/decode through SettingsResolver's generic "json" fallback branch.
 	public string? Fields { get; init; }
+
+	// kanban-column-picker: which kanban columns (workflow-status slugs) are visible, same CSV
+	// shape as Fields above (BoardColumnConfig.ToCsv()) — rides along in this SAME per-board
+	// record for the same reason Fields does (board-view-cross-device's header comment): both
+	// are "what does THIS board look like", both write on the exact same `?columns=`+
+	// `columnsSet=1` navigation trigger.
+	public string? Columns { get; init; }
 }
 
 // board-view-cross-device / board-filters-server-state: per-user task-board preferences, resolved
