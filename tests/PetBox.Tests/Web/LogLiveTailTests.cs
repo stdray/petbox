@@ -358,6 +358,32 @@ public sealed class LogLiveTailTests : IClassFixture<LiveTailFixture>
 			"a key scoped to tailproja must not tail tailprojb");
 	}
 
+	// ---- static-assets-compression-cache: the SSE transport must survive response compression ----
+	//
+	// AddResponseCompression (Program.cs) excludes text/event-stream explicitly: compression wraps
+	// the response body in a stream that only flushes on its own schedule, which would turn this
+	// stream from "one chunk per log line, immediately" into "stalled, then bursty" — silently
+	// breaking exactly the incremental delivery every other test in this file relies on. Proven here
+	// by offering br/gzip on the request and checking the SSE response never grows a
+	// Content-Encoding header, rather than trusting the exclusion list never regresses.
+	[Fact]
+	public async Task Live_tail_response_is_never_compressed_even_when_the_client_offers_encoding()
+	{
+		var auth = await LoginAsync("tail-member");
+		using var cts = Deadline();
+
+		using var req = new HttpRequestMessage(HttpMethod.Get, Url(LiveTailFixture.ProjA));
+		req.Headers.Add("Cookie", auth);
+		req.Headers.Add("Accept-Encoding", "br, gzip");
+		using var resp = await _client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.OK, "the tail must still open with compression offered");
+		resp.Content.Headers.ContentType!.MediaType.Should().Be("text/event-stream");
+		resp.Content.Headers.ContentEncoding.Should().BeEmpty(
+			"text/event-stream is excluded from AddResponseCompression's MIME list — a compressed SSE "
+			+ "body would buffer instead of streaming line-by-line");
+	}
+
 	// ---- catch-up: no hole between the last rendered row and the subscription ----
 
 	[Fact]
