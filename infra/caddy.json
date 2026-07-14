@@ -1,0 +1,90 @@
+{
+  "apps": {
+    "layer4": {
+      "servers": {
+        "https443": {
+          "listen": [":443"],
+          "routes": [
+            { "match": [{"tls": {"sni": ["yobapub.3po.su"]}}],
+              "handle": [{"handler": "proxy", "upstreams": [{"dial": ["127.0.0.1:8443"]}]}] },
+            { "match": [{"tls": {"sni": ["tun4.3po.su"]}}],
+              "handle": [{"handler": "proxy", "upstreams": [{"dial": ["127.0.0.1:4433"]}]}] },
+            { "match": [{"tls": {"sni": ["petbox.3po.su"]}}],
+              "handle": [{"handler": "proxy", "upstreams": [{"dial": ["127.0.0.1:8444"]}]}] }
+          ]
+        }
+      }
+    },
+    "http": {
+      "servers": {
+        "yobapub_l7": {
+          "listen": ["127.0.0.1:8443"],
+          "protocols": ["h1", "h2"],
+          "automatic_https": {"disable_redirects": true},
+          "routes": [{
+            "match": [{"host": ["yobapub.3po.su"]}],
+            "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "localhost:8080"}]}]
+          }],
+          "tls_connection_policies": [{}]
+        },
+        "petbox_l7": {
+          "listen": ["127.0.0.1:8444"],
+          "protocols": ["h1", "h2"],
+          "automatic_https": {"disable_redirects": true},
+          "routes": [{
+            "match": [{"host": ["petbox.3po.su"]}],
+            "handle": [{
+              "handler": "reverse_proxy",
+              "upstreams": [{"dial": "localhost:8083"}],
+              "flush_interval": -1
+            }]
+          }],
+          "errors": {
+            "routes": [
+              {
+                "match": [{
+                  "expression": "{http.error.status_code} == 502 || {http.error.status_code} == 504",
+                  "path": ["/api/*", "/mcp", "/mcp/*", "/health"]
+                }],
+                "handle": [{
+                  "handler": "static_response",
+                  "status_code": 503,
+                  "headers": {
+                    "Content-Type": ["application/json; charset=utf-8"],
+                    "Retry-After": ["60"],
+                    "Cache-Control": ["no-store"]
+                  },
+                  "body": "{\"error\":\"service_unavailable\",\"reason\":\"deploy_in_progress\",\"message\":\"PetBox is being redeployed and will be back shortly. Retry after the number of seconds in the Retry-After header.\",\"retryAfterSeconds\":60}\n"
+                }]
+              },
+              {
+                "match": [{
+                  "expression": "{http.error.status_code} == 502 || {http.error.status_code} == 504"
+                }],
+                "handle": [{
+                  "handler": "static_response",
+                  "status_code": 503,
+                  "headers": {
+                    "Content-Type": ["text/html; charset=utf-8"],
+                    "Retry-After": ["60"],
+                    "Cache-Control": ["no-store"]
+                  },
+                  "body": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta http-equiv=\"refresh\" content=\"20\">\n<title>PetBox — deploying</title>\n<style>\n  :root { color-scheme: light dark; }\n  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;\n         font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", sans-serif;\n         background:#0f1115; color:#e6e8ec; }\n  @media (prefers-color-scheme: light) { body { background:#f6f7f9; color:#1c1f24; } }\n  main { max-width: 34rem; padding: 2rem; text-align: center; }\n  h1 { font-size: 1.35rem; margin: 0 0 .75rem; font-weight: 600; }\n  p { margin: 0 0 .5rem; opacity: .8; }\n  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; opacity: .7; }\n</style>\n</head>\n<body>\n<main>\n  <h1>PetBox is being redeployed</h1>\n  <p>A deploy is in progress. The service is usually back within a minute.</p>\n  <p><code>503 · deploy_in_progress · this page reloads every 20s</code></p>\n</main>\n</body>\n</html>\n"
+                }]
+              }
+            ]
+          },
+          "tls_connection_policies": [{}]
+        },
+        "http80": {
+          "listen": [":80"],
+          "automatic_https": {"disable": true},
+          "routes": [{"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "localhost:8080"}], "headers": {"request": {"set": {"X-Forwarded-Proto": ["https"]}}}}]}]
+        }
+      }
+    },
+    "tls": {
+      "automation": { "policies": [{"subjects": ["yobapub.3po.su", "tun4.3po.su", "petbox.3po.su"]}] }
+    }
+  }
+}

@@ -98,57 +98,41 @@ docker run --rm ghcr.io/stdray/petbox:latest --hash-password 'your-strong-passwo
 ```
 (Требует чтобы образ уже был опубликован — для первого деплоя локальный `dotnet run` неизбежен.)
 
-## Step 3 — добавить Caddy fragment
+## Step 3 — обновить Caddy config
 
-SSH на сервер, открыть central Caddyfile:
+Боевой Caddy запущен через systemd drop-in как `caddy run --config /etc/caddy/caddy.json` —
+`/etc/caddy/Caddyfile` и `conf.d/*.caddy` **не читаются вообще**, править их бесполезно.
+Единственный источник истины — `/etc/caddy/caddy.json`, эталон которого лежит в репе как
+`infra/caddy.json`.
 
-```bash
-sudo nano /etc/caddy/Caddyfile
-```
+Цепочка для petbox: `:443` → app `layer4` (SNI-мультиплексор, матчит `petbox.3po.su`) →
+`127.0.0.1:8444` → http-сервер `petbox_l7` (TLS) → `reverse_proxy` → `localhost:8083`
+(контейнер petbox). `flush_interval: -1` на этом route — то же, что раньше жило в
+Caddyfile fragment, для SSE live-tail.
 
-Append блок из `infra/Caddyfile.fragment` репы. Port 8083 — petbox slot из shared allocation:
+`petbox_l7` также несёт заглушку на деплой: если backend недоступен (502/504), Caddy
+вместо сырого 502 отдаёт `503` с `Retry-After: 60` — JSON на `/api/*`, `/mcp`, `/health`,
+HTML на всё остальное. 60 секунд — не круглое число для красоты, а замер простоя за 14 дней
+по логам Caddy + docker events: медиана 37s, p90 ≈ 55s, максимум 114s.
 
-```caddy
-petbox.3po.su {
-    # Container publishes to 127.0.0.1:8083 (shared-host convention: yobaconf=8081, yobalog=8082, petbox=8083).
-    reverse_proxy 127.0.0.1:8083 {
-        flush_interval -1
-    }
-
-    encode gzip zstd
-
-    log {
-        output file /var/log/caddy/petbox.access.log {
-            roll_size 50mb
-            roll_keep 5
-        }
-        format json
-    }
-}
-```
-
-Заменить `petbox.3po.su` на реальный домен если другой.
-
-**Pre-create access log file** — Caddy user не может создать новый файл в `/var/log/caddy/`, нужно положить заранее с правильным owner:
+Применение на сервере:
 
 ```bash
-sudo touch /var/log/caddy/petbox.access.log
-sudo chown caddy:caddy /var/log/caddy/petbox.access.log
-```
-
-(Если user/group другой — узнай через `ps -ef | grep '[c]addy run'` или `systemctl show caddy --property=User`.)
-
-Без этого reload упадёт с `permission denied` для log writer и застрянет в state `reloading (reload-notify)` — починка через `sudo systemctl reset-failed caddy && sudo systemctl restart caddy`.
-
-Validate + reload:
-```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
+scp infra/caddy.json <host>:/tmp/caddy.json
+ssh <host>
+sudo caddy validate --config /tmp/caddy.json
+sudo cp /etc/caddy/caddy.json /etc/caddy/caddy.json.bak
+sudo cp /tmp/caddy.json /etc/caddy/caddy.json
 sudo systemctl reload caddy
 ```
 
+`caddy validate` **до** подмены файла — если конфиг битый, `reload` не должен даже
+пытаться его подхватить. Бэкап перед подменой — откат при необходимости — это
+`sudo cp /etc/caddy/caddy.json.bak /etc/caddy/caddy.json && sudo systemctl reload caddy`.
+
 Caddy получит TLS-cert автоматически на первый HTTPS-запрос (Let's Encrypt) — manual certbot не нужен. После reload в логах будет видно `obtaining certificate` → `served key authentication certificate` → `certificate obtained successfully`.
 
-Если reload завис >2 минут или systemd state в `reloading` дольше нескольких секунд — это corrupt state systemd, ситуация которая была в первый раз когда log file не существовал:
+Если reload завис >2 минут или systemd state в `reloading` дольше нескольких секунд — это corrupt state systemd:
 
 ```bash
 sudo systemctl reset-failed caddy
@@ -255,9 +239,10 @@ CI прогонит полный pipeline на старом commit'е — tests 
 | (free) | 8084+ | для будущих |
 
 При добавлении нового сервиса:
-1. Зарезервировать port в **всех** репозиториях `infra/Caddyfile.fragment` (header table sync'ить руками)
+1. Зарезервировать port в **всех** репозиториях `infra/caddy.json` (header table sync'ить руками)
 2. DNS A-record для нового субдомена
-3. Append Caddyfile block; reload
+3. Добавить route в `infra/caddy.json` (layer4 SNI match + http server); применить как в Step 3
+4. Deploy через свой `deploy` tag flow
 4. Deploy через свой `deploy` tag flow
 
 ## Что лежит в `/opt/petbox/data/`
@@ -278,10 +263,11 @@ CI прогонит полный pipeline на старом commit'е — tests 
 - `BaseUrl is required` / `ApiKey is required` от PetBoxConfigProvider → не должно быть на первом деплое (petbox не использует свой Config-client на себе; см. invariant "No PetBox self-config через ConfigModule")
 - `Admin__Username is required` / login form не принимает credentials → проверь secrets `PETBOX_ADMIN_USERNAME` + `PETBOX_ADMIN_PASSWORD_HASH`
 
-**Caddy 502 Bad Gateway** при открытии `petbox.3po.su`:
+**503 "PetBox is being redeployed"** дольше пары минут при открытии `petbox.3po.su`
+(это ожидаемая заглушка на время деплоя — см. Step 3 — но не должна висеть долго):
 - Container не работает: `docker ps -a | grep petbox` — exited?
 - Port не пробрасывается: `ss -tlnp | grep 8083` — должен слушать loopback
-- Caddyfile fragment не reload'нут: `sudo systemctl reload caddy`
+- `caddy.json` не reload'нут после правки: `sudo systemctl reload caddy`
 
 **Login принимает но redirect на `/Login` снова**:
 - DataProtection keys не персистятся: `docker exec petbox ls /app/data/keys` пусто

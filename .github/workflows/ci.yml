@@ -269,9 +269,10 @@ jobs:
             export OTEL_ENDPOINT
             export PETBOX_IMAGE
 
-            # One-time migration off the legacy standalone `docker run` container.
-            docker rm -f petbox 2>/dev/null || true
-
+            # Pull before up: the old container (container_name: petbox) keeps serving
+            # traffic while the new image downloads. `docker rm -f petbox` here used to
+            # kill the live container before the pull even started, so the downtime
+            # window included the image download on top of the restart.
             docker compose pull petbox
             docker compose up -d --build
 
