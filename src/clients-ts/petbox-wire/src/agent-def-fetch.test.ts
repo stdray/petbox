@@ -60,7 +60,9 @@ test("parseAgentDefinitionResponse maps camelCase envelope + definition", () => 
   assert.equal(got.version, 3);
   assert.equal(got.definition.name, "proj-default");
   assert.equal(got.definition.roles.length, 2);
-  assert.equal(got.definition.roles[0].slug, "orchestrator");
+  const [firstRole] = got.definition.roles;
+  assert.ok(firstRole);
+  assert.equal(firstRole.slug, "orchestrator");
   validateAgentDefinition(got.definition);
 });
 
@@ -80,7 +82,7 @@ test("parseAgentDefinitionResponse rejects missing roles / name / version", () =
 });
 
 test("fetchAgentDefinition returns mapped definition on 200", async () => {
-  const calls: Array<{ url: string; headers: HeadersInit | undefined }> = [];
+  const calls: Array<{ url: string; headers: RequestInit["headers"] }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     calls.push({ url: String(input), headers: init?.headers });
     return new Response(JSON.stringify(VALID_BODY), {
@@ -99,7 +101,10 @@ test("fetchAgentDefinition returns mapped definition on 200", async () => {
   assert.ok(got);
   assert.equal(got.key, "default");
   assert.equal(got.version, 3);
-  assert.equal(calls[0].url, "https://petbox.example/api/%24system/agent-defs/default");
+  assert.equal(calls.length, 1);
+  const [call] = calls;
+  assert.ok(call);
+  assert.equal(call.url, "https://petbox.example/api/%24system/agent-defs/default");
 });
 
 test("fetchAgentDefinition returns null on 404 / network / bad body (never throws)", async () => {

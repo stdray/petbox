@@ -81,10 +81,12 @@ test("finishWireRun: successful smoke without the env var in-process adds the ne
   assert.equal(f.printDone, true);
   assert.equal(f.toStderr, false);
   assert.equal(f.lines.length, 1);
-  assert.match(f.lines[0], /^done\. NOTE:/);
-  assert.match(f.lines[0], /PETBOX_X_API_KEY/);
+  const [line] = f.lines;
+  assert.ok(line, "finishWireRun must produce exactly one line here");
+  assert.match(line, /^done\. NOTE:/);
+  assert.match(line, /PETBOX_X_API_KEY/);
   // win32 branch omits "(login shell)"
-  assert.doesNotMatch(f.lines[0], /login shell/);
+  assert.doesNotMatch(line, /login shell/);
 });
 
 test("finishWireRun: POSIX platform's NOTE mentions the login shell", () => {
@@ -94,5 +96,8 @@ test("finishWireRun: POSIX platform's NOTE mentions the login shell", () => {
     envVarPresentInProcess: false,
     platform: "linux",
   });
-  assert.match(f.lines[0], /login shell/);
+  assert.equal(f.lines.length, 1);
+  const [line] = f.lines;
+  assert.ok(line, "finishWireRun must produce exactly one line here");
+  assert.match(line, /login shell/);
 });

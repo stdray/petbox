@@ -29,5 +29,9 @@ const MARKER_LINE_RE = new RegExp(`^${PETBOX_MARKER_KEY}:\\s*\\S+`, "m");
 export function hasPetboxMarker(content: string): boolean {
   const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return false;
-  return MARKER_LINE_RE.test(m[1]);
+  const frontmatter = m[1];
+  // The capture group is mandatory in the pattern above (no `?`), so a successful match
+  // always populates it — but a stray content string could still fail to match at all.
+  if (frontmatter === undefined) return false;
+  return MARKER_LINE_RE.test(frontmatter);
 }

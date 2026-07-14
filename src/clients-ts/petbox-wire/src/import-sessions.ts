@@ -47,11 +47,16 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--agent") a.agent = (argv[++i] as Args["agent"]) ?? "all";
-    else if (arg === "--project") a.project = argv[++i];
-    else if (arg === "--dry-run") a.dryRun = true;
+    else if (arg === "--project") {
+      const project = argv[++i];
+      if (project !== undefined) a.project = project;
+    } else if (arg === "--dry-run") a.dryRun = true;
     else if (arg === "--force") a.force = true;
     else if (arg === "--since") a.since = new Date(argv[++i] ?? "");
-    else if (arg === "--limit") a.limit = parseInt(argv[++i] ?? "0", 10) || undefined;
+    else if (arg === "--limit") {
+      const limit = parseInt(argv[++i] ?? "0", 10) || undefined;
+      if (limit !== undefined) a.limit = limit;
+    }
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!["claude", "opencode", "all"].includes(a.agent)) throw new Error(`invalid --agent: ${a.agent}`);

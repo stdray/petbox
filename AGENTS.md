@@ -434,6 +434,10 @@ migration `M019_DropServices`.)
   interface members.
 - **Maximum static typing.** No `object`, no `dynamic`, no `any`. Generics and
   discriminated unions.
+- **Never silence the typechecker.** No `!` (non-null assertion), no `as any`, no
+  `@ts-expect-error` to make an error go away. Narrow the type honestly — a guard that
+  does something real (return, throw, meaningful default). If you cannot say what should
+  happen when the value is absent, you have found a bug, not an annoyance.
 - **Formatting:** tool defaults — `dotnet format` for C#, biome for TS.
   `.editorconfig` at repo root.
 

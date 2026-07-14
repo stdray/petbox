@@ -80,14 +80,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function asModelBinding(v: unknown): RoleBinding | null {
   if (!isPlainObject(v)) return null;
-  const model = v.model;
+  const model = v["model"];
   if (typeof model !== "string" || !model.trim()) return null;
   return { model: model.trim() };
 }
 
 function asAgentRoles(v: unknown): AgentRoles | null {
   if (!isPlainObject(v)) return null;
-  const rolesRaw = v.roles;
+  const rolesRaw = v["roles"];
   if (!isPlainObject(rolesRaw)) return { roles: {} };
   const roles: Record<string, RoleBinding> = {};
   for (const [role, binding] of Object.entries(rolesRaw)) {
@@ -99,7 +99,7 @@ function asAgentRoles(v: unknown): AgentRoles | null {
 
 function asProfile(v: unknown): Profile {
   if (!isPlainObject(v)) return { agents: {} };
-  const agentsRaw = v.agents;
+  const agentsRaw = v["agents"];
   if (!isPlainObject(agentsRaw)) return { agents: {} };
   const agents: Record<string, AgentRoles> = {};
   for (const [agent, ar] of Object.entries(agentsRaw)) {
@@ -113,10 +113,10 @@ function asProfile(v: unknown): Profile {
 export function normalizeRoles(raw: unknown): RolesFile {
   if (!isPlainObject(raw)) return { ...EMPTY };
   const activeProfile =
-    typeof raw.activeProfile === "string" && raw.activeProfile.trim()
-      ? raw.activeProfile.trim()
+    typeof raw["activeProfile"] === "string" && raw["activeProfile"].trim()
+      ? raw["activeProfile"].trim()
       : "default";
-  const profilesRaw = raw.profiles;
+  const profilesRaw = raw["profiles"];
   if (!isPlainObject(profilesRaw)) return { activeProfile, profiles: {} };
   const profiles: Record<string, Profile> = {};
   for (const [name, p] of Object.entries(profilesRaw)) {
@@ -228,13 +228,13 @@ export function formatResolvedBinding(data: RolesFile): string {
   }
   for (const [agent, ar] of Object.entries(profile.agents)) {
     lines.push(`  ${agent}:`);
-    const roleNames = Object.keys(ar.roles);
-    if (roleNames.length === 0) {
+    const roleEntries = Object.entries(ar.roles);
+    if (roleEntries.length === 0) {
       lines.push("    (no roles)");
       continue;
     }
-    for (const role of roleNames) {
-      lines.push(`    ${role}: ${ar.roles[role].model}`);
+    for (const [role, binding] of roleEntries) {
+      lines.push(`    ${role}: ${binding.model}`);
     }
   }
   return lines.join("\n");

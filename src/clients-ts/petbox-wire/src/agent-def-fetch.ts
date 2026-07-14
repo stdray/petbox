@@ -89,20 +89,20 @@ export function parseAgentDefinitionResponse(json: unknown): FetchedAgentDefinit
   if (!json || typeof json !== "object") return null;
   const root = json as Record<string, unknown>;
 
-  const key = typeof root.key === "string" && root.key.trim() ? root.key.trim() : null;
-  const version = parseVersion(root.version);
+  const key = typeof root["key"] === "string" && root["key"].trim() ? root["key"].trim() : null;
+  const version = parseVersion(root["version"]);
   if (key === null || version === null) return null;
 
-  const defRaw = root.definition;
+  const defRaw = root["definition"];
   if (!defRaw || typeof defRaw !== "object") return null;
   const def = defRaw as Record<string, unknown>;
 
-  const name = typeof def.name === "string" && def.name.trim() ? def.name.trim() : null;
+  const name = typeof def["name"] === "string" && def["name"].trim() ? def["name"].trim() : null;
   if (name === null) return null;
-  if (!Array.isArray(def.roles) || def.roles.length === 0) return null;
+  if (!Array.isArray(def["roles"]) || def["roles"].length === 0) return null;
 
   const roles: AgentRole[] = [];
-  for (const item of def.roles) {
+  for (const item of def["roles"]) {
     const role = mapRole(item);
     if (role === null) return null;
     roles.push(role);
@@ -191,11 +191,11 @@ export function readAgentDefCache(
     const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (!raw || typeof raw !== "object") return null;
     const r = raw as Record<string, unknown>;
-    const key = typeof r.key === "string" && r.key.trim() ? r.key.trim() : null;
-    const version = parseVersion(r.version);
-    const fetchedAt = typeof r.fetchedAt === "string" ? r.fetchedAt : "";
+    const key = typeof r["key"] === "string" && r["key"].trim() ? r["key"].trim() : null;
+    const version = parseVersion(r["version"]);
+    const fetchedAt = typeof r["fetchedAt"] === "string" ? r["fetchedAt"] : "";
     if (key === null || version === null) return null;
-    const def = r.definition;
+    const def = r["definition"];
     if (!def || typeof def !== "object") return null;
     // Re-parse via envelope so shape validation matches server responses.
     const mapped = parseAgentDefinitionResponse({
@@ -249,8 +249,8 @@ export async function resolveAgentDefinitionWithLkg(
       projectKey,
       apiKey: opts.apiKey,
       definitionKey: defKey,
-      timeoutMs: opts.timeoutMs,
-      fetchImpl: opts.fetchImpl,
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
     });
     if (fetched) {
       writeAgentDefCache(projectKey, fetched, homeDir);
@@ -318,9 +318,9 @@ export async function resolveAgentDefinitionForSession(
     projectKey: resolved.project,
     baseUrl: resolved.baseUrl,
     apiKey: resolved.apiKey,
-    homeDir: opts?.homeDir,
-    fetchImpl: opts?.fetchImpl,
-    timeoutMs: opts?.timeoutMs,
+    ...(opts?.homeDir !== undefined ? { homeDir: opts.homeDir } : {}),
+    ...(opts?.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+    ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   });
 }
 
@@ -340,24 +340,24 @@ function mapRole(item: unknown): AgentRole | null {
   // Portable definitions must not carry model binding.
   if ("model" in r) return null;
 
-  const slug = typeof r.slug === "string" && r.slug.trim() ? r.slug.trim() : null;
-  const tier = typeof r.tier === "string" && r.tier.trim() ? r.tier.trim() : null;
+  const slug = typeof r["slug"] === "string" && r["slug"].trim() ? r["slug"].trim() : null;
+  const tier = typeof r["tier"] === "string" && r["tier"].trim() ? r["tier"].trim() : null;
   if (slug === null || tier === null) return null;
 
-  if (!Array.isArray(r.requiredCapabilities)) return null;
+  if (!Array.isArray(r["requiredCapabilities"])) return null;
   const requiredCapabilities: string[] = [];
-  for (const c of r.requiredCapabilities) {
+  for (const c of r["requiredCapabilities"]) {
     if (typeof c !== "string") return null;
     requiredCapabilities.push(c);
   }
 
-  const spawn = mapSpawn(r.spawn);
+  const spawn = mapSpawn(r["spawn"]);
   if (spawn === "invalid") return null;
-  const escalation = mapEscalation(r.escalation);
+  const escalation = mapEscalation(r["escalation"]);
   if (escalation === "invalid") return null;
 
   const notes =
-    typeof r.notes === "string" && r.notes.trim() ? r.notes.trim() : undefined;
+    typeof r["notes"] === "string" && r["notes"].trim() ? r["notes"].trim() : undefined;
 
   const role: AgentRole = {
     slug,
@@ -374,36 +374,36 @@ function mapSpawn(raw: unknown): RoleSpawn | null | "invalid" {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "object") return "invalid";
   const s = raw as Record<string, unknown>;
-  if (typeof s.allowed !== "boolean") return "invalid";
+  if (typeof s["allowed"] !== "boolean") return "invalid";
   let allowedRoles: string[] | undefined;
-  if (s.allowedRoles !== undefined && s.allowedRoles !== null) {
-    if (!Array.isArray(s.allowedRoles)) return "invalid";
+  if (s["allowedRoles"] !== undefined && s["allowedRoles"] !== null) {
+    if (!Array.isArray(s["allowedRoles"])) return "invalid";
     allowedRoles = [];
-    for (const x of s.allowedRoles) {
+    for (const x of s["allowedRoles"]) {
       if (typeof x !== "string") return "invalid";
       allowedRoles.push(x);
     }
   }
   return allowedRoles !== undefined
-    ? { allowed: s.allowed, allowedRoles }
-    : { allowed: s.allowed };
+    ? { allowed: s["allowed"], allowedRoles }
+    : { allowed: s["allowed"] };
 }
 
 function mapEscalation(raw: unknown): RoleEscalation | null | "invalid" {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "object") return "invalid";
   const e = raw as Record<string, unknown>;
-  if (typeof e.available !== "boolean") return "invalid";
+  if (typeof e["available"] !== "boolean") return "invalid";
   let targets: string[] | undefined;
-  if (e.targets !== undefined && e.targets !== null) {
-    if (!Array.isArray(e.targets)) return "invalid";
+  if (e["targets"] !== undefined && e["targets"] !== null) {
+    if (!Array.isArray(e["targets"])) return "invalid";
     targets = [];
-    for (const x of e.targets) {
+    for (const x of e["targets"]) {
       if (typeof x !== "string") return "invalid";
       targets.push(x);
     }
   }
   return targets !== undefined
-    ? { available: e.available, targets }
-    : { available: e.available };
+    ? { available: e["available"], targets }
+    : { available: e["available"] };
 }
