@@ -12,7 +12,7 @@
    to the table's original always-on set so search results are unaffected by this feature. *@
 @{
 	var fields = Model.Fields ?? new PetBox.Web.Rendering.BoardFieldConfig(
-		Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true, Delivery: true, BlockedBy: false, Body: false);
+		Slug: true, Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true, Delivery: true, BlockedBy: false, Body: false);
 	var viewMode = Model.Fields is not null ? BoardViewModeNames.Table : "";
 }
 @if (Model.Rows.Count == 0)
@@ -65,7 +65,10 @@ else
 							   status COLUMN is on — but only on the spec board (row.IsSpecBoard, review
 							   finding) — everywhere else the status is already a displayable property. *@
 							<a href="@row.Url" class="link link-hover font-semibold @(row.TerminalCancel && row.IsSpecBoard ? "line-through opacity-60" : "")" data-testid="node-name">@row.Title</a>
-							<span class="font-mono text-xs opacity-50">@row.Key</span>
+							@if (fields.Slug)
+							{
+								<span class="font-mono text-xs opacity-50">@row.Key</span>
+							}
 						</td>
 						@if (fields.Type)
 						{

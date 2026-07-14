@@ -99,6 +99,18 @@ else
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocking-badge" title="blocking @blockingCount">🔒 blocking @blockingCount</span>
 									}
 								</div>
+								@* board-fields-slug-missing: the node key never rendered on a kanban card at all
+								   before this field existed — every other view mode already showed it. Click-to-
+								   copy reuses the SAME global [data-copy] handler as the node detail page
+								   (ts/config.ts, document-level; wired unconditionally via initConfigPage in
+								   ts/site.ts, so it's live here without extra wiring). *@
+								@if (Model.Fields.Slug)
+								{
+									<div class="flex items-center gap-1">
+										<a href="@nodeUrl" class="font-mono text-xs opacity-50 link link-hover" data-testid="node-leaf">@n.Key</a>
+										<button type="button" class="btn btn-ghost btn-xs px-1 leading-none opacity-50 hover:opacity-100" data-copy="@n.Key" data-testid="node-slug-copy" title="Copy slug" aria-label="Copy slug">⧉</button>
+									</div>
+								}
 								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
 									@if (Model.Fields.Type)
 									{
@@ -180,6 +192,13 @@ else
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocking-badge" title="blocking @blockingCount">🔒 blocking @blockingCount</span>
 									}
 								</div>
+								@if (Model.Fields.Slug)
+								{
+									<div class="flex items-center gap-1">
+										<a href="@nodeUrl" class="font-mono text-xs opacity-50 link link-hover" data-testid="node-leaf">@n.Key</a>
+										<button type="button" class="btn btn-ghost btn-xs px-1 leading-none opacity-50 hover:opacity-100" data-copy="@n.Key" data-testid="node-slug-copy" title="Copy slug" aria-label="Copy slug">⧉</button>
+									</div>
+								}
 								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>
 								@if (blocked && Model.Fields.BlockedBy)
 								{

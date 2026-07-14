@@ -74,7 +74,10 @@ else
 					<details open data-testid="outline-node-eager">
 						<summary class="cursor-pointer flex items-baseline gap-2 flex-wrap">
 							<a href="@nodeUrl" class="@titleClass" data-testid="node-name">@n.Title</a>
-							<span class="font-mono text-xs opacity-50">@n.Key</span>
+							@if (Model.Fields.Slug)
+							{
+								<span class="font-mono text-xs opacity-50">@n.Key</span>
+							}
 							<partial name="_OutlineFieldChips" model="new PetBox.Web.Pages.ProjectHome.OutlineFieldChipsModel(Model.Runtime, Model.KindSlug, Model.Fields, n, Model.WorkspaceKey, Model.ProjectKey)" />
 						</summary>
 						<div class="mt-1 ml-2" data-outline-body data-testid="outline-body">
@@ -88,7 +91,10 @@ else
 					<details data-testid="outline-node-lazy" hx-get="@bodyUrl" hx-trigger="toggle once" hx-target="find [data-outline-body]" hx-swap="innerHTML">
 						<summary class="cursor-pointer flex items-baseline gap-2 flex-wrap">
 							<a href="@nodeUrl" class="@titleClass" data-testid="node-name">@n.Title</a>
-							<span class="font-mono text-xs opacity-50">@n.Key</span>
+							@if (Model.Fields.Slug)
+							{
+								<span class="font-mono text-xs opacity-50">@n.Key</span>
+							}
 							<partial name="_OutlineFieldChips" model="new PetBox.Web.Pages.ProjectHome.OutlineFieldChipsModel(Model.Runtime, Model.KindSlug, Model.Fields, n, Model.WorkspaceKey, Model.ProjectKey)" />
 						</summary>
 						<div class="mt-1 ml-2" data-outline-body data-testid="outline-body">
@@ -100,7 +106,10 @@ else
 				{
 					<div class="flex items-baseline gap-2 flex-wrap">
 						<a href="@nodeUrl" class="@titleClass" data-testid="node-name">@n.Title</a>
-						<span class="font-mono text-xs opacity-50">@n.Key</span>
+						@if (Model.Fields.Slug)
+						{
+							<span class="font-mono text-xs opacity-50">@n.Key</span>
+						}
 						<partial name="_OutlineFieldChips" model="new PetBox.Web.Pages.ProjectHome.OutlineFieldChipsModel(Model.Runtime, Model.KindSlug, Model.Fields, n, Model.WorkspaceKey, Model.ProjectKey)" />
 					</div>
 				}
