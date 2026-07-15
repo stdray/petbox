@@ -28,11 +28,16 @@
 				<input id="new-password" name="password" type="password" class="input input-bordered input-sm" data-testid="sys-user-create-password" autocomplete="new-password" required />
 			</div>
 			@* No default value on purpose: the allowance is a decision, so the field is empty and
-			   required. An empty submit is rejected — it never becomes a silent 0. *@
+			   required. An empty submit is rejected — it never becomes a silent 0. Native `required`
+			   validation blocks the POST with no visible feedback in some environments (no toast, no
+			   inline error, counter unchanged), so the "Required" hint below is a permanent, always-on
+			   signal rather than relying solely on the browser's own validation UI. *@
 			<div>
-				<label class="text-xs opacity-60 block" for="new-quota">Workspace allowance</label>
+				<label class="text-xs opacity-60 block" for="new-quota">Workspace allowance <span class="text-error">*</span></label>
 				<input id="new-quota" name="workspaceQuota" type="number" min="0" step="1" placeholder="e.g. 0 or 1"
-					class="input input-bordered input-sm w-40" data-testid="sys-user-create-quota" required />
+					class="input input-bordered input-sm w-40" data-testid="sys-user-create-quota" required
+					aria-describedby="new-quota-hint" />
+				<span id="new-quota-hint" class="text-xs text-error block mt-1" data-testid="sys-user-create-quota-hint">Required — pick a number (0 = no workspaces).</span>
 			</div>
 			<button type="submit" class="btn btn-primary btn-sm" data-testid="sys-user-create-submit">Create</button>
 		</form>
