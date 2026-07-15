@@ -30,6 +30,10 @@ required on `memory_upsert`; `tags` is an ARRAY of strings ([] clears, omit keep
 a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing (updated
 desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 
+**Canon** — SessionStart injects an index from memory store `canon`, key `index` (per
+scope: `$system` project / `$workspace`). To edit it: `memory_upsert` with `store:"canon"`,
+`key:"index"` at the matching scope; keep it a compact index of pointers, not a growing doc.
+
 **What goes where:**
 - Session (`session_*`) — the current working plan/thinking. "Stale next week?" → session.
 - Tasks (`tasks_*`) — a unit of work with a status tracked to Done.
