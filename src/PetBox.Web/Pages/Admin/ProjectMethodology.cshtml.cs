@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
@@ -37,12 +38,15 @@ public sealed class ProjectMethodologyModel : PageModel
 	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
+	readonly IWorkspaceMembershipService _members;
 
-	public ProjectMethodologyModel(IProjectDirectory projects, FeatureFlags features, ITasksService tasks)
+	public ProjectMethodologyModel(
+		IProjectDirectory projects, FeatureFlags features, ITasksService tasks, IWorkspaceMembershipService members)
 	{
 		_projects = projects;
 		_features = features;
 		_tasks = tasks;
+		_members = members;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -397,11 +401,14 @@ public sealed class ProjectMethodologyModel : PageModel
 			previews.Add((slug, GraphViews(MethodologyPresets.RenderPresetDefinition(p.Slug))));
 		}
 
-		// Every project across every workspace (the base picker's whole point — another project's
-		// template/instance may live in a different workspace than this one). Workspace memory
-		// containers never hold methodology templates/instances, so the directory's safe default
-		// (containers excluded) changes nothing observable here.
-		var projects = (await _projects.ListAllAsync(ct: ct)).Where(p => p.Key != ProjectKey);
+		// The projects whose stored templates / open instance rules the picker may offer as a base.
+		// Builtin presets above are universal; a template/instance, by contrast, is another project's
+		// LIVE process, so it is confined to the projects the CALLER can see — every project in the
+		// workspaces they belong to (methodology-base-picker-cross-tenant-leak: a WorkspaceAdmin of one
+		// tenant must not read another tenant's methodologies through this picker). Membership is the
+		// welded predicate of the query (AccessibleProjectsAsync → IProjectDirectory.ListByWorkspaceAsync),
+		// not a filter over a fetch-all — the DB decides visibility, never the rendered list.
+		var projects = (await AccessibleProjectsAsync(ct)).Where(p => p.Key != ProjectKey);
 		foreach (var p in projects)
 		{
 			var templates = await _tasks.ListMethodologyTemplatesAsync(p.Key, ct);
@@ -431,6 +438,30 @@ public sealed class ProjectMethodologyModel : PageModel
 
 		Bases = options;
 		BasePreviewsJson = WorkflowGraphJson.SerializeBases(previews);
+	}
+
+	// The projects whose methodologies the caller is entitled to base a new one on: every project in
+	// the workspaces they are a member of. A sysadmin keeps the fleet-wide view (they administer every
+	// workspace); everyone else is confined to their own memberships. Those are read from the same
+	// yb:ws_roles claim the WorkspaceAdmin policy trusts — WorkspaceClaimsRefresher rebuilds it from
+	// WorkspaceMembers on every request, so it is current, not a stale sign-in snapshot — and fall back
+	// to the membership service when the claim is absent (a non-cookie identity), exactly as
+	// NavigationContext does. ListByWorkspaceAsync welds `keys.Contains(p.WorkspaceKey)` into the query.
+	async Task<IReadOnlyList<Project>> AccessibleProjectsAsync(CancellationToken ct)
+	{
+		if (User.HasClaim(PetBoxClaims.IsSysAdmin, "true"))
+			return await _projects.ListAllAsync(ct: ct);
+
+		IReadOnlyCollection<string> memberKeys = User.MemberWorkspaceKeys();
+		if (memberKeys.Count == 0
+			&& long.TryParse(User.FindFirst(PetBoxClaims.UserId)?.Value, out var userId))
+			memberKeys = [.. (await _members.GetRolesAsync(userId, ct)).Select(m => m.WorkspaceKey)];
+
+		if (memberKeys.Count == 0)
+			return [];
+
+		var byWorkspace = await _projects.ListByWorkspaceAsync(memberKeys, ct);
+		return [.. byWorkspace.Values.SelectMany(list => list)];
 	}
 
 	// Resolve a base picker choice.
