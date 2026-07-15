@@ -195,6 +195,9 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
+		An unrecognized `store` value is AUTO-CREATED, not rejected — a typo silently forks
+		memory into a new, unreachable namespace. Unsure a store exists? Check `memory_store_list`
+		first.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
 		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
 		On a NEW entry (version 0) omitted fields start empty.
