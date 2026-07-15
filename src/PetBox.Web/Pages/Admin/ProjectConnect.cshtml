@@ -36,8 +36,11 @@
 		This wires a coding agent to PetBox over <strong>MCP</strong> (Model Context Protocol).
 		Once connected, the agent can read and write this project's <strong>task boards</strong>,
 		<strong>memory stores</strong> and <strong>session plans</strong> using the
-		<code>tasks_*</code>, <code>memory_*</code> and <code>session_*</code> tools — a shared,
-		durable plan/notes store that survives across sessions and agents.
+		<code>tasks_*</code> and <code>memory_*</code> tools — a shared, durable plan/notes store
+		that survives across sessions and agents. Session functionality (the <code>session_*</code>
+		tools) isn't a scope of its own — it rides on the <code>tasks:*</code> scopes below
+		(read: list/read sessions; write: append/upsert/delete sessions), plus
+		<code>memory:read</code> when searching the session archive by content.
 	</p>
 	<p class="text-sm opacity-70">
 		MCP endpoint: <code data-testid="connect-mcp-url">@mcp</code> · auth header:

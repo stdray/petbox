@@ -59,7 +59,7 @@ test("finishWireRun: failed smoke suppresses 'done.' entirely and goes to stderr
   assert.ok(!f.lines.join("\n").includes("done."));
 });
 
-test("finishWireRun: successful smoke + env var already present prints exactly 'done.'", () => {
+test("finishWireRun: successful smoke + env var already present in this process STILL prints the new-terminal NOTE (idempotent — the NOTE is about other/future terminals, not this process)", () => {
   const f = finishWireRun({
     smokeOk: true,
     envVar: "PETBOX_X_API_KEY",
@@ -68,7 +68,10 @@ test("finishWireRun: successful smoke + env var already present prints exactly '
   });
   assert.equal(f.printDone, true);
   assert.equal(f.toStderr, false);
-  assert.deepEqual(f.lines, ["done."]);
+  assert.equal(f.lines.length, 1);
+  const [line] = f.lines;
+  assert.ok(line, "finishWireRun must produce exactly one line here");
+  assert.match(line, /^done\. NOTE:/);
 });
 
 test("finishWireRun: successful smoke without the env var in-process adds the new-terminal NOTE, still to stdout", () => {

@@ -20,7 +20,9 @@ This single step replaces what older material described as several manual ones: 
 
 Requires **Node ≥ 23.6**. `petbox-wire` never mints a key itself — if you don't have one yet, get it from the Connect page above; a brand-new agent has no project of its own to mint one from.
 
-**Check:** the run ends with `[10/10] self-smoke: OK`. If it doesn't, fix the reported step before continuing — everything after this depends on it.
+**Check:** the run reaches `[10/10] self-smoke: OK`. If it doesn't, fix the reported step before continuing — everything after this depends on it.
+
+The run doesn't stop there — it continues into a `[11/10]` phase (the numbering isn't a typo: step 10 is the last of the original 10-step sequence, and 11 was added later without renumbering the rest). `[11/10]` seeds a default role→model binding on a fresh machine and compiles the per-harness startup artifacts (`.claude/agents/*.md`, `.opencode/agent/*.md`, `.factory/droids/*.md`) for all three wired harnesses (Claude Code, opencode, Factory Droid), so the freshly-wired roster is usable immediately. It never fails the run: a hiccup here (e.g. a transient fetch) is logged but does not flip the exit code — re-run `petbox-wire apply` to retry just that step. The actual final line is `done.` (with a NOTE about opening a new terminal, see step 2).
 
 > **Agent not covered by `petbox-wire` yet?** `opencode` and Factory Droid are wired the same way as Claude Code; `omp` and `pi` aren't, and need the manual registration steps on the [connect reference](/doc/agent) instead. Claude Code is the priority path — treat the other harnesses as best-effort until that page says otherwise.
 

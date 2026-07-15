@@ -579,6 +579,10 @@ async function resolveApplyDefinition(opts: {
   } else if (got.source === "lkg") {
     log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
     log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
+  } else if (got.notFoundOnServer) {
+    // Server was reachable; it just has no definition of its own for this project yet
+    // (normal for a fresh project) — not an offline/unreachable condition.
+    log(`${label}: no server-side definition for this project yet — using kit default baseline`);
   } else {
     log(`${label}: offline default definition (no server, no LKG cache)`);
   }
