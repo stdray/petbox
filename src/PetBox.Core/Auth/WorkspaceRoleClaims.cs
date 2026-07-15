@@ -33,6 +33,28 @@ public static class WorkspaceRoleClaims
 		return GetWorkspaceRole(user, workspaceKey) is { } role && role <= minRole;
 	}
 
+	// Every workspace key recorded in yb:ws_roles (roles discarded) — the set of workspaces the caller
+	// currently belongs to. The claim is WorkspaceClaimsRefresher's per-request materialisation of the
+	// WorkspaceMembers table, so this is as fresh as the authorization pipeline's own view (the same
+	// source CanAdminWorkspace / HasWorkspaceRoleAtLeast read). EMPTY when the claim is absent (a
+	// non-cookie identity the refresher never touched): absence is "unknown", not "no memberships", so a
+	// caller that must not over- or under-scope has to fall back to IWorkspaceMembershipService. The
+	// "ws=Role,ws=Role" wire format is owned by WorkspaceRoleRequirement.SerializeRoles.
+	public static IReadOnlyCollection<string> MemberWorkspaceKeys(this ClaimsPrincipal user)
+	{
+		var claim = user.FindFirst(PetBoxClaims.WorkspaceRoles)?.Value;
+		if (string.IsNullOrEmpty(claim))
+			return [];
+
+		var keys = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var pair in claim.Split(',', StringSplitOptions.RemoveEmptyEntries))
+		{
+			var eq = pair.IndexOf('=', StringComparison.Ordinal);
+			if (eq > 0) keys.Add(pair[..eq]);
+		}
+		return keys;
+	}
+
 	// The principal's role in the given workspace, or null if none is recorded in the claim.
 	public static WorkspaceRole? GetWorkspaceRole(this ClaimsPrincipal user, string workspaceKey)
 	{
