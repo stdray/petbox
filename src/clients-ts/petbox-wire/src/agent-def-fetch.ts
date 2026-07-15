@@ -68,6 +68,13 @@ export type ResolvedAgentDefinition = {
   readonly version?: number;
   /** Human-facing line for apply logs when stale. */
   readonly staleMarker?: string;
+  /**
+   * Only meaningful when source === "default": the live fetch reached the server and it
+   * replied 404 (this project simply has no own definition — normal for a fresh project),
+   * as opposed to a genuine offline/unreachable/error condition. Lets callers avoid saying
+   * "no server" when the server was in fact reachable (agent-def-404-not-offline).
+   */
+  readonly notFoundOnServer?: boolean;
 };
 
 export function agentDefCacheDir(homeDir: string = homedir()): string {
@@ -115,20 +122,19 @@ export function parseAgentDefinitionResponse(json: unknown): FetchedAgentDefinit
   };
 }
 
-/**
- * GET the named agent definition. Returns the mapped definition on 200 + valid body;
- * null on any failure (network, timeout, non-OK status, bad JSON, invalid shape).
- * Never throws. Does NOT write LKG — caller uses writeAgentDefCache on success.
- */
-export async function fetchAgentDefinition(
+/** Richer outcome behind fetchAgentDefinition: keeps the HTTP status (when the request
+ * actually reached the server) so callers can tell a 404 (server reachable, this project
+ * just has no own definition — normal) apart from a genuine network/timeout/error failure
+ * (agent-def-404-not-offline). `status` is null when no response was ever obtained. */
+async function fetchAgentDefinitionRaw(
   opts: FetchAgentDefinitionOptions,
-): Promise<FetchedAgentDefinition | null> {
+): Promise<{ definition: FetchedAgentDefinition | null; status: number | null }> {
   try {
     const base = String(opts.baseUrl ?? "").replace(/\/+$/, "");
     const project = String(opts.projectKey ?? "").trim();
     const apiKey = String(opts.apiKey ?? "").trim();
     const defKey = (opts.definitionKey?.trim() || DEFAULT_DEFINITION_KEY).trim();
-    if (!base || !project || !apiKey || !defKey) return null;
+    if (!base || !project || !apiKey || !defKey) return { definition: null, status: null };
 
     const timeoutMs =
       typeof opts.timeoutMs === "number" && opts.timeoutMs > 0
@@ -147,15 +153,27 @@ export async function fetchAgentDefinition(
         headers: { "X-Api-Key": apiKey, Connection: "close" },
         signal: ctrl.signal,
       });
-      if (!resp.ok) return null;
+      if (!resp.ok) return { definition: null, status: resp.status };
       const body = (await resp.json().catch(() => null)) as unknown;
-      return parseAgentDefinitionResponse(body);
+      return { definition: parseAgentDefinitionResponse(body), status: resp.status };
     } finally {
       clearTimeout(timer);
     }
   } catch {
-    return null;
+    return { definition: null, status: null };
   }
+}
+
+/**
+ * GET the named agent definition. Returns the mapped definition on 200 + valid body;
+ * null on any failure (network, timeout, non-OK status, bad JSON, invalid shape).
+ * Never throws. Does NOT write LKG — caller uses writeAgentDefCache on success.
+ */
+export async function fetchAgentDefinition(
+  opts: FetchAgentDefinitionOptions,
+): Promise<FetchedAgentDefinition | null> {
+  const { definition } = await fetchAgentDefinitionRaw(opts);
+  return definition;
 }
 
 /** Persist LKG after a successful fetch. Never throws. */
@@ -243,8 +261,12 @@ export async function resolveAgentDefinitionWithLkg(
   const projectKey = opts.projectKey?.trim() ?? "";
   const defKey = opts.definitionKey.trim() || DEFAULT_DEFINITION_KEY;
 
+  // Tracks whether a live fetch actually reached the server and got a 404 (this project
+  // simply has no own definition — normal), vs never reaching it at all (offline/error).
+  let notFoundOnServer = false;
+
   if (!opts.offline && projectKey && opts.baseUrl && opts.apiKey) {
-    const fetched = await fetchAgentDefinition({
+    const { definition: fetched, status } = await fetchAgentDefinitionRaw({
       baseUrl: opts.baseUrl,
       projectKey,
       apiKey: opts.apiKey,
@@ -262,6 +284,7 @@ export async function resolveAgentDefinitionWithLkg(
         version: fetched.version,
       };
     }
+    notFoundOnServer = status === 404;
   }
 
   // LKG before DEFAULT (definition-offline-lkg).
@@ -286,6 +309,7 @@ export async function resolveAgentDefinitionWithLkg(
     definition: DEFAULT_AGENT_DEFINITION,
     source: "default",
     stale: false,
+    ...(notFoundOnServer ? { notFoundOnServer: true } : {}),
   };
 }
 

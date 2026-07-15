@@ -194,6 +194,54 @@ test("resolve: fetch null + no LKG → DEFAULT", async () => {
     assert.equal(got.source, "default");
     assert.equal(got.stale, false);
     assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+    // Genuine network failure — never reached the server, so this is NOT a 404.
+    assert.equal(got.notFoundOnServer, undefined);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// Regression for the misleading-message bug (agent-def-404-not-offline): a project with no
+// own agent-definition document gets a plain 404 from a reachable server — that is NORMAL
+// (fresh project), not an offline/unreachable condition. resolve must still fall through to
+// DEFAULT (unchanged functional behavior) but flag notFoundOnServer so the caller (wire.ts's
+// resolveApplyDefinition) can say so instead of claiming "no server".
+test("resolve: fetch 404 + no LKG → DEFAULT, flagged notFoundOnServer (server reachable, just no definition)", async () => {
+  const home = freshHome();
+  try {
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => new Response("not found", { status: 404 }),
+    });
+    assert.equal(got.source, "default");
+    assert.equal(got.stale, false);
+    assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+    assert.equal(got.notFoundOnServer, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve: fetch 500 + no LKG → DEFAULT, NOT flagged notFoundOnServer (server error, not a clean 404)", async () => {
+  const home = freshHome();
+  try {
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => new Response("boom", { status: 500 }),
+    });
+    assert.equal(got.source, "default");
+    assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+    assert.equal(got.notFoundOnServer, undefined);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

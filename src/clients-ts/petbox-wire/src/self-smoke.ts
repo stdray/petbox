@@ -64,6 +64,14 @@ export type FinishOutcome = {
  * Decide wire's terminal message set. `smokeOk` false is the ONLY branch that suppresses
  * "done." — steps 1-9 having completed does not make the run "done" when the last barrier
  * (self-smoke) failed.
+ *
+ * The NOTE always prints on a successful run (wire-note-idempotent) — it used to be gated on
+ * `envVarPresentInProcess`, which made it appear on a first wire run and silently vanish on a
+ * re-run once that same terminal had picked up the persisted env var, so it was unreliable as
+ * a checklist cue (a re-run in a fresh terminal, the common case, still needs the reminder).
+ * The persisted-env-var check only ever reflected the CURRENT process's environment, not
+ * whether agents launched from OTHER terminals would see it — printing unconditionally is both
+ * simpler and correct for the thing the NOTE is actually about (new agent processes).
  */
 export function finishWireRun(opts: {
   readonly smokeOk: boolean;
@@ -80,9 +88,6 @@ export function finishWireRun(opts: {
           `UNVERIFIED. Treat this run as failed, not finished; exit code is non-zero.`,
       ],
     };
-  }
-  if (opts.envVarPresentInProcess) {
-    return { printDone: true, toStderr: false, lines: ["done."] };
   }
   return {
     printDone: true,
