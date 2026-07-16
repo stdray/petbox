@@ -59,6 +59,19 @@ public sealed class ProjectMemoryAdminPageTests : IDisposable
 	ProjectMemoryModel Page() =>
 		new(new ProjectDirectory(_db.Factory()), Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
 
+	// namespace-create-in-ui: the explicit create control (store-create-form / store-create-name /
+	// store-create-submit) is the human-facing equivalent of the MCP memory:write auto-create path
+	// that a parallel gate change is closing off. Prove the POST handler behind it actually creates
+	// the store, not just that the form renders (ModuleViewsTests covers rendering).
+	[Fact]
+	public async Task Create_NewStore_CreatesAndRedirects()
+	{
+		var result = await Page().OnPostCreateAsync("notes", "agent notes");
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
+	}
+
 	[Fact]
 	public async Task Delete_OrdinaryStore_Removes()
 	{
