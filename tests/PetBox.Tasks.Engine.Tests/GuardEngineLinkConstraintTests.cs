@@ -34,6 +34,18 @@ public sealed class GuardEngineLinkConstraintTests
 	}
 
 	[Fact]
+	public void UntypedWorkNode_IsIndictedByItsEFFECTIVEType_NotABlankOne()
+	{
+		// The message must name the type the constraint MATCHED on. `work`'s default type is
+		// `feature` (declaration order), and `feature` is exactly what the task_spec constraint
+		// names — so an untyped work node is refused BY the feature rule and must be told so.
+		// Interpolating the node's RAW type here would read "a work  must link..." (double
+		// space): a verdict that matched on `feature` but refuses to say the word.
+		Require(Ctx(), [State("t1", "Pending")])!.Message
+			.Should().Be("a work feature must link a spec node — provide specRef (node 't1')");
+	}
+
+	[Fact]
 	public void NewChore_NeedsNoSpecRef()
 	{
 		// chore is exempt because NO constraint names it — the exemption is the absence of data,

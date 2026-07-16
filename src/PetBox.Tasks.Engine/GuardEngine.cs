@@ -193,6 +193,9 @@ public static class GuardEngine
 			// The node's EFFECTIVE type: single-FSM preset kinds accept untyped nodes (an untyped
 			// spec node IS a `spec`), so an empty type resolves to the kind's default before
 			// constraint matching — the old kind-wide guard's reach, as data.
+			// The MESSAGES below interpolate THIS, never n.Type: the verdict must name the type it
+			// matched on, or an untyped node reads "a work  must link ..." — indicted by a rule it
+			// refuses to name. Matching and wording share one variable so they can't drift apart.
 			var type = n.Type.Length == 0 ? ctx.Runtime.DefaultType(ctx.KindSlug) : n.Type;
 			foreach (var c in constraints)
 			{
@@ -206,14 +209,14 @@ public static class GuardEngine
 				var message = c.Link.ToLowerInvariant() switch
 				{
 					"task_spec" when !specRefs.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must link a {c.TargetKind ?? "spec"} node — provide specRef (node '{n.Key}')",
+						$"a {kindName} {type} must link a {c.TargetKind ?? "spec"} node — provide specRef (node '{n.Key}')",
 					"blocks" when !blockedBy.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must carry a {c.Link} link at creation — provide blockedBy (node '{n.Key}')",
+						$"a {kindName} {type} must carry a {c.Link} link at creation — provide blockedBy (node '{n.Key}')",
 					// idea_spec — the validator admits no other kind
 					"idea_spec" when !ideaRefs.ContainsKey(n.Key) =>
 						c.TargetStatuses is { Count: > 0 } ts
 							? $"a {kindName} change must be made under {string.Join("|", ts)} {c.TargetKind ?? c.Link} — provide ideaRef (node '{n.Key}')"
-							: $"a {kindName} {n.Type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
+							: $"a {kindName} {type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
 					_ => null,
 				};
 				if (message is not null) return Bad(n.Key, message);
