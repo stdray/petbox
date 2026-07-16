@@ -7,6 +7,7 @@
     <Project Path="src/PetBox.Data/PetBox.Data.csproj" />
     <Project Path="src/PetBox.Dashboard/PetBox.Dashboard.csproj" />
     <Project Path="src/PetBox.Tasks/PetBox.Tasks.csproj" />
+    <Project Path="src/PetBox.Tasks.Engine/PetBox.Tasks.Engine.csproj" />
     <Project Path="src/PetBox.Memory/PetBox.Memory.csproj" />
     <Project Path="src/PetBox.Sessions/PetBox.Sessions.csproj" />
     <Project Path="src/PetBox.Deploy/PetBox.Deploy.csproj" />

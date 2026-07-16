@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- The DB-free methodology engine (methodology-engine-extraction, slice 1). Dependency-free
+	     on purpose: pure FSM/definition/preset logic with zero linq2db/data-layer coupling, so it
+	     can be exercised and reasoned about without a store. PetBox.Tasks references this project;
+	     never the other way around. -->
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+</Project>
