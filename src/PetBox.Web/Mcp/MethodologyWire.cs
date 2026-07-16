@@ -136,6 +136,12 @@ static class MethodologyWire
 				.Select(e => new MethodologyTransitionEffectDef(
 					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
 					e.Set ?? string.Empty, e.OnlyFrom)).ToList(),
+			AutoWireSpecFrom = k.AutoWireSpecFrom,
+			Delivery = k.Delivery is null ? null : new MethodologyDeliveryDef(
+				(k.Delivery.RequiredTypes ?? []).Select(t => t ?? string.Empty).ToList(),
+				(k.Delivery.DefectTypes ?? []).Select(t => t ?? string.Empty).ToList()),
+			DefaultView = k.DefaultView,
+			OutlineReveal = k.OutlineReveal,
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])

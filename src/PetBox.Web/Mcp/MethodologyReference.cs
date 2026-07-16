@@ -35,6 +35,7 @@ static class MethodologyReference
 	{
 		[typeof(MethodologyDefInput)] = "definition",
 		[typeof(MethodologyKindInput)] = "kind",
+		[typeof(MethodologyDeliveryInput)] = "delivery",
 		[typeof(MethodologyWorkflowInput)] = "workflow",
 		[typeof(MethodologyStatusInput)] = "status",
 		[typeof(MethodologyTransitionInput)] = "transition",
@@ -66,6 +67,17 @@ static class MethodologyReference
 				["workflows"] = "The kind's workflow blocks — at least one. A type slug maps to exactly one block across the kind.",
 				["linkConstraints"] = "Per-type creation link requirements (\"a NEW <type> must carry a <link>\"). Omitted = no requirement; constraints are opt-in per type.",
 				["effects"] = "Declared transition effects — cross-node automation the server executes when a node of this kind enters the trigger status.",
+				["autoWireSpecFrom"] = "Auto-wire this kind's boards to the sole active board of the named kind (e.g. work → \"spec\"), so specRef resolves without naming a board. Omitted = no auto-wire.",
+				["delivery"] = "The bottom-up delivery roll-up for this kind (a spec node's verdict computed from the work nodes linked to it). Omitted = this kind computes no delivery.",
+				["defaultView"] = "The board's initial view mode when a viewer has no saved preference. Omitted = the builtin default.",
+				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
+			}),
+		Describe<MethodologyDeliveryInput>(
+			"The delivery roll-up definition: how a node of the OWNING kind derives its verdict (not_started | in_progress | done | done_with_defects) from the nodes linked to it. Omit the whole object and the kind computes no delivery at all — the roll-up is gated by this DATA, so an absent definition silently disables the feature (work/delivery-rollup-is-vacuous-in-prod).",
+			new()
+			{
+				["requiredTypes"] = "The type slugs that DRIVE progress (e.g. [\"feature\"]): none linked → not_started; any not in a terminalok status → in_progress; all terminalok → a done candidate.",
+				["defectTypes"] = "The type slugs counted as defects (e.g. [\"bug\"]): once the requireds are done, any defect still in an OPEN status turns the verdict into done_with_defects. Omitted/empty = done has no defect variant.",
 			}),
 		Describe<MethodologyWorkflowInput>(
 			"One state machine shared by every type slug in `types`. Convention: statuses[0] is the initial status.",
