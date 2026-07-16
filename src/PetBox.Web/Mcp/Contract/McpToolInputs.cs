@@ -85,6 +85,14 @@ public sealed record MethodologyDefInput
 
 // One board kind of the methodology. `kind` is a FREE-FORM slug (user-defined kinds are
 // the point — not limited to the built-in simple|spec|ideas|intake|work).
+//
+// MUST mirror MethodologyKindDef (PetBox.Tasks.Workflow) FIELD FOR FIELD. rules_upsert /
+// template_upsert perform a FULL-DOCUMENT REPLACE keyed off this type — any domain field
+// missing here is silently discarded on every edit, no error, no warning (root cause of
+// work/mcp-rules-upsert-is-lossy: AutoWireSpecFrom/Delivery/DefaultView/OutlineReveal were
+// wiped in prod TWICE this way before this parity was enforced by
+// MethodologyKindContractParityTests). Add a domain field → add it here too, or the arch
+// test in that file goes red.
 public sealed record MethodologyKindInput
 {
 	public string? Kind { get; init; }
@@ -98,6 +106,24 @@ public sealed record MethodologyKindInput
 	// Declared transition effects ("on entering <on>, set <direction> <link> nodes to
 	// <set>"); omitted = none. Declaration only — the engine executes them in a later wave.
 	public MethodologyEffectInput[]? Effects { get; init; }
+	// Mirrors MethodologyKindDef.AutoWireSpecFrom: auto-wire this kind's SpecBoard to the
+	// sole active board of this kind when the condition holds. Null = no auto-wire.
+	public string? AutoWireSpecFrom { get; init; }
+	// Mirrors MethodologyKindDef.Delivery: the bottom-up delivery roll-up for this kind.
+	// Null = no delivery computation.
+	public MethodologyDeliveryInput? Delivery { get; init; }
+	// Mirrors MethodologyKindDef.DefaultView (BoardViewModeNames). Null = builtin default.
+	public string? DefaultView { get; init; }
+	// Mirrors MethodologyKindDef.OutlineReveal (OutlineRevealModeNames). Null = builtin
+	// default.
+	public string? OutlineReveal { get; init; }
+}
+
+// Mirrors MethodologyDeliveryDef 1:1 (see the parity note on MethodologyKindInput above).
+public sealed record MethodologyDeliveryInput
+{
+	public string[]? RequiredTypes { get; init; }
+	public string[]? DefectTypes { get; init; }
 }
 
 // "A NEW node of type `type` must carry a link of kind `link` at creation." `link` must
