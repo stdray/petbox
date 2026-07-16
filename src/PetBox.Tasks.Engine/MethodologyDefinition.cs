@@ -96,7 +96,7 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 	// Optional link-target declaration (schema v2): the required link must point at a node
 	// of kind `TargetKind` and/or in one of `TargetStatuses` — the generalization of the
 	// once-hardcoded ideaRef→accepted-idea guard as data. Cross-kind targets resolve at
-	// runtime, enforced at write time by TasksService.ValidateLinkTargetsAsync. Null = no
+	// runtime, enforced at write time by GuardEngine.ValidateLinkTargets. Null = no
 	// restriction beyond the link kind itself.
 	public string? TargetKind { get; init; }
 	public IReadOnlyList<string>? TargetStatuses { get; init; }
