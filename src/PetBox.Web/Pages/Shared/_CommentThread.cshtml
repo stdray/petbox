@@ -8,18 +8,59 @@
    editor) and are shown by ts/commentThread.ts (no inline JS) — works without JS too, since a
    hidden form still submits if a client force-shows it. The add form is always visible so a
    node with zero comments still offers to start the thread. *@
-<div class="mt-4 border-t border-base-300 pt-3 flex flex-col gap-1" data-testid="node-comments">
-	<div class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-0.5" data-testid="comments-heading">
-		@(Model.Lines.Count == 0 ? "Comments" : $"Comments · {Model.Lines.Count}")
-	</div>
-	@foreach (var line in Model.Lines)
-	{
-		var c = line.Comment;
-		@* `group` + per-comment left rail: the action buttons (reply/edit/delete) stay invisible
-		   until the comment is hovered or holds focus (comment-action-buttons-hover) — kills the
-		   visual noise of a full button row on every comment. *@
-		<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
-			<div class="flex items-baseline gap-2 flex-wrap">
+@* reader-view-body-and-comments, round 2 (real ideas/memory-store-creation-guard node still
+   dropped the body after round 1's shared-<article>-only fix — verified via @@mozilla/readability
+   --debug candidate scores, not guessed). The remaining problem was DEPTH: comment text sat
+   4 ancestor levels below the shared <article> (md-body → comment-read-body → "comment" div →
+   this div → article), and Readability's contentScore divides by ~(level*3) past the second
+   ancestor — so by the time a paragraph's score reaches this div or the article, it has been
+   divided down far enough that Readability's climb-then-stop promotion locks onto the inner
+   "comment" div and never reaches the shared root. Fix: DELETE this wrapper (was
+   data-testid="node-comments", the JS delegated-click root) and the comment-read-body wrapper
+   inside each comment — every child here (heading, each comment, the add-form) now renders as a
+   DIRECT child of TaskBoardNode.cshtml's shared <article data-testid="node-comments"
+   class="node-reader-content">, cutting md-body's distance to the shared root from 4 levels to 2.
+   The old wrapper's border-top/padding moved onto the heading below (comments-heading); its
+   flex-col gap-1 spacing is replaced by explicit margins on each direct child, so the visual
+   layout is unchanged — verified in ts/readerView.test.ts (dense fixture) and by build/tests
+   below, not by eyeballing. ts/commentThread.ts's delegated listener now binds to the <article>
+   (data-testid="node-comments" — kept for zero JS churn beyond the "comment-read-body" →
+   "comment-body" toggle-target rename below); a click anywhere in the body area simply matches
+   none of the comment-specific selectors, so behavior there is unaffected.
+   Spacing arithmetic (worked out, not eyeballed): flex's `gap` ADDS to each item's own margin;
+   plain block flow instead COLLAPSES adjacent margins to the larger one. The old layout's total
+   gaps were heading→comment1 = mb-0.5(2px) + gap(4px) = 6px, comment→comment = gap(4px) = 4px,
+   comment→add-form = gap(4px) + the add-form's own mt-1(4px) = 8px. Without a flex parent,
+   reproducing those needs: comments-heading's mb bumped 0.5→1.5 (6px) so it collapses with a
+   comment's `mt-1` (4px) to max(6,4)=6px; the add-form's own mt bumped 1→2 (8px, the ONLY margin
+   at that boundary since the preceding comment has no bottom margin) for 8px; comment→comment
+   needed no change (only the follower's `mt-1` was ever present at that boundary, so it was never
+   diluted by collapsing). *@
+@{
+	var hasComments = Model.Lines.Count > 0;
+}
+<div class="mt-4 border-t border-base-300 pt-3 text-xs font-semibold uppercase tracking-wide opacity-50 mb-1.5" data-testid="comments-heading">
+	@(hasComments ? $"Comments · {Model.Lines.Count}" : "Comments")
+</div>
+@foreach (var line in Model.Lines)
+{
+	var c = line.Comment;
+	@* `group` + per-comment left rail: the action buttons (reply/edit/delete) stay invisible
+	   until the comment is hovered or holds focus (comment-action-buttons-hover) — kills the
+	   visual noise of a full button row on every comment. `mt-1` replaces the old wrapper's
+	   flex-col `gap-1` (same 0.25rem Tailwind spacing step) now that comments are direct
+	   siblings under the shared <article> rather than flex children of a removed wrapper. *@
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
+		<div class="flex items-baseline gap-2 flex-wrap">
+			@* rv-noscore: a bare <div class="flex items-baseline …"> full of only inline children
+			   (span/time/button/form) is exactly what Readability's node-prep pass converts into a
+			   scoreable <p> (no block-level descendant → _hasChildBlockElement is false), handing
+			   the author/timestamp/actions row its own full, UNDILUTED contentScore contribution
+			   straight onto the "comment" div — part of why a comment's wrapper can outscore its
+			   own body text and short-circuit Readability's climb one level too early
+			   (reader-view-body-and-comments). This inert wrapper (any real DIV element defeats the
+			   "no block child" check) keeps this row as inert layout chrome instead, no visual effect. *@
+			<div class="contents">
 				<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
 				@* Created time — UTC in the `datetime` attribute, localized client-side by
 				   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
@@ -44,46 +85,51 @@
 					</form>
 				</span>
 			</div>
-			<div data-testid="comment-read-body">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
-			</div>
-
-			@* Edit form — same comment, in place. `version` is the watermark baseline read on
-			   this render; a stale one comes back as a conflict (surfaced as the page Error),
-			   never a silent clobber, mirroring node edit-respects-guards. *@
-			<form method="post" asp-page-handler="CommentEdit" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none">
-				<input type="hidden" name="id" value="@c.Id" />
-				<input type="hidden" name="version" value="@c.Version" />
-				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">@c.Body</textarea>
-				<div class="flex items-center gap-2">
-					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
-					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
-				</div>
-			</form>
-
-			@* Reply form — a plain add scoped to this comment via the hidden parentId; the
-			   service rejects a parentId that isn't an active comment under the SAME node. *@
-			<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none">
-				<input type="hidden" name="nodeId" value="@Model.NodeId" />
-				<input type="hidden" name="parentId" value="@c.Id" />
-				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
-				<div class="flex items-center gap-2">
-					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
-					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
-				</div>
-			</form>
 		</div>
-	}
+		@* comment-read-body wrapper REMOVED (reader-view-body-and-comments round 2) — the
+		   md-body div below (data-testid="comment-body") is now the direct show/hide toggle
+		   target; ts/commentThread.ts was updated to query "comment-body" instead of the old
+		   "comment-read-body" (same element's role, just one fewer wrapper div). *@
+		<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 
-	@* Root add-comment form — rendered on the node detail page (always, even on a thread with
-	   zero comments yet). List views (board-comment-form-list-noise) pass ShowAddForm: false —
-	   commenting is a node-detail operation, not a per-card affordance on a list of nodes. *@
-	@if (Model.ShowAddForm)
-	{
-		<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-add-form">
-			<input type="hidden" name="nodeId" value="@Model.NodeId" />
-			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
-			<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+		@* Edit form — same comment, in place. `version` is the watermark baseline read on
+		   this render; a stale one comes back as a conflict (surfaced as the page Error),
+		   never a silent clobber, mirroring node edit-respects-guards. *@
+		<form method="post" asp-page-handler="CommentEdit" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none">
+			<input type="hidden" name="id" value="@c.Id" />
+			<input type="hidden" name="version" value="@c.Version" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">@c.Body</textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+			</div>
 		</form>
-	}
-</div>
+
+		@* Reply form — a plain add scoped to this comment via the hidden parentId; the
+		   service rejects a parentId that isn't an active comment under the SAME node. *@
+		<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none">
+			<input type="hidden" name="nodeId" value="@Model.NodeId" />
+			<input type="hidden" name="parentId" value="@c.Id" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+			</div>
+		</form>
+	</div>
+}
+
+@* Root add-comment form — rendered on the node detail page (always, even on a thread with
+   zero comments yet). List views (board-comment-form-list-noise) pass ShowAddForm: false —
+   commenting is a node-detail operation, not a per-card affordance on a list of nodes. *@
+@if (Model.ShowAddForm)
+{
+	@* mt-2, not mt-1 (spacing arithmetic in the comment above): this is now the ONLY margin at
+	   the previous-comment/add-form boundary (the preceding comment has no bottom margin), so it
+	   must carry the full 8px the old flex `gap` + this form's own `mt-1` used to add up to. *@
+	<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-2" data-testid="comment-add-form">
+		<input type="hidden" name="nodeId" value="@Model.NodeId" />
+		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
+		<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+	</form>
+}

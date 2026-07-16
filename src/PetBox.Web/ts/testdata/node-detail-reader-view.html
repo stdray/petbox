@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>guard-node - PetBox</title>
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+	<link rel="stylesheet" href="/css/app.css?v=0KDumvK1CU7oUp98i5e-Pa_4qMnflAYA9EFlOrhnWGo" />
+		<script>document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";</script>
+
+	<script type="module" src="/js/site.js?v=ebHvxjXnsdMIHp5dKEpvMwmbORQkmqY_dAzOaHzRKQ8"></script>
+</head>
+<body class="min-h-full">
+	<div id="app-drawer" class="drawer drawer-open">
+		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
+		<div class="drawer-content flex flex-col min-h-screen min-w-0">
+			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12">
+				<div class="flex-none">
+					<label for="sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="nav-toggle" title="Toggle sidebar">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+						</svg>
+					</label>
+				</div>
+				<div class="flex-1 flex items-center gap-3">
+					<a href="/ui/$system" class="text-lg font-semibold" data-testid="nav-home">PetBox</a>
+						<form method="get" action="/ui/search" class="hidden sm:block ml-auto mr-3" data-testid="nav-search">
+							<input type="text" name="q" placeholder="Find a task…" title="Find a task by slug, NodeId, or text — searches every workspace and project you can access"
+								class="input input-sm input-bordered w-40 md:w-64" data-testid="nav-search-input" />
+						</form>
+				</div>
+				<div class="flex-none flex items-center gap-1">
+						<a href="/ui/me/account" class="text-xs opacity-60 hover:opacity-100 hidden md:inline font-mono" data-testid="nav-username" title="Account settings">admin</a>
+						<a href="/ui/admin/ws/$system/projects/$system/info" class="btn btn-ghost btn-sm " data-testid="nav-admin-gear" title="Administration">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+							</svg>
+						</a>
+						<form method="post" action="/api/auth/logout" class="m-0">
+							<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" />
+							<button type="submit" class="btn btn-ghost btn-sm" data-testid="nav-signout" title="Sign out">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+								</svg>
+							</button>
+						</form>
+				</div>
+			</header>
+
+			<main class="flex-1 p-4 lg:p-6">
+				
+				
+<div class="mb-4 flex items-center gap-2 flex-wrap text-sm" data-testid="node-breadcrumb">
+	<a href="/ui/$system/$system/tasks" class="link link-hover opacity-70">tasks</a>
+	<span class="opacity-40">/</span>
+	<a href="/ui/$system/$system/tasks/capreader2" class="link link-hover opacity-70 font-mono">capreader2</a>
+	<span class="badge badge-info badge-outline badge-xs" data-testid="node-board-kind" data-kind="simple" title="simple board &#x2014; lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue">simple</span>
+	<span class="opacity-40">/</span>
+	<span class="font-mono opacity-90" data-testid="node-leaf">cap-node</span>
+	<button type="button" class="btn btn-ghost btn-xs px-1 leading-none opacity-60 hover:opacity-100" data-copy="cap-node" data-testid="node-slug-copy" title="Copy slug" aria-label="Copy slug">⧉</button>
+</div>
+
+<div class="card bg-base-200 border border-base-300" data-testid="node-detail" data-node-id="b7c99f4bbe4b4abb934e3f9446e70006" data-board="capreader2" data-terminal-cancel="false">
+	<div class="card-body p-4">
+
+
+		<div class="flex items-baseline justify-between gap-2 flex-wrap">
+			<h1 class="text-2xl font-semibold " data-testid="node-name">guard-node</h1>
+			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+					<span class="badge badge-ghost badge-sm" data-testid="node-type">chore</span>
+				<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="chore" title="View this type's workflow graph">⤳ workflow</button>
+					<span class="badge badge-info badge-sm" data-testid="node-status">Todo</span>
+
+					<form method="post" class="inline-flex items-center gap-1" data-testid="node-status-form" action="/ui/$system/$system/tasks/capreader2/cap-node?handler=Status">
+						<input type="hidden" name="version" value="1" />
+						<select name="status" class="select select-bordered select-xs" data-testid="node-status-select" aria-label="Change status">
+								<option value="InProgress">In progress</option>
+								<option value="Blocked">Blocked</option>
+								<option value="Done">Done</option>
+								<option value="Cancelled">Cancelled</option>
+						</select>
+						<button type="submit" class="btn btn-xs" data-testid="node-status-submit" title="change status">→</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
+			</div>
+		</div>
+
+		<form method="post" class="flex flex-col gap-2 mt-3" data-testid="node-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader2/cap-node?handler=Edit">
+			<input type="hidden" name="version" value="1" />
+			<input type="text" name="title" value="guard-node" maxlength="200" class="input input-bordered input-sm w-full" placeholder="Title" data-testid="node-edit-title" aria-label="Title" />
+			<div role="tablist" class="tabs tabs-bordered text-xs self-start">
+				<a role="tab" class="tab tab-active" data-testid="node-edit-write-tab">write</a>
+				<a role="tab" class="tab" data-testid="node-edit-preview-tab">preview</a>
+			</div>
+			<textarea name="body" rows="12" class="textarea textarea-bordered textarea-sm w-full font-mono" placeholder="Body (markdown)" data-testid="node-edit-body" aria-label="Body">BODY_MARKER: Guard against creating a memory store that collides with an existing one.</textarea>
+				<div class="md-body text-base border border-base-300 rounded p-3 min-h-24" data-testid="node-edit-preview" style="display:none"></div>
+
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="node-edit-save">Save</button>
+				<button type="button" class="btn btn-sm btn-ghost" data-testid="node-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+
+		<article class="node-reader-content mt-3" data-testid="node-comments">
+			<div data-testid="node-read-body" class="rv-content">
+					<div class="rounded-lg border border-base-300/70 bg-base-100/40 p-4">
+							<div class="md-body text-base" data-testid="node-body"><p>BODY_MARKER: Guard against creating a memory store that collides with an existing one.</p>
+</div>
+
+					</div>
+			</div>
+
+
+			<div class="mt-4 border-t border-base-300 pt-3 text-xs font-semibold uppercase tracking-wide opacity-50 mb-1.5" data-testid="comments-heading">
+	Comments &#xB7; 1
+</div>
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="135d9157441e4af9a599ffa7dcded426" data-comment-version="1" style="margin-left:0rem">
+		<div class="flex items-baseline gap-2 flex-wrap">
+			<div class="contents">
+				<span class="font-semibold opacity-70" data-testid="comment-author">reviewer</span>
+				<time class="local-time text-xs opacity-50 font-mono" datetime="2026-07-16T06:31:50.5800000" data-testid="comment-time">2026-07-16 06:31</time>
+				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+					<form method="post" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first." action="/ui/$system/$system/tasks/capreader2/cap-node?handler=CommentDelete">
+						<input type="hidden" name="id" value="135d9157441e4af9a599ffa7dcded426" />
+						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+				</span>
+			</div>
+		</div>
+			<div class="md-body text-base" data-testid="comment-body"><p>COMMENT_MARKER: I'd reject on collision with a clear error naming the existing store's owner and creation time, then let the caller decide to adopt or pick a new key. Silent idempotence is convenient for retries but it means two unrelated callers can end up sharing state without ever finding out, which is worse than a loud failure. We should also make sure the error payload is structured, not just a generic message, so an agent reading it can act on it directly instead of re-parsing English text.</p>
+</div>
+
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader2/cap-node?handler=CommentEdit">
+			<input type="hidden" name="id" value="135d9157441e4af9a599ffa7dcded426" />
+			<input type="hidden" name="version" value="1" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">COMMENT_MARKER: I&#x27;d reject on collision with a clear error naming the existing store&#x27;s owner and creation time, then let the caller decide to adopt or pick a new key. Silent idempotence is convenient for retries but it means two unrelated callers can end up sharing state without ever finding out, which is worse than a loud failure. We should also make sure the error payload is structured, not just a generic message, so an agent reading it can act on it directly instead of re-parsing English text.</textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none" action="/ui/$system/$system/tasks/capreader2/cap-node?handler=CommentAdd">
+			<input type="hidden" name="nodeId" value="b7c99f4bbe4b4abb934e3f9446e70006" />
+			<input type="hidden" name="parentId" value="135d9157441e4af9a599ffa7dcded426" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+	</div>
+
+	<form method="post" class="flex flex-col gap-1 mt-2" data-testid="comment-add-form" action="/ui/$system/$system/tasks/capreader2/cap-node?handler=CommentAdd">
+		<input type="hidden" name="nodeId" value="b7c99f4bbe4b4abb934e3f9446e70006" />
+		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
+		<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+	<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kZLy7ArjicgjCc_VgbIjboBKLZ-0zAaeRn1eFnX0uRuqT7QhlWH1HaNShXVCXBdnIP4QPV7jnDIQwlDHBmwseUbRuQuBYiz7ceq-jXdcePBmN--ilX8X3ySVGoPZgaKE_IjBKPs6cOTBktucfaLomBBSj17bN4oWLVCFcKE3c3wQ" /></form>
+
+		</article>
+	</div>
+</div>
+
+	
+
+<div class="modal" data-testid="workflow-modal" role="dialog" aria-modal="true">
+	<div class="modal-box max-w-3xl">
+		<div class="flex items-center justify-between gap-2 mb-3">
+			<h3 class="font-semibold text-lg" data-testid="workflow-modal-title">View workflow</h3>
+			<button type="button" class="btn btn-sm btn-circle btn-ghost" data-testid="workflow-modal-close" aria-label="Close">✕</button>
+		</div>
+		<div class="overflow-x-auto" data-testid="workflow-graph"></div>
+		<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-70" data-testid="workflow-legend">
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-neutral"></span> open</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-success"></span> done</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-error"></span> cancelled</span>
+			<span class="opacity-80">▶ initial · edge labels = gates (approve / reason / artifact:&lt;slug&gt;)</span>
+		</div>
+	</div>
+	<div class="modal-backdrop" data-testid="workflow-modal-backdrop"></div>
+</div>
+
+<script type="application/json" data-testid="workflow-data">{"kind":"simple","blocks":[{"types":["task","bug","feature","chore","issue"],"statuses":[{"slug":"Todo","name":"Todo","kind":"Open"},{"slug":"InProgress","name":"In progress","kind":"Open"},{"slug":"Blocked","name":"Blocked","kind":"Open"},{"slug":"Done","name":"Done","kind":"TerminalOk"},{"slug":"Cancelled","name":"Cancelled","kind":"TerminalCancel"}],"transitions":[{"from":"Todo","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false}]}],"effectNotes":[]}</script>
+
+
+			</main>
+
+			<footer class="p-3 text-center text-xs opacity-60 border-t border-base-300" data-testid="footer-version">
+	vdev
+	· local
+	· <span data-testid="footer-features">
+			<span class="text-success" title="enabled">config</span> 			<span class="text-success" title="enabled">logging</span> 			<span class="text-success" title="enabled">data</span> 			<span class="text-success" title="enabled">dashboard</span> 			<span class="text-success" title="enabled">tasks</span> 			<span class="text-success" title="enabled">memory</span> 			<span class="text-success" title="enabled">llmrouter</span> 			<span class="text-success" title="enabled">deploy</span> 	</span>
+</footer>
+
+		</div>
+
+		<div class="drawer-side">
+			<label for="sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
+			<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col">
+					<div class="hidden" data-testid="nav-current-ws">$system</div>
+					<div class="px-2 pt-2" data-testid="nav-workspace-selector">
+	<div class="flex items-center gap-1">
+		<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1 min-w-0">
+			<input type="hidden" name="zone" value="ui" data-testid="nav-workspace-zone" />
+				<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
+						<option value="$system" selected="selected">$system</option>
+				</select>
+		</form>
+		<button type="button" class="btn btn-sm btn-ghost btn-square btn-active" data-sidebar-pin
+	aria-pressed="true" title="Pin sidebar open" data-testid="nav-sidebar-pin">
+	<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+		<path d="M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z" />
+	</svg>
+</button>
+
+	</div>
+</div>
+
+					<ul class="menu w-full p-2 gap-1">
+						<li>
+							<a href="/ui/$system" class="" data-testid="nav-status">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
+								</svg>
+								Status
+							</a>
+						</li>
+							<li>
+								<a href="/ui/$system/$workspace/memory" class="" data-testid="nav-ws-memory">
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+									</svg>
+									Shared memory
+								</a>
+							</li>
+						<li>
+							<a href="/ui/$system/config" class="" data-testid="nav-shared-config">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+								</svg>
+								Shared config
+							</a>
+						</li>
+					</ul>
+					<div class="px-3 pt-2 mt-2 border-t border-base-300">
+						<div class="text-xs opacity-50 uppercase tracking-wide">Project</div>
+					</div>
+					<div class="px-2" data-testid="nav-project-selector">
+	<form method="post" action="/api/ui/project" data-testid="nav-project-switch">
+		<input type="hidden" name="ws" value="$system" />
+		<input type="hidden" name="zone" value="ui" data-testid="nav-project-zone" />
+			<select name="key" onchange="this.form.submit()" aria-label="Switch project" title="Switch project"
+				class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-project-select">
+					<option value="$system" selected="selected">$system</option>
+			</select>
+	</form>
+</div>
+
+					<ul class="menu menu-sm w-full p-2 gap-0.5 flex-1 overflow-y-auto" data-testid="nav-sidebar-projects">
+							<li class="hidden" data-testid="nav-project" data-project-key="$system"></li>
+							<li><a href="/ui/$system/$system" class="" data-testid="nav-proj-dashboard">Dashboard</a></li>
+								<li data-testid="nav-proj-logs-node">
+									<details hx-get="/ui/_nav/tree?handler=Logs&project=$system" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+										<summary class=""><a href="/ui/$system/$system/logs" data-testid="nav-proj-logs">Logs</a></summary>
+										<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
+									</details>
+								</li>
+							<li><a href="/ui/$system/$system/traces" class="" data-testid="nav-proj-traces">Traces</a></li>
+							<li><a href="/ui/$system/$system/config" class="" data-testid="nav-proj-config">Config</a></li>
+								<li><a href="/ui/$system/$system/llm" class="" data-testid="nav-proj-llm">LLM router</a></li>
+									<li data-testid="nav-proj-tasks-node">
+										<details open="open">
+											<summary class=""><a href="/ui/$system/$system/tasks" data-testid="nav-proj-tasks">Tasks</a></summary>
+											<ul>
+													<li data-testid="nav-proj-task-board-node" data-board-name="capreader">
+														<a href="/ui/$system/$system/tasks/capreader" class="" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">capreader</span>
+														</a>
+													</li>
+													<li data-testid="nav-proj-task-board-node" data-board-name="capreader2">
+														<a href="/ui/$system/$system/tasks/capreader2" class="active" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">capreader2</span>
+														</a>
+													</li>
+													<li data-testid="nav-proj-task-board-node" data-board-name="roadmap">
+														<a href="/ui/$system/$system/tasks/roadmap" class="" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">roadmap</span>
+														</a>
+													</li>
+											</ul>
+										</details>
+									</li>
+								<li><a href="/ui/$system/$system/memory" class="" data-testid="nav-proj-memory">Memory</a></li>
+								<li><a href="/ui/$system/$system/sessions" class="" data-testid="nav-proj-agent">Sessions</a></li>
+					</ul>
+			</aside>
+		</div>
+	</div>
+	
+</body>
+</html>

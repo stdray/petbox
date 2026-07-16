@@ -44,7 +44,12 @@ function wireThread(root: HTMLElement): void {
 		if (editToggle) {
 			const comment = editToggle.closest<HTMLElement>("[data-testid='comment']");
 			const form = comment?.querySelector("[data-testid='comment-edit-form']") ?? null;
-			const readBody = comment?.querySelector("[data-testid='comment-read-body']") ?? null;
+			// reader-view-body-and-comments round 2: the comment-read-body WRAPPER div was
+			// removed from _CommentThread.cshtml (it added an ancestor level that kept
+			// Readability's candidate climb from reaching the shared reader-view root) — the
+			// md-body div (data-testid="comment-body") is now toggled directly; same element's
+			// role, one fewer wrapper.
+			const readBody = comment?.querySelector("[data-testid='comment-body']") ?? null;
 			const opening = isHidden(form);
 			setDisplay(form, opening);
 			setDisplay(readBody, !opening);
@@ -55,7 +60,7 @@ function wireThread(root: HTMLElement): void {
 		if (editCancel) {
 			const comment = editCancel.closest<HTMLElement>("[data-testid='comment']");
 			const form = comment?.querySelector("[data-testid='comment-edit-form']") ?? null;
-			const readBody = comment?.querySelector("[data-testid='comment-read-body']") ?? null;
+			const readBody = comment?.querySelector("[data-testid='comment-body']") ?? null; // see editToggle above
 			setDisplay(form, false);
 			setDisplay(readBody, true);
 		}
