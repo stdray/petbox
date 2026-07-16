@@ -20,8 +20,24 @@ public static class TasksSearchDocs
 	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime) =>
 		n.NodeId.Length > 0 && !runtime.IsTerminalSlug(n.Status);
 
+	// The slug LEADS the indexed text (search-slug-words-gap): the entity address (Id) is
+	// `unindexed` in search_fts, so before this the slug was reachable ONLY through the exact
+	// retriever, and only when the WHOLE query was the slug verbatim. Slugs are English kebab
+	// while titles/bodies are often Russian, so an English query built from the slug's words
+	// (`methodology lifecycle ux`) fell in the gap: too fuzzy for exact, and its terms were
+	// absent from the lexicon. Feeding the slug to the lexical floor turns it from all-or-nothing
+	// into a per-word bridge between an English identifier and a Russian body.
+	//
+	// No manual split on `-` is needed and none is wanted: BOTH tokenizers already treat every
+	// non-alphanumeric as a separator — fts5 `unicode61` on the index side (M009) and
+	// FtsQuery.Tokens (`[\p{L}\p{Nd}]+`) on the query side. So `methodology-lifecycle-ux` and
+	// `methodology_lifecycle_ux` alike yield the terms methodology/lifecycle/ux, digits included
+	// — the whole `[a-z][a-z0-9_-]*` slug grammar is covered by the shared tokenizer, and a
+	// pre-split here would only produce the same terms one layer earlier (and could drift from it).
+	// The slug is NOT re-matchable as one whole term — that address is the exact retriever's job,
+	// which reads the temporal store, not this index.
 	public static SearchDoc ToDoc(PlanNode n, string scope, IReadOnlyList<string> tags) =>
-		new(scope, n.Board, n.Key, n.Name + "\n" + n.Body, string.Join(' ', tags));
+		new(scope, n.Board, n.Key, n.Key + "\n" + n.Name + "\n" + n.Body, string.Join(' ', tags));
 
 	// Namespace prefix for a comment's FTS Id. A node slug is `[a-z][a-z0-9_-]*` (no colon
 	// ever), so "c:" + commentKey is collision-free within the same Type=board partition — a

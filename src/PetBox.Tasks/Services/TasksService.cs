@@ -1552,9 +1552,16 @@ public sealed partial class TasksService : ITasksService
 			// Still subject to the criteria predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
-			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key))
-				.Select(e => e with { Retriever = "exact" }).ToList();
-			hits.InsertRange(0, freshExact);
+			// An exact match PREEMPTS its own fused copy rather than yielding to it: since the slug's
+			// words are lexical terms (search-slug-words-gap), a verbatim-slug query now ALSO matches
+			// that node lexically, and a "skip the ones already fused" rule would have demoted the
+			// addressed hit to whatever rank the fused pool gave it, labelled `lexical`. The spec is
+			// the other way round — exact goes ahead of the fused ranking, labelled by identity — so
+			// the fused duplicate is dropped and every exact match is (re)inserted at the front.
+			var exact = exactHits.Select(e => e with { Retriever = "exact" }).ToList();
+			var addressed = exact.Select(e => (e.Board, e.Node.Key)).ToHashSet();
+			hits.RemoveAll(h => addressed.Contains((h.Board, h.Node.Key)));
+			hits.InsertRange(0, exact);
 		}
 
 		hits = TaskSearchFilter.Apply(hits, criteria);
