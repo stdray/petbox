@@ -263,12 +263,13 @@ public sealed class TasksTreeContractTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Upsert_AutoVivifiesBoard_AndDeltaCarriesName()
+	public async Task Upsert_OnExistingBoard_DeltaCarriesName()
 	{
 		var http = Http("tasks:read,tasks:write");
 
-		// No BoardCreate first — a cold upsert must auto-create the board (F2), so
-		// following the agent guide literally no longer throws.
+		// The tool layer no longer auto-vivifies a board (namespace-creation gate) — create it
+		// explicitly first (see Upsert_ColdBoard_IsRejected for the reject path).
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "fresh", null);
 		var nodes = McpInputs.Nodes(new object[]
 		{
 			new { l1 = "alpha", status = "Todo", title = "Alpha", body = "do alpha", priority = 0 },
@@ -291,6 +292,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note). The `l1`
 		// back-compat alias for the flat `key` still binds through the typed record.
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "strboard", null);
 		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Todo","body":"b","priority":0}]""");
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes);
 		res.Added.Should().ContainSingle()

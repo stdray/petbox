@@ -23,7 +23,7 @@ public static class TasksTools
 	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the instance this board belongs to (required once the project has any methodology instance — board_create without an instance is then rejected). `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null,
+		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? specBoard = null,
 		[Description("Methodology instance this board belongs to (required when the project has any instance).")] string? methodologyInstance = null,
 		CancellationToken ct = default)
 	{
@@ -709,7 +709,9 @@ public static class TasksTools
 		no-ops even on an old baseline (an FSM effect or another writer already did it — no retry
 		needed), and an old baseline conflicts ONLY when the node semantically moved after your
 		read — attachment writes and other bookkeeping bumps auto-resolve (their keys land in
-		`autoResolved[]`). Rename via prevKey. A cold call auto-creates the board.
+		`autoResolved[]`). Rename via prevKey. The `board` must ALREADY exist — a cold
+			tasks_upsert to an unknown board is REJECTED (with a "did you mean 'X'?" suggestion), not
+			auto-created; create it first with tasks_board_create, or provision a methodology.
 
 		To DELETE a node, pass { key, deleted:true } (optional version baseline; 0 = delete
 		regardless) — the node is soft-closed (history kept), its edges and tags are closed, and
@@ -738,7 +740,7 @@ public static class TasksTools
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board,
+		string projectKey, [LogArg] string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
@@ -748,6 +750,7 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		await AssertBoardKnownAsync(tasks, projectKey, board, ct);
 		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
 		// write past methodology-ENFORCED approval gates (enforceApproval transitions).
 		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
@@ -800,6 +803,30 @@ public static class TasksTools
 	// the workspace can't be resolved. Per-node url = prefix + "{board}/{slug}" (the canonical
 	// slug-URL, node-slug-addressable); the prefix ends with "/tasks/". scheme/host come from
 	// the request (honor forwarded headers behind a proxy).
+	// The namespace-creation GATE for task boards (spec agent-namespace-provisioning, variant C —
+	// hard opt-in): a tasks_upsert naming a board that does not exist is REJECTED with a
+	// did-you-mean, not auto-created. Boards are created explicitly (tasks_board_create) or
+	// provisioned by a methodology (tasks_methodology_create → CreateBoardAsync) — both land the
+	// board BEFORE it is ever typed here, so the only thing this rejects is a typo/hallucinated
+	// name. No reserved-name allowlist: unlike memory stores there is no board that comes into
+	// being merely by typing it through this verb. The gate lives at the MCP tool layer ONLY — the
+	// service door (TasksService.UpsertAsync) still auto-vivifies for its internal callers
+	// (report_issue's triage board, etc.).
+	static async Task AssertBoardKnownAsync(ITasksService tasks, string projectKey, string board, CancellationToken ct)
+	{
+		var name = board?.Trim() ?? "";
+		if (await tasks.BoardExistsAsync(projectKey, name, ct)) return;
+
+		var existing = (await tasks.ListBoardsAsync(projectKey, ct)).Select(b => b.Name);
+		var near = NamespaceSuggest.Nearest(name, existing);
+		var hint = near.Count == 0 ? "" : $" Did you mean {string.Join(" / ", near.Select(n => $"'{n}'"))}?";
+		throw new InvalidOperationException(
+			$"Task board '{name}' does not exist in '{projectKey}'.{hint} "
+			+ "Create it explicitly with tasks_board_create (or provision a methodology with "
+			+ "tasks_methodology_create) — tasks_upsert no longer auto-creates a board (a cold write "
+			+ "used to silently create a simple board that then lived forever).");
+	}
+
 	static async Task<string?> UrlPrefixAsync(IHttpContextAccessor http, ITasksService tasks, string projectKey, bool includeUrl, CancellationToken ct)
 	{
 		if (!includeUrl) return null;

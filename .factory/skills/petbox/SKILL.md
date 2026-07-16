@@ -13,7 +13,8 @@ in Claude Code they are `mcp__petbox__<verb>`. Just prefix the base verb per run
 
 **Plan nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
 grouping is `tags` (`area:*` / `concern:*`). Give each node a short `title` and a markdown
-`body`. A cold `tasks_upsert` auto-creates the board. The upsert response is a pure ack for
+`body`. A cold `tasks_upsert` to an **unknown** board is rejected (with a did-you-mean) —
+create it first with `tasks_board_create` (or a methodology). The upsert response is a pure ack for
 YOUR call (added/updated/removed cover only your nodes); to catch up on everyone's changes
 call `tasks_delta` with `sinceVersion` = a previous `currentVersion`. `nodes`/`entries` are
 TYPED arrays — pass real JSON arrays, not stringified JSON.

@@ -68,8 +68,14 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
-	Task<UpsertResultView> Seed(string board, string nodesJson) =>
-		TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, board, McpInputs.NodesJson(nodesJson));
+	async Task<UpsertResultView> Seed(string board, string nodesJson)
+	{
+		// The tool layer no longer auto-vivifies a board (namespace-creation gate); create it
+		// explicitly first, exactly as the old cold-upsert auto-vivify did (a simple board).
+		if (!await _tasks.BoardExistsAsync(Proj, board))
+			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
+		return await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, board, McpInputs.NodesJson(nodesJson));
+	}
 
 	Task<TaskSearchResultView> Search(
 		string? q = null, string? board = null, string? under = null, string[]? status = null,

@@ -43,6 +43,17 @@ public sealed class UniformNodeRefTests : IDisposable
 		_relations = new RelationStore(_factory);
 		_comments = new CommentService(_factory);
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), _relations, new TagStore(_factory), _comments);
+		// The tool layer no longer auto-vivifies a board (namespace-creation gate). "b" is the
+		// default board these tests write to directly (incl. the reject-path tests that never seed);
+		// create it up front so those tool calls reach their own validation, not the board gate.
+		_tasks.CreateBoardAsync(Proj, "b", null, null, null).GetAwaiter().GetResult();
+	}
+
+	// Create a board if it does not exist (the explicit stand-in for the old cold-upsert auto-vivify).
+	async Task EnsureBoard(string board)
+	{
+		if (!await _tasks.BoardExistsAsync(Proj, board))
+			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
 	}
 
 	public void Dispose()
@@ -70,6 +81,7 @@ public sealed class UniformNodeRefTests : IDisposable
 	// Upsert nodes onto a board and return key -> NodeId of the call's echo.
 	async Task<Dictionary<string, string>> Seed(IHttpContextAccessor http, string board, string nodesJson)
 	{
+		await EnsureBoard(board);
 		var r = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, board, McpInputs.NodesJson(nodesJson));
 		r.Applied.Should().BeTrue();
 		return r.Added.Concat(r.Updated).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);

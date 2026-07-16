@@ -75,6 +75,10 @@ public sealed class TasksGetBudgetTests : IDisposable
 	// Seed `count` nodes, each with a `bodyChars`-char body.
 	async Task SeedAsync(string board, int count, int bodyChars)
 	{
+		// The tool layer no longer auto-vivifies a board (namespace-creation gate); create it
+		// explicitly first, as the old cold-upsert auto-vivify did (a simple board).
+		if (!await _tasks.BoardExistsAsync(Proj, board))
+			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
 		var body = new string('b', bodyChars);
 		var rows = string.Join(",", Enumerable.Range(0, count).Select(i =>
 			$$"""{"key":"node-{{i:d3}}","status":"Todo","title":"Node {{i}}","body":"{{body}}"}"""));

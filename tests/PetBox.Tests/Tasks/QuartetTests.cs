@@ -283,6 +283,7 @@ public sealed class QuartetTests : IDisposable
 	public async Task Upsert_IncludeUrl_ReturnsPermalinkForCreatedNode()
 	{
 		var http = Http("tasks:read,tasks:write");
+		await EnsureBoard("free1");
 		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A"}]""");
 		var added = (await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
 			.Added.Single();
@@ -317,6 +318,14 @@ public sealed class QuartetTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
+	// The tool layer no longer auto-vivifies a board (namespace-creation gate). Create it
+	// explicitly first, as the old cold-upsert auto-vivify did (a simple board).
+	async Task EnsureBoard(string board)
+	{
+		if (!await _tasks.BoardExistsAsync(Proj, board))
+			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
+	}
+
 	// spec echo-compact-by-default: the write-echo is a compact ack — it carries
 	// key/status/title/version but NOT the body unless bodyLen > 0. Defuses the footgun where
 	// a write re-dumps every recently-changed node's full body (the main context sink).
@@ -325,6 +334,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('y', 500);
+		await EnsureBoard("ce");
 
 		// Default echo: title present, body sliced to null (no re-dump of what I just sent).
 		var nodesA = McpInputs.NodesJson(
@@ -364,6 +374,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('z', 500);
+		await EnsureBoard("g");
 		var nodes = McpInputs.NodesJson(
 			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
@@ -398,6 +409,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('q', 400);
+		await EnsureBoard("g");
 		var nodes = McpInputs.NodesJson(
 			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
@@ -416,6 +428,7 @@ public sealed class QuartetTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 
 		// Land a node so the board has a cursor and "a" has current state to (wrongly) echo.
+		await EnsureBoard("conf");
 		var seed = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
 		var applied = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "conf", seed);
 		applied.Applied.Should().BeTrue();
