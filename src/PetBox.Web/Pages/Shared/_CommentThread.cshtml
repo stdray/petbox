@@ -8,7 +8,13 @@
    editor) and are shown by ts/commentThread.ts (no inline JS) — works without JS too, since a
    hidden form still submits if a client force-shows it. The add form is always visible so a
    node with zero comments still offers to start the thread. *@
-<div class="mt-4 border-t border-base-300 pt-3 flex flex-col gap-1" data-testid="node-comments">
+@* rv-content (reader-view-body-and-comments): a Readability positive-keyword class (matches
+   "content"), NOT "comment" (a Readability NEGATIVE keyword — stays out of every class/id here
+   on purpose). Readability's own candidate-election can land on this thread container instead of
+   diving into one dominant comment; see TaskBoardNode.cshtml's shared <article> for the other half
+   of the same fix. Purely a scoring hint — "rv-content" isn't a real Tailwind/daisyUI utility, so
+   it has zero visual effect. *@
+<div class="mt-4 border-t border-base-300 pt-3 flex flex-col gap-1 rv-content" data-testid="node-comments">
 	<div class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-0.5" data-testid="comments-heading">
 		@(Model.Lines.Count == 0 ? "Comments" : $"Comments · {Model.Lines.Count}")
 	</div>
@@ -20,29 +26,39 @@
 		   visual noise of a full button row on every comment. *@
 		<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
 			<div class="flex items-baseline gap-2 flex-wrap">
-				<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
-				@* Created time — UTC in the `datetime` attribute, localized client-side by
-				   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
-				   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
-				   carries the edit time in its title. Keeps the thread's chronology legible. *@
-				<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
-				@if (c.Updated > c.Created)
-				{
-					<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
-				}
-				@foreach (var tag in c.Tags)
-				{
-					var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
-					<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
-				}
-				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
-					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
-					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
-					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
-						<input type="hidden" name="id" value="@c.Id" />
-						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
-					</form>
-				</span>
+				@* rv-noscore: a bare <div class="flex items-baseline …"> full of only inline children
+				   (span/time/button/form) is exactly what Readability's node-prep pass converts into a
+				   scoreable <p> (no block-level descendant → _hasChildBlockElement is false), handing
+				   the author/timestamp/actions row its own full, UNDILUTED contentScore contribution
+				   straight onto the "comment" div — the reason a comment's wrapper can outscore its own
+				   comment-read-body child and short-circuit Readability's climb one level too early
+				   (reader-view-body-and-comments). This inert wrapper (any real DIV element defeats the
+				   "no block child" check) keeps this row as inert layout chrome instead, no visual effect. *@
+				<div class="contents">
+					<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
+					@* Created time — UTC in the `datetime` attribute, localized client-side by
+					   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
+					   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
+					   carries the edit time in its title. Keeps the thread's chronology legible. *@
+					<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
+					@if (c.Updated > c.Created)
+					{
+						<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
+					}
+					@foreach (var tag in c.Tags)
+					{
+						var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
+						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
+					}
+					<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+						<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
+							<input type="hidden" name="id" value="@c.Id" />
+							<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+						</form>
+					</span>
+				</div>
 			</div>
 			<div data-testid="comment-read-body">
 				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />

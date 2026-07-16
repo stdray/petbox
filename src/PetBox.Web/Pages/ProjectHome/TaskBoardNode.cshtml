@@ -120,73 +120,85 @@
 			</div>
 		</form>
 
-		@* Read body, no truncation (node-page-full-body). Markdown is rendered to sanitized HTML on
-		   the SERVER (_MdBody / IMarkdownRenderer) inside a semantic <article> so browser reader-view
-		   can detect it; storage/format unchanged. Hidden while editing. *@
-		@* Body framed as its own block (border + padding) so the task text reads as distinct
-		   content, separated from the meta row above and the relations/comments below. *@
-		<div data-testid="node-read-body">
-			@if (!string.IsNullOrEmpty(node.Body))
-			{
-				<article class="mt-3 rounded-lg border border-base-300/70 bg-base-100/40 p-4">
-					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
-				</article>
-			}
-			else
-			{
-				<p class="text-base opacity-40 italic mt-3" data-testid="node-body-empty">(no body)</p>
-			}
-		</div>
-
-		@if (node.Commits is { Count: > 0 })
-		{
-			<div class="text-xs opacity-50 font-mono mt-2 flex flex-wrap gap-x-2 gap-y-1" data-testid="node-commits">
-				@foreach (var sha in node.Commits)
+		@* Reader-view content root (reader-view-body-and-comments): the task body AND the comment
+		   thread are Readability's two natural top candidates (each sits in its own subtree, both
+		   scored up by the "body" keyword in md-body's class) — Readability keeps only ONE winner
+		   and drops the other. Wrapping both under ONE semantic <article> makes THIS the winning
+		   candidate instead, so everything inside survives extraction together. Editorial chrome
+		   (breadcrumb, status-change form, title/body edit form) stays OUTSIDE this root, above —
+		   it's noise in reader view. The per-comment reply/edit/delete forms inside the thread
+		   don't need special negative-weighting: Readability scores <form> at -3 and always strips
+		   their <input>/<textarea>/<button>/<select> children regardless of class, so they fall out
+		   on their own without penalizing the surrounding comment text. *@
+		<article class="node-reader-content mt-3">
+			@* Read body, no truncation (node-page-full-body). Markdown is rendered to sanitized HTML
+			   on the SERVER (_MdBody / IMarkdownRenderer) so browser reader-view can detect real
+			   markup; storage/format unchanged. Hidden while editing. *@
+			@* Body framed as its own block (border + padding) so the task text reads as distinct
+			   content, separated from the meta row above and the relations/comments below. *@
+			<div data-testid="node-read-body" class="rv-content">
+				@if (!string.IsNullOrEmpty(node.Body))
 				{
-					var commitUrl = PetBox.Web.Rendering.CommitUrl.For(Model.CommitUrlTemplate, sha);
-					if (commitUrl is not null)
-					{
-						<a href="@commitUrl" target="_blank" rel="noopener" class="link link-hover" data-testid="node-commit-link">@sha</a>
-					}
-					else
-					{
-						<span data-testid="node-commit">@sha</span>
-					}
+					<div class="rounded-lg border border-base-300/70 bg-base-100/40 p-4">
+						<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
+					</div>
+				}
+				else
+				{
+					<p class="text-base opacity-40 italic" data-testid="node-body-empty">(no body)</p>
 				}
 			</div>
-		}
 
-		@* Exhaustive relation panel (node-relations-panel): every relation kind in both directions
-		   — children (part_of down), blocks/blocked by, implements/linked, idea/spec, issue/tasks,
-		   supersedes/superseded by — computed by the service into Detail.Relations. Only non-empty
-		   groups render, in a fixed reading order; each row shows the target's live status. *@
-		@foreach (var group in Model.Detail.Relations)
-		{
-			@if (group.Links.Count > 0)
+			@if (node.Commits is { Count: > 0 })
 			{
-				<div class="text-sm opacity-80 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="node-links" data-relation="@group.Label">
-					<span class="opacity-60">@group.Label:</span>
-					@foreach (var l in group.Links)
+				<div class="text-xs opacity-50 font-mono mt-2 flex flex-wrap gap-x-2 gap-y-1" data-testid="node-commits">
+					@foreach (var sha in node.Commits)
 					{
-						@if (l.NodeId.Length > 0 && l.Status != "missing")
+						var commitUrl = PetBox.Web.Rendering.CommitUrl.For(Model.CommitUrlTemplate, sha);
+						if (commitUrl is not null)
 						{
-							@* Canonical slug-URL when the target's board+slug are known (cross-board
-							   links carry both); fall back to the opaque nodeId alias otherwise. *@
-							var href = l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s }
-								? Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, b, s)
-								: Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId);
-							<a href="@href" class="link link-hover font-mono" data-testid="node-link">@(l.Slug ?? l.NodeId)<span class="opacity-50"> · @l.Status</span></a>
+							<a href="@commitUrl" target="_blank" rel="noopener" class="link link-hover" data-testid="node-commit-link">@sha</a>
 						}
 						else
 						{
-							<span class="font-mono opacity-50" data-testid="node-link">@(l.Slug ?? l.NodeId) · @l.Status</span>
+							<span data-testid="node-commit">@sha</span>
 						}
 					}
 				</div>
 			}
-		}
 
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, MemoryRefs: Model.MemoryRefs))" />
+			@* Exhaustive relation panel (node-relations-panel): every relation kind in both directions
+			   — children (part_of down), blocks/blocked by, implements/linked, idea/spec, issue/tasks,
+			   supersedes/superseded by — computed by the service into Detail.Relations. Only non-empty
+			   groups render, in a fixed reading order; each row shows the target's live status. *@
+			@foreach (var group in Model.Detail.Relations)
+			{
+				@if (group.Links.Count > 0)
+				{
+					<div class="text-sm opacity-80 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="node-links" data-relation="@group.Label">
+						<span class="opacity-60">@group.Label:</span>
+						@foreach (var l in group.Links)
+						{
+							@if (l.NodeId.Length > 0 && l.Status != "missing")
+							{
+								@* Canonical slug-URL when the target's board+slug are known (cross-board
+								   links carry both); fall back to the opaque nodeId alias otherwise. *@
+								var href = l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s }
+									? Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, b, s)
+									: Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId);
+								<a href="@href" class="link link-hover font-mono" data-testid="node-link">@(l.Slug ?? l.NodeId)<span class="opacity-50"> · @l.Status</span></a>
+							}
+							else
+							{
+								<span class="font-mono opacity-50" data-testid="node-link">@(l.Slug ?? l.NodeId) · @l.Status</span>
+							}
+						}
+					</div>
+				}
+			}
+
+			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, MemoryRefs: Model.MemoryRefs))" />
+		</article>
 	</div>
 </div>
 
