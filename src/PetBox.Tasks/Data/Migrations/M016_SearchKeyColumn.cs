@@ -24,8 +24,16 @@ namespace PetBox.Tasks.Data.Migrations;
 // job (TasksSearchDocs.LexicalProjectionVersion, bumped alongside this migration in the same
 // commit): a stale marker rebuilds every indexable node/comment from plan_nodes/comments on the
 // next search, exactly like any other ToDoc shape change.
-[Migration(15, "search_fts: add the indexed Key column (search-key-column-everywhere)")]
-public sealed class M015_SearchKeyColumn : SqliteMigration
+// NUMBERED 16, NOT 15, AND THAT IS LOAD-BEARING. reindex-as-first-class-mechanism deleted the
+// old M015_SlugInLexicalText from this folder in the immediately preceding commit, which frees
+// the NUMBER but not the fact: FluentMigrator skips any version already in a file's VersionInfo
+// table, so a database that ran the old M015 (any checkout of this branch between 8e39e398 and
+// e43130d3 — prod never did, it stopped at 14) would silently SKIP a new migration numbered 15
+// and never grow this column. Ensure() does not throw on that path; it surfaces later as
+// "no such column: Key" on the first index write. Reproduced against such a file before the
+// renumber. A deleted migration's number is BURNED — never reuse one.
+[Migration(16, "search_fts: add the indexed Key column (search-key-column-everywhere)")]
+public sealed class M016_SearchKeyColumn : SqliteMigration
 {
 	public override void Up()
 	{
