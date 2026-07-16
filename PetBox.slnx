@@ -21,6 +21,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PetBox.Tests/PetBox.Tests.csproj" />
+    <Project Path="tests/PetBox.Tasks.Engine.Tests/PetBox.Tasks.Engine.Tests.csproj" />
     <Project Path="tests/PetBox.E2ETests/PetBox.E2ETests.csproj" />
     <Project Path="tests/PetBox.Client.Config.Tests/PetBox.Client.Config.Tests.csproj" />
     <Project Path="tests/PetBox.Client.Tests/PetBox.Client.Tests.csproj" />
