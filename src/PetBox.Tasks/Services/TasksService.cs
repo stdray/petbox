@@ -2173,6 +2173,14 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
+	// PlanNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side
+	// half of the mapping. PlanNode can't cross into PetBox.Tasks.Engine (linq2db-bound); this
+	// projects onto the five fields the guards actually branch on. No caller yet — slice 3
+	// wires RequireDefinitionLinks/RequireBlockersAsync/RequirePreconditionArtifactsAsync/
+	// ResolveBlockedBy onto GuardEngine, which is where desired/prior PlanNode[] turn into
+	// NodeState[] via this projection.
+	static NodeState ToNodeState(PlanNode n) => new(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type);
+
 	// DATA-DRIVEN link constraints (primitives-link-constraints): a NEW node of a
 	// constrained type must carry the constrained link in THIS call (task_spec = specRef,
 	// blocks = blockedBy, idea_spec = ideaRef — the validator admits only these).
