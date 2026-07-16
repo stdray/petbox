@@ -129,8 +129,15 @@
 		   it's noise in reader view. The per-comment reply/edit/delete forms inside the thread
 		   don't need special negative-weighting: Readability scores <form> at -3 and always strips
 		   their <input>/<textarea>/<button>/<select> children regardless of class, so they fall out
-		   on their own without penalizing the surrounding comment text. *@
-		<article class="node-reader-content mt-3">
+		   on their own without penalizing the surrounding comment text.
+		   round 2 (real ideas/memory-store-creation-guard node still dropped the body after round
+		   1 — verified, not guessed): this article ALSO now carries data-testid="node-comments",
+		   the former identity of _CommentThread.cshtml's own wrapper div, which round 2 deleted to
+		   cut the comment thread's ancestor distance to this shared root from 4 levels to 2 (see
+		   _CommentThread.cshtml for the full explanation). ts/commentThread.ts's delegated click
+		   listener now binds here — harmless for clicks inside node-read-body, since none of the
+		   comment-specific selectors it looks for exist there. *@
+		<article class="node-reader-content mt-3" data-testid="node-comments">
 			@* Read body, no truncation (node-page-full-body). Markdown is rendered to sanitized HTML
 			   on the SERVER (_MdBody / IMarkdownRenderer) so browser reader-view can detect real
 			   markup; storage/format unchanged. Hidden while editing. *@

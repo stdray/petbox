@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>&#x413;&#x430;&#x440;&#x434; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F; memory-&#x441;&#x442;&#x43E;&#x440;&#x43E;&#x432;: &#x431;&#x43B;&#x43E;&#x43A;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x442;&#x44C; &#x43E;&#x43F;&#x435;&#x447;&#x430;&#x442;&#x43A;&#x443;-&#x444;&#x43E;&#x440;&#x43A;, &#x43D;&#x435; &#x43B;&#x43E;&#x43C;&#x430;&#x44F; &#x44D;&#x440;&#x433;&#x43E;&#x43D;&#x43E;&#x43C;&#x438;&#x43A;&#x443; - PetBox</title>
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+	<link rel="stylesheet" href="/css/app.css?v=0KDumvK1CU7oUp98i5e-Pa_4qMnflAYA9EFlOrhnWGo" />
+		<script>document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";</script>
+
+	<script type="module" src="/js/site.js?v=ebHvxjXnsdMIHp5dKEpvMwmbORQkmqY_dAzOaHzRKQ8"></script>
+</head>
+<body class="min-h-full">
+	<div id="app-drawer" class="drawer drawer-open">
+		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
+		<div class="drawer-content flex flex-col min-h-screen min-w-0">
+			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12">
+				<div class="flex-none">
+					<label for="sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="nav-toggle" title="Toggle sidebar">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+						</svg>
+					</label>
+				</div>
+				<div class="flex-1 flex items-center gap-3">
+					<a href="/ui/$system" class="text-lg font-semibold" data-testid="nav-home">PetBox</a>
+						<form method="get" action="/ui/search" class="hidden sm:block ml-auto mr-3" data-testid="nav-search">
+							<input type="text" name="q" placeholder="Find a task…" title="Find a task by slug, NodeId, or text — searches every workspace and project you can access"
+								class="input input-sm input-bordered w-40 md:w-64" data-testid="nav-search-input" />
+						</form>
+				</div>
+				<div class="flex-none flex items-center gap-1">
+						<a href="/ui/me/account" class="text-xs opacity-60 hover:opacity-100 hidden md:inline font-mono" data-testid="nav-username" title="Account settings">admin</a>
+						<a href="/ui/admin/ws/$system/projects/$system/info" class="btn btn-ghost btn-sm " data-testid="nav-admin-gear" title="Administration">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+							</svg>
+						</a>
+						<form method="post" action="/api/auth/logout" class="m-0">
+							<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" />
+							<button type="submit" class="btn btn-ghost btn-sm" data-testid="nav-signout" title="Sign out">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+								</svg>
+							</button>
+						</form>
+				</div>
+			</header>
+
+			<main class="flex-1 p-4 lg:p-6">
+				
+				
+<div class="mb-4 flex items-center gap-2 flex-wrap text-sm" data-testid="node-breadcrumb">
+	<a href="/ui/$system/$system/tasks" class="link link-hover opacity-70">tasks</a>
+	<span class="opacity-40">/</span>
+	<a href="/ui/$system/$system/tasks/capreader" class="link link-hover opacity-70 font-mono">capreader</a>
+	<span class="badge badge-info badge-outline badge-xs" data-testid="node-board-kind" data-kind="simple" title="simple board &#x2014; lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue">simple</span>
+	<span class="opacity-40">/</span>
+	<span class="font-mono opacity-90" data-testid="node-leaf">cap-node</span>
+	<button type="button" class="btn btn-ghost btn-xs px-1 leading-none opacity-60 hover:opacity-100" data-copy="cap-node" data-testid="node-slug-copy" title="Copy slug" aria-label="Copy slug">⧉</button>
+</div>
+
+<div class="card bg-base-200 border border-base-300" data-testid="node-detail" data-node-id="38fc9fb74ad147d793f187b308fecea1" data-board="capreader" data-terminal-cancel="false">
+	<div class="card-body p-4">
+
+
+		<div class="flex items-baseline justify-between gap-2 flex-wrap">
+			<h1 class="text-2xl font-semibold " data-testid="node-name">&#x413;&#x430;&#x440;&#x434; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F; memory-&#x441;&#x442;&#x43E;&#x440;&#x43E;&#x432;: &#x431;&#x43B;&#x43E;&#x43A;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x442;&#x44C; &#x43E;&#x43F;&#x435;&#x447;&#x430;&#x442;&#x43A;&#x443;-&#x444;&#x43E;&#x440;&#x43A;, &#x43D;&#x435; &#x43B;&#x43E;&#x43C;&#x430;&#x44F; &#x44D;&#x440;&#x433;&#x43E;&#x43D;&#x43E;&#x43C;&#x438;&#x43A;&#x443;</h1>
+			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+					<span class="badge badge-ghost badge-sm" data-testid="node-type">chore</span>
+				<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="chore" title="View this type's workflow graph">⤳ workflow</button>
+					<span class="badge badge-info badge-sm" data-testid="node-status">Todo</span>
+
+					<form method="post" class="inline-flex items-center gap-1" data-testid="node-status-form" action="/ui/$system/$system/tasks/capreader/cap-node?handler=Status">
+						<input type="hidden" name="version" value="1" />
+						<select name="status" class="select select-bordered select-xs" data-testid="node-status-select" aria-label="Change status">
+								<option value="InProgress">In progress</option>
+								<option value="Blocked">Blocked</option>
+								<option value="Done">Done</option>
+								<option value="Cancelled">Cancelled</option>
+						</select>
+						<button type="submit" class="btn btn-xs" data-testid="node-status-submit" title="change status">→</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
+			</div>
+		</div>
+
+		<form method="post" class="flex flex-col gap-2 mt-3" data-testid="node-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=Edit">
+			<input type="hidden" name="version" value="1" />
+			<input type="text" name="title" value="&#x413;&#x430;&#x440;&#x434; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F; memory-&#x441;&#x442;&#x43E;&#x440;&#x43E;&#x432;: &#x431;&#x43B;&#x43E;&#x43A;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x442;&#x44C; &#x43E;&#x43F;&#x435;&#x447;&#x430;&#x442;&#x43A;&#x443;-&#x444;&#x43E;&#x440;&#x43A;, &#x43D;&#x435; &#x43B;&#x43E;&#x43C;&#x430;&#x44F; &#x44D;&#x440;&#x433;&#x43E;&#x43D;&#x43E;&#x43C;&#x438;&#x43A;&#x443;" maxlength="200" class="input input-bordered input-sm w-full" placeholder="Title" data-testid="node-edit-title" aria-label="Title" />
+			<div role="tablist" class="tabs tabs-bordered text-xs self-start">
+				<a role="tab" class="tab tab-active" data-testid="node-edit-write-tab">write</a>
+				<a role="tab" class="tab" data-testid="node-edit-preview-tab">preview</a>
+			</div>
+			<textarea name="body" rows="12" class="textarea textarea-bordered textarea-sm w-full font-mono" placeholder="Body (markdown)" data-testid="node-edit-body" aria-label="Body">## &#x41E;&#x442;&#x43A;&#x443;&#x434;&#x430;&#xA;&#x424;&#x43B;&#x430;&#x433; &#x438;&#x437; &#x437;&#x430;&#x43A;&#x440;&#x44B;&#x442;&#x43E;&#x439; [[memory-embed-provider-down-no-fallback-authoring-footguns]]: `memory_upsert`/`memory_remember` &#x43C;&#x43E;&#x43B;&#x447;&#x430; &#x430;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x44E;&#x442; &#x441;&#x442;&#x43E;&#x440; &#x43F;&#x43E; &#x43B;&#x44E;&#x431;&#x43E;&#x43C;&#x443; `store:` &#x2014; &#x43E;&#x43F;&#x435;&#x447;&#x430;&#x442;&#x43A;&#x430; &#x444;&#x43E;&#x440;&#x43A;&#x430;&#x435;&#x442; &#x43F;&#x430;&#x43C;&#x44F;&#x442;&#x44C; &#x432; &#x43D;&#x435;&#x447;&#x438;&#x442;&#x430;&#x435;&#x43C;&#x44B;&#x439; &#x43D;&#x435;&#x439;&#x43C;&#x441;&#x43F;&#x435;&#x439;&#x441;. &#x428;&#x438;&#x43F;&#x43D;&#x443;&#x442; warning &#x432; &#x43E;&#x43F;&#x438;&#x441;&#x430;&#x43D;&#x438;&#x435; (`1c09c565`); &#x43F;&#x43E;&#x432;&#x435;&#x434;&#x435;&#x43D;&#x447;&#x435;&#x441;&#x43A;&#x438;&#x439; &#x433;&#x430;&#x440;&#x434; &#x2014; &#x43E;&#x442;&#x43A;&#x440;&#x44B;&#x442;&#x44B;&#x439; &#x432;&#x43E;&#x43F;&#x440;&#x43E;&#x441;. &#x41E;&#x446;&#x435;&#x43D;&#x43A;&#x430; &#x2014; &#x441;&#x443;&#x431;&#x430;&#x433;&#x435;&#x43D;&#x442; Fable 5, &#x433;&#x440;&#x443;&#x43D;&#x442;&#x43E;&#x432;&#x430;&#x43D;&#x43E; &#x43F;&#x43E; &#x43A;&#x43E;&#x434;&#x443;.&#xA;&#xA;## &#x424;&#x430;&#x43A;&#x442;&#x44B; (&#x432;&#x435;&#x440;&#x438;&#x444;&#x438;&#x446;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x43D;&#x44B; &#x43F;&#x43E; &#x43A;&#x43E;&#x434;&#x443;)&#xA;- **&#x422;&#x43E;&#x447;&#x43A;&#x430; &#x430;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F;** &#x2014; &#x43E;&#x434;&#x43D;&#x430;: `MemoryService.UpsertAsync` &#x2192; `_stores.EnsureAsync` (`MemoryService.cs:532`). &#x421;&#x44E;&#x434;&#x430; &#x436;&#x435; &#x432;&#x43B;&#x438;&#x432;&#x430;&#x44E;&#x442;&#x441;&#x44F; &#x438; upsert (`MemoryTools.cs:243`), &#x438; remember (`:354`), &#x438; &#x444;&#x43E;&#x43D;&#x43E;&#x432;&#x44B;&#x435; &#x434;&#x436;&#x43E;&#x431;&#x44B;. &#x410;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; &#x2014; &#x43E;&#x441;&#x43E;&#x437;&#x43D;&#x430;&#x43D;&#x43D;&#x43E;&#x435; &#x440;&#x435;&#x448;&#x435;&#x43D;&#x438;&#x435; 31.05.2026 &#xAB;for agent ergonomics&#xBB; (`MemoryStore.cs:23-24`).&#xA;- **&#x421;&#x438;&#x441;&#x442;&#x435;&#x43C;&#x43D;&#x44B;&#x435; &#x438;&#x43C;&#x435;&#x43D;&#x430; &#x2014; 5, &#x43D;&#x435; 3**: `canon, notes, autocaptured, session-digests, ops` (&#x442;&#x440;&#x438; &#x440;&#x430;&#x437;&#x43D;&#x44B;&#x445; &#x43D;&#x430;&#x431;&#x43E;&#x440;&#x430;: `SystemStoreNames` {session-digests,autocaptured,canon}, `SensitiveNames` {ops}, &#x434;&#x435;&#x444;&#x43E;&#x43B;&#x442; remember `notes`). `MemoryStoreMeta.cs:8` &#x432;&#x440;&#x451;&#x442; (&#xAB;no auto-vivify&#xBB;).&#xA;- **&#x41A;&#x430;&#x43D;&#x43E;&#x43D;-&#x437;&#x430;&#x433;&#x43B;&#x443;&#x448;&#x43A;&#x430; &#x41D;&#x415; &#x43D;&#x443;&#x436;&#x43D;&#x430;**: read-&#x43F;&#x443;&#x442;&#x44C; null-safe (`MemoryApi.cs:65-71` &#x2014; &#x43D;&#x435; 500; `canon.ts:46-50,88` &#x2192; &#x43D;&#x435;&#x442; &#x431;&#x43B;&#x43E;&#x43A;&#x430;). &#x417;&#x430;&#x433;&#x43B;&#x443;&#x448;&#x43A;&#x430; &#x431;&#x44B;&#x43B;&#x430; &#x431;&#x44B; &#x425;&#x423;&#x416;&#x415; (&#x448;&#x443;&#x43C; &#x432; &#x43A;&#x430;&#x436;&#x434;&#x43E;&#x43C; SessionStart).&#xA;- **&#x41F;&#x440;&#x43E;&#x438;&#x437;&#x432;&#x43E;&#x43B;&#x44C;&#x43D;&#x44B;&#x435; &#x441;&#x442;&#x43E;&#x440;&#x44B; &#x43D;&#x438;&#x43A;&#x442;&#x43E; &#x43D;&#x435; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x451;&#x442;**: &#x436;&#x438;&#x432;&#x43E;&#x439; `$system` &#x43F;&#x43E;&#x441;&#x43B;&#x435; 6 &#x43D;&#x435;&#x434;&#x435;&#x43B;&#x44C; &#x2014; &#x440;&#x43E;&#x432;&#x43D;&#x43E; 5 &#x438;&#x43C;&#x451;&#x43D;, 0 ad-hoc. &#x413;&#x438;&#x431;&#x43A;&#x43E;&#x441;&#x442;&#x44C;, &#x43A;&#x43E;&#x442;&#x43E;&#x440;&#x443;&#x44E; &#x437;&#x430;&#x449;&#x438;&#x449;&#x430;&#x435;&#x43C;, &#x43D;&#x430; &#x43F;&#x440;&#x430;&#x43A;&#x442;&#x438;&#x43A;&#x435; &#x43D;&#x435; &#x438;&#x441;&#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x443;&#x435;&#x442;&#x441;&#x44F;.&#xA;- **&#x41F;&#x440;&#x435;&#x446;&#x435;&#x434;&#x435;&#x43D;&#x442;**: project-&#x43A;&#x43B;&#x44E;&#x447;&#x438; &#x423;&#x416;&#x415; &#x436;&#x451;&#x441;&#x442;&#x43A;&#x43E; &#x43E;&#x442;&#x43A;&#x43B;&#x43E;&#x43D;&#x44F;&#x44E;&#x442; &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x43E;&#x435; &#x438;&#x43C;&#x44F; &#x441; did-you-mean (`McpProjectExistsFilter.cs:177-221`); &#x434;&#x43E;&#x441;&#x43A;&#x438; &#x430;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x44E;&#x442;&#x441;&#x44F; &#x43A;&#x430;&#x43A; &#x43F;&#x430;&#x43C;&#x44F;&#x442;&#x44C;. &#x41B;&#x438;&#x43D;&#x438;&#x44F;: &#x43A;&#x43E;&#x43D;&#x442;&#x435;&#x439;&#x43D;&#x435;&#x440;&#x44B; &#x2192; &#x433;&#x435;&#x439;&#x442;, &#x43F;&#x430;&#x440;&#x442;&#x438;&#x446;&#x438;&#x438; &#x2192; &#x431;&#x435;&#x437; &#x442;&#x440;&#x435;&#x43D;&#x438;&#x44F;.&#xA;&#xA;## &#x412;&#x430;&#x440;&#x438;&#x430;&#x43D;&#x442;&#x44B;&#xA;- **A. &#x41A;&#x430;&#x43A; &#x435;&#x441;&#x442;&#x44C;** (warning &#x432; &#x43E;&#x43F;&#x438;&#x441;&#x430;&#x43D;&#x438;&#x438;). &#x424;&#x443;&#x442;&#x433;&#x430;&#x43D; &#x432;&#x437;&#x432;&#x435;&#x434;&#x451;&#x43D;, &#x43D;&#x443;&#x43B;&#x435;&#x432;&#x43E;&#x439; blast radius.&#xA;- **B&#x2B;. Soft-guard &#x2B; near-miss reject (&#x420;&#x415;&#x41A;&#x41E;&#x41C;&#x415;&#x41D;&#x414;&#x410;&#x426;&#x418;&#x42F;)**: &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x44B;&#x439; store &#x431;&#x43B;&#x438;&#x437;&#x43A;&#x43E; (edit-distance) &#x43A; &#x441;&#x443;&#x449;&#x435;&#x441;&#x442;&#x432;&#x443;&#x44E;&#x449;&#x435;&#x43C;&#x443;/&#x440;&#x435;&#x437;&#x435;&#x440;&#x432;&#x43D;&#x43E;&#x43C;&#x443; &#x2192; &#x43E;&#x442;&#x43A;&#x430;&#x437; &#x441; &#xAB;did you mean&#xBB;; &#x433;&#x435;&#x43D;&#x443;&#x438;&#x43D;&#x43D;&#x43E; &#x43D;&#x43E;&#x432;&#x43E;&#x435; &#x2192; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x451;&#x442;&#x441;&#x44F; &#x2B; `storeCreated:true`/warning &#x432; &#x430;&#x43A;&#x435;. &#x413;&#x435;&#x439;&#x442; &#x43D;&#x430; MCP-&#x441;&#x43B;&#x43E;&#x435; (MemoryTools), &#x43D;&#x435; &#x43D;&#x430; service-door &#x2192; &#x434;&#x436;&#x43E;&#x431;&#x44B; &#x43D;&#x435; &#x442;&#x440;&#x43E;&#x43D;&#x443;&#x442;&#x44B;. &#x41F;&#x435;&#x440;&#x435;&#x438;&#x441;&#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x443;&#x435;&#x442; Score/Distance &#x438;&#x437; McpProjectExistsFilter. &#x426;&#x435;&#x43B;&#x438;&#x442; &#x432; &#x41E;&#x41F;&#x415;&#x427;&#x410;&#x422;&#x41A;&#x423; (&#x442;&#x438;&#x43F;&#x43E; = near-miss &#x440;&#x435;&#x430;&#x43B;&#x44C;&#x43D;&#x43E;&#x433;&#x43E; &#x438;&#x43C;&#x435;&#x43D;&#x438;), &#x43D;&#x435; &#x432; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435;.&#xA;- **C. &#x416;&#x451;&#x441;&#x442;&#x43A;&#x438;&#x439; opt-in** (`createStore:true`/&#x43F;&#x440;&#x435;&#x434;&#x432;&#x430;&#x440;&#x438;&#x442;&#x435;&#x43B;&#x44C;&#x43D;&#x44B;&#x439; `memory_store_create`): &#x43F;&#x440;&#x43E;&#x442;&#x438;&#x432;&#x43E;&#x440;&#x435;&#x447;&#x438;&#x442; &#x437;&#x430;&#x434;&#x43E;&#x43A;&#x443;&#x43C;&#x435;&#x43D;&#x442;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x43D;&#x43D;&#x43E;&#x43C;&#x443; auto-create; &#x442;&#x440;&#x435;&#x431;&#x443;&#x435;&#x442; allowlist 5 &#x441;&#x438;&#x441;&#x442;&#x435;&#x43C;&#x43D;&#x44B;&#x445; &#x438;&#x43C;&#x451;&#x43D; (&#x438;&#x43D;&#x430;&#x447;&#x435; fresh-project &#x43B;&#x43E;&#x43C;&#x430;&#x435;&#x442;&#x441;&#x44F;), doc-churn (AGENTS.md:260, SKILL-&#x448;&#x430;&#x431;&#x43B;&#x43E;&#x43D;&#x44B;, .factory), &#x440;&#x435;&#x448;&#x435;&#x43D;&#x438;&#x435; &#x43F;&#x43E; &#x430;&#x441;&#x438;&#x43C;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x438; &#x441; &#x434;&#x43E;&#x441;&#x43A;&#x430;&#x43C;&#x438;. `memory_store_create` &#x443;&#x436;&#x435; &#x435;&#x441;&#x442;&#x44C; &#x43A;&#x430;&#x43A; &#x44F;&#x432;&#x43D;&#x44B;&#x439; &#x43F;&#x443;&#x442;&#x44C;.&#xA;&#xA;## &#x41D;&#x435; &#x432;&#x435;&#x440;&#x438;&#x444;&#x438;&#x446;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x43D;&#x43E; (&#x434;&#x43E; hardening)&#xA;&#x415;&#x441;&#x442;&#x44C; &#x43B;&#x438; ad-hoc &#x441;&#x442;&#x43E;&#x440;&#x44B; &#x432; non-`$system` &#x43F;&#x440;&#x43E;&#x435;&#x43A;&#x442;&#x430;&#x445; (&#x43C;&#x43E;&#x439; &#x43A;&#x43B;&#x44E;&#x447; scoped) &#x2014; &#x43F;&#x440;&#x43E;&#x432;&#x435;&#x440;&#x438;&#x442;&#x44C; &#x447;&#x435;&#x440;&#x435;&#x437; admin; &#x431;&#x44B;&#x43B;&#x438; &#x43B;&#x438; &#x442;&#x438;&#x43F;&#x43E;-&#x444;&#x43E;&#x440;&#x43A;&#x438; &#x438;&#x441;&#x442;&#x43E;&#x440;&#x438;&#x447;&#x435;&#x441;&#x43A;&#x438; (&#x43A;&#x430;&#x442;&#x430;&#x43B;&#x43E;&#x433; &#x43F;&#x43E;&#x43A;&#x430;&#x437;&#x44B;&#x432;&#x430;&#x435;&#x442; &#x442;&#x435;&#x43A;&#x443;&#x449;&#x435;&#x435;, &#x43D;&#x435; &#x43A;&#x430;&#x437;&#x443;&#x430;&#x43B;&#x442;&#x438;).&#xA;&#xA;## &#x421;&#x442;&#x430;&#x442;&#x443;&#x441;&#xA;&#x416;&#x434;&#x451;&#x442; &#x432;&#x44B;&#x431;&#x43E;&#x440;&#x430; &#x432;&#x43B;&#x430;&#x434;&#x435;&#x43B;&#x44C;&#x446;&#x430; (A/B&#x2B;/C). &#x414;&#x430;&#x43B;&#x44C;&#x448;&#x435;: spec_plan &#x2192; accept &#x2192; spec &#x2192; work.</textarea>
+				<div class="md-body text-base border border-base-300 rounded p-3 min-h-24" data-testid="node-edit-preview" style="display:none"></div>
+
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="node-edit-save">Save</button>
+				<button type="button" class="btn btn-sm btn-ghost" data-testid="node-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+
+		<article class="node-reader-content mt-3" data-testid="node-comments">
+			<div data-testid="node-read-body" class="rv-content">
+					<div class="rounded-lg border border-base-300/70 bg-base-100/40 p-4">
+							<div class="md-body text-base" data-testid="node-body"><h2>Откуда</h2>
+<p>Флаг из закрытой [[memory-embed-provider-down-no-fallback-authoring-footguns]]: <code>memory_upsert</code>/<code>memory_remember</code> молча автосоздают стор по любому <code>store:</code> — опечатка форкает память в нечитаемый неймспейс. Шипнут warning в описание (<code>1c09c565</code>); поведенческий гард — открытый вопрос. Оценка — субагент Fable 5, грунтовано по коду.</p>
+<h2>Факты (верифицированы по коду)</h2>
+<ul>
+<li><strong>Точка автосоздания</strong> — одна: <code>MemoryService.UpsertAsync</code> → <code>_stores.EnsureAsync</code> (<code>MemoryService.cs:532</code>). Сюда же вливаются и upsert (<code>MemoryTools.cs:243</code>), и remember (<code>:354</code>), и фоновые джобы. Автосоздание — осознанное решение 31.05.2026 «for agent ergonomics» (<code>MemoryStore.cs:23-24</code>).</li>
+<li><strong>Системные имена — 5, не 3</strong>: <code>canon, notes, autocaptured, session-digests, ops</code> (три разных набора: <code>SystemStoreNames</code> {session-digests,autocaptured,canon}, <code>SensitiveNames</code> , дефолт remember <code>notes</code>). <code>MemoryStoreMeta.cs:8</code> врёт («no auto-vivify»).</li>
+<li><strong>Канон-заглушка НЕ нужна</strong>: read-путь null-safe (<code>MemoryApi.cs:65-71</code> — не 500; <code>canon.ts:46-50,88</code> → нет блока). Заглушка была бы ХУЖЕ (шум в каждом SessionStart).</li>
+<li><strong>Произвольные сторы никто не создаёт</strong>: живой <code>$system</code> после 6 недель — ровно 5 имён, 0 ad-hoc. Гибкость, которую защищаем, на практике не используется.</li>
+<li><strong>Прецедент</strong>: project-ключи УЖЕ жёстко отклоняют неизвестное имя с did-you-mean (<code>McpProjectExistsFilter.cs:177-221</code>); доски автосоздаются как память. Линия: контейнеры → гейт, партиции → без трения.</li>
+</ul>
+<h2>Варианты</h2>
+<ul>
+<li><strong>A. Как есть</strong> (warning в описании). Футган взведён, нулевой blast radius.</li>
+<li><strong>B+. Soft-guard + near-miss reject (РЕКОМЕНДАЦИЯ)</strong>: неизвестный store близко (edit-distance) к существующему/резервному → отказ с «did you mean»; генуинно новое → создаётся + <code>storeCreated:true</code>/warning в аке. Гейт на MCP-слое (MemoryTools), не на service-door → джобы не тронуты. Переиспользует Score/Distance из McpProjectExistsFilter. Целит в ОПЕЧАТКУ (типо = near-miss реального имени), не в создание.</li>
+<li><strong>C. Жёсткий opt-in</strong> (<code>createStore:true</code>/предварительный <code>memory_store_create</code>): противоречит задокументированному auto-create; требует allowlist 5 системных имён (иначе fresh-project ломается), doc-churn (AGENTS.md:260, SKILL-шаблоны, .factory), решение по асимметрии с досками. <code>memory_store_create</code> уже есть как явный путь.</li>
+</ul>
+<h2>Не верифицировано (до hardening)</h2>
+<p>Есть ли ad-hoc сторы в non-<code>$system</code> проектах (мой ключ scoped) — проверить через admin; были ли типо-форки исторически (каталог показывает текущее, не казуалти).</p>
+<h2>Статус</h2>
+<p>Ждёт выбора владельца (A/B+/C). Дальше: spec_plan → accept → spec → work.</p>
+</div>
+
+					</div>
+			</div>
+
+
+			<div class="mt-4 border-t border-base-300 pt-3 text-xs font-semibold uppercase tracking-wide opacity-50 mb-1.5" data-testid="comments-heading">
+	Comments &#xB7; 3
+</div>
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="dc10430aa14d4c2d87fbf32647db0053" data-comment-version="1" style="margin-left:0rem">
+		<div class="flex items-baseline gap-2 flex-wrap">
+			<div class="contents">
+				<span class="font-semibold opacity-70" data-testid="comment-author">claude-opus-4-8</span>
+				<time class="local-time text-xs opacity-50 font-mono" datetime="2026-07-16T06:31:50.0350000" data-testid="comment-time">2026-07-16 06:31</time>
+				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+					<form method="post" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first." action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentDelete">
+						<input type="hidden" name="id" value="dc10430aa14d4c2d87fbf32647db0053" />
+						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+				</span>
+			</div>
+		</div>
+			<div class="md-body text-base" data-testid="comment-body"><h2>Scenario-first переоценка (Fable 5, линза — сценарии, не стоимость кода)</h2>
+<h3>История: честный ответ — НЕОПРЕДЕЛИМО</h3>
+<p>Ретракт вывода «0 ad-hoc → не используются». Факты: ничто автоматическое не создаёт/не удаляет стор целиком (GC/autocapture двигают только записи в паре autocaptured→notes); <code>MemoryStore.DeleteAsync</code> стирает всю темпоральную историю; арг <code>store</code> НЕ помечен <code>[LogArg]</code> → не виден в MCP-телеметрии. За 545 860 tool-calls (30д): ровно <strong>1 memory_store_create + 1 memory_store_delete, 13.07, через 7 мин</strong> — created-then-removed, имя неизвестно, и через ЯВНЫЙ верб, не auto-vivify. В сессиях: агент, первым зашедший на canon-путь, ФЛАГНУЛ auto-vivify как футган, а не использовал как фичу.</p>
+<h3>Сценарии (драйверы: strong-агент, weak-модель — реальная популяция droid/deepseek/pi, фоновые джобы, человек в admin UI)</h3>
+<ul>
+<li><strong>Auto-create несущий только для ФИКСИРОВАННЫХ имён</strong> (S2 fresh-project bootstrap notes/canon — верифицировано живьём; S3 workspace shared; S9 джобы).</li>
+<li><strong>Неизвестное-легитимное</strong> (S4 agent scratch, S5 per-feature): редко, и наблюдаемые случаи выбрали ЯВНОЕ создание (log_create, db_create) — как и весь остальной стек. <code>memory_store_create</code> уже есть.</li>
+<li><strong>Неизвестное-нелегитимное</strong> (S7 weak-модель typo-fork): именно его auto-create обслуживает плохо; weak-модель наименее склонна читать warning в описании.</li>
+</ul>
+<h3>Ключевое: MCP-слой НЕ различает тир модели</h3>
+<p>Api-ключ несёт только scopes, не model-tier → рельсы выбираются по СЛАБЕЙШЕМУ драйверу на поверхности. <strong>Per-surface split</strong> (не компромисс, а то что каждая поверхность заслуживает): гейт только на MCP-тул-слое; admin UI (человек, явная форма) — свободно; service-door (фикс-константы джобов) — auto-vivify.</p>
+<h3>Рекомендация (scenario-ranked)</h3>
+<ol>
+<li><strong>C на MCP-слое + резерв 5 имён</strong> — если weak-модельные handoff'ы, пишущие память, будут расти. Все реальные воркфлоу выживают (allowlist + service-door), убирается только ненаблюдавшийся сценарий; совпадает с нормой платформы (logs/dbs/projects).</li>
+<li><strong>B+ (distance-only near-miss reject + created-store warning)</strong> — если ценно сохранить zero-ceremony создание. Предостережение кода: убрать prefix-ногу матчера (иначе <code>notes-archive</code> ложно блокнётся). Остаётся residual: far-miss галлюцинация всё равно форкает.</li>
+<li><strong>A</strong> — только если weak-популяция останется маргинальной.</li>
+</ol>
+<h3>Побочные решения</h3>
+<ul>
+<li><strong>Доски</strong>: <code>tasks_upsert</code> точно так же автосоздаёт доски (TasksService.cs:1083) — идентичный S7. Решать оба тира вместе либо осознанно принять асимметрию.</li>
+<li><strong>Наблюдаемость</strong>: пометить <code>store</code> как <code>[LogArg]</code> (закрытый идентификатор, не free-text) → будущие создания сторов станут видны в телеметрии (совместимость с privacy-контрактом — чтение Fable, не верифицировано против интенции спека).</li>
+<li><strong>canon-заглушка НЕ нужна</strong> (null-safe end-to-end).</li>
+</ul>
+</div>
+
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentEdit">
+			<input type="hidden" name="id" value="dc10430aa14d4c2d87fbf32647db0053" />
+			<input type="hidden" name="version" value="1" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">## Scenario-first &#x43F;&#x435;&#x440;&#x435;&#x43E;&#x446;&#x435;&#x43D;&#x43A;&#x430; (Fable 5, &#x43B;&#x438;&#x43D;&#x437;&#x430; &#x2014; &#x441;&#x446;&#x435;&#x43D;&#x430;&#x440;&#x438;&#x438;, &#x43D;&#x435; &#x441;&#x442;&#x43E;&#x438;&#x43C;&#x43E;&#x441;&#x442;&#x44C; &#x43A;&#x43E;&#x434;&#x430;)&#xA;&#xA;### &#x418;&#x441;&#x442;&#x43E;&#x440;&#x438;&#x44F;: &#x447;&#x435;&#x441;&#x442;&#x43D;&#x44B;&#x439; &#x43E;&#x442;&#x432;&#x435;&#x442; &#x2014; &#x41D;&#x415;&#x41E;&#x41F;&#x420;&#x415;&#x414;&#x415;&#x41B;&#x418;&#x41C;&#x41E;&#xA;&#x420;&#x435;&#x442;&#x440;&#x430;&#x43A;&#x442; &#x432;&#x44B;&#x432;&#x43E;&#x434;&#x430; &#xAB;0 ad-hoc &#x2192; &#x43D;&#x435; &#x438;&#x441;&#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x443;&#x44E;&#x442;&#x441;&#x44F;&#xBB;. &#x424;&#x430;&#x43A;&#x442;&#x44B;: &#x43D;&#x438;&#x447;&#x442;&#x43E; &#x430;&#x432;&#x442;&#x43E;&#x43C;&#x430;&#x442;&#x438;&#x447;&#x435;&#x441;&#x43A;&#x43E;&#x435; &#x43D;&#x435; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x451;&#x442;/&#x43D;&#x435; &#x443;&#x434;&#x430;&#x43B;&#x44F;&#x435;&#x442; &#x441;&#x442;&#x43E;&#x440; &#x446;&#x435;&#x43B;&#x438;&#x43A;&#x43E;&#x43C; (GC/autocapture &#x434;&#x432;&#x438;&#x433;&#x430;&#x44E;&#x442; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x437;&#x430;&#x43F;&#x438;&#x441;&#x438; &#x432; &#x43F;&#x430;&#x440;&#x435; autocaptured&#x2192;notes); `MemoryStore.DeleteAsync` &#x441;&#x442;&#x438;&#x440;&#x430;&#x435;&#x442; &#x432;&#x441;&#x44E; &#x442;&#x435;&#x43C;&#x43F;&#x43E;&#x440;&#x430;&#x43B;&#x44C;&#x43D;&#x443;&#x44E; &#x438;&#x441;&#x442;&#x43E;&#x440;&#x438;&#x44E;; &#x430;&#x440;&#x433; `store` &#x41D;&#x415; &#x43F;&#x43E;&#x43C;&#x435;&#x447;&#x435;&#x43D; `[LogArg]` &#x2192; &#x43D;&#x435; &#x432;&#x438;&#x434;&#x435;&#x43D; &#x432; MCP-&#x442;&#x435;&#x43B;&#x435;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x438;. &#x417;&#x430; 545 860 tool-calls (30&#x434;): &#x440;&#x43E;&#x432;&#x43D;&#x43E; **1 memory_store_create &#x2B; 1 memory_store_delete, 13.07, &#x447;&#x435;&#x440;&#x435;&#x437; 7 &#x43C;&#x438;&#x43D;** &#x2014; created-then-removed, &#x438;&#x43C;&#x44F; &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x43E;, &#x438; &#x447;&#x435;&#x440;&#x435;&#x437; &#x42F;&#x412;&#x41D;&#x42B;&#x419; &#x432;&#x435;&#x440;&#x431;, &#x43D;&#x435; auto-vivify. &#x412; &#x441;&#x435;&#x441;&#x441;&#x438;&#x44F;&#x445;: &#x430;&#x433;&#x435;&#x43D;&#x442;, &#x43F;&#x435;&#x440;&#x432;&#x44B;&#x43C; &#x437;&#x430;&#x448;&#x435;&#x434;&#x448;&#x438;&#x439; &#x43D;&#x430; canon-&#x43F;&#x443;&#x442;&#x44C;, &#x424;&#x41B;&#x410;&#x413;&#x41D;&#x423;&#x41B; auto-vivify &#x43A;&#x430;&#x43A; &#x444;&#x443;&#x442;&#x433;&#x430;&#x43D;, &#x430; &#x43D;&#x435; &#x438;&#x441;&#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x43E;&#x432;&#x430;&#x43B; &#x43A;&#x430;&#x43A; &#x444;&#x438;&#x447;&#x443;.&#xA;&#xA;### &#x421;&#x446;&#x435;&#x43D;&#x430;&#x440;&#x438;&#x438; (&#x434;&#x440;&#x430;&#x439;&#x432;&#x435;&#x440;&#x44B;: strong-&#x430;&#x433;&#x435;&#x43D;&#x442;, weak-&#x43C;&#x43E;&#x434;&#x435;&#x43B;&#x44C; &#x2014; &#x440;&#x435;&#x430;&#x43B;&#x44C;&#x43D;&#x430;&#x44F; &#x43F;&#x43E;&#x43F;&#x443;&#x43B;&#x44F;&#x446;&#x438;&#x44F; droid/deepseek/pi, &#x444;&#x43E;&#x43D;&#x43E;&#x432;&#x44B;&#x435; &#x434;&#x436;&#x43E;&#x431;&#x44B;, &#x447;&#x435;&#x43B;&#x43E;&#x432;&#x435;&#x43A; &#x432; admin UI)&#xA;- **Auto-create &#x43D;&#x435;&#x441;&#x443;&#x449;&#x438;&#x439; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x434;&#x43B;&#x44F; &#x424;&#x418;&#x41A;&#x421;&#x418;&#x420;&#x41E;&#x412;&#x410;&#x41D;&#x41D;&#x42B;&#x425; &#x438;&#x43C;&#x451;&#x43D;** (S2 fresh-project bootstrap notes/canon &#x2014; &#x432;&#x435;&#x440;&#x438;&#x444;&#x438;&#x446;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x43D;&#x43E; &#x436;&#x438;&#x432;&#x44C;&#x451;&#x43C;; S3 workspace shared; S9 &#x434;&#x436;&#x43E;&#x431;&#x44B;).&#xA;- **&#x41D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x43E;&#x435;-&#x43B;&#x435;&#x433;&#x438;&#x442;&#x438;&#x43C;&#x43D;&#x43E;&#x435;** (S4 agent scratch, S5 per-feature): &#x440;&#x435;&#x434;&#x43A;&#x43E;, &#x438; &#x43D;&#x430;&#x431;&#x43B;&#x44E;&#x434;&#x430;&#x435;&#x43C;&#x44B;&#x435; &#x441;&#x43B;&#x443;&#x447;&#x430;&#x438; &#x432;&#x44B;&#x431;&#x440;&#x430;&#x43B;&#x438; &#x42F;&#x412;&#x41D;&#x41E;&#x415; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; (log_create, db_create) &#x2014; &#x43A;&#x430;&#x43A; &#x438; &#x432;&#x435;&#x441;&#x44C; &#x43E;&#x441;&#x442;&#x430;&#x43B;&#x44C;&#x43D;&#x43E;&#x439; &#x441;&#x442;&#x435;&#x43A;. `memory_store_create` &#x443;&#x436;&#x435; &#x435;&#x441;&#x442;&#x44C;.&#xA;- **&#x41D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x43E;&#x435;-&#x43D;&#x435;&#x43B;&#x435;&#x433;&#x438;&#x442;&#x438;&#x43C;&#x43D;&#x43E;&#x435;** (S7 weak-&#x43C;&#x43E;&#x434;&#x435;&#x43B;&#x44C; typo-fork): &#x438;&#x43C;&#x435;&#x43D;&#x43D;&#x43E; &#x435;&#x433;&#x43E; auto-create &#x43E;&#x431;&#x441;&#x43B;&#x443;&#x436;&#x438;&#x432;&#x430;&#x435;&#x442; &#x43F;&#x43B;&#x43E;&#x445;&#x43E;; weak-&#x43C;&#x43E;&#x434;&#x435;&#x43B;&#x44C; &#x43D;&#x430;&#x438;&#x43C;&#x435;&#x43D;&#x435;&#x435; &#x441;&#x43A;&#x43B;&#x43E;&#x43D;&#x43D;&#x430; &#x447;&#x438;&#x442;&#x430;&#x442;&#x44C; warning &#x432; &#x43E;&#x43F;&#x438;&#x441;&#x430;&#x43D;&#x438;&#x438;.&#xA;&#xA;### &#x41A;&#x43B;&#x44E;&#x447;&#x435;&#x432;&#x43E;&#x435;: MCP-&#x441;&#x43B;&#x43E;&#x439; &#x41D;&#x415; &#x440;&#x430;&#x437;&#x43B;&#x438;&#x447;&#x430;&#x435;&#x442; &#x442;&#x438;&#x440; &#x43C;&#x43E;&#x434;&#x435;&#x43B;&#x438;&#xA;Api-&#x43A;&#x43B;&#x44E;&#x447; &#x43D;&#x435;&#x441;&#x451;&#x442; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; scopes, &#x43D;&#x435; model-tier &#x2192; &#x440;&#x435;&#x43B;&#x44C;&#x441;&#x44B; &#x432;&#x44B;&#x431;&#x438;&#x440;&#x430;&#x44E;&#x442;&#x441;&#x44F; &#x43F;&#x43E; &#x421;&#x41B;&#x410;&#x411;&#x415;&#x419;&#x428;&#x415;&#x41C;&#x423; &#x434;&#x440;&#x430;&#x439;&#x432;&#x435;&#x440;&#x443; &#x43D;&#x430; &#x43F;&#x43E;&#x432;&#x435;&#x440;&#x445;&#x43D;&#x43E;&#x441;&#x442;&#x438;. **Per-surface split** (&#x43D;&#x435; &#x43A;&#x43E;&#x43C;&#x43F;&#x440;&#x43E;&#x43C;&#x438;&#x441;&#x441;, &#x430; &#x442;&#x43E; &#x447;&#x442;&#x43E; &#x43A;&#x430;&#x436;&#x434;&#x430;&#x44F; &#x43F;&#x43E;&#x432;&#x435;&#x440;&#x445;&#x43D;&#x43E;&#x441;&#x442;&#x44C; &#x437;&#x430;&#x441;&#x43B;&#x443;&#x436;&#x438;&#x432;&#x430;&#x435;&#x442;): &#x433;&#x435;&#x439;&#x442; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x43D;&#x430; MCP-&#x442;&#x443;&#x43B;-&#x441;&#x43B;&#x43E;&#x435;; admin UI (&#x447;&#x435;&#x43B;&#x43E;&#x432;&#x435;&#x43A;, &#x44F;&#x432;&#x43D;&#x430;&#x44F; &#x444;&#x43E;&#x440;&#x43C;&#x430;) &#x2014; &#x441;&#x432;&#x43E;&#x431;&#x43E;&#x434;&#x43D;&#x43E;; service-door (&#x444;&#x438;&#x43A;&#x441;-&#x43A;&#x43E;&#x43D;&#x441;&#x442;&#x430;&#x43D;&#x442;&#x44B; &#x434;&#x436;&#x43E;&#x431;&#x43E;&#x432;) &#x2014; auto-vivify.&#xA;&#xA;### &#x420;&#x435;&#x43A;&#x43E;&#x43C;&#x435;&#x43D;&#x434;&#x430;&#x446;&#x438;&#x44F; (scenario-ranked)&#xA;1. **C &#x43D;&#x430; MCP-&#x441;&#x43B;&#x43E;&#x435; &#x2B; &#x440;&#x435;&#x437;&#x435;&#x440;&#x432; 5 &#x438;&#x43C;&#x451;&#x43D;** &#x2014; &#x435;&#x441;&#x43B;&#x438; weak-&#x43C;&#x43E;&#x434;&#x435;&#x43B;&#x44C;&#x43D;&#x44B;&#x435; handoff&#x27;&#x44B;, &#x43F;&#x438;&#x448;&#x443;&#x449;&#x438;&#x435; &#x43F;&#x430;&#x43C;&#x44F;&#x442;&#x44C;, &#x431;&#x443;&#x434;&#x443;&#x442; &#x440;&#x430;&#x441;&#x442;&#x438;. &#x412;&#x441;&#x435; &#x440;&#x435;&#x430;&#x43B;&#x44C;&#x43D;&#x44B;&#x435; &#x432;&#x43E;&#x440;&#x43A;&#x444;&#x43B;&#x43E;&#x443; &#x432;&#x44B;&#x436;&#x438;&#x432;&#x430;&#x44E;&#x442; (allowlist &#x2B; service-door), &#x443;&#x431;&#x438;&#x440;&#x430;&#x435;&#x442;&#x441;&#x44F; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x43D;&#x435;&#x43D;&#x430;&#x431;&#x43B;&#x44E;&#x434;&#x430;&#x432;&#x448;&#x438;&#x439;&#x441;&#x44F; &#x441;&#x446;&#x435;&#x43D;&#x430;&#x440;&#x438;&#x439;; &#x441;&#x43E;&#x432;&#x43F;&#x430;&#x434;&#x430;&#x435;&#x442; &#x441; &#x43D;&#x43E;&#x440;&#x43C;&#x43E;&#x439; &#x43F;&#x43B;&#x430;&#x442;&#x444;&#x43E;&#x440;&#x43C;&#x44B; (logs/dbs/projects).&#xA;2. **B&#x2B; (distance-only near-miss reject &#x2B; created-store warning)** &#x2014; &#x435;&#x441;&#x43B;&#x438; &#x446;&#x435;&#x43D;&#x43D;&#x43E; &#x441;&#x43E;&#x445;&#x440;&#x430;&#x43D;&#x438;&#x442;&#x44C; zero-ceremony &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435;. &#x41F;&#x440;&#x435;&#x434;&#x43E;&#x441;&#x442;&#x435;&#x440;&#x435;&#x436;&#x435;&#x43D;&#x438;&#x435; &#x43A;&#x43E;&#x434;&#x430;: &#x443;&#x431;&#x440;&#x430;&#x442;&#x44C; prefix-&#x43D;&#x43E;&#x433;&#x443; &#x43C;&#x430;&#x442;&#x447;&#x435;&#x440;&#x430; (&#x438;&#x43D;&#x430;&#x447;&#x435; `notes-archive` &#x43B;&#x43E;&#x436;&#x43D;&#x43E; &#x431;&#x43B;&#x43E;&#x43A;&#x43D;&#x451;&#x442;&#x441;&#x44F;). &#x41E;&#x441;&#x442;&#x430;&#x451;&#x442;&#x441;&#x44F; residual: far-miss &#x433;&#x430;&#x43B;&#x43B;&#x44E;&#x446;&#x438;&#x43D;&#x430;&#x446;&#x438;&#x44F; &#x432;&#x441;&#x451; &#x440;&#x430;&#x432;&#x43D;&#x43E; &#x444;&#x43E;&#x440;&#x43A;&#x430;&#x435;&#x442;.&#xA;3. **A** &#x2014; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x435;&#x441;&#x43B;&#x438; weak-&#x43F;&#x43E;&#x43F;&#x443;&#x43B;&#x44F;&#x446;&#x438;&#x44F; &#x43E;&#x441;&#x442;&#x430;&#x43D;&#x435;&#x442;&#x441;&#x44F; &#x43C;&#x430;&#x440;&#x433;&#x438;&#x43D;&#x430;&#x43B;&#x44C;&#x43D;&#x43E;&#x439;.&#xA;&#xA;### &#x41F;&#x43E;&#x431;&#x43E;&#x447;&#x43D;&#x44B;&#x435; &#x440;&#x435;&#x448;&#x435;&#x43D;&#x438;&#x44F;&#xA;- **&#x414;&#x43E;&#x441;&#x43A;&#x438;**: `tasks_upsert` &#x442;&#x43E;&#x447;&#x43D;&#x43E; &#x442;&#x430;&#x43A; &#x436;&#x435; &#x430;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x451;&#x442; &#x434;&#x43E;&#x441;&#x43A;&#x438; (TasksService.cs:1083) &#x2014; &#x438;&#x434;&#x435;&#x43D;&#x442;&#x438;&#x447;&#x43D;&#x44B;&#x439; S7. &#x420;&#x435;&#x448;&#x430;&#x442;&#x44C; &#x43E;&#x431;&#x430; &#x442;&#x438;&#x440;&#x430; &#x432;&#x43C;&#x435;&#x441;&#x442;&#x435; &#x43B;&#x438;&#x431;&#x43E; &#x43E;&#x441;&#x43E;&#x437;&#x43D;&#x430;&#x43D;&#x43D;&#x43E; &#x43F;&#x440;&#x438;&#x43D;&#x44F;&#x442;&#x44C; &#x430;&#x441;&#x438;&#x43C;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x44E;.&#xA;- **&#x41D;&#x430;&#x431;&#x43B;&#x44E;&#x434;&#x430;&#x435;&#x43C;&#x43E;&#x441;&#x442;&#x44C;**: &#x43F;&#x43E;&#x43C;&#x435;&#x442;&#x438;&#x442;&#x44C; `store` &#x43A;&#x430;&#x43A; `[LogArg]` (&#x437;&#x430;&#x43A;&#x440;&#x44B;&#x442;&#x44B;&#x439; &#x438;&#x434;&#x435;&#x43D;&#x442;&#x438;&#x444;&#x438;&#x43A;&#x430;&#x442;&#x43E;&#x440;, &#x43D;&#x435; free-text) &#x2192; &#x431;&#x443;&#x434;&#x443;&#x449;&#x438;&#x435; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F; &#x441;&#x442;&#x43E;&#x440;&#x43E;&#x432; &#x441;&#x442;&#x430;&#x43D;&#x443;&#x442; &#x432;&#x438;&#x434;&#x43D;&#x44B; &#x432; &#x442;&#x435;&#x43B;&#x435;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x438; (&#x441;&#x43E;&#x432;&#x43C;&#x435;&#x441;&#x442;&#x438;&#x43C;&#x43E;&#x441;&#x442;&#x44C; &#x441; privacy-&#x43A;&#x43E;&#x43D;&#x442;&#x440;&#x430;&#x43A;&#x442;&#x43E;&#x43C; &#x2014; &#x447;&#x442;&#x435;&#x43D;&#x438;&#x435; Fable, &#x43D;&#x435; &#x432;&#x435;&#x440;&#x438;&#x444;&#x438;&#x446;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x43D;&#x43E; &#x43F;&#x440;&#x43E;&#x442;&#x438;&#x432; &#x438;&#x43D;&#x442;&#x435;&#x43D;&#x446;&#x438;&#x438; &#x441;&#x43F;&#x435;&#x43A;&#x430;).&#xA;- **canon-&#x437;&#x430;&#x433;&#x43B;&#x443;&#x448;&#x43A;&#x430; &#x41D;&#x415; &#x43D;&#x443;&#x436;&#x43D;&#x430;** (null-safe end-to-end).</textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentAdd">
+			<input type="hidden" name="nodeId" value="38fc9fb74ad147d793f187b308fecea1" />
+			<input type="hidden" name="parentId" value="dc10430aa14d4c2d87fbf32647db0053" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+	</div>
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="ce750caf45c045759b25b62ded89889c" data-comment-version="2" style="margin-left:0rem">
+		<div class="flex items-baseline gap-2 flex-wrap">
+			<div class="contents">
+				<span class="font-semibold opacity-70" data-testid="comment-author">claude-opus-4-8</span>
+				<time class="local-time text-xs opacity-50 font-mono" datetime="2026-07-16T06:31:50.0530000" data-testid="comment-time">2026-07-16 06:31</time>
+				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+					<form method="post" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first." action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentDelete">
+						<input type="hidden" name="id" value="ce750caf45c045759b25b62ded89889c" />
+						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+				</span>
+			</div>
+		</div>
+			<div class="md-body text-base" data-testid="comment-body"><h2>spec_plan — вариант C (жёсткий opt-in), решение владельца 16.07.2026</h2>
+<p>Решено: (1) жёсткий opt-in на MCP-слое, (2) распространить на tasks-доски, (3) <code>store</code> → <code>[LogArg]</code>.</p>
+<h3>Спек-узлы (создать ПОСЛЕ accept, каждый с ideaRef на эту идею)</h3>
+<ol>
+<li><strong><code>agent-namespace-provisioning</code></strong> (umbrella, <code>area:memory</code>) — «Создание нового namespace хранилища (memory-store / tasks-доска) через агентский MCP write-верб ДОЛЖНО быть явным: запись по неизвестному имени отклоняется; namespace создаётся только явным вербом (<code>memory_store_create</code> / <code>tasks_board_create</code>).»</li>
+<li><strong><code>system-namespace-reserved</code></strong> (partOf umbrella, <code>concern:reliability</code>) — «Системные memory-namespace (<code>canon, notes, autocaptured, session-digests, ops</code>) ДОЛЖНЫ провизиониться безусловно при первой записи — гейт не ломает bootstrap свежего проекта ни серверные джобы.»</li>
+<li><strong><code>namespace-guard-surface-scope</code></strong> (partOf umbrella, <code>concern:dx</code>) — «Гейт применяется ТОЛЬКО к агентскому MCP-слою; человеческий admin UI и серверные фоновые джобы создают namespace без ограничения.»</li>
+<li><strong><code>namespace-creation-observable</code></strong> (partOf umbrella, <code>concern:observability</code>) — «Имя namespace (store/board) при создании/записи ДОЛЖНО быть наблюдаемо в MCP-телеметрии (ToolCalls).»</li>
+</ol>
+<h3>Реализация (work, фат-часть — механика)</h3>
+<ul>
+<li><strong>Memory:</strong> гейт в <code>MemoryTools</code> (<code>memory_upsert</code>/<code>memory_remember</code>) — неизвестный <code>store</code> (не в существующих ∩ резервные 5) → отказ с did-you-mean (переиспользовать <code>McpProjectExistsFilter.Score</code>, ТОЛЬКО edit-distance, без prefix-ноги). Service-door (<code>MemoryService.cs:532</code>) авто-vivify ОСТАЁТСЯ (джобы + резервные имена). <code>memory_store_create</code> — явный путь.</li>
+<li><strong>Tasks:</strong> аналогичный гейт на автосоздание доски в <code>tasks_upsert</code> (<code>TasksService.cs:1083</code>) — неизвестная доска → отказ, создание только <code>tasks_board_create</code> (либо methodology-провизионинг). Уточнить резерв для досок (квартет ideas/spec/work/intake провизионятся отдельно).</li>
+<li><strong>Телеметрия:</strong> <code>[LogArg]</code> на <code>store</code> (<code>memory_upsert</code>/<code>memory_remember</code>/<code>memory_store_create</code>/<code>memory_store_delete</code>) и на <code>board</code> (<code>tasks_upsert</code>/<code>tasks_board_create</code>) — создания namespace становятся видны в <code>PetBox.Mcp.ToolCalls</code> (сверить с privacy-контрактом <code>McpTracingFilter.cs:20-22</code>).</li>
+<li><strong>Доки:</strong> <code>AGENTS.md:~260</code> (auto-create больше не «интенция» для агентского слоя), SKILL-шаблон + <code>.factory</code>, описания тулов <code>memory_upsert</code>/<code>tasks_upsert</code>, <code>MemoryStoreMeta.cs:8</code> (устаревший коммент).</li>
+<li><strong>Тесты:</strong> reject-unknown; reserved-5-vivify; admin-UI-свободно; джобы-не-тронуты; did-you-mean; LogArg round-trip.</li>
+<li><strong>Non-goals:</strong> canon-заглушка (null-safe, не нужна); admin UI не трогаем; service-door не трогаем; <code>createStore:true</code>-флаг НЕ добавляем (явный путь — уже существующий create-верб).</li>
+</ul>
+<h3>Связанное</h3>
+<p>Полный scenario-анализ — коммент <code>artifact:analysis</code> выше. Источник: закрытая [[memory-embed-provider-down-no-fallback-authoring-footguns]].</p>
+</div>
+
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentEdit">
+			<input type="hidden" name="id" value="ce750caf45c045759b25b62ded89889c" />
+			<input type="hidden" name="version" value="2" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">## spec_plan &#x2014; &#x432;&#x430;&#x440;&#x438;&#x430;&#x43D;&#x442; C (&#x436;&#x451;&#x441;&#x442;&#x43A;&#x438;&#x439; opt-in), &#x440;&#x435;&#x448;&#x435;&#x43D;&#x438;&#x435; &#x432;&#x43B;&#x430;&#x434;&#x435;&#x43B;&#x44C;&#x446;&#x430; 16.07.2026&#xA;&#xA;&#x420;&#x435;&#x448;&#x435;&#x43D;&#x43E;: (1) &#x436;&#x451;&#x441;&#x442;&#x43A;&#x438;&#x439; opt-in &#x43D;&#x430; MCP-&#x441;&#x43B;&#x43E;&#x435;, (2) &#x440;&#x430;&#x441;&#x43F;&#x440;&#x43E;&#x441;&#x442;&#x440;&#x430;&#x43D;&#x438;&#x442;&#x44C; &#x43D;&#x430; tasks-&#x434;&#x43E;&#x441;&#x43A;&#x438;, (3) `store` &#x2192; `[LogArg]`.&#xA;&#xA;### &#x421;&#x43F;&#x435;&#x43A;-&#x443;&#x437;&#x43B;&#x44B; (&#x441;&#x43E;&#x437;&#x434;&#x430;&#x442;&#x44C; &#x41F;&#x41E;&#x421;&#x41B;&#x415; accept, &#x43A;&#x430;&#x436;&#x434;&#x44B;&#x439; &#x441; ideaRef &#x43D;&#x430; &#x44D;&#x442;&#x443; &#x438;&#x434;&#x435;&#x44E;)&#xA;1. **`agent-namespace-provisioning`** (umbrella, `area:memory`) &#x2014; &#xAB;&#x421;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; &#x43D;&#x43E;&#x432;&#x43E;&#x433;&#x43E; namespace &#x445;&#x440;&#x430;&#x43D;&#x438;&#x43B;&#x438;&#x449;&#x430; (memory-store / tasks-&#x434;&#x43E;&#x441;&#x43A;&#x430;) &#x447;&#x435;&#x440;&#x435;&#x437; &#x430;&#x433;&#x435;&#x43D;&#x442;&#x441;&#x43A;&#x438;&#x439; MCP write-&#x432;&#x435;&#x440;&#x431; &#x414;&#x41E;&#x41B;&#x416;&#x41D;&#x41E; &#x431;&#x44B;&#x442;&#x44C; &#x44F;&#x432;&#x43D;&#x44B;&#x43C;: &#x437;&#x430;&#x43F;&#x438;&#x441;&#x44C; &#x43F;&#x43E; &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x43E;&#x43C;&#x443; &#x438;&#x43C;&#x435;&#x43D;&#x438; &#x43E;&#x442;&#x43A;&#x43B;&#x43E;&#x43D;&#x44F;&#x435;&#x442;&#x441;&#x44F;; namespace &#x441;&#x43E;&#x437;&#x434;&#x430;&#x451;&#x442;&#x441;&#x44F; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; &#x44F;&#x432;&#x43D;&#x44B;&#x43C; &#x432;&#x435;&#x440;&#x431;&#x43E;&#x43C; (`memory_store_create` / `tasks_board_create`).&#xBB;&#xA;2. **`system-namespace-reserved`** (partOf umbrella, `concern:reliability`) &#x2014; &#xAB;&#x421;&#x438;&#x441;&#x442;&#x435;&#x43C;&#x43D;&#x44B;&#x435; memory-namespace (`canon, notes, autocaptured, session-digests, ops`) &#x414;&#x41E;&#x41B;&#x416;&#x41D;&#x42B; &#x43F;&#x440;&#x43E;&#x432;&#x438;&#x437;&#x438;&#x43E;&#x43D;&#x438;&#x442;&#x44C;&#x441;&#x44F; &#x431;&#x435;&#x437;&#x443;&#x441;&#x43B;&#x43E;&#x432;&#x43D;&#x43E; &#x43F;&#x440;&#x438; &#x43F;&#x435;&#x440;&#x432;&#x43E;&#x439; &#x437;&#x430;&#x43F;&#x438;&#x441;&#x438; &#x2014; &#x433;&#x435;&#x439;&#x442; &#x43D;&#x435; &#x43B;&#x43E;&#x43C;&#x430;&#x435;&#x442; bootstrap &#x441;&#x432;&#x435;&#x436;&#x435;&#x433;&#x43E; &#x43F;&#x440;&#x43E;&#x435;&#x43A;&#x442;&#x430; &#x43D;&#x438; &#x441;&#x435;&#x440;&#x432;&#x435;&#x440;&#x43D;&#x44B;&#x435; &#x434;&#x436;&#x43E;&#x431;&#x44B;.&#xBB;&#xA;3. **`namespace-guard-surface-scope`** (partOf umbrella, `concern:dx`) &#x2014; &#xAB;&#x413;&#x435;&#x439;&#x442; &#x43F;&#x440;&#x438;&#x43C;&#x435;&#x43D;&#x44F;&#x435;&#x442;&#x441;&#x44F; &#x422;&#x41E;&#x41B;&#x42C;&#x41A;&#x41E; &#x43A; &#x430;&#x433;&#x435;&#x43D;&#x442;&#x441;&#x43A;&#x43E;&#x43C;&#x443; MCP-&#x441;&#x43B;&#x43E;&#x44E;; &#x447;&#x435;&#x43B;&#x43E;&#x432;&#x435;&#x447;&#x435;&#x441;&#x43A;&#x438;&#x439; admin UI &#x438; &#x441;&#x435;&#x440;&#x432;&#x435;&#x440;&#x43D;&#x44B;&#x435; &#x444;&#x43E;&#x43D;&#x43E;&#x432;&#x44B;&#x435; &#x434;&#x436;&#x43E;&#x431;&#x44B; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x44E;&#x442; namespace &#x431;&#x435;&#x437; &#x43E;&#x433;&#x440;&#x430;&#x43D;&#x438;&#x447;&#x435;&#x43D;&#x438;&#x44F;.&#xBB;&#xA;4. **`namespace-creation-observable`** (partOf umbrella, `concern:observability`) &#x2014; &#xAB;&#x418;&#x43C;&#x44F; namespace (store/board) &#x43F;&#x440;&#x438; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x438;/&#x437;&#x430;&#x43F;&#x438;&#x441;&#x438; &#x414;&#x41E;&#x41B;&#x416;&#x41D;&#x41E; &#x431;&#x44B;&#x442;&#x44C; &#x43D;&#x430;&#x431;&#x43B;&#x44E;&#x434;&#x430;&#x435;&#x43C;&#x43E; &#x432; MCP-&#x442;&#x435;&#x43B;&#x435;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x438; (ToolCalls).&#xBB;&#xA;&#xA;### &#x420;&#x435;&#x430;&#x43B;&#x438;&#x437;&#x430;&#x446;&#x438;&#x44F; (work, &#x444;&#x430;&#x442;-&#x447;&#x430;&#x441;&#x442;&#x44C; &#x2014; &#x43C;&#x435;&#x445;&#x430;&#x43D;&#x438;&#x43A;&#x430;)&#xA;- **Memory:** &#x433;&#x435;&#x439;&#x442; &#x432; `MemoryTools` (`memory_upsert`/`memory_remember`) &#x2014; &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x44B;&#x439; `store` (&#x43D;&#x435; &#x432; &#x441;&#x443;&#x449;&#x435;&#x441;&#x442;&#x432;&#x443;&#x44E;&#x449;&#x438;&#x445; &#x2229; &#x440;&#x435;&#x437;&#x435;&#x440;&#x432;&#x43D;&#x44B;&#x435; 5) &#x2192; &#x43E;&#x442;&#x43A;&#x430;&#x437; &#x441; did-you-mean (&#x43F;&#x435;&#x440;&#x435;&#x438;&#x441;&#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x43E;&#x432;&#x430;&#x442;&#x44C; `McpProjectExistsFilter.Score`, &#x422;&#x41E;&#x41B;&#x42C;&#x41A;&#x41E; edit-distance, &#x431;&#x435;&#x437; prefix-&#x43D;&#x43E;&#x433;&#x438;). Service-door (`MemoryService.cs:532`) &#x430;&#x432;&#x442;&#x43E;-vivify &#x41E;&#x421;&#x422;&#x410;&#x401;&#x422;&#x421;&#x42F; (&#x434;&#x436;&#x43E;&#x431;&#x44B; &#x2B; &#x440;&#x435;&#x437;&#x435;&#x440;&#x432;&#x43D;&#x44B;&#x435; &#x438;&#x43C;&#x435;&#x43D;&#x430;). `memory_store_create` &#x2014; &#x44F;&#x432;&#x43D;&#x44B;&#x439; &#x43F;&#x443;&#x442;&#x44C;.&#xA;- **Tasks:** &#x430;&#x43D;&#x430;&#x43B;&#x43E;&#x433;&#x438;&#x447;&#x43D;&#x44B;&#x439; &#x433;&#x435;&#x439;&#x442; &#x43D;&#x430; &#x430;&#x432;&#x442;&#x43E;&#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; &#x434;&#x43E;&#x441;&#x43A;&#x438; &#x432; `tasks_upsert` (`TasksService.cs:1083`) &#x2014; &#x43D;&#x435;&#x438;&#x437;&#x432;&#x435;&#x441;&#x442;&#x43D;&#x430;&#x44F; &#x434;&#x43E;&#x441;&#x43A;&#x430; &#x2192; &#x43E;&#x442;&#x43A;&#x430;&#x437;, &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; &#x442;&#x43E;&#x43B;&#x44C;&#x43A;&#x43E; `tasks_board_create` (&#x43B;&#x438;&#x431;&#x43E; methodology-&#x43F;&#x440;&#x43E;&#x432;&#x438;&#x437;&#x438;&#x43E;&#x43D;&#x438;&#x43D;&#x433;). &#x423;&#x442;&#x43E;&#x447;&#x43D;&#x438;&#x442;&#x44C; &#x440;&#x435;&#x437;&#x435;&#x440;&#x432; &#x434;&#x43B;&#x44F; &#x434;&#x43E;&#x441;&#x43E;&#x43A; (&#x43A;&#x432;&#x430;&#x440;&#x442;&#x435;&#x442; ideas/spec/work/intake &#x43F;&#x440;&#x43E;&#x432;&#x438;&#x437;&#x438;&#x43E;&#x43D;&#x44F;&#x442;&#x441;&#x44F; &#x43E;&#x442;&#x434;&#x435;&#x43B;&#x44C;&#x43D;&#x43E;).&#xA;- **&#x422;&#x435;&#x43B;&#x435;&#x43C;&#x435;&#x442;&#x440;&#x438;&#x44F;:** `[LogArg]` &#x43D;&#x430; `store` (`memory_upsert`/`memory_remember`/`memory_store_create`/`memory_store_delete`) &#x438; &#x43D;&#x430; `board` (`tasks_upsert`/`tasks_board_create`) &#x2014; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F; namespace &#x441;&#x442;&#x430;&#x43D;&#x43E;&#x432;&#x44F;&#x442;&#x441;&#x44F; &#x432;&#x438;&#x434;&#x43D;&#x44B; &#x432; `PetBox.Mcp.ToolCalls` (&#x441;&#x432;&#x435;&#x440;&#x438;&#x442;&#x44C; &#x441; privacy-&#x43A;&#x43E;&#x43D;&#x442;&#x440;&#x430;&#x43A;&#x442;&#x43E;&#x43C; `McpTracingFilter.cs:20-22`).&#xA;- **&#x414;&#x43E;&#x43A;&#x438;:** `AGENTS.md:~260` (auto-create &#x431;&#x43E;&#x43B;&#x44C;&#x448;&#x435; &#x43D;&#x435; &#xAB;&#x438;&#x43D;&#x442;&#x435;&#x43D;&#x446;&#x438;&#x44F;&#xBB; &#x434;&#x43B;&#x44F; &#x430;&#x433;&#x435;&#x43D;&#x442;&#x441;&#x43A;&#x43E;&#x433;&#x43E; &#x441;&#x43B;&#x43E;&#x44F;), SKILL-&#x448;&#x430;&#x431;&#x43B;&#x43E;&#x43D; &#x2B; `.factory`, &#x43E;&#x43F;&#x438;&#x441;&#x430;&#x43D;&#x438;&#x44F; &#x442;&#x443;&#x43B;&#x43E;&#x432; `memory_upsert`/`tasks_upsert`, `MemoryStoreMeta.cs:8` (&#x443;&#x441;&#x442;&#x430;&#x440;&#x435;&#x432;&#x448;&#x438;&#x439; &#x43A;&#x43E;&#x43C;&#x43C;&#x435;&#x43D;&#x442;).&#xA;- **&#x422;&#x435;&#x441;&#x442;&#x44B;:** reject-unknown; reserved-5-vivify; admin-UI-&#x441;&#x432;&#x43E;&#x431;&#x43E;&#x434;&#x43D;&#x43E;; &#x434;&#x436;&#x43E;&#x431;&#x44B;-&#x43D;&#x435;-&#x442;&#x440;&#x43E;&#x43D;&#x443;&#x442;&#x44B;; did-you-mean; LogArg round-trip.&#xA;- **Non-goals:** canon-&#x437;&#x430;&#x433;&#x43B;&#x443;&#x448;&#x43A;&#x430; (null-safe, &#x43D;&#x435; &#x43D;&#x443;&#x436;&#x43D;&#x430;); admin UI &#x43D;&#x435; &#x442;&#x440;&#x43E;&#x433;&#x430;&#x435;&#x43C;; service-door &#x43D;&#x435; &#x442;&#x440;&#x43E;&#x433;&#x430;&#x435;&#x43C;; `createStore:true`-&#x444;&#x43B;&#x430;&#x433; &#x41D;&#x415; &#x434;&#x43E;&#x431;&#x430;&#x432;&#x43B;&#x44F;&#x435;&#x43C; (&#x44F;&#x432;&#x43D;&#x44B;&#x439; &#x43F;&#x443;&#x442;&#x44C; &#x2014; &#x443;&#x436;&#x435; &#x441;&#x443;&#x449;&#x435;&#x441;&#x442;&#x432;&#x443;&#x44E;&#x449;&#x438;&#x439; create-&#x432;&#x435;&#x440;&#x431;).&#xA;&#xA;### &#x421;&#x432;&#x44F;&#x437;&#x430;&#x43D;&#x43D;&#x43E;&#x435;&#xA;&#x41F;&#x43E;&#x43B;&#x43D;&#x44B;&#x439; scenario-&#x430;&#x43D;&#x430;&#x43B;&#x438;&#x437; &#x2014; &#x43A;&#x43E;&#x43C;&#x43C;&#x435;&#x43D;&#x442; `artifact:analysis` &#x432;&#x44B;&#x448;&#x435;. &#x418;&#x441;&#x442;&#x43E;&#x447;&#x43D;&#x438;&#x43A;: &#x437;&#x430;&#x43A;&#x440;&#x44B;&#x442;&#x430;&#x44F; [[memory-embed-provider-down-no-fallback-authoring-footguns]].</textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentAdd">
+			<input type="hidden" name="nodeId" value="38fc9fb74ad147d793f187b308fecea1" />
+			<input type="hidden" name="parentId" value="ce750caf45c045759b25b62ded89889c" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+	</div>
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="78d4e443418f4336b0c3f7e01c390ce7" data-comment-version="3" style="margin-left:0rem">
+		<div class="flex items-baseline gap-2 flex-wrap">
+			<div class="contents">
+				<span class="font-semibold opacity-70" data-testid="comment-author">claude-opus-4-8</span>
+				<time class="local-time text-xs opacity-50 font-mono" datetime="2026-07-16T06:31:50.0570000" data-testid="comment-time">2026-07-16 06:31</time>
+				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+					<form method="post" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first." action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentDelete">
+						<input type="hidden" name="id" value="78d4e443418f4336b0c3f7e01c390ce7" />
+						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+					<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+				</span>
+			</div>
+		</div>
+			<div class="md-body text-base" data-testid="comment-body"><h2>spec_plan — дополнение владельца (после accept)</h2>
+<p><strong>Пятый спек-узел — UI явного создания:</strong><br>
+5. <strong><code>namespace-create-in-ui</code></strong> (partOf <code>agent-namespace-provisioning</code>, <code>area:ui</code>) — «Раз агентский авто-create закрыт, явное создание namespace (memory-store; аналогично таsks-доска) ДОЛЖНО быть первоклассно доступно человеку в UI — иначе гейт оставляет пользователя без пути создания.»</p>
+<p><strong>Реализация:</strong> memory store-create в admin UI УЖЕ есть (<code>ProjectMemory.cshtml.cs:57</code>) — верифицировать и сделать видным/удобным; для досок — проверить наличие явного board-create в UI, добавить если нет. Принцип: закрываем агентский авто-путь → открываем человеческий явный.</p>
+</div>
+
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentEdit">
+			<input type="hidden" name="id" value="78d4e443418f4336b0c3f7e01c390ce7" />
+			<input type="hidden" name="version" value="3" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">## spec_plan &#x2014; &#x434;&#x43E;&#x43F;&#x43E;&#x43B;&#x43D;&#x435;&#x43D;&#x438;&#x435; &#x432;&#x43B;&#x430;&#x434;&#x435;&#x43B;&#x44C;&#x446;&#x430; (&#x43F;&#x43E;&#x441;&#x43B;&#x435; accept)&#xA;&#xA;**&#x41F;&#x44F;&#x442;&#x44B;&#x439; &#x441;&#x43F;&#x435;&#x43A;-&#x443;&#x437;&#x435;&#x43B; &#x2014; UI &#x44F;&#x432;&#x43D;&#x43E;&#x433;&#x43E; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F;:**&#xA;5. **`namespace-create-in-ui`** (partOf `agent-namespace-provisioning`, `area:ui`) &#x2014; &#xAB;&#x420;&#x430;&#x437; &#x430;&#x433;&#x435;&#x43D;&#x442;&#x441;&#x43A;&#x438;&#x439; &#x430;&#x432;&#x442;&#x43E;-create &#x437;&#x430;&#x43A;&#x440;&#x44B;&#x442;, &#x44F;&#x432;&#x43D;&#x43E;&#x435; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x435; namespace (memory-store; &#x430;&#x43D;&#x430;&#x43B;&#x43E;&#x433;&#x438;&#x447;&#x43D;&#x43E; &#x442;&#x430;sks-&#x434;&#x43E;&#x441;&#x43A;&#x430;) &#x414;&#x41E;&#x41B;&#x416;&#x41D;&#x41E; &#x431;&#x44B;&#x442;&#x44C; &#x43F;&#x435;&#x440;&#x432;&#x43E;&#x43A;&#x43B;&#x430;&#x441;&#x441;&#x43D;&#x43E; &#x434;&#x43E;&#x441;&#x442;&#x443;&#x43F;&#x43D;&#x43E; &#x447;&#x435;&#x43B;&#x43E;&#x432;&#x435;&#x43A;&#x443; &#x432; UI &#x2014; &#x438;&#x43D;&#x430;&#x447;&#x435; &#x433;&#x435;&#x439;&#x442; &#x43E;&#x441;&#x442;&#x430;&#x432;&#x43B;&#x44F;&#x435;&#x442; &#x43F;&#x43E;&#x43B;&#x44C;&#x437;&#x43E;&#x432;&#x430;&#x442;&#x435;&#x43B;&#x44F; &#x431;&#x435;&#x437; &#x43F;&#x443;&#x442;&#x438; &#x441;&#x43E;&#x437;&#x434;&#x430;&#x43D;&#x438;&#x44F;.&#xBB;&#xA;&#xA;**&#x420;&#x435;&#x430;&#x43B;&#x438;&#x437;&#x430;&#x446;&#x438;&#x44F;:** memory store-create &#x432; admin UI &#x423;&#x416;&#x415; &#x435;&#x441;&#x442;&#x44C; (`ProjectMemory.cshtml.cs:57`) &#x2014; &#x432;&#x435;&#x440;&#x438;&#x444;&#x438;&#x446;&#x438;&#x440;&#x43E;&#x432;&#x430;&#x442;&#x44C; &#x438; &#x441;&#x434;&#x435;&#x43B;&#x430;&#x442;&#x44C; &#x432;&#x438;&#x434;&#x43D;&#x44B;&#x43C;/&#x443;&#x434;&#x43E;&#x431;&#x43D;&#x44B;&#x43C;; &#x434;&#x43B;&#x44F; &#x434;&#x43E;&#x441;&#x43E;&#x43A; &#x2014; &#x43F;&#x440;&#x43E;&#x432;&#x435;&#x440;&#x438;&#x442;&#x44C; &#x43D;&#x430;&#x43B;&#x438;&#x447;&#x438;&#x435; &#x44F;&#x432;&#x43D;&#x43E;&#x433;&#x43E; board-create &#x432; UI, &#x434;&#x43E;&#x431;&#x430;&#x432;&#x438;&#x442;&#x44C; &#x435;&#x441;&#x43B;&#x438; &#x43D;&#x435;&#x442;. &#x41F;&#x440;&#x438;&#x43D;&#x446;&#x438;&#x43F;: &#x437;&#x430;&#x43A;&#x440;&#x44B;&#x432;&#x430;&#x435;&#x43C; &#x430;&#x433;&#x435;&#x43D;&#x442;&#x441;&#x43A;&#x438;&#x439; &#x430;&#x432;&#x442;&#x43E;-&#x43F;&#x443;&#x442;&#x44C; &#x2192; &#x43E;&#x442;&#x43A;&#x440;&#x44B;&#x432;&#x430;&#x435;&#x43C; &#x447;&#x435;&#x43B;&#x43E;&#x432;&#x435;&#x447;&#x435;&#x441;&#x43A;&#x438;&#x439; &#x44F;&#x432;&#x43D;&#x44B;&#x439;.</textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+
+		<form method="post" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentAdd">
+			<input type="hidden" name="nodeId" value="38fc9fb74ad147d793f187b308fecea1" />
+			<input type="hidden" name="parentId" value="78d4e443418f4336b0c3f7e01c390ce7" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+			<div class="flex items-center gap-2">
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+			</div>
+		<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+	</div>
+
+	<form method="post" class="flex flex-col gap-1 mt-2" data-testid="comment-add-form" action="/ui/$system/$system/tasks/capreader/cap-node?handler=CommentAdd">
+		<input type="hidden" name="nodeId" value="38fc9fb74ad147d793f187b308fecea1" />
+		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
+		<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+	<input name="__RequestVerificationToken" type="hidden" value="CfDJ8Bh-DwAgG-9DiMBsNVqUH2kEtEyCBa4JaVKnbmvGSt9aPTZe_lURjoezROcXILnVV_LHvCxHXRTIx0HV7J5u_3PtUysi0iZgOVUeT3JkBzzOV9ixm3RZUvNkIpNQhzL0-hliNCRegYYNUEBW2uH0iEGhDrKWizvlmNjO2mvrmNbhot_Rpp-J2UuCzfK3b-hEhg" /></form>
+
+		</article>
+	</div>
+</div>
+
+	
+
+<div class="modal" data-testid="workflow-modal" role="dialog" aria-modal="true">
+	<div class="modal-box max-w-3xl">
+		<div class="flex items-center justify-between gap-2 mb-3">
+			<h3 class="font-semibold text-lg" data-testid="workflow-modal-title">View workflow</h3>
+			<button type="button" class="btn btn-sm btn-circle btn-ghost" data-testid="workflow-modal-close" aria-label="Close">✕</button>
+		</div>
+		<div class="overflow-x-auto" data-testid="workflow-graph"></div>
+		<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-70" data-testid="workflow-legend">
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-neutral"></span> open</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-success"></span> done</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-error"></span> cancelled</span>
+			<span class="opacity-80">▶ initial · edge labels = gates (approve / reason / artifact:&lt;slug&gt;)</span>
+		</div>
+	</div>
+	<div class="modal-backdrop" data-testid="workflow-modal-backdrop"></div>
+</div>
+
+<script type="application/json" data-testid="workflow-data">{"kind":"simple","blocks":[{"types":["task","bug","feature","chore","issue"],"statuses":[{"slug":"Todo","name":"Todo","kind":"Open"},{"slug":"InProgress","name":"In progress","kind":"Open"},{"slug":"Blocked","name":"Blocked","kind":"Open"},{"slug":"Done","name":"Done","kind":"TerminalOk"},{"slug":"Cancelled","name":"Cancelled","kind":"TerminalCancel"}],"transitions":[{"from":"Todo","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Todo","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"InProgress","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Blocked","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Done","to":"Cancelled","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Todo","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"InProgress","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Blocked","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false},{"from":"Cancelled","to":"Done","requiresApproval":false,"requiresReason":false,"preconditionArtifact":null,"checklist":false}]}],"effectNotes":[]}</script>
+
+
+			</main>
+
+			<footer class="p-3 text-center text-xs opacity-60 border-t border-base-300" data-testid="footer-version">
+	vdev
+	· local
+	· <span data-testid="footer-features">
+			<span class="text-success" title="enabled">config</span> 			<span class="text-success" title="enabled">logging</span> 			<span class="text-success" title="enabled">data</span> 			<span class="text-success" title="enabled">dashboard</span> 			<span class="text-success" title="enabled">tasks</span> 			<span class="text-success" title="enabled">memory</span> 			<span class="text-success" title="enabled">llmrouter</span> 			<span class="text-success" title="enabled">deploy</span> 	</span>
+</footer>
+
+		</div>
+
+		<div class="drawer-side">
+			<label for="sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
+			<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col">
+					<div class="hidden" data-testid="nav-current-ws">$system</div>
+					<div class="px-2 pt-2" data-testid="nav-workspace-selector">
+	<div class="flex items-center gap-1">
+		<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1 min-w-0">
+			<input type="hidden" name="zone" value="ui" data-testid="nav-workspace-zone" />
+				<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
+						<option value="$system" selected="selected">$system</option>
+				</select>
+		</form>
+		<button type="button" class="btn btn-sm btn-ghost btn-square btn-active" data-sidebar-pin
+	aria-pressed="true" title="Pin sidebar open" data-testid="nav-sidebar-pin">
+	<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+		<path d="M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z" />
+	</svg>
+</button>
+
+	</div>
+</div>
+
+					<ul class="menu w-full p-2 gap-1">
+						<li>
+							<a href="/ui/$system" class="" data-testid="nav-status">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
+								</svg>
+								Status
+							</a>
+						</li>
+							<li>
+								<a href="/ui/$system/$workspace/memory" class="" data-testid="nav-ws-memory">
+									<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+									</svg>
+									Shared memory
+								</a>
+							</li>
+						<li>
+							<a href="/ui/$system/config" class="" data-testid="nav-shared-config">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+								</svg>
+								Shared config
+							</a>
+						</li>
+					</ul>
+					<div class="px-3 pt-2 mt-2 border-t border-base-300">
+						<div class="text-xs opacity-50 uppercase tracking-wide">Project</div>
+					</div>
+					<div class="px-2" data-testid="nav-project-selector">
+	<form method="post" action="/api/ui/project" data-testid="nav-project-switch">
+		<input type="hidden" name="ws" value="$system" />
+		<input type="hidden" name="zone" value="ui" data-testid="nav-project-zone" />
+			<select name="key" onchange="this.form.submit()" aria-label="Switch project" title="Switch project"
+				class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-project-select">
+					<option value="$system" selected="selected">$system</option>
+			</select>
+	</form>
+</div>
+
+					<ul class="menu menu-sm w-full p-2 gap-0.5 flex-1 overflow-y-auto" data-testid="nav-sidebar-projects">
+							<li class="hidden" data-testid="nav-project" data-project-key="$system"></li>
+							<li><a href="/ui/$system/$system" class="" data-testid="nav-proj-dashboard">Dashboard</a></li>
+								<li data-testid="nav-proj-logs-node">
+									<details hx-get="/ui/_nav/tree?handler=Logs&project=$system" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+										<summary class=""><a href="/ui/$system/$system/logs" data-testid="nav-proj-logs">Logs</a></summary>
+										<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
+									</details>
+								</li>
+							<li><a href="/ui/$system/$system/traces" class="" data-testid="nav-proj-traces">Traces</a></li>
+							<li><a href="/ui/$system/$system/config" class="" data-testid="nav-proj-config">Config</a></li>
+								<li><a href="/ui/$system/$system/llm" class="" data-testid="nav-proj-llm">LLM router</a></li>
+									<li data-testid="nav-proj-tasks-node">
+										<details open="open">
+											<summary class=""><a href="/ui/$system/$system/tasks" data-testid="nav-proj-tasks">Tasks</a></summary>
+											<ul>
+													<li data-testid="nav-proj-task-board-node" data-board-name="capreader">
+														<a href="/ui/$system/$system/tasks/capreader" class="active" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">capreader</span>
+														</a>
+													</li>
+													<li data-testid="nav-proj-task-board-node" data-board-name="roadmap">
+														<a href="/ui/$system/$system/tasks/roadmap" class="" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">roadmap</span>
+														</a>
+													</li>
+											</ul>
+										</details>
+									</li>
+								<li><a href="/ui/$system/$system/memory" class="" data-testid="nav-proj-memory">Memory</a></li>
+								<li><a href="/ui/$system/$system/sessions" class="" data-testid="nav-proj-agent">Sessions</a></li>
+					</ul>
+			</aside>
+		</div>
+	</div>
+	
+</body>
+</html>

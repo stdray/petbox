@@ -2,32 +2,49 @@
 // must surface BOTH the task body AND the comment thread on a node-detail page — not just
 // whichever one Readability's density/keyword heuristic picks as the sole winner.
 //
-// Root cause (fixed in TaskBoardNode.cshtml / _CommentThread.cshtml, SSR markup only):
-// Readability scores candidate nodes by text density + a class/id keyword weight, then keeps
-// ONE winning subtree and appends only ITS siblings. Before the fix, the node body (inside
-// `node-read-body`) and the comment thread (`node-comments`) sat in separate subtrees under
-// `card-body`; both reused the same `md-body` class (a positive Readability keyword), so
-// whichever had more text won outright and the other was dropped. The fix wraps both under one
-// shared `<article class="node-reader-content">` content root and adds a `rv-content` class
-// (matches Readability's "content" positive keyword, NOT "comment" — that one is negative) to
-// nudge Readability's candidate climb through to that shared root instead of stopping one level
-// too early inside a single comment's own wrapper.
+// Root cause: Readability scores candidate nodes by text density + a class/id keyword weight,
+// then keeps ONE winning subtree and appends only ITS siblings. The node body (`node-read-body`)
+// and the comment thread (`node-comments`) sat in separate subtrees, both reusing the `md-body`
+// class (a positive Readability keyword), so whichever had more text won outright and the other
+// was dropped.
 //
-// The fixture (ts/testdata/node-detail-reader-view.html) is the REAL rendered node-detail page —
-// captured via the test host (tests/PetBox.Tests/Web/ScratchReaderViewCapture.cs, run once, then
-// removed) for a short body + one substantial comment, i.e. exactly the failing shape reported
-// against ideas/memory-store-creation-guard. This is not a hand-built approximation: it is the
-// actual Razor output (same wrappers, same `md-body`/`data-testid` markup) the browser receives.
+// Fix, in two rounds (both SSR markup / TS selector changes — no stored-data change, no
+// interactive-behavior change):
 //
-// Verified empirically before landing this fix (see the task's PR/commit for the full
-// transcript): on the ORIGINAL (pre-fix) markup, this exact scenario extracts the comment only
-// (textContent ~594 chars, BODY_MARKER absent). On the fixed markup below, both survive
-// (~844 chars, both markers present). A known residual limit: when ONE comment's own paragraph
-// density heavily dominates a rich, link-dense multi-comment thread (e.g. the real
-// ideas/memory-store-creation-guard node, which has three long comments full of `file.cs:line`
-// references), Readability's climb-then-stop algorithm can still settle one level below the
-// shared root and drop the body — this fix narrows that gap but does not close it for every
-// input shape; see the task report for the full analysis.
+// Round 1 — wrap node-read-body and the comment thread under one shared
+// `<article class="node-reader-content">`, plus an `rv-content` class (matches Readability's
+// "content" positive keyword; never "comment" — that one is a NEGATIVE keyword, kept out of
+// every class/id here on purpose) so the shared root scores well enough to be a candidate.
+// This alone fixed the short-body + one-moderate-comment shape (node-detail-reader-view.html)
+// but NOT the real ideas/memory-store-creation-guard node (node-detail-reader-view-dense.html,
+// short body + 3 real comments, one a long link-dense technical analysis) — verified via
+// `@mozilla/readability --debug` candidate scores, the body kept getting dropped.
+//
+// Round 2 — the remaining problem was ancestor DEPTH: comment text sat 4 levels below the
+// shared article (md-body → comment-read-body → "comment" div → node-comments wrapper →
+// article), and Readability's per-ancestor score divides by roughly (level*3) past the second
+// ancestor, so by the time a paragraph's score reached the shared root it was diluted far enough
+// that Readability's climb-then-stop promotion locked onto the inner "comment" div and never
+// reached the root. Fix: deleted the `comment-read-body` wrapper (the md-body div itself is now
+// directly toggled — ts/commentThread.ts updated to query `comment-body` instead) and deleted
+// _CommentThread.cshtml's own outer wrapper (`node-comments` moved onto the shared `<article>`
+// in TaskBoardNode.cshtml) — cutting comment text's distance to the shared root from 4 levels to
+// 2. Interactive behavior (reply/edit/delete toggles, hover-reveal, threading indent) is
+// unchanged: every element ts/commentThread.ts depends on (`comment`, `comment-edit-form`,
+// `comment-reply-form`, `comment-body`) still exists with the same `.closest()`/`querySelector()`
+// relationships, just one wrapper div shallower — see the task report for the full
+// selector-coupling walkthrough.
+//
+// Fixtures are REAL rendered node-detail pages — captured via the test host
+// (tests/PetBox.Tests/Web/ScratchReaderViewCapture.cs, run to regenerate, then removed) rather
+// than hand-built. node-detail-reader-view.html: a short body + one moderate synthetic comment.
+// node-detail-reader-view-dense.html: the ACTUAL ideas/memory-store-creation-guard node, body +
+// all 3 real comments pulled verbatim via tasks_node_get/comments_search — the exact case
+// originally reported as broken.
+//
+// Verified empirically: on the pre-round-2 markup, the dense fixture extracted all 3 comments
+// but dropped the body (textContent present, body marker absent). After round 2, both fixtures
+// extract body + every comment. See the task report for the full before/after transcript.
 //
 // Run: node --test ts/readerView.test.ts   (Node >= 23.6 native TS type-stripping; no build step)
 //      or: bun test ts/readerView.test.ts
@@ -39,9 +56,9 @@ import { fileURLToPath } from "node:url";
 import { Readability, isProbablyReaderable } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 
-const FIXTURE_PATH = fileURLToPath(new URL("./testdata/node-detail-reader-view.html", import.meta.url));
-const BODY_MARKER = "BODY_MARKER";
-const COMMENT_MARKER = "COMMENT_MARKER";
+function fixturePath(name: string): string {
+	return fileURLToPath(new URL(`./testdata/${name}`, import.meta.url));
+}
 
 function extractReaderView(html: string) {
 	const dom = new JSDOM(html, { url: "https://petbox.example/ui/ws/proj/tasks/board/node" });
@@ -50,8 +67,8 @@ function extractReaderView(html: string) {
 	return { readerable, article };
 }
 
-test("reader view: node body and comment thread both survive Readability extraction", () => {
-	const html = readFileSync(FIXTURE_PATH, "utf8");
+test("reader view: short body + one moderate comment both survive extraction", () => {
+	const html = readFileSync(fixturePath("node-detail-reader-view.html"), "utf8");
 	const { readerable, article } = extractReaderView(html);
 
 	assert.ok(readerable, "fixture page should be flagged reader-mode-eligible");
@@ -59,6 +76,23 @@ test("reader view: node body and comment thread both survive Readability extract
 	if (!article) return; // unreachable after assert.ok, keeps TS's null-narrowing happy without `!`
 
 	const text = article.textContent;
-	assert.match(text, new RegExp(BODY_MARKER), "node body text must survive extraction");
-	assert.match(text, new RegExp(COMMENT_MARKER), "comment text must survive extraction");
+	assert.match(text, /BODY_MARKER/, "node body text must survive extraction");
+	assert.match(text, /COMMENT_MARKER/, "comment text must survive extraction");
+});
+
+test("reader view: the real ideas/memory-store-creation-guard node (body + all 3 comments) survives extraction", () => {
+	const html = readFileSync(fixturePath("node-detail-reader-view-dense.html"), "utf8");
+	const { readerable, article } = extractReaderView(html);
+
+	assert.ok(readerable, "fixture page should be flagged reader-mode-eligible");
+	assert.ok(article, "Readability.parse() should return an article, not null");
+	if (!article) return;
+
+	const text = article.textContent;
+	// The node body's last line (distinctive, appears nowhere else in the fixture).
+	assert.match(text, /Ждёт выбора владельца/, "node body text must survive extraction");
+	// One distinctive phrase per real comment.
+	assert.match(text, /Scenario-first переоценка/, "comment 1 (analysis) must survive extraction");
+	assert.match(text, /жёсткий opt-in\), решение владельца/, "comment 2 (spec_plan) must survive extraction");
+	assert.match(text, /дополнение владельца/, "comment 3 (spec_plan addendum) must survive extraction");
 });
