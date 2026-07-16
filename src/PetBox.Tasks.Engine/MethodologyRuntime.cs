@@ -187,7 +187,7 @@ public sealed class MethodologyRuntime
 	// named in it): `work` is one of the quartet's four kinds, so RenderPresetDefinition renders
 	// it VERBATIM into a real quartet-provisioned project's stored definition exactly like
 	// `spec` — IsDefinedKind("work") is TRUE there, so `PresetKind(...) == BoardKind.Work` reads
-	// null and never matches. TasksService.RequireBlockersAsync gated the "a Blocked task must
+	// null and never matches. The blocker guard (now GuardEngine.RequireBlockers) gated the "a Blocked task must
 	// name a blocker" invariant on exactly that comparison, so it silently never fired on any
 	// real project's work board (only on the bare-preset shape a hand-built test uses). Use this
 	// wherever the question is "is this board's effective kind `work`", never PresetKind(...) ==

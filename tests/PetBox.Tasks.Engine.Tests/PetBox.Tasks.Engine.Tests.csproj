@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- The pure-unit suite of the DB-free methodology engine (methodology-engine-extraction,
+	     slice 4). It references PetBox.Tasks.Engine and NOTHING else on purpose: the engine's
+	     whole point is that its decisions are deterministic functions, so a test that could
+	     reach a store, a host or linq2db would be able to hide exactly the coupling the
+	     extraction removed. The reference list IS the architectural assertion — keep it at one
+	     entry. The existing DB-bound parity grid stays where it is (tests/PetBox.Tests/Tasks/);
+	     this suite is the second half of acceptance condition 5 (error-string equality). -->
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1812;CA1859;CA1001</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="AwesomeAssertions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+		<Using Include="AwesomeAssertions" />
+		<Using Include="PetBox.Tasks.Workflow" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\PetBox.Tasks.Engine\PetBox.Tasks.Engine.csproj" />
+	</ItemGroup>
+
+</Project>
