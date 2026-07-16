@@ -20,6 +20,7 @@ COPY src/PetBox.Config/PetBox.Config.csproj ./src/PetBox.Config/
 COPY src/PetBox.Log.Core/PetBox.Log.Core.csproj ./src/PetBox.Log.Core/
 COPY src/PetBox.Data/PetBox.Data.csproj ./src/PetBox.Data/
 COPY src/PetBox.Dashboard/PetBox.Dashboard.csproj ./src/PetBox.Dashboard/
+COPY src/PetBox.Tasks.Engine/PetBox.Tasks.Engine.csproj ./src/PetBox.Tasks.Engine/
 COPY src/PetBox.Tasks/PetBox.Tasks.csproj ./src/PetBox.Tasks/
 COPY src/PetBox.Memory/PetBox.Memory.csproj ./src/PetBox.Memory/
 COPY src/PetBox.Sessions/PetBox.Sessions.csproj ./src/PetBox.Sessions/
@@ -35,6 +36,7 @@ COPY src/PetBox.Config/ ./src/PetBox.Config/
 COPY src/PetBox.Log.Core/ ./src/PetBox.Log.Core/
 COPY src/PetBox.Data/ ./src/PetBox.Data/
 COPY src/PetBox.Dashboard/ ./src/PetBox.Dashboard/
+COPY src/PetBox.Tasks.Engine/ ./src/PetBox.Tasks.Engine/
 COPY src/PetBox.Tasks/ ./src/PetBox.Tasks/
 COPY src/PetBox.Memory/ ./src/PetBox.Memory/
 COPY src/PetBox.Sessions/ ./src/PetBox.Sessions/
