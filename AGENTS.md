@@ -273,7 +273,11 @@ derivable from code/git/config; do **not** store what the repo/git already recor
 transient state, secrets, or actionable work (that's a task). `Feedback`/`Project`
 entries should include the *why* and *how to apply*. Search before writing, update
 over duplicating, delete when wrong (temporal history makes deletes safe). A cold
-`tasks_upsert` / `memory_upsert` auto-creates the board/store.
+`tasks_upsert` / `memory_upsert` to an **unknown** board/store is now **rejected**
+(with a "did you mean X?" suggestion) — the agent MCP layer requires explicit creation
+(`tasks_board_create` / `memory_store_create`, or a methodology). The reserved system
+stores (`canon`, `notes`, `autocaptured`, `session-digests`, `ops`) always exist; the
+admin UI and background jobs are unchanged.
 
 ## Documents — what's here
 

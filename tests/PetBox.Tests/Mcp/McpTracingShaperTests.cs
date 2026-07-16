@@ -78,13 +78,15 @@ public sealed class McpTracingShaperTests
 		// like marked ones elsewhere. Markup is the ONLY thing that opens the gate.
 		var args = new { projectKey = "p", q = "secret needle", limit = 5, bodyLen = 240 };
 
-		McpLoggedArgs.For("memory_upsert").Should().BeEmpty();
+		// memory_get marks NO parameters (unlike memory_upsert, which marks `store` for the
+		// namespace-creation telemetry) — an unmarked tool contributes nothing regardless of args.
+		McpLoggedArgs.For("memory_get").Should().BeEmpty();
 		McpLoggedArgs.For("no_such_tool").Should().BeEmpty();
 		McpLoggedArgs.For(null).Should().BeEmpty();
 
 		Shapers("no_such_tool", args).Should().BeEmpty();
 		Shapers(null, args).Should().BeEmpty();
-		LogProps("memory_upsert", args).Should().BeEmpty();
+		LogProps("memory_get", args).Should().BeEmpty();
 	}
 
 	// --- Presence mode: the value NEVER leaves the process ---
@@ -230,10 +232,11 @@ public sealed class McpTracingShaperTests
 	}
 
 	[Fact]
-	public void Fields_Survives_On_An_Unmarked_Tool()
+	public void Fields_Survives_Independently_Of_Arg_Markup()
 	{
-		// The field shape is DERIVED, not declared: it does not depend on [LogArg] markup and so
-		// keeps working for the upsert tools, which mark no parameters at all.
+		// The field shape is DERIVED, not declared: it does not depend on [LogArg] markup. Here
+		// `board` is omitted, so tasks_upsert's one marked arg contributes nothing, yet the derived
+		// `fields` shape is still emitted off the node payload.
 		Shapers("tasks_upsert", new { projectKey = "p", nodes = new[] { new { key = "a", status = "Done" } } })
 			.Should().ContainKey("petbox.arg.fields").WhoseValue.Should().Be("key,status");
 	}

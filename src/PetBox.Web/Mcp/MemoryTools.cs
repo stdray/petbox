@@ -27,7 +27,7 @@ public static class MemoryTools
 	[Description("CREATE a named memory store. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
-		string projectKey, string store, string? description = null,
+		string projectKey, [LogArg] string store, string? description = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
@@ -96,7 +96,7 @@ public static class MemoryTools
 	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
-		string projectKey, string store,
+		string projectKey, [LogArg] string store,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
@@ -195,9 +195,10 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
-		An unrecognized `store` value is AUTO-CREATED, not rejected — a typo silently forks
-		memory into a new, unreachable namespace. Unsure a store exists? Check `memory_store_list`
-		first.
+		An unrecognized `store` value is REJECTED (with a "did you mean 'X'?" suggestion), NOT
+		auto-created — create a store explicitly with `memory_store_create` first (the reserved
+		system stores canon/notes/autocaptured/session-digests/ops are the exception; they always
+		exist). Unsure a store exists? Check `memory_store_list`.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
 		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
 		On a NEW entry (version 0) omitted fields start empty.
@@ -233,7 +234,7 @@ public static class MemoryTools
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
-		string projectKey, string store,
+		string projectKey, [LogArg] string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
@@ -244,6 +245,7 @@ public static class MemoryTools
 		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
+		await AssertStoreCreatableOrKnownAsync(memory, projectKey, store, ct);
 		var (upserts, deletes) = ParseEntries(entries);
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct), bodyLen);
 	}
@@ -338,7 +340,7 @@ public static class MemoryTools
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
-		string text, string? scope = null, string? projectKey = null, string? store = null,
+		string text, string? scope = null, string? projectKey = null, [LogArg] string? store = null,
 		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
 	{
@@ -348,6 +350,7 @@ public static class MemoryTools
 		var container = await ResolveScopeAsync(http, wsmem, projectKey, scope, ct);
 		await AssertMemoryProjectAsync(http, wsmem, container.Key, ct);
 		var st = NormalizeStore(store);
+		await AssertStoreCreatableOrKnownAsync(memory, container.Key, st, ct);
 		var key = "m-" + Guid.NewGuid().ToString("N");
 		var input = new MemoryEntryInput
 		{
@@ -760,6 +763,41 @@ public static class MemoryTools
 
 	static string NormalizeStore(string? store) =>
 		string.IsNullOrWhiteSpace(store) ? DefaultStore : store.Trim();
+
+	// Reserved system stores — ALWAYS auto-vivify on first write, NEVER gated. This is the UNION
+	// of every set that legitimately creates a store below the tool layer, hardcoded here (not
+	// referenced) because the module boundary (MemoryBoundaryTests) forbids this Web layer from
+	// depending on the store door PetBox.Memory.Data.MemoryStore, where two of the sets live.
+	// MemoryReservedStoresDriftTests pins this against the authoritative sets so a new system
+	// store cannot drift out of the reserve:
+	//   - memory_remember's default store        → "notes"            (DefaultStore, this class)
+	//   - MemoryStore.SystemStoreNames (IsSystem) → session-digests, autocaptured, canon
+	//   - MemoryStores.SensitiveNames (secrets)   → "ops"
+	internal static readonly IReadOnlySet<string> ReservedStores =
+		new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+		{ DefaultStore, "session-digests", "autocaptured", "canon", "ops" };
+
+	// The namespace-creation GATE for memory stores (spec agent-namespace-provisioning, variant C
+	// — hard opt-in): an AGENT write verb (memory_upsert / memory_remember) naming a store that
+	// does not exist is REJECTED with a did-you-mean, not auto-created. Creation is explicit
+	// (memory_store_create). Reserved system stores always pass (background jobs + reserved
+	// plumbing must keep auto-vivifying). This gate lives at the MCP tool layer ONLY — the service
+	// door (MemoryService/MemoryStore.EnsureAsync) still auto-vivifies for its internal callers.
+	static async Task AssertStoreCreatableOrKnownAsync(
+		IMemoryService memory, string projectKey, string store, CancellationToken ct)
+	{
+		var name = store?.Trim() ?? "";
+		if (ReservedStores.Contains(name)) return;
+		if (await memory.StoreExistsAsync(projectKey, name, ct)) return;
+
+		var existing = (await memory.ListStoresAsync(projectKey, ct)).Select(s => s.Name);
+		var near = NamespaceSuggest.Nearest(name, existing.Concat(ReservedStores));
+		var hint = near.Count == 0 ? "" : $" Did you mean {string.Join(" / ", near.Select(n => $"'{n}'"))}?";
+		throw new InvalidOperationException(
+			$"Memory store '{name}' does not exist in '{projectKey}'.{hint} "
+			+ "Create it explicitly with memory_store_create — the agent write path no longer "
+			+ "auto-creates a store (a typo used to silently fork memory into an unreachable namespace).");
+	}
 
 	// W6 provenance surface (spec memoverhaul-provenance-surface): the count of DISTINCT sessions
 	// a fact was observed in, parsed cheaply from the entry metadata the session jobs stamp —

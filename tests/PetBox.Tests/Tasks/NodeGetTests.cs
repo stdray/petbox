@@ -37,6 +37,11 @@ public sealed class NodeGetTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
+		// The tool layer no longer auto-vivifies a board (namespace-creation gate); these tests
+		// upsert directly to "b" and "other", so create both up front (simple boards, as the old
+		// cold-upsert auto-vivify did).
+		_tasks.CreateBoardAsync(Proj, "b", null, null, null).GetAwaiter().GetResult();
+		_tasks.CreateBoardAsync(Proj, "other", null, null, null).GetAwaiter().GetResult();
 	}
 
 	public void Dispose()

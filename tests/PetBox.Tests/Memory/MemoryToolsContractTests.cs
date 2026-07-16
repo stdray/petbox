@@ -173,6 +173,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// rich input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note).
 		var entries = McpInputs.EntriesJson("""[{"key":"k","type":"project","description":"d","body":"b"}]""");
+		// The tool layer no longer auto-vivifies a store (namespace-creation gate); create the
+		// non-reserved store explicitly first.
+		await _memory.CreateStoreAsync(Proj, "strstore", null);
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "strstore", entries);
 		res.Added.Should().ContainSingle()
 			.Which.Key.Should().Be("k");

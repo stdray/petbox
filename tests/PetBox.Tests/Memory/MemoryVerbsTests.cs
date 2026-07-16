@@ -168,6 +168,9 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_SearchesEveryStoreByDefault()
 	{
 		var http = Http("memory:read,memory:write");
+		// "journal" is a non-reserved store; the tool layer no longer auto-vivifies (namespace gate),
+		// so create it explicitly before writing to it.
+		await _memory.CreateStoreAsync(Proj, "journal", null);
 		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "alpha lives in notes", store: "notes");
 		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "alpha lives in journal", store: "journal");
 

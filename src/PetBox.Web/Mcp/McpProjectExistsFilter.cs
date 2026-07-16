@@ -218,32 +218,9 @@ static class McpProjectExistsFilter
 			return Math.Min(typo.Length, candidate.Length) >= MinPrefix
 				? Math.Abs(typo.Length - candidate.Length)
 				: int.MaxValue;
-		var distance = Distance(typo, candidate, budget);
+		// The Levenshtein core is shared with the namespace gates (NamespaceSuggest); only the
+		// prefix leg above is project-key-specific (project keys are hierarchical, namespaces are not).
+		var distance = NamespaceSuggest.Distance(typo, candidate, budget);
 		return distance <= budget ? distance : int.MaxValue;
-	}
-
-	// Levenshtein, abandoned once every cell of a row exceeds the budget (the registry rows that are
-	// nowhere near the typo cost one short row each).
-	static int Distance(string a, string b, int budget)
-	{
-		if (Math.Abs(a.Length - b.Length) > budget) return int.MaxValue;
-		var previous = new int[b.Length + 1];
-		var current = new int[b.Length + 1];
-		for (var j = 0; j <= b.Length; j++) previous[j] = j;
-
-		for (var i = 1; i <= a.Length; i++)
-		{
-			current[0] = i;
-			var best = current[0];
-			for (var j = 1; j <= b.Length; j++)
-			{
-				var cost = char.ToLowerInvariant(a[i - 1]) == char.ToLowerInvariant(b[j - 1]) ? 0 : 1;
-				current[j] = Math.Min(Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + cost);
-				best = Math.Min(best, current[j]);
-			}
-			if (best > budget) return int.MaxValue;
-			(previous, current) = (current, previous);
-		}
-		return previous[b.Length];
 	}
 }
