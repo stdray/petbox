@@ -13,8 +13,10 @@ public sealed class NodeRefResolver
 	public NodeRefResolver(ITaskBoardStore boards) => _boards = boards;
 
 	// A NodeId is a 32-hex Guid ("N"); a slug starts [a-z] and can't be 32 hex chars in
-	// practice — the two are trivially distinguishable.
-	public static bool LooksLikeNodeId(string v) => v.Length == 32 && v.All(Uri.IsHexDigit);
+	// practice — the two are trivially distinguishable. The predicate itself lives in the
+	// engine (GuardEngine.LooksLikeNodeId), which resolves the same slug-or-NodeId refs
+	// purely; delegating keeps one definition rather than two that can drift.
+	public static bool LooksLikeNodeId(string v) => PetBox.Tasks.Workflow.GuardEngine.LooksLikeNodeId(v);
 
 	// NodeRefPolicy.Strict — write-addressing / tasks_node_get: miss and ambiguity throw.
 	public Task<string> ResolveStrictAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default)

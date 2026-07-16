@@ -1201,27 +1201,38 @@ public sealed partial class TasksService : ITasksService
 			.ToDictionary(g => g.Key, g => g.First().Version, StringComparer.Ordinal);
 		var live = upsertPatches;
 		PlanNode[] desired;
-		Dictionary<string, string> specRefs, blockedBy, ideaRefs;
+		IReadOnlyDictionary<string, string> specRefs, blockedBy, ideaRefs;
+
+		// EVERY row the resolvers and guards need, fetched ONCE for the whole call
+		// (methodology-engine-extraction, slice 3): the node index, the boards, the inbound
+		// `blocks` edges, the active part_of children, the board's comment tags. This is the
+		// context the pure engine judges on — it is retry-loop-STABLE (built from `prior` and the
+		// patches AS SUBMITTED, neither of which the loop narrows), so re-running the engine after
+		// a rejection costs no IO and can never see a different world than the pass before.
+		var engineContext = await BuildEngineContextAsync(projectKey, meta, board, runtime, kindSlug, nodes, prior, ct);
+		var priorStates = prior.ToDictionary(kv => kv.Key, kv => ToNodeState(kv.Value), StringComparer.Ordinal);
+
 		while (true)
 		{
 			try
 			{
 				desired = live.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor, p.Reason) with { Board = board }).ToArray();
 				ValidateChanges(desired, prior);
-				// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
-				// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
-				specRefs = ResolveSpecRefs(projectKey, meta, LinkFields(live, p => p.SpecRef));
-				// blockedBy resolves ONCE up front too, so the `blocks` edge always carries a NodeId.
-				blockedBy = ResolveBlockedBy(board, desired, prior, LinkFields(live, p => p.BlockedBy));
-				// ideaRef resolves ONCE up front the same way (slug → the ideas board of this instance),
-				// so both the constraint check and the idea_spec edge write see a NodeId, never a slug.
-				ideaRefs = await ResolveIdeaRefsAsync(projectKey, meta, runtime, LinkFields(live, p => p.IdeaRef), ct);
 				using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 				{
-					RequireDefinitionLinks(runtime, kindSlug, desired, prior, specRefs, blockedBy, ideaRefs);
-					await ValidateLinkTargetsAsync(projectKey, meta, kindSlug, runtime, specRefs, ideaRefs, ct);
-					await RequireBlockersAsync(runtime, kindSlug, projectKey, desired, blockedBy, ct);
-					await RequirePreconditionArtifactsAsync(runtime, kindSlug, projectKey, board, desired, prior, ct);
+					// ONE pure decision replaces the seven inline resolve/guard calls that each used
+					// to fetch for themselves. The engine resolves the slug refs (specRef/ideaRef/
+					// blockedBy) and judges, in the historical order, and STOPS at the first refusal
+					// — so this seam still produces exactly one exception per pass, naming one node,
+					// which is all the partial-mode catch below ever saw.
+					var decision = GuardEngine.Decide(engineContext, desired.Select(ToNodeState).ToList(), priorStates,
+						LinkFields(live, p => p.SpecRef), LinkFields(live, p => p.BlockedBy), LinkFields(live, p => p.IdeaRef));
+					if (decision.Verdicts.Count > 0) throw ToRefusal(decision.Verdicts[0]);
+					// The resolved maps hold NodeIds only — the post-write edge writes (LinkRefsAsync)
+					// read them and must never see a raw slug.
+					specRefs = decision.SpecRefs;
+					blockedBy = decision.BlockedBy;
+					ideaRefs = decision.IdeaRefs;
 				}
 				break;
 			}
@@ -1260,7 +1271,9 @@ public sealed partial class TasksService : ITasksService
 			{
 				if (!prior.TryGetValue(p.Key, out var row))
 					continue; // idempotent: nothing active to delete
-				if ((await ActivePartOfChildrenAsync(projectKey, row.NodeId, ct)).Any(c => !dyingIds.Contains(c)))
+							  // The children come from the prefetched context (condition 2) — the guard's own
+							  // per-delete relation+node round-trip is gone, the judgement is unchanged.
+				if (engineContext.PartOfChildrenByNodeId.GetValueOrDefault(row.NodeId, []).Any(c => !dyingIds.Contains(c)))
 					guardConflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, row.Version,
 						"node has active part_of children — delete them first (or in the same batch)"));
 				else
@@ -1788,57 +1801,17 @@ public sealed partial class TasksService : ITasksService
 		return map;
 	}
 
-	// DATA-DRIVEN transition gate (idea-review-needs-plan generalized): a transition whose
-	// definition names a PreconditionArtifact requires an active `artifact:<slug>` comment
-	// on the node before it fires — the ideas preset gates exploring→review on
-	// `artifact:spec_plan` (the spec-update plan), a definition kind declares its own.
-	// WorkflowEngine stays pure (kind/type/from/to); this guard lives here because it
-	// reads comments (ICommentService). Mirrors WorkflowEngine's from-resolution
-	// (unchanged status skipped, unknown prior = recovery); landing DIRECTLY in a gated
-	// target status at creation is refused too, so the gate can't be bypassed by birth.
-	// NodeId comes from the prior row (desired rows get their NodeId assigned inside the
-	// temporal upsert, after this check).
-	async Task RequirePreconditionArtifactsAsync(
-		MethodologyRuntime runtime, string? kindSlug, string projectKey, string board,
-		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
-	{
-		foreach (var d in desired)
+	// A pure verdict, re-raised as the exception the guard used to throw at this very spot: same
+	// TYPE (load-bearing — NodeRejection.cs), same message, same indicted node key. This is the
+	// ONLY glue between the engine's verdict contract and UpsertAsync's exception-driven partial
+	// cascade: the engine judges, the service raises, and `ex.RejectedNode()` / TemporalStore.
+	// Cascade / the atomic passthrough downstream stay bit-for-bit what they were.
+	static Exception ToRefusal(MethodologyVerdict v) =>
+		(v.Kind switch
 		{
-			var wf = runtime.For(kindSlug, d.Type.Length == 0 ? null : d.Type);
-			if (wf is null) continue; // ApplyWorkflow already rejected the unknown type
-			var p = prior.GetValueOrDefault(d.Key) ?? (d.PrevKey is not null ? prior.GetValueOrDefault(d.PrevKey) : null);
-			var from = p?.Status;
-			if (from is not null && string.Equals(from, d.Status, StringComparison.OrdinalIgnoreCase)) continue; // unchanged
-			if (from is not null && wf.Status(from) is null) from = null; // recovery — mirrors WorkflowEngine
-
-			string? artifact;
-			string transition;
-			if (from is null)
-			{
-				// No transition fired (creation/recovery) — but if any transition INTO this
-				// status is gated, entering it directly must satisfy the same artifact.
-				var gated = wf.Transitions.FirstOrDefault(t =>
-					t.PreconditionArtifact is not null && string.Equals(t.To, d.Status, StringComparison.OrdinalIgnoreCase));
-				if (gated is null) continue;
-				artifact = gated.PreconditionArtifact;
-				transition = $"'{gated.From}' -> '{gated.To}'";
-			}
-			else
-			{
-				var tr = wf.Transition(from, d.Status);
-				if (tr?.PreconditionArtifact is null) continue;
-				artifact = tr.PreconditionArtifact;
-				transition = $"'{from}' -> '{d.Status}'";
-			}
-
-			var tag = $"artifact:{artifact}";
-			if (p is null || p.NodeId.Length == 0)
-				throw new InvalidOperationException($"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment; create the node, add the comment, then transition").ForNode(d.Key);
-			var comments = await _comments.ListForNodeAsync(projectKey, board, p.NodeId, ct);
-			if (!comments.Any(c => c.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))))
-				throw new InvalidOperationException($"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact) — add the comment, then retry").ForNode(d.Key);
-		}
-	}
+			VerdictKind.InvalidOperation => new InvalidOperationException(v.Message),
+			_ => (Exception)new ArgumentException(v.Message),
+		}).ForNode(v.Node);
 
 	// Default status, assign/carry the stable NodeId (new = fresh, edit = keep, rename =
 	// inherit from source), and validate status/transition — the single workflow point.
@@ -1930,173 +1903,111 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// specRef accepts the spec node's slug OR its NodeId, mirroring part_of (ResolveParentId).
-	// A slug resolves against the board's linked spec board (SpecBoard); the returned map holds
-	// NodeIds only. NodeId-shaped values pass through untouched (existing behavior).
-	Dictionary<string, string> ResolveSpecRefs(string projectKey, TaskBoardMeta board, Dictionary<string, string> specRefs)
+	// The methodology engine's IO-free input, assembled ONCE per upsert (methodology-engine-
+	// extraction, slice 3). Every fetch here used to sit INSIDE a guard or a resolver, re-run per
+	// pass of the retry loop and, for the edge/comment reads, per node:
+	//   ResolveSpecRefs      — a connection + a spec-board query
+	//   ResolveIdeaRefs      — _boards.ListAsync + a connection + a query per slug ref
+	//   ValidateLinkTargets  — BuildNodeIndexAsync (_boards.ListAsync + a scan per board)
+	//   RequireBlockers      — _relations.ListAsync per Blocked node
+	//   RequirePrecondition  — _comments.ListForNodeAsync per gated node
+	//   the delete guard     — _relations.ListAsync + a connection per deleted node
+	// They are now one board list, one node scan, one relation query and (only for a kind that
+	// gates on artifacts) one comment query — shared by all of them, for every pass.
+	//
+	// LAZINESS IS PART OF THE PARITY, not an optimization on top of it: each of those reads was
+	// guarded by an early return (no refs -> no index; not a work kind -> no edges), so a plain
+	// upsert paid for none of them. The `needs*` predicates below reproduce exactly those gates
+	// from data that does NOT narrow across the retry loop — the patches AS SUBMITTED and `prior`
+	// — so the context is stable even though it is cheap.
+	async Task<MethodologyEngineContext> BuildEngineContextAsync(
+		string projectKey, TaskBoardMeta meta, string board, MethodologyRuntime runtime, string? kindSlug,
+		IReadOnlyList<NodePatch> nodes, Dictionary<string, PlanNode> prior, CancellationToken ct)
 	{
-		if (specRefs.Count == 0) return specRefs;
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var (key, raw) in specRefs.ToList())
+		var upserts = nodes.Where(p => !p.Deleted).ToList();
+		var deletes = nodes.Where(p => p.Deleted).ToList();
+
+		// The node index + the board list serve specRef resolution, ideaRef resolution and the
+		// link-target guard alike; all three are dead unless the batch carries a ref field, which
+		// is precisely when the old code built the index at all.
+		var needsIndex = upserts.Any(p => !string.IsNullOrWhiteSpace(p.SpecRef) || !string.IsNullOrWhiteSpace(p.IdeaRef));
+		IReadOnlyDictionary<string, NodeIndexEntry> nodeIndex = new Dictionary<string, NodeIndexEntry>(StringComparer.Ordinal);
+		IReadOnlyList<EngineBoard> boards = [];
+		if (needsIndex)
 		{
-			var v = raw.Trim();
-			if (NodeRefResolver.LooksLikeNodeId(v)) { specRefs[key] = v; continue; }
-			if (board.SpecBoard is not { Length: > 0 } sb)
-				throw new ArgumentException($"specRef '{raw}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId").ForNode(key);
-			var slug = v.ToLowerInvariant();
-			var target = ctx.PlanNodes.Where(n => n.Board == sb && n.ActiveTo == null && n.Key == slug).ToList().FirstOrDefault();
-			if (target is null || target.NodeId.Length == 0)
-				throw new ArgumentException($"specRef '{raw}' (node '{key}') does not match any node on spec board '{sb}'").ForNode(key);
-			specRefs[key] = target.NodeId;
+			var metas = await _boards.ListAsync(projectKey, ct);
+			boards = metas.Select(b => new EngineBoard(b.Name, b.Kind, b.MethodologyInstance ?? "", b.ClosedAt != null)).ToList();
+			nodeIndex = (await BuildNodeIndexAsync(projectKey, ct))
+				.ToDictionary(kv => kv.Key, kv => new NodeIndexEntry(kv.Key, kv.Value.Board, kv.Value.BoardKind, kv.Value.Slug, kv.Value.Status, kv.Value.Type), StringComparer.Ordinal);
 		}
-		return specRefs;
-	}
 
-	// ideaRef accepts the idea node's slug OR its NodeId, mirroring specRef (ResolveSpecRefs).
-	// There is no SpecBoard-style pin for ideas, so a slug resolves against the board(s) whose
-	// kind is the idea_spec target kind (`ideas`) INSIDE THIS BOARD'S methodology-instance
-	// bucket — the same membership grouping AutoWireSpecAsync wires work→spec within, so a
-	// multi-instance project never resolves an ideaRef across instances. Any active row matches:
-	// no status filter (the only legal target is TERMINAL `accepted`; the kind/status constraint
-	// still runs afterwards in ValidateLinkTargetsAsync). NodeId-shaped values pass through
-	// untouched. Callable from any board that carries an ideaRef (spec today, work as well).
-	async Task<Dictionary<string, string>> ResolveIdeaRefsAsync(
-		string projectKey, TaskBoardMeta board, MethodologyRuntime runtime,
-		Dictionary<string, string> ideaRefs, CancellationToken ct)
-	{
-		if (ideaRefs.Count == 0) return ideaRefs;
-		var slugRefs = ideaRefs.Where(kv => !NodeRefResolver.LooksLikeNodeId(kv.Value.Trim())).ToList();
-		foreach (var (key, raw) in ideaRefs.ToList())
-			ideaRefs[key] = raw.Trim();
-		if (slugRefs.Count == 0) return ideaRefs;
-
-		// The target kind is DATA: the writing kind's idea_spec constraint names it (spec preset:
-		// `ideas`); a definition that declares no target falls back to the preset ideas kind.
-		var targetKind = runtime.LinkConstraints(board.Kind)
-			.FirstOrDefault(c => string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)
-			?.TargetKind ?? BoardKind.Ideas.ToString().ToLowerInvariant();
-
-		var instance = board.MethodologyInstance ?? "";
-		var ideaBoards = (await _boards.ListAsync(projectKey, ct))
-			.Where(b => b.ClosedAt == null
-				&& string.Equals(b.MethodologyInstance ?? "", instance, StringComparison.OrdinalIgnoreCase)
-				&& string.Equals(runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase))
-			.Select(b => b.Name)
-			.OrderBy(n => n, StringComparer.Ordinal)
-			.ToList();
-
-		var (firstKey, firstRaw) = slugRefs[0];
-		if (ideaBoards.Count == 0)
-			throw new ArgumentException($"ideaRef '{firstRaw}' (node '{firstKey}') is a slug, but no active {targetKind} board exists alongside board '{board.Name}'{InstanceSuffix(instance)} — create one or provide the idea node's NodeId").ForNode(firstKey);
-
-		var boardList = string.Join(", ", ideaBoards);
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var (key, raw) in slugRefs)
+		// Edge prefetch, ONE query for both consumers. The blocker invariant only fires on a work
+		// kind; the delete guard only fires when something is deleted. A node born in this call has
+		// a fresh NodeId and no edges, so only rows that ALREADY exist can contribute — the ids come
+		// from `prior` (via the patch key and, for a rename, its PrevKey), which the loop never narrows.
+		var blockerIds = runtime.IsWorkKind(kindSlug) ? PriorNodeIds(upserts, prior) : [];
+		var deleteIds = PriorNodeIds(deletes, prior);
+		var blockerEdges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+		var partOfChildren = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+		var edgeIds = blockerIds.Concat(deleteIds).ToHashSet(StringComparer.Ordinal);
+		if (edgeIds.Count > 0)
 		{
-			var slug = raw.Trim().ToLowerInvariant();
-			var hits = ctx.PlanNodes
-				.Where(n => ideaBoards.Contains(n.Board) && n.ActiveTo == null && n.Key == slug)
-				.ToList()
-				.Where(n => n.NodeId.Length > 0)
-				.ToList();
-			ideaRefs[key] = hits.Count switch
+			var edges = await _relations.ListForNodesAsync(projectKey, edgeIds, ct);
+			foreach (var id in blockerIds)
 			{
-				1 => hits[0].NodeId,
-				0 => throw new ArgumentException($"ideaRef '{raw}' (node '{key}') does not match any node on {targetKind} board{(ideaBoards.Count > 1 ? "s" : "")} '{boardList}'").ForNode(key),
-				_ => throw new ArgumentException($"ambiguous ideaRef '{raw}' (node '{key}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the idea node's NodeId instead").ForNode(key),
-			};
-		}
-		return ideaRefs;
-	}
-
-	static string InstanceSuffix(string instance) =>
-		instance.Length == 0 ? "" : $" in methodology instance '{instance}'";
-
-	// blockedBy accepts the blocker's slug OR its NodeId, mirroring specRef (ResolveSpecRefs).
-	// A slug resolves on THIS board (blockers are usually siblings) over the active rows
-	// overlaid with this batch, so a blocker created in the same call resolves too. The
-	// returned map holds NodeIds only; NodeId-shaped values pass through untouched.
-	static Dictionary<string, string> ResolveBlockedBy(
-		string board, PlanNode[] desired, IReadOnlyDictionary<string, PlanNode> prior, Dictionary<string, string> blockedBy)
-	{
-		if (blockedBy.Count == 0) return blockedBy;
-		var slugToId = prior.Values.Where(n => n.NodeId.Length > 0)
-			.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var n in desired.Where(n => n.NodeId.Length > 0))
-			slugToId[n.Key] = n.NodeId;
-		foreach (var (key, raw) in blockedBy.ToList())
-		{
-			var v = raw.Trim();
-			if (NodeRefResolver.LooksLikeNodeId(v)) { blockedBy[key] = v; continue; }
-			if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var id))
-				throw new ArgumentException($"blockedBy '{raw}' (node '{key}') does not match any node on board '{board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board").ForNode(key);
-			blockedBy[key] = id;
-		}
-		return blockedBy;
-	}
-
-	// DATA-DRIVEN link-target guard (schema v2, was ValidateSpecRefsAsync +
-	// RequireAcceptedIdeaForSpecAsync): every PROVIDED ref must resolve to a real node, and
-	// when the writing kind's constraints declare a target for that link kind (TargetKind /
-	// TargetStatuses), the target's EFFECTIVE kind and status must match. The target rule is
-	// KIND-level, not type-level: the constraint's Type says who MUST carry the link, its
-	// target says what the link points at for this kind — so a voluntary ref (e.g. a chore's
-	// specRef) is validated by the same rule. The SpecBoard binding stays alongside: it is
-	// the quartet auto-wire's board pin, data on the board meta rather than the methodology.
-	async Task ValidateLinkTargetsAsync(
-		string projectKey, TaskBoardMeta board, string? kindSlug, MethodologyRuntime runtime,
-		Dictionary<string, string> specRefs, Dictionary<string, string> ideaRefs, CancellationToken ct)
-	{
-		if (specRefs.Count == 0 && ideaRefs.Count == 0) return;
-		var index = await BuildNodeIndexAsync(projectKey, ct);
-		var constraints = runtime.LinkConstraints(kindSlug);
-
-		ValidateRefs("specRef", "task_spec", specRefs);
-		ValidateRefs("ideaRef", "idea_spec", ideaRefs);
-
-		// Auto-wire pin: when this board links a specific spec board, every specRef must
-		// live on it (same message as always).
-		if (board.SpecBoard is { Length: > 0 } sb)
-			foreach (var (key, refId) in specRefs)
-				if (index.TryGetValue(refId, out var t) && t.Board != sb)
-					throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'").ForNode(key);
-
-		void ValidateRefs(string field, string link, Dictionary<string, string> refs)
-		{
-			if (refs.Count == 0) return;
-			// The kind's target rule for this link kind: the first constraint declaring one
-			// (the validator keeps (type, link) pairs unique; quartet declares one rule per link).
-			var rule = constraints.FirstOrDefault(c =>
-				string.Equals(c.Link, link, StringComparison.OrdinalIgnoreCase)
-				&& (c.TargetKind is not null || c.TargetStatuses is { Count: > 0 }));
-			foreach (var (key, refId) in refs)
+				var into = edges.Where(e => e.Kind == "blocks" && string.Equals(e.ToNodeId, id, StringComparison.Ordinal))
+					.Select(e => e.FromNodeId).ToList();
+				if (into.Count > 0) blockerEdges[id] = into;
+			}
+			// part_of children, then ONE liveness query for all of them at once: a child edge whose
+			// own row is already gone would dangle nothing (ActivePartOfChildrenAsync's rule —
+			// terminal-status children still count, they are active rows).
+			var childrenOf = deleteIds.ToDictionary(id => id,
+				id => edges.Where(e => e.Kind == "part_of" && string.Equals(e.ToNodeId, id, StringComparison.Ordinal))
+					.Select(e => e.FromNodeId).ToList(), StringComparer.Ordinal);
+			var allChildren = childrenOf.Values.SelectMany(x => x).Distinct(StringComparer.Ordinal).ToList();
+			if (allChildren.Count > 0)
 			{
-				if (!index.TryGetValue(refId, out var t))
-					throw new ArgumentException($"{field} '{refId}' (node '{key}') does not resolve to any node").ForNode(key);
-				if (rule is null) continue;
-				if (rule.TargetKind is not null && !string.Equals(runtime.KindName(t.BoardKind), rule.TargetKind, StringComparison.OrdinalIgnoreCase))
-					throw new ArgumentException($"{field} '{refId}' (node '{key}') points to board '{t.Board}', which is not a {rule.TargetKind} board").ForNode(key);
-				if (rule.TargetStatuses is { Count: > 0 } ts && !ts.Contains(t.Status, StringComparer.OrdinalIgnoreCase))
-					throw new ArgumentException($"{field} '{refId}' (node '{key}') target is '{t.Status}', not {string.Join("|", ts)} — a {runtime.KindName(kindSlug)} change needs a {rule.TargetKind ?? link} node in status {string.Join("|", ts)}").ForNode(key);
+				using var ctx = _boards.NewEnsuredConnection(projectKey);
+				var alive = ctx.PlanNodes.Where(n => n.ActiveTo == null && allChildren.Contains(n.NodeId))
+					.Select(n => n.NodeId).ToList().ToHashSet(StringComparer.Ordinal);
+				foreach (var (id, kids) in childrenOf)
+				{
+					var live = kids.Where(alive.Contains).ToList();
+					if (live.Count > 0) partOfChildren[id] = live;
+				}
 			}
 		}
+
+		// The artifact gate reads comment tags. The ENGINE declares whether this kind can gate at
+		// all (GuardEngine.NeedsCommentTags — pure runtime data); only then does the service pay,
+		// and then for the whole board in one pass instead of a read per gated node mid-decision.
+		var commentTags = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+		if (upserts.Count > 0 && GuardEngine.NeedsCommentTags(runtime, kindSlug))
+			foreach (var g in await _comments.ListForBoardAsync(projectKey, board, ct))
+				commentTags[g.Key] = g.SelectMany(c => c.Tags).ToList();
+
+		return new MethodologyEngineContext(
+			runtime, kindSlug, board, meta.Name, meta.SpecBoard, meta.MethodologyInstance ?? "",
+			nodeIndex, boards, blockerEdges, partOfChildren, commentTags);
 	}
 
-	// NodeIds of this node's part_of children whose own row is still active. Terminal-status
-	// children count too — they are active rows and would dangle just the same.
-	async Task<IReadOnlyList<string>> ActivePartOfChildrenAsync(string projectKey, string nodeId, CancellationToken ct)
+	// The already-active NodeIds these patches address (a rename addresses its source row) —
+	// the only ids an edge of THIS batch's world can already point at.
+	static List<string> PriorNodeIds(IReadOnlyList<NodePatch> patches, Dictionary<string, PlanNode> prior)
 	{
-		if (nodeId.Length == 0) return [];
-		var childIds = (await _relations.ListAsync(projectKey, nodeId, "to", ct: ct))
-			.Where(e => e.Kind == "part_of").Select(e => e.FromNodeId).ToList();
-		if (childIds.Count == 0) return [];
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return childIds.Where(id => ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == id)).ToList();
+		var ids = new List<string>();
+		foreach (var p in patches)
+		{
+			var row = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
+			if (row is { NodeId.Length: > 0 } && !ids.Contains(row.NodeId, StringComparer.Ordinal)) ids.Add(row.NodeId);
+		}
+		return ids;
 	}
 
 	// Create relation edges from a per-node field after the upsert applies. task_spec
 	// (specRef): task -> spec. blocks (blockedBy): blocker -> task. Idempotent.
-	async Task LinkRefsAsync(string projectKey, string kind, PlanNode[] desired, Dictionary<string, string> refs, bool blockerIsFrom, CancellationToken ct)
+	async Task LinkRefsAsync(string projectKey, string kind, PlanNode[] desired, IReadOnlyDictionary<string, string> refs, bool blockerIsFrom, CancellationToken ct)
 	{
 		if (refs.Count == 0) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
@@ -2140,27 +2051,6 @@ public sealed partial class TasksService : ITasksService
 		return rows.ToHashSet(StringComparer.Ordinal);
 	}
 
-	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
-	// an already-active `blocks` edge into it). "Blocked requires a link."
-	// IsWorkKind, NOT PresetKind(...) == BoardKind.Work (presetkind-spec-blind-spot follow-up,
-	// same anti-pattern as the named production regression): PresetKind nulls out for any DEFINED
-	// kind, and `work` is one of the quartet's four kinds — RenderPresetDefinition renders it
-	// VERBATIM into a real quartet-provisioned project's stored definition exactly like `spec`, so
-	// the old `kind != BoardKind.Work` comparison was ALWAYS true (kind always null) and this guard
-	// silently never fired on any real project's work board.
-	async Task RequireBlockersAsync(MethodologyRuntime runtime, string? kindSlug, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
-	{
-		if (!runtime.IsWorkKind(kindSlug)) return;
-		foreach (var n in desired)
-		{
-			if (!string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
-			if (blockedBy.ContainsKey(n.Key)) continue;
-			var hasActiveBlocker = (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Any(e => e.Kind == "blocks");
-			if (!hasActiveBlocker)
-				throw new ArgumentException($"a Blocked task must name a blocker — provide blockedBy (node '{n.Key}')").ForNode(n.Key);
-		}
-	}
-
 	// Leaving Blocked manually closes the active `blocks` edges into the node (history kept).
 	async Task CloseBlocksOnLeaveAsync(string projectKey, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
 	{
@@ -2175,62 +2065,10 @@ public sealed partial class TasksService : ITasksService
 
 	// PlanNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side
 	// half of the mapping. PlanNode can't cross into PetBox.Tasks.Engine (linq2db-bound); this
-	// projects onto the five fields the guards actually branch on. No caller yet — slice 3
-	// wires RequireDefinitionLinks/RequireBlockersAsync/RequirePreconditionArtifactsAsync/
-	// ResolveBlockedBy onto GuardEngine, which is where desired/prior PlanNode[] turn into
-	// NodeState[] via this projection.
+	// projects onto the five fields the guards actually branch on. This is where UpsertAsync's
+	// desired/prior PlanNode rows turn into the engine's input: the guards themselves now live in
+	// GuardEngine and never see a linq2db type.
 	static NodeState ToNodeState(PlanNode n) => new(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type);
-
-	// DATA-DRIVEN link constraints (primitives-link-constraints): a NEW node of a
-	// constrained type must carry the constrained link in THIS call (task_spec = specRef,
-	// blocks = blockedBy, idea_spec = ideaRef — the validator admits only these).
-	// CADENCE follows the builtin link kind's semantics: task_spec/blocks are STRUCTURAL
-	// edges, required at creation only (edits don't re-require them); idea_spec is a
-	// PROVENANCE edge — every write of a constrained type must name the idea that
-	// authorizes it (the spec-write governance, now as data). Constraints resolve through
-	// the runtime for preset and definition kinds alike — the work preset declares
-	// feature/bug → task_spec, and `chore` (engineering hygiene below the spec) is exempt
-	// because no constraint names it; the spec preset declares spec → idea_spec.
-	static void RequireDefinitionLinks(
-		MethodologyRuntime runtime, string? kindSlug, PlanNode[] desired,
-		Dictionary<string, PlanNode> prior,
-		Dictionary<string, string> specRefs, Dictionary<string, string> blockedBy, Dictionary<string, string> ideaRefs)
-	{
-		var constraints = runtime.LinkConstraints(kindSlug);
-		if (constraints.Count == 0) return;
-		foreach (var n in desired)
-		{
-			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
-			// The node's EFFECTIVE type: single-FSM preset kinds accept untyped nodes (an
-			// untyped spec node IS a `spec`), so an empty type resolves to the kind's default
-			// before constraint matching — the old kind-wide guard's reach, as data.
-			var type = n.Type.Length == 0 ? runtime.DefaultType(kindSlug) : n.Type;
-			foreach (var c in constraints)
-			{
-				if (!string.Equals(c.Type, type, StringComparison.OrdinalIgnoreCase)) continue;
-				var everyWrite = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase);
-				if (!isNew && !everyWrite) continue;
-				var kindName = runtime.KindName(kindSlug);
-				// task_spec keeps the historical, target-naming wording; idea_spec states the
-				// provenance rule with the declared target; the generic form names the link
-				// kind + the upsert field that expresses it.
-				var message = c.Link.ToLowerInvariant() switch
-				{
-					"task_spec" when !specRefs.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must link a {c.TargetKind ?? "spec"} node — provide specRef (node '{n.Key}')",
-					"blocks" when !blockedBy.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must carry a {c.Link} link at creation — provide blockedBy (node '{n.Key}')",
-					// idea_spec — the validator admits no other kind
-					"idea_spec" when !ideaRefs.ContainsKey(n.Key) =>
-						c.TargetStatuses is { Count: > 0 } ts
-							? $"a {kindName} change must be made under {string.Join("|", ts)} {c.TargetKind ?? c.Link} — provide ideaRef (node '{n.Key}')"
-							: $"a {kindName} {n.Type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
-					_ => null,
-				};
-				if (message is not null) throw new ArgumentException(message).ForNode(n.Key);
-			}
-		}
-	}
 
 	// Active node key -> chain of prior keys it was renamed from.
 	static Dictionary<string, List<string>> BuildLineage(List<PlanNode> all)
