@@ -34,7 +34,7 @@ KindInput {
   linkConstraints[], effects[], autoWireFrom?, delivery?, defaultView?, outlineReveal?
 }
 // delivery: { requiredTypes, defectTypes, link } — link ОБЯЗАТЕЛЕН (не default!): роллап сегодня
-// считает по литералу task_spec (TasksService.cs:1028); дефолт-строка вернула бы тот же зашитый
+// считает по литералу task_spec (`ComputeSpecDeliveryAsync`); дефолт-строка вернула бы тот же зашитый
 // литерал под видом поля данных
 
 LinkKindInput {
@@ -91,7 +91,7 @@ PlanNodeInput {
   по доскам вида `direction.toKind`» — ОШИБОЧНА, исправлено). Правило: пишущий узел занимает ТОТ
   конец `direction`, чей `kind` совпадает с его собственным; цель — ПРОТИВОПОЛОЖНЫЙ конец; слаг цели
   резолвится по доскам вида противоположного конца, в бакете активного инстанса (совпадает с
-  `ResolveIdeaRefsAsync`, вызов `TasksService.cs:1138-1140` — spec-узел пишет `ideaRef`,
+  `ResolveIdeaRefsAsync`, ныне `GuardEngine.ResolveIdeaRefs` — spec-узел пишет `ideaRef`,
   `idea_spec.toKind=spec`: spec занимает `toKind`, цель резолвится по `fromKind=ideas`). Старая
   формулировка была бы верна, только если ПИШУЩИЙ узел всегда на `fromKind`-конце — ложно для
   `idea_spec` (пишет `spec` = `toKind`-конец) и для `issue_task` (пишет `work`,
@@ -127,7 +127,7 @@ PlanNodeInput {
   = не трогать существующие связи этого вида; **пустой список** `links.<kind>: []` = явно снять все
   связи этого вида. Идемпотентность — по (kind, from, to).
 - **`links.blocks` (и сахарный `blockedBy`) — ADD-ONLY, НЕ declarative-replace.** Движок ПОТРЕБЛЯЕТ
-  `blocks`-рёбра при разблокировке (gating-consumption, `TaskTransitionEffects.cs:45-51`, см.
+  `blocks`-рёбра при разблокировке (gating-consumption, `TaskTransitionEffects.RunTransitionEffectsAsync`, см.
   `01-model` §7) — декларативная замена набора воскресила бы уже потреблённые рёбра и задвоила бы
   срабатывание разблокировки. `blockedBy`/`links.blocks` в вызове ТОЛЬКО добавляет блокеры; снятие —
   через явный transition-эффект/delete-путь движка, не через пустой список.
@@ -161,11 +161,11 @@ PlanNodeInput {
 
 **Read-путь — тот же список чистки** (раунд 2: иначе write станет data-driven, а read молча
 останется квартетным):
-- `PlanNodeView.Spec`/`.LinkedTasks` строятся по литералу `task_spec` (`TasksService.cs:647,658`) —
+- `PlanNodeView.Spec`/`.LinkedTasks` строятся по литералу `task_spec` (`TasksService.GetBoardAsync`) —
   перевести на построение, driven `LinkKind.direction.label` (любой process-вид со своим label, не
   только `task_spec`).
 - Панель связей detail-страницы — хардкод-таблица из 6 видов (`RelationPanelSpecs`,
-  `TasksService.cs:743-756`) — та же замена: driven `LinkKind.direction.label`, включая ЛЮБОЙ
+  `TasksService.RelationPanelSpecs`) — та же замена: driven `LinkKind.direction.label`, включая ЛЮБОЙ
   объявленный вид, не только builtin-шестёрку.
 - `tasks_board_set_spec` и параметр `specBoard` на `board_create`/`board_list` — квартет-именованная
   поверхность (пин specRef-резолва под другим именем). Обобщается вместе со `SpecBoard`-колонкой
@@ -227,7 +227,7 @@ issue_task` уже лежат как строки. Значит миграция
 нет). Поэтому колоночных миграций почти нет.
 
 Исключение — квартет-именованная колонка каталога досок **`TaskBoardMeta.SpecBoard`** (пин авто-вайра
-и резолва `specRef`; `TaskBoardStore.cs:186`). Это НЕ JSON-эволюция, а колонка со квартет-семантикой.
+и резолва `specRef`; `TaskBoardStore.CreateAsync`). Это НЕ JSON-эволюция, а колонка со квартет-семантикой.
 Оставить её = ровно тот legacy-шов, который редизайн обещал убрать. Решение (п.B.2-8): обобщить в
 per-link-kind пин (напр. `autoWireFrom` уже несёт вид-источник → пин выводится из него), либо
 `wiredBoard`-указатель на доске без квартет-имени. Это самое крупное, что часть B раньше упускала.
@@ -260,16 +260,18 @@ per-link-kind пин (напр. `autoWireFrom` уже несёт вид-исто
    рождение — не только момент входа; `01-model` §6/§7). `Kind.blocksGate{status,releaseTo}` —
    новый builtin-примитив на `work`, параметризующий и этот констрейн, и оба спутника ниже (заодно
    снимает завязку на имя вида `IsWorkKind`). **Все ТРИ литерала `"Blocked"`/`"InProgress"`**
-   (`RequireBlockersAsync` `TasksService.cs:2073-2084`; `CloseBlocksOnLeaveAsync`
-   `TasksService.cs:2087-2096`; delete-разблокировка `TaskTransitionEffects.cs:76-81`) читают
+   (`GuardEngine.RequireBlockers`; `TasksService.CloseBlocksOnLeaveAsync`; delete-разблокировка
+   `TaskTransitionEffects.RunDeleteEffectsAsync`) читают
    `blocksGate.status`/`.releaseTo` вместо литералов; gating-consumption ребра `blocks`
-   (`TaskTransitionEffects.cs:45-51`) остаётся builtin — данными становятся только статусы-параметры.
+   (`TaskTransitionEffects.RunTransitionEffectsAsync`) остаётся builtin — данными становятся только
+   статусы-параметры.
 5. **Строгость.** `EnforceApproval` → часть `GateEnforcement`; `strictMode` на дефиницию. Квартет
    мигрирует как `strictMode:false`, но **`reason=true` и `preconditionArtifact=true`** (оба жёсткие
-   сегодня — `WorkflowEngine.cs:56`) → поведение неизменно. (Прежний черновик ошибочно делал reason
+   сегодня — `WorkflowEngine.Validate`) → поведение неизменно. (Прежний черновик ошибочно делал reason
    мягким.)
 6. **Один активный инстанс на проект.** Сегодня код допускает N открытых инстансов с merge-резолвом
-   (`TasksService.RuntimeAsync:160-167`) и legacy null-membership доски (`:106-117`). Под «одну активную
+   (`TasksService.RuntimeAsync`) и legacy null-membership доски (`TasksService.CreateBoardAsync`).
+   Под «одну активную
    методологию»: схлопнуть $system к одному открытому инстансу и **backfill membership** legacy-досок.
    Без этого «одна активная» — декларация, а не миграция. (Стыкуется с lifecycle-слоем, но точку
    «одна активная» фиксируем здесь.)
@@ -288,7 +290,7 @@ per-link-kind пин (напр. `autoWireFrom` уже несёт вид-исто
     ЯВНО на каждом её `Kind` при переписывании в новую JSON-форму. `singleton:false`-дефолт
     ОПАСЕН: сохранённый квартет БЕЗ явного поля тихо потерял бы singleton-инвариант — тот же класс
     инцидента, что уже задокументированный `DefaultView`-производственный случай (merge читает
-    отсутствующее поле как «нет мнения», а не «унаследуй пресет», `MethodologyRuntime.cs:77-90`).
+    отсутствующее поле как «нет мнения», а не «унаследуй пресет», `MethodologyRuntime.DefaultView`).
     Backfill проходит ПО ВСЕМ строкам ВСЕХ трёх temporal-таблиц во всех проектах, не по одному
     known-инстансу; членства досок не трогаются (кроме re-home п.12 и backfill п.6). Одноразовый
     data-fix, но с полным охватом.
@@ -296,7 +298,7 @@ per-link-kind пин (напр. `autoWireFrom` уже несёт вид-исто
 12. **Utility-слой: re-home сквозных досок $system** (владелец, раунд 2 — новый шаг). Utility-слой
     (`01-model` §2a) — project-owned виды, живущие вне активного инстанса. На `$system` сегодня
     доски `classic`, `client-issues`, `roadmap`, `wiki` либо не члены quartet-инстанса (legacy
-    null-membership, `TasksService.cs:106-117`), либо их членство спорно. Ре-хоумим их ЯВНО в
+    null-membership, `TasksService.CreateBoardAsync`), либо их членство спорно. Ре-хоумим их ЯВНО в
     проектный utility-набор (не в quartet-инстанс); `ideas`/`spec`/`work`/`intake` остаются в
     quartet-методологии — они и есть процесс. Закрывает флаг-день из шага 1: без явного re-home
     удаление code-пресетов осиротило бы эти доски (мигрировать членство некуда — «process» уже не
@@ -320,7 +322,7 @@ per-link-kind пин (напр. `autoWireFrom` уже несёт вид-исто
      `delivery.link` — авто-вайр и SpecBoard-подобный пин корректны, только когда у источника РОВНО
      одна открытая доска; без `singleton:true` резолв неоднозначен по построению.
   4. Коллизия слагов статусов МЕЖДУ видами в рамках проекта — `KindOfSlug` сканирует project-wide
-     (`MethodologyRuntime.cs:272-277`: сначала пресет, потом все объявленные виды); два вида с
+     (`MethodologyRuntime.KindOfSlug`: сначала пресет, потом все объявленные виды); два вида с
      разными `StatusCategory` на одинаковом слаге статуса дают неоднозначную классификацию там, где
      вызывающий код не знает kind (`IsTerminalSlug`).
 - **Definition-change-под-живыми-досками — НЕ покрыто, требует решения** (раунд 2, найдено

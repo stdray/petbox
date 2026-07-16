@@ -37,7 +37,7 @@ linkKinds:
 
 ### 1.2. Виды-доски
 
-> Все четыре вида квартета несут enforced оси тегов `area`, `concern` (`MethodologyPresets.cs:283-293`);
+> Все четыре вида квартета несут enforced оси тегов `area`, `concern` (`MethodologyPresets.BuiltinAxes`/`TagAxes`);
 > classic/simple — free-form (осей нет). Ниже `tagAxes` опущены для краткости, но в дефиниции присутствуют.
 > Все четыре — `singleton: true` (по одной доске вида на инстанс).
 
@@ -95,7 +95,8 @@ linkConstraints:
     requiredOnEveryWrite: true,
     description: "любая запись листа спеки требует связь idea_spec (links) на принятую идею"
 delivery: { requiredTypes: [feature], defectTypes: [bug], link: task_spec }
-  # link ОБЯЗАТЕЛЕН (не дефолт) — роллап сегодня литералом task_spec, TasksService.cs:1028
+  # link ОБЯЗАТЕЛЕН (не дефолт) — роллап сегодня литералом task_spec
+  # (`TasksService.ComputeSpecDeliveryAsync`, tasksOf-выборка)
 ```
 
 **work** (`singleton: true`, `boardName: work`, `autoWireFrom: spec`,
@@ -119,7 +120,8 @@ linkConstraints:
   # chore — не назван → освобождён (изъятие = данные)
   - type: "*", atStatus: Blocked, link: blocks, requiredOnEveryWrite: true,
     description: "в статусе Blocked узел обязан нести связь blocks (на каждую запись, включая рождение)"
-    # замена RequireBlockersAsync (TasksService.cs:2073-2084) — STATE invariant, не onTransitionTo:
+    # замена RequireBlockersAsync (ныне `GuardEngine.RequireBlockers`) — STATE invariant,
+    # не onTransitionTo:
     # держит инвариант, пока узел в Blocked, не только в момент входа (01-model §6)
 effects:
   - on: Done, link: issue_task, direction: incoming, set: done,
@@ -132,7 +134,7 @@ effects:
 ```
 
 **Замечание про сегодняшнее поведение (сверено с кодом):** `strictMode` квартета = `false`, но
-`preconditionArtifact` И `reason` остаются жёсткими (reason блокирует `WorkflowEngine.cs:56-57` —
+`preconditionArtifact` И `reason` остаются жёсткими (reason блокирует `WorkflowEngine.Validate` —
 `triage→duplicate/wontfix`, `review→rejected` требуют причину на сервере). Мягок только `approval`
 Review→Done (`EnforceApproval=false` → конвенция: агент не должен, но сервер не блокирует). Это ровно
 нынешнее наблюдаемое поведение — новая модель его не меняет.
@@ -158,8 +160,7 @@ workflows: [ types: [task, feature, bug]
 > **На $system классик — utility-доска, не процесс** (owner-решение, раунд 2 — см. `00-overview`
 > «Методология vs utility-слой», `01-model` §2a). Классик как МЕТОДОЛОГИЯ (одновидовой пресет
 > выше) — легитимный процесс, который можно завести отдельным инстансом. Но КОНКРЕТНАЯ доска
-> `classic` на `$system` сегодня не член активного quartet-инстанса (легаси, `TasksService.cs:106-
-> 117`) — в новой модели она re-homed в проектный utility-слой (`03-mcp-and-migration`, шаг
+> `classic` на `$system` сегодня не член активного quartet-инстанса (легаси, `TasksService.CreateBoardAsync`) — в новой модели она re-homed в проектный utility-слой (`03-mcp-and-migration`, шаг
 > B.2 п.12), как `wiki`/`client-issues`/`roadmap`. «classic-методология» и «classic-доска на
 > $system» — два разных объекта, случайно одноимённых; путать их — источник ошибок.
 
