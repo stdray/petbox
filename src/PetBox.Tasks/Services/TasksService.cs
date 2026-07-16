@@ -1920,6 +1920,20 @@ public sealed partial class TasksService : ITasksService
 	// upsert paid for none of them. The `needs*` predicates below reproduce exactly those gates
 	// from data that does NOT narrow across the retry loop — the patches AS SUBMITTED and `prior`
 	// — so the context is stable even though it is cheap.
+	//
+	// THE INVARIANT, and it is load-bearing: this method reads `nodes` (the patches AS SUBMITTED)
+	// and `prior`, and NEVER `live` or `desired`. Those two are the loop's working set — each pass
+	// that indicts a node drops it, so a context sourced from them would shrink underneath a
+	// decision that claims to be prefetched ONCE, and pass 2 would judge a smaller world than pass
+	// 1. The `needs*` gates below are batch-WIDE booleans, so this is not a style preference: gate
+	// on `live` and a patch that dropped can take a survivor's prefetched data down with it, with
+	// no error anywhere — the call reports `applied:true` and a verdict that was never earned. The
+	// delete path shows it plainly: `live` is the UPSERTS, so deletes are not in it at all, and a
+	// context built from `live` hands the delete guard an empty child map and orphans a subtree in
+	// silence. EngineContextStabilityTests (tests/PetBox.Tests/Tasks) stands on exactly that seam —
+	// a partial batch that both spends a retry pass and carries a guarded delete. If you are here
+	// to make this cheaper, narrow the CONTENT of a fetch (fewer ids, fewer columns); never narrow
+	// the SET of patches it is derived from.
 	async Task<MethodologyEngineContext> BuildEngineContextAsync(
 		string projectKey, TaskBoardMeta meta, string board, MethodologyRuntime runtime, string? kindSlug,
 		IReadOnlyList<NodePatch> nodes, Dictionary<string, PlanNode> prior, CancellationToken ct)
