@@ -12,6 +12,15 @@ namespace PetBox.Tasks.Services;
 // so renames/soft-deletes address the right row without needing a closed node's NodeId.
 public static class TasksSearchDocs
 {
+	// The lexical projection's SCHEMA version (reindex-as-first-class-mechanism). TasksService's
+	// EnsureLexicalBackfillAsync gates its rebuild on this number, stored per project file — not on
+	// "search_fts has any row", which could never re-fire once a file had ANY row. Bump this
+	// whenever ToDoc or CommentToDoc's projected TEXT shape changes (the way search-slug-words-gap
+	// once did): every project file self-heals its search_fts on the next search, no migration
+	// needed. The upcoming search-key-column-everywhere slice reprojects the key into a dedicated
+	// column — bumping this is the whole reindex it needs.
+	public const long LexicalProjectionVersion = 1;
+
 	// Indexed iff the node has a stable identity and is not in a terminal workflow state.
 	// The runtime overload also recognizes a project definition's terminal statuses; the
 	// bare form is the presets-only view (background board walkers without a runtime).

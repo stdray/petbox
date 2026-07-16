@@ -15,4 +15,12 @@ public static class MemoryCursors
 
 	// The vector-index cursor for one store within the project file.
 	public static string Vector(string store) => $"vector:{store}";
+
+	// The lexical PROJECTION version marker for one store (reindex-as-first-class-mechanism):
+	// what schema version's search_fts rows this store currently carries, not a Class-B replay
+	// cursor. MemoryService.EnsureLexicalBackfillAsync compares it against
+	// MemorySearchDocs.LexicalProjectionVersion and rebuilds the store's search_fts on a mismatch —
+	// a missing row reads as version 0, which is always behind version 1+, so a never-backfilled
+	// store rebuilds exactly like a stale-projection one.
+	public static string Lexical(string store) => $"lexical:{store}";
 }

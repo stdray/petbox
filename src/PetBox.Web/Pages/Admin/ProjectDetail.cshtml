@@ -147,6 +147,30 @@
 	</form>
 </section>
 
+@if (Model.SearchReindexEnabled)
+{
+	<div class="divider"></div>
+
+	<section class="mb-6 max-w-3xl" data-testid="project-search-index-section">
+		<h2 class="text-lg font-semibold mb-3">Search index</h2>
+		<p class="text-xs opacity-60 mb-3">
+			Rebuilds both halves of the search index from the live data: the semantic (vector) index
+			re-embeds on the stock background drain, and the lexical (full-text) index rebuilds on the
+			very next search of each store/board. Use it after a search-projection change, or when
+			search looks stale or wrong and you don't want to wait for it to self-heal.
+		</p>
+		<div class="card bg-base-200 border border-base-300">
+			<div class="card-body p-4">
+				<form method="post" asp-page-handler="Reindex"
+					onsubmit="return confirm('Rebuild the search index for @Model.Project.Key? This re-embeds and re-indexes the whole project.')">
+					@Html.AntiForgeryToken()
+					<button type="submit" class="btn btn-sm btn-warning" data-testid="project-search-reindex">Rebuild search index</button>
+				</form>
+			</div>
+		</div>
+	</section>
+}
+
 @if (!PetBox.Core.Data.ProjectDeletion.IsReserved(Model.Project.Key))
 {
 	<div class="divider"></div>

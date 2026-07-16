@@ -510,23 +510,32 @@ public sealed class TasksHybridSearchTests : IDisposable
 	}
 
 	[Fact]
-	public async Task CommentBackfill_ReindexesAfterFtsRowsWiped()
+	public async Task CommentRowsWiped_DoNotSelfHeal_UntilTheLexicalMarkerIsRewound()
 	{
+		// The old per-signal guards ("no c:% row yet") are gone (reindex-as-first-class-mechanism):
+		// EnsureLexicalBackfillAsync is now VERSION-gated, ONE marker for the whole file — nodes and
+		// comments both come out of the single TasksSearchDocs projection. So once a search has
+		// stamped the marker at the current version, wiping just the comment rows does NOT self-heal
+		// on the next plain search (that would mean re-verifying the whole file on every query).
+		// Recovery from row-level corruption like this is what search_reindex's Class-A half is
+		// for: it rewinds TasksCursors.Lexical, and the very next search rebuilds the file.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("host", "host note", "unrelated body")]);
 		await AddComment(tasks, "b", "host", "narwhal note in a comment");
 
-		// Write path already indexed the comment.
+		// Write path already indexed the comment; this search also stamps the lexical marker.
 		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
 
-		// Simulate a file predating tasks-search-comments: wipe ONLY the comment FTS rows (node rows
-		// stay), so the node-backfill guard is satisfied and only the comment backfill re-runs.
 		var ctx = _store.GetContext(Proj);
 		ctx.Execute("DELETE FROM search_fts WHERE Id LIKE 'c:%'");
 		ctx.Execute<long>("SELECT count(*) FROM search_fts WHERE Id LIKE 'c:%'").Should().Be(0);
 
-		// The next query runs the comment backfill (guard: no c:% rows) → the comment is found again.
+		// The marker is current → a plain search does NOT rebuild the wiped comment row.
+		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Should().BeEmpty();
+
+		// Rewinding the marker (what search_reindex's Class-A reset does) heals it on the NEXT search.
+		ctx.Execute($"UPDATE search_cursor SET Version = 0 WHERE IndexName = '{TasksCursors.Lexical}'");
 		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
 	}
 

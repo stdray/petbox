@@ -24,25 +24,34 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class SearchTools
 {
-	[McpServerTool(Name = "search_reindex", Title = "Rebuild a project's semantic index",
+	[McpServerTool(Name = "search_reindex", Title = "Rebuild a project's search index",
 		Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SearchReindexResult))]
 	[Description("""
-		MAINTENANCE: rebuild a project's semantic (vector) index from scratch. Use it when search
-		reports `semantic:true, degraded:false` and STILL returns nothing — the symptom of documents
-		that were dead-lettered during an embedder outage and left behind an advanced cursor.
+		MAINTENANCE: rebuild a project's search index from scratch — BOTH the semantic (vector,
+		Class-B) and lexical (full-text, Class-A) halves. Use it when search reports
+		`semantic:true, degraded:false` and STILL returns nothing (documents dead-lettered during
+		an embedder outage, cursor advanced past them), or when the lexical floor looks stale/wrong
+		(e.g. after a projection change) and you don't want to wait for an incidental search to
+		trigger the self-heal.
 
-		Resets, per named index (memory: `vector:{store}`; tasks: the bare board name — no other
-		index in those files is touched): the dead-letter (so condemned docs are eligible again) and
-		the version cursor (back to 0, so the whole store is a delta again). The re-embedding itself
+		CLASS-B (vector): resets, per named index (memory: `vector:{store}`; tasks: the bare board
+		name — no other index in those files is touched), the dead-letter (condemned docs eligible
+		again) and the version cursor (back to 0, so the whole store is a delta again). Re-embedding
 		is then done by the STOCK background enrichment drain (60s tick), in capped portions — this
 		tool returns immediately; `activeDocs` per tier is how many `search_vec` rows to expect once
 		it finishes (a few minutes). VERIFY by searching again, or from the drain's own log lines
-		(events 410/411: `search_vec rows N, dead total 0, max cursor lag 0`) — do NOT re-run this
-		tool to check progress: it is idempotent but it would rewind the cursor and re-embed the
-		corpus from the start.
+		(events 410/411: `search_vec rows N, dead total 0, max cursor lag 0`).
 
-		REFUSES (and resets nothing) when the project has no working Embed route — fix the LLM route
-		first. `tier`: memory | tasks | all (default all). Requires memory:write / tasks:write.
+		CLASS-A (lexical): rewinds the lexical projection marker(s) (memory: one per store; tasks:
+		one for the whole file) to 0 — `lexicalReset` per tier is how many were rewound. No drain to
+		wait for: the next search runs the lexical backfill synchronously and rebuilds search_fts
+		from the current ToDoc projection, before that search's own results come back.
+
+		Do NOT re-run this tool to check progress on the vector half: it is idempotent but it would
+		rewind the cursor and re-embed the corpus from the start.
+
+		REFUSES (and resets NEITHER half) when the project has no working Embed route — fix the LLM
+		route first. `tier`: memory | tasks | all (default all). Requires memory:write / tasks:write.
 		""")]
 	public static async Task<SearchReindexResult> ReindexAsync(
 		IHttpContextAccessor http, FeatureFlags features, SearchReindexService reindex,

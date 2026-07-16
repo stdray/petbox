@@ -196,6 +196,97 @@ public sealed class SearchReindexTests
 		fx.MemoryCount("SELECT COUNT(*) FROM search_deadletter WHERE IndexName = 'vector:notes'").Should().Be(0);
 	}
 
+	// ---- (f) Class-A: the lexical projection VERSION gate (reindex-as-first-class-mechanism) ----
+	//
+	// EnsureLexicalBackfillAsync used to gate its rebuild on "search_fts has ANY row" — once a store
+	// had one, the guard was satisfied FOREVER, so a stale/corrupted row (or a ToDoc projection
+	// change) could never be repaired without a migration that emptied the table first. It is now
+	// gated on a per-store/per-file VERSION marker (MemoryCursors.Lexical / TasksCursors.Lexical)
+	// compared against *SearchDocs.LexicalProjectionVersion, and search_reindex can rewind that
+	// marker on demand — the tests below exercise both the self-heal and the on-demand reset, and
+	// prove the version gate actually STOPS re-rebuilding once it is current (the cost control the
+	// old "any row" guard was there for in the first place).
+
+	[Fact]
+	public async Task Backfill_RebuildsAnAlreadyPopulatedStore_WhenNoLexicalMarkerExistsYet()
+	{
+		using var fx = new Fixture();
+		var memory = fx.Memory();
+		var r = await memory.UpsertAsync(Fixture.Proj, "notes",
+			[new MemoryEntryInput { Key = "k0", Type = "Project", Body = "widget" }], []);
+		r.Result.Applied.Should().BeTrue();
+
+		// Hand-corrupt the row the write seam just indexed, and leave NO lexical marker behind —
+		// exactly the state a real upgrade lands an existing project file in: search_fts already has
+		// rows, but nothing has ever stamped a projection version. Under the old "any row" guard this
+		// store would be considered done and the corruption would never be repaired.
+		fx.MemoryExec("UPDATE search_fts SET Text = 'corrupted, no match term here' WHERE Type = 'notes' AND Id = 'k0'");
+
+		var res = await memory.SearchAsync(Fixture.Proj, "notes", "widget", null);
+
+		res.Hits.Should().ContainSingle().Which.Key.Should().Be("k0",
+			"the version gate rebuilds the store from the live entries because no marker says it's current — " +
+			"an existing row does not stop it, unlike the old any-row guard");
+	}
+
+	[Fact]
+	public async Task Reindex_Memory_RewindsTheLexicalMarker_SoAStaleRowSelfHealsOnTheNextSearch()
+	{
+		using var fx = new Fixture();
+		var memory = fx.Memory();
+		var r = await memory.UpsertAsync(Fixture.Proj, "notes",
+			[new MemoryEntryInput { Key = "k0", Type = "Project", Body = "widget" }], []);
+		r.Result.Applied.Should().BeTrue();
+
+		// A first search stamps the marker at the current projection version (nothing was stale).
+		(await memory.SearchAsync(Fixture.Proj, "notes", "widget", null)).Hits.Should().ContainSingle();
+		fx.MemoryCount($"SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = '{MemoryCursors.Lexical("notes")}'")
+			.Should().Be((int)MemorySearchDocs.LexicalProjectionVersion);
+
+		// Corrupt the row WITHOUT touching the marker — the version gate is current, so a plain
+		// search must NOT rebuild (the cost control: at most one rebuild per version, per store).
+		fx.MemoryExec("UPDATE search_fts SET Text = 'corrupted, no match term here' WHERE Type = 'notes' AND Id = 'k0'");
+		(await memory.SearchAsync(Fixture.Proj, "notes", "widget", null)).Hits.Should().BeEmpty(
+			"the marker is current, so the gate correctly skips the rebuild — this is the guard doing its job");
+
+		// search_reindex's Class-A half rewinds the marker to 0, per store...
+		var result = await fx.Reindex(new FakeLlmClient()).ReindexAsync(Fixture.Proj, ReindexTier.Memory);
+		result.Tiers.Should().ContainSingle().Which.LexicalReset.Should().Be(1);
+		fx.MemoryCount($"SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = '{MemoryCursors.Lexical("notes")}'")
+			.Should().Be(0);
+
+		// ...so the very next search rebuilds the store and the corrupted row is repaired.
+		(await memory.SearchAsync(Fixture.Proj, "notes", "widget", null)).Hits.Should().ContainSingle()
+			.Which.Key.Should().Be("k0");
+	}
+
+	[Fact]
+	public async Task Reindex_Tasks_RewindsTheProjectWideLexicalMarker_SoAStaleRowSelfHealsOnTheNextSearch()
+	{
+		using var fx = new Fixture();
+		var tasks = fx.Tasks();
+		await tasks.CreateBoardAsync(Fixture.Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Fixture.Proj, "b",
+			[new NodePatch { Key = "gizmo", Version = 0, Title = "t", Body = "widget" }]);
+		var query = new PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> { Query = "widget" };
+
+		(await tasks.SearchNodesAsync(Fixture.Proj, query)).Hits.Should().ContainSingle();
+		fx.TasksCount($"SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = '{TasksCursors.Lexical}'")
+			.Should().Be((int)TasksSearchDocs.LexicalProjectionVersion);
+
+		fx.TasksExec("UPDATE search_fts SET Text = 'corrupted, no match term here' WHERE Type = 'b' AND Id = 'gizmo'");
+		(await tasks.SearchNodesAsync(Fixture.Proj, query)).Hits.Should().BeEmpty(
+			"the marker is current, so the gate correctly skips the rebuild");
+
+		var result = await fx.Reindex(new FakeLlmClient()).ReindexAsync(Fixture.Proj, ReindexTier.Tasks);
+		result.Tiers.Should().ContainSingle().Which.LexicalReset.Should().Be(1);
+		fx.TasksCount($"SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = '{TasksCursors.Lexical}'")
+			.Should().Be(0);
+
+		(await tasks.SearchNodesAsync(Fixture.Proj, query)).Hits.Should().ContainSingle()
+			.Which.Node.Key.Should().Be("gizmo");
+	}
+
 	// ---- fakes + fixture ----
 
 	sealed class CountingIndex : ISearchIndex
@@ -297,6 +388,19 @@ public sealed class SearchReindexTests
 					[new NodePatch { Key = $"n{i}", Version = 0, Title = $"t{i}", Body = $"body number {i}" }]);
 		}
 
+		// A real MemoryService/TasksService over the SAME files SeedMemoryAsync/SeedTasksAsync wrote
+		// to, for tests that need to run an actual SEARCH (to trigger EnsureLexicalBackfillAsync) —
+		// not just seed data.
+		public MemoryService Memory(ILlmClient? llm = null) =>
+			new(new MemoryStore(_db.Factory(), NewMemoryFactory()), llm);
+
+		public TasksService Tasks(ILlmClient? llm = null)
+		{
+			var factory = NewTasksFactory();
+			return new TasksService(new TaskBoardStore(_db.Factory(), factory), new RelationStore(factory),
+				new TagStore(factory), new CommentService(factory), llm);
+		}
+
 		public int MemoryCount(string sql)
 		{
 			using var db = new MemoryDb(MemoryDb.CreateOptions($"Data Source={Path.Combine(_dir, "memory", Proj + ".db")}"));
@@ -307,6 +411,21 @@ public sealed class SearchReindexTests
 		{
 			using var db = new TasksDb(TasksDb.CreateOptions($"Data Source={Path.Combine(_dir, "tasks", Proj + ".db")}"));
 			return db.Execute<int>(sql);
+		}
+
+		// Raw DDL/DML escape hatch — used to hand-corrupt a search_fts row's Text so a test can tell
+		// whether a rebuild actually re-derived it from the live entity, versus just leaving a stale
+		// row alone because some guard thought the store was already done.
+		public void MemoryExec(string sql)
+		{
+			using var db = new MemoryDb(MemoryDb.CreateOptions($"Data Source={Path.Combine(_dir, "memory", Proj + ".db")}"));
+			db.Execute(sql);
+		}
+
+		public void TasksExec(string sql)
+		{
+			using var db = new TasksDb(TasksDb.CreateOptions($"Data Source={Path.Combine(_dir, "tasks", Proj + ".db")}"));
+			db.Execute(sql);
 		}
 
 		public void Dispose()
