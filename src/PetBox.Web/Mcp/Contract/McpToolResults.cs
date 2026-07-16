@@ -637,10 +637,26 @@ public sealed record MethodologyInstanceRulesUpsertResult(
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
 // kind's per-type creation link requirements, Effects its declared transition effects
 // (null = none declared, omitted by the serializer).
+//
+// MUST mirror MethodologyKindDef (PetBox.Tasks.Workflow) FIELD FOR FIELD — same parity
+// obligation as MethodologyKindInput (see its note): rules_get/template_get feed the
+// STANDARD rules_upsert/template_upsert read-edit-write cycle, so a domain field this view
+// omits is invisible to a caller building the next upsert from this output, and gets wiped
+// on the very next honest edit (work/mcp-rules-get-is-lossy-so-the-round-trip-still-
+// destroys — AutoWireSpecFrom/Delivery/DefaultView/OutlineReveal were missing here even
+// after the INPUT side already carried them). Add a domain field → add it here too, or the
+// {Def, View} half of MethodologyKindContractParityTests goes red.
 public sealed record MethodologyKindView(
 	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows,
 	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null,
-	IReadOnlyList<MethodologyEffectView>? Effects = null);
+	IReadOnlyList<MethodologyEffectView>? Effects = null,
+	string? AutoWireSpecFrom = null,
+	MethodologyDeliveryView? Delivery = null,
+	string? DefaultView = null,
+	string? OutlineReveal = null);
+
+// Mirrors MethodologyDeliveryDef 1:1 — the output-side counterpart of MethodologyDeliveryInput.
+public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes);
 
 // "A new <type> on this kind's boards must carry a <link> at creation" (link =
 // task_spec|blocks|idea_spec — the upsert-expressible kinds). `targetKind`/

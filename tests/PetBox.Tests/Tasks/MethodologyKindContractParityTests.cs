@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
@@ -113,5 +114,112 @@ public sealed class MethodologyKindContractParityTests
 		kind.Delivery.DefectTypes.Should().Equal("bug");
 		kind.DefaultView.Should().Be("kanban");
 		kind.OutlineReveal.Should().Be("navigate");
+	}
+
+	// work/mcp-rules-get-is-lossy-so-the-round-trip-still-destroys — the OUTPUT-side half of
+	// the class above. rules_get/template_get are the READ leg of the SAME documented cycle
+	// (rules_get → edit → rules_upsert); the wire's own tool descriptions promise the get and
+	// upsert shapes match ("same document shape as tasks_methodology_template_get" /
+	// MethodologyReference: "the same shape ... rules_get return and rules_upsert accept").
+	// The {Def, Input} pairs above proved the WRITE side carries every domain field; they say
+	// nothing about the READ side — MethodologyKindView shipped with only 5 of
+	// MethodologyKindDef's 9 fields (Delivery/AutoWireSpecFrom/DefaultView/OutlineReveal
+	// missing) for exactly this reason: nothing was asserting {Def, View} parity.
+	public static TheoryData<Type, Type> ViewPairs() => new()
+	{
+		{ typeof(MethodologyKindDef), typeof(MethodologyKindView) },
+		{ typeof(MethodologyDeliveryDef), typeof(MethodologyDeliveryView) },
+		{ typeof(MethodologyLinkConstraintDef), typeof(MethodologyLinkConstraintView) },
+		{ typeof(MethodologyTransitionEffectDef), typeof(MethodologyEffectView) },
+		{ typeof(MethodologyWorkflowDef), typeof(MethodologyWorkflowBlockView) },
+		{ typeof(WorkflowStatus), typeof(WorkflowStatusView) },
+		{ typeof(MethodologyTransitionDef), typeof(MethodologyTransitionView) },
+	};
+
+	[Theory]
+	[MemberData(nameof(ViewPairs))]
+	public void ViewCarriesEveryDomainField(Type def, Type view)
+	{
+		var missing = SettableFieldNames(def).Except(SettableFieldNames(view)).ToList();
+
+		missing.Should().BeEmpty(
+			$"{view.Name} must carry every field of {def.Name} — rules_get/template_get feed "
+			+ "the documented read-edit-write cycle (rules_get → edit → rules_upsert), so a "
+			+ "domain field absent from the view contract is invisible to whoever builds the "
+			+ "next upsert from this output, and is silently wiped on the very next honest edit "
+			+ "(work/mcp-rules-get-is-lossy-so-the-round-trip-still-destroys). Missing: "
+			+ string.Join(", ", missing));
+	}
+
+	// Same non-vacuity guard as ThePairTable_CoversTheKnownWireShapes, for the view pairs.
+	[Fact]
+	public void TheViewPairTable_CoversTheKnownWireShapes()
+	{
+		var pairs = ViewPairs().Select(row => ((Type)row[0]!).Name).ToList();
+		pairs.Should().Contain([
+			nameof(MethodologyKindDef), nameof(MethodologyDeliveryDef),
+			nameof(MethodologyLinkConstraintDef), nameof(MethodologyTransitionEffectDef),
+			nameof(MethodologyWorkflowDef), nameof(WorkflowStatus), nameof(MethodologyTransitionDef),
+		]);
+	}
+
+	// The honest end of the class: shape parity (above) proves the FIELDS exist on both
+	// {Def, Input} and {Def, View} — it does NOT prove the two directions COMPOSE to an
+	// identity. A field could exist on both sides yet still get dropped or reshaped
+	// specifically in ProjectDefinition (the Def→View projector) or ParseDefinition (the
+	// Input→Def parser), and the pair-table theories above would stay green throughout,
+	// because they inspect field NAMES via reflection, never actual VALUES flowing through
+	// the wire. This test drives an unedited rules_get → rules_upsert cycle for a document
+	// where every one of MethodologyKindDef's 9 fields is populated, through the ACTUAL wire
+	// JSON (MethodologyWire.WireOptions — the same camelCase/omit-nulls posture the MCP SDK
+	// serializes every tool call with), and asserts the result equals the original. This
+	// catches lossiness on EITHER side with one assertion, independent of the hand-maintained
+	// pair table.
+	[Fact]
+	public void RulesGet_RoundTrip_Through_RulesUpsert_IsIdentity()
+	{
+		var original = new MethodologyDefinition("roundtrip-quartet",
+		[
+			new MethodologyKindDef(
+				"work", QuickAddAllowed: false,
+				Workflows:
+				[
+					new MethodologyWorkflowDef(
+						Types: ["feature", "bug"],
+						Statuses:
+						[
+							new WorkflowStatus("open", "Open", StatusKind.Open),
+							new WorkflowStatus("done", "Done", StatusKind.TerminalOk),
+						],
+						Transitions:
+						[
+							new MethodologyTransitionDef(
+								"open", "done", RequiresApproval: true, RequiresReason: true, PreconditionArtifact: "spec_plan")
+							{
+								EnforceApproval = true,
+								Checklist = ["reviewed"],
+							},
+						]),
+				])
+			{
+				LinkConstraints = [new MethodologyLinkConstraintDef("feature", "task_spec") { TargetKind = "spec", TargetStatuses = ["accepted"] }],
+				Effects = [new MethodologyTransitionEffectDef("done", "blocks", "incoming", "unblocked", "blocked")],
+				AutoWireSpecFrom = "spec",
+				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"]),
+				DefaultView = "kanban",
+				OutlineReveal = "navigate",
+			},
+		]);
+
+		// rules_get side: project the stored definition onto the wire View — exactly what
+		// TasksTools.RulesGet hands back to the caller.
+		var view = MethodologyWire.ProjectDefinition(original, version: 1, created: null, updated: null);
+		var json = JsonSerializer.Serialize(view, MethodologyWire.WireOptions);
+
+		// rules_upsert side: the caller pastes that SAME document back, unedited.
+		var input = JsonSerializer.Deserialize<MethodologyDefInput>(json, MethodologyWire.WireOptions);
+		var roundTripped = MethodologyWire.ParseDefinition(input!);
+
+		roundTripped.Should().BeEquivalentTo(original);
 	}
 }
