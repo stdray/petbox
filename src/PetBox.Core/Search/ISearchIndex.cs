@@ -29,7 +29,18 @@ public enum SearchCapability
 // A document to index, addressed by ENTITY (scope, type, id) — never by row. Resolving the
 // entity back from (type, id) is the consumer's job; the contract only carries the searchable
 // text + optional free tags. (spec: search-entity-addressed.)
-public readonly record struct SearchDoc(string Scope, string Type, string Id, string Text, string? Tags = null);
+//
+// `Key` (search-key-column-everywhere) is the entity's own business key/slug — n.Key for a task
+// node, e.Key for a memory entry — projected into its OWN indexed column instead of being spliced
+// into `Text`. Slugs are English kebab while titles/bodies are often Russian; a dedicated column
+// keeps the key's tokens searchable WITHOUT mixing them into the prose term frequencies (a splice
+// there double-counts the key's words and skews BM25 — see TasksSearchDocs' history). Distinct
+// from `Id`: `Id` is the (unindexed) row ADDRESS an index resolves a hit back to, which for a
+// comment is a namespaced "c:"+guid, not a word a caller would type. `Key` is OPTIONAL (default
+// "") — an entity with no meaningful lexicon key (e.g. a comment, addressed by a random GUID)
+// simply leaves it empty; an index with no dedicated Key column (none yet outside SqliteFtsIndex)
+// ignores it.
+public readonly record struct SearchDoc(string Scope, string Type, string Id, string Text, string? Tags = null, string Key = "");
 
 // A single match: the entity identity (type, id), a per-index relevance score (scales differ
 // across indexes — the facade fuses by RANK, not raw score), and which retriever produced it.

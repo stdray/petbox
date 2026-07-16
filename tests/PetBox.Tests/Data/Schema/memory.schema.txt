@@ -83,4 +83,4 @@ TABLE search_vec
   INDEX sqlite_autoindex_search_vec_1 UNIQUE origin=pk (Scope, Type, Id)
 
 VIRTUAL TABLE search_fts
-  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61')
+  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, KEY, tokenize='unicode61')

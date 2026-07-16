@@ -23,9 +23,16 @@ public static class MemorySearchDocs
 	// specifically: emptying search_fts ahead of LegacyStoreMerge racing to copy rows across from a
 	// legacy per-store file breaks the merge (2 red MemoryStoreMergeTests when tried). The version
 	// gate reprojects lazily on the next search instead, so no migration ever needs to touch
-	// search_fts again. Bump this whenever ToDoc's projected TEXT shape changes.
-	public const long LexicalProjectionVersion = 1;
+	// search_fts's CONTENT again. Bump this whenever ToDoc's projected Text/Key shape changes.
+	//
+	// Bumped to 2 by search-key-column-everywhere: e.Key now projects into its own indexed `Key`
+	// column (M012_SearchKeyColumn adds the column — a schema change no version bump can express;
+	// this bump is what makes every existing row actually get its Key populated). Memory never had
+	// a Text-splice of its own (search-slug-words-gap only ever touched the tasks tier) — the key
+	// simply had NO lexical leg before this, and memory has no exact-identifier retriever either,
+	// so an English memory key never bridged into a Russian-titled query by any path until now.
+	public const long LexicalProjectionVersion = 2;
 
 	public static SearchDoc ToDoc(MemoryEntry e, string scope) =>
-		new(scope, e.Store, e.Key, e.Description + "\n" + e.Body, e.Tags);
+		new(scope, e.Store, e.Key, e.Description + "\n" + e.Body, e.Tags, Key: e.Key);
 }
