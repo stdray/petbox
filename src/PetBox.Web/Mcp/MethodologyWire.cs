@@ -95,7 +95,11 @@ static class MethodologyWire
 				: null,
 			Effects: k.Effects is { Count: > 0 }
 				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
-				: null)).ToList();
+				: null,
+			AutoWireSpecFrom: k.AutoWireSpecFrom,
+			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes),
+			DefaultView: k.DefaultView,
+			OutlineReveal: k.OutlineReveal)).ToList();
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
 		def.LinkKinds is { Count: > 0 }
