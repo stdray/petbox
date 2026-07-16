@@ -10,7 +10,9 @@ namespace PetBox.Memory.Data;
 // SQLite file lifecycle via IScopedDbFactory<MemoryDb>. All of a project's stores share one file
 // (memory/{project}.db); a store's entries are the rows whose Store column equals its name —
 // exactly the tasks tier's board partition. Mirrors TaskBoardStore.
-// v1 is project-scoped only. Explicit creation — no auto-vivify.
+// v1 is project-scoped only. The service door auto-vivifies a store on first write
+// (EnsureAsync, below — for background jobs and the reserved system stores); the agent MCP
+// write path gates an unknown store to explicit creation (see MemoryTools).
 public interface IMemoryStore
 {
 	// The project's shared memory file (holds every store's entries, partitioned by Store).
