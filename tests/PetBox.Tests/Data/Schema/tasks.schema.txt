@@ -175,6 +175,7 @@ TABLE search_meta_alias
   COL Id TEXT NOT NULL PK3
   COL Scope TEXT NOT NULL PK1
   COL Type TEXT NOT NULL PK2
+  INDEX ix_search_meta_alias_lookup origin=c (Scope, Alias)
   INDEX sqlite_autoindex_search_meta_alias_1 UNIQUE origin=pk (Scope, Type, Id, Alias)
 
 TABLE search_vec

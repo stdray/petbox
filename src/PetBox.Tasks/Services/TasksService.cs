@@ -982,39 +982,56 @@ public sealed partial class TasksService : ITasksService
 	public Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default) =>
 		_nodeRefs.ResolveBatchRenameAsync(projectKey, slugs, ct);
 
-	// exact-identifier-search-surfacing (spec) — NodeRefPolicy.MultiHit: soft multi-hit ids from
-	// the resolver, then GetNodeAsync enrichment (includeClosed) so terminal nodes surface.
-	// Empty list on a miss; `board` narrows; multi-board slug returns ALL matches ordered by board.
+	// exact-identifier-search-surfacing / search-identity-leg (spec): the IDENTITY leg of the search
+	// pipeline. Identity is now a plain EQUALITY predicate over the search_meta_alias reference table
+	// (SqliteMetaIndex.ResolveIdentityAsync) — NOT a read of the temporal store off the side of the
+	// ranking. Index membership is the single truth about findability by identifier: the alias set of a
+	// node carries BOTH its slug AND its NodeId, so ONE predicate resolves either, and a NodeId query
+	// lands the same rank-1 identity hit a slug query does (slug↔NodeId SYMMETRY — the NodeId the
+	// lexical index never carried). Empty list on a miss; `board` narrows; a slug shared across boards
+	// returns ALL matches ordered by board. Terminality is IGNORED here by construction — a terminal
+	// node stays in the index (search-hides-terminal-nodes), so its aliases still resolve, and the
+	// enrichment rides GetNodeBySlugAsync (includeClosed inside) so an accepted/Cancelled node surfaces
+	// like any other. Cross-scope isolation: the predicate is scoped to `projectKey`.
 	//
-	// search-hides-terminal-nodes (defect 1): the LITERAL identifier is tried first (unchanged
-	// ranking/order for an already-exact q); a caller/agent typing a slug's WORDS with spaces
-	// ("methodology redesign") is the dominant case, not the edge, so a KEBAB-NORMALIZED second
-	// candidate is tried too (trim, collapse internal whitespace/underscores to one hyphen,
-	// casefold) — its ids are appended after the literal's, deduplicated by NodeId.
+	// TWO candidates, deduplicated: the LITERAL identifier (trim + casefold, so it lines up with the
+	// stored alias set — slug is lowercase kebab, NodeId is lowercase hex) and, when it differs, the
+	// KEBAB normalization (collapse internal whitespace/underscores to one hyphen) — the dominant
+	// "typed the slug's words with spaces" case (search-hides-terminal-nodes defect 1), preserved.
 	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
-		TaskSearchHit? Enrich(NodeDetailView? detail)
-		{
-			if (detail is null) return null;
-			if (board is not null && !string.Equals(detail.Board, board, StringComparison.Ordinal)) return null;
-			var node = urlPrefix is null ? detail.Node : detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key };
-			return new TaskSearchHit(detail.Board, node);
-		}
+		var raw = (identifier ?? "").Trim();
+		if (raw.Length == 0) return [];
 
-		var ids = new List<string>(_nodeRefs.ResolveMultiHitIds(projectKey, identifier, board));
-		var normalized = KebabCandidate(identifier);
-		if (normalized is not null && !string.Equals(normalized, (identifier ?? "").Trim(), StringComparison.Ordinal))
-		{
-			var seen = new HashSet<string>(ids, StringComparer.Ordinal);
-			foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, normalized, board))
-				if (seen.Add(id)) ids.Add(id);
-		}
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		// Self-heal on the same read-time trigger the lexical floor uses: a file predating search_meta
+		// (or behind its projection version) has no alias rows yet — rebuild them once BEFORE the
+		// identity predicate reads them. Direct callers (the cross-scope leg, the MCP escape hatch)
+		// reach this leg without going through the hybrid path, so the backfill must live here too.
+		var runtime = await RuntimeAsync(projectKey, ct);
+		await EnsureMetaBackfillAsync(ctx, projectKey, runtime, ct);
+
+		// Candidate alias strings, deduped. Both are lowercased to match the stored (lowercase) alias set.
+		var candidates = new List<string> { raw.ToLowerInvariant() };
+		var kebab = KebabCandidate(raw);
+		if (kebab is not null && !candidates.Contains(kebab)) candidates.Add(kebab);
+
+		// Equality over the alias table → (board, slug) addresses; dedup across candidates.
+		var targets = new List<(string Board, string Slug)>();
+		var seen = new HashSet<(string, string)>();
+		foreach (var cand in candidates)
+			foreach (var (b, slug) in await SqliteMetaIndex.ResolveIdentityAsync(ctx, projectKey, cand, board, ct))
+				if (seen.Add((b, slug))) targets.Add((b, slug));
 
 		var hits = new List<TaskSearchHit>();
-		foreach (var id in ids)
-			if (Enrich(await GetNodeAsync(projectKey, id, ct)) is { } hit) hits.Add(hit);
+		foreach (var (b, slug) in targets)
+		{
+			var detail = await GetNodeBySlugAsync(projectKey, b, slug, ct);
+			if (detail is null) continue;
+			var node = urlPrefix is null ? detail.Node : detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key };
+			hits.Add(new TaskSearchHit(detail.Board, node));
+		}
 		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
-		// NodeId path is ≤1 hit — OrderBy is a no-op there (was an early return before).
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
 	}
 
@@ -1695,11 +1712,11 @@ public sealed partial class TasksService : ITasksService
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
 				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, f.IncludeClosed, ct);
 
-			// exact-identifier-search-surfacing (spec): a query that exactly matches a node's
-			// slug reads as an addressed ask in disguise — surface EVERY exact match regardless of
-			// terminality (the exact escape hatch reads the temporal store directly, ignoring the
-			// includeClosed/terminal-CANCEL filter above), ahead of the fused ranking.
-			// Still subject to the criteria predicates below like any other hit.
+			// exact-identifier-search-surfacing / search-identity-leg (spec): a query that exactly
+			// matches a node's slug OR its NodeId reads as an addressed ask in disguise — the identity
+			// leg (equality over search_meta_alias, terminal nodes included by index membership)
+			// surfaces EVERY exact match regardless of the includeClosed/terminal-CANCEL filter above,
+			// ahead of the fused ranking. Still subject to the criteria predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
 			// An exact match PREEMPTS its own fused copy rather than yielding to it: since the slug's
