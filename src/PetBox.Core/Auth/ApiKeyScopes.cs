@@ -25,6 +25,9 @@ public static class ApiKeyScopes
 	public const string TasksRead = "tasks:read";
 	public const string TasksWrite = "tasks:write";
 	public const string TasksApprove = "tasks:approve";
+	// Changing the RULES that already govern EXISTING nodes — deliberately separate from
+	// tasks:write (which writes nodes UNDER the rules). See the catalog entry below.
+	public const string MethodologyWrite = "methodology:write";
 	public const string MemoryRead = "memory:read";
 	public const string MemoryWrite = "memory:write";
 	public const string LlmInvoke = "llm:invoke";
@@ -53,6 +56,7 @@ public static class ApiKeyScopes
 		new(TasksRead,   "Read tasks",             "List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(TasksApprove, "Approve tasks",         "Perform approval-gated workflow transitions the methodology ENFORCES (enforceApproval) — the maintainer capability. Meaningless without tasks:write.", "Tasks"),
+		new(MethodologyWrite, "Change live process rules", "GOVERNANCE: change the rules that already govern EXISTING nodes — tasks_methodology_rules_upsert (rewrites a live instance's rules and migrates live nodes), tasks_methodology_create (mints a live rules document), tasks_board_adopt (moves an existing board and its nodes under another instance's rules). tasks:write writes nodes UNDER the rules; this changes the rules themselves. Inert templates (template_upsert/snapshot/delete) do NOT need it. Meaningless without tasks:write.", "Tasks"),
 		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
 		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools.", "Memory"),
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.", "LlmRouter"),

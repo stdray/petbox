@@ -47,7 +47,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Create_BuiltinQuartet_ProvisionsBoards_AndAutoWires()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		en.Name.Should().Be("quartet");
 		en.Changed.Should().BeTrue();
@@ -81,7 +81,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Create_BuiltinClassic_ProvisionsOneClassicBoard()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "classic", "builtin", "classic");
 		en.Name.Should().Be("classic");
 		var reported = en.Boards.Should().ContainSingle().Subject;
@@ -109,7 +109,7 @@ public sealed class QuartetTests : IDisposable
 	[InlineData("classic", "classic", "task")]
 	public async Task Upsert_UntypedNode_MaterializesKindDefaultType(string preset, string board, string defaultType)
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, preset, "builtin", preset);
 		var nodes = McpInputs.NodesJson("""[{"key":"untyped-a","title":"A"}]"""); // no type, no status
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, board, nodes);
@@ -128,7 +128,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task MethodologyTemplateGet_Builtin_IsValidCopyableTemplate()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 
 		var render = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "quartet");
 		render.Found.Should().BeTrue();
@@ -157,7 +157,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Singleton_SecondBoardOfMethodologyKind_Rejected()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "spec", "spec");
 		// A 2nd open process-role board is rejected (one-per-instance; legacy unassigned
 		// boards share the null-membership bucket). GuardAsync is not on board_create,
@@ -169,7 +169,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Singleton_SimpleBoards_Unlimited()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f1", "simple");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f2", "simple");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
@@ -181,7 +181,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task QuartetIndex_IsCompact_WithBodyLen_AndBoardFilter()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 
 		var body = new string('x', 500);
@@ -224,7 +224,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task QuartetIndex_LargeBoard_CutsRowsWithMarkers_CountsStayComplete()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 
 		const int total = 150;
@@ -261,7 +261,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task QuartetIndex_IncludeUrl_AddsAbsolutePermalink()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		var nodes = McpInputs.NodesJson("""[{"key":"idea-u","status":"raw","type":"idea","title":"U"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
@@ -282,7 +282,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Upsert_IncludeUrl_ReturnsPermalinkForCreatedNode()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await EnsureBoard("free1");
 		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A"}]""");
 		var added = (await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
@@ -293,7 +293,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task QuartetIndex_InvalidIncludeBoards_SilentlyDropped()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		// An unknown board kind is silently dropped (soft filter); an all-unknown set → no boards.
 		var res = await _tasks.GetMethodologyAsync(Proj, includeBoards: ["bogus"]);
@@ -332,7 +332,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Upsert_EchoOmitsBodyByDefault_SlicesWithBodyLen_AndDeltaStaysBodiless()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		var big = new string('y', 500);
 		await EnsureBoard("ce");
 
@@ -372,7 +372,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task TasksSearch_UniformBodyLenContract()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		var big = new string('z', 500);
 		await EnsureBoard("g");
 		var nodes = McpInputs.NodesJson(
@@ -407,7 +407,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task NodeGet_UniformBodyLenContract()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 		var big = new string('q', 400);
 		await EnsureBoard("g");
 		var nodes = McpInputs.NodesJson(
@@ -425,7 +425,7 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Upsert_NotApplied_EchoIsEmpty_ConflictCarriesTheStory()
 	{
-		var http = Http("tasks:read,tasks:write");
+		var http = Http("tasks:read,tasks:write,methodology:write");
 
 		// Land a node so the board has a cursor and "a" has current state to (wrongly) echo.
 		await EnsureBoard("conf");

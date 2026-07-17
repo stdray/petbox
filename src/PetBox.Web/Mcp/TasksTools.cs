@@ -35,7 +35,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
-	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. Requires tasks:write.")]
+	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. GOVERNANCE: this re-points an existing board's live nodes at another instance's rules — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardAdoptResult> BoardAdoptAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
@@ -45,6 +45,10 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Adopting an EXISTING board re-points its EXISTING nodes at another instance's
+		// rules — the criterion "changes the rules for existing nodes" is met even though
+		// no rules document is edited here. Governance-gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var meta = await tasks.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
 		return new BoardAdoptResult(meta.Name, meta.Kind, meta.MethodologyInstance);
 	}
@@ -123,7 +127,8 @@ public static class TasksTools
 		name — snapshot its rules). Provisions instance rules + one board per kind in the
 		source definition; process-role singleton applies INSIDE the new instance (a second
 		instance may reuse the same process-role kinds). Template write alone never creates
-		boards — only this call does. Requires tasks:write.
+		boards — only this call does. GOVERNANCE: this authors a LIVE rules document —
+		requires tasks:write AND methodology:write.
 		""")]
 	public static async Task<MethodologyInstanceCreateResult> MethodologyCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -136,6 +141,11 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Creating an instance AUTHORS a live rules document. On its own it governs only
+		// the boards it provisions — but create+board_adopt is the composed bypass of
+		// rules_upsert (mint your own rules, then pull existing boards under them), so the
+		// criterion binds here too and both halves must be gated or neither is.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, name, source, sourceKey, ct);
 		return new MethodologyInstanceCreateResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
@@ -255,7 +265,8 @@ public static class TasksTools
 		[{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a node's
 		current value is invalid under the new resolution (a valid value is never rewritten).
 		Closed instances reject the write. Returns { name, version, changed, migrated }.
-		Requires tasks:write.
+		GOVERNANCE: this changes the rules that already govern EXISTING nodes — requires
+		tasks:write AND methodology:write. (Inert templates do not: see template_upsert.)
 		""")]
 	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyRulesUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -269,6 +280,9 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The paradigm case: rewrites the rules of a LIVE instance and migrates the live
+		// nodes on its member boards. Governance-gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
 			projectKey, name, def, version, MethodologyWire.ParseMigration(migration), ct);

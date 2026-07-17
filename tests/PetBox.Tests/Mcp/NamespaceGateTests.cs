@@ -236,7 +236,9 @@ public sealed class TasksNamespaceGateTests : IDisposable
 
 	static IHttpContextAccessor Http()
 	{
-		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test");
+		// methodology:write — this suite provisions a methodology to exercise the NAMESPACE
+		// gate, which is a different gate (spec methodology-write-scope owns the authz one).
+		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write,methodology:write")], "test");
 		var ctx = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) };
 		ctx.Request.Scheme = "https";
 		ctx.Request.Host = new HostString("box.test");

@@ -3,6 +3,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -364,6 +365,101 @@ public sealed class McpModuleToolsTests : IDisposable
 		// The direct exploring->accepted transition was removed; you must pass through review.
 		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "accepted", version = v } }), 0));
+	}
+
+	// spec methodology-write-scope — changing the rules that govern EXISTING nodes needs
+	// methodology:write, a scope SEPARATE from tasks:write. tasks:write alone writes nodes
+	// UNDER the rules; it must not be able to rewrite the rules themselves.
+	const string TasksOnly = "tasks:read,tasks:write";
+	const string TasksAndMethodology = "tasks:read,tasks:write,methodology:write";
+
+	// Smallest definition the validator accepts (a methodology needs >=1 kind).
+	static MethodologyDefInput MinimalDef() => new()
+	{
+		Name = "d",
+		Kinds =
+		[
+			new MethodologyKindInput
+			{
+				Kind = "simple",
+				Workflows =
+				[
+					new MethodologyWorkflowInput
+					{
+						Types = ["task"],
+						Statuses = [new MethodologyStatusInput { Slug = "todo" }],
+					},
+				],
+			},
+		],
+	};
+
+	[Fact]
+	public async Task Methodology_RulesUpsert_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyRulesUpsertAsync(http, Flags(), _tasks, Proj, "inst",
+				MinimalDef()));
+	}
+
+	[Fact]
+	public async Task Methodology_Create_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+	}
+
+	[Fact]
+	public async Task Methodology_BoardAdopt_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardAdoptAsync(http, Flags(), _tasks, Proj, "b", "inst"));
+	}
+
+	// The gate is a scope check, not a ban: methodology:write actually opens the door.
+	[Fact]
+	public async Task Methodology_Create_WithMethodologyWrite_Succeeds()
+	{
+		var http = Http(TasksAndMethodology);
+		var ack = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple");
+		ack.Name.Should().Be("inst");
+		ack.Boards.Should().NotBeEmpty();
+	}
+
+	// The gate must not over-reach: an INERT template touches no live node, so the
+	// criterion ("changes the rules for EXISTING nodes") does not bind and tasks:write
+	// stays sufficient. A gate here would break template authoring for no security gain.
+	[Fact]
+	public async Task Methodology_TemplateUpsert_NeedsNoMethodologyWrite()
+	{
+		var http = Http(TasksOnly);
+		var ack = await TasksTools.MethodologyTemplateUpsertAsync(http, Flags(), _tasks, Proj, "tmpl",
+			MinimalDef());
+		ack.Key.Should().Be("tmpl");
+	}
+
+	// methodology:write is a capability layered ON tasks:write (like tasks:approve), not a
+	// replacement for it: it must not become a back door for a key that cannot write tasks.
+	[Fact]
+	public async Task Methodology_Create_MethodologyWriteWithoutTasksWrite_StillThrows()
+	{
+		var http = Http("tasks:read,methodology:write");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+	}
+
+	[Fact]
+	public void MethodologyWrite_IsInTheScopeCatalog()
+	{
+		// The catalog is the single source of truth: the create-key UI renders from it and
+		// the server validates submitted scope strings against it. A scope enforced but not
+		// catalogued cannot be granted — the gate would be unopenable.
+		var (valid, invalid) = ApiKeyScopes.Validate("methodology:write");
+		valid.Should().Equal(ApiKeyScopes.MethodologyWrite);
+		invalid.Should().BeEmpty();
 	}
 
 	static IHttpContextAccessor Http(string scopes, string? project = null)
