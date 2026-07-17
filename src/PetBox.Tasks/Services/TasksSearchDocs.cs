@@ -40,7 +40,7 @@ public static class TasksSearchDocs
 	// all-or-nothing into a per-word bridge between an English identifier and a Russian body —
 	// SqliteFtsIndex's MATCH has no column filter, so a key-word query finds it same as before.
 	//
-	// search-slug-words-gap (8e39e398) shipped this same bridge by SPLICING the slug onto the
+	// search-slug-words-gap shipped this same bridge by SPLICING the slug onto the
 	// front of `Text` (`n.Key + "\n" + n.Name + "\n" + n.Body`) — a poorer version of the same
 	// idea per the owner: the key's words landed in Text's OWN term frequencies, double-counting
 	// them into whatever BM25 score Text/Tags already carry. A dedicated column keeps the key's

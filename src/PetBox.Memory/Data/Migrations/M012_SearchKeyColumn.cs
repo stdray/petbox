@@ -5,7 +5,7 @@ namespace PetBox.Memory.Data.Migrations;
 
 // search-key-column-everywhere: search_fts gets a dedicated INDEXED `Key` column for a memory
 // entry's own business key. Memory never had the tasks tier's Text-splice fix (search-slug-words-gap
-// / 8e39e398 never touched MemorySearchDocs) — the key simply had NO lexical leg at all: unlike
+// never touched MemorySearchDocs) — the key simply had NO lexical leg at all: unlike
 // tasks, memory has no exact-identifier retriever either, so an English memory key never bridged
 // into a Russian-titled query by any path. This column is the fix for both tiers at once, from
 // the shared SqliteFtsIndex schema — MemorySearchDocs.ToDoc projects e.Key into it in the same

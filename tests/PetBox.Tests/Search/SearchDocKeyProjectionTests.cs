@@ -7,7 +7,7 @@ namespace PetBox.Tests.Search;
 
 // The projection invariant search-key-column-everywhere shipped: a node/entry's slug-like Key is
 // carried in the SearchDoc's OWN `Key` column, never spliced into `Text` — that splice
-// (search-slug-words-gap, 8e39e398) double-counted the key's words into Text's BM25 term
+// (search-slug-words-gap) double-counted the key's words into Text's BM25 term
 // frequencies alongside whatever the title/body already contributed, skewing ranking toward any
 // node that merely shares a key word over one that is actually topical. TasksHybridSearchTests'
 // SlugWords_DoNotOutrankATopicalMatch was meant to guard the ranking consequence, but its decoy
