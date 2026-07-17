@@ -168,6 +168,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["tasks_methodology_get"] = "pending: covered by MethodologyInstanceTests",
 		["tasks_methodology_close"] = "pending: write path covered by MethodologyInstanceTests",
 		["tasks_methodology_rules_get"] = "pending: covered by MethodologyInstanceRulesEditTests",
+		["tasks_methodology_active_get"] = "pending: covered by MethodologyActiveInstanceTests",
+		["tasks_methodology_set_active"] = "pending: write path covered by MethodologyActiveInstanceTests",
 		["tasks_methodology_rules_upsert"] = "pending: full methodology-definition JSON; covered by MethodologyInstanceRulesEditTests",
 		["tasks_methodology_describe"] = "pending: needs a seeded live instance + primitive natural key; covered end-to-end by MethodologyDescribeTests",
 		["tasks_board_adopt"] = "pending: write path covered by MethodologyInstanceTests",

@@ -36,6 +36,18 @@ TABLE comments
   INDEX sqlite_autoindex_comments_1 UNIQUE origin=pk (Key, Version)
   INDEX ux_comments_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
 
+TABLE methodology_active_instance
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Created TEXT NOT NULL
+  COL InstanceName TEXT NOT NULL
+  COL Key TEXT NOT NULL PK1
+  COL PrevKey TEXT NULL
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX sqlite_autoindex_methodology_active_instance_1 UNIQUE origin=pk (Key, Version)
+  INDEX ux_methodology_active_instance_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
+
 TABLE methodology_defs
   COL ActiveFrom INTEGER NOT NULL
   COL ActiveTo INTEGER NULL

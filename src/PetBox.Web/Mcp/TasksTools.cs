@@ -201,6 +201,55 @@ public static class TasksTools
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
 	}
 
+	[McpServerTool(Name = "tasks_methodology_active_get", Title = "Get the project's active methodology instance pointer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveGetResult))]
+	[Description("""
+		Return the project's explicit ACTIVE methodology instance pointer (spec
+		methodology-active-instance) — the instance DEFAULT surfaces (UI, MCP verbs called
+		without an explicit instance, tasks_methodology_guide with no `name`) resolve through
+		when set. NEVER overrides board membership — a board's own methodology instance
+		(tasks_board_create's methodologyInstance) always wins regardless of what is active
+		here. `name` is null when no pointer is set: resolution then falls back to the single
+		open instance when there is exactly one, or an explicit "no active instance" guide
+		otherwise (never a silent merge). `version` is the CAS baseline for
+		tasks_methodology_set_active. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyActiveGetResult> MethodologyActiveGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetActiveMethodologyInstanceAsync(projectKey, ct);
+		return new MethodologyActiveGetResult(view.Name, view.Version);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_set_active", Title = "Set (or clear) the project's active methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveSetResult))]
+	[Description("""
+		Set the project's explicit ACTIVE methodology instance pointer, or CLEAR it (omit/null
+		`name`) — spec methodology-active-instance. Controls DEFAULTS only: UI, MCP verbs
+		without an explicit instance, and tasks_methodology_guide with no `name` resolve
+		through this pointer when set. NEVER controls board membership — a board that belongs
+		to instance X always resolves X's rules even while Y is active (board membership
+		always wins). The pointer MUST reference an OPEN instance: naming a missing or closed
+		instance is rejected, nothing is written — close it first or pick another. `version`
+		is the watermark baseline from tasks_methodology_active_get (0 = no prior read).
+		Requires tasks:write.
+		""")]
+	public static async Task<MethodologyActiveSetResult> MethodologySetActiveAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) to make active; omit/null to clear the pointer.")] string? name,
+		[Description("Watermark baseline: version from tasks_methodology_active_get; 0 = no prior read.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, name, version, ct);
+		return new MethodologyActiveSetResult(ack.Name, ack.Changed, ack.Version);
+	}
+
 	static MethodologyInstanceViewResult ProjectInstance(MethodologyInstanceView v) => new(
 		v.Name, v.Closed, v.Version, v.Created, v.Updated, v.ClosedAt, v.DefinitionName, v.Kinds,
 		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList(),
@@ -472,27 +521,31 @@ public static class TasksTools
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
 		boards — DERIVED AT RUNTIME from OPEN methodology INSTANCE rules (tasks_methodology_create
 		/ tasks_methodology_rules_upsert), with builtin templates (quartet|classic|simple)
-		as the baseline where no open instance applies. Optional `name` selects one instance;
-		when omitted: 0 open→presets, 1 open→that instance, N open→merged kinds (first open
-		by name wins on kind-slug conflict). Call it when you start working a project's tasks
-		and need the process rules. `markdown` covers, per effective kind: types (quick-add
-		default marked), statuses grouped open/terminal, initial status, the transition map
-		(collapsed to "free" when a block allows every move), the GATES as behavioral
-		invariants (owner-only transitions the agent NEVER performs — marked enforced vs
-		convention, reason-required moves, artifact:<slug> comment preconditions,
-		pre-transition checklists), creation link requirements (specRef/blockedBy/ideaRef,
-		incl. declared link targets), declared transition effects, tag axes (or free-form),
-		and the relation-kind dictionary (process vs neutral vs instance-declared).
-		`invariants` is the same derivation machine-readable: [{ kind, rule: approval_gate|
-		approval_gate_enforced|reason_required|precondition_artifact|checklist|
-		transition_effect|link_constraint|tag_axes, detail }]. `source` =
-		presets|instance|instances; `definitionVersion` when a single instance is selected.
-		Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		as the baseline where no open instance applies. Optional `name` selects one instance
+		explicitly. When omitted, resolution follows the project's ACTIVE INSTANCE pointer
+		(spec methodology-active-instance, tasks_methodology_active_get /
+		tasks_methodology_set_active): the pointer when set and open; else the single open
+		instance when there is exactly one; else an EXPLICIT "N open, none active" guide
+		naming every open instance — never a silent merge of their kinds. Call it when you
+		start working a project's tasks and need the process rules. `markdown` covers, per
+		effective kind: types (quick-add default marked), statuses grouped open/terminal,
+		initial status, the transition map (collapsed to "free" when a block allows every
+		move), the GATES as behavioral invariants (owner-only transitions the agent NEVER
+		performs — marked enforced vs convention, reason-required moves, artifact:<slug>
+		comment preconditions, pre-transition checklists), creation link requirements
+		(specRef/blockedBy/ideaRef, incl. declared link targets), declared transition
+		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
+		neutral vs instance-declared). `invariants` is the same derivation machine-readable:
+		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
+		precondition_artifact|checklist|transition_effect|link_constraint|tag_axes, detail }].
+		`source` = instance|active|ambiguous|presets; `definitionVersion` when a single
+		instance is selected (named, active, or the unambiguous single open one). Bounded (a
+		handful of kinds) — no truncation. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Optional methodology instance name; when omitted, open instances are merged.")] string? name = null,
+		[Description("Optional methodology instance name; when omitted, resolves via the active-instance pointer (tasks_methodology_active_get/set_active).")] string? name = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
