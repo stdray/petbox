@@ -58,7 +58,8 @@ static class MethodologyWire
 			Created: created,
 			Updated: updated,
 			LinkKinds: ProjectLinkKinds(def),
-			TagAxes: ProjectTagAxes(def));
+			TagAxes: ProjectTagAxes(def),
+			StrictMode: def.StrictMode);
 
 	// Project a named template (stored|builtin|definition) onto the template_get wire result.
 	// Reuses the same kinds/workflows document body as def_get so a template is copyable into
@@ -75,7 +76,8 @@ static class MethodologyWire
 			Created: created,
 			Updated: updated,
 			LinkKinds: ProjectLinkKinds(def),
-			TagAxes: ProjectTagAxes(def));
+			TagAxes: ProjectTagAxes(def),
+			StrictMode: def.StrictMode);
 
 	static List<MethodologyKindView> ProjectKinds(MethodologyDefinition def) =>
 		def.Kinds.Select(k => new MethodologyKindView(
@@ -88,7 +90,11 @@ static class MethodologyWire
 					t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
 					t.EnforceApproval,
 					Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null,
-					Description: t.Description)).ToList())).ToList(),
+					Description: t.Description,
+					RequiredArtifacts: t.RequiredArtifacts is { Count: > 0 }
+						? t.RequiredArtifacts.Select(a => new MethodologyRequiredArtifactView(a.Slug, a.Inline)).ToList()
+						: null,
+					Enforce: t.Enforce is null ? null : new MethodologyGateEnforcementView(t.Enforce.Approval, t.Enforce.Artifacts))).ToList())).ToList(),
 			LinkConstraints: k.LinkConstraints is { Count: > 0 }
 				? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
 					c.Type, c.Link, c.TargetKind,
@@ -135,6 +141,9 @@ static class MethodologyWire
 					EnforceApproval = t.EnforceApproval,
 					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
 					Description = t.Description,
+					RequiredArtifacts = (t.RequiredArtifacts ?? [])
+						.Select(a => new RequiredArtifactDef(a.Slug ?? string.Empty, a.Inline)).ToList(),
+					Enforce = t.Enforce is null ? null : new GateEnforcementDef(t.Enforce.Approval, t.Enforce.Artifacts),
 				}).ToList())).ToList())
 		{
 			LinkConstraints = (k.LinkConstraints ?? [])
@@ -165,6 +174,7 @@ static class MethodologyWire
 			.Select(lk => new MethodologyLinkKindDef(lk.Slug ?? string.Empty, lk.Description)).ToList(),
 		TagAxes = (d.TagAxes ?? [])
 			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
+		StrictMode = d.StrictMode,
 	};
 
 	// Map the typed migration document 1:1 (nulls → empty, so the service validator reports

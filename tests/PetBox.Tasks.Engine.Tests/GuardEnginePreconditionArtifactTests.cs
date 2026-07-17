@@ -138,4 +138,34 @@ public sealed class GuardEnginePreconditionArtifactTests
 		// reports it.
 		GuardEngine.RequirePreconditionArtifacts(Ctx(), [State("t1", "Pending")], NoPrior).Should().BeNull();
 	}
+
+	// ---- The artifacts-strictness switch (schema v2, spec methodology-gate-strictness) ----
+
+	static readonly MethodologyRuntime SoftArtifactsRuntime = MethodologyRuntime.From(new MethodologyDefinition("soft-artifacts",
+	[
+		new MethodologyKindDef("gated", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["item"],
+				[
+					new WorkflowStatus("raw", "Raw", StatusKind.Open),
+					new WorkflowStatus("reviewed", "Reviewed", StatusKind.Open),
+				],
+				[
+					new MethodologyTransitionDef("raw", "reviewed")
+					{
+						RequiredArtifacts = [new RequiredArtifactDef("spec_plan")],
+						Enforce = new GateEnforcementDef(Artifacts: false),
+					},
+				]),
+		]),
+	]));
+
+	[Fact]
+	public void EnforceArtifactsFalse_DemotesTheGateToConvention_NotBlocked()
+	{
+		var ctx = Ctx(runtime: SoftArtifactsRuntime, kindSlug: "gated", board: "gated-board", specBoard: null);
+		var prior = Prior(State("g1", "raw", "item", nodeId: Id("g1")));
+		// No artifact:spec_plan comment anywhere in this context, and yet:
+		GuardEngine.RequirePreconditionArtifacts(ctx, [State("g1", "reviewed", "item")], prior).Should().BeNull();
+	}
 }

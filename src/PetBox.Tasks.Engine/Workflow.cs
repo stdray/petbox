@@ -37,6 +37,28 @@ public sealed record WorkflowTransition(string From, string To, bool RequiresApp
 	// the workflow graph marks; never server-enforced. Carried here so presentation surfaces
 	// (the graph's `checklist` edge marker) see it without re-reading the definition.
 	public IReadOnlyList<string> Checklist { get; init; } = [];
+
+	// Whether the server actually BLOCKS a missing RequiresReason/PreconditionArtifact for THIS
+	// transition (the "force" half — EnforceApproval is approval's; schema v2, spec methodology-
+	// gate-strictness). Default true reproduces today's behavior: reason and precondition
+	// artifacts are both hard, unconditionally, for every existing definition (none declares
+	// Enforce, the new nullable field). false = the gate is a CONVENTION only — the guide still
+	// states it, the server does not block it.
+	//
+	// NOTE this stays a scalar, not a list: MethodologyTransitionDef.RequiredArtifacts (the
+	// declaration) CAN name more than one non-inline artifact, but ToWorkflow collapses it to
+	// (at most) one inline + one non-inline here — the shape WorkflowTransition already had
+	// before this schema (RequiresReason bool + PreconditionArtifact string), and the ONE
+	// GuardEngine/WorkflowEngine still enforce at runtime. A settable LIST field here would be
+	// included in this record's generated structural equality, and every pre-existing test that
+	// hand-builds an expected WorkflowTransition (MethodologyPresetsTests and friends) compares
+	// by value without knowing about it — breaking bit-for-bit reproduction for a presentation
+	// nicety, not a behavior change. A definition declaring MORE than one non-inline artifact on
+	// one transition validates (MethodologyDefinitionValidator) but only the FIRST is actually
+	// enforced — a known v1 limitation (documented on RequiredArtifactDef), not a silent runtime
+	// surprise: it is caught by inspection of the stored document, same as the pre-existing
+	// single-PreconditionArtifact ceiling.
+	public bool EnforceArtifacts { get; init; } = true;
 }
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is

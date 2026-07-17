@@ -345,6 +345,32 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 			// enforceApproval is a MODE of the approval gate, not a gate of its own.
 			if (t.EnforceApproval && !t.RequiresApproval)
 				ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): enforceApproval is only meaningful with requiresApproval — set requiresApproval:true or drop enforceApproval");
+			// Same rule for the schema-v2 replacement: enforce.approval is only meaningful with
+			// requiresApproval (the WHO gate); it never implies requiresApproval itself.
+			if (t.Enforce?.Approval == true && !t.RequiresApproval)
+				ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): enforce.approval is only meaningful with requiresApproval — set requiresApproval:true or drop enforce.approval");
+
+			// requiredArtifacts (schema v2, spec methodology-gate-strictness) REPLACES
+			// requiresReason/preconditionArtifact — don't declare both shapes on one transition,
+			// or which one is authoritative (EffectiveRequiredArtifacts prefers the new shape
+			// silently) becomes a trap for whoever edits this document next.
+			if (t.RequiredArtifacts.Count > 0 && (t.RequiresReason || t.PreconditionArtifact is not null))
+				ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): don't mix legacy requiresReason/preconditionArtifact with requiredArtifacts on the same transition — declare the gate once, as requiredArtifacts:[{{slug,inline}}]");
+
+			var artifactSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (var a in t.RequiredArtifacts)
+			{
+				if (!IsSlug(a.Slug))
+					ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): requiredArtifacts slug '{a.Slug}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+				else if (!artifactSlugs.Add(a.Slug))
+					ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): duplicate requiredArtifacts slug '{a.Slug}'");
+				// v1 boundary (spec methodology-gate-strictness): the only inline channel a call
+				// can carry is NodePatch.Reason — a custom inline artifact has nowhere to receive
+				// its content, so it would be a runtime surprise on the first write, not a
+				// declared feature. Reject it at definition time instead.
+				if (a.Inline && !string.Equals(a.Slug, "reason", StringComparison.Ordinal))
+					ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): requiredArtifacts '{a.Slug}' declares inline:true, but only slug 'reason' may be inline in v1 — no other call field carries inline content");
+			}
 			foreach (var item in t.Checklist ?? [])
 			{
 				if (string.IsNullOrWhiteSpace(item))

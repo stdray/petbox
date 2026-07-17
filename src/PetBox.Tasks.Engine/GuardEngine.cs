@@ -299,13 +299,18 @@ public static class GuardEngine
 		return null;
 	}
 
-	// DATA-DRIVEN transition gate (idea-review-needs-plan generalized): a transition whose
-	// definition names a PreconditionArtifact requires an active `artifact:<slug>` comment on the
-	// node before it fires — the ideas preset gates exploring->review on `artifact:spec_plan`, a
-	// definition kind declares its own. Mirrors WorkflowEngine's from-resolution (unchanged status
-	// skipped, unknown prior = recovery); landing DIRECTLY in a gated target status at creation is
-	// refused too, so the gate can't be bypassed by birth. NodeId comes from the prior row (desired
-	// rows get their NodeId assigned inside the temporal upsert, after this check).
+	// DATA-DRIVEN transition gate (idea-review-needs-plan generalized; schema v2, spec
+	// methodology-gate-strictness): a transition whose definition names a PreconditionArtifact
+	// requires an active `artifact:<slug>` comment on the node before it fires — the ideas
+	// preset gates exploring->review on `artifact:spec_plan`, a definition kind declares its
+	// own. Mirrors WorkflowEngine's from-resolution (unchanged status skipped, unknown prior =
+	// recovery); landing DIRECTLY in a gated target status at creation is refused too, so the
+	// gate can't be bypassed by birth. NodeId comes from the prior row (desired rows get their
+	// NodeId assigned inside the temporal upsert, after this check). `EnforceArtifacts` false
+	// demotes the gate to a convention the guide states but the server does not block — the
+	// default is true, which reproduces today's unconditional hard gate for every existing
+	// definition. (A definition may declare MORE than one non-inline requiredArtifacts entry per
+	// transition — only the first is enforced here; see the note on WorkflowTransition.EnforceArtifacts.)
 	public static MethodologyVerdict? RequirePreconditionArtifacts(
 		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, NodeState> prior)
 	{
@@ -319,6 +324,7 @@ public static class GuardEngine
 			if (from is not null && wf.Status(from) is null) from = null; // recovery — mirrors WorkflowEngine
 
 			string? artifact;
+			bool enforceArtifacts;
 			string transition;
 			if (from is null)
 			{
@@ -328,6 +334,7 @@ public static class GuardEngine
 					t.PreconditionArtifact is not null && string.Equals(t.To, d.Status, StringComparison.OrdinalIgnoreCase));
 				if (gated is null) continue;
 				artifact = gated.PreconditionArtifact;
+				enforceArtifacts = gated.EnforceArtifacts;
 				transition = $"'{gated.From}' -> '{gated.To}'";
 			}
 			else
@@ -335,8 +342,10 @@ public static class GuardEngine
 				var tr = wf.Transition(from, d.Status);
 				if (tr?.PreconditionArtifact is null) continue;
 				artifact = tr.PreconditionArtifact;
+				enforceArtifacts = tr.EnforceArtifacts;
 				transition = $"'{from}' -> '{d.Status}'";
 			}
+			if (!enforceArtifacts) continue; // convention only — declared, not server-blocked
 
 			var tag = $"artifact:{artifact}";
 			if (p is null || p.NodeId.Length == 0)

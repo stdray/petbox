@@ -15,6 +15,13 @@ public sealed record WorkflowResult(bool Ok, string? Error)
 // one demands `actorCanApprove` (tasks:approve at the MCP door, the cookie-authenticated
 // owner in the UI). The builtin presets declare no enforced gate, so preset behavior is
 // unchanged; a definition opts in per transition.
+//
+// The requiredArtifacts gate (schema v2, spec methodology-gate-strictness) has its OWN
+// strictness switch, `EnforceArtifacts` (WorkflowTransition), default true — reason and
+// precondition artifacts are both hard today for every existing definition, unconditionally;
+// this default reproduces that bit-for-bit. It is independent of the approve switches above:
+// a transition can be approval-soft and artifacts-hard (the quartet's Review/accept edges) or
+// any other combination a definition declares.
 public static class WorkflowEngine
 {
 	// The resolution-agnostic core: `wf` is the already-resolved state machine (preset or
@@ -53,7 +60,12 @@ public static class WorkflowEngine
 			var tr = wf.Transition(fromSlug!, toSlug);
 			if (tr is null)
 				return WorkflowResult.Fail($"no transition '{fromSlug}' -> '{toSlug}'; from '{fromSlug}' you can go to: {string.Join("|", wf.NextFrom(fromSlug!))}");
-			if (tr.RequiresReason && !hasReason)
+			// The inline `reason` artifact (schema v2, spec methodology-gate-strictness): blocks
+			// only when EnforceArtifacts is true — the default, reproducing today's unconditional
+			// hard reason gate for every existing definition. A transition whose Enforce.Artifacts
+			// resolves false states the same rule as a CONVENTION (the guide still says so) but the
+			// server does not stop the write.
+			if (tr.RequiresReason && tr.EnforceArtifacts && !hasReason)
 				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires a reason (provide a non-empty reason field on this call)");
 			if (tr.RequiresApproval && (enforceApproval || tr.EnforceApproval) && !actorCanApprove)
 				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires maintainer approval");

@@ -339,7 +339,8 @@ public static class TasksTools
 			Created: view.Created,
 			Updated: view.Updated,
 			LinkKinds: doc.LinkKinds,
-			TagAxes: doc.TagAxes);
+			TagAxes: doc.TagAxes,
+			StrictMode: doc.StrictMode);
 	}
 
 	[McpServerTool(Name = "tasks_methodology_rules_upsert", Title = "Edit a live methodology instance's rules (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesUpsertResult))]
@@ -613,7 +614,11 @@ public static class TasksTools
 		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
 		neutral vs instance-declared). `invariants` is the same derivation machine-readable:
 		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
-		precondition_artifact|checklist|transition_effect|link_constraint|tag_axes, detail }].
+		reason_required_convention|precondition_artifact|precondition_artifact_convention|
+		checklist|transition_effect|link_constraint|tag_axes, detail }]. The "_convention"
+		variants (schema v2, spec methodology-gate-strictness) mean the gate is declared but
+		NOT server-blocked (Enforce.Artifacts:false on the transition) — every builtin preset
+		and every already-stored definition keeps the enforced variant, unchanged.
 		`source` = instance|active|ambiguous|presets; `definitionVersion` when a single
 		instance is selected (named, active, or the unambiguous single open one). Bounded (a
 		handful of kinds) — no truncation. Requires tasks:read.

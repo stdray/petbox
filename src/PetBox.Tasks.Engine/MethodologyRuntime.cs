@@ -36,6 +36,7 @@ public sealed class MethodologyRuntime
 	readonly IReadOnlyList<MethodologyKindDef> _declared;
 	readonly IReadOnlyList<MethodologyLinkKindDef> _linkKinds;
 	readonly IReadOnlyList<MethodologyTagAxisDef> _tagAxes;
+	readonly bool _strictMode;
 
 	public MethodologyRuntime(MethodologyDefinition? definition)
 	{
@@ -45,7 +46,16 @@ public sealed class MethodologyRuntime
 		// `?? []` also covers a hand-written stored document with an explicit JSON null.
 		_linkKinds = definition?.LinkKinds ?? [];
 		_tagAxes = definition?.TagAxes ?? [];
+		_strictMode = definition?.StrictMode ?? false;
 	}
+
+	// The definition's approval-strictness default (spec methodology-gate-strictness) — applies
+	// ONLY to a kind THIS definition declares; a kind resolved from the builtin presets (this
+	// definition doesn't declare it, or there is none) is never strict, so a project's own
+	// StrictMode cannot retroactively toughen a preset kind it hasn't authored. Threaded into
+	// ToWorkflow at every declared-kind resolution point below.
+	public bool StrictMode(string? kindSlug) =>
+		kindSlug is not null && _kinds.ContainsKey(kindSlug) && _strictMode;
 
 	// Creation link constraints of a kind: the definition's when it declares the kind,
 	// else the preset's (work: feature/bug need task_spec; chore free — as data).
@@ -264,11 +274,11 @@ public sealed class MethodologyRuntime
 				if (kind.Workflows.Count == 0 || kind.Workflows[0].Types.Count == 0)
 					return null;
 				var defType = kind.Workflows[0].Types[0];
-				return kind.Workflows[0].ToWorkflow(defType);
+				return kind.Workflows[0].ToWorkflow(defType, _strictMode);
 			}
 			var label = type.ToLowerInvariant();
 			var block = FindBlock(kind, label);
-			return block?.ToWorkflow(label);
+			return block?.ToWorkflow(label, _strictMode);
 		}
 		return MethodologyPresets.For(MethodologyPresets.ParseKind(kindSlug), type);
 	}
@@ -276,7 +286,7 @@ public sealed class MethodologyRuntime
 	// All workflows hosted by a kind, one per type slug (status-filter validation).
 	public IReadOnlyList<Workflow> Types(string? kindSlug) =>
 		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
-			? kind.Workflows.SelectMany(b => b.Types.Select(b.ToWorkflow)).ToList()
+			? kind.Workflows.SelectMany(b => b.Types.Select(t => b.ToWorkflow(t, _strictMode))).ToList()
 			: MethodologyPresets.Types(MethodologyPresets.ParseKind(kindSlug));
 
 	// Valid type slugs for a kind (for error messages).
@@ -352,7 +362,7 @@ public sealed class MethodologyRuntime
 	// carries its whole type vocabulary).
 	public IReadOnlyList<WorkflowBlock> Blocks(string? kindSlug) =>
 		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
-			? kind.Workflows.Select(b => new WorkflowBlock(b.Types, b.ToWorkflow(b.Types[0]))).ToList()
+			? kind.Workflows.Select(b => new WorkflowBlock(b.Types, b.ToWorkflow(b.Types[0], _strictMode))).ToList()
 			: MethodologyPresets.Blocks(MethodologyPresets.ParseKind(kindSlug));
 
 	StatusKind? DefinedKindOfSlug(string slug)

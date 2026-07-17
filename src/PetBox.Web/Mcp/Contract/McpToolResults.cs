@@ -552,7 +552,9 @@ public sealed record MethodologyDefGetResult(
 	// Definition-level primitives (null = none declared, omitted by the serializer):
 	// project-declared relation kinds and tag axes.
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
-	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null,
+	// Mirrors MethodologyDefinition.StrictMode (spec methodology-gate-strictness). Default false.
+	bool StrictMode = false);
 
 // ---- methodology templates (methodology-template-storage) ----------------------------
 
@@ -575,7 +577,8 @@ public sealed record MethodologyTemplateGetResult(
 	DateTime? Created = null,
 	DateTime? Updated = null,
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
-	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null,
+	bool StrictMode = false);
 
 // tasks_methodology_template_list answer: builtins + stored (+ dual-read definition entry).
 public sealed record MethodologyTemplateListResult(IReadOnlyList<MethodologyTemplateListItemView> Templates);
@@ -632,7 +635,8 @@ public sealed record MethodologyInstanceRulesGetResult(
 	DateTime? Created = null,
 	DateTime? Updated = null,
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
-	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null,
+	bool StrictMode = false);
 
 // tasks_methodology_rules_upsert ack: version cursor, whether a revision was written, and
 // how many live member-board nodes the migration rewrote.
@@ -709,9 +713,22 @@ public sealed record MethodologyWorkflowBlockView(
 // tag required before the transition; null = omitted by the serializer), `enforceApproval`
 // (the approval gate is server-blocked, not convention) and `checklist` (free-text
 // conditions; null = none declared, omitted).
+//
+// `requiresReason`/`preconditionArtifact`/`enforceApproval` are the LEGACY shape (output-side
+// counterpart of MethodologyTransitionInput's legacy fields — see its note). `requiredArtifacts`/
+// `enforce` are the schema-v2 replacement (spec methodology-gate-strictness); null = declared via
+// the legacy fields instead (or no gate).
 public sealed record MethodologyTransitionView(
 	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null,
-	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null, string? Description = null);
+	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null, string? Description = null,
+	IReadOnlyList<MethodologyRequiredArtifactView>? RequiredArtifacts = null,
+	MethodologyGateEnforcementView? Enforce = null);
+
+// Mirrors RequiredArtifactDef 1:1 — the output-side counterpart of MethodologyRequiredArtifactInput.
+public sealed record MethodologyRequiredArtifactView(string Slug, bool Inline = false);
+
+// Mirrors GateEnforcementDef 1:1 — the output-side counterpart of MethodologyGateEnforcementInput.
+public sealed record MethodologyGateEnforcementView(bool? Approval = null, bool? Artifacts = null);
 
 // ---- tool_describe (spec tool-description-economy) -----------------------------------
 
