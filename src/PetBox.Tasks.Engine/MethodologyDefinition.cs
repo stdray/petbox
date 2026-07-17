@@ -75,6 +75,20 @@ public sealed record MethodologyKindDef(
 	// heuristic that should travel with the template). Validated against
 	// OutlineRevealModeNames.All by MethodologyDefinitionValidator.
 	public string? OutlineReveal { get; init; }
+	// Process-role cardinality (spec methodology-kind-singleton): true = at most one open
+	// board of this kind per methodology instance (or per legacy null-membership bucket).
+	// Null = no opinion from THIS declaration — resolved with the SAME field-level merge as
+	// DefaultView/OutlineReveal above, NOT a whole-object merge (ResolvedKind): a builtin-
+	// provisioned instance materializes each preset MethodologyKindDef VERBATIM at creation
+	// time (RenderPresetDefinition), so an instance created before this field existed stores
+	// it as the JSON-missing default on a kind that IS a process role (e.g. `work`) — a
+	// whole-object merge would silently read that as "not singleton" on every already-
+	// provisioned project (the exact board-view-defaults-not-applied-existing-instances
+	// trap). Was gated on membership in the `BoardKind` enum via two duplicate arrays
+	// (`Methodological` in TasksService, `ProcessRoleKinds` in MethodologyInstanceService) —
+	// a custom-declared kind could never opt in. Now data: the definition author declares it
+	// per kind, custom kinds included (spec methodology-kind-singleton).
+	public bool? Singleton { get; init; }
 }
 
 // Delivery roll-up as DATA (spec primitives-enum-residual): how linked task_spec nodes

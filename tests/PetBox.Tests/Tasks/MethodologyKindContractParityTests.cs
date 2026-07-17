@@ -208,6 +208,7 @@ public sealed class MethodologyKindContractParityTests
 				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"]),
 				DefaultView = "kanban",
 				OutlineReveal = "navigate",
+				Singleton = true,
 			},
 		]);
 

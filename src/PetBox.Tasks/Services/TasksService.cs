@@ -98,9 +98,6 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	// Process-role kinds: ≤1 open board per kind INSIDE an instance (not project-wide).
-	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
-
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
 		// Membership: required once the project has entered the instance world (any instance
@@ -131,16 +128,16 @@ public sealed partial class TasksService : ITasksService
 		string canonical;
 		if (runtime.IsDefinedKind(kindSlug))
 		{
-			// A definition-declared kind is stored VERBATIM. Process-role singleton still
-			// applies when the kind maps onto a process-role BoardKind.
+			// A definition-declared kind is stored VERBATIM. Process-role singleton is DATA on
+			// the kind (MethodologyKindDef.Singleton, spec methodology-kind-singleton) — a
+			// custom-declared kind can opt in too, not just the four quartet enum names.
 			canonical = kindSlug;
-			if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var definedAs) && Methodological.Contains(definedAs))
-				await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, runtime, ct: ct);
 		}
 		else if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var k))
 		{
 			canonical = k.ToString().ToLowerInvariant();
-			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, runtime, ct: ct);
 		}
 		else
 		{

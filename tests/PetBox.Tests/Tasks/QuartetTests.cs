@@ -166,6 +166,23 @@ public sealed class QuartetTests : IDisposable
 		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
 	}
 
+	// methodology-kind-singleton: the existing-board match moved from enum-parse equality
+	// (MethodologyPresets.ParseKind(b.Kind) == kind) to exact-slug equality
+	// (string.Equals(b.Kind, kindSlug, OrdinalIgnoreCase)) — required because a custom kind
+	// has no BoardKind value to compare against. For the four builtin process-role kinds this
+	// is behavior-PRESERVING: Enum.TryParse<BoardKind> only ever succeeds on a case-insensitive
+	// exact name match (no aliases), so the two predicates agree on every string that used to
+	// reach this guard. Proven here across a casing difference, the one axis where the two
+	// predicates could plausibly have diverged.
+	[Fact]
+	public async Task Singleton_CaseInsensitiveKindSlug_StillCollides()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "spec", "spec");
+		var act = () => _tasks.CreateBoardAsync(Proj, "spec2", "SPEC", null, null);
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
+	}
+
 	[Fact]
 	public async Task Singleton_SimpleBoards_Unlimited()
 	{
