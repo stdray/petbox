@@ -127,6 +127,9 @@ public sealed record MethodologyKindInput
 	// Mirrors MethodologyKindDef.Description: free-form prose about this kind (spec
 	// methodology-primitive-descriptions). Null = none.
 	public string? Description { get; init; }
+	// Mirrors MethodologyKindDef.BoardName: the preferred board name for this kind, tried
+	// first by PickBoardName. Null = no opinion (falls back to the kind-slug-derived names).
+	public string? BoardName { get; init; }
 }
 
 // Mirrors MethodologyBlocksGateDef 1:1 (see the parity note on MethodologyKindInput above).

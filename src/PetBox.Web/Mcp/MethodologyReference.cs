@@ -75,6 +75,7 @@ static class MethodologyReference
 				["singleton"] = "true = at most one open board of this kind per methodology instance (the quartet's work/spec/ideas/intake are singleton; classic/simple are not). Omitted = falls back to the builtin preset of the same slug, else not singleton.",
 				["blocksGate"] = "The blocking-gate statuses: a node in `status` must name a blocker (a STATE invariant checked on every write, not a transition gate); a released node moves to `releaseTo`. Omitted = this kind has no blocking gate (falls back to the builtin preset of the same slug, else none) — only work is gated today, but a definition can opt any kind in.",
 				["description"] = "Optional free-form prose about this kind (data, not code). Surfaced by the compiled process guide (tasks_methodology_guide); never resolved or enforced. Edit it alone with tasks_methodology_describe instead of a whole-document rules_upsert.",
+				["boardName"] = "The preferred board name for this kind, tried FIRST when a board of this kind is provisioned (still subject to the usual name-collision/reserved-name rules). Omitted = no opinion — the board is named from the kind slug as before.",
 			}),
 		Describe<MethodologyBlocksGateInput>(
 			"The blocking-gate statuses of a kind (spec methodology-blocks-gate-data).",

@@ -663,7 +663,8 @@ public sealed record MethodologyKindView(
 	string? OutlineReveal = null,
 	bool? Singleton = null,
 	MethodologyBlocksGateView? BlocksGate = null,
-	string? Description = null);
+	string? Description = null,
+	string? BoardName = null);
 
 // Mirrors MethodologyBlocksGateDef 1:1 — the output-side counterpart of MethodologyBlocksGateInput.
 public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);

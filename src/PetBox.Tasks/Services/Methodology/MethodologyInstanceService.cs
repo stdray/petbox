@@ -398,7 +398,7 @@ public sealed partial class MethodologyInstanceService
 			// instance, but re-check in case of concurrent create.
 			await AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, runtime, ct: ct);
 
-			var boardName = PickBoardName(instanceName, kindSlug, singleKind, taken);
+			var boardName = PickBoardName(instanceName, kindSlug, runtime.BoardName(kindSlug), singleKind, taken);
 			taken.Add(boardName);
 			var meta = await _boards.CreateAsync(
 				projectKey, boardName,
@@ -440,12 +440,21 @@ public sealed partial class MethodologyInstanceService
 		}
 	}
 
-	static string PickBoardName(string instanceName, string kindSlug, bool singleKind, HashSet<string> taken)
+	// `preferredName` (MethodologyKindDef.BoardName via MethodologyRuntime.BoardName, spec
+	// primitives-enum-residual) is a definition-declared board name — tried FIRST, ahead of the
+	// slug-derived candidates, so a custom kind can give its board a name other than its own
+	// slug. It's still just a candidate: subject to the same taken/"node"-reserved skip as every
+	// other one, so a collision falls through to the slug-derived names exactly as before this
+	// parameter existed. Null (no preferred name — the default for every kind today) reproduces
+	// the original candidate list unchanged.
+	static string PickBoardName(string instanceName, string kindSlug, string? preferredName, bool singleKind, HashSet<string> taken)
 	{
 		// Prefer short, readable names; fall back to instance-prefixed when taken.
 		IEnumerable<string> candidates = singleKind
 			? [instanceName, kindSlug, $"{instanceName}-{kindSlug}"]
 			: [kindSlug, $"{instanceName}-{kindSlug}"];
+		if (!string.IsNullOrWhiteSpace(preferredName))
+			candidates = new[] { preferredName }.Concat(candidates);
 		foreach (var c in candidates)
 		{
 			if (c.Length > 0 && !taken.Contains(c) && c != "node")

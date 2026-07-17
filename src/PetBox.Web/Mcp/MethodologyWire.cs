@@ -104,7 +104,8 @@ static class MethodologyWire
 			OutlineReveal: k.OutlineReveal,
 			Singleton: k.Singleton,
 			BlocksGate: k.BlocksGate is null ? null : new MethodologyBlocksGateView(k.BlocksGate.Status, k.BlocksGate.ReleaseTo),
-			Description: k.Description)).ToList();
+			Description: k.Description,
+			BoardName: k.BoardName)).ToList();
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
 		def.LinkKinds is { Count: > 0 }
@@ -157,6 +158,7 @@ static class MethodologyWire
 			BlocksGate = k.BlocksGate is null ? null : new MethodologyBlocksGateDef(
 				k.BlocksGate.Status ?? string.Empty, k.BlocksGate.ReleaseTo ?? string.Empty),
 			Description = k.Description,
+			BoardName = k.BoardName,
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])

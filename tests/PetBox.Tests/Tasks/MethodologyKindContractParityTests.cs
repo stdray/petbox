@@ -221,6 +221,7 @@ public sealed class MethodologyKindContractParityTests
 				Singleton = true,
 				BlocksGate = new MethodologyBlocksGateDef("open", "done"),
 				Description = "The work board's kind.",
+				BoardName = "backlog",
 			},
 		]);
 
