@@ -172,6 +172,19 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		ValidateDelivery(kind, ctx);
 		ValidateDefaultView(kind, ctx);
 		ValidateOutlineReveal(kind, ctx);
+		ValidateBoardName(kind, ctx);
+	}
+
+	// BoardName is a board-name candidate PickBoardName tries first (spec primitives-enum-
+	// residual) — format-checked against the same slug spec TaskBoardStore.CreateAsync enforces
+	// on every board name. The "node"-reserved / already-taken skip is PickBoardName's own
+	// runtime concern (a definition-time check here can't see sibling instances' boards), so
+	// this only rejects a shape that could never be a valid board name at all.
+	static void ValidateBoardName(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.BoardName is null) return;
+		if (!IsSlug(kind.BoardName))
+			ctx.AddFailure($"kind '{kind.Kind}': boardName '{kind.BoardName}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
 	}
 
 	// DefaultView names a BoardViewModeNames entry (methodology-default-view-field). Format-

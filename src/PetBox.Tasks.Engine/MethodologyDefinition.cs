@@ -102,6 +102,17 @@ public sealed record MethodologyKindDef(
 	// invariant under its own status names — the invariant is no longer work's alone by
 	// construction, only by which kinds today declare this field.
 	public MethodologyBlocksGateDef? BlocksGate { get; init; }
+	// The preferred board NAME for this kind (spec primitives-enum-residual, "имя доски выводится
+	// из слага вида" — a template couldn't give a board its own name/display, only the kind slug
+	// via PickBoardName). Null = no opinion — PickBoardName falls back to the slug-derived
+	// candidates exactly as before. When set, tried FIRST by PickBoardName (still subject to the
+	// same collision/"node"-reserved rules as every other candidate), so a custom-declared kind
+	// can name its board something other than its own slug (e.g. kind `issue` naming its board
+	// `backlog`). Resolved through MethodologyRuntime.BoardName with the SAME field-level merge
+	// as DefaultView/OutlineReveal/Singleton/BlocksGate above — display-only, not process
+	// semantics, and no preset declares it today (every preset's board name already equals its
+	// kind slug), so the preset half of the merge is currently always null.
+	public string? BoardName { get; init; }
 }
 
 // The blocking-gate statuses of a kind (spec methodology-blocks-gate-data): `Status` gates

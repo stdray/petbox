@@ -124,6 +124,9 @@ public sealed record MethodologyKindInput
 	// must name a blocker; a released node moves to `releaseTo`). Null = this kind has no
 	// blocking gate.
 	public MethodologyBlocksGateInput? BlocksGate { get; init; }
+	// Mirrors MethodologyKindDef.BoardName: the preferred board name for this kind, tried
+	// first by PickBoardName. Null = no opinion (falls back to the kind-slug-derived names).
+	public string? BoardName { get; init; }
 }
 
 // Mirrors MethodologyBlocksGateDef 1:1 (see the parity note on MethodologyKindInput above).

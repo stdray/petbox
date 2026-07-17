@@ -74,6 +74,7 @@ static class MethodologyReference
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
 				["singleton"] = "true = at most one open board of this kind per methodology instance (the quartet's work/spec/ideas/intake are singleton; classic/simple are not). Omitted = falls back to the builtin preset of the same slug, else not singleton.",
 				["blocksGate"] = "The blocking-gate statuses: a node in `status` must name a blocker (a STATE invariant checked on every write, not a transition gate); a released node moves to `releaseTo`. Omitted = this kind has no blocking gate (falls back to the builtin preset of the same slug, else none) — only work is gated today, but a definition can opt any kind in.",
+				["boardName"] = "The preferred board name for this kind, tried FIRST when a board of this kind is provisioned (still subject to the usual name-collision/reserved-name rules). Omitted = no opinion — the board is named from the kind slug as before.",
 			}),
 		Describe<MethodologyBlocksGateInput>(
 			"The blocking-gate statuses of a kind (spec methodology-blocks-gate-data).",
