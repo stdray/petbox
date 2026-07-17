@@ -5,6 +5,7 @@ using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
+using PetBox.Tasks.Workflow;
 using PetBox.Web.Search;
 
 namespace PetBox.Tests.Web;
@@ -189,6 +190,59 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 		hit.Priority.Should().Be(7);
 		hit.Tags.Should().Contain("area:ui");
 		hit.UpdatedAt.Should().NotBeNull();
+	}
+
+	// spec tasks-status-kind-classifier — the DIVERGENCE this node fixes, at the fan-out boundary
+	// that carried it. On a CUSTOM methodology a hit's terminality was classified TWO ways: the
+	// service resolved it through the per-board runtime (StatusKindOf), while the /ui/search page
+	// approximated it on the far side with the board-less preset scan. They DISAGREED — a custom
+	// terminal slug the presets don't know read as LIVE. Now the ONE authority classifies every hit
+	// inside the search branch, and the hit carries the result. This test seeds a custom terminal
+	// status the presets are blind to, and asserts the fan-out now classifies it correctly.
+	[Fact]
+	public async Task Terminality_OnCustomMethodology_ClassifiedThroughAuthority_NotPresetScan()
+	{
+		// A custom kind whose terminal slug (`Shelved`, terminalcancel) and open slug (`Watching`)
+		// are NOT in any preset's vocabulary — the exact shape the board-less preset scan misreads.
+		var def = new MethodologyDefinition(
+			"acme-risk",
+			[
+				new MethodologyKindDef("risk", QuickAddAllowed: true,
+				[
+					new MethodologyWorkflowDef(["risk"],
+						[
+							new WorkflowStatus("Watching", "Watching", StatusKind.Open),
+							new WorkflowStatus("Shelved", "Shelved", StatusKind.TerminalCancel),
+						],
+						[new MethodologyTransitionDef("Watching", "Shelved")]),
+				]),
+			]);
+		await _tasks.UpsertMethodologyTemplateAsync(ProjA, "risk-tmpl", def, 0);
+		await _tasks.CreateMethodologyInstanceAsync(ProjA, "risks", "template", "risk-tmpl");
+		var board = (await _tasks.ListBoardsAsync(ProjA)).Single(b => b.Kind == "risk").Name;
+
+		// Born directly in the two custom statuses (create is not a transition — no FSM dance).
+		await Seed(ProjA, board,
+			new NodePatch { Key = "risk-shelved", Type = "risk", Status = "Shelved", Title = "Retired risk", Body = "x" },
+			new NodePatch { Key = "risk-watching", Type = "risk", Status = "Watching", Title = "Live risk", Body = "x" });
+
+		// The OLD board-less path: the preset scan does not know these slugs at all, so it read the
+		// terminal one as live. This is the divergence made concrete.
+		MethodologyPresets.KindOfSlug("Shelved").Should().BeNull("presets are blind to a custom terminal slug — the old path read it as live");
+		MethodologyPresets.KindOfSlug("Watching").Should().BeNull();
+
+		var scope = ByWorkspace((Ws: "ws1", Project: Proj(ProjA, "ws1")));
+
+		// The fan-out now classifies each hit through the board's own runtime (StatusKindOf). The
+		// exact-identifier leg surfaces terminal nodes, so the retired risk comes back too.
+		var shelved = await CoreOnly().SearchAsync(scope, "risk-shelved", "https", "box.test");
+		shelved.Should().ContainSingle();
+		shelved[0].StatusKind.Should().Be(StatusKind.TerminalCancel,
+			"terminality is resolved through the board's runtime, not the preset scan the page used to apply");
+
+		var watching = await CoreOnly().SearchAsync(scope, "risk-watching", "https", "box.test");
+		watching.Should().ContainSingle();
+		watching[0].StatusKind.Should().Be(StatusKind.Open, "a custom open status is classified as open, not terminal");
 	}
 
 	[Fact]

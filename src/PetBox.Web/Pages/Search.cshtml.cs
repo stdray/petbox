@@ -24,14 +24,15 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 
 	public IReadOnlyList<CrossScopeSearchHit> Hits { get; private set; } = [];
 
-	// The reusable table's row shape (Pages/Shared/_TaskTable.cshtml), projected from Hits. No
-	// per-project MethodologyRuntime is available at this fan-out (many projects, potentially
-	// many methodologies), so Status renders as a plain outline badge — exactly what this page
-	// already showed before the table reuse, just laid out as a table column instead of a
-	// hand-rolled badge in a <li>. Closed uses the project-wide preset scan (MethodologyPresets.
-	// IsTerminalSlug) — an approximation for a defined-kind's custom terminal slug, acceptable
-	// here since active-only filtering on the search page is a bonus the row data enables for
-	// free, not a promised guarantee.
+	// The reusable table's row shape (Pages/Shared/_TaskTable.cshtml), projected from Hits. This
+	// fan-out spans many projects/methodologies, so there is no single MethodologyRuntime to render
+	// the status LABEL through — Status stays a plain outline badge (raw slug), exactly what this
+	// page already showed before the table reuse. Closed / TerminalCancel, however, are NOT a
+	// far-side guess: each hit already carries its authoritative per-board classification
+	// (CrossScopeSearchHit.StatusKind), computed inside the search branch through the ONE classifier
+	// StatusKindOf (spec tasks-status-kind-classifier). The old code approximated them here with the
+	// board-less preset scan (MethodologyPresets.IsTerminalSlug/KindOfSlug), which diverged from the
+	// authority on a custom methodology's own terminal slugs — a custom terminal status read as live.
 	public IReadOnlyList<TaskTableRow> Rows { get; private set; } = [];
 
 	public async Task OnGetAsync(CancellationToken ct)
@@ -41,16 +42,15 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 		Rows = Hits.Select(h => new TaskTableRow(
 			NodeId: h.NodeId, Key: h.Key, Title: h.Title, Url: h.Url, Type: h.Type,
 			StatusSlug: h.Status, StatusDisplay: h.Status, StatusCssClass: "badge-outline", StatusShow: true,
-			Closed: MethodologyPresets.IsTerminalSlug(h.Status),
+			Closed: h.StatusKind is StatusKind.TerminalOk or StatusKind.TerminalCancel,
 			Priority: h.Priority, Tags: h.Tags ?? [], CreatedAt: null, UpdatedAt: h.UpdatedAt,
 			Delivery: h.Delivery,
-			// board-terminal-negative-visible: same project-wide preset approximation Closed
-			// already uses above (no per-project MethodologyRuntime available at this fan-out).
-			// IsSpecBoard is left at its default false (review finding: strikethrough is spec-only
-			// now) — cheaply telling a spec hit from any other kind would need a per-project runtime
-			// this fan-out doesn't have, and Status is already always shown here (StatusShow: true
-			// above), so the redundancy argument holds without it too.
-			TerminalCancel: MethodologyPresets.KindOfSlug(h.Status) == StatusKind.TerminalCancel,
+			// board-terminal-negative-visible: the terminal-CANCEL half of the same authoritative
+			// per-board classification Closed reads above. IsSpecBoard is left at its default false
+			// (review finding: strikethrough is spec-only now) — cheaply telling a spec hit from any
+			// other kind would need more than the classification carried here, and Status is already
+			// always shown (StatusShow: true above), so the redundancy argument holds without it too.
+			TerminalCancel: h.StatusKind == StatusKind.TerminalCancel,
 			Workspace: h.Workspace, ProjectKey: h.ProjectKey, Board: h.Board)).ToList();
 	}
 }

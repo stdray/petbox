@@ -406,10 +406,6 @@ public static class MethodologyPresets
 		return null;
 	}
 
-	// A node is "closed" (hidden under active-only) if its status is terminal in some preset.
-	public static bool IsTerminalSlug(string slug) =>
-		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
-
 	// ---- provisioning presets (methodology enable + copy-as-definition) ----
 
 	// A named PROVISIONING PRESET: the board kinds `tasks_methodology_enable` creates as one
