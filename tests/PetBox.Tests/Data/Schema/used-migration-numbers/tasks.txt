@@ -32,3 +32,4 @@
 16 LIVE M016_SearchKeyColumn
 17 LIVE M017_MethodologyActiveInstance
 18 LIVE M018_SearchMeta
+19 LIVE M019_SearchMetaAliasIndex

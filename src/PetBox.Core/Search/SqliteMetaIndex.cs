@@ -28,14 +28,16 @@ public readonly record struct SearchMetaDoc(
 //   search_meta        — one row per entity: the facet columns (StatusKind, Created, Updated).
 //   search_meta_alias  — the alias SET, one row per (entity, alias).
 // A query JOINS against search_meta (a plain table), NOT search_fts (an FTS5 virtual table a join
-// without MATCH would scan) — but that read leg (facet pushdown, identity resolution) lives with its
-// consumers. This class is the WRITE side only.
+// without MATCH would scan). The IDENTITY read leg (ResolveIdentityAsync) lives here too — it is the
+// natural owner of the alias-table mapping — while the FACET-pushdown read leg lives with its
+// consumer. Writes are the primary surface.
 //
 // Writes ride the caller's `tx` (Class A): `tx` MUST be non-null. We never open our own write
 // connection — that would commit independently of the entity and reintroduce the very lag the
 // reference layer exists to remove. STATIC by nature: unlike SqliteFtsIndex (which holds a connect
 // func for its read path), the write side carries no state — the entity's transaction is the only
-// connection it touches. The read legs (facet pushdown, identity resolution) are separate work.
+// connection it touches. The identity read (ResolveIdentityAsync) is a pure equality query over the
+// alias table and takes a plain read connection; the facet-pushdown read leg is separate work.
 public static class SqliteMetaIndex
 {
 	// Upsert one entity's facet row + alias set: delete any prior row/aliases for (Scope, Type, Id)
@@ -84,6 +86,32 @@ public static class SqliteMetaIndex
 		var db = Tx(tx);
 		await db.GetTable<MetaRow>().Where(r => r.Scope == scope && r.Type == type).DeleteAsync(ct);
 		await db.GetTable<AliasRow>().Where(r => r.Scope == scope && r.Type == type).DeleteAsync(ct);
+	}
+
+	// ---- read leg: identity resolution ----
+	//
+	// The identity leg of the search pipeline (spec search-identity-leg): resolve an identifier to the
+	// entities whose ALIAS SET contains it exactly. A plain EQUALITY predicate over search_meta_alias
+	// (`Alias = @alias`) — NOT a temporal-store read and NOT an FTS5 MATCH — so index MEMBERSHIP is the
+	// single truth about findability by identifier. Because the alias set carries a task node's slug AND
+	// its NodeId, ONE predicate resolves both: a NodeId query and a slug query land the same rank-1
+	// identity hit (slug↔NodeId symmetry). Cross-scope isolation: `Scope = @scope` is always applied, so
+	// a resolution never crosses into another project's rows. `type` narrows to one container (a board)
+	// when given. Returns the matched (Type, Id) = (board, slug) addresses, deduplicated and ordered by
+	// (Type, Id) for a stable multi-board result; the caller enriches each to a node view. This is a
+	// READ (no `tx` required) — it never writes, so it takes a plain connection.
+	public static async Task<IReadOnlyList<(string Type, string Id)>> ResolveIdentityAsync(
+		DataConnection db, string scope, string alias, string? type = null, CancellationToken ct = default)
+	{
+		if (string.IsNullOrEmpty(alias)) return [];
+		var q = db.GetTable<AliasRow>().Where(r => r.Scope == scope && r.Alias == alias);
+		if (type is not null) q = q.Where(r => r.Type == type);
+		return (await q.Select(r => new { r.Type, r.Id }).ToListAsync(ct))
+			.Select(r => (r.Type, r.Id))
+			.Distinct()
+			.OrderBy(x => x.Type, StringComparer.Ordinal)
+			.ThenBy(x => x.Id, StringComparer.Ordinal)
+			.ToList();
 	}
 
 	static DataConnection Tx(DataConnection? tx) =>
