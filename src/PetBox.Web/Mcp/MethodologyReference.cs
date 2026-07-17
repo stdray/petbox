@@ -71,6 +71,7 @@ static class MethodologyReference
 				["delivery"] = "The bottom-up delivery roll-up for this kind (a spec node's verdict computed from the work nodes linked to it). Omitted = this kind computes no delivery.",
 				["defaultView"] = "The board's initial view mode when a viewer has no saved preference. Omitted = the builtin default.",
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
+				["singleton"] = "true = at most one open board of this kind per methodology instance (the quartet's work/spec/ideas/intake are singleton; classic/simple are not). Omitted = falls back to the builtin preset of the same slug, else not singleton.",
 			}),
 		Describe<MethodologyDeliveryInput>(
 			"The delivery roll-up definition: how a node of the OWNING kind derives its verdict (not_started | in_progress | done | done_with_defects) from the nodes linked to it. Omit the whole object and the kind computes no delivery at all — the roll-up is gated by this DATA, so an absent definition silently disables the feature (work/delivery-rollup-is-vacuous-in-prod).",

@@ -653,7 +653,8 @@ public sealed record MethodologyKindView(
 	string? AutoWireSpecFrom = null,
 	MethodologyDeliveryView? Delivery = null,
 	string? DefaultView = null,
-	string? OutlineReveal = null);
+	string? OutlineReveal = null,
+	bool? Singleton = null);
 
 // Mirrors MethodologyDeliveryDef 1:1 — the output-side counterpart of MethodologyDeliveryInput.
 public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes);

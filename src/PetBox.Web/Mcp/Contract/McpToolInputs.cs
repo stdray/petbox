@@ -117,6 +117,9 @@ public sealed record MethodologyKindInput
 	// Mirrors MethodologyKindDef.OutlineReveal (OutlineRevealModeNames). Null = builtin
 	// default.
 	public string? OutlineReveal { get; init; }
+	// Mirrors MethodologyKindDef.Singleton: true = at most one open board of this kind per
+	// methodology instance. Null = no opinion (falls back to the preset's, else false).
+	public bool? Singleton { get; init; }
 }
 
 // Mirrors MethodologyDeliveryDef 1:1 (see the parity note on MethodologyKindInput above).

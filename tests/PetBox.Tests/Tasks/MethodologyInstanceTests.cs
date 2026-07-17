@@ -239,6 +239,39 @@ public sealed class MethodologyInstanceTests : IDisposable
 		fromInst.Boards[0].Kind.Should().Be("simple");
 	}
 
+	// methodology-kind-singleton: cardinality is DATA on MethodologyKindDef.Singleton, not
+	// membership in the BoardKind enum — a custom-declared kind (not one of the quartet's four
+	// names) can opt in too. Before this, AssertProcessRoleSingletonAsync early-returned for
+	// any kind that didn't Enum.TryParse into {Spec,Ideas,Intake,Work}, so this scenario could
+	// never be enforced no matter what the definition said.
+	[Fact]
+	public async Task Singleton_CustomDeclaredKind_SecondBoardRejected()
+	{
+		var def = new MethodologyDefinition("custom",
+		[
+			new MethodologyKindDef("myrole", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			])
+			{
+				Singleton = true,
+			},
+		]);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "custom-tmpl", def, 0);
+
+		var inst = await _tasks.CreateMethodologyInstanceAsync(Proj, "custom-inst", "template", "custom-tmpl");
+		inst.Boards.Should().ContainSingle(b => b.Kind == "myrole");
+
+		var act = () => _tasks.CreateBoardAsync(Proj, "myrole-2", "myrole", null, null, "custom-inst");
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
+	}
+
 	[Fact]
 	public async Task Create_RequiresExplicitSource_NoSilentDefault()
 	{

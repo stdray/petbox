@@ -99,7 +99,8 @@ static class MethodologyWire
 			AutoWireSpecFrom: k.AutoWireSpecFrom,
 			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes),
 			DefaultView: k.DefaultView,
-			OutlineReveal: k.OutlineReveal)).ToList();
+			OutlineReveal: k.OutlineReveal,
+			Singleton: k.Singleton)).ToList();
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
 		def.LinkKinds is { Count: > 0 }
@@ -146,6 +147,7 @@ static class MethodologyWire
 				(k.Delivery.DefectTypes ?? []).Select(t => t ?? string.Empty).ToList()),
 			DefaultView = k.DefaultView,
 			OutlineReveal = k.OutlineReveal,
+			Singleton = k.Singleton,
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])

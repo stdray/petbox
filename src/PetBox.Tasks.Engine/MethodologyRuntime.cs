@@ -104,6 +104,23 @@ public sealed class MethodologyRuntime
 		(DeclaredField(kindSlug, k => k.OutlineReveal) ?? PresetField(kindSlug, k => k.OutlineReveal))
 			?? OutlineRevealModeNames.Navigate;
 
+	// Process-role cardinality of a kind (spec methodology-kind-singleton): the SAME field-
+	// level merge as DefaultView/OutlineReveal just above, not the whole-object ResolvedKind
+	// merge every other process resolver uses — for the identical reason those two document:
+	// a builtin-provisioned instance materializes each preset MethodologyKindDef VERBATIM at
+	// creation time (RenderPresetDefinition), so an instance created before this field existed
+	// stores Singleton as the JSON-missing null on a kind that IS a process role (e.g. `work`)
+	// — a whole-object merge would read that as "not singleton" and silently drop the
+	// invariant on every already-provisioned project. The declared kind's own bool? when set,
+	// else the preset's for the SAME resolved kind, else false (a wholly custom kind with no
+	// opinion is NOT singleton by default — opt-in, not a global law). Was gated on membership
+	// in the `BoardKind` enum (MethodologyInstanceService.AssertProcessRoleSingletonAsync) —
+	// a custom-declared kind could never opt in; now data, custom kinds included.
+	public bool Singleton(string? kindSlug) =>
+		(kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind) ? kind.Singleton : null)
+			?? MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).Singleton
+			?? false;
+
 	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
 	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
 	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).
