@@ -54,7 +54,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
-	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
+	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. GOVERNANCE: re-targets or severs the edge that link-constraints and delivery resolve through for every node already on the board — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
@@ -62,6 +62,12 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when specBoard is
+		// omitted, SEVERS) the link the rules' link-constraints and delivery roll-up resolve
+		// through, for every node already on the board. This one meets even the narrow original
+		// criterion — I had excluded it before on the reading that it edits no rules document.
+		// It does not need to: it changes what the rules MEAN for existing nodes. Gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var (set, norm) = await tasks.SetSpecBoardAsync(projectKey, board, specBoard, ct);
 		return new BoardSetSpecResult(set, norm);
 	}
@@ -80,7 +86,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
-	[Description("Delete a task board and its nodes. Requires tasks:write.")]
+	[Description("Delete a task board and its nodes. GOVERNANCE: removes a process role from a live methodology instance and destroys its nodes — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardDeletedResult> BoardDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -88,11 +94,14 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Removes a process ROLE from a live instance and destroys its nodes with it. The most
+		// irreversible governance act on the surface — gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
 	[McpServerTool(Name = "tasks_board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
-	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. Requires tasks:write.")]
+	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. GOVERNANCE: retires a process role of a live methodology instance for everyone — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardClosedResult> BoardCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -100,11 +109,16 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// A board is not "just data": in a methodology instance it IS a process role (the spec
+		// board, the work board). Closing one retires that role for everyone — close the spec
+		// board and the rules' own "a work feature must link a spec node" becomes unsatisfiable,
+		// which halts the process without editing one line of rules. Governance act — gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
 	[McpServerTool(Name = "tasks_board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
-	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
+	[Description("Reopen a closed board so it accepts writes again. GOVERNANCE: undoes a deliberate governance freeze — same scope as tasks_board_close, requires tasks:write AND methodology:write.")]
 	public static async Task<BoardReopenedResult> BoardReopenAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -112,6 +126,10 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The inverse of a gated act must be gated too, or the gate is one-way theatre: a
+		// deliberate governance freeze could be undone by any tasks:write key. Same scope as
+		// board_close, on purpose.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
@@ -194,7 +212,8 @@ public static class TasksTools
 	[Description("""
 		Close a NAMED methodology INSTANCE whole: marks the instance closed and closes every
 		member board. Closed boards stay readable (history/search) but reject new writes.
-		Idempotent when already closed. Requires tasks:write.
+		Idempotent when already closed. GOVERNANCE: retires a whole live process — requires
+		tasks:write AND methodology:write.
 		""")]
 	public static async Task<MethodologyInstanceCloseResult> MethodologyCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -205,6 +224,12 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Retires a whole live process: the instance AND every member board stop accepting
+		// writes. Changes no rules document, so the narrow "changes the rules for existing
+		// nodes" test misses it — but it is a governance act over an EXISTING process, which
+		// is the criterion. Gating rules_upsert while leaving this open would be a hole: you
+		// cannot rewrite the process, but you could retire it wholesale.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, name, ct);
 		return new MethodologyInstanceCloseResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,

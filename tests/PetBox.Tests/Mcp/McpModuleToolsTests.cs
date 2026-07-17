@@ -429,6 +429,63 @@ public sealed class McpModuleToolsTests : IDisposable
 		ack.Boards.Should().NotBeEmpty();
 	}
 
+	// Owner decision (intake/finding-methodology-close-blast-radius): the criterion is
+	// "a governance act over an EXISTING process", not only "changes the rules". These four
+	// change no rules document and still retire/destroy/rewire a live process.
+	[Fact]
+	public async Task Methodology_Close_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCloseAsync(http, Flags(), _tasks, Proj, "inst"));
+	}
+
+	[Fact]
+	public async Task BoardClose_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardCloseAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardReopen_WithoutMethodologyWrite_Throws()
+	{
+		// The inverse of a gated act: an ungated reopen would undo a governance freeze.
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardReopenAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardDelete_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardDeleteAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardSetSpec_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardSetSpecAsync(http, Flags(), _tasks, Proj, "b", "s"));
+	}
+
+	// The line I am holding: board_create is NOT governance. It is constrained BY the rules
+	// (kind must be declared, process-role singleton enforced) and alters nothing that already
+	// exists — it adds an empty board. Gating it would put the routine verb agents use daily
+	// behind the governance scope and buy nothing: you cannot change a process by adding a
+	// board the rules already permit.
+	[Fact]
+	public async Task BoardCreate_NeedsNoMethodologyWrite()
+	{
+		var http = Http(TasksOnly);
+		var meta = await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "plain");
+		meta.Name.Should().Be("plain");
+	}
+
 	// The gate must not over-reach: an INERT template touches no live node, so the
 	// criterion ("changes the rules for EXISTING nodes") does not bind and tasks:write
 	// stays sufficient. A gate here would break template authoring for no security gain.
