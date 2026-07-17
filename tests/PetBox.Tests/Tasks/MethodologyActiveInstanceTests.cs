@@ -249,6 +249,29 @@ public sealed class MethodologyActiveInstanceTests : IDisposable
 		again.Changed.Should().BeFalse();
 	}
 
+	// methodology-inactive-visibility leans on ResolveDefaultMethodologyInstanceAsync to answer
+	// "is board X's instance the project's current default" without re-deriving a whole
+	// MethodologyRuntime. It must mirror RuntimeAsync's own resolution exactly (same four
+	// states this suite already pins for GetRuntimeAsync/GetMethodologyGuideAsync above).
+	[Fact]
+	public async Task ResolveDefaultInstance_MirrorsRuntimeResolution_AcrossAllFourStates()
+	{
+		// 0 open instances -> no default.
+		(await _tasks.ResolveDefaultMethodologyInstanceAsync(Proj)).Should().BeNull();
+
+		// Exactly 1 open, no pointer -> that one, unambiguous (the live $system shape today).
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "solo", "builtin", "classic");
+		(await _tasks.ResolveDefaultMethodologyInstanceAsync(Proj)).Should().Be("solo");
+
+		// 2 open, no pointer -> ambiguous, no default (never a silent first-by-name pick).
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "second", "builtin", "classic");
+		(await _tasks.ResolveDefaultMethodologyInstanceAsync(Proj)).Should().BeNull();
+
+		// Active pointer set -> explicit win, regardless of how many other instances are open.
+		await _tasks.SetActiveMethodologyInstanceAsync(Proj, "second", 0);
+		(await _tasks.ResolveDefaultMethodologyInstanceAsync(Proj)).Should().Be("second");
+	}
+
 	[Fact]
 	public async Task Mcp_ActiveGetSet_RoundTrip()
 	{

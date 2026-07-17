@@ -52,11 +52,39 @@
 						@foreach (var inst in Model.OpenInstances)
 						{
 							var href = $"?instance={Uri.EscapeDataString(inst.Name)}";
-							var active = string.Equals(inst.Name, Model.Stored.Name, StringComparison.OrdinalIgnoreCase);
-							<a href="@href" class="badge @(active ? "badge-primary" : "badge-ghost") badge-sm font-mono" data-testid="methodology-instance-pick">@inst.Name</a>
+							var viewing = string.Equals(inst.Name, Model.Stored.Name, StringComparison.OrdinalIgnoreCase);
+							<a href="@href" class="badge @(viewing ? "badge-primary" : "badge-ghost") badge-sm font-mono" data-testid="methodology-instance-pick">@inst.Name</a>
 						}
 					</div>
 				}
+				@* Active-instance pointer (spec methodology-switch): select/create an instance, then
+				   activate it — ONE guided act, never destroying whichever instance was active before
+				   (that stays open; tasks_methodology_close is the separate explicit retire act). *@
+				<div class="flex items-center gap-2 mt-2 flex-wrap" data-testid="methodology-active-row">
+					@if (string.Equals(Model.EffectiveActiveInstance, Model.Stored.Name, StringComparison.OrdinalIgnoreCase))
+					{
+						<span class="badge badge-success badge-sm" data-testid="methodology-active-badge">active default</span>
+					}
+					else
+					{
+						<span class="text-xs opacity-60" data-testid="methodology-active-hint">
+							@if (Model.EffectiveActiveInstance is null)
+							{
+								<text>no active default set@(Model.OpenInstances.Count > 1 ? " (ambiguous — several open instances)" : "")</text>
+							}
+							else
+							{
+								<text>active default: <span class="font-mono">@Model.EffectiveActiveInstance</span></text>
+							}
+						</span>
+						<form method="post" asp-page-handler="Activate" style="display:inline">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="instance" value="@Model.Stored.Name" />
+							<input type="hidden" name="activeVersion" value="@Model.ActiveVersion" />
+							<button type="submit" class="btn btn-xs btn-primary" data-testid="methodology-activate">Make active</button>
+						</form>
+					}
+				</div>
 				<div class="flex gap-1 mt-1 flex-wrap">
 					@foreach (var k in Model.Stored.Definition.Kinds)
 					{

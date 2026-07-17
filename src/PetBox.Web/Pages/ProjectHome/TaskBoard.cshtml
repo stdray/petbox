@@ -30,6 +30,13 @@
 	{
 		<span class="badge badge-warning badge-xs" data-testid="board-closed-badge" title="closed — read-only, writes are rejected">closed</span>
 	}
+	@if (Model.InstanceInactive)
+	{
+		@* methodology-inactive-visibility: COMPUTED — this board's own instance is open (a full
+		   process, not disabled) but is not the project's current active default. *@
+		<span class="badge badge-ghost badge-outline badge-xs" data-testid="board-inactive-instance-badge"
+			title="this board's methodology instance is open but is not the project's active default — still a full process, not disabled">not active</span>
+	}
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
 	@* Per-type "View workflow" triggers — one per FSM block (a preset kind has exactly one).
 	   Opens the daisyUI modal with the block's status graph (ts/workflow-viz.ts). *@

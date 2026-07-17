@@ -261,6 +261,12 @@ public sealed class TaskBoardModel : PageModel
 	public string? KindSlug { get; private set; }
 	public string KindName { get; private set; } = string.Empty;
 
+	// spec methodology-inactive-visibility: true when this board belongs (membership) to an
+	// OPEN methodology instance that is not the project's current effective default — a
+	// COMPUTED view (this comparison), never a stored flag. A board with no instance membership
+	// (legacy/simple) is never "inactive" by this measure.
+	public bool InstanceInactive { get; private set; }
+
 	// closed-board-disabled-display: null = open. Mirrors the list/sidebar closed badge
 	// (TaskBoardMeta.ClosedAt) onto this content page — the write path already rejects
 	// (TasksService.UpsertAsync) a closed board, so this drives the badge + hides quick-add.
@@ -461,8 +467,11 @@ public sealed class TaskBoardModel : PageModel
 	async Task<IActionResult> LoadAsync(CancellationToken ct, string? error = null)
 	{
 		Error = error;
-		(Runtime, KindSlug, ClosedAt) = await ResolveProcessAsync(ct);
+		string? instanceName;
+		(Runtime, KindSlug, ClosedAt, instanceName) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
+		InstanceInactive = !string.IsNullOrEmpty(instanceName)
+			&& !string.Equals(instanceName, await _tasks.ResolveDefaultMethodologyInstanceAsync(ProjectKey, ct), StringComparison.OrdinalIgnoreCase);
 
 		// board-view-cross-device / board-filters-server-state: resolve BoardPreferences (DB,
 		// Scope.User) and BrowserState.CollapsedByBoard (cookie) BEFORE deciding view/fields/
@@ -694,14 +703,14 @@ public sealed class TaskBoardModel : PageModel
 	// The board's effective process context: board-scoped MethodologyRuntime (instance
 	// rules when membership is set) plus this board's stored kind slug. ListBoardsAsync
 	// supplies the raw slug; this page must not open the store directly.
-	async Task<(MethodologyRuntime Runtime, string? KindSlug, DateTime? ClosedAt)> ResolveProcessAsync(CancellationToken ct)
+	async Task<(MethodologyRuntime Runtime, string? KindSlug, DateTime? ClosedAt, string? InstanceName)> ResolveProcessAsync(CancellationToken ct)
 	{
 		var meta = (await _tasks.ListBoardsAsync(ProjectKey, ct))
 			.FirstOrDefault(b => string.Equals(b.Name, Board, StringComparison.Ordinal));
 		var runtime = meta is null
 			? await _tasks.GetRuntimeAsync(ProjectKey, ct)
 			: await _tasks.GetRuntimeForBoardAsync(ProjectKey, Board, ct);
-		return (runtime, meta?.Kind, meta?.ClosedAt);
+		return (runtime, meta?.Kind, meta?.ClosedAt, meta?.MethodologyInstance);
 	}
 
 	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by the
@@ -770,7 +779,7 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var (runtime, kindSlug, closedAt) = await ResolveProcessAsync(ct);
+		var (runtime, kindSlug, closedAt, _) = await ResolveProcessAsync(ct);
 		if (!runtime.QuickAddAllowed(kindSlug) || closedAt is not null) return BadRequest();
 
 		await _tasks.QuickAddAsync(ProjectKey, Board, name, body, priority, ct);

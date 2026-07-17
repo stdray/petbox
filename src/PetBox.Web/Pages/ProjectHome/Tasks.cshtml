@@ -34,7 +34,17 @@ else
 				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
 				data-testid="board-card" data-board-name="@b.Name">
 				<div class="card-body p-4">
-					<span class="font-mono font-semibold">@b.Name</span>
+					<div class="flex items-center gap-1 flex-wrap">
+						<span class="font-mono font-semibold">@b.Name</span>
+						@* methodology-inactive-visibility: COMPUTED — this board's own open instance is not
+						   the project's current default (a full process, not disabled). *@
+						@if (b.ClosedAt == null && !string.IsNullOrEmpty(b.MethodologyInstance)
+							&& !string.Equals(b.MethodologyInstance, Model.EffectiveActiveInstance, StringComparison.OrdinalIgnoreCase))
+						{
+							<span class="badge badge-ghost badge-outline badge-xs" data-testid="board-inactive-instance-badge"
+								title="belongs to open methodology instance '@b.MethodologyInstance', which is not the project's active default">not active</span>
+						}
+					</div>
 					@if (!string.IsNullOrEmpty(b.Description))
 					{
 						<p class="text-sm opacity-80">@b.Description</p>

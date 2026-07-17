@@ -38,6 +38,12 @@ public sealed class TasksModel : PageModel
 	public bool TasksEnabled => _features.IsEnabled(Feature.Tasks);
 	public IReadOnlyList<TaskBoardMeta> Boards { get; private set; } = [];
 
+	// spec methodology-inactive-visibility: the project's current effective default instance —
+	// a board whose own membership names an open instance other than this one is a full member
+	// of a live process that just isn't the project's default right now. Computed here (not a
+	// stored board flag) so the card template can compare identity directly.
+	public string? EffectiveActiveInstance { get; private set; }
+
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		// The route workspace is welded into the lookup: ProjectWorkspaceBindingFilter has already
@@ -47,5 +53,6 @@ public sealed class TasksModel : PageModel
 		if (Project is null || !TasksEnabled) return;
 
 		Boards = await _tasks.ListBoardsAsync(ProjectKey, ct);
+		EffectiveActiveInstance = await _tasks.ResolveDefaultMethodologyInstanceAsync(ProjectKey, ct);
 	}
 }
