@@ -370,6 +370,93 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		}
 	}
 
+	// spec methodology-display-name: Definition.Name is the ONLY display name; the instance
+	// key is a non-mutable internal address, never a second competing name. With a single
+	// open instance (no collision), the state banner must not surface the raw key at all.
+	[Fact]
+	public async Task Get_SingleOpenInstance_DoesNotSurfaceKeyAsCompetingName()
+	{
+		const string project = "meddisplaysingle";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+			if (await tasks.GetMethodologyInstanceAsync(project, "onlyone") is null)
+			{
+				var def = new MethodologyDefinition("display-name-only",
+				[
+					new MethodologyKindDef("job", QuickAddAllowed: true,
+					[
+						new MethodologyWorkflowDef(["task"],
+							[new("todo", "Todo", StatusKind.Open), new("done", "Done", StatusKind.TerminalOk)],
+							[new("todo", "done")]),
+					]),
+				]);
+				await tasks.UpsertMethodologyTemplateAsync(project, "solo-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync(project, "onlyone", "template", "solo-tmpl");
+			}
+		}
+
+		var url = $"/ui/admin/ws/$system/projects/{project}/methodology";
+		using var resp = await GetAuthedAsync(url);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-state-name\"");
+		html.Should().Contain("display-name-only", "Definition.Name is the display name");
+		html.Should().NotContain("data-testid=\"methodology-state-instance\"",
+			"the key is not shown alongside the name when there is no collision to disambiguate");
+		html.Should().NotContain(">onlyone<", "the bare instance key must not appear as a second name");
+	}
+
+	// spec methodology-display-name: "on collision, disambiguate by key" — two OPEN instances
+	// whose definitions share a display name must both render key-qualified in the switcher
+	// (and the viewed one's key-qualified in the state banner), so a human can tell them apart
+	// without the surface pretending the key is a second, competing name in the normal case.
+	[Fact]
+	public async Task Get_TwoOpenInstancesShareDisplayName_SwitcherDisambiguatesByKey()
+	{
+		const string project = "meddisplaycollide";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+			var def = new MethodologyDefinition("shared-display-name",
+			[
+				new MethodologyKindDef("job", QuickAddAllowed: true,
+				[
+					new MethodologyWorkflowDef(["task"],
+						[new("todo", "Todo", StatusKind.Open), new("done", "Done", StatusKind.TerminalOk)],
+						[new("todo", "done")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync(project, "keyalpha") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync(project, "collide-tmpl-a", def, 0);
+				await tasks.CreateMethodologyInstanceAsync(project, "keyalpha", "template", "collide-tmpl-a");
+			}
+			if (await tasks.GetMethodologyInstanceAsync(project, "keybeta") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync(project, "collide-tmpl-b", def, 0);
+				await tasks.CreateMethodologyInstanceAsync(project, "keybeta", "template", "collide-tmpl-b");
+			}
+		}
+
+		// Default pick is the first open instance by key, Ordinal — "keyalpha".
+		var url = $"/ui/admin/ws/$system/projects/{project}/methodology";
+		using var resp = await GetAuthedAsync(url);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-state-name\"");
+		html.Should().Contain("data-testid=\"methodology-state-instance\"",
+			"the viewed instance's name collides with another open instance's — the key must disambiguate");
+		html.Should().Contain("(keyalpha)", "the currently-viewed instance is key-qualified in the state banner");
+		html.Should().Contain("data-testid=\"methodology-instance-pick\"");
+		html.Should().Contain("shared-display-name (keyalpha)", "the switcher disambiguates the colliding name by key");
+		html.Should().Contain("shared-display-name (keybeta)", "the switcher disambiguates the colliding name by key");
+	}
+
 	// Finding 5a+5c: the legend renders under the preview, and the quartet work kind's
 	// cross-board effects surface in the preview island as pre-phrased sentences.
 	[Fact]

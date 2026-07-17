@@ -13,8 +13,9 @@ namespace PetBox.Tasks.Services.Methodology;
 
 // Named methodology-template storage. Owns the multi-key methodology_templates temporal
 // documents, the builtin-template read contract (quartet|classic|simple), the dual-read
-// of the legacy singleton definition as a virtual template, and snapshot-from-effective-
-// rules (interim until methodology-instance-core lands instance entities).
+// of the project's utility-layer singleton (methodology_defs, spec methodology-utility-
+// kinds — MethodologyDefinitionService's header has the full history of that storage) as
+// a virtual template, and snapshot-from-effective-rules.
 //
 // HARD INVARIANT: every write path here stores a document only — it NEVER creates boards,
 // never rewrites live nodes, and never mutates methodology_defs. Live process mutation
@@ -28,7 +29,7 @@ public sealed partial class MethodologyTemplateService
 	// never written into methodology_templates and rejected on upsert/delete.
 	public static readonly IReadOnlyList<string> BuiltinKeys = ["quartet", "classic", "simple"];
 
-	// Compat dual-read key: the legacy project-singleton definition (MethodologyDefRow)
+	// Compat dual-read key: the project's utility-layer singleton definition (MethodologyDefRow)
 	// surfaces under this key with source="definition" when present and no STORED template
 	// owns it. Same string as MethodologyDefRow.SingletonKey so the dual-read is obvious.
 	public const string LegacyDefinitionKey = MethodologyDefRow.SingletonKey;
