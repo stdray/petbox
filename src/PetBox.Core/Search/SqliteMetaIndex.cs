@@ -48,7 +48,7 @@ public static class SqliteMetaIndex
 	{
 		var db = Tx(tx);
 		await DeleteAsync(db, doc.Scope, doc.Type, doc.Id, ct);
-		await db.InsertAsync(new MetaRow
+		await db.InsertAsync(new SearchMetaRow
 		{
 			Scope = doc.Scope,
 			Type = doc.Type,
@@ -74,7 +74,7 @@ public static class SqliteMetaIndex
 	public static async Task DeleteAsync(DataConnection tx, string scope, string type, string id, CancellationToken ct = default)
 	{
 		var db = Tx(tx);
-		await db.GetTable<MetaRow>().Where(r => r.Scope == scope && r.Type == type && r.Id == id).DeleteAsync(ct);
+		await db.GetTable<SearchMetaRow>().Where(r => r.Scope == scope && r.Type == type && r.Id == id).DeleteAsync(ct);
 		await db.GetTable<AliasRow>().Where(r => r.Scope == scope && r.Type == type && r.Id == id).DeleteAsync(ct);
 	}
 
@@ -84,7 +84,7 @@ public static class SqliteMetaIndex
 	public static async Task DeleteByTypeAsync(DataConnection tx, string scope, string type, CancellationToken ct = default)
 	{
 		var db = Tx(tx);
-		await db.GetTable<MetaRow>().Where(r => r.Scope == scope && r.Type == type).DeleteAsync(ct);
+		await db.GetTable<SearchMetaRow>().Where(r => r.Scope == scope && r.Type == type).DeleteAsync(ct);
 		await db.GetTable<AliasRow>().Where(r => r.Scope == scope && r.Type == type).DeleteAsync(ct);
 	}
 
@@ -117,17 +117,6 @@ public static class SqliteMetaIndex
 	static DataConnection Tx(DataConnection? tx) =>
 		tx ?? throw new InvalidOperationException("SqliteMetaIndex is Class-A (transactional): a write must ride the entity's transaction (tx).");
 
-	[Table("search_meta")]
-	sealed class MetaRow
-	{
-		[Column, PrimaryKey(0)] public string Scope { get; set; } = string.Empty;
-		[Column, PrimaryKey(1)] public string Type { get; set; } = string.Empty;
-		[Column, PrimaryKey(2)] public string Id { get; set; } = string.Empty;
-		[Column] public string StatusKind { get; set; } = string.Empty;
-		[Column] public DateTime Created { get; set; }
-		[Column] public DateTime Updated { get; set; }
-	}
-
 	[Table("search_meta_alias")]
 	sealed class AliasRow
 	{
@@ -136,4 +125,19 @@ public static class SqliteMetaIndex
 		[Column, PrimaryKey(2)] public string Id { get; set; } = string.Empty;
 		[Column, PrimaryKey(3)] public string Alias { get; set; } = string.Empty;
 	}
+}
+
+// The search_meta facet row, shared across the Core.Search assembly: SqliteMetaIndex owns the WRITE
+// side, and the two read legs (SqliteFtsIndex, VectorSearchIndex) join against it for the FACET
+// pushdown (spec search-facet-pushdown). One row per indexed entity, addressed (Scope, Type, Id) —
+// the SAME address the text/vector rows carry — so a leg joins its candidate to this by primary key.
+[Table("search_meta")]
+sealed class SearchMetaRow
+{
+	[Column, PrimaryKey(0)] public string Scope { get; set; } = string.Empty;
+	[Column, PrimaryKey(1)] public string Type { get; set; } = string.Empty;
+	[Column, PrimaryKey(2)] public string Id { get; set; } = string.Empty;
+	[Column] public string StatusKind { get; set; } = string.Empty;
+	[Column] public DateTime Created { get; set; }
+	[Column] public DateTime Updated { get; set; }
 }

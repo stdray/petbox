@@ -1703,14 +1703,17 @@ public sealed partial class TasksService : ITasksService
 		{
 			// QUERY: hybrid selection over the indexed set. Candidates are LEAN-projected (no
 			// per-node relation panel) — enough for sort + the MCP lean wire cut. The fused ranking
-			// supplies a bounded CANDIDATE POOL of max(3×limit, 50) — 3× leaves post-fusion
-			// predicates room to drop candidates and still fill `limit`; the 50 floor keeps recall
-			// sane for small limits. search-hides-terminal-nodes: terminal-CANCEL candidates are
-			// resolved out of this pool unless includeClosed widened the ask; terminal-OK (accepted/
-			// Done) is always resolvable — it is a success state, not "closed" — so a default query
-			// already reaches it.
+			// supplies a bounded CANDIDATE POOL of max(limit, 50). search-facet-pushdown killed the
+			// old 3× compensation: terminal-CANCEL candidates used to survive into this pool and get
+			// dropped only at resolve time (search-hides-terminal-nodes), so the pool was inflated 3×
+			// to still fill `limit` after those hidden nodes ate slots. Now each leg excludes them by
+			// FACET before it truncates (SearchFilter.Facets below), so the pool arrives already free
+			// of that pollution and needs no compensating multiplier. The 50 floor stays for its own
+			// reason — recall at small limits — not to cover the visibility filter. terminal-OK
+			// (accepted/Done) is never excluded — it is a success state, not "closed", so a default
+			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, f.IncludeClosed, ct);
+				Math.Max(req.Limit, 50), urlPrefix, runtime, f.IncludeClosed, ct);
 
 			// exact-identifier-search-surfacing / search-identity-leg (spec): a query that exactly
 			// matches a node's slug OR its NodeId reads as an addressed ask in disguise — the identity
@@ -1769,7 +1772,14 @@ public sealed partial class TasksService : ITasksService
 		if (_llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter), k, ct);
+		// search-facet-pushdown: the SAME visibility rule that used to run AFTER fusion (hide
+		// terminal-CANCEL unless includeClosed) is now a facet predicate each leg applies against
+		// search_meta BEFORE it truncates — moved DOWN, not changed. includeClosed widens the ask by
+		// passing NO facet filter (nothing excluded); otherwise exclude the terminal-CANCEL facet.
+		var facets = includeClosed
+			? (FacetFilter?)null
+			: new FacetFilter(ExcludeStatusKinds: [TasksSearchDocs.TerminalCancelFacet]);
+		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
 		// Semantic-noise floor (spec search-relevance-floor): a hit the lexical leg did NOT confirm
