@@ -473,6 +473,64 @@ public sealed class McpModuleToolsTests : IDisposable
 			TasksTools.BoardSetSpecAsync(http, Flags(), _tasks, Proj, "b", "s"));
 	}
 
+	// set_active moves the pointer tasks_methodology_guide resolves through. Board membership
+	// still wins, so no node's enforcement changes — but the guide is the only control that
+	// exists for CONVENTION gates, so moving it changes what every agent is taught the process
+	// is. Gated under the owner-widened criterion.
+	[Fact]
+	public async Task MethodologySetActive_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, "inst"));
+	}
+
+	// Clearing the pointer is the same governance act as setting it.
+	[Fact]
+	public async Task MethodologySetActive_Clear_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, null));
+	}
+
+	// The second line I am holding: methodology_describe writes a LIVE instance's rules
+	// document through the same service call as the gated rules_upsert, and still needs no
+	// governance scope — prose cannot change a rule. Structure is untouchable from here, and
+	// the guide derives every invariant from structure. Gating it would rot the docs.
+	[Fact]
+	public async Task Methodology_Describe_NeedsNoMethodologyWrite()
+	{
+		var admin = Http(TasksAndMethodology);
+		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "d-inst", "builtin", "simple");
+
+		var http = Http(TasksOnly);
+		var ack = await TasksTools.MethodologyDescribeAsync(
+			http, Flags(), _tasks, Proj, "d-inst", "kind", "prose set by a plain tasks:write key", kind: "simple");
+		ack.Primitive.Should().Be("kind");
+	}
+
+	// The claim the ungated decision rests on, asserted rather than trusted: a describe call
+	// changes ONLY prose. If someone ever teaches this verb to touch structure, this test goes
+	// red and the ungated decision must be revisited.
+	[Fact]
+	public async Task Methodology_Describe_CannotChangeStructure()
+	{
+		var admin = Http(TasksAndMethodology);
+		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "s-inst", "builtin", "simple");
+		var before = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");
+
+		await TasksTools.MethodologyDescribeAsync(
+			admin, Flags(), _tasks, Proj, "s-inst", "kind", "a description", kind: "simple");
+
+		var after = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");
+		after.Kinds!.Select(k => k.Kind).Should().Equal(before.Kinds!.Select(k => k.Kind));
+		after.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Statuses!).Select(s => s.Slug)
+			.Should().Equal(before.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Statuses!).Select(s => s.Slug));
+		after.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Transitions!).Select(t => $"{t.From}->{t.To}")
+			.Should().Equal(before.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Transitions!).Select(t => $"{t.From}->{t.To}"));
+	}
+
 	// The line I am holding: board_create is NOT governance. It is constrained BY the rules
 	// (kind must be declared, process-role singleton enforced) and alters nothing that already
 	// exists — it adds an empty board. Gating it would put the routine verb agents use daily

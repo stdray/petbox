@@ -252,7 +252,10 @@ public sealed class MethodologyActiveInstanceTests : IDisposable
 	[Fact]
 	public async Task Mcp_ActiveGetSet_RoundTrip()
 	{
-		var http = Http("tasks:read tasks:write");
+		// methodology:write — set_active moves the pointer the agent-facing guide resolves
+		// through, so it is governance-gated (spec methodology-write-scope). This suite covers
+		// the pointer's CAS round-trip; the authz boundary lives in McpModuleToolsTests.
+		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 
 		await _tasks.CreateMethodologyInstanceAsync(Proj, "mcp-inst", "builtin", "classic");

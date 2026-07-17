@@ -269,7 +269,10 @@ public static class TasksTools
 		always wins). The pointer MUST reference an OPEN instance: naming a missing or closed
 		instance is rejected, nothing is written — close it first or pick another. `version`
 		is the watermark baseline from tasks_methodology_active_get (0 = no prior read).
-		Requires tasks:write.
+		GOVERNANCE: tasks_methodology_guide (called with no `name`) resolves through this
+		pointer, and the guide is the only control that exists for CONVENTION gates — moving
+		it changes what every agent is taught the process IS. Requires tasks:write AND
+		methodology:write.
 		""")]
 	public static async Task<MethodologyActiveSetResult> MethodologySetActiveAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -281,6 +284,20 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// GOVERNANCE (spec methodology-write-scope, owner-widened criterion). Board membership
+		// always wins, so no node's ENFORCEMENT changes — under the narrow original criterion
+		// ("changes the rules for existing nodes") this verb would walk free. It is gated under
+		// the WIDENED criterion, and the reason is not cosmetic:
+		//
+		// tasks_methodology_guide with no `name` resolves through this pointer, and the guide is
+		// the ONLY control that exists for CONVENTION gates — a non-enforced approval_gate is,
+		// by definition, one the server does NOT block; the sole thing stopping an agent from
+		// self-approving is that the guide told it not to. Flipping the pointer at an instance
+		// whose transitions lack RequiresApproval deletes those approval_gate invariants from
+		// the guide outright (MethodologyGuide derives them from the RESOLVED instance's
+		// structure). That is a complete bypass of every convention gate, by one pointer write.
+		// Gating board_close while leaving this open would be incoherent.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, name, version, ct);
 		return new MethodologyActiveSetResult(ack.Name, ack.Changed, ack.Version);
 	}
@@ -387,7 +404,10 @@ public static class TasksTools
 		is a clear error (nothing written). Internally this still reads the current rules
 		document and writes the whole thing back (rules storage is one document) — but the
 		caller never sees or supplies its version; a version race is retried a bounded
-		number of times. Requires tasks:write.
+		number of times. Requires tasks:write — and deliberately NOT methodology:write: prose
+		can never change a rule (it cannot touch structure, and the guide derives every
+		invariant from structure, rendering prose only as an additive note), so documenting
+		the process stays a routine write.
 		""")]
 	public static async Task<MethodologyDescribeResult> MethodologyDescribeAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -409,6 +429,23 @@ public static class TasksTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
+		// DELIBERATELY NOT methodology:write, though it writes a live instance's rules document
+		// through the same DefineMethodologyInstanceRulesAsync as the gated rules_upsert. The
+		// line is not "which service call" but "can it change the process":
+		//
+		// 1. MethodologyDescribe.Apply only ever does `with { Description = ... }` on a record
+		//    found by natural key; every branch maps over the lists preserving shape. It cannot
+		//    add, remove or reorder a kind, block, status, transition, effect or constraint.
+		// 2. MethodologyGuide derives EVERY invariant from structural fields — not one
+		//    invariants.Add reads .Description. Prose is strictly additive decoration: a
+		//    transition renders "OWNER-ONLY (enforced)" from RequiresApproval/EnforceApproval
+		//    and the prose lands beside it as "note: ...". A lying description cannot delete
+		//    the mark it sits next to, and the machine-readable invariants never see it at all.
+		//
+		// So the worst this verb can do is write a misleading comment next to a rule that stays
+		// visibly in force — the same exposure any task body already has under tasks:write.
+		// Gating it would put routine process documentation behind the governance scope and rot
+		// the docs. Locked by Methodology_Describe_NeedsNoMethodologyWrite.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		const int maxAttempts = 5;
