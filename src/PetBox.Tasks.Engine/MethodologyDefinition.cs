@@ -89,6 +89,14 @@ public sealed record MethodologyKindDef(
 	// a custom-declared kind could never opt in. Now data: the definition author declares it
 	// per kind, custom kinds included (spec methodology-kind-singleton).
 	public bool? Singleton { get; init; }
+	// Free-form prose about this kind (spec methodology-primitive-descriptions): data, not
+	// code — MAY be null (most kinds carry none). The compiled process guide
+	// (MethodologyGuide.Render, tasks_methodology_guide) surfaces it; nothing resolves or
+	// enforces against it. No preset-fallback merge needed (unlike Singleton/BlocksGate/
+	// DefaultView above): null legitimately means "no description", not "defer to the
+	// preset's opinion" — there is no behavioral default to silently lose on an old stored
+	// document.
+	public string? Description { get; init; }
 	// Blocking-gate statuses (spec methodology-blocks-gate-data): `Status` is the status a node
 	// of this kind must name a blocker to enter/hold ("a Blocked task must name a blocker" — a
 	// STATE invariant, checked on every write including birth, not a transition gate); `ReleaseTo`
@@ -145,6 +153,10 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 	// restriction beyond the link kind itself.
 	public string? TargetKind { get; init; }
 	public IReadOnlyList<string>? TargetStatuses { get; init; }
+	// Free-form prose about why this constraint exists (spec methodology-primitive-
+	// descriptions). Null = none. Surfaced by the compiled process guide alongside the
+	// constraint's cadence sentence; never enforced.
+	public string? Description { get; init; }
 }
 
 // One declared transition effect of a kind (schema v2, spec engine-v2; `OnLeave` added by
@@ -179,7 +191,10 @@ public sealed record MethodologyTransitionEffectDef(
 	string Direction,
 	string? Set,
 	string? OnlyFrom = null,
-	bool OnLeave = false);
+	bool OnLeave = false,
+	// Free-form prose about why this effect exists (spec methodology-primitive-descriptions).
+	// Null = none. Appended to EffectSentence wherever effects render; never itself executed.
+	string? Description = null);
 
 // A project-declared relation kind: a free semantic edge with NO FSM effects and no
 // process meaning (like the builtin neutral kinds). `Slug` follows the common slug spec
@@ -231,4 +246,8 @@ public sealed record MethodologyTransitionDef(
 	// Free-text conditions to confirm before this transition (schema v2). Rendered by the
 	// guide as a checklist; never enforced by the server — a convention, not a gate.
 	public IReadOnlyList<string> Checklist { get; init; } = [];
+	// Free-form prose about this transition (spec methodology-primitive-descriptions). Null =
+	// none. Surfaced by the compiled process guide as a note alongside the transition's other
+	// marks; never enforced.
+	public string? Description { get; init; }
 }

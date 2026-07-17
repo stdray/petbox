@@ -190,7 +190,7 @@ public sealed class MethodologyKindContractParityTests
 						Types: ["feature", "bug"],
 						Statuses:
 						[
-							new WorkflowStatus("open", "Open", StatusKind.Open),
+							new WorkflowStatus("open", "Open", StatusKind.Open, Description: "Not started yet."),
 							new WorkflowStatus("done", "Done", StatusKind.TerminalOk),
 						],
 						Transitions:
@@ -200,14 +200,15 @@ public sealed class MethodologyKindContractParityTests
 							{
 								EnforceApproval = true,
 								Checklist = ["reviewed"],
+								Description = "The maintainer's own call.",
 							},
 						]),
 				])
 			{
-				LinkConstraints = [new MethodologyLinkConstraintDef("feature", "task_spec") { TargetKind = "spec", TargetStatuses = ["accepted"] }],
+				LinkConstraints = [new MethodologyLinkConstraintDef("feature", "task_spec") { TargetKind = "spec", TargetStatuses = ["accepted"], Description = "Every feature traces to a spec." }],
 				Effects =
 				[
-					new MethodologyTransitionEffectDef("done", "blocks", "incoming", "unblocked", "blocked"),
+					new MethodologyTransitionEffectDef("done", "blocks", "incoming", "unblocked", "blocked", Description: "Releases whatever this was blocking."),
 					// Effect.onLeave + the Set-omitted pure-consume shape (methodology-blocks-gate-data)
 					// must round-trip too — a nullable field is exactly where a lossy wire silently
 					// coerces null to "" instead of carrying it through.
@@ -219,6 +220,7 @@ public sealed class MethodologyKindContractParityTests
 				OutlineReveal = "navigate",
 				Singleton = true,
 				BlocksGate = new MethodologyBlocksGateDef("open", "done"),
+				Description = "The work board's kind.",
 				BoardName = "backlog",
 			},
 		]);
