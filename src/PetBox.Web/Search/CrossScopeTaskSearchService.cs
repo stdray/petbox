@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Contract;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
+using PetBox.Tasks.Workflow;
 using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Search;
@@ -138,9 +139,13 @@ public sealed class CrossScopeTaskSearchService(
 		// (each row labelled by board). A miss is an empty list, never a fault (no try/catch).
 		var exactHits = await tasks.ExactIdentifierHitsAsync(project.Key, query, board: null, urlPrefix, ct).ConfigureAwait(false);
 
-		var exact = exactHits.Select(h => ToHit(ws, project.Key, h, exactMatch: true)).ToList();
-		if (exact.Count > 0)
-			return (exact, []); // the identifier already resolved — a full-text pass would be redundant
+		if (exactHits.Count > 0)
+		{
+			// the identifier already resolved — a full-text pass would be redundant
+			var classifyExact = await ClassifyByBoardAsync(tasks, project.Key, exactHits, ct).ConfigureAwait(false);
+			var exact = exactHits.Select(h => ToHit(ws, project.Key, h, exactMatch: true, classifyExact(h))).ToList();
+			return (exact, []);
+		}
 
 		// Full-text leg. A failure here throws: the fan-out's per-project catch turns it into an
 		// empty contribution (partial degradation) — no leg-local swallow, one place to reason about.
@@ -150,12 +155,41 @@ public sealed class CrossScopeTaskSearchService(
 			Limit = MaxFullTextPerProject,
 			BodyLen = 0,
 		}, urlPrefix, ct).ConfigureAwait(false);
-		var fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false)).ToList();
+		var classifyText = await ClassifyByBoardAsync(tasks, project.Key, textRes.Hits, ct).ConfigureAwait(false);
+		var fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false, classifyText(h))).ToList();
 
-		return (exact, (IReadOnlyList<CrossScopeSearchHit>)fullText);
+		return ([], (IReadOnlyList<CrossScopeSearchHit>)fullText);
 	}
 
-	static CrossScopeSearchHit ToHit(string ws, string projectKey, TaskSearchHit h, bool exactMatch) => new(
+	// Terminality of each hit is classified through the ONE authority (spec tasks-status-kind-
+	// classifier): the per-board MethodologyRuntime.StatusKindOf, resolved INSIDE this branch's DI
+	// scope where the project's runtime IS available. The /ui/search page used to approximate it on
+	// the far side with the board-less preset scan (MethodologyPresets.IsTerminalSlug/KindOfSlug),
+	// which DIVERGED from the authority on a custom methodology's own terminal slugs — a custom
+	// terminal status read as live. Resolved per DISTINCT board (a handful at most: the exact leg's
+	// same-slug boards, or the ≤5 full-text hits), so the enrichment is a couple of cheap in-scope
+	// reads, not one per hit. A board whose runtime can't be resolved yields null (unclassified) —
+	// the same "not terminal" the page falls back to for a legacy/out-of-vocab slug.
+	static async Task<Func<TaskSearchHit, StatusKind?>> ClassifyByBoardAsync(
+		ITasksService tasks, string projectKey, IReadOnlyList<TaskSearchHit> hits, CancellationToken ct)
+	{
+		var boards = hits.Select(h => h.Board).Distinct(StringComparer.Ordinal).ToList();
+		if (boards.Count == 0) return _ => null;
+
+		// The board's stored kind slug (meta.Kind) is what StatusKindOf keys a DEFINED kind on;
+		// ListBoardsAsync supplies it exactly as the board page's ResolveProcessAsync does.
+		var kindByBoard = (await tasks.ListBoardsAsync(projectKey, ct).ConfigureAwait(false))
+			.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
+		var runtimeByBoard = new Dictionary<string, MethodologyRuntime>(StringComparer.Ordinal);
+		foreach (var b in boards)
+			runtimeByBoard[b] = await tasks.GetRuntimeForBoardAsync(projectKey, b, ct).ConfigureAwait(false);
+
+		return h => runtimeByBoard.TryGetValue(h.Board, out var rt)
+			? rt.StatusKindOf(kindByBoard.GetValueOrDefault(h.Board), h.Node.Status)
+			: null;
+	}
+
+	static CrossScopeSearchHit ToHit(string ws, string projectKey, TaskSearchHit h, bool exactMatch, StatusKind? statusKind) => new(
 		Workspace: ws,
 		ProjectKey: projectKey,
 		Board: h.Board,
@@ -171,16 +205,24 @@ public sealed class CrossScopeTaskSearchService(
 		Priority: h.Node.Priority,
 		Tags: h.Node.Tags,
 		UpdatedAt: h.Node.UpdatedAt,
-		Delivery: h.Node.Delivery);
+		Delivery: h.Node.Delivery,
+		// The authoritative per-board terminality classification (spec tasks-status-kind-classifier),
+		// computed in-scope by ClassifyByBoardAsync; the page derives Closed / TerminalCancel off it.
+		StatusKind: statusKind);
 }
 
 // One cross-scope search result row: the enriched node's identity/status plus WHERE it lives
 // (Workspace/ProjectKey/Board — the spec requires every result to locate the task) and its
 // absolute permalink. ExactMatch marks an identifier-leg hit (shown ahead of full-text hits).
 // Priority/Tags/UpdatedAt/Delivery back the reused _TaskTable columns (board-view-mode-
-// framework's table task) — this fan-out spans many projects/methodologies at once, so unlike
-// TaskBoard's own table view, Status here is NOT resolved through a MethodologyRuntime (no
-// single runtime applies); it renders as a plain outline badge, same as the page always has.
+// framework's table task). This fan-out spans many projects/methodologies at once, so no single
+// MethodologyRuntime applies across the whole page — the status LABEL still renders as a plain
+// outline badge (raw slug, same as the page always has). TERMINALITY, though, is not left to a
+// far-side guess: StatusKind carries each hit's per-board classification (open|terminalok|
+// terminalcancel), computed inside the search branch through the ONE authority StatusKindOf (spec
+// tasks-status-kind-classifier), replacing the board-less preset scan that diverged on a custom
+// methodology's own terminal slugs. Null = unclassified (legacy/out-of-vocab slug) → treated as
+// not terminal, same fallback the page had.
 public sealed record CrossScopeSearchHit(
 	string Workspace,
 	string ProjectKey,
@@ -195,4 +237,5 @@ public sealed record CrossScopeSearchHit(
 	long Priority = 0,
 	IReadOnlyList<string>? Tags = null,
 	DateTime? UpdatedAt = null,
-	string? Delivery = null);
+	string? Delivery = null,
+	StatusKind? StatusKind = null);

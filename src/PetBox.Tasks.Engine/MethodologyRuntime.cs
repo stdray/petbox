@@ -315,9 +315,6 @@ public sealed class MethodologyRuntime
 	public StatusKind? KindOfSlug(string slug) =>
 		MethodologyPresets.KindOfSlug(slug) ?? DefinedKindOfSlug(slug);
 
-	public bool IsTerminalSlug(string slug) =>
-		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
-
 	// Per-board status classification (badge coloring and the closed-node predicate): a
 	// DEFINED kind classifies against its own status vocabulary (falling back to the
 	// project-wide scan only for an out-of-vocab legacy slug); a preset kind keeps the

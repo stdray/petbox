@@ -304,16 +304,19 @@ public sealed class MethodologyPresetsTests
 	[Fact]
 	public void StatusClassification_MatchesCatalog()
 	{
-		// Cross-preset slug classification (spec delivery, closed predicate, indexability).
-		Runtime.IsTerminalSlug("Done").Should().BeTrue();
-		Runtime.IsTerminalSlug("Cancelled").Should().BeTrue();
-		Runtime.IsTerminalSlug("deprecated").Should().BeTrue();
-		Runtime.IsTerminalSlug("accepted").Should().BeTrue();
-		Runtime.IsTerminalSlug("rejected").Should().BeTrue();
-		Runtime.IsTerminalSlug("wontfix").Should().BeTrue();
-		Runtime.IsTerminalSlug("Duplicate").Should().BeTrue(); // intake + classic agree: TerminalCancel
-		Runtime.IsTerminalSlug("Blocked").Should().BeFalse();
-		Runtime.IsTerminalSlug("review").Should().BeFalse();
+		// Cross-preset slug classification (spec delivery, closed predicate, indexability). The
+		// board-less terminal question is expressed through the ONE surviving authority
+		// (StatusKindOf's terminal projection) — the former IsTerminalSlug fork is gone
+		// (spec tasks-status-kind-classifier). On PresetsOnly, StatusKindOf(null, slug) == KindOfSlug(slug).
+		Runtime.IsTerminalStatus(null, "Done").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "Cancelled").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "deprecated").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "accepted").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "rejected").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "wontfix").Should().BeTrue();
+		Runtime.IsTerminalStatus(null, "Duplicate").Should().BeTrue(); // intake + classic agree: TerminalCancel
+		Runtime.IsTerminalStatus(null, "Blocked").Should().BeFalse();
+		Runtime.IsTerminalStatus(null, "review").Should().BeFalse();
 		// classic's new open slugs classify as open, not legacy-unknown.
 		Runtime.KindOfSlug("Backlog").Should().Be(StatusKind.Open);
 		Runtime.KindOfSlug("InReview").Should().Be(StatusKind.Open);
