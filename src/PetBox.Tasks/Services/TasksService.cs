@@ -878,6 +878,12 @@ public sealed partial class TasksService : ITasksService
 	// exact-identifier-search-surfacing (spec) — NodeRefPolicy.MultiHit: soft multi-hit ids from
 	// the resolver, then GetNodeAsync enrichment (includeClosed) so terminal nodes surface.
 	// Empty list on a miss; `board` narrows; multi-board slug returns ALL matches ordered by board.
+	//
+	// search-hides-terminal-nodes (defect 1): the LITERAL identifier is tried first (unchanged
+	// ranking/order for an already-exact q); a caller/agent typing a slug's WORDS with spaces
+	// ("methodology redesign") is the dominant case, not the edge, so a KEBAB-NORMALIZED second
+	// candidate is tried too (trim, collapse internal whitespace/underscores to one hyphen,
+	// casefold) — its ids are appended after the literal's, deduplicated by NodeId.
 	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
 		TaskSearchHit? Enrich(NodeDetailView? detail)
@@ -888,12 +894,31 @@ public sealed partial class TasksService : ITasksService
 			return new TaskSearchHit(detail.Board, node);
 		}
 
+		var ids = new List<string>(_nodeRefs.ResolveMultiHitIds(projectKey, identifier, board));
+		var normalized = KebabCandidate(identifier);
+		if (normalized is not null && !string.Equals(normalized, (identifier ?? "").Trim(), StringComparison.Ordinal))
+		{
+			var seen = new HashSet<string>(ids, StringComparer.Ordinal);
+			foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, normalized, board))
+				if (seen.Add(id)) ids.Add(id);
+		}
+
 		var hits = new List<TaskSearchHit>();
-		foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, identifier, board))
+		foreach (var id in ids)
 			if (Enrich(await GetNodeAsync(projectKey, id, ct)) is { } hit) hits.Add(hit);
 		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
 		// NodeId path is ≤1 hit — OrderBy is a no-op there (was an early return before).
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
+	}
+
+	// Trim, collapse a run of whitespace/underscores into ONE hyphen, casefold — turns the
+	// dominant "typed the slug's words with spaces" case into the kebab candidate the exact
+	// resolver already knows how to match. Null on an empty/whitespace-only input (nothing to try).
+	static string? KebabCandidate(string? identifier)
+	{
+		var v = (identifier ?? "").Trim();
+		if (v.Length == 0) return null;
+		return Regex.Replace(v, @"[\s_]+", "-").ToLowerInvariant();
 	}
 
 	// Instance-scoped relation-kind vocabulary check (primitives-link-kinds +
@@ -1250,8 +1275,9 @@ public sealed partial class TasksService : ITasksService
 				dels = dels.Where(d => !rejectedGuardKeys.Contains(d.Key)).ToList();
 			}
 		}
-		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
-		// removed nodes dropped (search covers only the open set), committing/rolling back with the
+		// Class-A lexical floor written INSIDE the entity tx: every node with an identity is
+		// (re)indexed, terminal or not (search-hides-terminal-nodes — IsIndexable no longer forks
+		// on terminality; only an actually-removed row is dropped), committing/rolling back with the
 		// entity. Tags read in-tx are the pre-upsert set; SetTagsAsync (below) is reflected by the
 		// post-commit RefreshFtsTagsAsync. Vectors are materialized by the worker, not here.
 		var fts = new SqliteFtsIndex(() => ctx);
@@ -1270,7 +1296,7 @@ public sealed partial class TasksService : ITasksService
 						if (TasksSearchDocs.IsIndexable(n, runtime))
 							await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
 						else
-							await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
+							await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // lost its identity (rare)
 					foreach (var key in deletedKeys)
 						await fts.DeleteAsync(tx, projectKey, board, key, c);
 				},
@@ -1538,17 +1564,21 @@ public sealed partial class TasksService : ITasksService
 		}
 		else
 		{
-			// QUERY: hybrid selection over the OPEN set (terminal nodes are not indexed).
-			// Candidates are LEAN-projected (no per-node relation panel) — enough for sort + the
-			// MCP lean wire cut. The fused ranking supplies a bounded CANDIDATE POOL of
-			// max(3×limit, 50) — 3× leaves post-fusion predicates room to drop candidates and
-			// still fill `limit`; the 50 floor keeps recall sane for small limits.
+			// QUERY: hybrid selection over the indexed set. Candidates are LEAN-projected (no
+			// per-node relation panel) — enough for sort + the MCP lean wire cut. The fused ranking
+			// supplies a bounded CANDIDATE POOL of max(3×limit, 50) — 3× leaves post-fusion
+			// predicates room to drop candidates and still fill `limit`; the 50 floor keeps recall
+			// sane for small limits. search-hides-terminal-nodes: terminal-CANCEL candidates are
+			// resolved out of this pool unless includeClosed widened the ask; terminal-OK (accepted/
+			// Done) is always resolvable — it is a success state, not "closed" — so a default query
+			// already reaches it.
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, ct);
+				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, f.IncludeClosed, ct);
 
 			// exact-identifier-search-surfacing (spec): a query that exactly matches a node's
-			// slug reads as an addressed ask in disguise — surface EVERY exact match even when
-			// terminal (closed nodes aren't indexed for relevance), ahead of the fused ranking.
+			// slug reads as an addressed ask in disguise — surface EVERY exact match regardless of
+			// terminality (the exact escape hatch reads the temporal store directly, ignoring the
+			// includeClosed/terminal-CANCEL filter above), ahead of the fused ranking.
 			// Still subject to the criteria predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
@@ -1587,7 +1617,8 @@ public sealed partial class TasksService : ITasksService
 	// the vector index is simply absent (semantic=false, not degraded); a query-time embed
 	// failure is caught by the facade and flagged degraded.
 	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
-		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime, CancellationToken ct)
+		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime,
+		bool includeClosed, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
@@ -1623,10 +1654,12 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(c => c.Key, c => c.NodeId, StringComparer.Ordinal);
 
 		// Hits carry Type=board, Id=slug (nodes) or "c:"+commentKey (comments) — group by board,
-		// LEAN-project each owning board's OPEN nodes once (no relation panel — query wire is
+		// LEAN-project each owning board's resolvable nodes once (no relation panel — query wire is
 		// lean), resolve each hit to a node row and thread fused score/retriever + MatchedIn.
 		// Fused rank is the hit's index in `floored`; a group yields ascending rank, so the FIRST
-		// time a (board, slug) target appears WINS its rank.
+		// time a (board, slug) target appears WINS its rank. search-hides-terminal-nodes:
+		// terminal-CANCEL nodes are excluded from this resolve pool unless includeClosed — a fused
+		// hit pointing at one then resolves to nothing and is dropped, same as any stale doc.
 		var ranked = new List<(int Rank, TaskSearchHit Hit)>();
 		var seen = new HashSet<(string Board, string Slug)>();
 		foreach (var g in floored.Select((h, rank) => (h, rank)).GroupBy(x => x.h.Type, StringComparer.Ordinal))
@@ -1635,16 +1668,16 @@ public sealed partial class TasksService : ITasksService
 			// (pre-fix orphans / delete races) — skip the stale group instead of throwing.
 			var meta = await _boards.FindAsync(projectKey, g.Key, ct);
 			if (meta is null) continue;
-			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, ct);
+			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, includeClosed, ct);
 			foreach (var (h, rank) in g)
 			{
 				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);
 				PlanNodeView? node;
 				if (isComment)
 				{
-					// A comment resolves to its owner in the SAME open view; if the owner is
-					// absent (closed/terminal — the node's FTS row is gone but the comment row
-					// lingered) the hit is dropped. This staleness is bounded and harmless.
+					// A comment resolves to its owner in the SAME resolve pool; if the owner is
+					// absent (a hidden terminal-CANCEL owner, or a stale FTS row) the hit is
+					// dropped. This staleness is bounded and harmless.
 					var key = h.Id[TasksSearchDocs.CommentIdPrefix.Length..];
 					node = ownerByComment.TryGetValue(key, out var nodeId) && byNodeId.TryGetValue(nodeId, out var owner) ? owner : null;
 				}
@@ -1660,20 +1693,21 @@ public sealed partial class TasksService : ITasksService
 		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers);
 	}
 
-	// Lean OPEN-set projection for query-mode hit resolve: active non-terminal nodes + tags,
-	// no per-node relation ListAsync / delivery / lineage. Same open pool HybridCandidates
-	// previously took from GetAsync(includeClosed: false) minus the terminal-ancestor keep
-	// (query hits never address pure terminal ancestors via FTS).
+	// Lean projection for query-mode hit resolve: active nodes + tags, no per-node relation
+	// ListAsync / delivery / lineage. search-hides-terminal-nodes: terminal-CANCEL is dropped
+	// from this pool UNLESS includeClosed widened the ask; terminal-OK (accepted/Done) always
+	// stays — it's a success state search-before-rework must reach, not "closed". No
+	// terminal-ancestor keep here (query hits never address pure terminal ancestors via FTS).
 	async Task<(Dictionary<string, PlanNodeView> BySlug, Dictionary<string, PlanNodeView> ByNodeId)>
 		ProjectBoardLeanOpenAsync(
 			string projectKey, string board, string kindSlug, MethodologyRuntime runtime,
-			string? urlPrefix, CancellationToken ct)
+			string? urlPrefix, bool includeClosed, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		var open = ctx.PlanNodes
 			.Where(n => n.Board == board && n.ActiveTo == null)
 			.ToList()
-			.Where(n => !runtime.IsTerminalStatus(kindSlug, n.Status))
+			.Where(n => includeClosed || !runtime.IsTerminalCancelStatus(kindSlug, n.Status))
 			.ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix);

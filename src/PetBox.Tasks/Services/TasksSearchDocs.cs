@@ -5,31 +5,46 @@ using PetBox.Tasks.Workflow;
 namespace PetBox.Tasks.Services;
 
 // Single source of truth for how a plan node maps onto the entity-addressed search contract.
-// Tasks search covers only the OPEN set (active, non-terminal) — terminal/closed nodes are dropped
-// from the index, so membership is the IsIndexable predicate. Entity address: Scope=projectKey,
-// Type=Board (so a board filter is a SearchFilter(Type=board) and the per-board vector cursor uses
-// IndexName=Board), Id=node slug (the temporal Key) — the temporal log's slugs map straight through,
-// so renames/soft-deletes address the right row without needing a closed node's NodeId.
+// Tasks search indexes every node with a stable identity, terminal or not (search-hides-terminal-
+// nodes) — membership is the IsIndexable predicate, and it no longer forks on terminality; a
+// terminal-CANCEL node stays reachable via includeClosed, and terminal-OK (accepted/Done) is a
+// success state search-before-rework must reach, so both need to be IN the index. Terminal
+// visibility is now a QUERY-time filter (TasksService's query-mode candidate resolve), not an
+// index-membership one. Entity address: Scope=projectKey, Type=Board (so a board filter is a
+// SearchFilter(Type=board) and the per-board vector cursor uses IndexName=Board), Id=node slug
+// (the temporal Key) — the temporal log's slugs map straight through, so renames/soft-deletes
+// address the right row without needing a closed node's NodeId.
 public static class TasksSearchDocs
 {
 	// The lexical projection's SCHEMA version (reindex-as-first-class-mechanism). TasksService's
 	// EnsureLexicalBackfillAsync gates its rebuild on this number, stored per project file — not on
 	// "search_fts has any row", which could never re-fire once a file had ANY row. Bump this
 	// whenever ToDoc or CommentToDoc's projected TEXT/Key shape changes (the way search-slug-words-gap
-	// once did): every project file self-heals its search_fts on the next search, no migration
-	// needed for the CONTENT. Bumped to 2 by search-key-column-everywhere: the slug moved out of
-	// `Text` into its own indexed `Key` column (M015_SearchKeyColumn adds the column — a schema
-	// change no version bump can express — this bump is what makes every existing row's Text/Key
-	// actually get reprojected into the new shape).
-	public const long LexicalProjectionVersion = 2;
+	// once did), OR whenever IsIndexable's MEMBERSHIP changes (the way search-hides-terminal-nodes
+	// does): every project file self-heals its search_fts on the next search, no migration needed for
+	// the CONTENT. Bumped to 2 by search-key-column-everywhere: the slug moved out of `Text` into its
+	// own indexed `Key` column (M015_SearchKeyColumn adds the column — a schema change no version
+	// bump can express — this bump is what makes every existing row's Text/Key actually get
+	// reprojected into the new shape). Bumped to 3 by search-hides-terminal-nodes: IsIndexable
+	// stopped excluding terminal nodes, so every already-terminal node (previously deleted from the
+	// index) needs to be (re)added — the LEXICAL half self-heals on the next search; the semantic
+	// (vector) half only catches up incrementally as the async-vectorization worker drains forward,
+	// so a project with old terminal nodes may need an explicit search_reindex to backfill their
+	// vectors.
+	public const long LexicalProjectionVersion = 3;
 
-	// Indexed iff the node has a stable identity and is not in a terminal workflow state.
-	// The runtime overload also recognizes a project definition's terminal statuses; the
-	// bare form is the presets-only view (background board walkers without a runtime).
+	// Indexed iff the node has a stable identity — terminality no longer forks membership
+	// (search-hides-terminal-nodes): a terminal node's VISIBILITY in a default query-mode result
+	// is a read-time filter (hide terminal-CANCEL unless includeClosed), not an index-membership
+	// one, so ranked search can still reach it when asked. The runtime parameter is kept for
+	// call-site stability (many callers pass one) though it is no longer consulted here.
 	public static bool IsIndexable(PlanNode n) => IsIndexable(n, MethodologyRuntime.PresetsOnly);
 
-	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime) =>
-		n.NodeId.Length > 0 && !runtime.IsTerminalSlug(n.Status);
+	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime)
+	{
+		_ = runtime;
+		return n.NodeId.Length > 0;
+	}
 
 	// The slug is a lexicon term, in its OWN column (search-key-column-everywhere): the entity
 	// address (Id) is `unindexed` in search_fts, so without this the slug is reachable only

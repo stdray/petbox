@@ -7,10 +7,13 @@ namespace PetBox.Tasks.Services;
 
 // ISearchSource over ONE board's slice of a project plan file: the async-vectorization worker rides
 // it to materialize that board's vectors off the write path. Boards are temporal partitions, so the
-// delta (and the worker's cursor) is per-board (partition n.Board == board). A node that left the
-// open set (became terminal) OR was removed/renamed-away is emitted as a Delete so its vector is
-// dropped — search covers only the open set. Tags aren't embedded (Class-B uses Name+Body only), so
-// the doc carries none here. Fresh connection per drain (the worker runs outside the request scope).
+// delta (and the worker's cursor) is per-board (partition n.Board == board). A node is emitted as a
+// Delete only when it was actually removed/renamed-away — going terminal (search-hides-terminal-
+// nodes) is no longer a reason to drop it: IsIndexable no longer forks on terminality, so a node
+// that turns terminal rides the ordinary upsert path instead, and stays reachable for query-mode
+// search (terminal-CANCEL hidden by default, surfaced via includeClosed; terminal-OK always visible).
+// Tags aren't embedded (Class-B uses Name+Body only), so the doc carries none here. Fresh connection
+// per drain (the worker runs outside the request scope).
 public sealed class TasksSearchSource : ISearchSource
 {
 	readonly Func<DataConnection> _connect;
@@ -41,9 +44,10 @@ public sealed class TasksSearchSource : ISearchSource
 		var upserts = changed.Where(TasksSearchDocs.IsIndexable)
 			.Select(n => TasksSearchDocs.ToDoc(n, _scope, []))
 			.ToList();
-		// Deletes cost no embed call, so the whole removed set rides along even under a cap; the
-		// nodes that went terminal beyond the watermark are re-emitted next pass (deletes are
-		// idempotent), when the cursor reaches them.
+		// Deletes cost no embed call, so the whole removed set rides along even under a cap. The
+		// IsIndexable filter on `deletes` below is now near-vestigial (only a NodeId-less row can
+		// fail it — terminality no longer does), kept for the edge case rather than assuming every
+		// row in `changed` carries an identity.
 		var deletes = removed.Select(k => new DocRef(_scope, _board, k))
 			.Concat(changed.Where(n => !TasksSearchDocs.IsIndexable(n)).Select(n => new DocRef(_scope, _board, n.Key)))
 			.ToList();
