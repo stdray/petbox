@@ -40,10 +40,12 @@
 					}
 					<div class="flex gap-1 mt-1">
 						@{
-							// Effective kind via MethodologyRuntime: a definition-declared kind reads verbatim;
+							// Effective kind via THIS board's own runtime (board membership always wins —
+							// spec methodology-active-instance): a definition-declared kind reads verbatim;
 							// preset kinds parse as before (legacy "free" shows as "simple" — M029 migrates it).
-							var listKind = Model.Runtime.KindName(b.Kind);
-							var listIsSimple = Model.Runtime.PresetKind(b.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
+							var boardRuntime = Model.BoardRuntimes.TryGetValue(b.Name, out var br) ? br : PetBox.Tasks.Workflow.MethodologyRuntime.PresetsOnly;
+							var listKind = boardRuntime.KindName(b.Kind);
+							var listIsSimple = boardRuntime.PresetKind(b.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
 							var listKindClass = listIsSimple ? "badge-info badge-outline" : "badge-neutral";
 							var listKindTitle = listIsSimple
 								? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"

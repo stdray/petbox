@@ -30,3 +30,4 @@
 14 LIVE M014_Relations
 15 BURNED M015_SlugInLexicalText # deleted by reindex-as-first-class-mechanism, which replaced the migration with a real reindex mechanism; it emptied search_fts (DELETE FROM search_fts) to force the lexical backfill. The incident this whole registry exists for — see work/migration-number-reuse-is-silently-destructive. NEVER reuse 15 in this tier.
 16 LIVE M016_SearchKeyColumn
+17 LIVE M017_MethodologyActiveInstance

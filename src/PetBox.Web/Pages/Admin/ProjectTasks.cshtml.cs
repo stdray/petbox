@@ -39,9 +39,14 @@ public sealed class ProjectTasksModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
-	// Open methodology instance rules (merged) — kind badges resolve through this, so an
-	// instance-declared custom kind shows its own slug instead of the Simple fallback.
-	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
+	// Per-board runtime, keyed by board name (spec methodology-active-instance: board
+	// membership always wins) — a board's own methodology instance resolves its kind badge,
+	// never a single project-wide default. Boards with no instance membership (legacy, or a
+	// project with no instances) fall back to the project's active-instance resolution the
+	// same way GetRuntimeForBoardAsync does for everything else. Keyed rather than a single
+	// Runtime because two open instances can legitimately declare the SAME kind slug
+	// differently (or one and not the other) — a project-level merge would have to guess.
+	public Dictionary<string, MethodologyRuntime> BoardRuntimes { get; } = new(StringComparer.Ordinal);
 
 	// First open instance by name (used when creating a free board once instances exist).
 	public string? FirstOpenInstance { get; private set; }
@@ -64,8 +69,10 @@ public sealed class ProjectTasksModel : PageModel
 		var project = await _projects.GetAsync(ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		Boards = [.. await _tasks.ListBoardsAsync(ProjectKey, ct)];
+		BoardRuntimes.Clear();
+		foreach (var b in Boards)
+			BoardRuntimes[b.Name] = await _tasks.GetRuntimeForBoardAsync(ProjectKey, b.Name, ct);
 		var openKinds = Boards.Where(b => b.ClosedAt == null).Select(b => b.Kind).ToHashSet(StringComparer.Ordinal);
 		MethodologyEnabled = MethodologyKinds.All(openKinds.Contains);
 		var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))

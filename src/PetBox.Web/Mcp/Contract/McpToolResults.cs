@@ -614,6 +614,12 @@ public sealed record MethodologyInstanceGetResult(
 	string? Name = null,
 	MethodologyInstanceViewResult? Instance = null);
 
+// tasks_methodology_active_get / tasks_methodology_set_active (methodology-active-instance):
+// the project's explicit "which instance is active" pointer. Name is null when unset.
+public sealed record MethodologyActiveGetResult(string? Name, long Version);
+
+public sealed record MethodologyActiveSetResult(string? Name, bool Changed, long Version);
+
 // tasks_methodology_rules_get: Found=true → name + full rules document (same kinds/workflows
 // shape as template_get) + version baseline for rules_upsert. Found=false on miss.
 public sealed record MethodologyInstanceRulesGetResult(

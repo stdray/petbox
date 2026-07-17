@@ -348,6 +348,81 @@ public sealed partial class MethodologyInstanceService
 		}
 	}
 
+	// ---- active instance pointer (spec methodology-active-instance) ----
+	//
+	// Explicit project-level default resolution: which OPEN instance the project's default
+	// surfaces (UI, MCP verbs called without an explicit instance, tasks_methodology_guide
+	// with no `name`) resolve through. NEVER touches board membership — TaskBoards.
+	// MethodologyInstance always wins for a board that belongs to an instance, whatever is
+	// active here (spec's hard boundary). Stored as a temporal SCD-2 singleton row
+	// (methodology_active_instance, same one-key-per-project shape as MethodologyDefRow) —
+	// the pointer's own revision history, separate from the instances it points at.
+
+	// The raw stored pointer + its CAS version (0/null name when never set or cleared).
+	public async Task<MethodologyActiveInstanceView> GetActiveAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var row = await ctx.GetTable<ActiveMethodologyInstanceRow>()
+			.FirstOrDefaultAsync(r => r.Key == ActiveMethodologyInstanceRow.SingletonKey && r.ActiveTo == null, ct);
+		return new MethodologyActiveInstanceView(row?.InstanceName, row?.Version ?? 0);
+	}
+
+	// The VALIDATED pointer: set AND pointing at a currently-open instance, else null. A
+	// pointer left stale by its target instance closing AFTER the pointer was set is treated
+	// as ABSENT here — never silently followed to a closed instance — but not retroactively
+	// cleared (GetActiveAsync still reports the raw stored name so an operator can see and
+	// fix the drift; closing an instance does not rewrite pointers to it).
+	public async Task<string?> ResolveActiveNameAsync(string projectKey, CancellationToken ct = default)
+	{
+		var pointer = await GetActiveAsync(projectKey, ct);
+		if (pointer.Name is null) return null;
+		var inst = await GetAsync(projectKey, pointer.Name, ct);
+		return inst is { Closed: false } ? pointer.Name : null;
+	}
+
+	// Set (name not null) or clear (name null) the project's active-instance pointer. A
+	// non-null name MUST reference an OPEN instance (spec methodology-active-instance's hard
+	// invariant) — a missing or closed instance is rejected, nothing is written. `version` is
+	// the watermark baseline from GetActiveAsync (0 = no prior read).
+	public async Task<MethodologyActiveInstanceAck> SetActiveAsync(
+		string projectKey, string? name, long version, CancellationToken ct = default)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+
+		if (string.IsNullOrWhiteSpace(name))
+		{
+			var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<ActiveMethodologyInstanceRow>(),
+				new[] { (ActiveMethodologyInstanceRow.SingletonKey, version) }, ct: ct);
+			if (!r.Applied)
+			{
+				var c = r.Conflicts[0];
+				throw new InvalidOperationException(
+					$"active methodology instance pointer conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_active_get");
+			}
+			return new MethodologyActiveInstanceAck(null, r.Closed > 0, r.CurrentVersion);
+		}
+
+		var inst = await GetAsync(projectKey, name, ct)
+			?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}' — the active pointer must reference an existing instance");
+		if (inst.Closed)
+			throw new ArgumentException($"methodology instance '{inst.Name}' is closed — the active pointer must reference an OPEN instance (spec methodology-active-instance)");
+
+		var row = new ActiveMethodologyInstanceRow
+		{
+			Key = ActiveMethodologyInstanceRow.SingletonKey,
+			Version = version,
+			InstanceName = inst.Name,
+		};
+		var res = await TemporalStore.UpsertAsync(ctx, new[] { row }, ct: ct);
+		if (!res.Applied)
+		{
+			var c = res.Conflicts[0];
+			throw new InvalidOperationException(
+				$"active methodology instance pointer conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_active_get");
+		}
+		return new MethodologyActiveInstanceAck(inst.Name, res.Inserted > 0, res.CurrentVersion);
+	}
+
 	// ---- internals ----
 
 	async Task<MethodologyDefinition> ResolveCreateSourceAsync(
