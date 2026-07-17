@@ -35,7 +35,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
-	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. Requires tasks:write.")]
+	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. GOVERNANCE: this re-points an existing board's live nodes at another instance's rules — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardAdoptResult> BoardAdoptAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
@@ -45,12 +45,16 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Adopting an EXISTING board re-points its EXISTING nodes at another instance's
+		// rules — the criterion "changes the rules for existing nodes" is met even though
+		// no rules document is edited here. Governance-gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var meta = await tasks.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
 		return new BoardAdoptResult(meta.Name, meta.Kind, meta.MethodologyInstance);
 	}
 
 	[McpServerTool(Name = "tasks_board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
-	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
+	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. GOVERNANCE: re-targets or severs the edge that link-constraints and delivery resolve through for every node already on the board — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
@@ -58,6 +62,12 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when specBoard is
+		// omitted, SEVERS) the link the rules' link-constraints and delivery roll-up resolve
+		// through, for every node already on the board. This one meets even the narrow original
+		// criterion — I had excluded it before on the reading that it edits no rules document.
+		// It does not need to: it changes what the rules MEAN for existing nodes. Gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var (set, norm) = await tasks.SetSpecBoardAsync(projectKey, board, specBoard, ct);
 		return new BoardSetSpecResult(set, norm);
 	}
@@ -76,7 +86,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
-	[Description("Delete a task board and its nodes. Requires tasks:write.")]
+	[Description("Delete a task board and its nodes. GOVERNANCE: removes a process role from a live methodology instance and destroys its nodes — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardDeletedResult> BoardDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -84,11 +94,14 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Removes a process ROLE from a live instance and destroys its nodes with it. The most
+		// irreversible governance act on the surface — gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
 	[McpServerTool(Name = "tasks_board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
-	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. Requires tasks:write.")]
+	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. GOVERNANCE: retires a process role of a live methodology instance for everyone — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardClosedResult> BoardCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -96,11 +109,16 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// A board is not "just data": in a methodology instance it IS a process role (the spec
+		// board, the work board). Closing one retires that role for everyone — close the spec
+		// board and the rules' own "a work feature must link a spec node" becomes unsatisfiable,
+		// which halts the process without editing one line of rules. Governance act — gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
 	[McpServerTool(Name = "tasks_board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
-	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
+	[Description("Reopen a closed board so it accepts writes again. GOVERNANCE: undoes a deliberate governance freeze — same scope as tasks_board_close, requires tasks:write AND methodology:write.")]
 	public static async Task<BoardReopenedResult> BoardReopenAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -108,6 +126,10 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The inverse of a gated act must be gated too, or the gate is one-way theatre: a
+		// deliberate governance freeze could be undone by any tasks:write key. Same scope as
+		// board_close, on purpose.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
@@ -123,7 +145,8 @@ public static class TasksTools
 		name — snapshot its rules). Provisions instance rules + one board per kind in the
 		source definition; process-role singleton applies INSIDE the new instance (a second
 		instance may reuse the same process-role kinds). Template write alone never creates
-		boards — only this call does. Requires tasks:write.
+		boards — only this call does. GOVERNANCE: this authors a LIVE rules document —
+		requires tasks:write AND methodology:write.
 		""")]
 	public static async Task<MethodologyInstanceCreateResult> MethodologyCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -136,6 +159,11 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Creating an instance AUTHORS a live rules document. On its own it governs only
+		// the boards it provisions — but create+board_adopt is the composed bypass of
+		// rules_upsert (mint your own rules, then pull existing boards under them), so the
+		// criterion binds here too and both halves must be gated or neither is.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, name, source, sourceKey, ct);
 		return new MethodologyInstanceCreateResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
@@ -184,7 +212,8 @@ public static class TasksTools
 	[Description("""
 		Close a NAMED methodology INSTANCE whole: marks the instance closed and closes every
 		member board. Closed boards stay readable (history/search) but reject new writes.
-		Idempotent when already closed. Requires tasks:write.
+		Idempotent when already closed. GOVERNANCE: retires a whole live process — requires
+		tasks:write AND methodology:write.
 		""")]
 	public static async Task<MethodologyInstanceCloseResult> MethodologyCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -195,10 +224,82 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Retires a whole live process: the instance AND every member board stop accepting
+		// writes. Changes no rules document, so the narrow "changes the rules for existing
+		// nodes" test misses it — but it is a governance act over an EXISTING process, which
+		// is the criterion. Gating rules_upsert while leaving this open would be a hole: you
+		// cannot rewrite the process, but you could retire it wholesale.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, name, ct);
 		return new MethodologyInstanceCloseResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
+	}
+
+	[McpServerTool(Name = "tasks_methodology_active_get", Title = "Get the project's active methodology instance pointer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveGetResult))]
+	[Description("""
+		Return the project's explicit ACTIVE methodology instance pointer (spec
+		methodology-active-instance) — the instance DEFAULT surfaces (UI, MCP verbs called
+		without an explicit instance, tasks_methodology_guide with no `name`) resolve through
+		when set. NEVER overrides board membership — a board's own methodology instance
+		(tasks_board_create's methodologyInstance) always wins regardless of what is active
+		here. `name` is null when no pointer is set: resolution then falls back to the single
+		open instance when there is exactly one, or an explicit "no active instance" guide
+		otherwise (never a silent merge). `version` is the CAS baseline for
+		tasks_methodology_set_active. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyActiveGetResult> MethodologyActiveGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetActiveMethodologyInstanceAsync(projectKey, ct);
+		return new MethodologyActiveGetResult(view.Name, view.Version);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_set_active", Title = "Set (or clear) the project's active methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveSetResult))]
+	[Description("""
+		Set the project's explicit ACTIVE methodology instance pointer, or CLEAR it (omit/null
+		`name`) — spec methodology-active-instance. Controls DEFAULTS only: UI, MCP verbs
+		without an explicit instance, and tasks_methodology_guide with no `name` resolve
+		through this pointer when set. NEVER controls board membership — a board that belongs
+		to instance X always resolves X's rules even while Y is active (board membership
+		always wins). The pointer MUST reference an OPEN instance: naming a missing or closed
+		instance is rejected, nothing is written — close it first or pick another. `version`
+		is the watermark baseline from tasks_methodology_active_get (0 = no prior read).
+		GOVERNANCE: tasks_methodology_guide (called with no `name`) resolves through this
+		pointer, and the guide is the only control that exists for CONVENTION gates — moving
+		it changes what every agent is taught the process IS. Requires tasks:write AND
+		methodology:write.
+		""")]
+	public static async Task<MethodologyActiveSetResult> MethodologySetActiveAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) to make active; omit/null to clear the pointer.")] string? name,
+		[Description("Watermark baseline: version from tasks_methodology_active_get; 0 = no prior read.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// GOVERNANCE (spec methodology-write-scope, owner-widened criterion). Board membership
+		// always wins, so no node's ENFORCEMENT changes — under the narrow original criterion
+		// ("changes the rules for existing nodes") this verb would walk free. It is gated under
+		// the WIDENED criterion, and the reason is not cosmetic:
+		//
+		// tasks_methodology_guide with no `name` resolves through this pointer, and the guide is
+		// the ONLY control that exists for CONVENTION gates — a non-enforced approval_gate is,
+		// by definition, one the server does NOT block; the sole thing stopping an agent from
+		// self-approving is that the guide told it not to. Flipping the pointer at an instance
+		// whose transitions lack RequiresApproval deletes those approval_gate invariants from
+		// the guide outright (MethodologyGuide derives them from the RESOLVED instance's
+		// structure). That is a complete bypass of every convention gate, by one pointer write.
+		// Gating board_close while leaving this open would be incoherent.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
+		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, name, version, ct);
+		return new MethodologyActiveSetResult(ack.Name, ack.Changed, ack.Version);
 	}
 
 	static MethodologyInstanceViewResult ProjectInstance(MethodologyInstanceView v) => new(
@@ -255,7 +356,8 @@ public static class TasksTools
 		[{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a node's
 		current value is invalid under the new resolution (a valid value is never rewritten).
 		Closed instances reject the write. Returns { name, version, changed, migrated }.
-		Requires tasks:write.
+		GOVERNANCE: this changes the rules that already govern EXISTING nodes — requires
+		tasks:write AND methodology:write. (Inert templates do not: see template_upsert.)
 		""")]
 	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyRulesUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -269,10 +371,105 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The paradigm case: rewrites the rules of a LIVE instance and migrates the live
+		// nodes on its member boards. Governance-gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
 			projectKey, name, def, version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_describe", Title = "Describe one methodology primitive (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDescribeResult))]
+	[Description("""
+		Set (or clear) the free-form Description of ONE primitive of a LIVE methodology
+		INSTANCE's rules — a kind, status, transition, effect, constraint, linkKind or
+		tagAxis — addressed by its NATURAL KEY, not a version-CAS whole-document replace
+		(that stays tasks_methodology_rules_upsert, for STRUCTURE). This verb only ever
+		replaces one Description string; it can never add/remove/reorder a kind, block,
+		status, transition, effect or constraint.
+
+		`primitive` selects the natural key shape:
+		- kind: { kind }
+		- status: { kind, type, slug } — `type` names any ONE type slug of the owning
+		  workflow block (a block is shared by every type in it; any of its types
+		  disambiguates it).
+		- transition: { kind, type, from, to }
+		- effect: { kind, on, link, direction, onLeave? } (onLeave defaults false)
+		- constraint: { kind, type, link }
+		- linkKind: { slug }
+		- tagAxis: { namespace }
+
+		`description` is the new prose; pass "" to clear it. A natural key matching nothing
+		is a clear error (nothing written). Internally this still reads the current rules
+		document and writes the whole thing back (rules storage is one document) — but the
+		caller never sees or supplies its version; a version race is retried a bounded
+		number of times. Requires tasks:write — and deliberately NOT methodology:write: prose
+		can never change a rule (it cannot touch structure, and the guide derives every
+		invariant from structure, rendering prose only as an additive note), so documenting
+		the process stays a routine write.
+		""")]
+	public static async Task<MethodologyDescribeResult> MethodologyDescribeAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) whose rules the primitive lives on.")] string name,
+		[Description("kind | status | transition | effect | constraint | linkKind | tagAxis.")] string primitive,
+		[Description("The new prose. Pass \"\" to clear an existing description.")] string description,
+		[Description("Kind slug — required for every primitive except linkKind/tagAxis.")] string? kind = null,
+		[Description("Any one type slug of the owning workflow block — required for status/transition/constraint.")] string? type = null,
+		[Description("Status slug — required for primitive 'status'. Also doubles as the linkKind slug when primitive is 'linkKind'.")] string? slug = null,
+		[Description("Transition source status — required for primitive 'transition'.")] string? from = null,
+		[Description("Transition target status — required for primitive 'transition'.")] string? to = null,
+		[Description("Effect trigger status — required for primitive 'effect'.")] string? on = null,
+		[Description("Effect relation kind — required for primitive 'effect'; also the constraint's link for primitive 'constraint'.")] string? link = null,
+		[Description("Effect direction (incoming|outgoing) — required for primitive 'effect'.")] string? direction = null,
+		[Description("Effect onLeave flag — matches Effect.onLeave; default false (entering).")] bool onLeave = false,
+		[Description("Tag axis namespace — required for primitive 'tagAxis'.")] string? @namespace = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		// DELIBERATELY NOT methodology:write, though it writes a live instance's rules document
+		// through the same DefineMethodologyInstanceRulesAsync as the gated rules_upsert. The
+		// line is not "which service call" but "can it change the process":
+		//
+		// 1. MethodologyDescribe.Apply only ever does `with { Description = ... }` on a record
+		//    found by natural key; every branch maps over the lists preserving shape. It cannot
+		//    add, remove or reorder a kind, block, status, transition, effect or constraint.
+		// 2. MethodologyGuide derives EVERY invariant from structural fields — not one
+		//    invariants.Add reads .Description. Prose is strictly additive decoration: a
+		//    transition renders "OWNER-ONLY (enforced)" from RequiresApproval/EnforceApproval
+		//    and the prose lands beside it as "note: ...". A lying description cannot delete
+		//    the mark it sits next to, and the machine-readable invariants never see it at all.
+		//
+		// So the worst this verb can do is write a misleading comment next to a rule that stays
+		// visibly in force — the same exposure any task body already has under tasks:write.
+		// Gating it would put routine process documentation behind the governance scope and rot
+		// the docs. Locked by Methodology_Describe_NeedsNoMethodologyWrite.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+
+		const int maxAttempts = 5;
+		for (var attempt = 1; ; attempt++)
+		{
+			var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct)
+				?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
+			var (def, matched) = MethodologyDescribe.Apply(
+				view.Definition, primitive, kind, type, slug, from, to, on, link, direction, onLeave, @namespace, description);
+			if (!matched)
+				throw new ArgumentException($"no {primitive} matched the given natural key on methodology instance '{name}'");
+			try
+			{
+				var ack = await tasks.DefineMethodologyInstanceRulesAsync(projectKey, name, def, view.Version, null, ct);
+				return new MethodologyDescribeResult(ack.Name, primitive, ack.Version);
+			}
+			catch (InvalidOperationException ex) when (attempt < maxAttempts && ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+			{
+				// Someone else wrote the rules document between our read and our write — the
+				// prose target itself didn't change, only the version cursor did. Re-read and
+				// reapply rather than surfacing a CAS conflict for a call that never asked the
+				// caller to track a version.
+			}
+		}
 	}
 
 	// ---- named methodology templates (inert process documents; builtins are templates) ----
@@ -400,27 +597,31 @@ public static class TasksTools
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
 		boards — DERIVED AT RUNTIME from OPEN methodology INSTANCE rules (tasks_methodology_create
 		/ tasks_methodology_rules_upsert), with builtin templates (quartet|classic|simple)
-		as the baseline where no open instance applies. Optional `name` selects one instance;
-		when omitted: 0 open→presets, 1 open→that instance, N open→merged kinds (first open
-		by name wins on kind-slug conflict). Call it when you start working a project's tasks
-		and need the process rules. `markdown` covers, per effective kind: types (quick-add
-		default marked), statuses grouped open/terminal, initial status, the transition map
-		(collapsed to "free" when a block allows every move), the GATES as behavioral
-		invariants (owner-only transitions the agent NEVER performs — marked enforced vs
-		convention, reason-required moves, artifact:<slug> comment preconditions,
-		pre-transition checklists), creation link requirements (specRef/blockedBy/ideaRef,
-		incl. declared link targets), declared transition effects, tag axes (or free-form),
-		and the relation-kind dictionary (process vs neutral vs instance-declared).
-		`invariants` is the same derivation machine-readable: [{ kind, rule: approval_gate|
-		approval_gate_enforced|reason_required|precondition_artifact|checklist|
-		transition_effect|link_constraint|tag_axes, detail }]. `source` =
-		presets|instance|instances; `definitionVersion` when a single instance is selected.
-		Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		as the baseline where no open instance applies. Optional `name` selects one instance
+		explicitly. When omitted, resolution follows the project's ACTIVE INSTANCE pointer
+		(spec methodology-active-instance, tasks_methodology_active_get /
+		tasks_methodology_set_active): the pointer when set and open; else the single open
+		instance when there is exactly one; else an EXPLICIT "N open, none active" guide
+		naming every open instance — never a silent merge of their kinds. Call it when you
+		start working a project's tasks and need the process rules. `markdown` covers, per
+		effective kind: types (quick-add default marked), statuses grouped open/terminal,
+		initial status, the transition map (collapsed to "free" when a block allows every
+		move), the GATES as behavioral invariants (owner-only transitions the agent NEVER
+		performs — marked enforced vs convention, reason-required moves, artifact:<slug>
+		comment preconditions, pre-transition checklists), creation link requirements
+		(specRef/blockedBy/ideaRef, incl. declared link targets), declared transition
+		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
+		neutral vs instance-declared). `invariants` is the same derivation machine-readable:
+		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
+		precondition_artifact|checklist|transition_effect|link_constraint|tag_axes, detail }].
+		`source` = instance|active|ambiguous|presets; `definitionVersion` when a single
+		instance is selected (named, active, or the unambiguous single open one). Bounded (a
+		handful of kinds) — no truncation. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Optional methodology instance name; when omitted, open instances are merged.")] string? name = null,
+		[Description("Optional methodology instance name; when omitted, resolves via the active-instance pointer (tasks_methodology_active_get/set_active).")] string? name = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);

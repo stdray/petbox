@@ -37,12 +37,12 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 
 	// Provision a methodology preset's board(s) if missing and (quartet only) auto-wire
-	// work->spec. `preset` selects the board set (default "quartet" = intake/ideas/spec/work;
-	// unknown slug is a clear error). Idempotent for the quartet (its kinds are one-per-
-	// project); a non-singleton preset (e.g. "classic") just leaves an existing board alone.
-	// Returns what THIS preset provisioned — NOT the quartet surface (GetMethodologyAsync's
-	// job; irrelevant to a non-quartet preset).
-	Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default);
+	// work->spec. `preset` selects the board set (default MethodologyPresets.
+	// DefaultProvisioningPreset = "quartet" = intake/ideas/spec/work; unknown slug is a clear
+	// error). Idempotent for the quartet (its kinds are one-per-project); a non-singleton preset
+	// (e.g. "classic") just leaves an existing board alone. Returns what THIS preset provisioned
+	// — NOT the quartet surface (GetMethodologyAsync's job; irrelevant to a non-quartet preset).
+	Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = MethodologyPresets.DefaultProvisioningPreset, CancellationToken ct = default);
 	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
@@ -85,9 +85,14 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
 	// The agent-facing PROCESS GUIDE derived at runtime from OPEN methodology instances
 	// (instance rules + preset kinds not overridden): markdown prose + structured invariants.
-	// Optional `name` selects one instance; when null: 0 open→presets, 1 open→that instance,
-	// N open→merged kinds (first open by name wins on kind-slug conflict). Source is
-	// "presets" | "instance" | "instances". Deterministic and bounded — no truncation.
+	// Optional `name` selects one instance explicitly. When null, resolution is the SAME
+	// seam GetRuntimeAsync uses (spec methodology-active-instance): the active pointer when
+	// set and pointing at an open instance, else the single open instance when there is
+	// exactly one, else an explicit "N open, none active" guide — NEVER a silent
+	// kind/linkKind/tagAxis merge across several open instances (the old heuristic this
+	// replaced). Source is "instance" (named, or the single unambiguous open one) | "active"
+	// (resolved via the pointer) | "ambiguous" (N open, no valid pointer) | "presets" (0
+	// open). Deterministic and bounded — no truncation.
 	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? name = null, CancellationToken ct = default);
 
 	// --- named methodology templates (independent of live process / instances) ---
@@ -133,6 +138,19 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<MethodologyInstanceRulesAck> DefineMethodologyInstanceRulesAsync(
 		string projectKey, string name, MethodologyDefinition def, long version,
 		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
+
+	// --- active instance pointer (spec methodology-active-instance) ---
+	// The project's explicit "which instance is active" default: controls DEFAULT
+	// surfaces (UI, MCP verbs without an explicit instance, tasks_methodology_guide with no
+	// `name`) — NEVER board membership rules, which always resolve through a board's own
+	// TaskBoards.MethodologyInstance regardless of what is active here.
+
+	// The raw stored pointer (Name null when never set / cleared) + its CAS version.
+	Task<MethodologyActiveInstanceView> GetActiveMethodologyInstanceAsync(string projectKey, CancellationToken ct = default);
+	// Set (name not null) or clear (name null) the pointer. `name` MUST reference an OPEN
+	// instance — a missing or closed instance is rejected, nothing is written. `version` is
+	// the watermark baseline from GetActiveMethodologyInstanceAsync (0 = no prior read).
+	Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(string projectKey, string? name, long version, CancellationToken ct = default);
 
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
@@ -271,14 +289,17 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// before (identical FSMs collapsed into one block). Powers tasks_workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 	// The project's data-driven FSM resolution seam — the SAME MethodologyRuntime the MCP
-	// tools resolve through: OPEN methodology instance rules (0→presets, 1→that instance,
-	// N→merge by kind-slug, first open by name wins) over the built-in presets. UI pages
-	// resolve kind name / quick-add / terminality / next-statuses off this so a custom kind
-	// behaves the same on UI, MCP and REST. Prefer GetRuntimeForBoardAsync when a board is
-	// known (instance membership). Immutable and cheap (built once per call).
+	// tools resolve through (spec methodology-active-instance): the active-instance pointer
+	// when set and open; else the single open instance when there is exactly one
+	// (unambiguous without a pointer); else the built-in presets — NEVER a merge across
+	// several open instances with no pointer (that silent heuristic is gone; see
+	// GetMethodologyGuideAsync for the human-readable "ambiguous" explanation of that state).
+	// UI pages resolve kind name / quick-add / terminality / next-statuses off this so a
+	// custom kind behaves the same on UI, MCP and REST. Prefer GetRuntimeForBoardAsync when a
+	// board is known (instance membership). Immutable and cheap (built once per call).
 	Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default);
 	// Board-scoped resolution: the board's methodology instance rules when membership is
-	// set, else the project open-instance merge (legacy unassigned boards).
+	// set, else the project-level active-instance resolution (legacy unassigned boards).
 	Task<MethodologyRuntime> GetRuntimeForBoardAsync(string projectKey, string board, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---

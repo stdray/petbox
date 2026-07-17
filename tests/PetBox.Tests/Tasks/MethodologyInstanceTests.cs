@@ -239,6 +239,70 @@ public sealed class MethodologyInstanceTests : IDisposable
 		fromInst.Boards[0].Kind.Should().Be("simple");
 	}
 
+	// methodology-kind-singleton: cardinality is DATA on MethodologyKindDef.Singleton, not
+	// membership in the BoardKind enum — a custom-declared kind (not one of the quartet's four
+	// names) can opt in too. Before this, AssertProcessRoleSingletonAsync early-returned for
+	// any kind that didn't Enum.TryParse into {Spec,Ideas,Intake,Work}, so this scenario could
+	// never be enforced no matter what the definition said.
+	[Fact]
+	public async Task Singleton_CustomDeclaredKind_SecondBoardRejected()
+	{
+		var def = new MethodologyDefinition("custom",
+		[
+			new MethodologyKindDef("myrole", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			])
+			{
+				Singleton = true,
+			},
+		]);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "custom-tmpl", def, 0);
+
+		var inst = await _tasks.CreateMethodologyInstanceAsync(Proj, "custom-inst", "template", "custom-tmpl");
+		inst.Boards.Should().ContainSingle(b => b.Kind == "myrole");
+
+		var act = () => _tasks.CreateBoardAsync(Proj, "myrole-2", "myrole", null, null, "custom-inst");
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
+	}
+
+	// primitives-enum-residual (00-overview §"Ещё хардкод" п.4, "имя доски выводится из слага
+	// вида (PickBoardName) — шаблон не может дать доске собственное имя"): MethodologyKindDef.
+	// BoardName is tried FIRST by PickBoardName, ahead of the kind-slug-derived candidates — a
+	// custom-declared kind's board can be named something other than its own slug.
+	[Fact]
+	public async Task BoardName_CustomDeclaredKind_PreferredOverSlug()
+	{
+		var def = new MethodologyDefinition("custom",
+		[
+			new MethodologyKindDef("myrole", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			])
+			{
+				BoardName = "roster",
+			},
+		]);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "boardname-tmpl", def, 0);
+
+		var inst = await _tasks.CreateMethodologyInstanceAsync(Proj, "boardname-inst", "template", "boardname-tmpl");
+		inst.Boards.Should().ContainSingle();
+		inst.Boards[0].Kind.Should().Be("myrole");
+		inst.Boards[0].Name.Should().Be("roster");
+	}
+
 	[Fact]
 	public async Task Create_RequiresExplicitSource_NoSilentDefault()
 	{
@@ -353,7 +417,7 @@ public sealed class MethodologyInstanceTests : IDisposable
 		(await _tasks.ValidateRelationKindAsync(Proj, "blocks", b1.NodeId)).Should().Be("blocks");
 
 		// MCP relations_create follows the same instance scope (from-node).
-		var http = Http("tasks:read tasks:write");
+		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 		var relations = new RelationStore(_factory);
 
@@ -409,7 +473,7 @@ public sealed class MethodologyInstanceTests : IDisposable
 	[Fact]
 	public async Task Mcp_CreateListGetClose_RoundTrip()
 	{
-		var http = Http("tasks:read tasks:write");
+		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 
 		var created = await TasksTools.MethodologyCreateAsync(http, flags, _tasks, Proj, "mcp-main", "builtin", "classic");

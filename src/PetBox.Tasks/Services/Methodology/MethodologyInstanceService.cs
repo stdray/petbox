@@ -30,9 +30,6 @@ public sealed partial class MethodologyInstanceService
 	public const string SourceTemplate = "template";
 	public const string SourceInstance = "instance";
 
-	// Process-role kinds: ≤1 open board per kind INSIDE an instance (not project-wide).
-	static readonly BoardKind[] ProcessRoleKinds = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
-
 	readonly ITaskBoardStore _boards;
 	readonly MethodologyTemplateService _templates;
 	readonly MethodologyLiveMigration _live;
@@ -311,8 +308,10 @@ public sealed partial class MethodologyInstanceService
 		if (string.Equals(meta.MethodologyInstance, key, StringComparison.OrdinalIgnoreCase))
 			return meta; // already a member
 
-		// Process-role singleton INSIDE the target instance.
-		await AssertProcessRoleSingletonAsync(projectKey, meta.Kind, key, excludeBoard: meta.Name, ct);
+		// Process-role singleton INSIDE the target instance — Singleton is DATA on the target
+		// instance's own kind declaration (or the preset fallback), so build ITS runtime.
+		var targetRuntime = MethodologyRuntime.From(await GetDefinitionAsync(projectKey, key, allowClosed: true, ct));
+		await AssertProcessRoleSingletonAsync(projectKey, meta.Kind, key, targetRuntime, excludeBoard: meta.Name, ct);
 
 		var ok = await _boards.UpdateAsync(projectKey, board, m => m with { MethodologyInstance = key }, ct);
 		if (!ok)
@@ -320,18 +319,23 @@ public sealed partial class MethodologyInstanceService
 		return (await _boards.FindAsync(projectKey, board, ct))!;
 	}
 
-	// Process-role singleton: ≤1 open board of a process-role kind per instance (or per
-	// legacy null-membership bucket). classic|simple are unlimited.
+	// Process-role singleton: ≤1 open board of a singleton kind per instance (or per legacy
+	// null-membership bucket). Cardinality is DATA on the kind (MethodologyKindDef.Singleton,
+	// resolved through `runtime` — the definition's own declaration when it declares the kind,
+	// else the preset's for the same slug) — was gated on membership in the `BoardKind` enum,
+	// which meant a custom-declared kind could never opt in (spec methodology-kind-singleton).
+	// The quartet's four preset kinds (work/spec/ideas/intake) declare Singleton=true;
+	// classic/simple declare none (⇒ false) and stay unlimited, unchanged from before.
 	public async Task AssertProcessRoleSingletonAsync(
-		string projectKey, string kindSlug, string? instanceName, string? excludeBoard = null, CancellationToken ct = default)
+		string projectKey, string kindSlug, string? instanceName, MethodologyRuntime runtime, string? excludeBoard = null, CancellationToken ct = default)
 	{
-		if (!Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var kind) || !ProcessRoleKinds.Contains(kind))
+		if (!runtime.Singleton(kindSlug))
 			return;
 
 		var existing = (await _boards.ListAsync(projectKey, ct))
 			.FirstOrDefault(b =>
 				b.ClosedAt is null
-				&& MethodologyPresets.ParseKind(b.Kind) == kind
+				&& string.Equals(b.Kind, kindSlug, StringComparison.OrdinalIgnoreCase)
 				&& MembershipEquals(b.MethodologyInstance, instanceName)
 				&& (excludeBoard is null || !string.Equals(b.Name, excludeBoard, StringComparison.OrdinalIgnoreCase)));
 		if (existing is not null)
@@ -340,8 +344,83 @@ public sealed partial class MethodologyInstanceService
 				? "project (legacy unassigned boards)"
 				: $"methodology instance '{instanceName}'";
 			throw new ArgumentException(
-				$"{scope} already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — process-role kinds are one-per-instance; close it (tasks_board_close), adopt it elsewhere, or use a simple board");
+				$"{scope} already has an active {runtime.KindName(kindSlug)} board ('{existing.Name}') — process-role kinds are one-per-instance; close it (tasks_board_close), adopt it elsewhere, or use a simple board");
 		}
+	}
+
+	// ---- active instance pointer (spec methodology-active-instance) ----
+	//
+	// Explicit project-level default resolution: which OPEN instance the project's default
+	// surfaces (UI, MCP verbs called without an explicit instance, tasks_methodology_guide
+	// with no `name`) resolve through. NEVER touches board membership — TaskBoards.
+	// MethodologyInstance always wins for a board that belongs to an instance, whatever is
+	// active here (spec's hard boundary). Stored as a temporal SCD-2 singleton row
+	// (methodology_active_instance, same one-key-per-project shape as MethodologyDefRow) —
+	// the pointer's own revision history, separate from the instances it points at.
+
+	// The raw stored pointer + its CAS version (0/null name when never set or cleared).
+	public async Task<MethodologyActiveInstanceView> GetActiveAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var row = await ctx.GetTable<ActiveMethodologyInstanceRow>()
+			.FirstOrDefaultAsync(r => r.Key == ActiveMethodologyInstanceRow.SingletonKey && r.ActiveTo == null, ct);
+		return new MethodologyActiveInstanceView(row?.InstanceName, row?.Version ?? 0);
+	}
+
+	// The VALIDATED pointer: set AND pointing at a currently-open instance, else null. A
+	// pointer left stale by its target instance closing AFTER the pointer was set is treated
+	// as ABSENT here — never silently followed to a closed instance — but not retroactively
+	// cleared (GetActiveAsync still reports the raw stored name so an operator can see and
+	// fix the drift; closing an instance does not rewrite pointers to it).
+	public async Task<string?> ResolveActiveNameAsync(string projectKey, CancellationToken ct = default)
+	{
+		var pointer = await GetActiveAsync(projectKey, ct);
+		if (pointer.Name is null) return null;
+		var inst = await GetAsync(projectKey, pointer.Name, ct);
+		return inst is { Closed: false } ? pointer.Name : null;
+	}
+
+	// Set (name not null) or clear (name null) the project's active-instance pointer. A
+	// non-null name MUST reference an OPEN instance (spec methodology-active-instance's hard
+	// invariant) — a missing or closed instance is rejected, nothing is written. `version` is
+	// the watermark baseline from GetActiveAsync (0 = no prior read).
+	public async Task<MethodologyActiveInstanceAck> SetActiveAsync(
+		string projectKey, string? name, long version, CancellationToken ct = default)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+
+		if (string.IsNullOrWhiteSpace(name))
+		{
+			var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<ActiveMethodologyInstanceRow>(),
+				new[] { (ActiveMethodologyInstanceRow.SingletonKey, version) }, ct: ct);
+			if (!r.Applied)
+			{
+				var c = r.Conflicts[0];
+				throw new InvalidOperationException(
+					$"active methodology instance pointer conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_active_get");
+			}
+			return new MethodologyActiveInstanceAck(null, r.Closed > 0, r.CurrentVersion);
+		}
+
+		var inst = await GetAsync(projectKey, name, ct)
+			?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}' — the active pointer must reference an existing instance");
+		if (inst.Closed)
+			throw new ArgumentException($"methodology instance '{inst.Name}' is closed — the active pointer must reference an OPEN instance (spec methodology-active-instance)");
+
+		var row = new ActiveMethodologyInstanceRow
+		{
+			Key = ActiveMethodologyInstanceRow.SingletonKey,
+			Version = version,
+			InstanceName = inst.Name,
+		};
+		var res = await TemporalStore.UpsertAsync(ctx, new[] { row }, ct: ct);
+		if (!res.Applied)
+		{
+			var c = res.Conflicts[0];
+			throw new InvalidOperationException(
+				$"active methodology instance pointer conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_active_get");
+		}
+		return new MethodologyActiveInstanceAck(inst.Name, res.Inserted > 0, res.CurrentVersion);
 	}
 
 	// ---- internals ----
@@ -385,15 +464,16 @@ public sealed partial class MethodologyInstanceService
 		var taken = existing.Select(b => b.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var created = new List<MethodologyInstanceBoard>(def.Kinds.Count);
 		var singleKind = def.Kinds.Count == 1;
+		var runtime = new MethodologyRuntime(def);
 
 		foreach (var kindDef in def.Kinds)
 		{
 			var kindSlug = kindDef.Kind.Trim().ToLowerInvariant();
 			// Process-role singleton inside this (new) instance — always free for a brand-new
 			// instance, but re-check in case of concurrent create.
-			await AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, ct: ct);
+			await AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, runtime, ct: ct);
 
-			var boardName = PickBoardName(instanceName, kindSlug, singleKind, taken);
+			var boardName = PickBoardName(instanceName, kindSlug, runtime.BoardName(kindSlug), singleKind, taken);
 			taken.Add(boardName);
 			var meta = await _boards.CreateAsync(
 				projectKey, boardName,
@@ -435,12 +515,21 @@ public sealed partial class MethodologyInstanceService
 		}
 	}
 
-	static string PickBoardName(string instanceName, string kindSlug, bool singleKind, HashSet<string> taken)
+	// `preferredName` (MethodologyKindDef.BoardName via MethodologyRuntime.BoardName, spec
+	// primitives-enum-residual) is a definition-declared board name — tried FIRST, ahead of the
+	// slug-derived candidates, so a custom kind can give its board a name other than its own
+	// slug. It's still just a candidate: subject to the same taken/"node"-reserved skip as every
+	// other one, so a collision falls through to the slug-derived names exactly as before this
+	// parameter existed. Null (no preferred name — the default for every kind today) reproduces
+	// the original candidate list unchanged.
+	static string PickBoardName(string instanceName, string kindSlug, string? preferredName, bool singleKind, HashSet<string> taken)
 	{
 		// Prefer short, readable names; fall back to instance-prefixed when taken.
 		IEnumerable<string> candidates = singleKind
 			? [instanceName, kindSlug, $"{instanceName}-{kindSlug}"]
 			: [kindSlug, $"{instanceName}-{kindSlug}"];
+		if (!string.IsNullOrWhiteSpace(preferredName))
+			candidates = new[] { preferredName }.Concat(candidates);
 		foreach (var c in candidates)
 		{
 			if (c.Length > 0 && !taken.Contains(c) && c != "node")

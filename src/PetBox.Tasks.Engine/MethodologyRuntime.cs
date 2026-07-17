@@ -104,6 +104,48 @@ public sealed class MethodologyRuntime
 		(DeclaredField(kindSlug, k => k.OutlineReveal) ?? PresetField(kindSlug, k => k.OutlineReveal))
 			?? OutlineRevealModeNames.Navigate;
 
+	// Process-role cardinality of a kind (spec methodology-kind-singleton): the SAME field-
+	// level merge as DefaultView/OutlineReveal just above, not the whole-object ResolvedKind
+	// merge every other process resolver uses — for the identical reason those two document:
+	// a builtin-provisioned instance materializes each preset MethodologyKindDef VERBATIM at
+	// creation time (RenderPresetDefinition), so an instance created before this field existed
+	// stores Singleton as the JSON-missing null on a kind that IS a process role (e.g. `work`)
+	// — a whole-object merge would read that as "not singleton" and silently drop the
+	// invariant on every already-provisioned project. The declared kind's own bool? when set,
+	// else the preset's for the SAME resolved kind, else false (a wholly custom kind with no
+	// opinion is NOT singleton by default — opt-in, not a global law). Was gated on membership
+	// in the `BoardKind` enum (MethodologyInstanceService.AssertProcessRoleSingletonAsync) —
+	// a custom-declared kind could never opt in; now data, custom kinds included.
+	public bool Singleton(string? kindSlug) =>
+		(kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind) ? kind.Singleton : null)
+			?? MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).Singleton
+			?? false;
+
+	// Blocking-gate statuses of a kind (spec methodology-blocks-gate-data): the SAME field-level
+	// merge as Singleton/DefaultView/OutlineReveal just above, for the identical reason those
+	// document — RenderPresetDefinition materializes a preset kind VERBATIM at instance-creation
+	// time, so an instance created before this field existed stores BlocksGate as the JSON-missing
+	// null on a kind that IS gated (e.g. `work`); a whole-object merge would silently read that as
+	// "no gate" on every already-provisioned project. The declared kind's own value when set, else
+	// the preset's for the SAME resolved kind, else null (no gate — opt-in per kind, not a global
+	// law). Replaces the two code-level "Blocked" literals this used to be (GuardEngine.
+	// RequireBlockers, TasksService's blocker-edge prefetch gate), both formerly wired through
+	// IsWorkKind — a custom-declared kind can now opt into the same state invariant under its own
+	// status names.
+	public MethodologyBlocksGateDef? BlocksGate(string? kindSlug) =>
+		(kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind) ? kind.BlocksGate : null)
+			?? MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).BlocksGate;
+
+	// The preferred board name for a kind (spec primitives-enum-residual, "имя доски из слага
+	// вида"): the SAME field-level merge as DefaultView/OutlineReveal/Singleton/BlocksGate above
+	// — a display-only opinion, not process semantics. Null = no opinion from either the
+	// definition or the preset — PickBoardName falls back to its slug-derived candidates exactly
+	// as before this field existed. No preset declares this today (every preset's natural board
+	// name already equals its kind slug), so the preset half is currently always null; it exists
+	// so a custom-declared kind can name its board something other than its own slug.
+	public string? BoardName(string? kindSlug) =>
+		DeclaredField(kindSlug, k => k.BoardName) ?? PresetField(kindSlug, k => k.BoardName);
+
 	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
 	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
 	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).
@@ -181,19 +223,6 @@ public sealed class MethodologyRuntime
 	// (and re-break) it.
 	public bool IsSpecKind(string? kindSlug) =>
 		string.Equals(KindName(kindSlug), "spec", StringComparison.OrdinalIgnoreCase);
-
-	// Whether a board's EFFECTIVE kind is `work` — the SAME effective-kind pattern as IsSpecKind
-	// just above (presetkind-spec-blind-spot follow-up, found by that bug's sweep rather than
-	// named in it): `work` is one of the quartet's four kinds, so RenderPresetDefinition renders
-	// it VERBATIM into a real quartet-provisioned project's stored definition exactly like
-	// `spec` — IsDefinedKind("work") is TRUE there, so `PresetKind(...) == BoardKind.Work` reads
-	// null and never matches. The blocker guard (now GuardEngine.RequireBlockers) gated the "a Blocked task must
-	// name a blocker" invariant on exactly that comparison, so it silently never fired on any
-	// real project's work board (only on the bare-preset shape a hand-built test uses). Use this
-	// wherever the question is "is this board's effective kind `work`", never PresetKind(...) ==
-	// BoardKind.Work.
-	public bool IsWorkKind(string? kindSlug) =>
-		string.Equals(KindName(kindSlug), "work", StringComparison.OrdinalIgnoreCase);
 
 	// The preset kinds in guide order: the quartet pipeline first, then the standalone
 	// kinds (`classic`, `simple` last).

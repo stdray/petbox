@@ -84,7 +84,10 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
 			await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = ProjectKey, WorkspaceKey = "test", Name = _projectName });
-			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow });
+			// methodology:write: these suites PROVISION a methodology (and edit live rules) as
+			// fixture setup, which the spec methodology-write-scope gates separately from
+			// tasks:write. The authz boundary itself is asserted in McpModuleToolsTests, not here.
+			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,methodology:write", CreatedAt = DateTime.UtcNow });
 		}
 
 		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -151,4 +154,9 @@ public sealed class MethodologyPrimitivesFixture : TasksMcpFixture
 public sealed class MethodologyRuntimeFixture : TasksMcpFixture
 {
 	public MethodologyRuntimeFixture() : base("mrt", "Runtime") { }
+}
+
+public sealed class MethodologyDescribeFixture : TasksMcpFixture
+{
+	public MethodologyDescribeFixture() : base("mdsc", "Describe") { }
 }

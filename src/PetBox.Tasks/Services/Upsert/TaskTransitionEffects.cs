@@ -21,8 +21,19 @@ public sealed class TaskTransitionEffects
 		_tags = tags;
 	}
 
-	// Data-driven FSM effects: when a node enters a status, walk matching edges and apply
-	// Set / OnlyFrom (and for `blocks`, consume the edge + release only the last blocker).
+	// Data-driven FSM effects: when a node enters (default) or leaves (OnLeave, Effect.onLeave,
+	// methodology-blocks-gate-data) a status, walk matching edges and apply Set / OnlyFrom (and
+	// for `blocks`, consume the edge + release only the last blocker — that mechanism itself
+	// stays builtin to the `blocks` link kind, not generalized to arbitrary link kinds).
+	// `Set: null` declares a PURE edge-consumption effect: the edge is still closed (for
+	// `blocks`), but no status is propagated to the linked node. NOTE: no BUILTIN kind declares
+	// an OnLeave effect today — TasksService.CloseBlocksOnLeaveAsync (the manual-leave-Blocked
+	// unblock) stays its OWN imperative method rather than a WorkKind preset entry, because
+	// MethodologyRuntime.Effects(kindSlug) resolves whole-object and a real quartet-provisioned
+	// project's `work` kind already carries its own frozen, pre-existing Effects list (see the
+	// comment on MethodologyTransitionEffectDef.OnLeave) — this generalization exists so a
+	// PROJECT-DECLARED kind can opt into an onLeave effect, proven by schema/wire-round-trip
+	// tests, not by any builtin preset routing through it.
 	public async Task RunTransitionEffectsAsync(
 		string projectKey, string? kindSlug, MethodologyRuntime runtime,
 		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
@@ -32,9 +43,14 @@ public sealed class TaskTransitionEffects
 		foreach (var n in desired)
 		{
 			var cur = prior.GetValueOrDefault(n.Key) ?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
-			var entered = cur is null || !string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase);
-			if (!entered || n.NodeId.Length == 0) continue;
-			foreach (var e in effects.Where(e => string.Equals(e.On, n.Status, StringComparison.OrdinalIgnoreCase)))
+			var statusChanged = cur is null || !string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase);
+			if (!statusChanged || n.NodeId.Length == 0) continue;
+			// onEnter effects trigger on the NEW status; onLeave effects trigger on the OLD one —
+			// and need a prior row to have left at all (a brand-new node cannot "leave" anything).
+			var matching = effects.Where(e => e.OnLeave
+				? cur is not null && string.Equals(e.On, cur.Status, StringComparison.OrdinalIgnoreCase)
+				: string.Equals(e.On, n.Status, StringComparison.OrdinalIgnoreCase));
+			foreach (var e in matching)
 			{
 				var incoming = string.Equals(e.Direction, "incoming", StringComparison.OrdinalIgnoreCase);
 				var edges = (await _relations.ListAsync(projectKey, n.NodeId, incoming ? "to" : "from", ct: ct))
@@ -46,9 +62,11 @@ public sealed class TaskTransitionEffects
 					{
 						// gating semantics: consume the edge; release only the last blocker
 						await _relations.CloseAsync(projectKey, "blocks", edge.FromNodeId, edge.ToNodeId, ct);
+						if (e.Set is null) continue; // pure consume — no status to propagate, ever
 						var stillBlocked = (await _relations.ListAsync(projectKey, linkedId, "to", ct: ct)).Any(x => x.Kind == "blocks");
 						if (stillBlocked) continue;
 					}
+					if (e.Set is null) continue;
 					await SetActiveNodeStatusAsync(projectKey, linkedId, runtime,
 						(wf, node, isTerminal) =>
 							isTerminal ? null
@@ -63,6 +81,13 @@ public sealed class TaskTransitionEffects
 	// every edge touching it (both directions, any kind) and its tags. Unblocking mirrors the
 	// Done effect: when the deleted node was a blocker, a target left with no blockers moves
 	// Blocked → InProgress. System action (no gate).
+	// NOTE (methodology-blocks-gate-data, scope boundary): this "Blocked"/"InProgress" literal
+	// is intentionally NOT threaded through MethodologyRuntime.BlocksGate in this pass — unlike
+	// RunTransitionEffectsAsync's blocks-effect above, this path runs UNGATED by kind (any board
+	// whose preset happens to name a "Blocked" status gets this unblock-on-delete, including
+	// non-gated kinds like `simple`); gating it on BlocksGate(kindSlug) would silently NARROW
+	// that behavior with no test net proving today's cross-kind reach is even intentional. Filed
+	// as a finding under work/umbrella-methodology-engine rather than changed here.
 	public async Task RunDeleteEffectsAsync(
 		string projectKey, string board, IReadOnlyList<NodePatch> deletePatches,
 		Dictionary<string, PlanNode> prior, MethodologyRuntime runtime, CancellationToken ct)

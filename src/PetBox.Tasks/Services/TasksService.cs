@@ -98,9 +98,6 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	// Process-role kinds: ≤1 open board per kind INSIDE an instance (not project-wide).
-	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
-
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
 		// Membership: required once the project has entered the instance world (any instance
@@ -131,16 +128,16 @@ public sealed partial class TasksService : ITasksService
 		string canonical;
 		if (runtime.IsDefinedKind(kindSlug))
 		{
-			// A definition-declared kind is stored VERBATIM. Process-role singleton still
-			// applies when the kind maps onto a process-role BoardKind.
+			// A definition-declared kind is stored VERBATIM. Process-role singleton is DATA on
+			// the kind (MethodologyKindDef.Singleton, spec methodology-kind-singleton) — a
+			// custom-declared kind can opt in too, not just the four quartet enum names.
 			canonical = kindSlug;
-			if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var definedAs) && Methodological.Contains(definedAs))
-				await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, runtime, ct: ct);
 		}
 		else if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var k))
 		{
 			canonical = k.ToString().ToLowerInvariant();
-			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, runtime, ct: ct);
 		}
 		else
 		{
@@ -157,17 +154,30 @@ public sealed partial class TasksService : ITasksService
 	public Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default) =>
 		_methodologyInstances.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
 
-	// Project-level FSM resolution from OPEN methodology instances (not methodology_defs).
-	// 0 open → presets; 1 open → that instance's rules; N open → merge kinds/linkKinds/tagAxes
-	// (first open instance by name wins on kind-slug / link-slug / axis-namespace conflict).
+	// Project-level FSM resolution (spec methodology-active-instance): the explicit active-
+	// instance pointer when set and pointing at an OPEN instance (an explicit win, whatever
+	// else is open); else the single open instance when there is exactly one (unambiguous
+	// without any pointer — a one-instance project needs no explicit default); else the
+	// built-in presets. Replaces the former heuristic ("N open → merge kinds/linkKinds/
+	// tagAxes, first open by name wins on conflict"): several open instances with no active
+	// pointer is now an EXPLICIT, visible state (presets here; GetMethodologyGuideAsync
+	// surfaces it as "ambiguous" with the open names, rather than silently blending their
+	// rules). Board membership is untouched by any of this — RuntimeForBoardAsync below only
+	// falls back here for boards with NO instance membership.
 	async Task<MethodologyRuntime> RuntimeAsync(string projectKey, CancellationToken ct)
 	{
-		var merged = await MergeOpenInstanceDefinitionAsync(projectKey, ct);
-		return merged is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(merged);
+		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		if (active is not null)
+			return await RuntimeForInstanceAsync(projectKey, active, ct);
+
+		var open = await ListOpenInstancesAsync(projectKey, ct);
+		return open.Count == 1
+			? await RuntimeForInstanceAsync(projectKey, open[0].Name, ct)
+			: MethodologyRuntime.PresetsOnly;
 	}
 
-	// Board-scoped runtime: instance rules when the board has membership, else open-instance
-	// merge (legacy unassigned boards).
+	// Board-scoped runtime: instance rules when the board has membership, else the
+	// project-level active-instance resolution (legacy unassigned boards).
 	async Task<MethodologyRuntime> RuntimeForBoardAsync(string projectKey, TaskBoardMeta meta, CancellationToken ct)
 	{
 		if (!string.IsNullOrWhiteSpace(meta.MethodologyInstance))
@@ -182,58 +192,23 @@ public sealed partial class TasksService : ITasksService
 		return def is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(def);
 	}
 
-	// Open instances ordered by name (stable merge order). Empty when none open.
+	// Open instances ordered by name (deterministic listing — the "ambiguous" guide and any
+	// other multi-instance enumeration read them in this order). Empty when none open.
 	async Task<IReadOnlyList<MethodologyInstanceView>> ListOpenInstancesAsync(string projectKey, CancellationToken ct)
 	{
 		var all = await _methodologyInstances.ListAsync(projectKey, ct);
 		return all.Where(i => !i.Closed).OrderBy(i => i.Name, StringComparer.Ordinal).ToList();
 	}
 
-	// Merge open-instance rules into one MethodologyDefinition, or null when none / empty.
-	async Task<MethodologyDefinition?> MergeOpenInstanceDefinitionAsync(string projectKey, CancellationToken ct)
-	{
-		var open = await ListOpenInstancesAsync(projectKey, ct);
-		if (open.Count == 0) return null;
-
-		if (open.Count == 1)
-			return await _methodologyInstances.GetDefinitionAsync(projectKey, open[0].Name, allowClosed: false, ct);
-
-		var kinds = new List<MethodologyKindDef>();
-		var kindSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		var linkKinds = new List<MethodologyLinkKindDef>();
-		var linkSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		var tagAxes = new List<MethodologyTagAxisDef>();
-		var axisSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-		foreach (var inst in open)
-		{
-			var def = await _methodologyInstances.GetDefinitionAsync(projectKey, inst.Name, allowClosed: false, ct);
-			if (def is null) continue;
-			foreach (var k in def.Kinds)
-				if (kindSeen.Add(k.Kind)) kinds.Add(k);
-			foreach (var lk in def.LinkKinds ?? [])
-				if (linkSeen.Add(lk.Slug)) linkKinds.Add(lk);
-			foreach (var ax in def.TagAxes ?? [])
-				if (axisSeen.Add(ax.Namespace)) tagAxes.Add(ax);
-		}
-
-		if (kinds.Count == 0 && linkKinds.Count == 0 && tagAxes.Count == 0)
-			return null;
-
-		return new MethodologyDefinition("instances", kinds)
-		{
-			LinkKinds = linkKinds,
-			TagAxes = tagAxes,
-		};
-	}
-
-	// The public door to the project-level resolution seam (open-instance merge). UI pages
-	// hold it for a request to answer kind/terminality/quick-add/next-status the SAME way
-	// the MCP path does. Prefer GetRuntimeForBoardAsync when a board is in hand.
+	// The public door to the project-level resolution seam (active-instance pointer, spec
+	// methodology-active-instance). UI pages hold it for a request to answer kind/
+	// terminality/quick-add/next-status the SAME way the MCP path does. Prefer
+	// GetRuntimeForBoardAsync when a board is in hand.
 	public Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default) =>
 		RuntimeAsync(projectKey, ct);
 
-	// Board-scoped public door: instance rules when the board has membership, else open merge.
+	// Board-scoped public door: instance rules when the board has membership, else the
+	// project-level active-instance resolution.
 	public async Task<MethodologyRuntime> GetRuntimeForBoardAsync(string projectKey, string board, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
@@ -332,7 +307,7 @@ public sealed partial class TasksService : ITasksService
 	// Pipeline order of the quartet kinds.
 	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
 
-	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
+	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = MethodologyPresets.DefaultProvisioningPreset, CancellationToken ct = default)
 	{
 		// Compat layer (methodology-instance-core): enable still works for $system / legacy
 		// callers by ensuring a named instance from the builtin preset, then reporting the
@@ -549,43 +524,81 @@ public sealed partial class TasksService : ITasksService
 		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default) =>
 		_methodologyInstances.DefineRulesAsync(projectKey, name, def, version, migration, ct);
 
+	public Task<MethodologyActiveInstanceView> GetActiveMethodologyInstanceAsync(
+		string projectKey, CancellationToken ct = default) =>
+		_methodologyInstances.GetActiveAsync(projectKey, ct);
+
+	public Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(
+		string projectKey, string? name, long version, CancellationToken ct = default) =>
+		_methodologyInstances.SetActiveAsync(projectKey, name, version, ct);
+
 	// Product surface over open methodology instance rules (guide is derived presentation).
-	// Optional `name` selects one instance; when null, same open-instance merge as RuntimeAsync.
-	// Source: "presets" | "instance" | "instances".
+	// Optional `name` selects one instance explicitly; when null, resolution mirrors
+	// RuntimeAsync (spec methodology-active-instance) — active pointer, else the single open
+	// instance, else an explicit "ambiguous" guide naming every open instance (never a silent
+	// kind merge). Source: "instance" | "active" | "ambiguous" | "presets".
 	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? name = null, CancellationToken ct = default)
 	{
 		if (!string.IsNullOrWhiteSpace(name))
 		{
 			var rules = await GetMethodologyInstanceRulesAsync(projectKey, name, ct);
-			if (rules is null)
-				return MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
-			return MethodologyGuide.Render(
-				rules.Definition.Name,
-				new MethodologyRuntime(rules.Definition),
-				"instance",
-				rules.Version);
+			return rules is null
+				? PresetsGuide()
+				: MethodologyGuide.Render(rules.Definition.Name, new MethodologyRuntime(rules.Definition), "instance", rules.Version);
+		}
+
+		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		if (active is not null)
+		{
+			var rules = await GetMethodologyInstanceRulesAsync(projectKey, active, ct);
+			// ResolveActiveNameAsync already checked existence + open state, so a miss here
+			// would mean a race (the instance closed/vanished between the two reads) —
+			// defensive fallback to presets rather than surfacing a null-ref.
+			return rules is null
+				? PresetsGuide()
+				: MethodologyGuide.Render(rules.Definition.Name, new MethodologyRuntime(rules.Definition), "active", rules.Version);
 		}
 
 		var open = await ListOpenInstancesAsync(projectKey, ct);
 		if (open.Count == 0)
-			return MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
+			return PresetsGuide();
 
 		if (open.Count == 1)
 		{
 			var rules = await GetMethodologyInstanceRulesAsync(projectKey, open[0].Name, ct);
-			if (rules is null)
-				return MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
-			return MethodologyGuide.Render(
-				rules.Definition.Name,
-				new MethodologyRuntime(rules.Definition),
-				"instance",
-				rules.Version);
+			return rules is null
+				? PresetsGuide()
+				: MethodologyGuide.Render(rules.Definition.Name, new MethodologyRuntime(rules.Definition), "instance", rules.Version);
 		}
 
-		var merged = await MergeOpenInstanceDefinitionAsync(projectKey, ct);
-		if (merged is null)
-			return MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
-		return MethodologyGuide.Render(merged.Name, new MethodologyRuntime(merged), "instances", null);
+		// N open instances, no valid active pointer: an EXPLICIT, visible state (spec
+		// methodology-active-instance) — never the old silent kind/linkKind/tagAxis merge.
+		return AmbiguousInstancesGuide(open);
+	}
+
+	static MethodologyGuideView PresetsGuide() =>
+		MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
+
+	// The guide for "several open instances, none active" — names them and tells the caller
+	// how to resolve the ambiguity (name one explicitly, or set the project default) instead
+	// of silently blending their rules the way the pre-methodology-active-instance merge did.
+	static MethodologyGuideView AmbiguousInstancesGuide(IReadOnlyList<MethodologyInstanceView> open)
+	{
+		var names = string.Join(", ", open.Select(o => o.Name));
+		var md = $"""
+			# Process guide: no active methodology instance
+
+			This project has {open.Count} OPEN methodology instances ({names}) and none is marked
+			active (spec methodology-active-instance) — this is an EXPLICIT, visible state, not a
+			silent merge of their rules. A board's own methodology instance always resolves its
+			rules regardless of this (tasks_workflow / a board-scoped call already works). To pick
+			a project-wide default:
+
+			- Pass `name` to tasks_methodology_guide (or any other call that accepts it) to see one
+			  instance's rules explicitly, or
+			- Call tasks_methodology_set_active to make one of {names} the project default.
+			""";
+		return new MethodologyGuideView(md, [], "ambiguous", null);
 	}
 
 	// A specBoard link only makes sense on a work board and must point at an existing spec board.
@@ -1336,7 +1349,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "task_spec", landed, specRefs, blockerIsFrom: false, ct);
 				await LinkRefsAsync(projectKey, "blocks", landed, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", landed, ideaRefs, blockerIsFrom: true, ct);
-				await CloseBlocksOnLeaveAsync(projectKey, landed, prior, ct);
+				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
 			}
@@ -1947,11 +1960,12 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(kv => kv.Key, kv => new NodeIndexEntry(kv.Key, kv.Value.Board, kv.Value.BoardKind, kv.Value.Slug, kv.Value.Status, kv.Value.Type), StringComparer.Ordinal);
 		}
 
-		// Edge prefetch, ONE query for both consumers. The blocker invariant only fires on a work
-		// kind; the delete guard only fires when something is deleted. A node born in this call has
-		// a fresh NodeId and no edges, so only rows that ALREADY exist can contribute — the ids come
+		// Edge prefetch, ONE query for both consumers. The blocker invariant only fires on a kind
+		// that declares a blocking gate (methodology-blocks-gate-data — was IsWorkKind); the
+		// delete guard only fires when something is deleted. A node born in this call has a fresh
+		// NodeId and no edges, so only rows that ALREADY exist can contribute — the ids come
 		// from `prior` (via the patch key and, for a rename, its PrevKey), which the loop never narrows.
-		var blockerIds = runtime.IsWorkKind(kindSlug) ? PriorNodeIds(upserts, prior) : [];
+		var blockerIds = runtime.BlocksGate(kindSlug) is not null ? PriorNodeIds(upserts, prior) : [];
 		var deleteIds = PriorNodeIds(deletes, prior);
 		var blockerEdges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 		var partOfChildren = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
@@ -2057,13 +2071,24 @@ public sealed partial class TasksService : ITasksService
 		return rows.ToHashSet(StringComparer.Ordinal);
 	}
 
-	// Leaving Blocked manually closes the active `blocks` edges into the node (history kept).
-	async Task CloseBlocksOnLeaveAsync(string projectKey, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	// Leaving the kind's blocking-gate status (MethodologyKindDef.BlocksGate, spec
+	// methodology-blocks-gate-data) manually closes the active `blocks` edges into the node
+	// (history kept — no status forced on the blocker). Kept IMPERATIVE, deliberately NOT folded
+	// into the declared Effects list (MethodologyRuntime.Effects(kindSlug) resolves WHOLE-OBJECT:
+	// a real quartet-provisioned project materialized `work`'s Effects verbatim before this field
+	// existed, so an entry added to the WorkKind PRESET would silently never reach it — see the
+	// comment on MethodologyPresets.WorkKind.Effects). Only the STATUS literal is now data
+	// (gate.Status, via the SAME field-level-merged BlocksGate resolver RequireBlockers uses) —
+	// was the hardcoded literal "Blocked".
+	async Task CloseBlocksOnLeaveAsync(
+		string projectKey, MethodologyRuntime runtime, string? kindSlug,
+		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
 	{
+		if (runtime.BlocksGate(kindSlug) is not { } gate) return;
 		foreach (var n in desired)
 		{
-			var wasBlocked = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, "Blocked", StringComparison.OrdinalIgnoreCase);
-			if (!wasBlocked || string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
+			var wasGated = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, gate.Status, StringComparison.OrdinalIgnoreCase);
+			if (!wasGated || string.Equals(n.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) continue;
 			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "blocks"))
 				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
 		}

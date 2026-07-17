@@ -25,6 +25,9 @@ public static class ApiKeyScopes
 	public const string TasksRead = "tasks:read";
 	public const string TasksWrite = "tasks:write";
 	public const string TasksApprove = "tasks:approve";
+	// Changing the RULES that already govern EXISTING nodes — deliberately separate from
+	// tasks:write (which writes nodes UNDER the rules). See the catalog entry below.
+	public const string MethodologyWrite = "methodology:write";
 	public const string MemoryRead = "memory:read";
 	public const string MemoryWrite = "memory:write";
 	public const string LlmInvoke = "llm:invoke";
@@ -53,6 +56,7 @@ public static class ApiKeyScopes
 		new(TasksRead,   "Read tasks",             "List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(TasksApprove, "Approve tasks",         "Perform approval-gated workflow transitions the methodology ENFORCES (enforceApproval) — the maintainer capability. Meaningless without tasks:write.", "Tasks"),
+		new(MethodologyWrite, "Govern the live process", "GOVERNANCE: any act over an EXISTING live process — rewrite its rules (methodology_rules_upsert), author a live rules document (methodology_create), move an existing board under other rules (board_adopt), retire the whole process (methodology_close), add/retire/destroy/rewire one of its process-role boards (board_close, board_reopen, board_delete, board_set_spec), or move the active-instance pointer the agent-facing guide resolves through (methodology_set_active). tasks:write writes nodes UNDER the process; this changes the process itself. NOT needed for inert templates (template_upsert/snapshot/delete — documents, not processes), for board_create (constrained BY the rules, changes nothing that exists), or for methodology_describe (prose only — it cannot touch structure, and the guide derives every invariant from structure). Meaningless without tasks:write.", "Tasks"),
 		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
 		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools.", "Memory"),
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.", "LlmRouter"),
