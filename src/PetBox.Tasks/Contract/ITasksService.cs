@@ -21,12 +21,19 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// --- board lifecycle ---
 
 	// Create a board, validating the spec link first. Returns the new metadata row.
-	// `methodologyInstance` is required when the project already has any methodology
-	// instance (board membership exactly-one); omitted only for legacy pre-instance
-	// projects. Process-role singleton is enforced inside the instance.
+	// `methodologyInstance` selects the board's WORLD (spec methodology-utility-kinds: a
+	// board is a member of exactly one) — a real instance name, or the reserved
+	// `TaskBoardMeta.UtilityWorld` ("$utility") for the project's utility layer, always
+	// legal regardless of how many instances exist. Omitted/null is legacy: legal only
+	// for a project with no methodology instance yet (pre-backfill bootstrap); once any
+	// instance exists, a caller MUST say which world explicitly. Process-role singleton
+	// is enforced inside whichever world is targeted (instance, or the utility bucket).
 	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default);
-	// Move/adopt a board into a (different) open methodology instance. Enforces
-	// process-role singleton inside the target instance.
+	// Move/adopt a board into a (different) open methodology instance, OR release it into
+	// the project's utility layer when `methodologyInstance` is the reserved
+	// `TaskBoardMeta.UtilityWorld` sentinel (spec methodology-utility-kinds) — the board's
+	// world changes exactly once per call, never to "no world". Enforces process-role
+	// singleton inside the target (instance, or the utility bucket).
 	Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default);
 	// Set (or clear, when specBoard is null/empty) a work board's spec board. Returns
 	// whether the row changed and the normalized spec board value.
@@ -53,11 +60,18 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
 	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).
 	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
-	// --- user-defined methodology definition (LIVE since wave 1.2: a kind the definition
-	//     declares resolves types/statuses/transitions from data; any other kind — or a
-	//     project without a definition — falls back to the built-in presets) ---
+	// --- the project's utility layer of kinds (spec methodology-utility-kinds) ---
+	//     Storage predates the instance model (it was the project's one-and-only
+	//     methodology definition before methodology-instance-core); reclaimed here as the
+	//     LIVE home for kinds that are project-homed rather than instance-declared — a kind
+	//     this document declares resolves types/statuses/transitions from data for any board
+	//     carrying the explicit TaskBoardMeta.UtilityWorld sentinel membership
+	//     (TaskBoardMeta.IsUtilityMembership) — NEVER a legacy null-membership board (that
+	//     stays on the untouched pre-instance-core presets/active-instance path); any other
+	//     kind, or a project with no utility document yet, falls back to the built-in
+	//     presets. Exposed over MCP as tasks_methodology_utility_get/_upsert.
 
-	// Validate and store the project's methodology definition as a new temporal revision.
+	// Validate and store the project's utility-layer definition as a new temporal revision.
 	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
 	// optimistic concurrency: a moved baseline throws, naming the current version so the
 	// caller re-reads and rebases. An identical resubmit is a no-op (Changed=false).

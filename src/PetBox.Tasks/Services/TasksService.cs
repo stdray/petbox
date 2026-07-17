@@ -100,17 +100,20 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
-		// Membership: required once the project has entered the instance world (any instance
-		// exists). Pre-instance projects keep the legacy null-membership path so enable/def
-		// and existing boards work until backfill; the MCP surface documents the requirement.
+		// World: a real instance name, the reserved UtilityWorld sentinel (spec methodology-
+		// utility-kinds — always legal, first-class regardless of how many instances exist),
+		// or null (legacy: legal ONLY before the project has entered the instance world —
+		// MethodologyInstanceBackfill sweeps that bootstrap state into a real membership at
+		// startup, so it is never a steady state once any instance exists).
 		var instanceName = string.IsNullOrWhiteSpace(methodologyInstance)
 			? null
 			: methodologyInstance.Trim().ToLowerInvariant();
-		if (instanceName is null)
+		var isUtilitySentinel = instanceName == TaskBoardMeta.UtilityWorld;
+		if (instanceName is null || isUtilitySentinel)
 		{
-			if (await _methodologyInstances.AnyAsync(projectKey, ct))
+			if (instanceName is null && await _methodologyInstances.AnyAsync(projectKey, ct))
 				throw new ArgumentException(
-					"methodology instance is required — pass methodologyInstance (create one with tasks_methodology_create first); board_create without an instance is rejected once the project has any methodology instance");
+					$"methodology instance is required — pass methodologyInstance (an instance name, or '{TaskBoardMeta.UtilityWorld}' for the project's utility layer); board_create without one is rejected once the project has any methodology instance");
 		}
 		else
 		{
@@ -121,10 +124,18 @@ public sealed partial class TasksService : ITasksService
 		}
 
 		var kindSlug = (kind ?? "simple").Trim().ToLowerInvariant();
-		// Prefer instance rules when membership is set; else project def / presets.
-		var runtime = instanceName is not null
-			? await RuntimeForInstanceAsync(projectKey, instanceName, ct)
-			: await RuntimeAsync(projectKey, ct);
+		// Instance rules for a named world; the project's utility layer (spec methodology-
+		// utility-kinds) for the explicit sentinel ONLY. A bare null stays on the OLD
+		// RuntimeAsync path UNCHANGED (methodology-instance-core's "drop dual-read": a legacy
+		// pre-backfill board never reads methodology_defs, see
+		// LegacyUnassignedBoard_IgnoresProjectSingletonAxes) — the utility layer is a NEW,
+		// deliberate world reached only by explicitly naming the sentinel, never inherited by
+		// the transient bootstrap state.
+		var runtime = isUtilitySentinel
+			? await UtilityRuntimeAsync(projectKey, ct)
+			: instanceName is not null
+				? await RuntimeForInstanceAsync(projectKey, instanceName, ct)
+				: await RuntimeAsync(projectKey, ct);
 		string canonical;
 		if (runtime.IsDefinedKind(kindSlug))
 		{
@@ -143,7 +154,9 @@ public sealed partial class TasksService : ITasksService
 		{
 			throw new ArgumentException(
 				$"unknown board kind '{kind}' — valid kinds: {string.Join("|", runtime.KnownKinds())}" +
-				" (a custom kind must first be declared on a methodology instance's rules — tasks_methodology_create or tasks_methodology_rules_upsert)");
+				" (a custom kind must first be declared — on a methodology instance's rules via" +
+				" tasks_methodology_create/tasks_methodology_rules_upsert for a process kind, or on" +
+				" the project's utility layer via tasks_methodology_utility_upsert for a project-homed one)");
 		}
 		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
 		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, instanceName, ct);
@@ -151,8 +164,59 @@ public sealed partial class TasksService : ITasksService
 		return meta;
 	}
 
-	public Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default) =>
-		_methodologyInstances.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
+	public Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default)
+	{
+		if (string.IsNullOrWhiteSpace(methodologyInstance))
+			throw new ArgumentException("methodologyInstance is required", nameof(methodologyInstance));
+		// Releasing INTO the utility world (spec methodology-utility-kinds) is a different
+		// act from moving between two instances — there is no instance row to look up, and
+		// singleton is enforced against the utility bucket instead of an instance's rules.
+		if (string.Equals(methodologyInstance.Trim(), TaskBoardMeta.UtilityWorld, StringComparison.OrdinalIgnoreCase))
+			return AdoptToUtilityAsync(projectKey, board, ct);
+		return _methodologyInstances.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
+	}
+
+	// Release an existing board FROM instance membership INTO the project's utility world
+	// (spec methodology-utility-kinds) — first-classes what today's TaskBoardMeta.
+	// MethodologyInstance = null path only reaches as a transient, pre-backfill fallback:
+	// this is a deliberate, permanent world, not "no membership yet". Idempotent when the
+	// board is already utility-homed. Rejects a kind the utility layer does not (yet)
+	// declare and no builtin resolves — releasing a board whose kind cannot be resolved in
+	// its new world would strand every node on it, so the release itself is the gate: fix
+	// the utility layer first (tasks_methodology_utility_upsert), then release the board.
+	async Task<TaskBoardMeta> AdoptToUtilityAsync(string projectKey, string board, CancellationToken ct)
+	{
+		var meta = await _boards.FindAsync(projectKey, board, ct)
+			?? throw new InvalidOperationException($"task board '{board}' not found in project '{projectKey}'");
+		if (string.Equals(meta.MethodologyInstance, TaskBoardMeta.UtilityWorld, StringComparison.OrdinalIgnoreCase))
+			return meta; // already a member
+
+		var utilityRuntime = await UtilityRuntimeAsync(projectKey, ct);
+		if (!utilityRuntime.IsDefinedKind(meta.Kind) && !Enum.TryParse<BoardKind>(meta.Kind, ignoreCase: true, out _))
+			throw new ArgumentException(
+				$"board '{board}' has kind '{meta.Kind}', which the project's utility layer does not declare and no builtin kind resolves — " +
+				"declare it first (tasks_methodology_utility_upsert) before releasing the board from its instance");
+		await _methodologyInstances.AssertProcessRoleSingletonAsync(
+			projectKey, meta.Kind, TaskBoardMeta.UtilityWorld, utilityRuntime, excludeBoard: meta.Name, ct: ct);
+
+		var ok = await _boards.UpdateAsync(projectKey, board, m => m with { MethodologyInstance = TaskBoardMeta.UtilityWorld }, ct);
+		if (!ok)
+			throw new InvalidOperationException($"task board '{board}' not found in project '{projectKey}'");
+		return (await _boards.FindAsync(projectKey, board, ct))!;
+	}
+
+	// The project's utility layer of kinds (spec methodology-utility-kinds): the singleton
+	// methodology_defs document when present, else built-in presets only. Used ONLY for a
+	// board carrying the explicit UtilityWorld sentinel (TaskBoardMeta.IsUtilityMembership) —
+	// NEVER the legacy null bucket (that keeps RuntimeAsync below, untouched) and NEVER the
+	// active-instance pointer or "single open instance" heuristic RuntimeAsync uses — that is
+	// the whole point of the utility world existing independently of whichever methodology is
+	// active (spec's "переживают switch методологии").
+	async Task<MethodologyRuntime> UtilityRuntimeAsync(string projectKey, CancellationToken ct)
+	{
+		var view = await _methodologyDefs.GetAsync(projectKey, ct);
+		return view is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(view.Definition);
+	}
 
 	// Project-level FSM resolution (spec methodology-active-instance): the explicit active-
 	// instance pointer when set and pointing at an OPEN instance (an explicit win, whatever
@@ -162,8 +226,12 @@ public sealed partial class TasksService : ITasksService
 	// tagAxes, first open by name wins on conflict"): several open instances with no active
 	// pointer is now an EXPLICIT, visible state (presets here; GetMethodologyGuideAsync
 	// surfaces it as "ambiguous" with the open names, rather than silently blending their
-	// rules). Board membership is untouched by any of this — RuntimeForBoardAsync below only
-	// falls back here for boards with NO instance membership.
+	// rules). For a call with no board in hand (guide/quick-add default with no board yet
+	// picked) ONLY — a board that already exists resolves through RuntimeForBoardAsync below,
+	// which never reaches here for a utility-homed board (spec methodology-utility-kinds:
+	// this pointer governs the ACTIVE PROCESS, and a utility board is deliberately outside
+	// any process, so it must never inherit whichever instance this resolves to today and a
+	// different one after the next switch).
 	async Task<MethodologyRuntime> RuntimeAsync(string projectKey, CancellationToken ct)
 	{
 		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
@@ -176,10 +244,17 @@ public sealed partial class TasksService : ITasksService
 			: MethodologyRuntime.PresetsOnly;
 	}
 
-	// Board-scoped runtime: instance rules when the board has membership, else the
-	// project-level active-instance resolution (legacy unassigned boards).
+	// Board-scoped runtime — THREE ways, not two: the explicit UtilityWorld sentinel (spec
+	// methodology-utility-kinds) resolves against the project's utility layer, stable across
+	// a methodology switch by construction; a real instance name resolves that instance's
+	// rules; a bare null (the legacy pre-backfill bootstrap state — never a board reaches it
+	// deliberately) keeps the OLD RuntimeAsync active-instance/presets heuristic UNCHANGED
+	// (methodology-instance-core's "drop dual-read" — see
+	// LegacyUnassignedBoard_IgnoresProjectSingletonAxes — never methodology_defs).
 	async Task<MethodologyRuntime> RuntimeForBoardAsync(string projectKey, TaskBoardMeta meta, CancellationToken ct)
 	{
+		if (TaskBoardMeta.IsUtilityMembership(meta.MethodologyInstance))
+			return await UtilityRuntimeAsync(projectKey, ct);
 		if (!string.IsNullOrWhiteSpace(meta.MethodologyInstance))
 			return await RuntimeForInstanceAsync(projectKey, meta.MethodologyInstance, ct);
 		return await RuntimeAsync(projectKey, ct);
@@ -208,7 +283,7 @@ public sealed partial class TasksService : ITasksService
 		RuntimeAsync(projectKey, ct);
 
 	// Board-scoped public door: instance rules when the board has membership, else the
-	// project-level active-instance resolution.
+	// project's utility layer (spec methodology-utility-kinds).
 	public async Task<MethodologyRuntime> GetRuntimeForBoardAsync(string projectKey, string board, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
@@ -223,13 +298,17 @@ public sealed partial class TasksService : ITasksService
 	async Task AutoWireSpecAsync(string projectKey, CancellationToken ct)
 	{
 		var all = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
-		// Group by membership (null = legacy unassigned bucket) so multi-instance projects
-		// never cross-wire work→spec across instances.
+		// Group by RAW membership (empty key = legacy null bucket, unchanged) so multi-
+		// instance projects never cross-wire work→spec across instances, the utility sentinel
+		// gets its OWN group (never merged with the null bucket — see RuntimeForBoardAsync),
+		// and a utility board never cross-wires against an instance's boards either.
 		foreach (var group in all.GroupBy(b => b.MethodologyInstance ?? "", StringComparer.OrdinalIgnoreCase))
 		{
-			var runtime = group.Key.Length > 0
-				? await RuntimeForInstanceAsync(projectKey, group.Key, ct)
-				: await RuntimeAsync(projectKey, ct);
+			var runtime = group.Key.Length == 0
+				? await RuntimeAsync(projectKey, ct)
+				: TaskBoardMeta.IsUtilityMembership(group.Key)
+					? await UtilityRuntimeAsync(projectKey, ct)
+					: await RuntimeForInstanceAsync(projectKey, group.Key, ct);
 			var active = group.ToList();
 			foreach (var kind in runtime.EffectiveKinds())
 			{

@@ -11,11 +11,26 @@ using PetBox.Tasks.Workflow;
 
 namespace PetBox.Tasks.Services.Methodology;
 
-// Definition storage + live-schema migration for project methodologies. Owns the
-// singleton methodology_defs temporal document and delegates live-node repair to
-// MethodologyLiveMigration (shared with instance rules edit). TasksService public
-// methods stay as thin wrappers so ITasksService / MCP / DI stay unchanged (private
-// collaborator — not DI-registered; same posture as NodeRefResolver / TaskUpsertAssociations).
+// Storage + live-schema migration for the project's UTILITY LAYER of kinds (spec
+// methodology-utility-kinds): the singleton methodology_defs temporal document, now the
+// live home for kinds that are project-homed rather than declared inside a methodology
+// instance — they exist independently of the active methodology and survive its switch,
+// because TasksService.UtilityRuntimeAsync resolves any board carrying the explicit
+// TaskBoardMeta.UtilityWorld sentinel membership (TaskBoardMeta.IsUtilityMembership)
+// against exactly this document, never against whichever instance happens to be active —
+// and never a legacy null-membership board (that stays on its own untouched pre-instance-
+// core path, see TasksService.RuntimeAsync). Predates the instance model (it WAS the
+// project's one-and-only methodology definition before methodology-instance-core); the
+// instance model superseded it for PROCESS kinds, and methodology-utility-kinds reclaims
+// the same storage — same MethodologyDefinition shape (kinds/linkKinds/tagAxes), same
+// validator, same live-migration path — for the non-process world instead of retiring it.
+// Still dual-read as a template (source="definition", MethodologyTemplateService) and
+// still the source SnapshotMethodologyTemplateAsync's "effective" falls back to — both
+// continue to work unchanged, now reading LIVE utility content instead of an inert row.
+// Delegates live-node repair to MethodologyLiveMigration (shared with instance rules
+// edit). TasksService public methods stay as thin wrappers so ITasksService / MCP / DI
+// stay unchanged (private collaborator — not DI-registered; same posture as
+// NodeRefResolver / TaskUpsertAssociations).
 public sealed class MethodologyDefinitionService
 {
 	readonly ITaskBoardStore _boards;
