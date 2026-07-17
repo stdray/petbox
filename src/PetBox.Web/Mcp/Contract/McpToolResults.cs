@@ -512,7 +512,7 @@ public sealed record TaskSearchResultView(
 	string? Hint = null);
 
 // tasks_workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
-public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
+public sealed record WorkflowStatusView(string Slug, string Name, string Kind, string? Description = null);
 
 // `PreconditionArtifact` names a comment-artifact tag the node must carry before the
 // transition fires — filled for definition-resolved kinds, null (omitted by the
@@ -633,6 +633,13 @@ public sealed record MethodologyInstanceRulesGetResult(
 public sealed record MethodologyInstanceRulesUpsertResult(
 	string Name, long Version, bool Changed, int Migrated = 0);
 
+// tasks_methodology_describe ack (spec methodology-describe-verb): the natural-key-addressed
+// primitive was found and its Description replaced; `version` is the instance rules cursor
+// AFTER the write (a fresh baseline for rules_upsert, same field as rules_upsert's own ack —
+// this verb still writes through the whole document internally, it just never asks the
+// caller to supply it or its version).
+public sealed record MethodologyDescribeResult(string Name, string Primitive, long Version);
+
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
 // kind's per-type creation link requirements, Effects its declared transition effects
@@ -655,7 +662,8 @@ public sealed record MethodologyKindView(
 	string? DefaultView = null,
 	string? OutlineReveal = null,
 	bool? Singleton = null,
-	MethodologyBlocksGateView? BlocksGate = null);
+	MethodologyBlocksGateView? BlocksGate = null,
+	string? Description = null);
 
 // Mirrors MethodologyBlocksGateDef 1:1 — the output-side counterpart of MethodologyBlocksGateInput.
 public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);
@@ -668,13 +676,15 @@ public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes
 // `targetStatuses` declare what the link must point at (null = no restriction, omitted).
 public sealed record MethodologyLinkConstraintView(
 	string Type, string Link,
-	string? TargetKind = null, IReadOnlyList<string>? TargetStatuses = null);
+	string? TargetKind = null, IReadOnlyList<string>? TargetStatuses = null,
+	string? Description = null);
 
 // One declared transition effect: on entering (default) or leaving (`onLeave`, Effect.onLeave)
 // `on`, `direction` `link` nodes are set to `set` (`onlyFrom` = only linked nodes currently in
 // that status; null = any, omitted). `set` null/omitted = a pure edge-consumption effect.
 public sealed record MethodologyEffectView(
-	string On, string Link, string Direction, string? Set, string? OnlyFrom = null, bool OnLeave = false);
+	string On, string Link, string Direction, string? Set, string? OnlyFrom = null, bool OnLeave = false,
+	string? Description = null);
 
 // A project-declared relation kind (free semantic edge, no FSM effects).
 public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
@@ -694,7 +704,7 @@ public sealed record MethodologyWorkflowBlockView(
 // conditions; null = none declared, omitted).
 public sealed record MethodologyTransitionView(
 	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null,
-	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null);
+	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null, string? Description = null);
 
 // ---- tool_describe (spec tool-description-economy) -----------------------------------
 

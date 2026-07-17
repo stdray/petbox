@@ -124,6 +124,9 @@ public sealed record MethodologyKindInput
 	// must name a blocker; a released node moves to `releaseTo`). Null = this kind has no
 	// blocking gate.
 	public MethodologyBlocksGateInput? BlocksGate { get; init; }
+	// Mirrors MethodologyKindDef.Description: free-form prose about this kind (spec
+	// methodology-primitive-descriptions). Null = none.
+	public string? Description { get; init; }
 }
 
 // Mirrors MethodologyBlocksGateDef 1:1 (see the parity note on MethodologyKindInput above).
@@ -150,6 +153,9 @@ public sealed record MethodologyLinkConstraintInput
 	public string? Link { get; init; }
 	public string? TargetKind { get; init; }
 	public string[]? TargetStatuses { get; init; }
+	// Mirrors MethodologyLinkConstraintDef.Description: free-form prose (spec methodology-
+	// primitive-descriptions). Null = none.
+	public string? Description { get; init; }
 }
 
 // One declared transition effect of a kind: when a node of this kind ENTERS status `on`
@@ -165,6 +171,9 @@ public sealed record MethodologyEffectInput
 	public string? Set { get; init; }
 	public string? OnlyFrom { get; init; }
 	public bool OnLeave { get; init; }
+	// Mirrors MethodologyTransitionEffectDef.Description: free-form prose (spec methodology-
+	// primitive-descriptions). Null = none.
+	public string? Description { get; init; }
 }
 
 // A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not
@@ -198,6 +207,9 @@ public sealed record MethodologyStatusInput
 	public string? Slug { get; init; }
 	public string? Name { get; init; }
 	public string? Kind { get; init; }
+	// Mirrors WorkflowStatus.Description: free-form prose (spec methodology-primitive-
+	// descriptions). Null = none.
+	public string? Description { get; init; }
 }
 
 // A directed FSM edge. `preconditionArtifact` names a comment-artifact tag (e.g.
@@ -214,6 +226,9 @@ public sealed record MethodologyTransitionInput
 	public string? PreconditionArtifact { get; init; }
 	public bool EnforceApproval { get; init; }
 	public string[]? Checklist { get; init; }
+	// Mirrors MethodologyTransitionDef.Description: free-form prose (spec methodology-
+	// primitive-descriptions). Null = none.
+	public string? Description { get; init; }
 }
 
 // One entry of the `migration` argument of tasks_methodology_rules_upsert: declared value

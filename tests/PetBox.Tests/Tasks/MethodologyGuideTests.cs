@@ -76,6 +76,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 			new
 			{
 				kind = "support",
+				description = "Support requests: tickets and incidents.",
 				quickAddAllowed = true,
 				workflows = new object[]
 				{
@@ -85,19 +86,19 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 						statuses = new object[]
 						{
 							new { slug = "New", kind = "open" },
-							new { slug = "Open", kind = "open" },
+							new { slug = "Open", kind = "open", description = "Actively triaged." },
 							new { slug = "Resolved", kind = "terminalok" },
 							new { slug = "Junk", kind = "terminalcancel" },
 						},
 						transitions = new object[]
 						{
-							new { from = "New", to = "Open", preconditionArtifact = "triage-note" },
+							new { from = "New", to = "Open", preconditionArtifact = "triage-note", description = "Triage assigns severity." },
 							new { from = "Open", to = "Resolved", requiresApproval = true },
 							new { from = "Open", to = "Junk", requiresReason = true },
 						},
 					},
 				},
-				linkConstraints = new object[] { new { type = "incident", link = "blocks" } },
+				linkConstraints = new object[] { new { type = "incident", link = "blocks", description = "Every incident names a related outage." } },
 			},
 		},
 		linkKinds = new object[] { new { slug = "escalates", description = "support escalation edge" } },
@@ -191,11 +192,15 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 
 		var md = guide.GetProperty("markdown").GetString()!;
 		md.Should().Contain("## Kind: support");
+		md.Should().Contain("Support requests: tickets and incidents.", "a kind's Description is data the compiled guide must convey (spec methodology-primitive-descriptions)");
 		md.Should().Contain("Types: ticket (default), incident");
+		md.Should().Contain("Open (Actively triaged.)", "a status's Description renders alongside its slug");
 		md.Should().Contain("The agent NEVER performs Open -> Resolved");
 		md.Should().Contain("Open -> Junk requires a reason");
 		md.Should().Contain("Add an `artifact:triage-note` comment on the node before New -> Open");
+		md.Should().Contain("note: Triage assigns severity.", "a transition's Description renders as a note alongside its other gates");
 		md.Should().Contain("A new `incident` must carry a `blocks` link (provide `blockedBy`");
+		md.Should().Contain("Every incident names a related outage.", "a link constraint's Description renders alongside its cadence sentence");
 		md.Should().Contain("severity, channel");
 		md.Should().Contain("escalates (support escalation edge)");
 		md.Should().Contain("## Kind: work", "an undeclared preset kind still serves the project");
