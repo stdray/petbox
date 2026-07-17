@@ -6,8 +6,11 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Memory.Data;
+using PetBox.Tasks.Data;
 using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
+using PetBox.Web.Search;
 
 namespace PetBox.Tests.Web;
 
@@ -49,13 +52,21 @@ public sealed class ProjectDeletePageTests : IDisposable
 	// SERVICES it asks, and these are the production implementations, not stubs. Log retention
 	// (formerly needing ISettingsStore for the override lookup) moved off this page onto the generic
 	// Settings page (admin-routes-and-pages item 3), so the constructor is one dependency shorter.
+	// SearchReindexService (reindex-as-first-class-mechanism) is likewise wired for real — these
+	// tests never click the reindex button, so llm:null (never dereferenced) is enough.
 	ProjectDetailModel Page(string projectKey) =>
 		new(
 			new ProjectDirectory(_db.Factory()),
 			_db.Factory().AgentKeys(),
 			_db.Factory().HealthEndpoints(),
 			Features(),
-			new NullSettingsResolver())
+			new NullSettingsResolver(),
+			new SearchReindexService(
+				new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
+					c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure),
+				new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+					c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure),
+				new ProjectCatalog(_db.Factory())))
 		{ WorkspaceKey = "ws", ProjectKey = projectKey };
 
 	// Seed one owned row in every table the cascade touches, for the given project key.

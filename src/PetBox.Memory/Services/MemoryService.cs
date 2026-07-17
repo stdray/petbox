@@ -868,23 +868,22 @@ public sealed class MemoryService : IMemoryService
 		return q.OrderBy(e => e.Store).ThenBy(e => e.Key).ToList();
 	}
 
-	// One-time lexical backfill: entries written before the search retrofit have no search_fts
-	// rows. Cheap and idempotent — guarded PER STORE (the stores share one search_fts now, so a
-	// whole-file count would let a populated store mask an unindexed one), rebuilt in a single
-	// transaction from the same projection the write seam uses.
+	// Lexical backfill, VERSION-gated (reindex-as-first-class-mechanism): guarded PER STORE against
+	// MemorySearchDocs.LexicalProjectionVersion via the MemoryCursors.Lexical(store) marker in
+	// search_cursor — not "this store already has a search_fts row", which could never re-fire once
+	// a store had ANY row. A missing marker reads as version 0, so a never-backfilled store rebuilds
+	// exactly like a stale-projection one; each store rebuilds independently since they share one
+	// file. Rebuilt in a single transaction from the same projection the write seam uses.
 	static async Task EnsureLexicalBackfillAsync(MemoryDb ctx, string scope, IReadOnlyList<string> stores, CancellationToken ct)
 	{
-		var indexed = ctx.GetTable<FtsStoreRow>()
-			.Where(r => stores.Contains(r.Type))
-			.Select(r => r.Type)
-			.Distinct()
-			.ToList()
-			.ToHashSet(StringComparer.Ordinal);
-		var missing = stores.Where(s => !indexed.Contains(s)).ToList();
-		if (missing.Count == 0) return;
+		var markers = stores.Select(MemoryCursors.Lexical).ToList();
+		var versions = (await ctx.GetTable<LexicalCursorRow>()
+				.Where(r => markers.Contains(r.IndexName)).ToListAsync(ct))
+			.ToDictionary(r => r.IndexName, r => r.Version, StringComparer.Ordinal);
+		var stale = stores.Where(s => versions.GetValueOrDefault(MemoryCursors.Lexical(s), 0L) < MemorySearchDocs.LexicalProjectionVersion).ToList();
+		if (stale.Count == 0) return;
 
-		var active = ListActive(ctx, missing, null);
-		if (active.Count == 0) return;
+		var active = ListActive(ctx, stale, null);
 
 		var fts = new SqliteFtsIndex(() => ctx);
 		using var tx = await ctx.BeginTransactionAsync(ct);
@@ -892,6 +891,10 @@ public sealed class MemoryService : IMemoryService
 		{
 			foreach (var e in active)
 				await fts.IndexAsync(ctx, MemorySearchDocs.ToDoc(e, scope), ct);
+			foreach (var s in stale)
+				await ctx.InsertOrReplaceAsync(
+					new LexicalCursorRow { IndexName = MemoryCursors.Lexical(s), Version = MemorySearchDocs.LexicalProjectionVersion },
+					token: ct);
 			await tx.CommitAsync(ct);
 		}
 		catch
@@ -901,11 +904,11 @@ public sealed class MemoryService : IMemoryService
 		}
 	}
 
-	// Read-only probe of which stores already have lexical rows (the entity Type IS the store).
-	[LinqToDB.Mapping.Table("search_fts")]
-	sealed class FtsStoreRow
+	[LinqToDB.Mapping.Table("search_cursor")]
+	sealed class LexicalCursorRow
 	{
-		[LinqToDB.Mapping.Column] public string Type { get; set; } = string.Empty;
+		[LinqToDB.Mapping.Column, LinqToDB.Mapping.PrimaryKey] public string IndexName { get; set; } = string.Empty;
+		[LinqToDB.Mapping.Column] public long Version { get; set; }
 	}
 
 	// PATCH semantics (spec explicit-write-semantics): an EDIT (version > 0) merges against the

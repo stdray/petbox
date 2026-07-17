@@ -8,8 +8,12 @@ namespace PetBox.Core.Search;
 // The trivial Class-A index that gives the contract an end-to-end pass: a local SQLite
 // FTS5 mirror, written INSIDE the entity's transaction (Synchronous consistency) so a
 // committed entity is never lexically-stale, and rolled back with it on abort
-// (spec: search-lexical-floor). Entity-addressed by (Scope, Type, Id); Text/Tags are the
-// indexed columns. Tokenizer fix for ru/en lives in the shared FtsQuery helper.
+// (spec: search-lexical-floor). Entity-addressed by (Scope, Type, Id); Text/Tags/Key are the
+// indexed columns (Key: search-key-column-everywhere — the entity's own business key/slug,
+// tokenized in its OWN column instead of prose, so a query built from the key's words reaches
+// the entity per-word without inflating Text's term frequencies). Tokenizer fix for ru/en lives
+// in the shared FtsQuery helper. MATCH with no column filter searches every indexed column
+// (Text, Tags, Key) as one term space, so a key-word query is found with zero query-side change.
 //
 // Reads open their own connection via the supplied factory; writes ride the caller's `tx`.
 // This is the floor, not the ceiling — vector/episodic indexes are separate Class-B work.
@@ -50,6 +54,7 @@ public sealed class SqliteFtsIndex : ISearchIndex
 			Id = doc.Id,
 			Text = shadow.Length == 0 ? doc.Text : doc.Text + "\n" + shadow,
 			Tags = doc.Tags ?? string.Empty,
+			Key = doc.Key,
 		}, token: ct);
 	}
 
@@ -98,5 +103,6 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		[Column] public string Id { get; set; } = string.Empty;
 		[Column] public string Text { get; set; } = string.Empty;
 		[Column] public string Tags { get; set; } = string.Empty;
+		[Column] public string Key { get; set; } = string.Empty;
 	}
 }

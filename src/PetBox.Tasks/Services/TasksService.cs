@@ -1552,9 +1552,16 @@ public sealed partial class TasksService : ITasksService
 			// Still subject to the criteria predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
-			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key))
-				.Select(e => e with { Retriever = "exact" }).ToList();
-			hits.InsertRange(0, freshExact);
+			// An exact match PREEMPTS its own fused copy rather than yielding to it: since the slug's
+			// words are lexical terms (search-slug-words-gap), a verbatim-slug query now ALSO matches
+			// that node lexically, and a "skip the ones already fused" rule would have demoted the
+			// addressed hit to whatever rank the fused pool gave it, labelled `lexical`. The spec is
+			// the other way round — exact goes ahead of the fused ranking, labelled by identity — so
+			// the fused duplicate is dropped and every exact match is (re)inserted at the front.
+			var exact = exactHits.Select(e => e with { Retriever = "exact" }).ToList();
+			var addressed = exact.Select(e => (e.Board, e.Node.Key)).ToHashSet();
+			hits.RemoveAll(h => addressed.Contains((h.Board, h.Node.Key)));
+			hits.InsertRange(0, exact);
 		}
 
 		hits = TaskSearchFilter.Apply(hits, criteria);
@@ -2144,28 +2151,29 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// One-time lexical backfill: content written before a search retrofit has no search_fts rows.
-	// TWO independently-guarded passes both run: nodes (for a file predating the node retrofit) and
-	// comments (for a file predating tasks-search-comments — its nodes are already indexed, so the
-	// node guard alone would never re-run). Cheap, count-guarded, at most once per project file each.
+	// Lexical backfill, VERSION-gated (reindex-as-first-class-mechanism): the guard is
+	// TasksSearchDocs.LexicalProjectionVersion against a marker stored in search_cursor, not
+	// "search_fts has any row" — that old guard could never re-fire once a file had ANY row, so a
+	// ToDoc/CommentToDoc shape change (e.g. the slug joining the indexed text) needed an
+	// empty-the-table migration to reach already-populated files (M015_SlugInLexicalText, now
+	// gone — this gate IS the mechanism that migration was standing in for). Nodes and comments
+	// share ONE marker: both projections live in TasksSearchDocs, so one version bump rebuilds
+	// both in the same pass. Re-running IndexAsync for a doc that's already current is a no-op
+	// cost (SqliteFtsIndex deletes-then-inserts per id), so this is safe to call every search —
+	// the version read is a single indexed row lookup, cheaper than the old COUNT(*) scan.
 	static async Task EnsureLexicalBackfillAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
 	{
-		await BackfillNodesAsync(ctx, scope, runtime, ct);
-		await BackfillCommentsAsync(ctx, scope, runtime, ct);
-	}
+		if (await LexicalVersionAsync(ctx, ct) >= TasksSearchDocs.LexicalProjectionVersion) return;
 
-	// Node backfill: rebuilds the OPEN set across every board from the same projection the write
-	// seam uses. Guard is ANY search_fts row (node or comment) — a virgin file is the only re-run.
-	static async Task BackfillNodesAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
-	{
-		if (ctx.Execute<long>("SELECT count(*) FROM search_fts") > 0) return;
 		var open = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
-		if (open.Count == 0) return;
-
 		var tagsByNode = (await ctx.GetTable<NodeTag>().Where(t => t.ValidTo == null)
 				.Select(t => new { t.NodeId, t.Tag }).ToListAsync(ct))
 			.GroupBy(r => r.NodeId).ToDictionary(g => g.Key, g => g.Select(x => x.Tag).ToList());
+
+		var indexableIds = open.Select(n => n.NodeId).ToHashSet(StringComparer.Ordinal);
+		var comments = (await ctx.GetTable<CommentRow>().Where(c => c.ActiveTo == null).ToListAsync(ct))
+			.Where(c => indexableIds.Contains(c.NodeId)).ToList();
 
 		var fts = new SqliteFtsIndex(() => ctx);
 		using var tx = await ctx.BeginTransactionAsync(ct);
@@ -2173,6 +2181,9 @@ public sealed partial class TasksService : ITasksService
 		{
 			foreach (var n in open)
 				await fts.IndexAsync(ctx, TasksSearchDocs.ToDoc(n, scope, tagsByNode.GetValueOrDefault(n.NodeId, [])), ct);
+			foreach (var c in comments)
+				await fts.IndexAsync(ctx, TasksSearchDocs.CommentToDoc(c, scope), ct);
+			await SetLexicalVersionAsync(ctx, TasksSearchDocs.LexicalProjectionVersion, ct);
 			await tx.CommitAsync(ct);
 		}
 		catch
@@ -2182,35 +2193,18 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// Comment backfill: own guard (no "c:%" row yet) so it runs on files whose nodes are already
-	// indexed. Indexes every ACTIVE comment whose owner node is currently indexable (resolve owner
-	// via PlanNodes by NodeId) — a comment under a closed/terminal owner is dropped at read time
-	// anyway. Empty-comment files re-run the cheap count each search, matching the node guard's cost.
-	static async Task BackfillCommentsAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
+	static async Task<long> LexicalVersionAsync(TasksDb ctx, CancellationToken ct) =>
+		await ctx.GetTable<LexicalCursorRow>().Where(r => r.IndexName == TasksCursors.Lexical)
+			.Select(r => (long?)r.Version).FirstOrDefaultAsync(ct) ?? 0;
+
+	static Task<int> SetLexicalVersionAsync(TasksDb ctx, long version, CancellationToken ct) =>
+		ctx.InsertOrReplaceAsync(new LexicalCursorRow { IndexName = TasksCursors.Lexical, Version = version }, token: ct);
+
+	[LinqToDB.Mapping.Table("search_cursor")]
+	sealed class LexicalCursorRow
 	{
-		if (ctx.Execute<long>("SELECT count(*) FROM search_fts WHERE Id LIKE 'c:%'") > 0) return;
-		var comments = await ctx.GetTable<CommentRow>().Where(c => c.ActiveTo == null).ToListAsync(ct);
-		if (comments.Count == 0) return;
-
-		var indexable = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
-			.Where(n => TasksSearchDocs.IsIndexable(n, runtime))
-			.Select(n => n.NodeId).ToHashSet(StringComparer.Ordinal);
-		var toIndex = comments.Where(c => indexable.Contains(c.NodeId)).ToList();
-		if (toIndex.Count == 0) return;
-
-		var fts = new SqliteFtsIndex(() => ctx);
-		using var tx = await ctx.BeginTransactionAsync(ct);
-		try
-		{
-			foreach (var c in toIndex)
-				await fts.IndexAsync(ctx, TasksSearchDocs.CommentToDoc(c, scope), ct);
-			await tx.CommitAsync(ct);
-		}
-		catch
-		{
-			await tx.RollbackAsync(ct);
-			throw;
-		}
+		[LinqToDB.Mapping.Column, LinqToDB.Mapping.PrimaryKey] public string IndexName { get; set; } = string.Empty;
+		[LinqToDB.Mapping.Column] public long Version { get; set; }
 	}
 
 	// Active (ValidTo == null) tags for the given nodes on a board, read on the supplied connection.

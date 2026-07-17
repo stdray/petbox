@@ -241,13 +241,17 @@ public sealed class TasksHybridSearchTests : IDisposable
 	public async Task ExactSlug_OpenNodeMatchingBothWays_AppearsOnce()
 	{
 		// An open node whose slug equals the q also matches the relevance leg — the dedup guard
-		// must keep it single (escape hatch skips a hit the fused ranking already produced).
+		// must keep it single. Since search-slug-words-gap the OVERLAP is the normal case (the
+		// slug's own words are lexical terms, so a verbatim-slug q always matches lexically too),
+		// and the dedup resolves toward the ADDRESSED hit: one row, labelled `exact`, not the
+		// fused copy labelled `lexical`.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
 
 		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
 		res.Hits.Select(h => h.Node.Key).Should().Equal("alpha"); // exactly one, not duplicated
+		res.Hits[0].Retriever.Should().Be("exact");
 	}
 
 	[Fact]
@@ -348,6 +352,96 @@ public sealed class TasksHybridSearchTests : IDisposable
 		res.Hits[0].Score.Should().BeNull(); // an addressed match has no fused score
 	}
 
+	// ---- the slug is part of the lexicon (search-slug-words-gap) ----
+
+	[Fact]
+	public async Task SlugWords_SpacedQuery_FindsRussianTitledNode()
+	{
+		// THE repro (owner, 16.07.2026). Slugs are English kebab, titles/bodies are often Russian —
+		// so an English-speaking query has exactly two ways in: the slug verbatim (exact) or
+		// semantics. Type the slug's own words with SPACES and both miss: too fuzzy to be an
+		// addressed ask, and (before the fix) `methodology`/`lifecycle`/`ux` were in no document.
+		// The slug now leads the indexed text, so the lexical leg carries the query across the
+		// English-identifier / Russian-prose divide. llm: null → no semantic leg can rescue this;
+		// what passes here passes lexically or not at all.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b",
+		[
+			Node("methodology-lifecycle-ux", "Жизненный цикл методологии: удобство работы",
+				"Как выглядит путь от идеи до спека глазами агента."),
+		]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("methodology lifecycle ux"));
+
+		res.Retrievers!.Value.Lexical.Should().BeTrue();
+		res.Hits.Select(h => h.Node.Key).Should().Equal("methodology-lifecycle-ux");
+		res.Hits[0].Retriever.Should().Be("lexical"); // lexicon, not the exact escape hatch
+	}
+
+	[Fact]
+	public async Task SlugWords_SingleWordOfSlug_IsEnough()
+	{
+		// The bridge is per-WORD, not all-or-nothing: one word of the slug reaches the node, and a
+		// word of no document reaches nothing (the terms come from the slug, not from thin air).
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("kql-spans-query", "Запрос по спанам", "Тело без латиницы.")]);
+
+		(await tasks.SearchNodesAsync(Proj, Query("spans"))).Hits
+			.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
+		(await tasks.SearchNodesAsync(Proj, Query("wombat"))).Hits.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task SlugWords_DoNotOutrankATopicalMatch()
+	{
+		// The ranking guard. The new channel must ADD reach, not reorder what already worked: a node
+		// that merely SHARES one word in its slug must not climb over the node the query is actually
+		// about. Both match `report`, but only `report-deploy-pipeline` matches through its slug
+		// alone — its prose is about something else entirely — while the topical node carries the
+		// term in title AND body. The topical node stays first.
+		//
+		// The query is LATIN on purpose: a slug is `[a-z0-9_-]*`, so a Cyrillic query can never
+		// reach one, and a decoy built on a transliterated slug (`otchet-…` vs `отчёт`) would not
+		// match at all — the test would pass on an empty decoy and prove nothing.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b",
+		[
+			Node("weekly-summary", "Weekly report of the team", "The report is assembled from member reports."),
+			Node("report-deploy-pipeline", "Конвейер выкатки", "Как устроен деплой в проде."),
+		]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("report"));
+
+		res.Hits.Select(h => h.Node.Key).Should().Equal("weekly-summary", "report-deploy-pipeline");
+	}
+
+	[Fact]
+	public async Task VerbatimSlug_StaysExactAndFirst_EvenThoughItNowMatchesLexically()
+	{
+		// The regression the fix could plausibly cause. A verbatim-slug query now ALSO matches the
+		// node lexically, so the old "skip an exact hit the fused ranking already produced" rule
+		// would have handed the addressed node back at its FUSED rank, labelled `lexical` — behind
+		// a node that merely shares the slug's words. exact-identifier-search-surfacing says the
+		// exact match leads and is confirmed by identity; the decoy must not get in front of it.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b",
+		[
+			Node("decoy", "alpha beta gamma", "alpha beta gamma alpha beta gamma"),
+			Node("alpha-beta-gamma", "Русский заголовок", "Русское тело."),
+		]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha-beta-gamma"));
+
+		res.Hits[0].Node.Key.Should().Be("alpha-beta-gamma");
+		res.Hits[0].Retriever.Should().Be("exact");
+		res.Hits[0].Score.Should().BeNull();
+		res.Hits.Count(h => h.Node.Key == "alpha-beta-gamma").Should().Be(1); // not duplicated
+	}
+
 	// ---- comments in the lexical corpus (tasks-search-comments) ----
 
 	// Add a root comment under a node (resolves the owner's stable NodeId from the open view).
@@ -416,23 +510,32 @@ public sealed class TasksHybridSearchTests : IDisposable
 	}
 
 	[Fact]
-	public async Task CommentBackfill_ReindexesAfterFtsRowsWiped()
+	public async Task CommentRowsWiped_DoNotSelfHeal_UntilTheLexicalMarkerIsRewound()
 	{
+		// The old per-signal guards ("no c:% row yet") are gone (reindex-as-first-class-mechanism):
+		// EnsureLexicalBackfillAsync is now VERSION-gated, ONE marker for the whole file — nodes and
+		// comments both come out of the single TasksSearchDocs projection. So once a search has
+		// stamped the marker at the current version, wiping just the comment rows does NOT self-heal
+		// on the next plain search (that would mean re-verifying the whole file on every query).
+		// Recovery from row-level corruption like this is what search_reindex's Class-A half is
+		// for: it rewinds TasksCursors.Lexical, and the very next search rebuilds the file.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("host", "host note", "unrelated body")]);
 		await AddComment(tasks, "b", "host", "narwhal note in a comment");
 
-		// Write path already indexed the comment.
+		// Write path already indexed the comment; this search also stamps the lexical marker.
 		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
 
-		// Simulate a file predating tasks-search-comments: wipe ONLY the comment FTS rows (node rows
-		// stay), so the node-backfill guard is satisfied and only the comment backfill re-runs.
 		var ctx = _store.GetContext(Proj);
 		ctx.Execute("DELETE FROM search_fts WHERE Id LIKE 'c:%'");
 		ctx.Execute<long>("SELECT count(*) FROM search_fts WHERE Id LIKE 'c:%'").Should().Be(0);
 
-		// The next query runs the comment backfill (guard: no c:% rows) → the comment is found again.
+		// The marker is current → a plain search does NOT rebuild the wiped comment row.
+		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Should().BeEmpty();
+
+		// Rewinding the marker (what search_reindex's Class-A reset does) heals it on the NEXT search.
+		ctx.Execute($"UPDATE search_cursor SET Version = 0 WHERE IndexName = '{TasksCursors.Lexical}'");
 		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
 	}
 

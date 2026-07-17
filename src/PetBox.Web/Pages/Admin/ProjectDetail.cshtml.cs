@@ -6,6 +6,7 @@ using PetBox.Core.Health;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Web.Auth;
+using PetBox.Web.Search;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -29,22 +30,29 @@ public sealed class ProjectDetailModel : PageModel
 	readonly IHealthEndpointDirectory _health;
 	readonly FeatureFlags _features;
 	readonly ISettingsResolver _settings;
+	readonly SearchReindexService _reindex;
 
 	public ProjectDetailModel(
 		IProjectDirectory projects,
 		AgentKeyAdminService keys,
 		IHealthEndpointDirectory health,
 		FeatureFlags features,
-		ISettingsResolver settings)
+		ISettingsResolver settings,
+		SearchReindexService reindex)
 	{
 		_projects = projects;
 		_keys = keys;
 		_health = health;
 		_features = features;
 		_settings = settings;
+		_reindex = reindex;
 	}
 
 	public bool DataEnabled => _features.IsEnabled(Feature.Data);
+
+	// reindex-as-first-class-mechanism: the button only makes sense when at least one searchable
+	// tier is on for this deployment (mirrors search_reindex's own "no searchable tier" refusal).
+	public bool SearchReindexEnabled => _features.IsEnabled(Feature.Memory) || _features.IsEnabled(Feature.Tasks);
 
 	// The project's effective commit-view URL template (RepoSettings, cascaded). Empty = unset →
 	// commit refs/hashes render as plain text. A literal {sha} placeholder is expanded per commit.
@@ -139,6 +147,40 @@ public sealed class ProjectDetailModel : PageModel
 		// project matches nothing.
 		await _health.DeleteAsync(id, ProjectKey);
 		this.NotifySuccess("Health endpoint deleted.");
+		return Self();
+	}
+
+	// reindex-as-first-class-mechanism: the operator's "rebuild it now" button. Calls the SAME
+	// service the search_reindex MCP tool calls (SearchReindexService), so the two surfaces can
+	// never drift — this page just skips the MCP tool's own scope/tier-parsing wrapper the way
+	// ProjectMemory calls IMemoryService directly instead of going through an MCP tool. Resets
+	// BOTH halves (Class-B vector cursors/dead-letter + Class-A lexical projection markers); the
+	// vector re-embedding then runs on the stock background drain, while the lexical rebuild
+	// happens synchronously on the very next search of each store/board.
+	public async Task<IActionResult> OnPostReindexAsync()
+	{
+		if (!SearchReindexEnabled) return NotFound();
+
+		try
+		{
+			var result = await _reindex.ReindexAsync(ProjectKey, ReindexTier.All);
+			if (result.Tiers.Count == 0)
+			{
+				this.NotifySuccess("Nothing to reindex — this project has no memory or tasks data yet.");
+				return Self();
+			}
+
+			var summary = string.Join("; ", result.Tiers.Select(t =>
+				$"{t.Tier}: {t.ActiveDocs} doc(s) to re-embed, {t.CursorsReset} vector cursor(s) and " +
+				$"{t.LexicalReset} lexical marker(s) rewound"));
+			this.NotifySuccess($"Search index reindex started. {summary}.");
+		}
+		catch (InvalidOperationException ex)
+		{
+			// The Embed-route refusal (SearchReindexService.ReindexAsync) — nothing was reset.
+			this.NotifyError(ex.Message);
+		}
+
 		return Self();
 	}
 

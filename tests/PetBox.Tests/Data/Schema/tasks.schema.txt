@@ -166,4 +166,4 @@ TABLE tag_vocab
   INDEX sqlite_autoindex_tag_vocab_1 UNIQUE origin=pk (Tag)
 
 VIRTUAL TABLE search_fts
-  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61')
+  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, KEY, tokenize='unicode61')
