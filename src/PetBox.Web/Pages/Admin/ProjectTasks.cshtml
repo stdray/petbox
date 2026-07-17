@@ -56,6 +56,14 @@
 						{
 							<span class="badge badge-warning badge-xs" data-testid="board-closed-badge">closed</span>
 						}
+						@* methodology-inactive-visibility: a COMPUTED view — this board's own instance is
+						   open (a full process, not disabled) but is not the project's current default. *@
+						@if (b.ClosedAt == null && !string.IsNullOrEmpty(b.MethodologyInstance)
+							&& !string.Equals(b.MethodologyInstance, Model.EffectiveActiveInstance, StringComparison.OrdinalIgnoreCase))
+						{
+							<span class="badge badge-ghost badge-outline badge-xs" data-testid="board-inactive-instance-badge"
+								title="belongs to open methodology instance '@b.MethodologyInstance', which is not the project's active default — still a full process, not disabled">not active</span>
+						}
 					</div>
 					<div class="card-actions justify-between mt-2">
 						<span class="text-xs opacity-50 font-mono">@b.CreatedAt.ToString("yyyy-MM-dd")</span>

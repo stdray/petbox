@@ -213,6 +213,31 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 			.Should().Be(0, "quick-add is gated off for this kind — nothing written");
 	}
 
+	// spec methodology-inactive-visibility: TaskBoardModel.InstanceInactive is a COMPUTED view —
+	// true only when the board's own OPEN instance is not the project's current effective
+	// default (ResolveDefaultMethodologyInstanceAsync). Never a stored flag; never true for a
+	// board with no instance membership.
+	[Fact]
+	public async Task TaskBoardModel_InstanceInactive_TracksEffectiveDefault_NotBoardState()
+	{
+		var alpha = await _tasks.CreateMethodologyInstanceAsync(Proj, "alpha", "builtin", "classic");
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "beta", "builtin", "classic");
+		var alphaBoard = alpha.Boards.Single().Name;
+
+		// Two open instances, no pointer -> ambiguous, no default: alpha's own board reads inactive.
+		var page = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = alphaBoard };
+		await page.OnGetAsync(default);
+		page.InstanceInactive.Should().BeTrue("no effective default exists while two instances are open and no pointer is set");
+
+		// Make alpha itself the active pointer -> its own board is no longer "inactive".
+		await _tasks.SetActiveMethodologyInstanceAsync(Proj, "alpha", 0);
+		var page2 = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = alphaBoard };
+		await page2.OnGetAsync(default);
+		page2.InstanceInactive.Should().BeFalse("alpha is now the project's active default");
+	}
+
 	async Task InstallRiskInstanceAsync()
 	{
 		await _tasks.UpsertMethodologyTemplateAsync(Proj, "risk-tmpl", RiskDefinition(), 0);

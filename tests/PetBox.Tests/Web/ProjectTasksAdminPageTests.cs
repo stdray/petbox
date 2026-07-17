@@ -65,4 +65,59 @@ public sealed class ProjectTasksAdminPageTests : IDisposable
 		var boards = await _tasks.ListBoardsAsync(Proj, CancellationToken.None);
 		boards.Should().ContainSingle(b => b.Name == "roadmap");
 	}
+
+	// spec methodology-inactive-visibility: with exactly one open instance and no active
+	// pointer, resolution is unambiguous (that instance IS the effective default) — the page
+	// must compute EffectiveActiveInstance to match it, so its own boards never show "not
+	// active". This is the live $system shape today (single open instance, no pointer set) —
+	// the invariant the worker's prediction leans on.
+	[Fact]
+	public async Task SingleOpenInstance_NoPointer_IsTheEffectiveDefault_NotInactive()
+	{
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "quartet", "builtin", "quartet");
+
+		var page = Page();
+		await page.OnGetAsync(CancellationToken.None);
+
+		page.EffectiveActiveInstance.Should().Be("quartet");
+		var quartetBoards = page.Boards.Where(b => b.MethodologyInstance == "quartet").ToList();
+		quartetBoards.Should().NotBeEmpty();
+		quartetBoards.Should().OnlyContain(b => b.MethodologyInstance == page.EffectiveActiveInstance);
+	}
+
+	// Two open instances, no pointer set: an EXPLICIT ambiguous state (spec
+	// methodology-active-instance) — EffectiveActiveInstance is null, so EVERY board with
+	// instance membership computes as "not active" (no default exists to match).
+	[Fact]
+	public async Task TwoOpenInstances_NoPointer_NoDefault_BothInstancesComputeInactive()
+	{
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "alpha", "builtin", "classic");
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "beta", "builtin", "classic");
+
+		var page = Page();
+		await page.OnGetAsync(CancellationToken.None);
+
+		page.EffectiveActiveInstance.Should().BeNull();
+		page.Boards.Where(b => b.MethodologyInstance is not null)
+			.Should().OnlyContain(b => !string.Equals(b.MethodologyInstance, page.EffectiveActiveInstance));
+	}
+
+	// Once a pointer picks "beta", beta's boards match the effective default and alpha's do not
+	// — the exact comparison the Razor badge renders off.
+	[Fact]
+	public async Task TwoOpenInstances_PointerSet_OnlyThatInstanceMatchesDefault()
+	{
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "alpha", "builtin", "classic");
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "beta", "builtin", "classic");
+		await _tasks.SetActiveMethodologyInstanceAsync(Proj, "beta", 0);
+
+		var page = Page();
+		await page.OnGetAsync(CancellationToken.None);
+
+		page.EffectiveActiveInstance.Should().Be("beta");
+		page.Boards.Where(b => b.MethodologyInstance == "beta")
+			.Should().OnlyContain(b => b.MethodologyInstance == page.EffectiveActiveInstance);
+		page.Boards.Where(b => b.MethodologyInstance == "alpha")
+			.Should().OnlyContain(b => b.MethodologyInstance != page.EffectiveActiveInstance);
+	}
 }
