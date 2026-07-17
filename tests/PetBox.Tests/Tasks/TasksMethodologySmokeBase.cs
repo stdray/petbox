@@ -93,8 +93,12 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
 			await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = ProjectKey, WorkspaceKey = "test", Name = "Workflow" });
-			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow });
-			await db.InsertAsync(new ApiKey { Key = MaintainerKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,tasks:approve", CreatedAt = DateTime.UtcNow });
+			// methodology:write on both: these smoke suites PROVISION a methodology as fixture
+			// setup (spec methodology-write-scope gates that separately from tasks:write). The
+			// personas here model APPROVAL (tasks:approve), not the governance gate — the authz
+			// boundary itself is asserted in McpModuleToolsTests.
+			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,methodology:write", CreatedAt = DateTime.UtcNow });
+			await db.InsertAsync(new ApiKey { Key = MaintainerKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,tasks:approve,methodology:write", CreatedAt = DateTime.UtcNow });
 		}
 
 		(_httpAgent, Agent) = await ConnectAsync(AgentKey);

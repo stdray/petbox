@@ -3,6 +3,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -364,6 +365,216 @@ public sealed class McpModuleToolsTests : IDisposable
 		// The direct exploring->accepted transition was removed; you must pass through review.
 		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "accepted", version = v } }), 0));
+	}
+
+	// spec methodology-write-scope — changing the rules that govern EXISTING nodes needs
+	// methodology:write, a scope SEPARATE from tasks:write. tasks:write alone writes nodes
+	// UNDER the rules; it must not be able to rewrite the rules themselves.
+	const string TasksOnly = "tasks:read,tasks:write";
+	const string TasksAndMethodology = "tasks:read,tasks:write,methodology:write";
+
+	// Smallest definition the validator accepts (a methodology needs >=1 kind).
+	static MethodologyDefInput MinimalDef() => new()
+	{
+		Name = "d",
+		Kinds =
+		[
+			new MethodologyKindInput
+			{
+				Kind = "simple",
+				Workflows =
+				[
+					new MethodologyWorkflowInput
+					{
+						Types = ["task"],
+						Statuses = [new MethodologyStatusInput { Slug = "todo" }],
+					},
+				],
+			},
+		],
+	};
+
+	[Fact]
+	public async Task Methodology_RulesUpsert_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyRulesUpsertAsync(http, Flags(), _tasks, Proj, "inst",
+				MinimalDef()));
+	}
+
+	[Fact]
+	public async Task Methodology_Create_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+	}
+
+	[Fact]
+	public async Task Methodology_BoardAdopt_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardAdoptAsync(http, Flags(), _tasks, Proj, "b", "inst"));
+	}
+
+	// The gate is a scope check, not a ban: methodology:write actually opens the door.
+	[Fact]
+	public async Task Methodology_Create_WithMethodologyWrite_Succeeds()
+	{
+		var http = Http(TasksAndMethodology);
+		var ack = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple");
+		ack.Name.Should().Be("inst");
+		ack.Boards.Should().NotBeEmpty();
+	}
+
+	// Owner decision (intake/finding-methodology-close-blast-radius): the criterion is
+	// "a governance act over an EXISTING process", not only "changes the rules". These four
+	// change no rules document and still retire/destroy/rewire a live process.
+	[Fact]
+	public async Task Methodology_Close_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCloseAsync(http, Flags(), _tasks, Proj, "inst"));
+	}
+
+	[Fact]
+	public async Task BoardClose_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardCloseAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardReopen_WithoutMethodologyWrite_Throws()
+	{
+		// The inverse of a gated act: an ungated reopen would undo a governance freeze.
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardReopenAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardDelete_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardDeleteAsync(http, Flags(), _tasks, Proj, "b"));
+	}
+
+	[Fact]
+	public async Task BoardSetSpec_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardSetSpecAsync(http, Flags(), _tasks, Proj, "b", "s"));
+	}
+
+	// set_active moves the pointer tasks_methodology_guide resolves through. Board membership
+	// still wins, so no node's enforcement changes — but the guide is the only control that
+	// exists for CONVENTION gates, so moving it changes what every agent is taught the process
+	// is. Gated under the owner-widened criterion.
+	[Fact]
+	public async Task MethodologySetActive_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, "inst"));
+	}
+
+	// Clearing the pointer is the same governance act as setting it.
+	[Fact]
+	public async Task MethodologySetActive_Clear_WithoutMethodologyWrite_Throws()
+	{
+		var http = Http(TasksOnly);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, null));
+	}
+
+	// The second line I am holding: methodology_describe writes a LIVE instance's rules
+	// document through the same service call as the gated rules_upsert, and still needs no
+	// governance scope — prose cannot change a rule. Structure is untouchable from here, and
+	// the guide derives every invariant from structure. Gating it would rot the docs.
+	[Fact]
+	public async Task Methodology_Describe_NeedsNoMethodologyWrite()
+	{
+		var admin = Http(TasksAndMethodology);
+		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "d-inst", "builtin", "simple");
+
+		var http = Http(TasksOnly);
+		var ack = await TasksTools.MethodologyDescribeAsync(
+			http, Flags(), _tasks, Proj, "d-inst", "kind", "prose set by a plain tasks:write key", kind: "simple");
+		ack.Primitive.Should().Be("kind");
+	}
+
+	// The claim the ungated decision rests on, asserted rather than trusted: a describe call
+	// changes ONLY prose. If someone ever teaches this verb to touch structure, this test goes
+	// red and the ungated decision must be revisited.
+	[Fact]
+	public async Task Methodology_Describe_CannotChangeStructure()
+	{
+		var admin = Http(TasksAndMethodology);
+		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "s-inst", "builtin", "simple");
+		var before = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");
+
+		await TasksTools.MethodologyDescribeAsync(
+			admin, Flags(), _tasks, Proj, "s-inst", "kind", "a description", kind: "simple");
+
+		var after = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");
+		after.Kinds!.Select(k => k.Kind).Should().Equal(before.Kinds!.Select(k => k.Kind));
+		after.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Statuses!).Select(s => s.Slug)
+			.Should().Equal(before.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Statuses!).Select(s => s.Slug));
+		after.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Transitions!).Select(t => $"{t.From}->{t.To}")
+			.Should().Equal(before.Kinds!.SelectMany(k => k.Workflows!).SelectMany(w => w.Transitions!).Select(t => $"{t.From}->{t.To}"));
+	}
+
+	// The line I am holding: board_create is NOT governance. It is constrained BY the rules
+	// (kind must be declared, process-role singleton enforced) and alters nothing that already
+	// exists — it adds an empty board. Gating it would put the routine verb agents use daily
+	// behind the governance scope and buy nothing: you cannot change a process by adding a
+	// board the rules already permit.
+	[Fact]
+	public async Task BoardCreate_NeedsNoMethodologyWrite()
+	{
+		var http = Http(TasksOnly);
+		var meta = await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "plain");
+		meta.Name.Should().Be("plain");
+	}
+
+	// The gate must not over-reach: an INERT template touches no live node, so the
+	// criterion ("changes the rules for EXISTING nodes") does not bind and tasks:write
+	// stays sufficient. A gate here would break template authoring for no security gain.
+	[Fact]
+	public async Task Methodology_TemplateUpsert_NeedsNoMethodologyWrite()
+	{
+		var http = Http(TasksOnly);
+		var ack = await TasksTools.MethodologyTemplateUpsertAsync(http, Flags(), _tasks, Proj, "tmpl",
+			MinimalDef());
+		ack.Key.Should().Be("tmpl");
+	}
+
+	// methodology:write is a capability layered ON tasks:write (like tasks:approve), not a
+	// replacement for it: it must not become a back door for a key that cannot write tasks.
+	[Fact]
+	public async Task Methodology_Create_MethodologyWriteWithoutTasksWrite_StillThrows()
+	{
+		var http = Http("tasks:read,methodology:write");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+	}
+
+	[Fact]
+	public void MethodologyWrite_IsInTheScopeCatalog()
+	{
+		// The catalog is the single source of truth: the create-key UI renders from it and
+		// the server validates submitted scope strings against it. A scope enforced but not
+		// catalogued cannot be granted — the gate would be unopenable.
+		var (valid, invalid) = ApiKeyScopes.Validate("methodology:write");
+		valid.Should().Equal(ApiKeyScopes.MethodologyWrite);
+		invalid.Should().BeEmpty();
 	}
 
 	static IHttpContextAccessor Http(string scopes, string? project = null)

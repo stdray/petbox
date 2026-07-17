@@ -417,7 +417,7 @@ public sealed class MethodologyInstanceTests : IDisposable
 		(await _tasks.ValidateRelationKindAsync(Proj, "blocks", b1.NodeId)).Should().Be("blocks");
 
 		// MCP relations_create follows the same instance scope (from-node).
-		var http = Http("tasks:read tasks:write");
+		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 		var relations = new RelationStore(_factory);
 
@@ -473,7 +473,7 @@ public sealed class MethodologyInstanceTests : IDisposable
 	[Fact]
 	public async Task Mcp_CreateListGetClose_RoundTrip()
 	{
-		var http = Http("tasks:read tasks:write");
+		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 
 		var created = await TasksTools.MethodologyCreateAsync(http, flags, _tasks, Proj, "mcp-main", "builtin", "classic");

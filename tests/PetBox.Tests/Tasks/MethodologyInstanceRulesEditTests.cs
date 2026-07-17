@@ -285,7 +285,9 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 	{
 		var (inst, board) = await SeedSupportInstanceAsync();
 		var rules = await _tasks.GetMethodologyInstanceRulesAsync(Proj, inst);
-		var http = Http("tasks:write");
+		// rules_upsert changes the rules governing EXISTING nodes: tasks:write is necessary
+		// but no longer sufficient (spec methodology-write-scope).
+		var http = Http("tasks:write,methodology:write");
 
 		// Wire shape: MethodologyDefInput via MethodologyWire.ProjectDefinition reverse —
 		// call the service-facing door through TasksTools with a typed definition input.
