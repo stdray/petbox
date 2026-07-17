@@ -87,6 +87,19 @@ public sealed class ProjectMethodologyModel : PageModel
 	// Open instances for the instance switcher (name + definition display name).
 	public IReadOnlyList<MethodologyInstanceView> OpenInstances { get; private set; } = [];
 
+	// Definition display names shared by more than one OPEN instance (spec
+	// methodology-display-name: Definition.Name is the only display name; the instance key
+	// is disambiguation for exactly this collision case, never a second competing name).
+	HashSet<string> _collidingNames = new(StringComparer.OrdinalIgnoreCase);
+
+	public bool IsNameCollision(string definitionName) => _collidingNames.Contains(definitionName);
+
+	// The single label the surface shows for an instance: its definition name, with the
+	// immutable instance key appended ONLY when that name collides with another open
+	// instance's name. Never both names side by side outside the collision case.
+	public string DisplayLabel(MethodologyInstanceView inst) =>
+		IsNameCollision(inst.DefinitionName) ? $"{inst.DefinitionName} ({inst.Name})" : inst.DefinitionName;
+
 	// The project's ACTIVE boards — surfaced in the instance-less state so boards still
 	// show where process comes from.
 	public IReadOnlyList<TaskBoardMeta> ActiveBoards { get; private set; } = [];
@@ -101,6 +114,11 @@ public sealed class ProjectMethodologyModel : PageModel
 	public string? ActivePointerName { get; private set; }
 	public long ActiveVersion { get; private set; }
 	public string? EffectiveActiveInstance { get; private set; }
+
+	// Display label for EffectiveActiveInstance (definition name, key-disambiguated on
+	// collision) — the active-default hint must not surface the bare instance key as if it
+	// were the name. Null when no default is resolved.
+	public string? EffectiveActiveInstanceDisplay { get; private set; }
 
 	// The preset the "Load preset as template" control last loaded — echoed back so the
 	// select keeps the user's choice instead of snapping to the first option.
@@ -354,6 +372,12 @@ public sealed class ProjectMethodologyModel : PageModel
 			.Where(i => !i.Closed)
 			.OrderBy(i => i.Name, StringComparer.Ordinal)
 			.ToList();
+		_collidingNames = new HashSet<string>(
+			OpenInstances
+				.GroupBy(i => i.DefinitionName, StringComparer.OrdinalIgnoreCase)
+				.Where(g => g.Count() > 1)
+				.Select(g => g.Key),
+			StringComparer.OrdinalIgnoreCase);
 
 		var pick = string.IsNullOrWhiteSpace(Instance)
 			? (OpenInstances.Count > 0 ? OpenInstances[0].Name : null)
@@ -380,6 +404,12 @@ public sealed class ProjectMethodologyModel : PageModel
 		ActivePointerName = pointer.Name;
 		ActiveVersion = pointer.Version;
 		EffectiveActiveInstance = await _tasks.ResolveDefaultMethodologyInstanceAsync(ProjectKey, ct);
+		var activeMatch = EffectiveActiveInstance is null
+			? null
+			: OpenInstances.FirstOrDefault(i => string.Equals(i.Name, EffectiveActiveInstance, StringComparison.OrdinalIgnoreCase));
+		// Falls back to the bare key only if the pointer somehow names an instance not in
+		// OpenInstances (defensive — resolution is expected to always pick among these).
+		EffectiveActiveInstanceDisplay = activeMatch is not null ? DisplayLabel(activeMatch) : EffectiveActiveInstance;
 		return true;
 	}
 
