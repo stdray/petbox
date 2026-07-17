@@ -1,0 +1,32 @@
+# used-migration-numbers registry — tasks tier (PetBox.Tasks.Data.Migrations)
+#
+# Append-only, one line per number ever assigned in this tier. Numbers must stay STRICTLY
+# INCREASING top-to-bottom (that is both the uniqueness and the monotonic-growth invariant —
+# a number is never reused, not even under a new name, and a gap is legal but never backfilled).
+#
+# Format: <number> <LIVE|BURNED> <ClassName> [# free-text reason, BURNED entries only]
+#
+# Enforced by MigrationNumberingTests (tests/PetBox.Tests/Data/Schema/MigrationNumberingTests.cs):
+#   - the numbers column above is strictly increasing reading down the file
+#   - the set of LIVE lines here exactly matches this tier's live [Migration] types, by
+#     (number, ClassName) — a live migration missing here, or a LIVE line with no matching
+#     migration in code, both fail
+# New migration -> APPEND a line at the bottom with a number greater than every number above.
+# Deleted migration -> flip its line to BURNED (keep the number, add a reason) instead of
+# removing the line. See work/migration-number-reuse-is-silently-destructive.
+1 LIVE M001_PlanNodes
+2 LIVE M002_PlanNodeType
+3 LIVE M003_PlanNodeNodeId
+4 LIVE M004_StatusSlugAndNodeId
+5 LIVE M005_BoardColumn
+6 LIVE M006_TagTables
+7 LIVE M007_Comments
+8 LIVE M008_PlanNodeSearch
+9 LIVE M009_SearchTables
+10 LIVE M010_MethodologyDefs
+11 LIVE M011_PlanNodeCommits
+12 LIVE M012_MethodologyTemplates
+13 LIVE M013_MethodologyInstances
+14 LIVE M014_Relations
+15 BURNED M015_SlugInLexicalText # deleted by reindex-as-first-class-mechanism, which replaced the migration with a real reindex mechanism; it emptied search_fts (DELETE FROM search_fts) to force the lexical backfill. The incident this whole registry exists for — see work/migration-number-reuse-is-silently-destructive. NEVER reuse 15 in this tier.
+16 LIVE M016_SearchKeyColumn

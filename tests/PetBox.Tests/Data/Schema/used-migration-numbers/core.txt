@@ -1,0 +1,61 @@
+# used-migration-numbers registry — core tier (PetBox.Core.Data.Migrations)
+#
+# Append-only, one line per number ever assigned in this tier. Numbers must stay STRICTLY
+# INCREASING top-to-bottom (that is both the uniqueness and the monotonic-growth invariant —
+# a number is never reused, not even under a new name, and a gap is legal but never backfilled).
+#
+# Format: <number> <LIVE|BURNED> <ClassName> [# free-text reason, BURNED entries only]
+#
+# Enforced by MigrationNumberingTests (tests/PetBox.Tests/Data/Schema/MigrationNumberingTests.cs):
+#   - the numbers column above is strictly increasing reading down the file
+#   - the set of LIVE lines here exactly matches this tier's live [Migration] types, by
+#     (number, ClassName) — a live migration missing here, or a LIVE line with no matching
+#     migration in code, both fail
+# New migration -> APPEND a line at the bottom with a number greater than every number above.
+# Deleted migration -> flip its line to BURNED (keep the number, add a reason) instead of
+# removing the line. See work/migration-number-reuse-is-silently-destructive.
+1 LIVE M001_Initial
+2 LIVE M002_ConfigBindings
+3 LIVE M003_LogEntries
+4 LIVE M004_SeedSystem
+5 LIVE M005_DataTables
+6 LIVE M006_SavedQueries
+8 LIVE M008_Users
+9 LIVE M009_ShareLinks
+10 LIVE M010_RetentionPolicies
+11 LIVE M011_Settings
+12 LIVE M012_DropRetentionPolicies
+13 LIVE M013_DataDbs
+14 LIVE M014_ApiKeyName
+15 LIVE M015_ApiKeyExpiresAt
+16 LIVE M016_Logs
+17 LIVE M017_ShareLinkLogName
+18 LIVE M018_Health
+19 LIVE M019_DropServices
+20 LIVE M020_SavedConfigFilters
+21 LIVE M021_TaskBoards
+22 LIVE M022_MemoryStores
+23 LIVE M023_TaskBoardKind
+24 LIVE M024_Relations
+25 LIVE M025_RelationClosedAt
+26 LIVE M026_TaskBoardClosedAt
+27 LIVE M027_TaskBoardSpecBoard
+28 LIVE M028_SeedWorkspaceMemory
+29 LIVE M029_RenameFreeKindToSimple
+30 LIVE M030_MemoryStoreIsSystem
+31 LIVE M031_EnsureWorkspaceMemory
+32 LIVE M032_CleanOrphanMemberships
+33 LIVE M033_WidenSystemStores
+34 LIVE M034_NameSeededSystemKey
+35 LIVE M035_UniqueWorkspaceMember
+36 LIVE M036_TaskBoardMethodologyInstance
+37 LIVE M037_AgentDefinitions
+38 LIVE M038_DropDeadCoreSchema
+39 LIVE M039_LlmRegistry
+40 LIVE M040_ApiKeyDefaultProject
+41 LIVE M041_ProjectSandbox
+42 LIVE M042_ApiKeySandboxOnly
+43 LIVE M043_ApiKeyLastUsedAt
+44 LIVE M044_UserWorkspaceQuota
+45 LIVE M045_LogRetentionDays
+46 LIVE M046_LlmRouteEmbedSpaceId
