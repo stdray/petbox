@@ -157,15 +157,25 @@ public sealed class MethodologyLiveMigration
 		TasksDb ctx, string projectKey, string board, List<PlanNode> nodes, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var fts = new SqliteFtsIndex(() => ctx);
+		// Mirror the reference layer alongside the FTS floor (search-index-authority): a methodology
+		// migration can reclassify a status's StatusKind, so the facet row must be re-projected in the
+		// same transaction or search_meta would drift from the (new) runtime. kindSlug: null → the new
+		// runtime classifies project-wide, consistent with the backfill's own classification.
 		var r = await TemporalStore.UpsertAsync(ctx, nodes,
 			onWithinTx: async (tx, upserted, _, c) =>
 			{
 				var tags = await NodeTagsAsync(tx, board, upserted.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).Select(n => n.NodeId), c);
 				foreach (var n in upserted)
 					if (TasksSearchDocs.IsIndexable(n, runtime))
+					{
 						await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
+						await SqliteMetaIndex.IndexAsync(tx, TasksSearchDocs.ToMetaDoc(n, projectKey, runtime, kindSlug: null), c);
+					}
 					else
+					{
 						await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // lost its identity (rare)
+						await SqliteMetaIndex.DeleteAsync(tx, projectKey, board, n.Key, c);
+					}
 			},
 			partition: n => n.Board == board, ct: ct);
 		if (!r.Applied)

@@ -350,6 +350,9 @@ public sealed partial class TasksService : ITasksService
 		try
 		{
 			await fts.DeleteByTypeAsync(ctx, projectKey, board, ct);
+			// The reference layer is keyed the same (Scope=project, Type=board) and orphans the same
+			// way — purge its facet/alias rows board-wide too (search-index-authority).
+			await SqliteMetaIndex.DeleteByTypeAsync(ctx, projectKey, board, ct);
 			if (_llm is not null)
 				await new VectorSearchIndex(() => ctx, new LlmClientEmbedder(_llm, projectKey), VectorDim)
 					.DeleteByTypeAsync(ctx, projectKey, board, ct);
@@ -1385,6 +1388,10 @@ public sealed partial class TasksService : ITasksService
 		// entity. Tags read in-tx are the pre-upsert set; SetTagsAsync (below) is reflected by the
 		// post-commit RefreshFtsTagsAsync. Vectors are materialized by the worker, not here.
 		var fts = new SqliteFtsIndex(() => ctx);
+		// The Class-A META reference layer, written in the SAME entity transaction as the FTS floor
+		// (search-index-authority): every FTS index/delete below is mirrored to search_meta, so a
+		// node's facets/aliases commit and roll back exactly with its text row. StatusKind comes from
+		// the runtime authority; `kindSlug` (the board's kind) gives per-board classification.
 		TemporalUpsertResult<PlanNode> r;
 		using (var temporalSpan = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
 		{
@@ -1398,11 +1405,20 @@ public sealed partial class TasksService : ITasksService
 					var tags = await NodeTagsAsync(tx, board, upserted.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).Select(n => n.NodeId), c);
 					foreach (var n in upserted)
 						if (TasksSearchDocs.IsIndexable(n, runtime))
+						{
 							await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
+							await SqliteMetaIndex.IndexAsync(tx, TasksSearchDocs.ToMetaDoc(n, projectKey, runtime, kindSlug), c);
+						}
 						else
+						{
 							await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // lost its identity (rare)
+							await SqliteMetaIndex.DeleteAsync(tx, projectKey, board, n.Key, c);
+						}
 					foreach (var key in deletedKeys)
+					{
 						await fts.DeleteAsync(tx, projectKey, board, key, c);
+						await SqliteMetaIndex.DeleteAsync(tx, projectKey, board, key, c);
+					}
 				},
 				partition: n => n.Board == board, ct: ct);
 			// Concurrency outcomes as COUNTS/kinds only (privacy contract: forms and sizes,
@@ -1726,6 +1742,10 @@ public sealed partial class TasksService : ITasksService
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
+		// The reference layer self-heals on the same read-time trigger as the lexical floor
+		// (search-index-authority): a file predating search_meta (or behind its projection version)
+		// gets its facet/alias rows rebuilt here, once, before the first query reads them.
+		await EnsureMetaBackfillAsync(ctx, projectKey, runtime, ct);
 
 		Func<DataConnection> connect = () => _boards.NewEnsuredConnection(projectKey);
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(connect) };
@@ -2349,6 +2369,43 @@ public sealed partial class TasksService : ITasksService
 
 	static Task<int> SetLexicalVersionAsync(TasksDb ctx, long version, CancellationToken ct) =>
 		ctx.InsertOrReplaceAsync(new LexicalCursorRow { IndexName = TasksCursors.Lexical, Version = version }, token: ct);
+
+	// Meta backfill, VERSION-gated (search-index-authority) — the reference-layer twin of
+	// EnsureLexicalBackfillAsync: rebuild search_meta from the ToMetaDoc projection when this file's
+	// stored version is behind TasksSearchDocs.MetaProjectionVersion (a fresh, empty table reads as 0).
+	// Membership is IsIndexable (every identity-bearing node, terminal or not), the SAME set the write
+	// path and the FTS floor index — so the two authorities agree. StatusKind is classified project-wide
+	// (kindSlug: null): the backfill walks all boards' nodes on one project runtime without a board→kind
+	// map, and the next per-board write re-projects the node with precise per-board classification, so
+	// any difference self-heals. Comments carry no facets and are not part of the reference layer.
+	static async Task EnsureMetaBackfillAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
+	{
+		if (await MetaVersionAsync(ctx, ct) >= TasksSearchDocs.MetaProjectionVersion) return;
+
+		var indexed = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
+
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			foreach (var n in indexed)
+				await SqliteMetaIndex.IndexAsync(ctx, TasksSearchDocs.ToMetaDoc(n, scope, runtime, kindSlug: null), ct);
+			await SetMetaVersionAsync(ctx, TasksSearchDocs.MetaProjectionVersion, ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
+	}
+
+	static async Task<long> MetaVersionAsync(TasksDb ctx, CancellationToken ct) =>
+		await ctx.GetTable<LexicalCursorRow>().Where(r => r.IndexName == TasksCursors.Meta)
+			.Select(r => (long?)r.Version).FirstOrDefaultAsync(ct) ?? 0;
+
+	static Task<int> SetMetaVersionAsync(TasksDb ctx, long version, CancellationToken ct) =>
+		ctx.InsertOrReplaceAsync(new LexicalCursorRow { IndexName = TasksCursors.Meta, Version = version }, token: ct);
 
 	[LinqToDB.Mapping.Table("search_cursor")]
 	sealed class LexicalCursorRow

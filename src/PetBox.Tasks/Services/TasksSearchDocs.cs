@@ -33,6 +33,13 @@ public static class TasksSearchDocs
 	// vectors.
 	public const long LexicalProjectionVersion = 3;
 
+	// The META projection's schema version (search-index-authority) — the reference-layer twin of
+	// LexicalProjectionVersion, gating EnsureMetaBackfillAsync's rebuild of search_meta. Bump this
+	// whenever ToMetaDoc's projected facets or alias set change shape, so every project file self-heals
+	// its search_meta on the next search — same version-gated, no-migration mechanism the lexical floor
+	// uses. Starts at 1: the birth of the reference layer, populated for the first time.
+	public const long MetaProjectionVersion = 1;
+
 	// Indexed iff the node has a stable identity — terminality no longer forks membership
 	// (search-hides-terminal-nodes): a terminal node's VISIBILITY in a default query-mode result
 	// is a read-time filter (hide terminal-CANCEL unless includeClosed), not an index-membership
@@ -86,4 +93,29 @@ public static class TasksSearchDocs
 	// would only add noise tokens, not a search bridge like a node's slug is.
 	public static SearchDoc CommentToDoc(CommentRow c, string scope) =>
 		new(scope, c.Board, CommentIdPrefix + c.Key, c.Body, null);
+
+	// The node's row in the META reference layer (search-index-authority): the entity address
+	// (Scope=scope, Type=Board, Id=Key — the SAME address as ToDoc, so a node's text row and facet row
+	// line up), the computed facets, and the identity alias set. Written in the same entity transaction
+	// as ToDoc so a committed node's membership and facets never lag its text.
+	//
+	// StatusKind is taken from the SINGLE authority — MethodologyRuntime.StatusKindOf(kindSlug, status)
+	// — never recomputed here; `kindSlug` is the node's board kind on the write path (per-board
+	// classification) and null on the file-wide backfill (project-wide classification, StatusKindOf's
+	// KindOfSlug fallback). Aliases are the node's slug AND its NodeId: the slug doubles the Id on
+	// purpose (an identity lookup then resolves ANY node through the one alias table, Id included), and
+	// the NodeId is the identifier the lexical index does NOT carry — closing exactly the "agents search
+	// by node id and get nothing" gap this reference layer exists to close.
+	public static SearchMetaDoc ToMetaDoc(PlanNode n, string scope, MethodologyRuntime runtime, string? kindSlug) =>
+		new(scope, n.Board, n.Key,
+			StatusKind: StatusKindFacet(runtime.StatusKindOf(kindSlug, n.Status)),
+			Created: n.Created,
+			Updated: n.Updated,
+			Aliases: [n.Key, n.NodeId]);
+
+	// The StatusKind facet string — the enum name lowercased (open|terminalok|terminalcancel), the
+	// SAME vocabulary the methodology contract exposes (MethodologyReference derives it identically from
+	// Enum.GetNames<StatusKind>()). A status the authority cannot classify (an out-of-vocab legacy slug
+	// → null) is, by the membership rule, a non-terminal member of the index, so it reads as "open".
+	static string StatusKindFacet(StatusKind? kind) => (kind ?? StatusKind.Open).ToString().ToLowerInvariant();
 }

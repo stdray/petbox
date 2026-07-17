@@ -15,4 +15,12 @@ public static class TasksCursors
 	// TasksSearchDocs.LexicalProjectionVersion; SearchReindexService rewinds it to 0 to force a
 	// rebuild on demand (search_reindex's Class-A half).
 	public const string Lexical = "lexical:projection";
+
+	// The META PROJECTION version marker (search-index-authority): what schema version's search_meta
+	// facet/alias rows this project file currently carries — the exact same version-gated mechanism as
+	// Lexical, but for the reference layer instead of the text floor. One marker for the WHOLE file
+	// (all boards' nodes come out of the single TasksSearchDocs.ToMetaDoc projection).
+	// TasksService.EnsureMetaBackfillAsync compares it against TasksSearchDocs.MetaProjectionVersion;
+	// a fresh (empty) search_meta table reads as version 0 and rebuilds on the next search.
+	public const string Meta = "meta:projection";
 }
