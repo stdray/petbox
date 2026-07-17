@@ -296,6 +296,19 @@ public sealed record MethodologyInstanceView(
 	string? Source = null,
 	string? SourceKey = null);
 
+// The project's explicit "active methodology instance" pointer (spec
+// methodology-active-instance): controls DEFAULTS only (UI, MCP verbs without an explicit
+// instance, tasks_methodology_guide with no `name`) — board membership rules always
+// resolve through TaskBoards.MethodologyInstance regardless of what is active here. Name is
+// null when no pointer is set (resolution then falls back to the single-open-instance case,
+// or an explicit "no default" state — never a silent merge). Version is the CAS baseline
+// for tasks_methodology_set_active.
+public sealed record MethodologyActiveInstanceView(string? Name, long Version);
+
+// Ack of tasks_methodology_set_active: the resulting pointer (null when cleared), whether
+// this call changed the stored value, and the new CAS version.
+public sealed record MethodologyActiveInstanceAck(string? Name, bool Changed, long Version);
+
 // Ack of instance create/close: the instance name, whether this call changed state, and
 // the boards that were provisioned (create) or closed (close).
 public sealed record MethodologyInstanceAck(

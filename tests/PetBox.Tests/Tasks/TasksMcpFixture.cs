@@ -155,3 +155,8 @@ public sealed class MethodologyRuntimeFixture : TasksMcpFixture
 {
 	public MethodologyRuntimeFixture() : base("mrt", "Runtime") { }
 }
+
+public sealed class MethodologyDescribeFixture : TasksMcpFixture
+{
+	public MethodologyDescribeFixture() : base("mdsc", "Describe") { }
+}

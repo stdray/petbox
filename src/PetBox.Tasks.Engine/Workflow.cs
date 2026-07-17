@@ -12,7 +12,10 @@ public enum BoardKind { Simple, Spec, Ideas, Intake, Work, Classic }
 // and the (capability-level) approve gate (only a maintainer reaches TerminalOk).
 public enum StatusKind { Open, TerminalOk, TerminalCancel }
 
-public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind);
+// `Description` (spec methodology-primitive-descriptions): free-form prose, null = none,
+// surfaced by the compiled process guide (MethodologyGuide) next to the status slug; never
+// resolved or enforced against.
+public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind, string? Description = null);
 
 // A directed edge in a type's state machine. `RequiresApproval` marks the
 // transition as maintainer-only (the approve gate — capability modelled here,

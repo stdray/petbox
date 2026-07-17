@@ -57,6 +57,12 @@ public static class MethodologyGuide
 		md.AppendLine($"## Kind: {kind.Kind}");
 		md.AppendLine();
 
+		if (kind.Description is { Length: > 0 } kindDescription)
+		{
+			md.AppendLine(kindDescription);
+			md.AppendLine();
+		}
+
 		// The quick-add default is the first type of the first block (declaration order is
 		// meaningful — the same convention MethodologyRuntime.DefaultType applies).
 		var defaultType = kind.Workflows[0].Types[0];
@@ -70,7 +76,8 @@ public static class MethodologyGuide
 		var axes = runtime.TagAxes(kind.Kind);
 		if (axes.Count > 0)
 		{
-			md.AppendLine($"- Tags: namespaced only — `<axis>:value` with the axis one of: {string.Join(", ", axes.Select(a => a.Namespace))}.");
+			var axisNames = axes.Select(a => a.Description is { Length: > 0 } d ? $"{a.Namespace} ({d})" : a.Namespace);
+			md.AppendLine($"- Tags: namespaced only — `<axis>:value` with the axis one of: {string.Join(", ", axisNames)}.");
 			invariants.Add(new(kind.Kind, "tag_axes", string.Join("|", axes.Select(a => a.Namespace))));
 		}
 		else
@@ -107,9 +114,10 @@ public static class MethodologyGuide
 
 	static void AppendStatusGroup(StringBuilder md, MethodologyWorkflowDef block, StatusKind kind, string label)
 	{
-		var slugs = block.Statuses.Where(s => s.Kind == kind).Select(s => s.Slug).ToList();
-		if (slugs.Count > 0)
-			md.AppendLine($"  - {label}: {string.Join(", ", slugs)}");
+		var statuses = block.Statuses.Where(s => s.Kind == kind).ToList();
+		if (statuses.Count == 0) return;
+		var rendered = statuses.Select(s => s.Description is { Length: > 0 } d ? $"{s.Slug} ({d})" : s.Slug);
+		md.AppendLine($"  - {label}: {string.Join(", ", rendered)}");
 	}
 
 	static void AppendTransitions(StringBuilder md, MethodologyWorkflowDef block)
@@ -129,6 +137,7 @@ public static class MethodologyGuide
 			if (t.RequiresReason) marks.Add("reason required");
 			if (t.PreconditionArtifact is not null) marks.Add($"requires artifact:{t.PreconditionArtifact}");
 			if (t.Checklist is { Count: > 0 }) marks.Add("checklist");
+			if (t.Description is { Length: > 0 } d) marks.Add($"note: {d}");
 			md.AppendLine($"  - {t.From} -> {t.To}{(marks.Count > 0 ? $" [{string.Join("; ", marks)}]" : "")}");
 		}
 	}
@@ -188,7 +197,8 @@ public static class MethodologyGuide
 			var cadence = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase)
 				? $"- EVERY write of a `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in each upsert — it names the authorizing node)"
 				: $"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert)";
-			md.AppendLine($"{cadence}{TargetProse(c)}.{(string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) ? "" : " Edits don't re-require it.")}");
+			var note = c.Description is { Length: > 0 } d ? $" — {d}" : "";
+			md.AppendLine($"{cadence}{TargetProse(c)}{note}.{(string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) ? "" : " Edits don't re-require it.")}");
 			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} ({LinkField(c.Link)}){TargetDetail(c)}"));
 		}
 	}
@@ -238,7 +248,8 @@ public static class MethodologyGuide
 		var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
 		var trigger = e.OnLeave ? "leaving" : "entering";
 		var action = e.Set is null ? "have the link closed" : $"are set to {e.Set}";
-		return $"On {trigger} {e.On}, {e.Direction} {link} nodes{scope} {action}.";
+		var note = e.Description is { Length: > 0 } d ? $" ({d})" : "";
+		return $"On {trigger} {e.On}, {e.Direction} {link} nodes{scope} {action}.{note}";
 	}
 
 	// SpecBoard auto-wire as DATA (primitives-enum-residual) — when exactly one board of
