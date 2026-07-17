@@ -46,12 +46,27 @@ public readonly record struct SearchDoc(string Scope, string Type, string Id, st
 // across indexes — the facade fuses by RANK, not raw score), and which retriever produced it.
 public readonly record struct Hit(string Type, string Id, double Score, string? Retriever = null);
 
+// A FACET predicate pushed INTO each leg's candidate query, applied BEFORE the leg truncates at
+// k (spec search-facet-pushdown) — joined against the search_meta reference layer by the entity
+// address (Scope, Type, Id), the SAME address the text/vector rows carry. The pushdown is what
+// lets the caller drop a compensating over-fetch pool: a candidate a facet excludes never occupies
+// a top-k slot, so it never has to be re-fetched around.
+//
+// `ExcludeStatusKinds` drops entities whose search_meta.StatusKind is in the set — the general
+// mechanism; the tasks-specific VALUE (hide terminal-cancel unless includeClosed) is chosen by the
+// caller. An entity with NO search_meta row (e.g. a tasks comment doc, which carries text but no
+// facet row) is KEPT — a facet it does not carry cannot hide it, matching the pre-pushdown behavior
+// where such a hit resolved through its owner. Null/empty set = neutral (no facet narrowing).
+public readonly record struct FacetFilter(IReadOnlyList<string>? ExcludeStatusKinds = null);
+
 // Read-path narrowing. `Type` pins ONE entity type; `Types` is an include-SET over the same
 // column — the seam that lets a consumer whose containers share one file (memory stores in
 // memory/{project}.db, Type = store name) narrow a SINGLE index query to several containers at
 // once, instead of running one query per container and merging by hand. Null/empty = no
-// narrowing on that axis; when both are set, both must hold.
-public readonly record struct SearchFilter(string? Type = null, IReadOnlyList<string>? Types = null);
+// narrowing on that axis; when both are set, both must hold. `Facets` is the OPTIONAL facet
+// pushdown (search-facet-pushdown): null — the default, and what a file with no search_meta table
+// (memory today) always passes — emits no join, so it is a no-op there.
+public readonly record struct SearchFilter(string? Type = null, IReadOnlyList<string>? Types = null, FacetFilter? Facets = null);
 
 // A fused search response: the ranked hits plus honest provenance (which retrievers ran and
 // whether the result is degraded). (spec: search-provenance.)

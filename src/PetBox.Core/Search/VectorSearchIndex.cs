@@ -106,6 +106,17 @@ public sealed class VectorSearchIndex : ISearchIndex
 		// Include-SET narrowing (`Type IN (...)`) — one brute-force pass over several containers
 		// sharing this index (e.g. every memory store of a project), not one pass per container.
 		if (filter.Types is { Count: > 0 } types) rowsQ = rowsQ.Where(r => types.Contains(r.Type));
+		// Facet pushdown (spec search-facet-pushdown): drop the excluded candidates in SQL BEFORE
+		// materializing for cosine — brute-force scans every candidate, so filtering first is pure
+		// win. Joined to search_meta by the entity address (Scope, Type, Id = its primary key) via a
+		// correlated NOT EXISTS; an entity with no meta row is kept, same as the FTS leg. Neutral
+		// when no facet is set (memory passes none → no join emitted).
+		if (filter.Facets is { ExcludeStatusKinds: { Count: > 0 } excluded })
+		{
+			string[] kinds = [.. excluded];
+			rowsQ = rowsQ.Where(r => !db.GetTable<SearchMetaRow>()
+				.Any(m => m.Scope == scope && m.Type == r.Type && m.Id == r.Id && kinds.Contains(m.StatusKind)));
+		}
 		var rows = rowsQ.ToList();
 
 		var candidates = rows.Select(r => (Key: r.Type + Sep + r.Id, Vec: VectorCodec.Decode(r.Vec)));

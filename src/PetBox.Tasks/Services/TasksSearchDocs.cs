@@ -118,4 +118,12 @@ public static class TasksSearchDocs
 	// Enum.GetNames<StatusKind>()). A status the authority cannot classify (an out-of-vocab legacy slug
 	// → null) is, by the membership rule, a non-terminal member of the index, so it reads as "open".
 	static string StatusKindFacet(StatusKind? kind) => (kind ?? StatusKind.Open).ToString().ToLowerInvariant();
+
+	// The StatusKind facet VALUE a default query-mode search hides (search-hides-terminal-nodes):
+	// terminal-CANCEL. This is the tasks-specific value the general facet-pushdown mechanism (spec
+	// search-facet-pushdown, SearchFilter.Facets.ExcludeStatusKinds) excludes in each leg BEFORE
+	// truncation unless includeClosed widened the ask. Derived from the SAME StatusKindFacet
+	// projection the write path stamps into search_meta, so the pushdown predicate and the stored
+	// facet can never drift to different spellings — never a bare "terminalcancel" literal.
+	public static readonly string TerminalCancelFacet = StatusKindFacet(StatusKind.TerminalCancel);
 }
