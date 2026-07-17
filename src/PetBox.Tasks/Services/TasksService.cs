@@ -1307,6 +1307,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "task_spec", landed, specRefs, blockerIsFrom: false, ct);
 				await LinkRefsAsync(projectKey, "blocks", landed, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", landed, ideaRefs, blockerIsFrom: true, ct);
+				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
 			}
@@ -2018,6 +2019,29 @@ public sealed partial class TasksService : ITasksService
 			.Where(c => c.ValidTo == null && (c.Sha == v || (prefixable && c.Sha.StartsWith(v))))
 			.Select(c => c.NodeId).ToListAsync(ct);
 		return rows.ToHashSet(StringComparer.Ordinal);
+	}
+
+	// Leaving the kind's blocking-gate status (MethodologyKindDef.BlocksGate, spec
+	// methodology-blocks-gate-data) manually closes the active `blocks` edges into the node
+	// (history kept — no status forced on the blocker). Kept IMPERATIVE, deliberately NOT folded
+	// into the declared Effects list (MethodologyRuntime.Effects(kindSlug) resolves WHOLE-OBJECT:
+	// a real quartet-provisioned project materialized `work`'s Effects verbatim before this field
+	// existed, so an entry added to the WorkKind PRESET would silently never reach it — see the
+	// comment on MethodologyPresets.WorkKind.Effects). Only the STATUS literal is now data
+	// (gate.Status, via the SAME field-level-merged BlocksGate resolver RequireBlockers uses) —
+	// was the hardcoded literal "Blocked".
+	async Task CloseBlocksOnLeaveAsync(
+		string projectKey, MethodologyRuntime runtime, string? kindSlug,
+		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		if (runtime.BlocksGate(kindSlug) is not { } gate) return;
+		foreach (var n in desired)
+		{
+			var wasGated = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, gate.Status, StringComparison.OrdinalIgnoreCase);
+			if (!wasGated || string.Equals(n.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) continue;
+			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "blocks"))
+				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
+		}
 	}
 
 	// PlanNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side

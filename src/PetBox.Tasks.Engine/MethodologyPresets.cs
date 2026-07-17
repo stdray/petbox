@@ -166,18 +166,26 @@ public static class MethodologyPresets
 		//   - a work node entering Done releases nodes it was blocking (blocks edges point
 		//     blocker -> blocked, i.e. OUTGOING), gate.Status -> gate.ReleaseTo. The `blocks`
 		//     kind is a builtin GATING relation: the executor consumes the traversed edge and
-		//     applies the effect only when no other active blocker remains;
-		//   - methodology-blocks-gate-data: a work node LEAVING gate.Status (Effect.onLeave —
-		//     someone manually moves a Blocked task elsewhere, not through its blocker's Done)
-		//     closes every INCOMING blocks edge unconditionally, history kept, nobody's status
-		//     forced (Set: null — a pure edge-consumption effect). Was TasksService.
-		//     CloseBlocksOnLeaveAsync, a bespoke method hardcoded to the literal "Blocked"; now
-		//     this declared entry, keyed off WorkBlocksGate like the entry above it.
+		//     applies the effect only when no other active blocker remains.
+		// NOT the manual-leave-Blocked unblock (TaskTransitionEffects/TasksService.
+		// CloseBlocksOnLeaveAsync) — deliberately kept OUT of this list. MethodologyRuntime.
+		// Effects(kindSlug) resolves WHOLE-OBJECT, not field-by-field like BlocksGate/Singleton/
+		// DefaultView just below: a real quartet-provisioned project materialized `work` as a
+		// DEFINED kind (RenderPresetDefinition, at instance-creation time) carrying its OWN
+		// stored Effects list — exactly these two entries, frozen before this field existed. An
+		// onLeave entry added HERE would never reach that already-materialized project; only a
+		// bare, never-provisioned preset board would see it. Adding it anyway would be the exact
+		// DefaultView/Singleton field-materialization trap one level up: this file's own doc
+		// comments on Singleton/DefaultView warn against it, and this Effects list is the one
+		// place in this class where a whole-object resolver still means "silently invisible on
+		// every real project" for anything added here (caught in review before it shipped —
+		// methodology-blocks-gate-data). CloseBlocksOnLeaveAsync stays an imperative method
+		// instead, reading BlocksGate(kindSlug).Status (field-merged, safe) rather than hardcoding
+		// "Blocked".
 		Effects =
 		[
 			new MethodologyTransitionEffectDef(On: "Done", Link: "issue_task", Direction: "incoming", Set: "done"),
 			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: WorkBlocksGate.ReleaseTo, OnlyFrom: WorkBlocksGate.Status),
-			new MethodologyTransitionEffectDef(On: WorkBlocksGate.Status, Link: "blocks", Direction: "incoming", Set: null, OnLeave: true),
 		],
 		// primitives-enum-residual: work→spec auto-wire is DATA (executed by AutoWireSpecAsync).
 		AutoWireSpecFrom = "spec",

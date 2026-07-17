@@ -26,9 +26,14 @@ public sealed class TaskTransitionEffects
 	// for `blocks`, consume the edge + release only the last blocker — that mechanism itself
 	// stays builtin to the `blocks` link kind, not generalized to arbitrary link kinds).
 	// `Set: null` declares a PURE edge-consumption effect: the edge is still closed (for
-	// `blocks`), but no status is propagated to the linked node — the shape WorkKind's own
-	// onLeave entry uses to replace the old CloseBlocksOnLeaveAsync (manually leaving the gate
-	// status closes every incoming `blocks` edge, history kept, nobody's status forced).
+	// `blocks`), but no status is propagated to the linked node. NOTE: no BUILTIN kind declares
+	// an OnLeave effect today — TasksService.CloseBlocksOnLeaveAsync (the manual-leave-Blocked
+	// unblock) stays its OWN imperative method rather than a WorkKind preset entry, because
+	// MethodologyRuntime.Effects(kindSlug) resolves whole-object and a real quartet-provisioned
+	// project's `work` kind already carries its own frozen, pre-existing Effects list (see the
+	// comment on MethodologyTransitionEffectDef.OnLeave) — this generalization exists so a
+	// PROJECT-DECLARED kind can opt into an onLeave effect, proven by schema/wire-round-trip
+	// tests, not by any builtin preset routing through it.
 	public async Task RunTransitionEffectsAsync(
 		string projectKey, string? kindSlug, MethodologyRuntime runtime,
 		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)

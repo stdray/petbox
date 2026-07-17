@@ -143,11 +143,25 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 // (incoming = the linked node points at this one, outgoing = this node points at the linked
 // one) is set to status `Set`; `OnlyFrom` optionally restricts the effect to linked nodes
 // currently in that status. `Set` is OPTIONAL: null declares a PURE edge-consumption effect
-// (no status propagated to the linked node) — the shape "leaving Blocked closes the incoming
-// `blocks` edges, history kept, nobody's status changes" needs (was TasksService.
-// CloseBlocksOnLeaveAsync, hardcoded; now WorkKind's own onLeave Effect entry). `Set`/
-// `OnlyFrom` name statuses of the LINKED node's kind — cross-kind, so they are format-checked
-// only and resolve at runtime. Executed by TaskTransitionEffects.RunTransitionEffectsAsync.
+// (no status propagated to the linked node). `Set`/`OnlyFrom` name statuses of the LINKED
+// node's kind — cross-kind, so they are format-checked only and resolve at runtime. Executed
+// by TaskTransitionEffects.RunTransitionEffectsAsync.
+//
+// NOT wired into WorkKind's own preset (methodology-blocks-gate-data review finding): the
+// manual-leave-Blocked unblock stays TasksService.CloseBlocksOnLeaveAsync, an IMPERATIVE
+// method, deliberately NOT a declared entry on the builtin `work` kind. MethodologyRuntime.
+// Effects(kindSlug) resolves WHOLE-OBJECT (unlike BlocksGate/Singleton/DefaultView's
+// field-level merge) — a declared kind reads ONLY its own stored Effects, never falling back
+// to the preset's for anything the stored copy lacks. A real quartet-provisioned project
+// materialized `work` as a defined kind with its Effects list frozen BEFORE this primitive
+// existed, so an entry added to the preset here would be invisible on every such project,
+// reachable only on a bare/undeclared-kind board — caught in review before it shipped. The
+// primitive is proven at the SCHEMA/wire level (MethodologyDefinitionValidator,
+// MethodologyKindContractParityTests' round-trip) and its trigger logic is generalized in
+// TaskTransitionEffects.RunTransitionEffectsAsync; no integration test yet exercises an
+// OnLeave effect end-to-end on a project-DECLARED kind (only the builtin quartet's
+// unconditional CloseBlocksOnLeaveAsync is covered) — a project opting a custom kind into
+// this primitive is unverified beyond the pure trigger-selection logic.
 public sealed record MethodologyTransitionEffectDef(
 	string On,
 	string Link,
