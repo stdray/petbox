@@ -1307,7 +1307,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "task_spec", landed, specRefs, blockerIsFrom: false, ct);
 				await LinkRefsAsync(projectKey, "blocks", landed, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", landed, ideaRefs, blockerIsFrom: true, ct);
-				await CloseBlocksOnLeaveAsync(projectKey, landed, prior, ct);
+				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
 			}
@@ -1910,11 +1910,12 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(kv => kv.Key, kv => new NodeIndexEntry(kv.Key, kv.Value.Board, kv.Value.BoardKind, kv.Value.Slug, kv.Value.Status, kv.Value.Type), StringComparer.Ordinal);
 		}
 
-		// Edge prefetch, ONE query for both consumers. The blocker invariant only fires on a work
-		// kind; the delete guard only fires when something is deleted. A node born in this call has
-		// a fresh NodeId and no edges, so only rows that ALREADY exist can contribute — the ids come
+		// Edge prefetch, ONE query for both consumers. The blocker invariant only fires on a kind
+		// that declares a blocking gate (methodology-blocks-gate-data — was IsWorkKind); the
+		// delete guard only fires when something is deleted. A node born in this call has a fresh
+		// NodeId and no edges, so only rows that ALREADY exist can contribute — the ids come
 		// from `prior` (via the patch key and, for a rename, its PrevKey), which the loop never narrows.
-		var blockerIds = runtime.IsWorkKind(kindSlug) ? PriorNodeIds(upserts, prior) : [];
+		var blockerIds = runtime.BlocksGate(kindSlug) is not null ? PriorNodeIds(upserts, prior) : [];
 		var deleteIds = PriorNodeIds(deletes, prior);
 		var blockerEdges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 		var partOfChildren = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
@@ -2020,13 +2021,24 @@ public sealed partial class TasksService : ITasksService
 		return rows.ToHashSet(StringComparer.Ordinal);
 	}
 
-	// Leaving Blocked manually closes the active `blocks` edges into the node (history kept).
-	async Task CloseBlocksOnLeaveAsync(string projectKey, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	// Leaving the kind's blocking-gate status (MethodologyKindDef.BlocksGate, spec
+	// methodology-blocks-gate-data) manually closes the active `blocks` edges into the node
+	// (history kept — no status forced on the blocker). Kept IMPERATIVE, deliberately NOT folded
+	// into the declared Effects list (MethodologyRuntime.Effects(kindSlug) resolves WHOLE-OBJECT:
+	// a real quartet-provisioned project materialized `work`'s Effects verbatim before this field
+	// existed, so an entry added to the WorkKind PRESET would silently never reach it — see the
+	// comment on MethodologyPresets.WorkKind.Effects). Only the STATUS literal is now data
+	// (gate.Status, via the SAME field-level-merged BlocksGate resolver RequireBlockers uses) —
+	// was the hardcoded literal "Blocked".
+	async Task CloseBlocksOnLeaveAsync(
+		string projectKey, MethodologyRuntime runtime, string? kindSlug,
+		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
 	{
+		if (runtime.BlocksGate(kindSlug) is not { } gate) return;
 		foreach (var n in desired)
 		{
-			var wasBlocked = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, "Blocked", StringComparison.OrdinalIgnoreCase);
-			if (!wasBlocked || string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
+			var wasGated = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, gate.Status, StringComparison.OrdinalIgnoreCase);
+			if (!wasGated || string.Equals(n.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) continue;
 			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "blocks"))
 				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
 		}

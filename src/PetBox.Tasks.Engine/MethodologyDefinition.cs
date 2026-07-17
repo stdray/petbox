@@ -89,7 +89,27 @@ public sealed record MethodologyKindDef(
 	// a custom-declared kind could never opt in. Now data: the definition author declares it
 	// per kind, custom kinds included (spec methodology-kind-singleton).
 	public bool? Singleton { get; init; }
+	// Blocking-gate statuses (spec methodology-blocks-gate-data): `Status` is the status a node
+	// of this kind must name a blocker to enter/hold ("a Blocked task must name a blocker" — a
+	// STATE invariant, checked on every write including birth, not a transition gate); `ReleaseTo`
+	// is the status a released node moves to. Null = this kind has no blocking gate at all (most
+	// kinds). Was two code-level literals ("Blocked"/"InProgress") in
+	// GuardEngine.RequireBlockers and TasksService.CloseBlocksOnLeaveAsync, gated on
+	// MethodologyRuntime.IsWorkKind — now data, resolved through
+	// MethodologyRuntime.BlocksGate(kindSlug) with the SAME field-level merge as Singleton just
+	// above (RenderPresetDefinition materializes this verbatim, so a pre-field instance must still
+	// read the preset's opinion, not "no gate"). A custom-declared kind can opt into the same
+	// invariant under its own status names — the invariant is no longer work's alone by
+	// construction, only by which kinds today declare this field.
+	public MethodologyBlocksGateDef? BlocksGate { get; init; }
 }
+
+// The blocking-gate statuses of a kind (spec methodology-blocks-gate-data): `Status` gates
+// GuardEngine.RequireBlockers (a node in this status must name a blocker) and is the trigger
+// TaskTransitionEffects consumes incoming `blocks` edges on LEAVING (Effect.onLeave — "history
+// kept", no forced status); `ReleaseTo` is the status the kind's own Done-triggered
+// last-blocker-release Effect (declared in Effects, not derived here) sets a released node to.
+public sealed record MethodologyBlocksGateDef(string Status, string ReleaseTo);
 
 // Delivery roll-up as DATA (spec primitives-enum-residual): how linked task_spec nodes
 // contribute to a board's computed delivery. `RequiredTypes` drive progress (none present
@@ -116,19 +136,39 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 	public IReadOnlyList<string>? TargetStatuses { get; init; }
 }
 
-// One declared transition effect of a kind (schema v2, spec engine-v2). Fires when a node
-// of the OWNING kind ENTERS status `On`: every node linked through relation kind `Link`
-// in `Direction` (incoming = the linked node points at this one, outgoing = this node
-// points at the linked one) is set to status `Set`; `OnlyFrom` optionally restricts the
-// effect to linked nodes currently in that status. `Set`/`OnlyFrom` name statuses of the
-// LINKED node's kind — cross-kind, so they are format-checked only and resolve at
-// runtime. Executed by TasksService.RunTransitionEffectsAsync when the node enters `On`.
+// One declared transition effect of a kind (schema v2, spec engine-v2; `OnLeave` added by
+// methodology-blocks-gate-data). Fires when a node of the OWNING kind ENTERS status `On`
+// (default), or — when `OnLeave` is true (the Effect.onLeave primitive) — when it LEAVES
+// status `On`: either way, every node linked through relation kind `Link` in `Direction`
+// (incoming = the linked node points at this one, outgoing = this node points at the linked
+// one) is set to status `Set`; `OnlyFrom` optionally restricts the effect to linked nodes
+// currently in that status. `Set` is OPTIONAL: null declares a PURE edge-consumption effect
+// (no status propagated to the linked node). `Set`/`OnlyFrom` name statuses of the LINKED
+// node's kind — cross-kind, so they are format-checked only and resolve at runtime. Executed
+// by TaskTransitionEffects.RunTransitionEffectsAsync.
+//
+// NOT wired into WorkKind's own preset (methodology-blocks-gate-data review finding): the
+// manual-leave-Blocked unblock stays TasksService.CloseBlocksOnLeaveAsync, an IMPERATIVE
+// method, deliberately NOT a declared entry on the builtin `work` kind. MethodologyRuntime.
+// Effects(kindSlug) resolves WHOLE-OBJECT (unlike BlocksGate/Singleton/DefaultView's
+// field-level merge) — a declared kind reads ONLY its own stored Effects, never falling back
+// to the preset's for anything the stored copy lacks. A real quartet-provisioned project
+// materialized `work` as a defined kind with its Effects list frozen BEFORE this primitive
+// existed, so an entry added to the preset here would be invisible on every such project,
+// reachable only on a bare/undeclared-kind board — caught in review before it shipped. The
+// primitive is proven at the SCHEMA/wire level (MethodologyDefinitionValidator,
+// MethodologyKindContractParityTests' round-trip) and its trigger logic is generalized in
+// TaskTransitionEffects.RunTransitionEffectsAsync; no integration test yet exercises an
+// OnLeave effect end-to-end on a project-DECLARED kind (only the builtin quartet's
+// unconditional CloseBlocksOnLeaveAsync is covered) — a project opting a custom kind into
+// this primitive is unverified beyond the pure trigger-selection logic.
 public sealed record MethodologyTransitionEffectDef(
 	string On,
 	string Link,
 	string Direction,
-	string Set,
-	string? OnlyFrom = null);
+	string? Set,
+	string? OnlyFrom = null,
+	bool OnLeave = false);
 
 // A project-declared relation kind: a free semantic edge with NO FSM effects and no
 // process meaning (like the builtin neutral kinds). `Slug` follows the common slug spec
