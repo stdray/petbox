@@ -161,6 +161,22 @@ TABLE search_deadletter
   COL Type TEXT NOT NULL PK2
   INDEX sqlite_autoindex_search_deadletter_1 UNIQUE origin=pk (IndexName, Type, Id)
 
+TABLE search_meta
+  COL Created TEXT NOT NULL
+  COL Id TEXT NOT NULL PK3
+  COL Scope TEXT NOT NULL PK1
+  COL StatusKind TEXT NOT NULL
+  COL Type TEXT NOT NULL PK2
+  COL Updated TEXT NOT NULL
+  INDEX sqlite_autoindex_search_meta_1 UNIQUE origin=pk (Scope, Type, Id)
+
+TABLE search_meta_alias
+  COL Alias TEXT NOT NULL PK4
+  COL Id TEXT NOT NULL PK3
+  COL Scope TEXT NOT NULL PK1
+  COL Type TEXT NOT NULL PK2
+  INDEX sqlite_autoindex_search_meta_alias_1 UNIQUE origin=pk (Scope, Type, Id, Alias)
+
 TABLE search_vec
   COL Dim INTEGER NOT NULL
   COL Id TEXT NOT NULL PK3
