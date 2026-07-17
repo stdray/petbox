@@ -219,6 +219,7 @@ public sealed class MethodologyKindContractParityTests
 				OutlineReveal = "navigate",
 				Singleton = true,
 				BlocksGate = new MethodologyBlocksGateDef("open", "done"),
+				BoardName = "backlog",
 			},
 		]);
 

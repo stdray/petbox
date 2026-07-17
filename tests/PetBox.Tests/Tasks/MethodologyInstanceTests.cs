@@ -272,6 +272,37 @@ public sealed class MethodologyInstanceTests : IDisposable
 		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
 	}
 
+	// primitives-enum-residual (00-overview §"Ещё хардкод" п.4, "имя доски выводится из слага
+	// вида (PickBoardName) — шаблон не может дать доске собственное имя"): MethodologyKindDef.
+	// BoardName is tried FIRST by PickBoardName, ahead of the kind-slug-derived candidates — a
+	// custom-declared kind's board can be named something other than its own slug.
+	[Fact]
+	public async Task BoardName_CustomDeclaredKind_PreferredOverSlug()
+	{
+		var def = new MethodologyDefinition("custom",
+		[
+			new MethodologyKindDef("myrole", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			])
+			{
+				BoardName = "roster",
+			},
+		]);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "boardname-tmpl", def, 0);
+
+		var inst = await _tasks.CreateMethodologyInstanceAsync(Proj, "boardname-inst", "template", "boardname-tmpl");
+		inst.Boards.Should().ContainSingle();
+		inst.Boards[0].Kind.Should().Be("myrole");
+		inst.Boards[0].Name.Should().Be("roster");
+	}
+
 	[Fact]
 	public async Task Create_RequiresExplicitSource_NoSilentDefault()
 	{

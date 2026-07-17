@@ -329,7 +329,7 @@ public sealed partial class TasksService : ITasksService
 	// Pipeline order of the quartet kinds.
 	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
 
-	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
+	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = MethodologyPresets.DefaultProvisioningPreset, CancellationToken ct = default)
 	{
 		// Compat layer (methodology-instance-core): enable still works for $system / legacy
 		// callers by ensuring a named instance from the builtin preset, then reporting the
