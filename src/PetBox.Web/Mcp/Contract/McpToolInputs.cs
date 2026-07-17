@@ -81,6 +81,11 @@ public sealed record MethodologyDefInput
 	// Declared tag namespaces: when present, tags on definition-resolved boards must be
 	// `<namespace>:value` with the namespace from this list; empty/omitted = free-form.
 	public MethodologyTagAxisInput[]? TagAxes { get; init; }
+	// Mirrors MethodologyDefinition.StrictMode (spec methodology-gate-strictness): the default
+	// a transition's approval gate falls back to when it declares no `enforce.approval` of its
+	// own. Default false reproduces today's behavior (owner-only by convention) for every kind
+	// this definition declares; a preset kind (not declared here) is never strict.
+	public bool StrictMode { get; init; }
 }
 
 // One board kind of the methodology. `kind` is a FREE-FORM slug (user-defined kinds are
@@ -220,6 +225,13 @@ public sealed record MethodologyStatusInput
 // enforced by the engine task. `enforceApproval` (only with requiresApproval) declares
 // the approval gate as server-BLOCKED rather than owner-only by convention; `checklist`
 // is free-text conditions to confirm before the transition (guide-rendered, not enforced).
+//
+// `requiresReason`/`preconditionArtifact`/`enforceApproval` are the LEGACY shape (kept so an
+// already-stored document keeps round-tripping unedited). New authoring should use
+// `requiredArtifacts`/`enforce` instead (spec methodology-gate-strictness) — declaring the
+// gate (approval + which comment artifacts) separately from its server-strictness; `reason` is
+// just an artifact with slug "reason", inline:true — there is no separate reason gate. The
+// service rejects mixing both shapes on one transition.
 public sealed record MethodologyTransitionInput
 {
 	public string? From { get; init; }
@@ -232,6 +244,29 @@ public sealed record MethodologyTransitionInput
 	// Mirrors MethodologyTransitionDef.Description: free-form prose (spec methodology-
 	// primitive-descriptions). Null = none.
 	public string? Description { get; init; }
+	// Mirrors MethodologyTransitionDef.RequiredArtifacts: the unified requiredArtifacts gate
+	// (schema v2, spec methodology-gate-strictness). Null/omitted = declare via the legacy
+	// fields instead (or no artifact gate).
+	public MethodologyRequiredArtifactInput[]? RequiredArtifacts { get; init; }
+	// Mirrors MethodologyTransitionDef.Enforce: this transition's strictness override. Null =
+	// fall through to the defaults (approval → the definition's strictMode; artifacts → always
+	// hard).
+	public MethodologyGateEnforcementInput? Enforce { get; init; }
+}
+
+// Mirrors RequiredArtifactDef 1:1 (see the parity note on MethodologyKindInput above).
+public sealed record MethodologyRequiredArtifactInput
+{
+	public string? Slug { get; init; }
+	public bool Inline { get; init; }
+}
+
+// Mirrors GateEnforcementDef 1:1 — both fields independently nullable (null = no opinion,
+// fall through to that field's own default; see GateEnforcementDef).
+public sealed record MethodologyGateEnforcementInput
+{
+	public bool? Approval { get; init; }
+	public bool? Artifacts { get; init; }
 }
 
 // One entry of the `migration` argument of tasks_methodology_rules_upsert: declared value

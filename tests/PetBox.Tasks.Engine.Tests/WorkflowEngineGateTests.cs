@@ -92,6 +92,37 @@ public sealed class WorkflowEngineGateTests
 		Validate(Quartet, "ideas", "idea", "exploring", "rejected", hasReason: false).Error
 			.Should().Be("transition 'exploring' -> 'rejected' requires a reason (provide a non-empty reason field on this call)");
 
+	// ---- The artifacts-strictness switch (schema v2, spec methodology-gate-strictness) ----
+
+	[Fact]
+	public void ADeclaredReasonGate_WithEnforceArtifactsFalse_IsConventionOnly_NotBlocked()
+	{
+		// Same shape as the hard reason gate above (RequiredArtifacts:[{reason,inline:true}]),
+		// but Enforce.Artifacts:false demotes it to a convention: the guide states it, the
+		// server does not block a missing reason.
+		Validate(SoftArtifactsRuntime, "gated", "item", "open", "dropped", hasReason: false).Ok.Should().BeTrue();
+		Validate(SoftArtifactsRuntime, "gated", "item", "open", "dropped", hasReason: true).Ok.Should().BeTrue();
+	}
+
+	static readonly MethodologyRuntime SoftArtifactsRuntime = MethodologyRuntime.From(new MethodologyDefinition("soft-artifacts",
+	[
+		new MethodologyKindDef("gated", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["item"],
+				[
+					new WorkflowStatus("open", "Open", StatusKind.Open),
+					new WorkflowStatus("dropped", "Dropped", StatusKind.TerminalOk),
+				],
+				[
+					new MethodologyTransitionDef("open", "dropped")
+					{
+						RequiredArtifacts = [new RequiredArtifactDef("reason", Inline: true)],
+						Enforce = new GateEnforcementDef(Artifacts: false),
+					},
+				]),
+		]),
+	]));
+
 	// ---- The approve gate: a capability with two independent switches ----
 
 	[Fact]

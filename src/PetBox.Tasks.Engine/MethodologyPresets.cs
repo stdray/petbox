@@ -366,7 +366,7 @@ public static class MethodologyPresets
 
 	// All workflows hosted by a kind, one per type slug (status-filter validation).
 	public static IReadOnlyList<Workflow> Types(BoardKind kind) =>
-		KindDef(kind).Workflows.SelectMany(b => b.Types.Select(b.ToWorkflow)).ToList();
+		KindDef(kind).Workflows.SelectMany(b => b.Types.Select(t => b.ToWorkflow(t))).ToList();
 
 	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape): the preset data
 	// is already grouped by shared FSM (feature=bug=chore is ONE block; simple's block

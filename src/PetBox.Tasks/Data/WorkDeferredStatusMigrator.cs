@@ -350,7 +350,14 @@ public sealed class WorkDeferredStatusMigrator
 			&& x.RequiresReason == y.RequiresReason
 			&& x.PreconditionArtifact == y.PreconditionArtifact
 			&& x.EnforceApproval == y.EnforceApproval
-			&& x.Checklist.SequenceEqual(y.Checklist, StringComparer.Ordinal);
+			&& x.Checklist.SequenceEqual(y.Checklist, StringComparer.Ordinal)
+			// Schema-v2 fields (spec methodology-gate-strictness): no builtin preset sets these, but
+			// they must still be compared — otherwise a stored row a definition author customized
+			// via ONLY the new shape (RequiredArtifacts/Enforce, legacy fields left at their
+			// defaults) would read as identical to the untouched preset above and get silently
+			// overwritten by this migrator.
+			&& x.RequiredArtifacts.SequenceEqual(y.RequiredArtifacts)
+			&& x.Enforce == y.Enforce;
 
 		public int GetHashCode(MethodologyTransitionDef t) =>
 			HashCode.Combine(t.From.ToLowerInvariant(), t.To.ToLowerInvariant(), t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact);

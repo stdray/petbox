@@ -46,6 +46,8 @@ static class MethodologyReference
 		[typeof(MethodologyTagAxisInput)] = "tagAxis",
 		[typeof(MethodologyMigrationInput)] = "migration entry",
 		[typeof(MethodologyValueMapInput)] = "valueMap",
+		[typeof(MethodologyRequiredArtifactInput)] = "requiredArtifact",
+		[typeof(MethodologyGateEnforcementInput)] = "gateEnforcement",
 	};
 
 	public static readonly IReadOnlyList<Entity> Entities =
@@ -58,6 +60,7 @@ static class MethodologyReference
 				["kinds"] = "The board kinds this methodology declares — at least one. A declared kind OVERRIDES the builtin preset of the same slug; every other kind keeps its preset.",
 				["linkKinds"] = $"Additional project-declared relation kinds for relations_create (free semantic edges, no process meaning). Must not collide with the builtin kinds: {BuiltinRelationKinds}.",
 				["tagAxes"] = "Declared tag namespaces. When present, every tag on a definition-resolved board must be <namespace>:value from this list; empty/omitted = free-form tags.",
+				["strictMode"] = "The definition-wide default for a transition's approval enforcement (spec methodology-gate-strictness): a transition whose own `enforce.approval` is unset falls back to this. Default false — owner-only stays a CONVENTION, reproducing today's behavior. Never toughens a builtin preset kind this definition doesn't declare.",
 			}),
 		Describe<MethodologyKindInput>(
 			"One board kind. `kind` is a FREE-FORM slug — user-defined kinds are the point, not limited to the builtin intake|ideas|spec|work|simple|classic.",
@@ -109,17 +112,33 @@ static class MethodologyReference
 				["description"] = "Optional free-form prose about this status. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
 			}),
 		Describe<MethodologyTransitionInput>(
-			"A directed FSM edge with its gates. Gates are transition DATA — the server enforces requiresApproval(enforceApproval)/requiresReason/preconditionArtifact; checklist stays a convention.",
+			"A directed FSM edge with its gates. Gates are transition DATA — the server enforces requiresApproval(enforceApproval)/requiresReason/preconditionArtifact; checklist stays a convention. `requiredArtifacts`/`enforce` are the schema-v2 replacement for requiresReason/preconditionArtifact/enforceApproval (spec methodology-gate-strictness) — don't declare both shapes on one transition.",
 			new()
 			{
 				["from"] = "Source status slug (of this block).",
 				["to"] = "Target status slug (of this block).",
 				["requiresApproval"] = "The approval gate: this move belongs to the owner/maintainer. By default a CONVENTION the guide states; see enforceApproval.",
-				["requiresReason"] = "The move must carry a non-empty reason (e.g. triage → wontfix).",
-				["preconditionArtifact"] = $"A comment-artifact tag ({SlugSpec}) the node must carry before the transition — an `artifact:<slug>` comment (e.g. \"spec_plan\" gates exploring → review). Enforced.",
-				["enforceApproval"] = "Only with requiresApproval: true = the server BLOCKS the transition for a non-approver; false = owner-only by convention (the guide states it, the server does not block).",
+				["requiresReason"] = "LEGACY — the move must carry a non-empty reason (e.g. triage → wontfix). Prefer requiredArtifacts:[{slug:\"reason\",inline:true}] in new documents; don't set both.",
+				["preconditionArtifact"] = $"LEGACY — a comment-artifact tag ({SlugSpec}) the node must carry before the transition — an `artifact:<slug>` comment (e.g. \"spec_plan\" gates exploring → review). Enforced. Prefer requiredArtifacts:[{{slug}}] in new documents; don't set both.",
+				["enforceApproval"] = "LEGACY — only with requiresApproval: true = the server BLOCKS the transition for a non-approver; false = owner-only by convention (the guide states it, the server does not block). Prefer enforce.approval in new documents.",
 				["checklist"] = "Free-text conditions to confirm before the transition. Rendered by the guide and marked on the graph; never server-enforced.",
 				["description"] = "Optional free-form prose about this transition. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
+				["requiredArtifacts"] = "The unified artifact gate (schema v2, spec methodology-gate-strictness): every comment artifact this transition needs. `reason` is just an artifact with slug \"reason\", inline:true — there is no separate reason gate. Empty/omitted = declare via the legacy fields instead (or no artifact gate).",
+				["enforce"] = "This transition's strictness override: which of its declared gates the server actually blocks on. Omitted = fall through to the defaults (approval → the definition's strictMode; artifacts → always hard, reproducing today's behavior).",
+			}),
+		Describe<MethodologyRequiredArtifactInput>(
+			"One entry of a transition's requiredArtifacts gate (schema v2, spec methodology-gate-strictness) — the union of the legacy requiresReason/preconditionArtifact pair.",
+			new()
+			{
+				["slug"] = $"The artifact tag ({SlugSpec}) — an `artifact:<slug>` comment on the node. \"reason\" is the one legal inline slug (see inline).",
+				["inline"] = "true = the content rides THIS SAME call (today only slug \"reason\", via the `reason` field on tasks_upsert — v1 has no other inline channel, so any other slug with inline:true is rejected). false (default) = a pre-existing `artifact:<slug>` comment must already be on the node.",
+			}),
+		Describe<MethodologyGateEnforcementInput>(
+			"What the server actually BLOCKS for one transition's gates (schema v2, spec methodology-gate-strictness) — the FORCE half, separate from the DECLARATION (requiresApproval/requiredArtifacts). Both fields independently nullable: omitted = no opinion, fall through to that field's own default.",
+			new()
+			{
+				["approval"] = "Omitted = fall back to the definition's strictMode (default false — owner-only stays a convention). true/false explicitly overrides it for THIS transition.",
+				["artifacts"] = "Omitted = true (reason/precondition artifacts are hard today, unconditionally — this reproduces that). false demotes the gate to a convention the guide states but the server does not block.",
 			}),
 		Describe<MethodologyLinkConstraintInput>(
 			"\"A NEW node of `type` must carry a link of kind `link` at creation.\" Only upsert-expressible links can gate creation: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).",

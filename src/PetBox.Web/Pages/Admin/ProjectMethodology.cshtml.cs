@@ -594,7 +594,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		def.Kinds.Select(k => (
 			new BoardWorkflowView(
 				k.Kind,
-				[.. k.Workflows.Select(w => new WorkflowBlock(w.Types, w.ToWorkflow(w.Types.Count > 0 ? w.Types[0] : k.Kind)))]),
+				[.. k.Workflows.Select(w => new WorkflowBlock(w.Types, w.ToWorkflow(w.Types.Count > 0 ? w.Types[0] : k.Kind, def.StrictMode)))]),
 			(IReadOnlyList<string>)[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))]));
 
 	// The confirm/view digest: per kind, the counts plus every gated transition as one
@@ -605,15 +605,21 @@ public sealed class ProjectMethodologyModel : PageModel
 			k.Workflows.Sum(w => w.Types.Count),
 			k.Workflows.Sum(w => w.Statuses.Count),
 			k.Workflows.Sum(w => w.Transitions.Count),
-			[.. k.Workflows.SelectMany(w => w.Transitions).SelectMany(GateLines)],
+			[.. k.Workflows.SelectMany(w => w.Transitions).SelectMany(t => GateLines(t, def.StrictMode))],
 			[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))]))];
 
-	static IEnumerable<string> GateLines(MethodologyTransitionDef t)
+	// Reads the EFFECTIVE gate view (EffectiveRequiredArtifacts/EffectiveEnforceApproval), not
+	// the legacy fields directly — a kind authored purely through the new requiredArtifacts/
+	// enforce shape (schema v2, spec methodology-gate-strictness) must still show up here.
+	static IEnumerable<string> GateLines(MethodologyTransitionDef t, bool strictMode)
 	{
 		var gates = new List<string>();
-		if (t.RequiresApproval) gates.Add(t.EnforceApproval ? "approve (enforced)" : "approve");
-		if (t.RequiresReason) gates.Add("reason");
-		if (t.PreconditionArtifact is not null) gates.Add($"artifact:{t.PreconditionArtifact}");
+		if (t.RequiresApproval) gates.Add(t.EffectiveEnforceApproval(strictMode) ? "approve (enforced)" : "approve");
+		var enforceArtifacts = t.EffectiveEnforceArtifacts();
+		foreach (var a in t.EffectiveRequiredArtifacts())
+			gates.Add(a.Inline
+				? (enforceArtifacts ? "reason" : "reason (convention)")
+				: (enforceArtifacts ? $"artifact:{a.Slug}" : $"artifact:{a.Slug} (convention)"));
 		if (t.Checklist is { Count: > 0 }) gates.Add($"checklist ({t.Checklist.Count})");
 		if (gates.Count > 0)
 			yield return $"{t.From} → {t.To}: {string.Join(", ", gates)}";

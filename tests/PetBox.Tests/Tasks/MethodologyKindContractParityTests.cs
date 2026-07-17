@@ -43,6 +43,8 @@ public sealed class MethodologyKindContractParityTests
 		{ typeof(MethodologyWorkflowDef), typeof(MethodologyWorkflowInput) },
 		{ typeof(WorkflowStatus), typeof(MethodologyStatusInput) },
 		{ typeof(MethodologyTransitionDef), typeof(MethodologyTransitionInput) },
+		{ typeof(RequiredArtifactDef), typeof(MethodologyRequiredArtifactInput) },
+		{ typeof(GateEnforcementDef), typeof(MethodologyGateEnforcementInput) },
 	};
 
 	[Theory]
@@ -136,6 +138,8 @@ public sealed class MethodologyKindContractParityTests
 		{ typeof(MethodologyWorkflowDef), typeof(MethodologyWorkflowBlockView) },
 		{ typeof(WorkflowStatus), typeof(WorkflowStatusView) },
 		{ typeof(MethodologyTransitionDef), typeof(MethodologyTransitionView) },
+		{ typeof(RequiredArtifactDef), typeof(MethodologyRequiredArtifactView) },
+		{ typeof(GateEnforcementDef), typeof(MethodologyGateEnforcementView) },
 	};
 
 	[Theory]
@@ -202,6 +206,15 @@ public sealed class MethodologyKindContractParityTests
 								Checklist = ["reviewed"],
 								Description = "The maintainer's own call.",
 							},
+							// The schema-v2 shape (spec methodology-gate-strictness) on a SEPARATE edge
+							// (the validator rejects mixing legacy + new on one transition) — proves
+							// RequiredArtifacts/Enforce round-trip, not just the legacy fields above.
+							new MethodologyTransitionDef("done", "open", RequiresApproval: true)
+							{
+								RequiredArtifacts = [new RequiredArtifactDef("reason", Inline: true), new RequiredArtifactDef("spec_plan")],
+								Enforce = new GateEnforcementDef(Approval: true, Artifacts: false),
+								Description = "Reopen needs a reason and the plan revisited; server enforces WHO, not the artifacts.",
+							},
 						]),
 				])
 			{
@@ -223,7 +236,12 @@ public sealed class MethodologyKindContractParityTests
 				Description = "The work board's kind.",
 				BoardName = "backlog",
 			},
-		]);
+		])
+		{
+			// Definition-level strictness default (spec methodology-gate-strictness) must
+			// round-trip too — it lives outside the Kind-nested Pairs()/ViewPairs() table.
+			StrictMode = true,
+		};
 
 		// rules_get side: project the stored definition onto the wire View — exactly what
 		// TasksTools.RulesGet hands back to the caller.

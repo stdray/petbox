@@ -25,6 +25,16 @@ public sealed record MethodologyDefinition(
 	// definition-resolved boards (the wave-1.2 posture); declared = a namespaced tag must
 	// use one of these axes (bare tags are rejected, same as the enforced quartet presets).
 	public IReadOnlyList<MethodologyTagAxisDef> TagAxes { get; init; } = [];
+	// Definition-level strictness default (spec methodology-gate-strictness): the fallback a
+	// transition's approval gate resolves to when IT does not declare its own `Enforce.Approval`
+	// (a transition-level Enforce always wins — see MethodologyTransitionDef.EffectiveEnforceApproval).
+	// Default false reproduces today's behavior — the builtin quartet/classic presets never set
+	// this, and every already-stored definition (missing this field entirely) deserializes to
+	// false, so approval stays owner-only-by-convention exactly as before. Applies ONLY to kinds
+	// THIS definition declares (MethodologyRuntime.StrictMode) — a kind resolved from the builtin
+	// presets (this definition doesn't declare it) is never strict, so turning this on for a
+	// project cannot retroactively toughen a preset kind the project hasn't authored.
+	public bool StrictMode { get; init; }
 }
 
 // One board kind of the methodology. `Kind` is a FREE-FORM slug ([a-z][a-z0-9_-]*), NOT
@@ -216,13 +226,25 @@ public sealed record MethodologyWorkflowDef(
 	public string Initial => Statuses[0].Slug;
 
 	// Map this block onto the shared FSM vocabulary as one type's workflow, carrying the
-	// transition gates (approval/reason/precondition artifact) and the approval-gate mode.
-	public Workflow ToWorkflow(string type) =>
+	// transition gates (approval/requiredArtifacts) and their resolved strictness (schema v2,
+	// spec methodology-gate-strictness). `strictMode` is the OWNING definition's default (false
+	// for every builtin preset and for a definition that doesn't declare it) — passed in rather
+	// than read off a field here because a MethodologyWorkflowDef has no back-reference to its
+	// definition; callers resolving a DEFINITION-declared kind pass the definition's StrictMode
+	// (MethodologyRuntime.StrictMode), preset resolution always passes the default false.
+	public Workflow ToWorkflow(string type, bool strictMode = false) =>
 		new(type, Statuses,
-			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
+			Transitions.Select(t =>
 			{
-				EnforceApproval = t.EnforceApproval,
-				Checklist = t.Checklist,
+				var artifacts = t.EffectiveRequiredArtifacts();
+				var reasonArtifact = artifacts.Any(a => a.Inline);
+				var preconditionArtifact = artifacts.FirstOrDefault(a => !a.Inline)?.Slug;
+				return new WorkflowTransition(t.From, t.To, t.RequiresApproval, reasonArtifact, preconditionArtifact)
+				{
+					EnforceApproval = t.EffectiveEnforceApproval(strictMode),
+					EnforceArtifacts = t.EffectiveEnforceArtifacts(),
+					Checklist = t.Checklist,
+				};
 			}).ToList());
 }
 
@@ -230,6 +252,13 @@ public sealed record MethodologyWorkflowDef(
 // "spec_plan") that must exist on the node (as an `artifact:<slug>` comment) before the
 // transition fires — the exploring→review gate the catalog enforces imperatively in the
 // service, expressed as data and enforced by RequirePreconditionArtifactsAsync.
+//
+// `RequiresReason`/`PreconditionArtifact` are the LEGACY wire shape (kept so an already-stored
+// document — the live quartet included — keeps deserializing and behaving exactly as before;
+// see EffectiveRequiredArtifacts). New authoring should declare `RequiredArtifacts` instead
+// (spec methodology-gate-strictness): `reason` collapses into an artifact with slug "reason",
+// `inline:true` — there is no separate reason gate. The validator rejects mixing both shapes on
+// one transition, so there is exactly one source of truth per transition, old or new.
 public sealed record MethodologyTransitionDef(
 	string From,
 	string To,
@@ -241,7 +270,8 @@ public sealed record MethodologyTransitionDef(
 	// server BLOCKS the transition for a non-owner (the WorkflowEngine enforceApproval
 	// capability, wired up by the engine task); false = owner-only by CONVENTION — the
 	// guide states the rule, the server does not block (the historical v1 posture, so
-	// existing documents keep behavior).
+	// existing documents keep behavior). LEGACY — see EffectiveEnforceApproval; a transition
+	// declaring `Enforce.Approval` overrides this.
 	public bool EnforceApproval { get; init; }
 	// Free-text conditions to confirm before this transition (schema v2). Rendered by the
 	// guide as a checklist; never enforced by the server — a convention, not a gate.
@@ -250,4 +280,69 @@ public sealed record MethodologyTransitionDef(
 	// none. Surfaced by the compiled process guide as a note alongside the transition's other
 	// marks; never enforced.
 	public string? Description { get; init; }
+
+	// The unified gate declaration (schema v2, spec methodology-gate-strictness): every comment
+	// artifact this transition needs, `reason` (inline, content riding NodePatch.Reason on the
+	// SAME call) or a pre-existing one like `spec_plan` (non-inline, an `artifact:<slug>`
+	// comment that must already exist). Empty = declare via the legacy fields instead (or no
+	// artifact gate at all). See EffectiveRequiredArtifacts for the merge with the legacy shape;
+	// MethodologyDefinitionValidator rejects declaring both on one transition, and rejects
+	// `inline:true` for any slug other than "reason" (v1: no other call field carries inline
+	// content). KNOWN v1 CEILING: only ONE inline + ONE non-inline artifact is actually enforced
+	// per transition at runtime — WorkflowTransition (the resolved shape WorkflowEngine/
+	// GuardEngine judge against) carries RequiresReason/PreconditionArtifact, the same single-
+	// scalar shape it always has (see the note on WorkflowTransition.EnforceArtifacts for why a
+	// list isn't carried there too). A transition declaring more validates and stores fine; only
+	// its first inline and first non-inline entry are ever server-enforced.
+	public IReadOnlyList<RequiredArtifactDef> RequiredArtifacts { get; init; } = [];
+	// The strictness override for THIS transition's gates (schema v2): null = fall through to
+	// the defaults (approval → the owning definition's StrictMode; artifacts → always hard —
+	// see EffectiveEnforceApproval/EffectiveEnforceArtifacts). Declaring the object but leaving
+	// a field null still falls through for THAT field only (GateEnforcementDef fields are
+	// independently nullable).
+	public GateEnforcementDef? Enforce { get; init; }
+
+	// The resolved requiredArtifacts view: the new-style declaration when non-empty, else the
+	// legacy fields translated 1:1 (RequiresReason → {slug:"reason", inline:true},
+	// PreconditionArtifact → {slug:PreconditionArtifact, inline:false}) — the "reason IS an
+	// artifact, no separate gate" collapse from the outside, whichever shape produced it.
+	public IReadOnlyList<RequiredArtifactDef> EffectiveRequiredArtifacts()
+	{
+		if (RequiredArtifacts.Count > 0) return RequiredArtifacts;
+		if (!RequiresReason && PreconditionArtifact is null) return [];
+		var legacy = new List<RequiredArtifactDef>(2);
+		if (RequiresReason) legacy.Add(new RequiredArtifactDef("reason", Inline: true));
+		if (PreconditionArtifact is not null) legacy.Add(new RequiredArtifactDef(PreconditionArtifact, Inline: false));
+		return legacy;
+	}
+
+	// The EFFECTIVE approval-enforcement decision (declaration separated from its force, spec
+	// methodology-gate-strictness): this transition's own `Enforce.Approval` when set; else the
+	// legacy per-transition `EnforceApproval` OR the owning definition's `strictMode` (either one
+	// demands the capability — matches WorkflowEngine's historical "global flag OR per-transition
+	// flag" OR-not-AND posture, `strictMode` just replaces the caller-supplied global flag as the
+	// definition's own default). Every existing document has EnforceApproval=false and (now)
+	// strictMode=false, so this stays false everywhere it does today.
+	public bool EffectiveEnforceApproval(bool strictMode) => Enforce?.Approval ?? (EnforceApproval || strictMode);
+
+	// The EFFECTIVE artifacts-enforcement decision: this transition's own `Enforce.Artifacts`
+	// when set; else ALWAYS true — reason and precondition artifacts are both hard today
+	// (WorkflowEngine.Validate / GuardEngine.RequirePreconditionArtifacts), unconditionally, with
+	// no existing switch — so an undeclared Enforce reproduces exactly that.
+	public bool EffectiveEnforceArtifacts() => Enforce?.Artifacts ?? true;
 }
+
+// One required comment-artifact of a transition's requiredArtifacts gate (schema v2, spec
+// methodology-gate-strictness — the union of the legacy RequiresReason/PreconditionArtifact
+// pair). `Slug` names the artifact tag (`artifact:<slug>` comment); `Inline` = true means its
+// content rides the SAME call (today only `reason`, via NodePatch.Reason — MethodologyDefinitionValidator
+// rejects `inline:true` for any other slug in v1: no other call field carries inline content).
+// A non-inline artifact must already exist as a comment before the transition fires.
+public sealed record RequiredArtifactDef(string Slug, bool Inline = false);
+
+// What the server actually BLOCKS for one transition's gates (schema v2, spec methodology-gate-
+// strictness) — the "force" half of "declaration separated from its force". Both fields are
+// independently nullable: null on either means "no opinion, fall through to that field's own
+// default" (Approval → the owning definition's StrictMode; Artifacts → always true) — declaring
+// the object at all does not implicitly set the OTHER field's default to something else.
+public sealed record GateEnforcementDef(bool? Approval = null, bool? Artifacts = null);
