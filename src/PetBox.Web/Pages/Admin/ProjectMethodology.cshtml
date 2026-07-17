@@ -40,10 +40,16 @@
 		<div class="card-body p-4">
 			@if (Model.Stored is not null)
 			{
+				@* Definition.Name is the ONE display name (spec methodology-display-name); the
+				   instance key is an internal address, surfaced only to disambiguate a name
+				   collision among open instances — never shown alongside the name otherwise. *@
 				<div class="flex items-baseline gap-2 flex-wrap">
 					<span class="font-semibold">Open instance</span>
-					<span class="font-mono" data-testid="methodology-state-instance">@Model.Stored.Name</span>
 					<span class="font-mono" data-testid="methodology-state-name">@Model.Stored.Definition.Name</span>
+					@if (Model.IsNameCollision(Model.Stored.Definition.Name))
+					{
+						<span class="font-mono opacity-60 text-xs" data-testid="methodology-state-instance" title="disambiguated by instance key">(@Model.Stored.Name)</span>
+					}
 					<span class="badge badge-ghost badge-sm font-mono" data-testid="methodology-state-version">version @Model.Stored.Version</span>
 				</div>
 				@if (Model.OpenInstances.Count > 1)
@@ -53,7 +59,7 @@
 						{
 							var href = $"?instance={Uri.EscapeDataString(inst.Name)}";
 							var viewing = string.Equals(inst.Name, Model.Stored.Name, StringComparison.OrdinalIgnoreCase);
-							<a href="@href" class="badge @(viewing ? "badge-primary" : "badge-ghost") badge-sm font-mono" data-testid="methodology-instance-pick">@inst.Name</a>
+							<a href="@href" class="badge @(viewing ? "badge-primary" : "badge-ghost") badge-sm font-mono" data-testid="methodology-instance-pick">@Model.DisplayLabel(inst)</a>
 						}
 					</div>
 				}
@@ -74,7 +80,7 @@
 							}
 							else
 							{
-								<text>active default: <span class="font-mono">@Model.EffectiveActiveInstance</span></text>
+								<text>active default: <span class="font-mono">@Model.EffectiveActiveInstanceDisplay</span></text>
 							}
 						</span>
 						<form method="post" asp-page-handler="Activate" style="display:inline">
