@@ -136,6 +136,16 @@ public sealed class MethodologyRuntime
 		(kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind) ? kind.BlocksGate : null)
 			?? MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).BlocksGate;
 
+	// The preferred board name for a kind (spec primitives-enum-residual, "имя доски из слага
+	// вида"): the SAME field-level merge as DefaultView/OutlineReveal/Singleton/BlocksGate above
+	// — a display-only opinion, not process semantics. Null = no opinion from either the
+	// definition or the preset — PickBoardName falls back to its slug-derived candidates exactly
+	// as before this field existed. No preset declares this today (every preset's natural board
+	// name already equals its kind slug), so the preset half is currently always null; it exists
+	// so a custom-declared kind can name its board something other than its own slug.
+	public string? BoardName(string? kindSlug) =>
+		DeclaredField(kindSlug, k => k.BoardName) ?? PresetField(kindSlug, k => k.BoardName);
+
 	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
 	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
 	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).

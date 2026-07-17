@@ -37,12 +37,12 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 
 	// Provision a methodology preset's board(s) if missing and (quartet only) auto-wire
-	// work->spec. `preset` selects the board set (default "quartet" = intake/ideas/spec/work;
-	// unknown slug is a clear error). Idempotent for the quartet (its kinds are one-per-
-	// project); a non-singleton preset (e.g. "classic") just leaves an existing board alone.
-	// Returns what THIS preset provisioned — NOT the quartet surface (GetMethodologyAsync's
-	// job; irrelevant to a non-quartet preset).
-	Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default);
+	// work->spec. `preset` selects the board set (default MethodologyPresets.
+	// DefaultProvisioningPreset = "quartet" = intake/ideas/spec/work; unknown slug is a clear
+	// error). Idempotent for the quartet (its kinds are one-per-project); a non-singleton preset
+	// (e.g. "classic") just leaves an existing board alone. Returns what THIS preset provisioned
+	// — NOT the quartet surface (GetMethodologyAsync's job; irrelevant to a non-quartet preset).
+	Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = MethodologyPresets.DefaultProvisioningPreset, CancellationToken ct = default);
 	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
