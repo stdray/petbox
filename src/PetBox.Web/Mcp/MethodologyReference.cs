@@ -36,6 +36,7 @@ static class MethodologyReference
 		[typeof(MethodologyDefInput)] = "definition",
 		[typeof(MethodologyKindInput)] = "kind",
 		[typeof(MethodologyDeliveryInput)] = "delivery",
+		[typeof(MethodologyBlocksGateInput)] = "blocksGate",
 		[typeof(MethodologyWorkflowInput)] = "workflow",
 		[typeof(MethodologyStatusInput)] = "status",
 		[typeof(MethodologyTransitionInput)] = "transition",
@@ -71,6 +72,16 @@ static class MethodologyReference
 				["delivery"] = "The bottom-up delivery roll-up for this kind (a spec node's verdict computed from the work nodes linked to it). Omitted = this kind computes no delivery.",
 				["defaultView"] = "The board's initial view mode when a viewer has no saved preference. Omitted = the builtin default.",
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
+				["singleton"] = "true = at most one open board of this kind per methodology instance (the quartet's work/spec/ideas/intake are singleton; classic/simple are not). Omitted = falls back to the builtin preset of the same slug, else not singleton.",
+				["blocksGate"] = "The blocking-gate statuses: a node in `status` must name a blocker (a STATE invariant checked on every write, not a transition gate); a released node moves to `releaseTo`. Omitted = this kind has no blocking gate (falls back to the builtin preset of the same slug, else none) — only work is gated today, but a definition can opt any kind in.",
+				["boardName"] = "The preferred board name for this kind, tried FIRST when a board of this kind is provisioned (still subject to the usual name-collision/reserved-name rules). Omitted = no opinion — the board is named from the kind slug as before.",
+			}),
+		Describe<MethodologyBlocksGateInput>(
+			"The blocking-gate statuses of a kind (spec methodology-blocks-gate-data).",
+			new()
+			{
+				["status"] = "The status a node of this kind must name a blocker to enter or hold (e.g. \"Blocked\").",
+				["releaseTo"] = "The status a released node moves to when its last blocker resolves (e.g. \"InProgress\").",
 			}),
 		Describe<MethodologyDeliveryInput>(
 			"The delivery roll-up definition: how a node of the OWNING kind derives its verdict (not_started | in_progress | done | done_with_defects) from the nodes linked to it. Omit the whole object and the kind computes no delivery at all — the roll-up is gated by this DATA, so an absent definition silently disables the feature (work/delivery-rollup-is-vacuous-in-prod).",
@@ -117,14 +128,15 @@ static class MethodologyReference
 				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an ideaRef must point at an ACCEPTED idea). Omitted = any status.",
 			}),
 		Describe<MethodologyEffectInput>(
-			"A kind-level transition effect: when a node of this kind ENTERS status `on`, linked nodes are moved — the data form of cross-board automation like \"work Done closes the intake issues that spawned it\".",
+			"A kind-level transition effect: when a node of this kind ENTERS status `on` (default) or LEAVES it (`onLeave`, Effect.onLeave), linked nodes are moved — the data form of cross-board automation like \"work Done closes the intake issues that spawned it\", or \"leaving Blocked closes the incoming blocks edges\".",
 			new()
 			{
 				["on"] = "The trigger status (a status this kind's blocks declare).",
 				["link"] = $"The relation kind traversed ({BuiltinRelationKinds}, or a declared linkKind).",
 				["direction"] = "incoming | outgoing — whether the traversed edge points AT this node (incoming) or FROM it (outgoing).",
-				["set"] = "The status linked nodes are set to (a status of the LINKED node's kind — resolved at runtime).",
+				["set"] = "The status linked nodes are set to (a status of the LINKED node's kind — resolved at runtime). Omitted = a pure edge-consumption effect (no status propagated).",
 				["onlyFrom"] = "Optionally restrict the effect to linked nodes currently in this status (e.g. only Blocked nodes unblock).",
+				["onLeave"] = "true = fire when a node of this kind LEAVES `on` instead of entering it (Effect.onLeave). Default false (enter).",
 			}),
 		Describe<MethodologyLinkKindInput>(
 			"A project-declared relation kind: a free semantic edge with no FSM effects, usable in relations_create.",

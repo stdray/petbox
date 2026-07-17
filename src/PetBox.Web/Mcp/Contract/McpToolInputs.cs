@@ -117,6 +117,23 @@ public sealed record MethodologyKindInput
 	// Mirrors MethodologyKindDef.OutlineReveal (OutlineRevealModeNames). Null = builtin
 	// default.
 	public string? OutlineReveal { get; init; }
+	// Mirrors MethodologyKindDef.Singleton: true = at most one open board of this kind per
+	// methodology instance. Null = no opinion (falls back to the preset's, else false).
+	public bool? Singleton { get; init; }
+	// Mirrors MethodologyKindDef.BlocksGate: the blocking-gate statuses (a node in `status`
+	// must name a blocker; a released node moves to `releaseTo`). Null = this kind has no
+	// blocking gate.
+	public MethodologyBlocksGateInput? BlocksGate { get; init; }
+	// Mirrors MethodologyKindDef.BoardName: the preferred board name for this kind, tried
+	// first by PickBoardName. Null = no opinion (falls back to the kind-slug-derived names).
+	public string? BoardName { get; init; }
+}
+
+// Mirrors MethodologyBlocksGateDef 1:1 (see the parity note on MethodologyKindInput above).
+public sealed record MethodologyBlocksGateInput
+{
+	public string? Status { get; init; }
+	public string? ReleaseTo { get; init; }
 }
 
 // Mirrors MethodologyDeliveryDef 1:1 (see the parity note on MethodologyKindInput above).
@@ -138,10 +155,11 @@ public sealed record MethodologyLinkConstraintInput
 	public string[]? TargetStatuses { get; init; }
 }
 
-// One declared transition effect of a kind: when a node of this kind ENTERS status `on`,
-// linked nodes over relation kind `link` in `direction` (incoming|outgoing) are set to
-// status `set`; `onlyFrom` optionally restricts the effect to linked nodes currently in
-// that status.
+// One declared transition effect of a kind: when a node of this kind ENTERS status `on`
+// (default), or LEAVES it (`onLeave: true`, Effect.onLeave), linked nodes over relation kind
+// `link` in `direction` (incoming|outgoing) are set to status `set`; `onlyFrom` optionally
+// restricts the effect to linked nodes currently in that status. `set` omitted = a pure
+// edge-consumption effect (no status propagated to the linked node).
 public sealed record MethodologyEffectInput
 {
 	public string? On { get; init; }
@@ -149,6 +167,7 @@ public sealed record MethodologyEffectInput
 	public string? Direction { get; init; }
 	public string? Set { get; init; }
 	public string? OnlyFrom { get; init; }
+	public bool OnLeave { get; init; }
 }
 
 // A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not

@@ -172,6 +172,19 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		ValidateDelivery(kind, ctx);
 		ValidateDefaultView(kind, ctx);
 		ValidateOutlineReveal(kind, ctx);
+		ValidateBoardName(kind, ctx);
+	}
+
+	// BoardName is a board-name candidate PickBoardName tries first (spec primitives-enum-
+	// residual) — format-checked against the same slug spec TaskBoardStore.CreateAsync enforces
+	// on every board name. The "node"-reserved / already-taken skip is PickBoardName's own
+	// runtime concern (a definition-time check here can't see sibling instances' boards), so
+	// this only rejects a shape that could never be a valid board name at all.
+	static void ValidateBoardName(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.BoardName is null) return;
+		if (!IsSlug(kind.BoardName))
+			ctx.AddFailure($"kind '{kind.Kind}': boardName '{kind.BoardName}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
 	}
 
 	// DefaultView names a BoardViewModeNames entry (methodology-default-view-field). Format-
@@ -266,31 +279,34 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		}
 	}
 
-	// Transition effects (schema v2): `On` triggers on the OWNING kind's own statuses;
-	// `Link` must be a relation kind the project knows (builtin process/neutral or a
-	// definition-declared linkKind); `Direction` is incoming|outgoing; `Set`/`OnlyFrom`
-	// name statuses of the LINKED node's kind — cross-kind, so format-checked only (no
-	// static resolution); an (On, Link, Direction) triple is declared at most once.
+	// Transition effects (schema v2 + Effect.onLeave, methodology-blocks-gate-data): `On`
+	// triggers on the OWNING kind's own statuses (entered by default, LEFT when `OnLeave` is
+	// true); `Link` must be a relation kind the project knows (builtin process/neutral or a
+	// definition-declared linkKind); `Direction` is incoming|outgoing; `Set` is OPTIONAL (null =
+	// a pure edge-consumption effect, no status propagated) — when present, `Set`/`OnlyFrom`
+	// name statuses of the LINKED node's kind, cross-kind so format-checked only (no static
+	// resolution); an (On, Link, Direction, OnLeave) quadruple is declared at most once — an
+	// onEnter and an onLeave effect may legitimately share the same (On, Link, Direction).
 	static void ValidateEffects(
 		MethodologyKindDef kind, HashSet<string> kindStatuses, HashSet<string> knownLinks,
 		ValidationContext<MethodologyDefinition> ctx)
 	{
-		var seen = new HashSet<(string, string, string)>();
+		var seen = new HashSet<(string, string, string, bool)>();
 		foreach (var e in kind.Effects ?? [])
 		{
-			var label = $"kind '{kind.Kind}': effect (on {e.On}, {e.Direction} {e.Link} -> {e.Set})";
+			var label = $"kind '{kind.Kind}': effect ({(e.OnLeave ? "leave" : "on")} {e.On}, {e.Direction} {e.Link} -> {e.Set ?? "(closed)"})";
 			if (string.IsNullOrWhiteSpace(e.On) || !kindStatuses.Contains(e.On))
 				ctx.AddFailure($"{label}: 'on' '{e.On}' is not a status this kind's workflow blocks declare (statuses: {string.Join("|", kindStatuses)})");
 			if (!EffectDirections.Contains(e.Direction ?? "", StringComparer.OrdinalIgnoreCase))
 				ctx.AddFailure($"{label}: direction '{e.Direction}' is not valid ({string.Join("|", EffectDirections)})");
 			if (!knownLinks.Contains(e.Link ?? ""))
 				ctx.AddFailure($"{label}: link '{e.Link}' is not a relation kind this project knows (builtin: {string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds))}; or declare it in linkKinds)");
-			if (!IsStatusSlug(e.Set))
+			if (e.Set is not null && !IsStatusSlug(e.Set))
 				ctx.AddFailure($"{label}: 'set' '{e.Set}' is not a valid status slug (^[a-zA-Z][a-zA-Z0-9_-]{{0,99}}$)");
 			if (e.OnlyFrom is not null && !IsStatusSlug(e.OnlyFrom))
 				ctx.AddFailure($"{label}: onlyFrom '{e.OnlyFrom}' is not a valid status slug (^[a-zA-Z][a-zA-Z0-9_-]{{0,99}}$)");
-			if (!seen.Add((e.On?.ToLowerInvariant() ?? "", e.Link?.ToLowerInvariant() ?? "", e.Direction?.ToLowerInvariant() ?? "")))
-				ctx.AddFailure($"kind '{kind.Kind}': duplicate effect (on {e.On}, {e.Direction} {e.Link}) — one declaration per (on, link, direction)");
+			if (!seen.Add((e.On?.ToLowerInvariant() ?? "", e.Link?.ToLowerInvariant() ?? "", e.Direction?.ToLowerInvariant() ?? "", e.OnLeave)))
+				ctx.AddFailure($"kind '{kind.Kind}': duplicate effect ({(e.OnLeave ? "leave" : "on")} {e.On}, {e.Direction} {e.Link}) — one declaration per (on, link, direction, onLeave)");
 		}
 	}
 

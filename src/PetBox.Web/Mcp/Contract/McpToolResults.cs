@@ -653,7 +653,13 @@ public sealed record MethodologyKindView(
 	string? AutoWireSpecFrom = null,
 	MethodologyDeliveryView? Delivery = null,
 	string? DefaultView = null,
-	string? OutlineReveal = null);
+	string? OutlineReveal = null,
+	bool? Singleton = null,
+	MethodologyBlocksGateView? BlocksGate = null,
+	string? BoardName = null);
+
+// Mirrors MethodologyBlocksGateDef 1:1 — the output-side counterpart of MethodologyBlocksGateInput.
+public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);
 
 // Mirrors MethodologyDeliveryDef 1:1 — the output-side counterpart of MethodologyDeliveryInput.
 public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes);
@@ -665,10 +671,11 @@ public sealed record MethodologyLinkConstraintView(
 	string Type, string Link,
 	string? TargetKind = null, IReadOnlyList<string>? TargetStatuses = null);
 
-// One declared transition effect: on entering `on`, `direction` `link` nodes are set to
-// `set` (`onlyFrom` = only linked nodes currently in that status; null = any, omitted).
+// One declared transition effect: on entering (default) or leaving (`onLeave`, Effect.onLeave)
+// `on`, `direction` `link` nodes are set to `set` (`onlyFrom` = only linked nodes currently in
+// that status; null = any, omitted). `set` null/omitted = a pure edge-consumption effect.
 public sealed record MethodologyEffectView(
-	string On, string Link, string Direction, string Set, string? OnlyFrom = null);
+	string On, string Link, string Direction, string? Set, string? OnlyFrom = null, bool OnLeave = false);
 
 // A project-declared relation kind (free semantic edge, no FSM effects).
 public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
