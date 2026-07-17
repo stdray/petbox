@@ -697,10 +697,12 @@ public static class TasksTools
 		closed nodes are HIDDEN unless includeClosed=true (closed part_of ancestors of a
 		visible node are kept so the tree stays connected). With `q`: a RELEVANCE selection
 		via hybrid search over name/body/tags (lexical FTS5 ⊕ semantic vectors, RRF-fused;
-		semantic is silently absent when no embedding is configured) over the OPEN
-		(non-terminal) set; the fused ranking supplies a bounded candidate pool of
-		max(3×limit, 50). Default order: relevance; the response carries `retrievers`
-		{lexical, semantic, degraded}.
+		semantic is silently absent when no embedding is configured); the fused ranking
+		supplies a bounded candidate pool of max(3×limit, 50). A default query already
+		reaches terminal-OK nodes (accepted on ideas, Done on work — a SUCCESS state, not
+		"closed"; search-before-rework needs to find these). Terminal-CANCEL nodes
+		(rejected/cancelled) stay hidden unless includeClosed=true, same as listing. Default
+		order: relevance; the response carries `retrievers` {lexical, semantic, degraded}.
 
 		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
 		empty result, never an error): `under` = a part_of subtree root (slug or NodeId; a slug
@@ -721,7 +723,10 @@ public static class TasksTools
 
 		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
-		"exact" = an exact slug match); a semantic-only hit below the relevance floor is
+		"exact" = an exact slug/NodeId match — tried literally AND as a kebab-normalized
+		candidate, so "methodology redesign" also reaches the `methodology-redesign` slug;
+		an exact hit ignores includeClosed entirely, terminal or not); a semantic-only hit
+		below the relevance floor is
 		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows). COMMENTS
 		are searched too (lexical leg): a comment match returns its OWNER node row marked
 		`matchedIn:"comment"` (spec tasks-search-comments); a plain node match leaves it null.
@@ -757,7 +762,7 @@ public static class TasksTools
 		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? under = null,
 		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
 		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? keys = null,
-		[LogArg][Description("Include terminal/closed nodes in a listing (search covers the open set only).")] bool includeClosed = false,
+		[LogArg][Description("Include terminal-CANCEL (rejected/cancelled) nodes. Works in BOTH modes: widens a listing to every closed node; with q, additionally surfaces terminal-CANCEL nodes in the relevance selection (a default query already reaches terminal-OK — accepted/Done — regardless of this flag).")] bool includeClosed = false,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,

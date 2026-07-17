@@ -164,8 +164,10 @@ public enum TaskSortBy
 // slug or NodeId; resolved cross-board when Board is null). `Status` keeps only the named
 // slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without
 // IncludeClosed. `Keys` addresses specific nodes (slug|NodeId mixed, resolved like
-// tasks_node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens
-// a listing to terminal nodes (query mode searches the open set only).
+// tasks_node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens a
+// listing to terminal nodes; in query mode (search-hides-terminal-nodes) a default query
+// already surfaces terminal-OK (accepted/Done — a success state, not "closed") and
+// IncludeClosed additionally surfaces terminal-CANCEL (rejected/cancelled).
 public sealed record TaskNodeFilter(
 	string? Board = null,
 	string? Under = null,

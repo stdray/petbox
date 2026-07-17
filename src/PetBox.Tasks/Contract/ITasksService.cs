@@ -255,10 +255,12 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	//     carry their board), default order priority-then-key, overridable by Sort
 	//     (created/updated/title/priority; Relevance is rejected without a query).
 	//   With Query → relevance SELECTION over the hybrid machinery (lexical FTS ⊕ semantic
-	//     vectors, RRF-fused; open set only): the lexical/filter side is a PREDICATE, the
-	//     fused ranking supplies a bounded CANDIDATE POOL of max(3×limit, 50); default
-	//     order = fused relevance, an explicit Sort reorders WITHIN the selected set.
-	//     Retrievers provenance is filled.
+	//     vectors, RRF-fused): the lexical/filter side is a PREDICATE, the fused ranking
+	//     supplies a bounded CANDIDATE POOL of max(3×limit, 50); default order = fused
+	//     relevance, an explicit Sort reorders WITHIN the selected set. Retrievers provenance
+	//     is filled. search-hides-terminal-nodes: a default query already reaches terminal-OK
+	//     (accepted/Done — a success state); terminal-CANCEL (rejected/cancelled) needs
+	//     IncludeClosed, same as listing.
 	// Filter fields (board/under/status/keys/includeClosed) narrow the pool in both modes;
 	// a terminal status named in Status — and any node addressed via Keys — returns without
 	// IncludeClosed (an explicit ask). BodyLen slices row bodies (0 = full); Limit caps rows
@@ -267,7 +269,10 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
 	// Exact-identifier surfacing for SEARCH surfaces (spec exact-identifier-search-surfacing):
 	// resolve `identifier` (a slug or 32-hex NodeId) to EVERY exactly-matching node — including
-	// terminal/closed nodes the relevance index omits — each carrying its board. Unlike
+	// terminal/closed nodes a default query-mode search would otherwise hide — each carrying its
+	// board. `identifier` is tried literally AND as a kebab-normalized candidate (trim, collapse
+	// internal whitespace/underscores to one hyphen, casefold — search-hides-terminal-nodes),
+	// so "methodology redesign" also reaches the `methodology-redesign` slug. Unlike
 	// ResolveNodeRefAsync (a WRITE-addressing resolver that throws on a miss/ambiguity), this is
 	// a soft read: a miss is an empty list, and a slug living on several boards returns ALL of
 	// them (ambiguity is not an error in search). Ordered by board for a stable multi-board

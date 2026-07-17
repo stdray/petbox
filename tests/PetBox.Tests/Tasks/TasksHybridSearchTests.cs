@@ -70,8 +70,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 		new() { Key = key, Version = 0, Title = title, Body = body };
 
 	// Query-mode request for the unified read verb (list = search without a query).
-	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null) =>
-		new() { Query = q, Filter = new TaskNodeFilter(board) };
+	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, bool includeClosed = false) =>
+		new() { Query = q, Filter = new TaskNodeFilter(board, IncludeClosed: includeClosed) };
 
 	[Fact]
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
@@ -199,11 +199,12 @@ public sealed class TasksHybridSearchTests : IDisposable
 	}
 
 	[Fact]
-	public async Task TerminalNode_LeavesTheOpenSetIndex()
+	public async Task TerminalCancelNode_LeavesTheDefaultQuery()
 	{
-		// Tasks search covers only the OPEN set. Moving a node to a terminal status must drop it
-		// from the index — and that drop rides the entity transaction (onWithinTx), not a separate
-		// post-commit rebuild.
+		// search-hides-terminal-nodes (defect 2, owner decision): a default query-mode search
+		// hides ONLY terminal-CANCEL (rejected/cancelled) — moving a node to Cancelled must drop
+		// it from a plain content query's result. TerminalOk (Done) does NOT leave the default
+		// query — see TerminalOkNode_StaysInTheDefaultQuery.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
@@ -211,30 +212,115 @@ public sealed class TasksHybridSearchTests : IDisposable
 
 		var view = await tasks.GetAsync(Proj, "b", includeClosed: false);
 		var version = view.Nodes.First(n => n.Key == "keepme").Version;
-		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "keepme", Version = version, Status = "Done" }]);
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "keepme", Version = version, Status = "Cancelled" }]);
 
 		(await tasks.SearchNodesAsync(Proj, Query("alpha"))).Hits.Should().BeEmpty();
 	}
 
 	[Fact]
-	public async Task ExactSlug_SurfacesTerminalNode_EvenThoughNotIndexed()
+	public async Task TerminalOkNode_StaysInTheDefaultQuery()
+	{
+		// search-hides-terminal-nodes (defect 2, owner decision): terminal-OK (Done on work,
+		// accepted on ideas) is a SUCCESS state, not "closed" — it is the anchor
+		// search-before-rework needs to reach, so a default query-mode search must still find
+		// it after the transition, with no includeClosed needed.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
+		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "keepme").Version;
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "keepme", Version = version, Status = "Done" }]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
+		res.Hits.Select(h => h.Node.Key).Should().Equal("keepme");
+		res.Hits[0].Node.Status.Should().Be("Done");
+	}
+
+	[Fact]
+	public async Task ExactSlug_SurfacesTerminalCancelNode_EvenThoughHiddenByDefault()
 	{
 		// exact-slug-lookup-terminal-nodes: a q that IS an existing node's slug must return the
-		// node even after it goes terminal (dropped from the open-set index). Before the escape
-		// hatch this returned empty; now it rides GetNodeAsync (includeClosed) and leads the hits.
+		// node even after it goes terminal-CANCEL — hidden from the default query-mode pool per
+		// search-hides-terminal-nodes, but the exact escape hatch (GetNodeAsync, includeClosed
+		// internally) ignores that filter entirely and leads the hits with no includeClosed
+		// needed on the request.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("kql-spans-query", "spans note", "some body")]);
 		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "kql-spans-query").Version;
-		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "kql-spans-query", Version = version, Status = "Done" }]);
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "kql-spans-query", Version = version, Status = "Cancelled" }]);
 
-		// Sanity: it's out of the relevance index (a plain content query no longer finds it).
+		// Sanity: hidden from the default relevance pool (a plain content query finds nothing).
 		(await tasks.SearchNodesAsync(Proj, Query("spans"))).Hits.Should().BeEmpty();
 
-		// The exact-slug q surfaces it regardless of terminality.
+		// The exact-slug q surfaces it regardless of terminality — no includeClosed needed.
 		var res = await tasks.SearchNodesAsync(Proj, Query("kql-spans-query"));
 		res.Hits.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
-		res.Hits[0].Node.Status.Should().Be("Done");
+		res.Hits[0].Node.Status.Should().Be("Cancelled");
+		res.Hits[0].Retriever.Should().Be("exact");
+	}
+
+	[Fact]
+	public async Task ExactNodeId_SurfacesTerminalCancelNode_IgnoringTheFilter()
+	{
+		// Regression: an exact 32-hex NodeId query must still resolve via the exact escape
+		// hatch — rank first, retriever "exact" — and ignore the terminal-CANCEL filter
+		// entirely, same as an exact slug does.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("target-node", "target note", "some body")]);
+		var before = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "target-node");
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "target-node", Version = before.Version, Status = "Cancelled" }]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query(before.NodeId));
+
+		res.Hits.Select(h => h.Node.Key).Should().Equal("target-node");
+		res.Hits[0].Retriever.Should().Be("exact");
+		res.Hits[0].Score.Should().BeNull();
+		res.Hits[0].Node.Status.Should().Be("Cancelled");
+	}
+
+	[Fact]
+	public async Task IncludeClosed_SurfacesTerminalCancelNode_InRankedQuery()
+	{
+		// search-hides-terminal-nodes (defect 3): includeClosed:true with q is no longer a
+		// silent no-op — it widens the RANKED candidate pool to terminal-CANCEL nodes too,
+		// symmetric with listing mode's includeClosed. Uses a content match (not the slug) so
+		// the exact escape hatch can't be the one doing the work.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("scrapped-widget", "scrapped widget note", "the marmot keyword lives here")]);
+		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "scrapped-widget").Version;
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "scrapped-widget", Version = version, Status = "Cancelled" }]);
+
+		// Regression: hidden by default.
+		(await tasks.SearchNodesAsync(Proj, Query("marmot"))).Hits.Should().BeEmpty();
+
+		// includeClosed:true actually widens the search now.
+		var widened = await tasks.SearchNodesAsync(Proj, Query("marmot", "b", includeClosed: true));
+		widened.Hits.Select(h => h.Node.Key).Should().Equal("scrapped-widget");
+		widened.Hits[0].Node.Status.Should().Be("Cancelled");
+		widened.Hits[0].Retriever.Should().Be("lexical");
+	}
+
+	[Fact]
+	public async Task SlugWords_SpacedQuery_FindsTheKebabSlug_ViaNormalizedExact()
+	{
+		// search-hides-terminal-nodes (defect 1): a q that is the slug's WORDS separated by
+		// spaces — not the verbatim kebab slug — must still hit the exact escape hatch via a
+		// normalized kebab candidate (trim, collapse whitespace/underscores to one hyphen,
+		// casefold), tried as a SECOND candidate behind the literal identifier. The node's
+		// prose carries no Latin tokens, so a fused lexical/semantic hit can't be the one
+		// doing the work here — only the normalized exact path can find it.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b",
+			[Node("methodology-redesign", "Редизайн методологии", "Полное описание передела процесса.")]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("methodology redesign"));
+
+		res.Hits.Select(h => h.Node.Key).Should().Equal("methodology-redesign");
+		res.Hits[0].Retriever.Should().Be("exact");
+		res.Hits[0].Score.Should().BeNull();
 	}
 
 	[Fact]
@@ -364,6 +450,12 @@ public sealed class TasksHybridSearchTests : IDisposable
 		// The slug now leads the indexed text, so the lexical leg carries the query across the
 		// English-identifier / Russian-prose divide. llm: null → no semantic leg can rescue this;
 		// what passes here passes lexically or not at all.
+		//
+		// Word order is SHUFFLED on purpose (search-hides-terminal-nodes, defect 1): the slug's
+		// words IN ORDER now also normalize into the verbatim slug and resolve via the exact
+		// escape hatch (see SlugWords_SpacedQuery_FindsTheKebabSlug_ViaNormalizedExact) — a
+		// stronger, addressed result. Reordering keeps this test proving the INDEPENDENT lexical
+		// bridge (order-agnostic FTS matching), which the exact/kebab candidate does not cover.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b",
@@ -372,7 +464,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 				"Как выглядит путь от идеи до спека глазами агента."),
 		]);
 
-		var res = await tasks.SearchNodesAsync(Proj, Query("methodology lifecycle ux"));
+		var res = await tasks.SearchNodesAsync(Proj, Query("ux lifecycle methodology"));
 
 		res.Retrievers!.Value.Lexical.Should().BeTrue();
 		res.Hits.Select(h => h.Node.Key).Should().Equal("methodology-lifecycle-ux");

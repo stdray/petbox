@@ -325,6 +325,13 @@ public sealed class MethodologyRuntime
 	public bool IsTerminalStatus(string? kindSlug, string statusSlug) =>
 		StatusKindOf(kindSlug, statusSlug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
+	// Per-board terminal-CANCEL classification (search-hides-terminal-nodes): the half of
+	// "terminal" that stays hidden from a default query-mode search. TerminalOk (accepted on
+	// ideas, Done on work) is a SUCCESS state — the anchor search-before-rework needs to reach
+	// — so it is deliberately NOT covered by this predicate; only rejected/cancelled is.
+	public bool IsTerminalCancelStatus(string? kindSlug, string statusSlug) =>
+		StatusKindOf(kindSlug, statusSlug) is StatusKind.TerminalCancel;
+
 	// The human display Name for a status on a board — the ONE place the UI turns a stored slug
 	// into a label (status badge + status-change select), so PascalCase work statuses and
 	// lowercase methodology statuses read consistently ("In progress", "Defined"). A DEFINED kind

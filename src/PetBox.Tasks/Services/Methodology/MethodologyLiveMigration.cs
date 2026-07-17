@@ -150,9 +150,9 @@ public sealed class MethodologyLiveMigration
 
 	// Apply one board's repair batch as new temporal revisions (baseline = the version just
 	// read, so a concurrent writer is still caught). Mirrors UpsertAsync's Class-A search
-	// hygiene: inside the same transaction a node that stays in the open set is re-indexed
-	// and a node whose new status is terminal leaves the index; vectors are the async
-	// worker's job, as everywhere.
+	// hygiene: inside the same transaction every node with an identity is re-indexed,
+	// terminal or not (search-hides-terminal-nodes); vectors are the async worker's job,
+	// as everywhere.
 	public async Task<int> RewriteAsync(
 		TasksDb ctx, string projectKey, string board, List<PlanNode> nodes, MethodologyRuntime runtime, CancellationToken ct)
 	{
@@ -165,7 +165,7 @@ public sealed class MethodologyLiveMigration
 					if (TasksSearchDocs.IsIndexable(n, runtime))
 						await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
 					else
-						await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
+						await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // lost its identity (rare)
 			},
 			partition: n => n.Board == board, ct: ct);
 		if (!r.Applied)

@@ -137,7 +137,8 @@ public sealed partial class SearchReindexService
 
 	// Tasks: one file per project, all boards inside; the vector cursor of a board is the BARE board
 	// name (TasksVectorizationJob) — no prefix, so the enumerated-names rule matters even more here.
-	// ActiveDocs counts the OPEN set (TasksSearchDocs.IsIndexable), which is what the index carries.
+	// ActiveDocs counts every live, identity-bearing node (TasksSearchDocs.IsIndexable) — since
+	// search-hides-terminal-nodes that includes terminal nodes too, which is what the index carries.
 	// The lexical marker is ONE row for the whole file (TasksCursors.Lexical) — nodes and comments
 	// share the single TasksSearchDocs projection, so there is nothing to enumerate per board.
 	async Task<ReindexTierResult> ResetTasksAsync(string projectKey, CancellationToken ct)
