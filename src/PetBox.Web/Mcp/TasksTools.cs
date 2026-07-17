@@ -20,11 +20,11 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the instance this board belongs to (required once the project has any methodology instance — board_create without an instance is then rejected). `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance name, or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? specBoard = null,
-		[Description("Methodology instance this board belongs to (required when the project has any instance).")] string? methodologyInstance = null,
+		[Description("The board's world: a methodology instance name, or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -34,12 +34,12 @@ public static class TasksTools
 		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt, meta.MethodologyInstance);
 	}
 
-	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
-	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. GOVERNANCE: this re-points an existing board's live nodes at another instance's rules — requires tasks:write AND methodology:write.")]
+	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance, or release it to the utility layer", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
+	[Description("Move (adopt) an existing board into a methodology instance, OR release it into the project's utility layer (spec methodology-utility-kinds) by passing the reserved sentinel \"$utility\" — a board's world changes exactly once per call, never to \"no world\". Enforces process-role singleton (≤1 open board per singleton kind) INSIDE the target (the instance, or the utility bucket). A named instance target must be open; releasing to \"$utility\" rejects a kind the utility layer does not declare and no builtin resolves — declare it first (tasks_methodology_utility_upsert). GOVERNANCE: this re-points an existing board's live nodes at another world's rules — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardAdoptResult> BoardAdoptAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Target methodology instance name.")] string methodologyInstance,
+		[Description("Target: a methodology instance name, or \"$utility\" to release the board into the project's utility layer.")] string methodologyInstance,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -378,6 +378,76 @@ public static class TasksTools
 		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
 			projectKey, name, def, version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_utility_get", Title = "Get the project's utility-kind layer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyUtilityGetResult))]
+	[Description("""
+		Return the project's UTILITY LAYER of kinds (spec methodology-utility-kinds) — kinds
+		homed on the project rather than inside a methodology instance, so they exist
+		independently of the active methodology and survive its switch. Same document shape
+		as tasks_methodology_rules_get/template_get (kinds/workflows/linkConstraints/effects/
+		linkKinds/tagAxes), plus the version baseline for tasks_methodology_utility_upsert. A
+		board with no instance membership (methodologyInstance omitted, or the reserved
+		"$utility" sentinel on tasks_board_create/tasks_board_adopt) resolves its kind against
+		this document; an undeclared kind falls back to the built-in presets (simple|classic).
+		Found=false when the project has never defined a utility layer (everything then
+		resolves from presets alone) — not an error. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyUtilityGetResult> MethodologyUtilityGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
+		if (view is null)
+			return new MethodologyUtilityGetResult(Found: false);
+		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
+		return new MethodologyUtilityGetResult(
+			Found: true,
+			DefinitionName: doc.Name,
+			Kinds: doc.Kinds,
+			Version: view.Version,
+			Created: view.Created,
+			Updated: view.Updated,
+			LinkKinds: doc.LinkKinds,
+			TagAxes: doc.TagAxes);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_utility_upsert", Title = "Edit the project's utility-kind layer (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyUtilityUpsertResult))]
+	[Description("""
+		Replace the project's UTILITY LAYER of kinds (spec methodology-utility-kinds) with
+		optimistic concurrency and declarative live-node migration — the same document shape
+		and CAS discipline as tasks_methodology_rules_upsert, scoped to the project instead of
+		one instance. `version` is the watermark baseline from tasks_methodology_utility_get (a
+		stale/future baseline is a clear conflict). A CHANGE is validated against LIVE NODES on
+		every board with NO instance membership (methodologyInstance omitted, or "$utility"):
+		every active node whose board kind the old or new document declares must fit the new
+		resolution; an incompatible node with no `migration` entry REJECTS the whole call naming
+		board/node/value — nothing is written. Declaring a kind here does NOT move any board —
+		use tasks_board_adopt(methodologyInstance:"$utility") to release an existing board out
+		of its instance once the kind it needs is declared. GOVERNANCE: this changes the rules
+		that already govern existing utility-homed nodes — requires tasks:write AND
+		methodology:write.
+		""")]
+	public static async Task<MethodologyUtilityUpsertResult> MethodologyUtilityUpsertAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("The whole utility-layer document (same shape as tasks_methodology_rules_upsert).")] MethodologyDefInput definition,
+		[Description("Watermark baseline: the `version` from your last tasks_methodology_utility_get (0 = create).")] long version = 0,
+		[Description("Per-kind {from,to} type/status repairs for live utility-homed nodes the change would strand.")] MethodologyMigrationInput[]? migration = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// Same governance posture as rules_upsert: this rewrites the rules that already
+		// govern every live utility-homed node. Gated.
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
+		var def = MethodologyWire.ParseDefinition(definition);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, def, version, MethodologyWire.ParseMigration(migration), ct);
+		return new MethodologyUtilityUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
 	[McpServerTool(Name = "tasks_methodology_describe", Title = "Describe one methodology primitive (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDescribeResult))]

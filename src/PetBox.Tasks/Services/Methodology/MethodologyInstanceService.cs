@@ -319,13 +319,19 @@ public sealed partial class MethodologyInstanceService
 		return (await _boards.FindAsync(projectKey, board, ct))!;
 	}
 
-	// Process-role singleton: ≤1 open board of a singleton kind per instance (or per legacy
-	// null-membership bucket). Cardinality is DATA on the kind (MethodologyKindDef.Singleton,
-	// resolved through `runtime` — the definition's own declaration when it declares the kind,
-	// else the preset's for the same slug) — was gated on membership in the `BoardKind` enum,
-	// which meant a custom-declared kind could never opt in (spec methodology-kind-singleton).
-	// The quartet's four preset kinds (work/spec/ideas/intake) declare Singleton=true;
-	// classic/simple declare none (⇒ false) and stay unlimited, unchanged from before.
+	// Process-role singleton: ≤1 open board of a singleton kind per WORLD — an instance,
+	// the project's utility layer (`instanceName == TaskBoardMeta.UtilityWorld`, spec
+	// methodology-utility-kinds), or the legacy pre-backfill null bucket (transient — see
+	// TaskBoardMeta.MethodologyInstance). The utility bucket is scoped on the EXACT sentinel
+	// value, deliberately separate from the null bucket: a board only ever reaches the
+	// sentinel through an explicit act (board_create/board_adopt naming it), so a stray
+	// legacy-null board never collides with a deliberately-utility one. Cardinality is DATA
+	// on the kind (MethodologyKindDef.Singleton, resolved through `runtime` — the
+	// definition's own declaration when it declares the kind, else the preset's for the same
+	// slug) — was gated on membership in the `BoardKind` enum, which meant a custom-declared
+	// kind could never opt in (spec methodology-kind-singleton). The quartet's four preset
+	// kinds (work/spec/ideas/intake) declare Singleton=true; classic/simple declare none
+	// (⇒ false) and stay unlimited, unchanged from before.
 	public async Task AssertProcessRoleSingletonAsync(
 		string projectKey, string kindSlug, string? instanceName, MethodologyRuntime runtime, string? excludeBoard = null, CancellationToken ct = default)
 	{
@@ -340,9 +346,12 @@ public sealed partial class MethodologyInstanceService
 				&& (excludeBoard is null || !string.Equals(b.Name, excludeBoard, StringComparison.OrdinalIgnoreCase)));
 		if (existing is not null)
 		{
-			var scope = instanceName is null
-				? "project (legacy unassigned boards)"
-				: $"methodology instance '{instanceName}'";
+			var scope = instanceName switch
+			{
+				null => "project (legacy unassigned boards)",
+				TaskBoardMeta.UtilityWorld => "the project's utility layer",
+				_ => $"methodology instance '{instanceName}'",
+			};
 			throw new ArgumentException(
 				$"{scope} already has an active {runtime.KindName(kindSlug)} board ('{existing.Name}') — process-role kinds are one-per-instance; close it (tasks_board_close), adopt it elsewhere, or use a simple board");
 		}
