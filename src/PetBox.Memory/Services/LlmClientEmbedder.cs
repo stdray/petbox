@@ -30,9 +30,9 @@ public sealed class LlmClientEmbedder : IEmbedder
 		catch (LlmRouterException ex)
 		{
 			// The edge is also where the router's failure becomes a SEARCH reason code: no Embed
-			// route (the project-wide hole), a 4xx, or a transient chain failure. Core.Search reads
-			// the code off this exception without ever seeing the router's types.
-			throw new SearchDegradedException(SearchDegradedReason.Embed(ex.NoRoute, ex.Transient), ex.Message, ex);
+			// route (the project-wide hole), a 4xx, a rate-limit (429), or a generic transient chain
+			// failure. Core.Search reads the code off this exception without ever seeing the router's types.
+			throw new SearchDegradedException(SearchDegradedReason.Embed(ex.NoRoute, ex.Transient, ex.RateLimited), ex.Message, ex);
 		}
 	}
 }

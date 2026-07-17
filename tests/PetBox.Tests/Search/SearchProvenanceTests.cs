@@ -14,6 +14,7 @@ using PetBox.LlmRouter.Routing;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
+using PetBox.Tests.Memory; // FakeLlmClient — the deterministic embedder the memory search suites share
 
 namespace PetBox.Tests.Search;
 
@@ -106,6 +107,109 @@ public sealed class SearchProvenanceTests : IDisposable
 		res.Retrievers.Degraded.Should().BeTrue();
 		res.Retrievers.DegradedReason.Should().Be(SearchDegradedReason.EmbedTransient);
 		res.Hits.Select(h => h.Key).Should().Equal("alpha");
+	}
+
+	[Fact]
+	public async Task RateLimitRefusal_IsDistinctFromNoRoute_AndDegradedWithItsOwnReason()
+	{
+		// The owner requirement (spec search-degraded-provenance): a route that EXISTS but refuses
+		// by rate limit (429) is the THIRD state — degraded, but neither a config hole (no-route,
+		// which is a DIFFERENT reason) nor a generic transient blip. It must carry its own code so a
+		// caller can tell "throttled" from "structurally dead here".
+		var routerLog = new CapturingLogger<CapabilityRouter>();
+		var reg = new LlmRegistry([new LlmEndpoint("p", "https://p")], [new LlmRoute(LlmCapability.Embed, "p", "m", 10)]);
+		var router = new CapabilityRouter(new FixedResolver(reg), new CertPinningHttpClientProvider(),
+			new RateLimitingUpstream(), new EndpointBreaker(new FakeTimeProvider()), routerLog);
+		var memory = new MemoryService(_store, router);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes", [Entry("alpha", "alpha note", "alpha keyword")], []);
+
+		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null);
+
+		// Lexical still answers (degradation, not failure) …
+		res.Hits.Select(h => h.Key).Should().Equal("alpha");
+		res.Retrievers.Degraded.Should().BeTrue();
+		// … under the rate-limit code, which is DISTINCT from both no-route and generic transient.
+		res.Retrievers.DegradedReason.Should().Be(SearchDegradedReason.EmbedRateLimited);
+		res.Retrievers.DegradedReason.Should().NotBe(SearchDegradedReason.EmbedNoRoute);
+		res.Retrievers.DegradedReason.Should().NotBe(SearchDegradedReason.EmbedTransient);
+	}
+
+	[Fact]
+	public async Task RateLimitRefusal_LeavesAClassifiedQueryableLogEvent()
+	{
+		// "Were there rate-limit refusals or not?" must be answerable by log_query, not an incident:
+		// a 429 gets its OWN classified event (EventId 306) carrying the endpoint + capability, so
+		// SystemLogger persists them as KQL-addressable properties. The generic transient event (304)
+		// must NOT be the one that fires — that is exactly the merge that made rate-limits invisible.
+		var routerLog = new CapturingLogger<CapabilityRouter>();
+		var reg = new LlmRegistry([new LlmEndpoint("p", "https://p")], [new LlmRoute(LlmCapability.Embed, "p", "m", 10)]);
+		var router = new CapabilityRouter(new FixedResolver(reg), new CertPinningHttpClientProvider(),
+			new RateLimitingUpstream(), new EndpointBreaker(new FakeTimeProvider()), routerLog);
+		var memory = new MemoryService(_store, router);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes", [Entry("alpha", "alpha note", "alpha keyword")], []);
+
+		await memory.SearchAsync(Proj, "notes", "alpha", type: null);
+
+		var rateLimited = routerLog.Entries.Should().ContainSingle(e => e.EventId == 306).Which;
+		rateLimited.Level.Should().Be(MsLogLevel.Warning);
+		rateLimited.Message.Should().Contain("p").And.Contain("429"); // endpoint + status, structured args
+		routerLog.Entries.Should().NotContain(e => e.EventId == 304); // NOT the generic transient event
+	}
+
+	[Fact]
+	public async Task SemanticLag_IsZero_WhenTheVectorLegIsCaughtUp()
+	{
+		// `semantic:true` should not read as "coverage complete": the honest number is the cursor
+		// lag. After a full drain the async worker is caught up, so the lag is exactly 0 (present,
+		// not null) — and `reranked` is false, laid into the contract though the reranker is deferred.
+		var llm = new FakeLlmClient();
+		var memory = new MemoryService(_store, llm);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes", [Entry("alpha", "alpha note", "alpha keyword")], []);
+		await DrainVectors(llm, "notes"); // materialize vectors → cursor advances to the head
+
+		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null);
+
+		res.Retrievers.Semantic.Should().BeTrue();
+		res.Retrievers.Degraded.Should().BeFalse();
+		res.Retrievers.SemanticLag.Should().Be(0);
+		res.Retrievers.Reranked.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task SemanticLag_IsNonZero_WhenTheDrainTrailsTheData()
+	{
+		// A doc written AFTER the last drain is not embedded yet: the leg still answers (semantic:
+		// true) but its coverage TRAILS, and the provenance says so with a positive number — the very
+		// state a bare `semantic:true` used to hide (spec search-semantic-lag).
+		var llm = new FakeLlmClient();
+		var memory = new MemoryService(_store, llm);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes", [Entry("alpha", "alpha note", "alpha keyword")], []);
+		await DrainVectors(llm, "notes"); // cursor now at alpha's version
+										  // A second write moves the store past the cursor; no drain runs, so the vector leg trails.
+		await memory.UpsertAsync(Proj, "notes", [Entry("beta", "beta note", "beta keyword")], []);
+
+		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null);
+
+		res.Retrievers.Semantic.Should().BeTrue();
+		res.Retrievers.Degraded.Should().BeFalse();
+		res.Retrievers.SemanticLag.Should().NotBeNull();
+		res.Retrievers.SemanticLag!.Value.Should().BeGreaterThan(0);
+	}
+
+	// Materializes one store's Class-B vectors with the SAME embedder the query path uses (so the
+	// model/dim guard matches) — mirrors MemoryVectorizationJob for one store, like the hybrid suite.
+	async Task<DrainResult> DrainVectors(ILlmClient llm, string store)
+	{
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj);
+		var target = new VectorSearchIndex(Connect, new PetBox.Memory.Services.LlmClientEmbedder(llm, Proj));
+		var source = new MemorySearchSource(Connect, Proj, store);
+		var cursor = new SqliteIndexCursorStore(Connect);
+		var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor);
+		return await worker.DrainAsync();
 	}
 
 	[Fact]
@@ -202,6 +306,18 @@ public sealed class SearchProvenanceTests : IDisposable
 	{
 		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct) =>
 			throw new LlmUpstreamException(true, "connection refused");
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+			throw new NotSupportedException();
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>
+			throw new NotSupportedException();
+	}
+
+	// Refuses every embed with a 429 — the rate-limit case, tagged rateLimited so the router
+	// classifies it as its own event/reason rather than the generic transient bucket.
+	sealed class RateLimitingUpstream : IOpenAiCompatibleClient
+	{
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct) =>
+			throw new LlmUpstreamException(true, "HTTP 429: rate limit exceeded", rateLimited: true);
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
 			throw new NotSupportedException();
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>

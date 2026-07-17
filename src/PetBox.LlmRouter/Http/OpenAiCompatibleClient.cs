@@ -112,8 +112,9 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 			if (!resp.IsSuccessStatusCode)
 			{
 				var code = (int)resp.StatusCode;
-				var transient = code == 429 || code >= 500;
-				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}");
+				var rateLimited = code == 429;
+				var transient = rateLimited || code >= 500;
+				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited);
 			}
 			try { return JsonDocument.Parse(body); }
 			catch (JsonException ex) { throw new LlmUpstreamException(false, $"invalid JSON from upstream: {ex.Message}"); }

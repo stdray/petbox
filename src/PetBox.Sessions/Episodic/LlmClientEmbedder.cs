@@ -30,7 +30,7 @@ public sealed class LlmClientEmbedder : IEmbedder
 		{
 			// Translate the router's failure into a search reason code at the edge (Core must not
 			// know the router exists) — the facade puts it in the response provenance.
-			throw new SearchDegradedException(SearchDegradedReason.Embed(ex.NoRoute, ex.Transient), ex.Message, ex);
+			throw new SearchDegradedException(SearchDegradedReason.Embed(ex.NoRoute, ex.Transient, ex.RateLimited), ex.Message, ex);
 		}
 	}
 }
