@@ -144,12 +144,21 @@ public sealed partial class CapabilityRouter : ILlmClient
 			{
 				last = ux;
 				_breaker.RecordFailure(ep.Name);
-				LogTransient(_log, cap, ep.Name, ux.Message);
+				// A 429 gets its OWN classified event (spec: search-degraded-provenance): the owner
+				// must be able to ask "were there rate-limit refusals?" of log_query, and a distinct
+				// EventId + the {Endpoint}/{Capability} it carries is what makes that answerable —
+				// buried inside the generic transient event 304 it was not. Every 429 is logged here,
+				// even one a later provider in the chain then rescues (the refusal still HAPPENED).
+				if (ux.RateLimited) LogRateLimited(_log, cap, ep.Name, ux.Message);
+				else LogTransient(_log, cap, ep.Name, ux.Message);
 			}
 		}
 
+		// If the chain exhausted on a rate limit, say so: the reason the consumer reports
+		// (embed-rate-limited) is the more useful one for a throttled route than a generic transient.
+		var rateLimited = (last as LlmUpstreamException)?.RateLimited ?? false;
 		throw new LlmRouterException(cap, true,
-			$"all {routes.Count} {cap} provider(s) failed (last attempt {attempt})", last);
+			$"all {routes.Count} {cap} provider(s) failed (last attempt {attempt})", last, rateLimited: rateLimited);
 	}
 
 	// A route with no tier is the default and serves any requested tier; a tiered route only
@@ -171,6 +180,13 @@ public sealed partial class CapabilityRouter : ILlmClient
 
 	[LoggerMessage(EventId = 304, Level = LogLevel.Warning, Message = "llm {Capability} transient failure on '{Endpoint}': {Message} — trying next")]
 	static partial void LogTransient(ILogger logger, LlmCapability capability, string endpoint, string message);
+
+	// The queryable rate-limit event (spec: search-degraded-provenance) — a 429 refusal, split out
+	// of 304 so `log_query` can answer "were there rate-limit refusals?" by EventId (306) or by the
+	// {Endpoint}/{Capability} it carries, without an incident. Fires per refusal, even when a later
+	// provider rescues the call.
+	[LoggerMessage(EventId = 306, Level = LogLevel.Warning, Message = "llm {Capability} RATE-LIMITED on '{Endpoint}' (HTTP 429): {Message} — trying next")]
+	static partial void LogRateLimited(ILogger logger, LlmCapability capability, string endpoint, string message);
 
 	[LoggerMessage(EventId = 305, Level = LogLevel.Warning,
 		Message = "llm {Capability}: NO ROUTE for project '{Project}' (workspace '{Workspace}', tier '{Tier}', resolved level {Level}, inheritance blocked: {InheritanceBlocked}) — {Reason}. The capability is dead here")]

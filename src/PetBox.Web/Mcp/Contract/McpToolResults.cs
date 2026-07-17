@@ -265,10 +265,17 @@ public sealed record MemoryEntryRow(
 // Provenance of a hybrid search/recall: which retrievers ran, whether the answer is degraded and
 // WHY (spec: search-provenance). `DegradedReason` is a stable machine code — see
 // PetBox.Core.Search.SearchDegradedReason: embed-no-route | embed-upstream-4xx | embed-transient |
-// index-error. Additive/optional: omitted (null) whenever nothing degraded, so old clients are
-// untouched, while a new one can tell a permanent CONFIG hole ("this project has no embed route,
-// semantic search is dead here") from a passing blip — instead of staring at a mute degraded:true.
-public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded, string? DegradedReason = null);
+// embed-rate-limited | index-error. Additive/optional: omitted (null) whenever nothing degraded, so
+// old clients are untouched, while a new one can tell a permanent CONFIG hole ("this project has no
+// embed route, semantic search is dead here") from a passing blip — instead of a mute degraded:true.
+//
+// `SemanticLag` (spec search-semantic-lag) is the vector leg's coverage trail — docs the async
+// worker has not embedded yet (0 = fully drained); null when no semantic leg answered. It stops
+// `semantic:true` reading as "coverage complete" after a reindex/outage. `Reranked` (spec
+// search-degraded-provenance) is laid in NOW so switching the deferred reranker on is not a contract
+// change; today it is always false (no rerank pass runs yet).
+public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded, string? DegradedReason = null,
+	long? SemanticLag = null, bool Reranked = false);
 
 // memory_upsert / memory_delta echo (mirrors the old anonymous Serialize shape).
 // ChangedFields (Stale only): THIS entry's payload fields that moved past the author's

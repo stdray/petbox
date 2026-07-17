@@ -484,9 +484,12 @@ public static class MemoryTools
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
 					// The reason survives the OR-merge across scopes: the first scope that degraded
-					// owns it (a mute degraded:true is exactly what this leaf exists to kill).
+					// owns it (a mute degraded:true is exactly what this leaf exists to kill). SemanticLag
+					// SUMS across scopes (each container's vector leg trails its own data, so the total
+					// "docs not embedded yet" is the sum; null when neither scope ran a semantic leg);
+					// Reranked ORs (a rerank pass in any scope means the answer was reranked).
 					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded,
-						agg.DegradedReason ?? r.DegradedReason)
+						agg.DegradedReason ?? r.DegradedReason, SumLag(agg.SemanticLag, r.SemanticLag), agg.Reranked | r.Reranked)
 					: r;
 
 			// Usage counters are keyed per (store, key) — rows may span stores in one container.
@@ -571,11 +574,17 @@ public static class MemoryTools
 
 		return new MemorySearchResultView(
 			kept,
-			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason) : null,
+			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason,
+				fin.SemanticLag, fin.Reranked) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null);
 	}
+
+	// Merge the vector-lag counts of two scopes: null only when NEITHER ran a semantic leg (there
+	// is no coverage to be behind on); otherwise the sum, treating a scope that answered lexically-
+	// only (null lag) as contributing 0.
+	static long? SumLag(long? a, long? b) => a is null && b is null ? null : (a ?? 0) + (b ?? 0);
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;

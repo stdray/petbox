@@ -487,7 +487,41 @@ public sealed class MemoryService : IMemoryService
 			.Select(e => (e, score[(e.Store, e.Key)], confirmed[(e.Store, e.Key)]))
 			.ToList();
 
-		return (hits, resp.Retrievers);
+		// Provenance is honest about COVERAGE, not just that the leg ran (spec search-semantic-lag):
+		// when the vector leg actually answered, carry how far its async cursor trails the data, so
+		// `semantic:true` after a reindex/outage no longer reads as "coverage is complete". Read
+		// straight off the co-located search_cursor + the entries' max version — no embed call.
+		var retrievers = resp.Retrievers;
+		if (retrievers.Semantic)
+			retrievers = retrievers with { SemanticLag = SemanticLag(ctx, stores) };
+
+		return (hits, retrievers);
+	}
+
+	// The vector leg's coverage LAG (spec search-semantic-lag): Σ over the scope's stores of
+	// (store max version − vector cursor) — the SAME SourceVersion−Cursor the drain worker reports
+	// as DrainResult.Lag, surfaced per-query. Both the cursor (search_cursor, keyed
+	// MemoryCursors.Vector(store)) and the store's max revision live in this one file, so it is two
+	// cheap reads and never an embed call. 0 = the leg is fully drained (caught up).
+	static long SemanticLag(MemoryDb ctx, IReadOnlyList<string> stores)
+	{
+		if (stores.Count == 0) return 0;
+		var cursorNames = stores.Select(MemoryCursors.Vector).ToList();
+		var cursors = ctx.GetTable<CursorRow>()
+			.Where(r => cursorNames.Contains(r.IndexName))
+			.ToList()
+			.ToDictionary(r => r.IndexName, r => r.Version, StringComparer.Ordinal);
+		// Max revision PER STORE (the store is the temporal partition, so its watermark is its own
+		// max Version — the same partition the drain's cursor advances over). One grouped query.
+		var maxByStore = ctx.Entries
+			.Where(e => stores.Contains(e.Store))
+			.GroupBy(e => e.Store)
+			.Select(g => new { Store = g.Key, Max = g.Max(x => x.Version) })
+			.ToList();
+		long lag = 0;
+		foreach (var s in maxByStore)
+			lag += Math.Max(0, s.Max - cursors.GetValueOrDefault(MemoryCursors.Vector(s.Store), 0));
+		return lag;
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"

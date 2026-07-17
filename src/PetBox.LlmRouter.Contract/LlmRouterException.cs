@@ -16,11 +16,19 @@ public sealed class LlmRouterException : Exception
 	// (search reports it as degradedReason "embed-no-route"): retrying will never fix it.
 	public bool NoRoute { get; }
 
-	public LlmRouterException(LlmCapability capability, bool transient, string message, Exception? inner = null, bool noRoute = false)
+	// The chain exhausted on a RATE LIMIT (HTTP 429) — a route that EXISTS but is throttled, not a
+	// config hole and not a generic blip. Carried out so a consumer can report the distinct
+	// degradedReason "embed-rate-limited" (spec: search-degraded-provenance). Only meaningful when
+	// Transient is true (a 429 is a transient failure); false otherwise.
+	public bool RateLimited { get; }
+
+	public LlmRouterException(LlmCapability capability, bool transient, string message, Exception? inner = null,
+		bool noRoute = false, bool rateLimited = false)
 		: base(message, inner)
 	{
 		Capability = capability;
 		Transient = transient;
 		NoRoute = noRoute;
+		RateLimited = rateLimited;
 	}
 }
