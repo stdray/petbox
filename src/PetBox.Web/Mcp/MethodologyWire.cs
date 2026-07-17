@@ -83,18 +83,20 @@ static class MethodologyWire
 			k.Workflows.Select(w => new MethodologyWorkflowBlockView(
 				Types: w.Types,
 				Initial: w.Initial,
-				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant(), s.Description)).ToList(),
 				Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
 					t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
 					t.EnforceApproval,
-					Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
+					Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null,
+					Description: t.Description)).ToList())).ToList(),
 			LinkConstraints: k.LinkConstraints is { Count: > 0 }
 				? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
 					c.Type, c.Link, c.TargetKind,
-					TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
+					TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null,
+					Description: c.Description)).ToList()
 				: null,
 			Effects: k.Effects is { Count: > 0 }
-				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom, e.OnLeave)).ToList()
+				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom, e.OnLeave, e.Description)).ToList()
 				: null,
 			AutoWireSpecFrom: k.AutoWireSpecFrom,
 			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes),
@@ -102,6 +104,7 @@ static class MethodologyWire
 			OutlineReveal: k.OutlineReveal,
 			Singleton: k.Singleton,
 			BlocksGate: k.BlocksGate is null ? null : new MethodologyBlocksGateView(k.BlocksGate.Status, k.BlocksGate.ReleaseTo),
+			Description: k.Description,
 			BoardName: k.BoardName)).ToList();
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
@@ -131,6 +134,7 @@ static class MethodologyWire
 				{
 					EnforceApproval = t.EnforceApproval,
 					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
+					Description = t.Description,
 				}).ToList())).ToList())
 		{
 			LinkConstraints = (k.LinkConstraints ?? [])
@@ -138,11 +142,12 @@ static class MethodologyWire
 				{
 					TargetKind = c.TargetKind,
 					TargetStatuses = c.TargetStatuses?.Select(s => s ?? string.Empty).ToList(),
+					Description = c.Description,
 				}).ToList(),
 			Effects = (k.Effects ?? [])
 				.Select(e => new MethodologyTransitionEffectDef(
 					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
-					e.Set, e.OnlyFrom, e.OnLeave)).ToList(),
+					e.Set, e.OnlyFrom, e.OnLeave, e.Description)).ToList(),
 			AutoWireSpecFrom = k.AutoWireSpecFrom,
 			Delivery = k.Delivery is null ? null : new MethodologyDeliveryDef(
 				(k.Delivery.RequiredTypes ?? []).Select(t => t ?? string.Empty).ToList(),
@@ -152,6 +157,7 @@ static class MethodologyWire
 			Singleton = k.Singleton,
 			BlocksGate = k.BlocksGate is null ? null : new MethodologyBlocksGateDef(
 				k.BlocksGate.Status ?? string.Empty, k.BlocksGate.ReleaseTo ?? string.Empty),
+			Description = k.Description,
 			BoardName = k.BoardName,
 		}).ToList())
 	{
@@ -175,6 +181,6 @@ static class MethodologyWire
 		var kind = StatusKind.Open;
 		if (!string.IsNullOrWhiteSpace(s.Kind) && !Enum.TryParse(s.Kind.Trim(), ignoreCase: true, out kind))
 			throw new ArgumentException($"status '{slug}': kind '{s.Kind}' is not a status kind (valid: open|terminalok|terminalcancel)");
-		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind);
+		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind, s.Description);
 	}
 }

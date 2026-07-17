@@ -275,6 +275,78 @@ public static class TasksTools
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
 	}
 
+	[McpServerTool(Name = "tasks_methodology_describe", Title = "Describe one methodology primitive (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDescribeResult))]
+	[Description("""
+		Set (or clear) the free-form Description of ONE primitive of a LIVE methodology
+		INSTANCE's rules — a kind, status, transition, effect, constraint, linkKind or
+		tagAxis — addressed by its NATURAL KEY, not a version-CAS whole-document replace
+		(that stays tasks_methodology_rules_upsert, for STRUCTURE). This verb only ever
+		replaces one Description string; it can never add/remove/reorder a kind, block,
+		status, transition, effect or constraint.
+
+		`primitive` selects the natural key shape:
+		- kind: { kind }
+		- status: { kind, type, slug } — `type` names any ONE type slug of the owning
+		  workflow block (a block is shared by every type in it; any of its types
+		  disambiguates it).
+		- transition: { kind, type, from, to }
+		- effect: { kind, on, link, direction, onLeave? } (onLeave defaults false)
+		- constraint: { kind, type, link }
+		- linkKind: { slug }
+		- tagAxis: { namespace }
+
+		`description` is the new prose; pass "" to clear it. A natural key matching nothing
+		is a clear error (nothing written). Internally this still reads the current rules
+		document and writes the whole thing back (rules storage is one document) — but the
+		caller never sees or supplies its version; a version race is retried a bounded
+		number of times. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyDescribeResult> MethodologyDescribeAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) whose rules the primitive lives on.")] string name,
+		[Description("kind | status | transition | effect | constraint | linkKind | tagAxis.")] string primitive,
+		[Description("The new prose. Pass \"\" to clear an existing description.")] string description,
+		[Description("Kind slug — required for every primitive except linkKind/tagAxis.")] string? kind = null,
+		[Description("Any one type slug of the owning workflow block — required for status/transition/constraint.")] string? type = null,
+		[Description("Status slug — required for primitive 'status'. Also doubles as the linkKind slug when primitive is 'linkKind'.")] string? slug = null,
+		[Description("Transition source status — required for primitive 'transition'.")] string? from = null,
+		[Description("Transition target status — required for primitive 'transition'.")] string? to = null,
+		[Description("Effect trigger status — required for primitive 'effect'.")] string? on = null,
+		[Description("Effect relation kind — required for primitive 'effect'; also the constraint's link for primitive 'constraint'.")] string? link = null,
+		[Description("Effect direction (incoming|outgoing) — required for primitive 'effect'.")] string? direction = null,
+		[Description("Effect onLeave flag — matches Effect.onLeave; default false (entering).")] bool onLeave = false,
+		[Description("Tag axis namespace — required for primitive 'tagAxis'.")] string? @namespace = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+
+		const int maxAttempts = 5;
+		for (var attempt = 1; ; attempt++)
+		{
+			var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct)
+				?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
+			var (def, matched) = MethodologyDescribe.Apply(
+				view.Definition, primitive, kind, type, slug, from, to, on, link, direction, onLeave, @namespace, description);
+			if (!matched)
+				throw new ArgumentException($"no {primitive} matched the given natural key on methodology instance '{name}'");
+			try
+			{
+				var ack = await tasks.DefineMethodologyInstanceRulesAsync(projectKey, name, def, view.Version, null, ct);
+				return new MethodologyDescribeResult(ack.Name, primitive, ack.Version);
+			}
+			catch (InvalidOperationException ex) when (attempt < maxAttempts && ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+			{
+				// Someone else wrote the rules document between our read and our write — the
+				// prose target itself didn't change, only the version cursor did. Re-read and
+				// reapply rather than surfacing a CAS conflict for a call that never asked the
+				// caller to track a version.
+			}
+		}
+	}
+
 	// ---- named methodology templates (inert process documents; builtins are templates) ----
 
 	[McpServerTool(Name = "tasks_methodology_template_upsert", Title = "Upsert a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
