@@ -173,6 +173,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["tasks_methodology_rules_upsert"] = "pending: full methodology-definition JSON; covered by MethodologyInstanceRulesEditTests",
 		["tasks_methodology_describe"] = "pending: needs a seeded live instance + primitive natural key; covered end-to-end by MethodologyDescribeTests",
 		["tasks_board_adopt"] = "pending: write path covered by MethodologyInstanceTests",
+		["tasks_methodology_utility_get"] = "pending: covered by MethodologyUtilityKindsTests",
+		["tasks_methodology_utility_upsert"] = "pending: write path covered by MethodologyUtilityKindsTests",
 		["config_binding_delete"] = "pending: destructive; needs a seeded binding threaded mid-battery",
 		["db_create"] = "pending: Data chain (create→schema→exec→query→describe)",
 		["db_delete"] = "pending: Data chain",

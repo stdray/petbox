@@ -639,6 +639,25 @@ public sealed record MethodologyInstanceRulesGetResult(
 public sealed record MethodologyInstanceRulesUpsertResult(
 	string Name, long Version, bool Changed, int Migrated = 0);
 
+// tasks_methodology_utility_get: Found=true → the project's utility-layer document (same
+// kinds/workflows shape as rules_get/template_get) + version baseline for utility_upsert.
+// Found=false when the project has never defined one (everything resolves from presets).
+// No Name/Closed fields — the utility layer is a project-level singleton, not a named,
+// closeable instance.
+public sealed record MethodologyUtilityGetResult(
+	bool Found,
+	string? DefinitionName = null,
+	IReadOnlyList<MethodologyKindView>? Kinds = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null,
+	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+
+// tasks_methodology_utility_upsert ack: version cursor, whether a revision was written, and
+// how many live utility-homed nodes the migration rewrote.
+public sealed record MethodologyUtilityUpsertResult(long Version, bool Changed, int Migrated = 0);
+
 // tasks_methodology_describe ack (spec methodology-describe-verb): the natural-key-addressed
 // primitive was found and its Description replaced; `version` is the instance rules cursor
 // AFTER the write (a fresh baseline for rules_upsert, same field as rules_upsert's own ack —
