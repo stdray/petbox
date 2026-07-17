@@ -273,23 +273,28 @@ public static class GuardEngine
 		}
 	}
 
-	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or an
-	// already-active `blocks` edge into it). "Blocked requires a link."
-	// IsWorkKind, NOT PresetKind(...) == BoardKind.Work (presetkind-spec-blind-spot follow-up):
-	// PresetKind nulls out for any DEFINED kind, and `work` is one of the quartet's four kinds.
+	// Invariant: a node in the kind's blocking-gate status (MethodologyKindDef.BlocksGate,
+	// spec methodology-blocks-gate-data) must name a blocker (blockedBy in this call, or an
+	// already-active `blocks` edge into it) — a STATE invariant, checked on every write of a
+	// gated node (including birth), not a gate on the transition that lands it there.
+	// BlocksGate(...), NOT IsWorkKind/PresetKind(...) == BoardKind.Work: the gate status is now
+	// DATA on the kind (was the literal "Blocked", gated on IsWorkKind — itself a fix for
+	// presetkind-spec-blind-spot: PresetKind nulls out for any DEFINED kind, and `work` is one of
+	// the quartet's four kinds). A definition-declared kind can opt into this same invariant
+	// under its own gate status by declaring BlocksGate; today only the `work` preset does.
 	public static MethodologyVerdict? RequireBlockers(
 		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, string> blockedBy)
 	{
-		if (!ctx.Runtime.IsWorkKind(ctx.KindSlug)) return null;
+		if (ctx.Runtime.BlocksGate(ctx.KindSlug) is not { } gate) return null;
 		foreach (var n in desired)
 		{
-			if (!string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
+			if (!string.Equals(n.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) continue;
 			if (blockedBy.ContainsKey(n.Key)) continue;
 			// A node born in this call carries a fresh NodeId, so it is absent from the prefetched
 			// edge map — exactly as the old per-node live read came back empty for it.
 			var hasActiveBlocker = ctx.BlockerEdgesByNodeId.TryGetValue(n.NodeId, out var edges) && edges.Count > 0;
 			if (!hasActiveBlocker)
-				return Bad(n.Key, $"a Blocked task must name a blocker — provide blockedBy (node '{n.Key}')");
+				return Bad(n.Key, $"a {gate.Status} task must name a blocker — provide blockedBy (node '{n.Key}')");
 		}
 		return null;
 	}

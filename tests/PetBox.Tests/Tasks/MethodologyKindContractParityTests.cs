@@ -37,6 +37,7 @@ public sealed class MethodologyKindContractParityTests
 	{
 		{ typeof(MethodologyKindDef), typeof(MethodologyKindInput) },
 		{ typeof(MethodologyDeliveryDef), typeof(MethodologyDeliveryInput) },
+			{ typeof(MethodologyBlocksGateDef), typeof(MethodologyBlocksGateInput) },
 		{ typeof(MethodologyLinkConstraintDef), typeof(MethodologyLinkConstraintInput) },
 		{ typeof(MethodologyTransitionEffectDef), typeof(MethodologyEffectInput) },
 		{ typeof(MethodologyWorkflowDef), typeof(MethodologyWorkflowInput) },
@@ -129,6 +130,7 @@ public sealed class MethodologyKindContractParityTests
 	{
 		{ typeof(MethodologyKindDef), typeof(MethodologyKindView) },
 		{ typeof(MethodologyDeliveryDef), typeof(MethodologyDeliveryView) },
+			{ typeof(MethodologyBlocksGateDef), typeof(MethodologyBlocksGateView) },
 		{ typeof(MethodologyLinkConstraintDef), typeof(MethodologyLinkConstraintView) },
 		{ typeof(MethodologyTransitionEffectDef), typeof(MethodologyEffectView) },
 		{ typeof(MethodologyWorkflowDef), typeof(MethodologyWorkflowBlockView) },
@@ -203,12 +205,20 @@ public sealed class MethodologyKindContractParityTests
 				])
 			{
 				LinkConstraints = [new MethodologyLinkConstraintDef("feature", "task_spec") { TargetKind = "spec", TargetStatuses = ["accepted"] }],
-				Effects = [new MethodologyTransitionEffectDef("done", "blocks", "incoming", "unblocked", "blocked")],
+				Effects =
+				[
+					new MethodologyTransitionEffectDef("done", "blocks", "incoming", "unblocked", "blocked"),
+					// Effect.onLeave + the Set-omitted pure-consume shape (methodology-blocks-gate-data)
+					// must round-trip too — a nullable field is exactly where a lossy wire silently
+					// coerces null to "" instead of carrying it through.
+					new MethodologyTransitionEffectDef("open", "blocks", "incoming", null, OnLeave: true),
+				],
 				AutoWireSpecFrom = "spec",
 				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"]),
 				DefaultView = "kanban",
 				OutlineReveal = "navigate",
 				Singleton = true,
+				BlocksGate = new MethodologyBlocksGateDef("open", "done"),
 			},
 		]);
 

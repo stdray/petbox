@@ -167,6 +167,40 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		StatusOf(get, "b").Should().Be("InProgress", "the blocked task auto-unblocks when its only blocker is Done");
 	}
 
+	// methodology-blocks-gate-data: MANUALLY moving a Blocked task elsewhere (not via its
+	// blocker reaching Done) closes the incoming `blocks` edge too (Effect.onLeave, WorkKind's
+	// declared onLeave entry — was TasksService.CloseBlocksOnLeaveAsync, a bespoke hardcoded
+	// method, before this card folded it into the data-driven effect pass). Proof: re-entering
+	// Blocked afterwards WITHOUT naming a blocker again is refused — the edge is really gone,
+	// not merely superseded by the status change.
+	[Fact]
+	public async Task Block_ManuallyLeavingBlocked_ClosesTheEdge_SoReenteringNeedsANewBlocker()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var ir = await AcceptedIdeaId();
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var specId = NodeId(spec, "f");
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+
+		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", specRef = specId }) });
+		var aId = NodeId(a, "a");
+		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		IsErr(b).Should().BeFalse();
+
+		// B leaves Blocked on its own (not because A reached Done) — the incoming blocks edge
+		// closes. Baseline version 2: the board-wide write cursor stamps a's creation 1, b's
+		// creation 2 (TemporalStore.MaxVersionAsync + 1 per commit — a's own baseline in the
+		// AutoUnblocksWhenBlockerDone test above is 1 for the SAME reason).
+		var leave = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "InProgress", version = 2, title = "B", body = "x", specRef = specId }) });
+		IsErr(leave).Should().BeFalse();
+
+		// Re-entering Blocked without a fresh blockedBy is refused: the old edge is closed, not
+		// live. Baseline version 3: the leave commit above is the board's third write.
+		var reenter = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", version = 3, title = "B", body = "x", specRef = specId }) });
+		IsErr(reenter).Should().BeTrue("the manually-closed blocks edge must not still count as an active blocker");
+		Text(reenter).Should().Contain("block");
+	}
+
 	// 25. work `chore` — engineering hygiene below the spec: no specRef required at birth,
 	// but it rides the SAME FSM as feature/bug (no shortcut straight to Done).
 	[Fact]

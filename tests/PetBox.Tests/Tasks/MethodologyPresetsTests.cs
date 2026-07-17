@@ -352,18 +352,32 @@ public sealed class MethodologyPresetsTests
 		c.TargetStatuses.Should().Equal("accepted");
 	}
 
-	// Schema v2 (engine-v2-quartet-parity): the Done automation is effect DATA on the work
-	// preset — intake auto-close rides the INCOMING issue_task edge (issue -> task), the
-	// unblock rides the OUTGOING blocks edge (blocker -> blocked) gated on OnlyFrom=Blocked.
+	// Schema v2 (engine-v2-quartet-parity) + methodology-blocks-gate-data: the Done automation
+	// is effect DATA on the work preset — intake auto-close rides the INCOMING issue_task edge
+	// (issue -> task), the unblock rides the OUTGOING blocks edge (blocker -> blocked) gated on
+	// OnlyFrom=Blocked; leaving Blocked (Effect.onLeave) closes every INCOMING blocks edge as a
+	// pure edge-consumption effect (Set: null — no status forced).
 	[Fact]
 	public void WorkPreset_DoneAutomation_IsEffectData()
 	{
 		Runtime.Effects("work").Should().Equal(
 			new MethodologyTransitionEffectDef("Done", "issue_task", "incoming", "done"),
-			new MethodologyTransitionEffectDef("Done", "blocks", "outgoing", "InProgress", "Blocked"));
+			new MethodologyTransitionEffectDef("Done", "blocks", "outgoing", "InProgress", "Blocked"),
+			new MethodologyTransitionEffectDef("Blocked", "blocks", "incoming", null, OnLeave: true));
 		// No other preset kind declares effects.
 		foreach (var kind in new[] { "simple", "classic", "spec", "ideas", "intake" })
 			Runtime.Effects(kind).Should().BeEmpty();
+	}
+
+	// methodology-blocks-gate-data: work is the quartet's one gated kind (blocksGate{status,
+	// releaseTo} as data, replacing the old code-level "Blocked" literals in
+	// GuardEngine.RequireBlockers and TasksService's blocker-edge prefetch gate).
+	[Fact]
+	public void WorkPreset_BlocksGate_IsData()
+	{
+		Runtime.BlocksGate("work").Should().Be(new MethodologyBlocksGateDef("Blocked", "InProgress"));
+		foreach (var kind in new[] { "simple", "classic", "spec", "ideas", "intake" })
+			Runtime.BlocksGate(kind).Should().BeNull();
 	}
 
 	[Fact]

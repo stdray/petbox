@@ -211,30 +211,34 @@ public static class MethodologyGuide
 			: $" -> {c.TargetKind ?? "*"}{(c.TargetStatuses is { Count: > 0 } s ? $"[{string.Join("|", s)}]" : "")}";
 
 	// Declared transition effects, one line each — the engine EXECUTES them when a node of
-	// this kind enters the trigger status (RunTransitionEffectsAsync).
+	// this kind enters (default) or leaves (OnLeave, Effect.onLeave) the trigger status
+	// (TaskTransitionEffects.RunTransitionEffectsAsync).
 	static void AppendEffects(StringBuilder md, string kind, IReadOnlyList<MethodologyTransitionEffectDef> effects, List<MethodologyInvariant> invariants)
 	{
 		md.AppendLine();
 		md.AppendLine("### Transition effects");
 		md.AppendLine();
-		md.AppendLine("Cross-node automation the SERVER executes when a node of this kind enters the trigger status — do not apply these by hand:");
+		md.AppendLine("Cross-node automation the SERVER executes when a node of this kind enters or leaves the trigger status — do not apply these by hand:");
 		foreach (var e in effects)
 		{
 			md.AppendLine($"- {EffectSentence(e, markdown: true)}");
 			invariants.Add(new(kind, "transition_effect",
-				$"{e.On}: {e.Direction} {e.Link}{(e.OnlyFrom is null ? "" : $" from {e.OnlyFrom}")} -> {e.Set}"));
+				$"{(e.OnLeave ? "leave " : "")}{e.On}: {e.Direction} {e.Link}{(e.OnlyFrom is null ? "" : $" from {e.OnlyFrom}")} -> {e.Set ?? "(closed)"}"));
 		}
 	}
 
 	// ONE phrasing for a declared transition effect, shared by the guide markdown (link in
 	// backticks) and plain-text surfaces (the methodology editor's per-kind effects
 	// annotation) — so "On entering Done, incoming issue_task nodes are set to done." reads
-	// identically wherever effects surface.
+	// identically wherever effects surface. `Set: null` (Effect.onLeave's pure edge-consumption
+	// shape) reads as "have the link closed" instead of a status.
 	public static string EffectSentence(MethodologyTransitionEffectDef e, bool markdown = false)
 	{
 		var link = markdown ? $"`{e.Link}`" : e.Link;
 		var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
-		return $"On entering {e.On}, {e.Direction} {link} nodes{scope} are set to {e.Set}.";
+		var trigger = e.OnLeave ? "leaving" : "entering";
+		var action = e.Set is null ? "have the link closed" : $"are set to {e.Set}";
+		return $"On {trigger} {e.On}, {e.Direction} {link} nodes{scope} {action}.";
 	}
 
 	// SpecBoard auto-wire as DATA (primitives-enum-residual) — when exactly one board of

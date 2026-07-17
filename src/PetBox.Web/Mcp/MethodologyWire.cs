@@ -94,13 +94,14 @@ static class MethodologyWire
 					TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
 				: null,
 			Effects: k.Effects is { Count: > 0 }
-				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
+				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom, e.OnLeave)).ToList()
 				: null,
 			AutoWireSpecFrom: k.AutoWireSpecFrom,
 			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes),
 			DefaultView: k.DefaultView,
 			OutlineReveal: k.OutlineReveal,
-			Singleton: k.Singleton)).ToList();
+			Singleton: k.Singleton,
+			BlocksGate: k.BlocksGate is null ? null : new MethodologyBlocksGateView(k.BlocksGate.Status, k.BlocksGate.ReleaseTo))).ToList();
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
 		def.LinkKinds is { Count: > 0 }
@@ -140,7 +141,7 @@ static class MethodologyWire
 			Effects = (k.Effects ?? [])
 				.Select(e => new MethodologyTransitionEffectDef(
 					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
-					e.Set ?? string.Empty, e.OnlyFrom)).ToList(),
+					e.Set, e.OnlyFrom, e.OnLeave)).ToList(),
 			AutoWireSpecFrom = k.AutoWireSpecFrom,
 			Delivery = k.Delivery is null ? null : new MethodologyDeliveryDef(
 				(k.Delivery.RequiredTypes ?? []).Select(t => t ?? string.Empty).ToList(),
@@ -148,6 +149,8 @@ static class MethodologyWire
 			DefaultView = k.DefaultView,
 			OutlineReveal = k.OutlineReveal,
 			Singleton = k.Singleton,
+			BlocksGate = k.BlocksGate is null ? null : new MethodologyBlocksGateDef(
+				k.BlocksGate.Status ?? string.Empty, k.BlocksGate.ReleaseTo ?? string.Empty),
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])

@@ -122,6 +122,12 @@ public static class MethodologyPresets
 	// this change (RenderBuiltinTemplate copies a preset kind verbatim at creation time) —
 	// WorkDeferredStatusMigrator (PetBox.Tasks.Data) is the one-time startup migration that
 	// strips it (status + referencing transitions) from any such stored document.
+	// The quartet's ONE blocking gate (spec methodology-blocks-gate-data): the single source of
+	// truth this file's own Effects declarations below reference (OnlyFrom/Set/On), rather than
+	// repeating "Blocked"/"InProgress" as independent literals that could drift from BlocksGate
+	// itself — the whole point of the field is a kind's gate status living in exactly one place.
+	static readonly MethodologyBlocksGateDef WorkBlocksGate = new("Blocked", "InProgress");
+
 	static readonly MethodologyKindDef WorkKind = new("work", QuickAddAllowed: false,
 	[
 		new MethodologyWorkflowDef(["feature", "bug", "chore"],
@@ -158,13 +164,20 @@ public static class MethodologyPresets
 		//   - a work node entering Done closes intake issues that spawned it (issue_task
 		//     edges point issue -> task, i.e. INCOMING on the work node);
 		//   - a work node entering Done releases nodes it was blocking (blocks edges point
-		//     blocker -> blocked, i.e. OUTGOING), Blocked -> InProgress. The `blocks` kind
-		//     is a builtin GATING relation: the executor consumes the traversed edge and
-		//     applies the effect only when no other active blocker remains.
+		//     blocker -> blocked, i.e. OUTGOING), gate.Status -> gate.ReleaseTo. The `blocks`
+		//     kind is a builtin GATING relation: the executor consumes the traversed edge and
+		//     applies the effect only when no other active blocker remains;
+		//   - methodology-blocks-gate-data: a work node LEAVING gate.Status (Effect.onLeave —
+		//     someone manually moves a Blocked task elsewhere, not through its blocker's Done)
+		//     closes every INCOMING blocks edge unconditionally, history kept, nobody's status
+		//     forced (Set: null — a pure edge-consumption effect). Was TasksService.
+		//     CloseBlocksOnLeaveAsync, a bespoke method hardcoded to the literal "Blocked"; now
+		//     this declared entry, keyed off WorkBlocksGate like the entry above it.
 		Effects =
 		[
 			new MethodologyTransitionEffectDef(On: "Done", Link: "issue_task", Direction: "incoming", Set: "done"),
-			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: "InProgress", OnlyFrom: "Blocked"),
+			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: WorkBlocksGate.ReleaseTo, OnlyFrom: WorkBlocksGate.Status),
+			new MethodologyTransitionEffectDef(On: WorkBlocksGate.Status, Link: "blocks", Direction: "incoming", Set: null, OnLeave: true),
 		],
 		// primitives-enum-residual: work→spec auto-wire is DATA (executed by AutoWireSpecAsync).
 		AutoWireSpecFrom = "spec",
@@ -174,6 +187,10 @@ public static class MethodologyPresets
 		DefaultView = BoardViewModeNames.Kanban,
 		// methodology-kind-singleton: work is a process-role kind, one open board per instance.
 		Singleton = true,
+		// methodology-blocks-gate-data: work is the quartet's one gated kind — "a Blocked task
+		// must name a blocker" is a STATE invariant (GuardEngine.RequireBlockers), not a
+		// transition gate.
+		BlocksGate = WorkBlocksGate,
 	};
 
 	// A spec node is born `defined` (a worked-out requirement) and can only retire to
