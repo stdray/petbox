@@ -166,6 +166,14 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// the watermark baseline from GetActiveMethodologyInstanceAsync (0 = no prior read).
 	Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(string projectKey, string? name, long version, CancellationToken ct = default);
 
+	// The EFFECTIVE default instance NAME — same resolution seam GetRuntimeAsync/
+	// GetMethodologyGuideAsync use internally (the active pointer when set and open, else the
+	// single open instance when there is exactly one, else null for 0-or-ambiguous), exposed as
+	// a bare name for surfaces that need to ask "is board X's own instance the project's current
+	// default?" (spec methodology-inactive-visibility) without re-deriving a whole
+	// MethodologyRuntime just to compare identity. Never touches board membership.
+	Task<string?> ResolveDefaultMethodologyInstanceAsync(string projectKey, CancellationToken ct = default);
+
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);

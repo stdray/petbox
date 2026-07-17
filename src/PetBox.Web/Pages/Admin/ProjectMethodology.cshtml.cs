@@ -91,6 +91,17 @@ public sealed class ProjectMethodologyModel : PageModel
 	// show where process comes from.
 	public IReadOnlyList<TaskBoardMeta> ActiveBoards { get; private set; } = [];
 
+	// ── active-instance pointer (spec methodology-switch: select/create → activate, ONE
+	// guided act) ──────────────────────────────────────────────────────────────
+	// The raw stored pointer name (may be null/never set) + its CAS version — the baseline
+	// OnPostActivateAsync must post back. EffectiveActiveInstance is the VALIDATED resolution
+	// (pointer when open, else the single open instance, else null when 0/ambiguous) — what
+	// ResolveDefaultMethodologyInstanceAsync returns, used to mark which open instance the
+	// switcher badge shows as "active" and which ones offer an Activate button.
+	public string? ActivePointerName { get; private set; }
+	public long ActiveVersion { get; private set; }
+	public string? EffectiveActiveInstance { get; private set; }
+
 	// The preset the "Load preset as template" control last loaded — echoed back so the
 	// select keeps the user's choice instead of snapping to the first option.
 	public string? SelectedPreset { get; private set; }
@@ -364,7 +375,40 @@ public sealed class ProjectMethodologyModel : PageModel
 
 		Version = Stored?.Version ?? 0;
 		ActiveBoards = (await _tasks.ListBoardsAsync(ProjectKey, ct)).Where(b => b.ClosedAt == null).ToList();
+
+		var pointer = await _tasks.GetActiveMethodologyInstanceAsync(ProjectKey, ct);
+		ActivePointerName = pointer.Name;
+		ActiveVersion = pointer.Version;
+		EffectiveActiveInstance = await _tasks.ResolveDefaultMethodologyInstanceAsync(ProjectKey, ct);
 		return true;
+	}
+
+	// The switch, as ONE guided act (spec methodology-switch): pick an open instance (already
+	// listed by the switcher above) and activate it — never destroys/closes the previously
+	// active instance, only moves the project-default pointer (ITasksService.
+	// SetActiveMethodologyInstanceAsync). `activeVersion` is the CAS baseline from
+	// ActiveVersion (posted back as a hidden field so a concurrent activation elsewhere is a
+	// clear conflict, not a silent overwrite).
+	public async Task<IActionResult> OnPostActivateAsync(string instance, long activeVersion, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+
+		try
+		{
+			await _tasks.SetActiveMethodologyInstanceAsync(ProjectKey, instance, activeVersion, ct);
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+		{
+			if (!await LoadStateAsync(ct)) return Page();
+			Mode = Stored is not null ? EditorMode.View : EditorMode.Cta;
+			PrefillStored();
+			if (Stored is not null) Summary = SummaryOf(Stored.Definition);
+			ErrorMessage = ex.Message;
+			return Page();
+		}
+
+		this.NotifySuccess($"Methodology '{instance}' is now the project's active default.");
+		return RedirectToPage(new { WorkspaceKey, ProjectKey, Instance = instance });
 	}
 
 	// The stored instance rules rendered into the editor (document prefill + preview).

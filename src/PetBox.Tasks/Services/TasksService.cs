@@ -611,6 +611,18 @@ public sealed partial class TasksService : ITasksService
 		string projectKey, string? name, long version, CancellationToken ct = default) =>
 		_methodologyInstances.SetActiveAsync(projectKey, name, version, ct);
 
+	// Same resolution as RuntimeAsync (spec methodology-active-instance), returning just the
+	// winning instance's name instead of its whole runtime — the "is this board's instance the
+	// project's current default" question (methodology-inactive-visibility) needs only identity.
+	public async Task<string?> ResolveDefaultMethodologyInstanceAsync(string projectKey, CancellationToken ct = default)
+	{
+		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		if (active is not null) return active;
+
+		var open = await ListOpenInstancesAsync(projectKey, ct);
+		return open.Count == 1 ? open[0].Name : null;
+	}
+
 	// Product surface over open methodology instance rules (guide is derived presentation).
 	// Optional `name` selects one instance explicitly; when null, resolution mirrors
 	// RuntimeAsync (spec methodology-active-instance) — active pointer, else the single open

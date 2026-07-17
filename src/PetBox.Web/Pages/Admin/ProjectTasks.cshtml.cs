@@ -51,6 +51,13 @@ public sealed class ProjectTasksModel : PageModel
 	// First open instance by name (used when creating a free board once instances exist).
 	public string? FirstOpenInstance { get; private set; }
 
+	// spec methodology-inactive-visibility: the project's current effective default instance
+	// (ResolveDefaultMethodologyInstanceAsync — pointer when set+open, else the single open
+	// instance, else null). A board whose OWN membership names an open instance other than this
+	// one is a full member of a live process that simply isn't the project's default right now
+	// — "inactive" here is a COMPUTED view (this comparison), never a stored flag on the board.
+	public string? EffectiveActiveInstance { get; private set; }
+
 	// The four methodology kinds are per-instance singletons. The UI offers EITHER enabling
 	// a methodology preset (creates an instance) OR adding free boards.
 	static readonly string[] MethodologyKinds = ["spec", "ideas", "intake", "work"];
@@ -73,6 +80,7 @@ public sealed class ProjectTasksModel : PageModel
 		BoardRuntimes.Clear();
 		foreach (var b in Boards)
 			BoardRuntimes[b.Name] = await _tasks.GetRuntimeForBoardAsync(ProjectKey, b.Name, ct);
+		EffectiveActiveInstance = await _tasks.ResolveDefaultMethodologyInstanceAsync(ProjectKey, ct);
 		var openKinds = Boards.Where(b => b.ClosedAt == null).Select(b => b.Kind).ToHashSet(StringComparer.Ordinal);
 		MethodologyEnabled = MethodologyKinds.All(openKinds.Contains);
 		var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
