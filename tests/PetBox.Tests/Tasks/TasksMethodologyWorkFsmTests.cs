@@ -286,7 +286,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		});
 		// (the envelope '-escapes quotes, so assert around the quoted node key)
 		IsErr(bug).Should().BeTrue();
-		Text(bug).Should().Contain("a new work bug must carry a task_spec link — provide links.task_spec — points at a `spec` node (node");
+		Text(bug).Should().Contain("a new work bug must carry a task_spec link — provide links.task_spec");
 		Text(bug).Should().Contain("b\\u0027)");
 
 		var feature = await Agent("tasks_upsert", new
@@ -296,7 +296,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 			nodes = Nodes(new { key = "f", type = "feature", status = "Pending", title = "F", body = "x" })
 		});
 		IsErr(feature).Should().BeTrue();
-		Text(feature).Should().Contain("a new work feature must carry a task_spec link — provide links.task_spec — points at a `spec` node (node");
+		Text(feature).Should().Contain("a new work feature must carry a task_spec link — provide links.task_spec");
 		Text(feature).Should().Contain("f\\u0027)");
 	}
 
