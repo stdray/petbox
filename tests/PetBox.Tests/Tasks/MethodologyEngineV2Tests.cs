@@ -175,7 +175,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 		await Upsert("ticket", new NodePatch { Key = "t", Type = "ticket", Status = "Open", Title = "T", Body = "x" });
 		var ticket = await NodeInfo("ticket", "t");
 
-		await Upsert("job", new NodePatch { Key = "j", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = ticket.NodeId });
+		await Upsert("job", new NodePatch { Key = "j", Type = "job", Status = "Todo", Title = "J", Body = "x", Links = PetBox.Tests.TestLinks.TaskSpec(ticket.NodeId) });
 
 		var job = await NodeInfo("job", "j");
 		(await _relations.ListAsync(Proj, ticket.NodeId, "to"))
@@ -193,17 +193,17 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 		var wrongKind = await NodeInfo("misc", "m");
 		var wrongStatus = await NodeInfo("ticket", "t-res");
 
-		var kind = () => Upsert("job", new NodePatch { Key = "j1", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongKind.NodeId });
+		var kind = () => Upsert("job", new NodePatch { Key = "j1", Type = "job", Status = "Todo", Title = "J", Body = "x", Links = PetBox.Tests.TestLinks.TaskSpec(wrongKind.NodeId) });
 		(await kind.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*is not a ticket board*");
 
-		var status = () => Upsert("job", new NodePatch { Key = "j2", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongStatus.NodeId });
+		var status = () => Upsert("job", new NodePatch { Key = "j2", Type = "job", Status = "Todo", Title = "J", Body = "x", Links = PetBox.Tests.TestLinks.TaskSpec(wrongStatus.NodeId) });
 		(await status.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*'Resolved', not Open*");
 
 		var missing = () => Upsert("job", new NodePatch { Key = "j3", Type = "job", Status = "Todo", Title = "J", Body = "x" });
 		(await missing.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("a job job must link a ticket node — provide specRef (node 'j3')");
+			.WithMessage("a new job must carry a task_spec link — provide links.task_spec — points at a `ticket` node (node 'j3')");
 	}
 
 	// ── 3. enforceApproval through the MCP door: the SESSION key's scopes decide ──

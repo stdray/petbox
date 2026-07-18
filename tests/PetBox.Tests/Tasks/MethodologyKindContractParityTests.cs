@@ -232,7 +232,7 @@ public sealed class MethodologyKindContractParityTests
 					new MethodologyTransitionEffectDef("open", "blocks", "incoming", null, OnLeave: true),
 				],
 				AutoWireSpecFrom = "spec",
-				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"]),
+				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"], Link: "task_spec"),
 				DefaultView = "kanban",
 				OutlineReveal = "navigate",
 				Singleton = true,

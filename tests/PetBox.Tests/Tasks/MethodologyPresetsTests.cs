@@ -515,7 +515,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		// gated TARGETS are refused, and accepted carries no precondition artifact).
 		await Upsert("ideas", new NodePatch { Key = "why", Status = "accepted", Title = "Why", Body = "x" });
 		var ideaId = (await _tasks.GetAsync(Proj, "ideas", includeClosed: true)).Nodes.Single().NodeId;
-		await Upsert("spec", new NodePatch { Key = "root", Status = "defined", Title = "Root", Body = "x", IdeaRef = ideaId });
+		await Upsert("spec", new NodePatch { Key = "root", Status = "defined", Title = "Root", Body = "x", Links = PetBox.Tests.TestLinks.IdeaSpec(ideaId) });
 		return (await _tasks.GetAsync(Proj, "spec")).Nodes.Single().NodeId;
 	}
 
@@ -536,7 +536,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		// chore needs no spec link (below-spec hygiene) — the preset simply has no
 		// constraint for it; feature/bug pass once specRef is supplied.
 		await Upsert("work", new NodePatch { Key = "c", Type = "chore", Title = "C", Body = "x" });
-		await Upsert("work", new NodePatch { Key = "f", Type = "feature", Title = "F", Body = "x", SpecRef = specId });
+		await Upsert("work", new NodePatch { Key = "f", Type = "feature", Title = "F", Body = "x", Links = PetBox.Tests.TestLinks.TaskSpec(specId) });
 		(await _tasks.GetAsync(Proj, "work")).Nodes.Select(n => n.Key).Should().BeEquivalentTo(["c", "f"]);
 	}
 

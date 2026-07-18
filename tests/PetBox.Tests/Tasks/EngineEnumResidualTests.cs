@@ -136,14 +136,14 @@ public sealed class EngineEnumResidualTests : IDisposable
 		// Direct-to-accepted at creation is legal (no transition fires at birth).
 		await _tasks.UpsertAsync(Proj, "ideas", [new NodePatch { Key = "i1", Title = "I", Body = "x", Status = "accepted", Type = "idea" }]);
 		var ideaId = (await _tasks.GetAsync(Proj, "ideas", includeClosed: true)).Nodes.Single().NodeId;
-		await _tasks.UpsertAsync(Proj, "spec", [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec", IdeaRef = ideaId }]);
+		await _tasks.UpsertAsync(Proj, "spec", [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec", Links = PetBox.Tests.TestLinks.IdeaSpec(ideaId) }]);
 		var specId = (await _tasks.GetAsync(Proj, "spec")).Nodes.Single().NodeId;
 
 		// Born Done (TerminalOk) — no Review→Done transition at birth.
-		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "f1", Title = "F", Body = "x", Type = "feature", Status = "Done", SpecRef = specId }]);
+		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "f1", Title = "F", Body = "x", Type = "feature", Status = "Done", Links = PetBox.Tests.TestLinks.TaskSpec(specId) }]);
 		(await _tasks.GetAsync(Proj, "spec")).Nodes.Single().Delivery.Should().Be("done");
 
-		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "b1", Title = "B", Body = "x", Type = "bug", Status = "Pending", SpecRef = specId }]);
+		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "b1", Title = "B", Body = "x", Type = "bug", Status = "Pending", Links = PetBox.Tests.TestLinks.TaskSpec(specId) }]);
 		(await _tasks.GetAsync(Proj, "spec")).Nodes.Single().Delivery.Should().Be("done_with_defects");
 	}
 
@@ -166,7 +166,7 @@ public sealed class EngineEnumResidualTests : IDisposable
 				[
 					new MethodologyLinkConstraintDef("spec", "idea_spec") { TargetKind = "ideas", TargetStatuses = ["accepted"] },
 				],
-				Delivery = new MethodologyDeliveryDef(["story"], ["defect"]),
+				Delivery = new MethodologyDeliveryDef(["story"], ["defect"], "task_spec"),
 			},
 			new("work", QuickAddAllowed: false,
 			[
@@ -191,15 +191,15 @@ public sealed class EngineEnumResidualTests : IDisposable
 
 		await _tasks.UpsertAsync(Proj, "ideas", [new NodePatch { Key = "i1", Title = "I", Body = "x", Status = "accepted", Type = "idea" }]);
 		var ideaId = (await _tasks.GetAsync(Proj, "ideas", includeClosed: true)).Nodes.Single().NodeId;
-		await _tasks.UpsertAsync(Proj, "spec", [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec", IdeaRef = ideaId }]);
+		await _tasks.UpsertAsync(Proj, "spec", [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec", Links = PetBox.Tests.TestLinks.IdeaSpec(ideaId) }]);
 		var specId = (await _tasks.GetAsync(Proj, "spec")).Nodes.Single().NodeId;
 
 		// A Done story → done (story is requiredTypes; feature would NOT count).
-		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "st1", Title = "Story", Body = "x", Type = "story", Status = "Done", SpecRef = specId }]);
+		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "st1", Title = "Story", Body = "x", Type = "story", Status = "Done", Links = PetBox.Tests.TestLinks.TaskSpec(specId) }]);
 		(await _tasks.GetAsync(Proj, "spec")).Nodes.Single().Delivery.Should().Be("done");
 
 		// An open defect → done_with_defects (no hardcoded "bug" needed).
-		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "d1", Title = "Defect", Body = "x", Type = "defect", Status = "Pending", SpecRef = specId }]);
+		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "d1", Title = "Defect", Body = "x", Type = "defect", Status = "Pending", Links = PetBox.Tests.TestLinks.TaskSpec(specId) }]);
 		(await _tasks.GetAsync(Proj, "spec")).Nodes.Single().Delivery.Should().Be("done_with_defects");
 	}
 
@@ -271,7 +271,7 @@ public sealed class EngineEnumResidualTests : IDisposable
 					[]),
 			])
 			{
-				Delivery = new MethodologyDeliveryDef([], ["bug"]),
+				Delivery = new MethodologyDeliveryDef([], ["bug"], "task_spec"),
 			},
 		]);
 		var act = () => _tasks.DefineMethodologyAsync(Proj, def, 0);

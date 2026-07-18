@@ -141,22 +141,22 @@ public static class GuardEngine
 
 		bool writerIsFrom = true;
 		string? targetKind = null;
-		if (dir is not null && (dir.FromKind is not null || dir.ToKind is not null))
+		if (dir is not null)
 		{
 			var onFrom = dir.FromKind is not null && string.Equals(dir.FromKind, writerKind, StringComparison.OrdinalIgnoreCase);
 			var onTo = dir.ToKind is not null && string.Equals(dir.ToKind, writerKind, StringComparison.OrdinalIgnoreCase);
 			if (onFrom && !onTo) { writerIsFrom = true; targetKind = dir.ToKind; }
 			else if (onTo && !onFrom) { writerIsFrom = false; targetKind = dir.FromKind; }
-			else
-				return Bad(writerKey, $"link '{kind}' cannot be set from a '{writerKind}' node — its direction (from:{dir.FromKind ?? "*"} to:{dir.ToKind ?? "*"}) includes '{writerKind}' at neither end (node '{writerKey}')");
+			// The writer matches NEITHER end (a project reusing a builtin slug with its own kinds) or
+			// an end whose opposite is null (unconstrained): fall through to the constraint's target
+			// below, keeping the historical writer-is-FROM orientation.
 		}
-		// A null opposite end (unconstrained direction) or a direction-less kind falls back to the
-		// writer kind's link constraint for its target kind; without either there is nothing to
-		// resolve a slug against.
+		// A null opposite end or a direction-less/mismatched kind falls back to the writer kind's
+		// link constraint for its target kind; without either there is nothing to resolve a slug against.
 		targetKind ??= ctx.Runtime.LinkConstraints(ctx.KindSlug)
 			.FirstOrDefault(c => string.Equals(c.Link, kind, StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)?.TargetKind;
 		if (targetKind is null)
-			return Bad(writerKey, $"link '{kind}' has no direction to resolve against — declare its direction (fromKind/toKind), or pass a NodeId (node '{writerKey}')");
+			return Bad(writerKey, $"link '{kind}' has no direction to resolve against from a '{writerKind}' node — declare its direction (fromKind/toKind), or pass a NodeId (node '{writerKey}')");
 
 		// The target-kind boards of this instance bucket (built only for a slug ref).
 		var instance = ctx.MethodologyInstance;

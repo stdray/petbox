@@ -21,7 +21,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "login flow", ideaRef = ir }),
+			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "login flow", links = new { idea_spec = ir } }),
 		});
 		var specId = NodeId(spec, "login");
 
@@ -30,7 +30,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "...", specRef = specId }),
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "...", links = new { task_spec = specId } }),
 		});
 		work.IsError.Should().NotBe(true);
 		var taskId = NodeId(work, "do-login");
@@ -50,7 +50,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "auth", status = "defined", title = "Auth", body = "x", ideaRef = ir }),
+			nodes = Nodes(new { key = "auth", status = "defined", title = "Auth", body = "x", links = new { idea_spec = ir } }),
 		});
 		var specId = NodeId(spec, "auth");
 		var v = JsonDocument.Parse(Text(spec)).RootElement;
@@ -61,7 +61,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "identity", prevKey = "auth", version = 1, status = "defined", title = "Identity", body = "x", ideaRef = ir }),
+			nodes = Nodes(new { key = "identity", prevKey = "auth", version = 1, status = "defined", title = "Identity", body = "x", links = new { idea_spec = ir } }),
 		});
 		NodeId(renamed, "identity").Should().Be(specId, "rename must preserve the stable NodeId");
 	}
@@ -75,7 +75,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		var nonSpecId = NodeId(nf, "x");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = nonSpecId }) });
+		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", links = new { task_spec = nonSpecId } }) });
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not a spec board");
 	}
@@ -94,7 +94,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires to spec
 
-		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = otherId }) });
+		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", links = new { task_spec = otherId } }) });
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not a spec board");
 	}
@@ -111,7 +111,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir })
+			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } })
 		});
 		var specId = NodeId(spec, "login");
 
@@ -120,7 +120,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", specRef = "login" })
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", links = new { task_spec = "login" } })
 		});
 		IsErr(work).Should().BeFalse(Text(work));
 		var taskId = NodeId(work, "do-login");
@@ -147,7 +147,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = "no-such-spec" })
+			nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", links = new { task_spec = "no-such-spec" } })
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("no-such-spec");
@@ -165,11 +165,11 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = "some-spec" })
+			nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", links = new { task_spec = "some-spec" } })
 		});
 		IsErr(r).Should().BeTrue();
-		Text(r).Should().Contain("is a slug, but this board has no linked spec board");
-		Text(r).Should().Contain("provide the spec node");
+		Text(r).Should().Contain("is a slug, but no active spec board exists alongside board");
+		Text(r).Should().Contain("provide the target node");
 	}
 
 	// 31. ideaRef accepts the idea node's SLUG (resolved on the ideas board of this board's
@@ -184,7 +184,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "want-x" })
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = "want-x" } })
 		});
 		IsErr(spec).Should().BeFalse(Text(spec));
 		var specId = NodeId(spec, "x");
@@ -194,25 +194,23 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		Text(rels).Should().Contain(ideaId); // the resolved NodeId, never the raw slug
 	}
 
-	// 32. the same slug resolution from the WORK board (ideaRef is not spec-board-only): the
-	// ideas board is found by kind within the instance bucket, not via the SpecBoard pin.
+	// 32. idea_spec is DIRECTION-TYPED (ideas→spec): a work node is neither end, so addressing
+	// idea_spec from a work board by slug is refused (spec methodology-link-kinds-declared — the
+	// generic resolver resolves a slug only against the opposite END's kind). Work provenance is
+	// expressed by task_spec (work→spec), not by citing an idea directly.
 	[Fact]
-	public async Task IdeaRef_BySlug_FromWorkBoard_Resolves()
+	public async Task IdeaRef_BySlug_FromWorkBoard_IsRefused_NotAnEndOfIdeaSpec()
 	{
-		var ideaId = await AcceptedIdeaId("want-x");
+		await AcceptedIdeaId("want-x");
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		var work = await Agent("tasks_upsert", new
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "chore-x", type = "chore", status = "Pending", title = "Chore", body = "x", ideaRef = "want-x" })
+			nodes = Nodes(new { key = "chore-x", type = "chore", status = "Pending", title = "Chore", body = "x", links = new { idea_spec = "want-x" } })
 		});
-		IsErr(work).Should().BeFalse(Text(work));
-		var taskId = NodeId(work, "chore-x");
-
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = taskId, direction = "to" });
-		Text(rels).Should().Contain("idea_spec");
-		Text(rels).Should().Contain(ideaId);
+		IsErr(work).Should().BeTrue();
+		Text(work).Should().Contain("has no direction to resolve against from a");
 	}
 
 	// 33. slug resolution does NOT weaken the constraint: a slug pointing at a non-accepted
@@ -232,7 +230,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "drv" })
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = "drv" } })
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not accepted");
@@ -249,7 +247,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "no-such-idea" })
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = "no-such-idea" } })
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("no-such-idea");
@@ -268,7 +266,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = ideaId })
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = ideaId } })
 		});
 		IsErr(spec).Should().BeFalse(Text(spec));
 		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(spec, "x"), direction = "to" });

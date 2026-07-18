@@ -269,7 +269,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		await _tasks.CreateBoardAsync(Proj, "spec", "spec", null, null);
 		await Upsert("ideas", new NodePatch { Key = "i", Type = "idea", Status = "accepted", Title = "I" });
 		var ideaId = NodeId("ideas", "i");
-		await Upsert("spec", new NodePatch { Key = "s", Type = "spec", Status = "defined", Title = "S", Body = "req", IdeaRef = ideaId });
+		await Upsert("spec", new NodePatch { Key = "s", Type = "spec", Status = "defined", Title = "S", Body = "req", Links = PetBox.Tests.TestLinks.IdeaSpec(ideaId) });
 		var id = NodeId("spec", "s");
 		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
 
