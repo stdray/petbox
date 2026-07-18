@@ -373,13 +373,16 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		query.Should().BeEquivalentTo(listing);
 	}
 
-	// ---- presentation tiers (spec tasks-search-statuskind-presentation-tiers) ----
+	// ---- presentation tiers (spec tasks-search-status-tiers, Option A) ----
 
-	// The tier is a STABLE PARTITION over the fused relevance order (open → terminalok →
-	// terminalcancel): it demotes terminal nodes but preserves the relevance order WITHIN each tier
-	// (not a re-sort), hides nothing (not a cliff), and never folds terminalok in with terminalcancel.
+	// The tier is a STABLE PARTITION over the fused relevance order — TWO tiers, {open, terminalok} →
+	// 0, terminalcancel → 1 (owner decision 2026-07-18, revising the earlier 3-tier map): it demotes
+	// ONLY dead work (terminalcancel) but preserves the relevance order WITHIN each tier (not a
+	// re-sort), hides nothing (not a cliff), and never folds terminalok in with terminalcancel. A
+	// high-relevance Done node is NOT forced below a low-relevance open node — they interleave by
+	// relevance like any two same-tier hits.
 	[Fact]
-	public async Task PresentationTiers_StablePartition_NotResort_NotCliff()
+	public async Task PresentationTiers_StablePartition_TwoTier_OpenAndTerminalOkInterleave()
 	{
 		await Seed("b", """
 			[{"key":"op-a","status":"Todo","title":"pangolin a","body":"pangolin pangolin pangolin"},
@@ -390,21 +393,48 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		await Seed("b", """[{"key":"ok-c","status":"Done","version":1}]"""); // terminalok
 		await Seed("b", """[{"key":"can-d","status":"Cancelled","version":1}]"""); // terminalcancel
 
-		// The open tier, in pure relevance order (op-a is more keyword-dense than op-b).
-		var openOrder = (await Search(q: "pangolin", statusKind: ["open"])).Nodes.Select(n => n.Key).ToArray();
-		openOrder.Should().Equal("op-a", "op-b");
+		// The {open, terminalok} tier, in pure relevance order — no statusKind narrowing beyond
+		// dropping terminalcancel, so a query default already yields it (open + terminalok).
+		var openTierOrder = (await Search(q: "pangolin", statusKind: ["open", "terminalok"]))
+			.Nodes.Select(n => n.Key).ToArray();
+		// ok-c (2 hits of "pangolin") outranks op-b (1 hit) on pure relevance: it is NOT forced below
+		// op-b just for being terminal-OK — open and terminalok interleave by relevance.
+		openTierOrder.Should().Equal("op-a", "ok-c", "op-b");
 
-		// All three tiers present: the partition reorders, it never drops (not a cliff).
+		// Both tiers present: the partition reorders, it never drops (not a cliff).
 		var all = (await Search(q: "pangolin", statusKind: ["open", "terminalok", "terminalcancel"]))
 			.Nodes.Select(n => n.Key).ToList();
 		all.Should().BeEquivalentTo(new[] { "op-a", "op-b", "ok-c", "can-d" });
 
-		// Partition-not-resort: the open tier leads, in the SAME relevance order it had alone (a global
-		// re-sort would have reshuffled it) — and the terminal tiers follow, terminalok BEFORE
-		// terminalcancel (accepted/Done never folded in with rejected/cancelled).
-		all.Take(2).Should().Equal(openOrder);              // open tier first, relevance order preserved
-		all.IndexOf("ok-c").Should().BeLessThan(all.IndexOf("can-d")); // terminalok tier before terminalcancel
-		all.IndexOf("op-b").Should().BeLessThan(all.IndexOf("ok-c"));  // whole open tier above any terminal
+		// Partition-not-resort: tier 0 ({open, terminalok}) leads, in the SAME relevance order it had
+		// alone (a global re-sort would have reshuffled it) — terminalcancel (tier 1, dead work) is last.
+		all.Take(3).Should().Equal(openTierOrder);                     // tier 0, relevance order preserved
+		all.Last().Should().Be("can-d");                               // terminalcancel demoted to tier 1
+		all.IndexOf("ok-c").Should().BeLessThan(all.IndexOf("can-d")); // terminalok NOT demoted with terminalcancel
+	}
+
+	// Identity-leg interaction (Option A): an exact-slug hit is inserted at the front of the result
+	// BEFORE the tier partition runs (TasksService). Under the OLD 3-tier map a terminalok exact hit
+	// could still be pushed below the open tier by that later partition — silently breaking the
+	// "exact hit leads" promise for a Done node. Under the two-tier map it shares tier 0 with open,
+	// so the stable partition (which preserves incoming relative order within a tier) leaves it at
+	// the front: it is the earliest item in tier 0's relative order because the exact leg put it there.
+	[Fact]
+	public async Task PresentationTiers_ExactTerminalOkHit_StaysAtFront_NotDemoted()
+	{
+		// The exact-slug node is terminal-OK (Done); several open noise nodes also match the query
+		// text so the {open, terminalok} tier has more than one member for the partition to reorder.
+		await Seed("b", """
+			[{"key":"wombat-exact","status":"Todo","title":"wombat exact","body":"wombat marker text"},
+			 {"key":"wombat-noise-a","status":"Todo","title":"wombat noise a","body":"wombat marker text wombat"},
+			 {"key":"wombat-noise-b","status":"Todo","title":"wombat noise b","body":"wombat marker text wombat wombat"}]
+			""");
+		await Seed("b", """[{"key":"wombat-exact","status":"Done","version":1}]"""); // terminalok
+
+		// The query IS the slug (identity leg) → exact hit inserted first, then the tier partition
+		// runs over the whole result. It must still lead: not demoted below the open-tier noise.
+		var res = await Search(q: "wombat-exact", statusKind: ["open", "terminalok"]);
+		res.Nodes.Select(n => n.Key).First().Should().Be("wombat-exact");
 	}
 
 	// tasks-search-drop-terminal-default (exact leg): the exact-identifier leg is SUBJECT TO the
