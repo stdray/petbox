@@ -114,6 +114,21 @@ public static class SqliteMetaIndex
 			.ToList();
 	}
 
+	// ---- read leg: facet lookup (listing parity) ----
+	//
+	// The stored StatusKind facet for every entity under (scope, type), as Id → StatusKind (spec
+	// tasks-listing-search-predicate-parity). A listing evaluates its statusKind predicate against
+	// THIS — the SAME опорный слой the query legs' facet pushdown joins — so listing and search share
+	// ONE authority and there is NO live classifier recompute on read. A plain equality read over the
+	// search_meta table (no `tx`); the caller filters its hydrated rows by the returned map.
+	public static async Task<Dictionary<string, string>> StatusKindsByTypeAsync(
+		DataConnection db, string scope, string type, CancellationToken ct = default) =>
+		(await db.GetTable<SearchMetaRow>()
+			.Where(r => r.Scope == scope && r.Type == type)
+			.Select(r => new { r.Id, r.StatusKind })
+			.ToListAsync(ct))
+		.ToDictionary(r => r.Id, r => r.StatusKind, StringComparer.Ordinal);
+
 	static DataConnection Tx(DataConnection? tx) =>
 		tx ?? throw new InvalidOperationException("SqliteMetaIndex is Class-A (transactional): a write must ride the entity's transaction (tx).");
 

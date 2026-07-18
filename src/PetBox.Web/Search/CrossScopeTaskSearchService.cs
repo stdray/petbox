@@ -133,11 +133,14 @@ public sealed class CrossScopeTaskSearchService(
 			? null
 			: $"{scheme}://{host}{Routes.ProjectTasks(ws, project.Key)}/";
 
-		// Exact-identifier leg (exact-identifier-search-surfacing): every node whose slug/NodeId
-		// exactly equals `query`, INCLUDING terminal ones and ALL boards when a slug is shared —
-		// ambiguity is not an error in search, so a same-slug-on-two-boards paste surfaces both
-		// (each row labelled by board). A miss is an empty list, never a fault (no try/catch).
-		var exactHits = await tasks.ExactIdentifierHitsAsync(project.Key, query, board: null, urlPrefix, ct).ConfigureAwait(false);
+		// Exact-identifier leg: every node whose slug/NodeId exactly equals `query`, INCLUDING terminal
+		// ones and ALL boards when a slug is shared — ambiguity is not an error in search, so a
+		// same-slug-on-two-boards paste surfaces both (each row labelled by board). A miss is an empty
+		// list, never a fault (no try/catch). This UI cross-scope leg passes NO statusKind facet
+		// (neutral) — it is the raw identity resolver: pasting an exact id surfaces the node terminal or
+		// not. The facet-subjecting of the exact leg (tasks-search-drop-terminal-default) governs the
+		// tasks_search CONTRACT surface, not this direct identifier paste.
+		var exactHits = await tasks.ExactIdentifierHitsAsync(project.Key, query, board: null, urlPrefix, ct: ct).ConfigureAwait(false);
 
 		if (exactHits.Count > 0)
 		{

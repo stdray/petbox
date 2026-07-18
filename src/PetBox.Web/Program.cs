@@ -188,7 +188,7 @@ public partial class Program
 		// no membership floor — the tau/SemanticFloor threshold was removed (spec:
 		// search-leg-classification): the vector leg selects as a peer, not behind a threshold.
 		builder.Services.AddSingleton(
-			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchRerankOptions>() ?? new PetBox.Core.Search.SearchRerankOptions());
+			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchOrderingPolicies>() ?? new PetBox.Core.Search.SearchOrderingPolicies());
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
 		// Usage telemetry intake (spec: memory-usage-observability): singleton queue+drain;
 		// called ONLY by the MCP/UI adapters, so internal machine traffic never counts.
@@ -268,7 +268,7 @@ public partial class Program
 			sp.GetRequiredService<PetBox.Sessions.Search.ISessionFullScanIndex>(),
 			sp.GetRequiredService<PetBox.Core.Settings.ISettingsResolver>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
-			sp.GetRequiredService<PetBox.Core.Search.SearchRerankOptions>()));
+			sp.GetRequiredService<PetBox.Core.Search.SearchOrderingPolicies>()));
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
 		// out by idleness. Singleton — it IS the hydration cache. The stage-2 in-session
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec

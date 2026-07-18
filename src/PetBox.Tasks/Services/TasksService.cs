@@ -989,11 +989,18 @@ public sealed partial class TasksService : ITasksService
 	// enrichment rides GetNodeBySlugAsync (includeClosed inside) so an accepted/Cancelled node surfaces
 	// like any other. Cross-scope isolation: the predicate is scoped to `projectKey`.
 	//
+	// `statusKindFacet` (tasks-search-drop-terminal-default): the visibility facet the identity leg is
+	// SUBJECT TO — the exact leg no longer force-surfaces terminal nodes past the facet (its old
+	// terminal-override is the last of the five drop-terminal-default mechanisms to die). Null/empty =
+	// NEUTRAL (every kind — the raw resolver, e.g. the UI cross-scope leg). A non-empty set keeps only
+	// hits whose StatusKind (read from the ОПОРНЫЙ СЛОЙ, search_meta — no live recompute) is in the set;
+	// a hit with no meta row is KEPT, matching the pushdown's "a facet it does not carry cannot hide it".
+	//
 	// TWO candidates, deduplicated: the LITERAL identifier (trim + casefold, so it lines up with the
 	// stored alias set — slug is lowercase kebab, NodeId is lowercase hex) and, when it differs, the
 	// KEBAB normalization (collapse internal whitespace/underscores to one hyphen) — the dominant
 	// "typed the slug's words with spaces" case (search-hides-terminal-nodes defect 1), preserved.
-	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
+	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, IReadOnlyList<string>? statusKindFacet = null, CancellationToken ct = default)
 	{
 		var raw = (identifier ?? "").Trim();
 		if (raw.Length == 0) return [];
@@ -1025,6 +1032,22 @@ public sealed partial class TasksService : ITasksService
 			if (detail is null) continue;
 			var node = urlPrefix is null ? detail.Node : detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key };
 			hits.Add(new TaskSearchHit(detail.Board, node));
+		}
+		// tasks-search-drop-terminal-default: subject the exact hits to the statusKind facet, read from
+		// the опорный слой (search_meta — already backfilled above), NOT a live classifier. A no-meta hit
+		// is kept. Neutral facet (null/empty) skips this — the raw identity resolver, terminal or not.
+		if (statusKindFacet is { Count: > 0 } allowed && hits.Count > 0)
+		{
+			var metaByBoard = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+			var kept = new List<TaskSearchHit>();
+			foreach (var h in hits)
+			{
+				if (!metaByBoard.TryGetValue(h.Board, out var kinds))
+					metaByBoard[h.Board] = kinds = await SqliteMetaIndex.StatusKindsByTypeAsync(ctx, projectKey, h.Board, ct);
+				if (!kinds.TryGetValue(h.Node.Key, out var facet) || allowed.Contains(facet))
+					kept.Add(h);
+			}
+			hits = kept;
 		}
 		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
@@ -1685,13 +1708,43 @@ public sealed partial class TasksService : ITasksService
 			// A status filter or explicit keys are an EXPLICIT ask — widen the pool to terminal
 			// nodes first (mirrors GetAsync's own status handling), then criteria keep only what
 			// was asked for.
-			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null;
+			// The statusKind facet is a predicate in BOTH modes (spec tasks-search-statuskind-facet).
+			// An EXPLICIT statusKind widens the pool to every terminal node, then selects by the facet;
+			// otherwise the deprecated includeClosed alias decides (includeClosed:false + listing → the
+			// [open] set, which the existing FilterVisible already yields — so the default path is
+			// unchanged). PARITY (spec tasks-listing-search-predicate-parity): an explicit statusKind is
+			// evaluated against the ОПОРНЫЙ СЛОЙ (search_meta) — the SAME authority the query leg's facet
+			// pushdown joins — NOT a live classifier recompute on read (one fact, one authority). The
+			// listing still HYDRATES + ORDERS entity-side (default priority/key is an entity
+			// specialization); only the facet SELECTION moved onto the reference layer.
+			var listingFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: false);
+			var explicitStatusKind = f.StatusKind is { Count: > 0 };
+			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null || explicitStatusKind;
+			Dictionary<string, Dictionary<string, string>>? statusKindByBoard = null;
+			if (explicitStatusKind)
+			{
+				// Self-heal the reference layer once on the same read-time trigger the query path uses,
+				// then read the stored StatusKind facet per board (Id → facet). A node with no meta row
+				// is KEPT — matching the pushdown's "a facet it does not carry cannot hide it".
+				using var metaCtx = _boards.NewEnsuredConnection(projectKey);
+				await EnsureLexicalBackfillAsync(metaCtx, projectKey, runtime, ct);
+				await EnsureMetaBackfillAsync(metaCtx, projectKey, runtime, ct);
+				statusKindByBoard = new(StringComparer.Ordinal);
+				foreach (var b in boardsMeta)
+					statusKindByBoard[b.Name] = await SqliteMetaIndex.StatusKindsByTypeAsync(metaCtx, projectKey, b.Name, ct);
+			}
 			hits = new List<TaskSearchHit>();
 			foreach (var b in boardsMeta)
 			{
 				var view = await GetAsync(projectKey, b.Name, includeClosed: widen, urlPrefix: urlPrefix, ct: ct);
 				if (boardFilter is not null) currentVersion = view.CurrentVersion;
-				hits.AddRange(view.Nodes.Select(n => new TaskSearchHit(b.Name, n)));
+				var rows = view.Nodes.AsEnumerable();
+				if (explicitStatusKind)
+				{
+					var kinds = statusKindByBoard![b.Name];
+					rows = rows.Where(n => !kinds.TryGetValue(n.Key, out var facet) || listingFacet!.Contains(facet));
+				}
+				hits.AddRange(rows.Select(n => new TaskSearchHit(b.Name, n)));
 			}
 		}
 		else
@@ -1707,15 +1760,20 @@ public sealed partial class TasksService : ITasksService
 			// reason — recall at small limits — not to cover the visibility filter. terminal-OK
 			// (accepted/Done) is never excluded — it is a success state, not "closed", so a default
 			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
+			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit, 50), urlPrefix, runtime, f.IncludeClosed, ct);
+				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, ct);
 
-			// exact-identifier-search-surfacing / search-identity-leg (spec): a query that exactly
-			// matches a node's slug OR its NodeId reads as an addressed ask in disguise — the identity
-			// leg (equality over search_meta_alias, terminal nodes included by index membership)
-			// surfaces EVERY exact match regardless of the includeClosed/terminal-CANCEL filter above,
-			// ahead of the fused ranking. Still subject to the criteria predicates below like any other hit.
-			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
+			// search-identity-leg (spec): a query that exactly matches a node's slug OR its NodeId reads
+			// as an addressed ask in disguise — the identity leg (equality over search_meta_alias)
+			// surfaces every exact match ahead of the fused ranking. tasks-search-drop-terminal-default:
+			// the exact leg no longer carries a TERMINAL-OVERRIDE — it is SUBJECT TO the SAME statusKind
+			// facet as every other leg (the last of the five terminal mechanisms to die). The frame
+			// invariant (accepted/Done findable by default) is now held by the facet default, so exact
+			// need not force-surface terminal-OK; a terminal-CANCEL node by exact id is expressible as
+			// statusKind:[terminalcancel]. This SUPERSEDES the old exact-identifier-search-surfacing rule
+			// ("exact ignores visibility"). Still subject to the criteria predicates below like any hit.
+			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, statusKindFacet: queryFacet, ct: ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
 			// An exact match PREEMPTS its own fused copy rather than yielding to it: since the slug's
 			// words are lexical terms (search-slug-words-gap), a verbatim-slug query now ALSO matches
@@ -1732,6 +1790,19 @@ public sealed partial class TasksService : ITasksService
 		hits = TaskSearchFilter.Apply(hits, criteria);
 
 		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
+		// Presentation tiers (spec tasks-search-statuskind-presentation-tiers): OVER the fused relevance
+		// order — query mode, and only when the order IS the rerank order (no explicit sort, or the
+		// relevance sort). A STABLE PARTITION by StatusKind tier (open → terminalok → terminalcancel),
+		// preserving the relevance order WITHIN each tier: it demotes terminal nodes, it never re-sorts
+		// the whole list, applies no score multiplier, and hides nothing (a tier is not a cliff). It is
+		// a POLICY in the presentation slot — it changes ORDER, never SELECTION (the facet already
+		// selected). Named only by StatusKind, so terminalok/accepted never folds in with terminalcancel.
+		if (query is not null && (req.Sort is null || req.Sort.Value.By == TaskSortBy.Relevance))
+		{
+			var kindByBoard = boardsMeta.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
+			hits = Tiering.StablePartition(hits, h => TasksSearchDocs.StatusKindTier(
+				runtime.StatusKindOf(kindByBoard.GetValueOrDefault(h.Board), h.Node.Status) ?? StatusKind.Open));
+		}
 		if (req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
 		if (req.BodyLen > 0)
 			hits = hits.Select(h => h with { Node = h.Node with { Body = SnippetBody(h.Node.Body, req.BodyLen) } }).ToList();
@@ -1753,7 +1824,7 @@ public sealed partial class TasksService : ITasksService
 	// failure is caught by the facade and flagged degraded.
 	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
 		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime,
-		bool includeClosed, CancellationToken ct)
+		IReadOnlyList<string>? statusKindFacet, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
@@ -1767,13 +1838,19 @@ public sealed partial class TasksService : ITasksService
 		if (_llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		// search-facet-pushdown: the SAME visibility rule that used to run AFTER fusion (hide
-		// terminal-CANCEL unless includeClosed) is now a facet predicate each leg applies against
-		// search_meta BEFORE it truncates — moved DOWN, not changed. includeClosed widens the ask by
-		// passing NO facet filter (nothing excluded); otherwise exclude the terminal-CANCEL facet.
-		var facets = includeClosed
-			? (FacetFilter?)null
-			: new FacetFilter(ExcludeStatusKinds: [TasksSearchDocs.TerminalCancelFacet]);
+		// search-facet-pushdown / tasks-search-statuskind-facet: the visibility rule is a statusKind
+		// facet predicate each leg applies against the опорный слой (search_meta) BEFORE it truncates.
+		// The effective set was resolved upstream (TasksSearchDocs.ResolveStatusKindFacet — the single
+		// place the deprecated includeClosed alias maps onto statusKind): null/empty = NEUTRAL (no
+		// facet filter, every kind); a non-empty set keeps only those statusKinds.
+		var facets = statusKindFacet is { Count: > 0 }
+			? new FacetFilter(StatusKinds: statusKindFacet)
+			: (FacetFilter?)null;
+		// The hit-resolve pool below must AGREE with the leg's selection: keep terminal-CANCEL nodes in
+		// the pool iff the facet admits them (neutral set, or a set naming terminalcancel). A comment
+		// hit whose owner is an excluded terminal-CANCEL node then resolves to nothing and drops, as before.
+		bool poolKeepsTerminalCancel = statusKindFacet is not { Count: > 0 }
+			|| statusKindFacet.Contains(TasksSearchDocs.TerminalCancelFacet);
 
 		// PRECISION mode (spec: search-rerank-in-loop): the cross-encoder reranks the candidate union
 		// as the штатный path when an LLM route is configured. The candidate-text resolver fetches each
@@ -1848,7 +1925,7 @@ public sealed partial class TasksService : ITasksService
 			// (pre-fix orphans / delete races) — skip the stale group instead of throwing.
 			var meta = await _boards.FindAsync(projectKey, g.Key, ct);
 			if (meta is null) continue;
-			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, includeClosed, ct);
+			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, poolKeepsTerminalCancel, ct);
 			foreach (var (h, rank) in g)
 			{
 				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);

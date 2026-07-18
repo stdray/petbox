@@ -191,6 +191,46 @@ public sealed class MethodologyLiveMigration
 		return r.Inserted;
 	}
 
+	// The boards whose StatusKind classification a vocab change can move: those whose kind the OLD
+	// or the NEW resolution declares (a kind neither declares resolves from the immutable presets
+	// before AND after, so its facets can't drift). The same scoping Plan walks for rewrites.
+	public static IReadOnlyList<TaskBoardMeta> AffectedBoards(
+		MethodologyDefinition? oldDef, MethodologyDefinition? newDef, IReadOnlyList<TaskBoardMeta> boards)
+	{
+		static bool Declares(MethodologyDefinition? d, string? kind) =>
+			kind is not null && d is not null && d.Kinds.Any(k => string.Equals(k.Kind, kind, StringComparison.OrdinalIgnoreCase));
+		return boards.Where(b => Declares(oldDef, b.Kind) || Declares(newDef, b.Kind)).ToList();
+	}
+
+	// Reproject a WHOLE board's search_meta facet layer under a (new) runtime
+	// (spec tasks-reindex-on-methodology-vocab-change). A methodology vocab change can reclassify a
+	// status's StatusKind WITHOUT changing the status STRING (e.g. a rule marks an existing status
+	// terminal): such a node needs no type/status rewrite, so RewriteAsync — which only re-stamps the
+	// nodes it rewrites — leaves its facet row STALE and the опорный слой quietly lies. This re-stamps
+	// every active, indexable node of the board so search_meta always reflects the current vocabulary.
+	// Per-board classification (kindSlug, the board's own kind), idempotent; boards are small, and a
+	// reindex is a first-class operation here, not a fallback. Runs at the rules/adopt mutation points.
+	public static async Task<int> ReindexBoardMetaAsync(
+		TasksDb ctx, string projectKey, string board, string kindSlug, MethodologyRuntime runtime, CancellationToken ct)
+	{
+		var indexed = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
+		if (indexed.Count == 0) return 0;
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			foreach (var n in indexed)
+				await SqliteMetaIndex.IndexAsync(ctx, TasksSearchDocs.ToMetaDoc(n, projectKey, runtime, kindSlug), ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
+		return indexed.Count;
+	}
+
 	// Active (ValidTo == null) tags for the given nodes on a board, read on the supplied connection.
 	static async Task<Dictionary<string, List<string>>> NodeTagsAsync(DataConnection db, string board, IEnumerable<string> nodeIds, CancellationToken ct)
 	{

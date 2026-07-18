@@ -29,7 +29,7 @@ public sealed class TaskBoardModel : PageModel
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
 	readonly ISettingsResolver _settings;
-	// Optional ctor param (the SearchRerankOptions pattern): DI always supplies it — IMemoryService
+	// Optional ctor param (the SearchOrderingPolicies pattern): DI always supplies it — IMemoryService
 	// is registered unconditionally — and a page-model unit test that doesn't exercise memory
 	// autolinking may omit it. Null = no memory refs, keys render literal.
 	readonly PetBox.Memory.Contract.IMemoryService? _memory;

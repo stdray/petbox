@@ -45,17 +45,17 @@ public sealed class MemoryService : IMemoryService
 	// Relevance re-ranking policy (freshness decay + MMR diversity) bound from the `Search`
 	// config section. Defaults are enabled/conservative, so an un-wired construction (tests,
 	// other adapters) still gets the shipped ranking.
-	readonly SearchRerankOptions _rerank;
+	readonly SearchOrderingPolicies _ordering;
 	// Optional (DI fills it; hand-constructed test/adapter instances pass none). Handed to the
 	// per-query SearchService so a degraded retriever leg is LOGGED, not just flagged.
 	readonly ILogger<MemoryService>? _log;
 
-	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchRerankOptions? rerank = null,
+	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchOrderingPolicies? rerank = null,
 		ILogger<MemoryService>? log = null)
 	{
 		_stores = stores;
 		_llm = llm;
-		_rerank = rerank ?? new SearchRerankOptions();
+		_ordering = rerank ?? new SearchOrderingPolicies();
 		_log = log;
 	}
 
@@ -322,7 +322,7 @@ public sealed class MemoryService : IMemoryService
 		if (candidates.Count == 0) return candidates;
 
 		var now = DateTime.UtcNow;
-		var recency = _rerank.Recency;
+		var recency = _ordering.Recency;
 		double Blended(Candidate c) => recency.Enabled
 			? c.Score * RecencyDecay.Weight(c.Entry.Updated, now, recency.HalfLifeDays)
 			: c.Score;
@@ -335,7 +335,7 @@ public sealed class MemoryService : IMemoryService
 			.ThenBy(c => c.Store, StringComparer.Ordinal)
 			.ToList();
 
-		var diversity = _rerank.Diversity;
+		var diversity = _ordering.Diversity;
 		if (diversity.Enabled)
 			blended = Mmr.Reorder(blended, c => c.Score, c => c.Vector, diversity.Lambda);
 		return blended;

@@ -193,6 +193,7 @@ public sealed partial class MethodologyInstanceService
 		var sameDefinition = string.Equals(current.Json, json, StringComparison.Ordinal);
 		var newRuntime = new MethodologyRuntime(def);
 		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		var affected = new List<TaskBoardMeta>();
 		if (!sameDefinition)
 		{
 			// Scope: open boards that belong to THIS instance only. Other instances /
@@ -205,6 +206,7 @@ public sealed partial class MethodologyInstanceService
 			MethodologyLiveMigration.Validate(migration ?? [], newRuntime, boards);
 			rewrites = MethodologyLiveMigration.Plan(ctx, oldDef, def, newRuntime, migration ?? [], boards,
 				subject: $"methodology instance '{key}' rules change");
+			affected = MethodologyLiveMigration.AffectedBoards(oldDef, def, boards).ToList();
 		}
 
 		// Preserve ClosedAt (must stay null here — closed rejected above) so SamePayload
@@ -234,6 +236,11 @@ public sealed partial class MethodologyInstanceService
 		var migrated = 0;
 		foreach (var (board, nodes) in rewrites)
 			migrated += await _live.RewriteAsync(ctx, projectKey, board, nodes, newRuntime, ct);
+		// tasks-reindex-on-methodology-vocab-change: reproject each affected member board's facet
+		// layer under the new rules — a reclassification with no status-string change gets no rewrite
+		// above, so its stored statusKind facet would otherwise silently drift from the new vocabulary.
+		foreach (var b in affected)
+			await MethodologyLiveMigration.ReindexBoardMetaAsync(ctx, projectKey, b.Name, b.Kind, newRuntime, ct);
 		return new MethodologyInstanceRulesAck(key, r.CurrentVersion, Changed: r.Inserted > 0, Migrated: migrated);
 	}
 
@@ -316,6 +323,11 @@ public sealed partial class MethodologyInstanceService
 		var ok = await _boards.UpdateAsync(projectKey, board, m => m with { MethodologyInstance = key }, ct);
 		if (!ok)
 			throw new InvalidOperationException($"task board '{board}' not found in project '{projectKey}'");
+		// tasks-reindex-on-methodology-vocab-change: adoption swaps the board's resolution to the
+		// target instance's rules — its nodes' StatusKind may reclassify though no status string
+		// changed — so reproject the board's facet layer under the target runtime.
+		using (var reindexCtx = _boards.NewEnsuredConnection(projectKey))
+			await MethodologyLiveMigration.ReindexBoardMetaAsync(reindexCtx, projectKey, meta.Name, meta.Kind, targetRuntime, ct);
 		return (await _boards.FindAsync(projectKey, board, ct))!;
 	}
 

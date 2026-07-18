@@ -164,10 +164,13 @@ public enum TaskSortBy
 // slug or NodeId; resolved cross-board when Board is null). `Status` keeps only the named
 // slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without
 // IncludeClosed. `Keys` addresses specific nodes (slug|NodeId mixed, resolved like
-// tasks_node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens a
-// listing to terminal nodes; in query mode (search-hides-terminal-nodes) a default query
-// already surfaces terminal-OK (accepted/Done — a success state, not "closed") and
-// IncludeClosed additionally surfaces terminal-CANCEL (rejected/cancelled).
+// tasks_node_get; terminal nodes included — explicit addressing). `StatusKind` is the first-class
+// visibility facet (spec tasks-search-statuskind-facet): a SET over {open, terminalok,
+// terminalcancel} evaluated against the опорный слой (search_meta) in BOTH modes; absence = NEUTRAL
+// (everything), never a restricting default. `IncludeClosed` is a DEPRECATED ALIAS onto StatusKind
+// (TasksSearchDocs.ResolveStatusKindFacet): includeClosed:true → omit the facet (all);
+// includeClosed:false + query → [open, terminalok]; includeClosed:false + listing → [open]. An
+// explicit StatusKind WINS over the alias.
 public sealed record TaskNodeFilter(
 	string? Board = null,
 	string? Under = null,
@@ -177,7 +180,10 @@ public sealed record TaskNodeFilter(
 	// Reverse commit lookup (node-commits-impl): keep only nodes carrying this commit. An
 	// EXACT match on a stored sha, or — when the query is >=7 hex chars — a PREFIX match on a
 	// stored full sha (a short query finds the long commit). null/empty = no filter.
-	string? Commit = null);
+	string? Commit = null,
+	// The statusKind visibility facet (see the doc above). null = the deprecated IncludeClosed
+	// alias decides; a non-empty set is the first-class ask and overrides the alias.
+	IReadOnlyList<string>? StatusKind = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their
 // final order, the board context when the read was board-scoped (Kind/SpecBoard/

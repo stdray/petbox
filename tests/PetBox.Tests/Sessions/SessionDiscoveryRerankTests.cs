@@ -20,7 +20,7 @@ public sealed class SessionDiscoveryRerankTests
 		new(new MemoryEntryView(key, "Project", key, "", [], 1, ""),
 			Now.AddDays(-ageDays), score, lexicalConfirmed, vector);
 
-	static SearchRerankOptions RerankOff => new()
+	static SearchOrderingPolicies RerankOff => new()
 	{
 		Recency = new RecencyOptions { Enabled = false },
 		Diversity = new DiversityOptions { Enabled = false },
@@ -66,7 +66,7 @@ public sealed class SessionDiscoveryRerankTests
 		off.IndexOf("stale-strong").Should().BeLessThan(off.IndexOf("fresh-weak"),
 			"without decay the stronger score leads");
 
-		var decay = new SearchRerankOptions
+		var decay = new SearchOrderingPolicies
 		{
 			Recency = new RecencyOptions { Enabled = true, HalfLifeDays = 30 },
 			Diversity = new DiversityOptions { Enabled = false },
@@ -94,7 +94,7 @@ public sealed class SessionDiscoveryRerankTests
 			Hit("filler", score: 0.020, lexicalConfirmed: true, vector: b),
 		};
 
-		var mmrOff = new SearchRerankOptions
+		var mmrOff = new SearchOrderingPolicies
 		{
 			Recency = new RecencyOptions { Enabled = false },
 			Diversity = new DiversityOptions { Enabled = false },
@@ -102,7 +102,7 @@ public sealed class SessionDiscoveryRerankTests
 		Keys(SessionSearchService.RankDiscovery(hits, mmrOff)).Take(2)
 			.Should().BeEquivalentTo(["dup-a", "dup-b"], "by pure score the two near-dups occupy the head");
 
-		var mmrOn = new SearchRerankOptions
+		var mmrOn = new SearchOrderingPolicies
 		{
 			Recency = new RecencyOptions { Enabled = false },
 			Diversity = new DiversityOptions { Enabled = true, Lambda = 0.7 },
@@ -128,7 +128,7 @@ public sealed class SessionDiscoveryRerankTests
 
 		// Default policy: decay + MMR enabled. All hits are recent, so decay is a no-op multiplier
 		// and the score order survives.
-		var ranked = SessionSearchService.RankDiscovery(hits, new SearchRerankOptions());
+		var ranked = SessionSearchService.RankDiscovery(hits, new SearchOrderingPolicies());
 
 		Keys(ranked).Should().Equal(["a", "b", "c"], "no hit dropped; MMR identity; ordered by score");
 	}

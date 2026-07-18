@@ -102,12 +102,17 @@ public readonly record struct Hit(string Type, string Id, double Score, string? 
 // lets the caller drop a compensating over-fetch pool: a candidate a facet excludes never occupies
 // a top-k slot, so it never has to be re-fetched around.
 //
-// `ExcludeStatusKinds` drops entities whose search_meta.StatusKind is in the set — the general
-// mechanism; the tasks-specific VALUE (hide terminal-cancel unless includeClosed) is chosen by the
-// caller. An entity with NO search_meta row (e.g. a tasks comment doc, which carries text but no
-// facet row) is KEPT — a facet it does not carry cannot hide it, matching the pre-pushdown behavior
-// where such a hit resolved through its owner. Null/empty set = neutral (no facet narrowing).
-public readonly record struct FacetFilter(IReadOnlyList<string>? ExcludeStatusKinds = null);
+// `StatusKinds` is the statusKind facet PREDICATE (spec tasks-search-statuskind-facet): keep an
+// entity iff its search_meta.StatusKind is IN the set — a positive membership over the closed
+// vocabulary {open, terminalok, terminalcancel}. The facet is a SET, and its ABSENCE is NEUTRAL:
+// null/empty = no narrowing at all (everything), never a restricting default — the whole point of
+// modelling status as a statusKind facet rather than a boolean `closed` (a bool's `false` silently
+// hid accepted/Done; a neutral facet cannot). The tasks-specific VALUE set (what a default read
+// selects, and how the deprecated `includeClosed` alias maps onto it) is chosen by the caller
+// (TasksSearchDocs.ResolveStatusKindFacet). An entity with NO search_meta row (e.g. a tasks comment
+// doc, which carries text but no facet row) is KEPT — a facet it does not carry cannot hide it,
+// matching the pre-pushdown behavior where such a hit resolved through its owner.
+public readonly record struct FacetFilter(IReadOnlyList<string>? StatusKinds = null);
 
 // Read-path narrowing. `Type` pins ONE entity type; `Types` is an include-SET over the same
 // column — the seam that lets a consumer whose containers share one file (memory stores in

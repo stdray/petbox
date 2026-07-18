@@ -132,11 +132,61 @@ public static class TasksSearchDocs
 	// → null) is, by the membership rule, a non-terminal member of the index, so it reads as "open".
 	static string StatusKindFacet(StatusKind? kind) => (kind ?? StatusKind.Open).ToString().ToLowerInvariant();
 
-	// The StatusKind facet VALUE a default query-mode search hides (search-hides-terminal-nodes):
-	// terminal-CANCEL. This is the tasks-specific value the general facet-pushdown mechanism (spec
-	// search-facet-pushdown, SearchFilter.Facets.ExcludeStatusKinds) excludes in each leg BEFORE
-	// truncation unless includeClosed widened the ask. Derived from the SAME StatusKindFacet
-	// projection the write path stamps into search_meta, so the pushdown predicate and the stored
-	// facet can never drift to different spellings — never a bare "terminalcancel" literal.
+	// The three statusKind facet VALUES (spec tasks-search-statuskind-facet), derived from the SAME
+	// StatusKindFacet projection the write path stamps into search_meta, so a predicate and the stored
+	// facet can never drift to different spellings — never a bare "terminalcancel" literal. The word
+	// `closed` is deliberately ABSENT from this vocabulary: a boolean closed folds accepted/Done
+	// (terminalok — a SUCCESS state search-before-rework must reach) in with rejected/cancelled
+	// (terminalcancel), which is the exact silent-loss bug the statusKind facet exists to kill.
+	public static readonly string OpenFacet = StatusKindFacet(StatusKind.Open);
+	public static readonly string TerminalOkFacet = StatusKindFacet(StatusKind.TerminalOk);
 	public static readonly string TerminalCancelFacet = StatusKindFacet(StatusKind.TerminalCancel);
+
+	// The closed vocabulary a statusKind predicate ranges over (open|terminalok|terminalcancel).
+	public static readonly IReadOnlyList<string> AllStatusKindFacets = [OpenFacet, TerminalOkFacet, TerminalCancelFacet];
+
+	// THE one place the deprecated `includeClosed` alias maps onto the statusKind facet vocabulary
+	// (spec tasks-search-statuskind-facet). Returns the EFFECTIVE statusKind SET a read selects by;
+	// null/empty return = NEUTRAL (no narrowing — the facet's absence selects everything, the anchor
+	// invariant that keeps accepted/Done findable by a default query).
+	//
+	// Precedence, and why the alias mapping is spelled out (a naive includeClosed:true → [terminalcancel]
+	// would BREAK every caller — it would return ONLY closed):
+	//   1. an explicit `statusKind` set WINS (the first-class contract): values are validated + lowercased.
+	//   2. otherwise the alias derives it from includeClosed + mode:
+	//        includeClosed:true             → null            (facet omitted = everything)
+	//        includeClosed:false + query    → [open, terminalok]   (a query only ever hid terminal-CANCEL)
+	//        includeClosed:false + listing  → [open]               (a listing hid ALL terminal)
+	// The presentation TIER ordinal for a StatusKind (spec tasks-search-statuskind-presentation-tiers):
+	// open → terminalok → terminalcancel. Tiers are named ONLY by StatusKind — the word "closed" is
+	// FORBIDDEN here: it would fold terminalok (accepted/Done, a SUCCESS state search-before-rework
+	// must reach) into one tier with terminalcancel (rejected/cancelled), and the склейка the whole
+	// facet redesign removed would sneak back through presentation. A lower ordinal ranks higher.
+	public static int StatusKindTier(StatusKind kind) => kind switch
+	{
+		StatusKind.Open => 0,
+		StatusKind.TerminalOk => 1,
+		StatusKind.TerminalCancel => 2,
+		_ => 0,
+	};
+
+	public static IReadOnlyList<string>? ResolveStatusKindFacet(
+		IReadOnlyList<string>? statusKind, bool includeClosed, bool hasQuery)
+	{
+		if (statusKind is { Count: > 0 })
+			return statusKind.Select(NormalizeStatusKindFacet).Distinct().ToList();
+		if (includeClosed) return null;
+		return hasQuery ? [OpenFacet, TerminalOkFacet] : [OpenFacet];
+	}
+
+	// Validate + normalize a caller-supplied statusKind value against the closed vocabulary. An
+	// unknown value is a hard error (a typo like "closed" or "done" must not silently widen/narrow).
+	static string NormalizeStatusKindFacet(string value)
+	{
+		var norm = (value ?? "").Trim().ToLowerInvariant();
+		if (!AllStatusKindFacets.Contains(norm))
+			throw new ArgumentException(
+				$"statusKind: '{value}' is not a status kind — expected one of {string.Join("|", AllStatusKindFacets)}");
+		return norm;
+	}
 }

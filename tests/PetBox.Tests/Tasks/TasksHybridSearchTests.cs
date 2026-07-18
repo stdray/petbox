@@ -70,8 +70,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 		new() { Key = key, Version = 0, Title = title, Body = body };
 
 	// Query-mode request for the unified read verb (list = search without a query).
-	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, bool includeClosed = false) =>
-		new() { Query = q, Filter = new TaskNodeFilter(board, IncludeClosed: includeClosed) };
+	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, bool includeClosed = false, string[]? statusKind = null) =>
+		new() { Query = q, Filter = new TaskNodeFilter(board, IncludeClosed: includeClosed, StatusKind: statusKind) };
 
 	[Fact]
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
@@ -236,43 +236,48 @@ public sealed class TasksHybridSearchTests : IDisposable
 	}
 
 	[Fact]
-	public async Task ExactSlug_SurfacesTerminalCancelNode_EvenThoughHiddenByDefault()
+	public async Task ExactSlug_TerminalCancel_HiddenByDefault_SurfacedByStatusKind()
 	{
-		// exact-slug-lookup-terminal-nodes: a q that IS an existing node's slug must return the
-		// node even after it goes terminal-CANCEL — hidden from the default query-mode pool per
-		// search-hides-terminal-nodes, but the exact escape hatch (GetNodeAsync, includeClosed
-		// internally) ignores that filter entirely and leads the hits with no includeClosed
-		// needed on the request.
+		// tasks-search-drop-terminal-default SUPERSEDES exact-identifier-search-surfacing's "exact
+		// ignores visibility": the exact leg is now SUBJECT TO the statusKind facet (the last of the
+		// five terminal mechanisms to die). An exact slug of a terminal-CANCEL node is HIDDEN by a
+		// default lookup — the facet default is [open, terminalok] — and surfaces only when the ask
+		// names statusKind:[terminalcancel] (or includeClosed widens to neutral).
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("kql-spans-query", "spans note", "some body")]);
 		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "kql-spans-query").Version;
 		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "kql-spans-query", Version = version, Status = "Cancelled" }]);
 
-		// Sanity: hidden from the default relevance pool (a plain content query finds nothing).
-		(await tasks.SearchNodesAsync(Proj, Query("spans"))).Hits.Should().BeEmpty();
+		// Default exact lookup: HIDDEN — the exact leg obeys the facet, no terminal override.
+		(await tasks.SearchNodesAsync(Proj, Query("kql-spans-query"))).Hits.Should().BeEmpty();
 
-		// The exact-slug q surfaces it regardless of terminality — no includeClosed needed.
-		var res = await tasks.SearchNodesAsync(Proj, Query("kql-spans-query"));
+		// statusKind:[terminalcancel] surfaces it, still via the identity leg (retriever "exact").
+		var res = await tasks.SearchNodesAsync(Proj, Query("kql-spans-query", "b", statusKind: ["terminalcancel"]));
 		res.Hits.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
 		res.Hits[0].Node.Status.Should().Be("Cancelled");
 		res.Hits[0].Retriever.Should().Be("exact");
+
+		// includeClosed:true (deprecated alias → neutral facet) also surfaces it.
+		(await tasks.SearchNodesAsync(Proj, Query("kql-spans-query", "b", includeClosed: true)))
+			.Hits.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
 	}
 
 	[Fact]
-	public async Task ExactNodeId_SurfacesTerminalCancelNode_IgnoringTheFilter()
+	public async Task ExactNodeId_TerminalCancel_HiddenByDefault_SurfacedByStatusKind()
 	{
-		// Regression: an exact 32-hex NodeId query must still resolve via the exact escape
-		// hatch — rank first, retriever "exact" — and ignore the terminal-CANCEL filter
-		// entirely, same as an exact slug does.
+		// Symmetric with the slug case (tasks-search-drop-terminal-default): an exact 32-hex NodeId of a
+		// terminal-CANCEL node is SUBJECT TO the statusKind facet too — hidden by a default lookup,
+		// surfaced (retriever "exact", null fused score) only when statusKind names terminalcancel.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("target-node", "target note", "some body")]);
 		var before = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "target-node");
 		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "target-node", Version = before.Version, Status = "Cancelled" }]);
 
-		var res = await tasks.SearchNodesAsync(Proj, Query(before.NodeId));
+		(await tasks.SearchNodesAsync(Proj, Query(before.NodeId))).Hits.Should().BeEmpty(); // hidden by default
 
+		var res = await tasks.SearchNodesAsync(Proj, Query(before.NodeId, "b", statusKind: ["terminalcancel"]));
 		res.Hits.Select(h => h.Node.Key).Should().Equal("target-node");
 		res.Hits[0].Retriever.Should().Be("exact");
 		res.Hits[0].Score.Should().BeNull();
@@ -428,7 +433,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("wombat-burrow", "wombat note", "some body")]);
-		// Terminal → out of the relevance index; only the exact-slug escape hatch can surface it.
+		// Terminal-OK (Done) stays in the index and the default facet keeps it (frame invariant); the
+		// exact-slug leg leads with retriever "exact" and a null fused score, ahead of any lexical copy.
 		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "wombat-burrow").Version;
 		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "wombat-burrow", Version = version, Status = "Done" }]);
 
