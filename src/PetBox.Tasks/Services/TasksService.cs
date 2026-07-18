@@ -989,11 +989,18 @@ public sealed partial class TasksService : ITasksService
 	// enrichment rides GetNodeBySlugAsync (includeClosed inside) so an accepted/Cancelled node surfaces
 	// like any other. Cross-scope isolation: the predicate is scoped to `projectKey`.
 	//
+	// `statusKindFacet` (tasks-search-drop-terminal-default): the visibility facet the identity leg is
+	// SUBJECT TO — the exact leg no longer force-surfaces terminal nodes past the facet (its old
+	// terminal-override is the last of the five drop-terminal-default mechanisms to die). Null/empty =
+	// NEUTRAL (every kind — the raw resolver, e.g. the UI cross-scope leg). A non-empty set keeps only
+	// hits whose StatusKind (read from the ОПОРНЫЙ СЛОЙ, search_meta — no live recompute) is in the set;
+	// a hit with no meta row is KEPT, matching the pushdown's "a facet it does not carry cannot hide it".
+	//
 	// TWO candidates, deduplicated: the LITERAL identifier (trim + casefold, so it lines up with the
 	// stored alias set — slug is lowercase kebab, NodeId is lowercase hex) and, when it differs, the
 	// KEBAB normalization (collapse internal whitespace/underscores to one hyphen) — the dominant
 	// "typed the slug's words with spaces" case (search-hides-terminal-nodes defect 1), preserved.
-	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
+	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, IReadOnlyList<string>? statusKindFacet = null, CancellationToken ct = default)
 	{
 		var raw = (identifier ?? "").Trim();
 		if (raw.Length == 0) return [];
@@ -1025,6 +1032,22 @@ public sealed partial class TasksService : ITasksService
 			if (detail is null) continue;
 			var node = urlPrefix is null ? detail.Node : detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key };
 			hits.Add(new TaskSearchHit(detail.Board, node));
+		}
+		// tasks-search-drop-terminal-default: subject the exact hits to the statusKind facet, read from
+		// the опорный слой (search_meta — already backfilled above), NOT a live classifier. A no-meta hit
+		// is kept. Neutral facet (null/empty) skips this — the raw identity resolver, terminal or not.
+		if (statusKindFacet is { Count: > 0 } allowed && hits.Count > 0)
+		{
+			var metaByBoard = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+			var kept = new List<TaskSearchHit>();
+			foreach (var h in hits)
+			{
+				if (!metaByBoard.TryGetValue(h.Board, out var kinds))
+					metaByBoard[h.Board] = kinds = await SqliteMetaIndex.StatusKindsByTypeAsync(ctx, projectKey, h.Board, ct);
+				if (!kinds.TryGetValue(h.Node.Key, out var facet) || allowed.Contains(facet))
+					kept.Add(h);
+			}
+			hits = kept;
 		}
 		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
@@ -1737,15 +1760,20 @@ public sealed partial class TasksService : ITasksService
 			// reason — recall at small limits — not to cover the visibility filter. terminal-OK
 			// (accepted/Done) is never excluded — it is a success state, not "closed", so a default
 			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
+			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit, 50), urlPrefix, runtime, TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true), ct);
+				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, ct);
 
-			// exact-identifier-search-surfacing / search-identity-leg (spec): a query that exactly
-			// matches a node's slug OR its NodeId reads as an addressed ask in disguise — the identity
-			// leg (equality over search_meta_alias, terminal nodes included by index membership)
-			// surfaces EVERY exact match regardless of the includeClosed/terminal-CANCEL filter above,
-			// ahead of the fused ranking. Still subject to the criteria predicates below like any other hit.
-			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
+			// search-identity-leg (spec): a query that exactly matches a node's slug OR its NodeId reads
+			// as an addressed ask in disguise — the identity leg (equality over search_meta_alias)
+			// surfaces every exact match ahead of the fused ranking. tasks-search-drop-terminal-default:
+			// the exact leg no longer carries a TERMINAL-OVERRIDE — it is SUBJECT TO the SAME statusKind
+			// facet as every other leg (the last of the five terminal mechanisms to die). The frame
+			// invariant (accepted/Done findable by default) is now held by the facet default, so exact
+			// need not force-surface terminal-OK; a terminal-CANCEL node by exact id is expressible as
+			// statusKind:[terminalcancel]. This SUPERSEDES the old exact-identifier-search-surfacing rule
+			// ("exact ignores visibility"). Still subject to the criteria predicates below like any hit.
+			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, statusKindFacet: queryFacet, ct: ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
 			// An exact match PREEMPTS its own fused copy rather than yielding to it: since the slug's
 			// words are lexical terms (search-slug-words-gap), a verbatim-slug query now ALSO matches

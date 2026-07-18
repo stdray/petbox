@@ -807,7 +807,9 @@ public static class TasksTools
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
 		"exact" = an exact slug/NodeId match — tried literally AND as a kebab-normalized
 		candidate, so "methodology redesign" also reaches the `methodology-redesign` slug;
-		an exact hit ignores includeClosed entirely, terminal or not); a semantic-only hit
+		an exact hit is SUBJECT TO the statusKind facet like any other — it leads the ranking
+		but does not override visibility, so an exact match on a terminal-CANCEL node needs
+		statusKind:[terminalcancel] (terminal-OK is found by default)); a semantic-only hit
 		below the relevance floor is
 		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows). COMMENTS
 		are searched too (lexical leg): a comment match returns its OWNER node row marked

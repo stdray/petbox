@@ -300,7 +300,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// them (ambiguity is not an error in search). Ordered by board for a stable multi-board
 	// result; `board` narrows to one board. Backs the tasks_search escape hatch and the UI
 	// cross-scope identifier leg.
-	Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default);
+	// `statusKindFacet` (tasks-search-drop-terminal-default): the visibility facet the exact leg is
+	// subject to — null/empty = neutral (the raw resolver, terminal included); a non-empty set keeps
+	// only hits whose StatusKind (from search_meta) is in it (a no-meta hit kept). The exact leg no
+	// longer force-surfaces terminal nodes past the facet (supersedes exact-identifier-search-surfacing).
+	Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, IReadOnlyList<string>? statusKindFacet = null, CancellationToken ct = default);
 	// Ensure the board exists and return its PRESET kind (a definition-declared kind reads
 	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
 	// the FSM-aware surface is GetBoardWorkflowAsync.

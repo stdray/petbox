@@ -347,6 +347,27 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		all.IndexOf("op-b").Should().BeLessThan(all.IndexOf("ok-c"));  // whole open tier above any terminal
 	}
 
+	// tasks-search-drop-terminal-default (exact leg): the exact-identifier leg is SUBJECT TO the
+	// statusKind facet — no terminal override. A default exact lookup hides a terminal-CANCEL node;
+	// statusKind:[terminalcancel] surfaces it; a terminal-OK exact hit stays findable by default.
+	[Fact]
+	public async Task ExactLeg_SubjectToStatusKindFacet_DefaultHidesCancel_NamedSurfaces()
+	{
+		await Seed("b", """[{"key":"exact-gone","status":"Todo","title":"exact gone","body":"body"}]""");
+		await Seed("b", """[{"key":"exact-gone","status":"Cancelled","version":1}]"""); // terminalcancel
+
+		// The query IS the slug (identity leg). Default lookup obeys the facet → the cancelled node is hidden.
+		(await Search(q: "exact-gone")).Nodes.Should().BeEmpty();
+		// statusKind:[terminalcancel] surfaces it by exact id.
+		(await Search(q: "exact-gone", board: "b", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key)
+			.Should().Equal("exact-gone");
+
+		// A terminal-OK exact hit stays findable by a DEFAULT lookup (frame invariant).
+		await Seed("b", """[{"key":"exact-ok","status":"Todo","title":"exact ok","body":"body"}]""");
+		await Seed("b", """[{"key":"exact-ok","status":"Done","version":1}]""");
+		(await Search(q: "exact-ok")).Nodes.Select(n => n.Key).Should().Equal("exact-ok");
+	}
+
 	// ---- entity predicates (spec tasks-search-entity-predicates-under-commit) ----
 
 	// `under` (part_of subtree) and `commit` are predicates the опорный слой cannot express, applied

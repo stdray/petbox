@@ -15,7 +15,9 @@ namespace PetBox.Tests.Tasks;
 //   (1) an exact slug resolves rank-1, retriever "exact";
 //   (2) a NodeId resolves rank-1, retriever "exact" — slug↔NodeId SYMMETRY (the NodeId is an alias too);
 //   (3) the slug's words typed with spaces resolve via the kebab candidate;
-//   (4) identity ignores terminality — an accepted/Cancelled node still resolves by identifier;
+//   (4) identity is SUBJECT TO the statusKind facet (tasks-search-drop-terminal-default, supersedes
+//       the old "identity ignores terminality"): terminal-OK resolves by default, terminal-CANCEL
+//       resolves only when statusKind names it;
 //   (5) resolution is project-scoped — a NodeId/slug in one project never leaks into another.
 public sealed class SearchIdentityLegTests : IDisposable
 {
@@ -60,8 +62,8 @@ public sealed class SearchIdentityLegTests : IDisposable
 	static NodePatch Node(string key, string title, string body) =>
 		new() { Key = key, Version = 0, Title = title, Body = body };
 
-	static SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null) =>
-		new() { Query = q, Filter = new TaskNodeFilter(board) };
+	static SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, string[]? statusKind = null) =>
+		new() { Query = q, Filter = new TaskNodeFilter(board, StatusKind: statusKind) };
 
 	static async Task<PlanNodeView> NodeView(TasksService svc, string project, string board, string key) =>
 		(await svc.GetAsync(project, board, includeClosed: true)).Nodes.First(n => n.Key == key);
@@ -121,11 +123,15 @@ public sealed class SearchIdentityLegTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Identity_IgnoresTerminality_CancelledAndAccepted_ResolveBySlugAndNodeId()
+	public async Task Identity_SubjectToStatusKindFacet_TerminalOkByDefault_TerminalCancelWhenNamed()
 	{
-		// Identity is truth about findability, not about status: a terminal node stays in the index, so
-		// both a Cancelled (terminal-cancel, hidden from the default ranked pool) and a Done/accepted
-		// (terminal-ok) node still resolve by slug AND by NodeId — no includeClosed needed.
+		// tasks-search-drop-terminal-default SUPERSEDES the old "identity ignores terminality": the
+		// identity leg is now SUBJECT TO the statusKind facet. A terminal-OK (Done/accepted) node still
+		// resolves by identifier under a DEFAULT lookup — the facet default keeps terminalok, which is
+		// the frame invariant search-before-rework stands on. A terminal-CANCEL node is HIDDEN by a
+		// default identifier lookup and resolves only when statusKind names terminalcancel (or
+		// includeClosed widens). Identity is truth about findability WITHIN the asked visibility — no
+		// terminal override.
 		var svc = Service();
 		await svc.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await svc.UpsertAsync(Proj, "b",
@@ -142,25 +148,29 @@ public sealed class SearchIdentityLegTests : IDisposable
 		var cancelledId = (await NodeView(svc, Proj, "b", "cancelled-node")).NodeId;
 		var acceptedId = (await NodeView(svc, Proj, "b", "accepted-node")).NodeId;
 
-		// Sanity: the terminal-CANCEL node is hidden from a plain content query (proves the leg, not the
-		// ranked pool, is what surfaces it below).
-		(await svc.SearchNodesAsync(Proj, Query("Отменённая"))).Hits.Should().BeEmpty();
-
-		// Cancelled resolves by slug and by NodeId.
-		var cSlug = await svc.SearchNodesAsync(Proj, Query("cancelled-node"));
-		cSlug.Hits.Select(h => h.Node.Key).Should().Equal("cancelled-node");
-		cSlug.Hits[0].Node.Status.Should().Be("Cancelled");
-		cSlug.Hits[0].Retriever.Should().Be("exact");
-		var cId = await svc.SearchNodesAsync(Proj, Query(cancelledId));
-		cId.Hits.Select(h => h.Node.Key).Should().Equal("cancelled-node");
-		cId.Hits[0].Retriever.Should().Be("exact");
-
-		// Accepted (terminal-OK) resolves by slug and by NodeId too.
-		(await svc.SearchNodesAsync(Proj, Query("accepted-node"))).Hits.Select(h => h.Node.Key).Should().Equal("accepted-node");
+		// Accepted (terminal-OK) resolves by slug AND by NodeId under a DEFAULT lookup (frame invariant).
+		var aSlug = await svc.SearchNodesAsync(Proj, Query("accepted-node"));
+		aSlug.Hits.Select(h => h.Node.Key).Should().Equal("accepted-node");
+		aSlug.Hits[0].Retriever.Should().Be("exact");
 		var aId = await svc.SearchNodesAsync(Proj, Query(acceptedId));
 		aId.Hits.Select(h => h.Node.Key).Should().Equal("accepted-node");
 		aId.Hits[0].Node.Status.Should().Be("Done");
 		aId.Hits[0].Retriever.Should().Be("exact");
+
+		// Cancelled (terminal-CANCEL) is HIDDEN by a default identifier lookup — the exact leg obeys the
+		// facet — by slug AND by NodeId (a content query never surfaced it either).
+		(await svc.SearchNodesAsync(Proj, Query("Отменённая"))).Hits.Should().BeEmpty();
+		(await svc.SearchNodesAsync(Proj, Query("cancelled-node"))).Hits.Should().BeEmpty();
+		(await svc.SearchNodesAsync(Proj, Query(cancelledId))).Hits.Should().BeEmpty();
+
+		// Naming statusKind:[terminalcancel] surfaces it by slug AND NodeId, retriever "exact".
+		var cSlug = await svc.SearchNodesAsync(Proj, Query("cancelled-node", statusKind: ["terminalcancel"]));
+		cSlug.Hits.Select(h => h.Node.Key).Should().Equal("cancelled-node");
+		cSlug.Hits[0].Node.Status.Should().Be("Cancelled");
+		cSlug.Hits[0].Retriever.Should().Be("exact");
+		var cId = await svc.SearchNodesAsync(Proj, Query(cancelledId, statusKind: ["terminalcancel"]));
+		cId.Hits.Select(h => h.Node.Key).Should().Equal("cancelled-node");
+		cId.Hits[0].Retriever.Should().Be("exact");
 	}
 
 	[Fact]
