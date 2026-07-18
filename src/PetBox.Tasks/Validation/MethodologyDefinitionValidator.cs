@@ -86,6 +86,12 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		RuleFor(d => d.LinkKinds)
 			.Custom((linkKinds, ctx) =>
 			{
+				var def = ctx.InstanceToValidate;
+				// Direction ends must resolve to a kind THIS definition declares (a valid slug).
+				var declaredKinds = new HashSet<string>(
+					(def.Kinds ?? []).Where(k => IsSlug(k.Kind)).Select(k => k.Kind),
+					StringComparer.OrdinalIgnoreCase);
+
 				var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 				foreach (var lk in linkKinds ?? [])
 				{
@@ -96,6 +102,14 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 						ctx.AddFailure($"link kind '{lk.Slug}' collides with a builtin relation kind ({string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds))})");
 					else if (!seen.Add(lk.Slug))
 						ctx.AddFailure($"link kind '{lk.Slug}' is declared more than once");
+
+					// Category-enum integrity — belt-and-suspenders: the wire (ParseLinkCategory)
+					// rejects an unknown string before it reaches here, but a directly-constructed
+					// definition could still carry an out-of-range enum value.
+					if (!Enum.IsDefined(lk.Category))
+						ctx.AddFailure($"link kind '{lk.Slug}': category '{lk.Category}' is not valid ({string.Join("|", Enum.GetNames<LinkCategory>().Select(n => n.ToLowerInvariant()))})");
+
+					ValidateLinkDirection(lk, declaredKinds, def, ctx);
 				}
 			});
 
@@ -111,6 +125,47 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 						ctx.AddFailure($"tag axis '{axis.Namespace}' is declared more than once");
 				}
 			});
+	}
+
+	// Direction rules for a declared relation kind (v1, spec methodology-link-kinds-declared /
+	// design 03 A.2). FromKind/ToKind name the KINDS at the ends of the STORED edge (from→to);
+	// they must resolve to a kind this definition declares. A self-kind edge (both ends the same
+	// non-null kind) is out of v1 — the stored orientation can't tell the two ends apart, so it
+	// needs an explicit end-target discriminator that doesn't exist yet. Finally, any
+	// LinkConstraint opening THIS declared kind to a writer must be owned by a kind sitting on one
+	// END of the direction (design 03 A.2 degenerate case b) — a null end is unconstrained and
+	// satisfies the rule on its own. Only runs for declared kinds that CARRY a Direction, so the
+	// direction-less builtins/quartet never fall under it.
+	static void ValidateLinkDirection(
+		MethodologyLinkKindDef lk, HashSet<string> declaredKinds,
+		MethodologyDefinition def, ValidationContext<MethodologyDefinition> ctx)
+	{
+		var dir = lk.Direction;
+		if (dir is null) return;
+		var label = $"link kind '{lk.Slug}': direction";
+
+		if (dir.FromKind is not null && !declaredKinds.Contains(dir.FromKind))
+			ctx.AddFailure($"{label} references an unknown kind '{dir.FromKind}' — fromKind must be a kind this definition declares (kinds: {string.Join("|", declaredKinds)})");
+		if (dir.ToKind is not null && !declaredKinds.Contains(dir.ToKind))
+			ctx.AddFailure($"{label} references an unknown kind '{dir.ToKind}' — toKind must be a kind this definition declares (kinds: {string.Join("|", declaredKinds)})");
+
+		if (dir.FromKind is not null && dir.ToKind is not null
+			&& string.Equals(dir.FromKind, dir.ToKind, StringComparison.OrdinalIgnoreCase))
+			ctx.AddFailure($"{label} is self-kind (fromKind == toKind == '{dir.FromKind}') — a self-kind link needs an explicit end-target discriminator, not supported in v1");
+
+		foreach (var k in def.Kinds ?? [])
+		{
+			foreach (var c in k.LinkConstraints ?? [])
+			{
+				if (!string.Equals(c.Link, lk.Slug, StringComparison.OrdinalIgnoreCase)) continue;
+				var ownerOnAnEnd =
+					dir.FromKind is null || dir.ToKind is null
+					|| string.Equals(k.Kind, dir.FromKind, StringComparison.OrdinalIgnoreCase)
+					|| string.Equals(k.Kind, dir.ToKind, StringComparison.OrdinalIgnoreCase);
+				if (!ownerOnAnEnd)
+					ctx.AddFailure($"link '{lk.Slug}' is unavailable to kind '{k.Kind}' — its direction (from:{dir.FromKind ?? "*"} to:{dir.ToKind ?? "*"}) includes '{k.Kind}' at neither end");
+			}
+		}
 	}
 
 	// The status vocabulary of one kind: every status slug across ALL its workflow blocks

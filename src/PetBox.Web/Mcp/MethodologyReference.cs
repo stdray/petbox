@@ -48,6 +48,7 @@ static class MethodologyReference
 		[typeof(MethodologyValueMapInput)] = "valueMap",
 		[typeof(MethodologyRequiredArtifactInput)] = "requiredArtifact",
 		[typeof(MethodologyGateEnforcementInput)] = "gateEnforcement",
+		[typeof(MethodologyLinkDirectionInput)] = "linkDirection",
 	};
 
 	public static readonly IReadOnlyList<Entity> Entities =
@@ -168,6 +169,16 @@ static class MethodologyReference
 			{
 				["slug"] = $"The relation kind's {SlugSpec}; must not collide with a builtin kind.",
 				["description"] = "Optional human description (shown in the process guide's relation dictionary).",
+				["category"] = "neutral | process (default neutral). Declaration only in v1 — process marks the edge as process-bearing for the guide; it does not yet change effect/guard behavior.",
+				["direction"] = "Optional stored-edge orientation (fromKind/toKind name the node kinds at each end of relations.from→to). Omitted = the edge is unoriented.",
+			}),
+		Describe<MethodologyLinkDirectionInput>(
+			"The STORED orientation of a declared relation kind's edge (spec methodology-link-kinds-declared). fromKind/toKind constrain the node KIND at each end of the stored edge (relations.from→to), NOT a semantic reading — the human reading goes in label.",
+			new()
+			{
+				["fromKind"] = "The kind of the node at the FROM end of the stored edge (must be a kind this definition declares). Omitted = that end is unconstrained.",
+				["toKind"] = "The kind of the node at the TO end of the stored edge (must be a kind this definition declares). Omitted = that end is unconstrained.",
+				["label"] = "The human reading of the edge (e.g. \"delivers to\"), shown in the process guide's relation dictionary.",
 			}),
 		Describe<MethodologyTagAxisInput>(
 			"A declared tag namespace: with axes declared, every tag on a definition-resolved board must be <namespace>:value.",

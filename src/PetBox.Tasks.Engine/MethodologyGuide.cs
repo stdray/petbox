@@ -304,8 +304,28 @@ public static class MethodologyGuide
 		md.AppendLine($"- Neutral (free semantic edges, no process meaning): {string.Join(", ", MethodologyRuntime.NeutralRelationKinds)}");
 		var declared = runtime.DeclaredLinkKinds;
 		md.AppendLine(declared.Count > 0
-			? $"- Project-declared (free semantic edges): {string.Join(", ", declared.Select(k => k.Description is null ? k.Slug : $"{k.Slug} ({k.Description})"))}"
+			? $"- Project-declared (free semantic edges): {string.Join(", ", declared.Select(RenderDeclaredLinkKind))}"
 			: "- Project-declared: none.");
+	}
+
+	// One declared relation kind as human-readable text. A direction-less NEUTRAL kind keeps the
+	// bare `slug (description)` shape (the free-edge default); a kind that carries a Direction or
+	// is Process-categorized adds a bracketed suffix with its category and stored-edge orientation
+	// (fromKind → toKind (Label)), a `*` marking an unconstrained end (spec methodology-link-kinds-
+	// declared). FromKind/ToKind read as the STORED edge (relations.from → to), Label the semantics.
+	static string RenderDeclaredLinkKind(MethodologyLinkKindDef k)
+	{
+		var head = k.Description is null ? k.Slug : $"{k.Slug} ({k.Description})";
+		if (k.Category == LinkCategory.Neutral && k.Direction is null)
+			return head;
+		var parts = new List<string> { k.Category.ToString().ToLowerInvariant() };
+		if (k.Direction is { } dir)
+		{
+			var from = dir.FromKind ?? "*";
+			var to = dir.ToKind ?? "*";
+			parts.Add(dir.Label is { Length: > 0 } ? $"{from} → {to} ({dir.Label})" : $"{from} → {to}");
+		}
+		return $"{head} [{string.Join("; ", parts)}]";
 	}
 
 	static void AppendBodyConventions(StringBuilder md)

@@ -45,6 +45,8 @@ public sealed class MethodologyKindContractParityTests
 		{ typeof(MethodologyTransitionDef), typeof(MethodologyTransitionInput) },
 		{ typeof(RequiredArtifactDef), typeof(MethodologyRequiredArtifactInput) },
 		{ typeof(GateEnforcementDef), typeof(MethodologyGateEnforcementInput) },
+		{ typeof(MethodologyLinkKindDef), typeof(MethodologyLinkKindInput) },
+		{ typeof(MethodologyLinkDirectionDef), typeof(MethodologyLinkDirectionInput) },
 	};
 
 	[Theory]
@@ -140,6 +142,8 @@ public sealed class MethodologyKindContractParityTests
 		{ typeof(MethodologyTransitionDef), typeof(MethodologyTransitionView) },
 		{ typeof(RequiredArtifactDef), typeof(MethodologyRequiredArtifactView) },
 		{ typeof(GateEnforcementDef), typeof(MethodologyGateEnforcementView) },
+		{ typeof(MethodologyLinkKindDef), typeof(MethodologyLinkKindView) },
+		{ typeof(MethodologyLinkDirectionDef), typeof(MethodologyLinkDirectionView) },
 	};
 
 	[Theory]
@@ -241,6 +245,18 @@ public sealed class MethodologyKindContractParityTests
 			// Definition-level strictness default (spec methodology-gate-strictness) must
 			// round-trip too — it lives outside the Kind-nested Pairs()/ViewPairs() table.
 			StrictMode = true,
+			// A declared relation kind carrying BOTH new fields (spec methodology-link-kinds-
+			// declared): Category=Process and a NON-EMPTY Direction. Direction is a nullable nested
+			// record — exactly where a lossy wire silently drops the value instead of carrying it —
+			// so this arm fails BeEquivalentTo the moment ProjectLinkKinds/ParseDefinition stops
+			// wiring category or direction through.
+			LinkKinds =
+			[
+				new MethodologyLinkKindDef(
+					"delivers", "Work delivers to a spec.",
+					LinkCategory.Process,
+					new MethodologyLinkDirectionDef(FromKind: "work", ToKind: "spec", Label: "delivers to")),
+			],
 		};
 
 		// rules_get side: project the stored definition onto the wire View — exactly what

@@ -115,7 +115,11 @@ static class MethodologyWire
 
 	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
 		def.LinkKinds is { Count: > 0 }
-			? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+			? def.LinkKinds.Select(lk => new MethodologyLinkKindView(
+				lk.Slug, lk.Description,
+				lk.Category.ToString().ToLowerInvariant(),
+				lk.Direction is null ? null : new MethodologyLinkDirectionView(
+					lk.Direction.FromKind, lk.Direction.ToKind, lk.Direction.Label))).ToList()
 			: null;
 
 	static List<MethodologyTagAxisView>? ProjectTagAxes(MethodologyDefinition def) =>
@@ -171,7 +175,11 @@ static class MethodologyWire
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])
-			.Select(lk => new MethodologyLinkKindDef(lk.Slug ?? string.Empty, lk.Description)).ToList(),
+			.Select(lk => new MethodologyLinkKindDef(
+				lk.Slug ?? string.Empty, lk.Description,
+				ParseLinkCategory(lk.Category),
+				lk.Direction is null ? null : new MethodologyLinkDirectionDef(
+					lk.Direction.FromKind, lk.Direction.ToKind, lk.Direction.Label))).ToList(),
 		TagAxes = (d.TagAxes ?? [])
 			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
 		StrictMode = d.StrictMode,
@@ -184,6 +192,17 @@ static class MethodologyWire
 			m.Kind ?? string.Empty,
 			(m.Types ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList(),
 			(m.Statuses ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList())).ToList();
+
+	// Parse the linkKind category string to the LinkCategory enum (default Neutral when blank).
+	// Same actionable-error posture as ParseStatus: an unknown value is an ArgumentException, not
+	// a silent coercion.
+	static LinkCategory ParseLinkCategory(string? category)
+	{
+		var kind = LinkCategory.Neutral;
+		if (!string.IsNullOrWhiteSpace(category) && !Enum.TryParse(category.Trim(), ignoreCase: true, out kind))
+			throw new ArgumentException($"link kind category '{category}' is not valid (neutral|process)");
+		return kind;
+	}
 
 	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
 	{

@@ -185,11 +185,26 @@ public sealed record MethodologyEffectInput
 }
 
 // A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not
-// collide with a builtin process/neutral kind.
+// collide with a builtin process/neutral kind. `category` is neutral|process (default
+// neutral); `direction` optionally declares the stored edge's orientation.
 public sealed record MethodologyLinkKindInput
 {
 	public string? Slug { get; init; }
 	public string? Description { get; init; }
+	// Mirrors MethodologyLinkKindDef.Category: neutral|process (default neutral when null).
+	// v1 declaration only — parsed to the LinkCategory enum by MethodologyWire.
+	public string? Category { get; init; }
+	// Mirrors MethodologyLinkKindDef.Direction: the stored-edge orientation. Null = none.
+	public MethodologyLinkDirectionInput? Direction { get; init; }
+}
+
+// The stored-edge orientation of a declared relation kind (mirrors MethodologyLinkDirectionDef):
+// fromKind/toKind constrain the node kind at each end of relations.from→to; null = unconstrained.
+public sealed record MethodologyLinkDirectionInput
+{
+	public string? FromKind { get; init; }
+	public string? ToKind { get; init; }
+	public string? Label { get; init; }
 }
 
 // A declared tag namespace (axis) for the project's definition-resolved boards.
