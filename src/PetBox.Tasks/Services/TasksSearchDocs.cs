@@ -157,16 +157,24 @@ public static class TasksSearchDocs
 	//        includeClosed:true             → null            (facet omitted = everything)
 	//        includeClosed:false + query    → [open, terminalok]   (a query only ever hid terminal-CANCEL)
 	//        includeClosed:false + listing  → [open]               (a listing hid ALL terminal)
-	// The presentation TIER ordinal for a StatusKind (spec tasks-search-statuskind-presentation-tiers):
-	// open → terminalok → terminalcancel. Tiers are named ONLY by StatusKind — the word "closed" is
-	// FORBIDDEN here: it would fold terminalok (accepted/Done, a SUCCESS state search-before-rework
-	// must reach) into one tier with terminalcancel (rejected/cancelled), and the склейка the whole
-	// facet redesign removed would sneak back through presentation. A lower ordinal ranks higher.
+	// The presentation TIER ordinal for a StatusKind (spec tasks-search-status-tiers, Option A —
+	// owner decision 2026-07-18, revising tasks-search-statuskind-presentation-tiers after a live
+	// observation: a near-exact Done hit, score 0.997, was demoted under open noise scored 0.0006).
+	// TWO tiers, not three: open and terminalok SHARE tier 0 — only terminalcancel (rejected/
+	// cancelled, dead work) is demoted to tier 1. Why terminalok is not a demotion tier: the frame
+	// invariant (accepted/Done must be findable) exists FOR search-before-rework — Done IS the
+	// reusable work being searched for, so demoting it as hard as dead work undercuts the exact goal
+	// the invariant protects. This also fixes the identity-leg interaction: an exact-slug terminalok
+	// hit inserted at the front of the result (the exact leg, TasksService) must stay there — under
+	// the old 3-tier map it could still be pushed below the open tier by this very partition, which
+	// silently broke the "exact hit leads" promise for a Done node. Tiers are named ONLY by
+	// StatusKind — the word "closed" is FORBIDDEN here: it would fold terminalok back in with
+	// terminalcancel, the exact склейка the facet redesign removed. A lower ordinal ranks higher.
 	public static int StatusKindTier(StatusKind kind) => kind switch
 	{
 		StatusKind.Open => 0,
-		StatusKind.TerminalOk => 1,
-		StatusKind.TerminalCancel => 2,
+		StatusKind.TerminalOk => 0,
+		StatusKind.TerminalCancel => 1,
 		_ => 0,
 	};
 

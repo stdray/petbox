@@ -1796,13 +1796,14 @@ public sealed partial class TasksService : ITasksService
 		hits = TaskSearchFilter.Apply(hits, criteria);
 
 		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
-		// Presentation tiers (spec tasks-search-statuskind-presentation-tiers): OVER the fused relevance
+		// Presentation tiers (spec tasks-search-status-tiers, Option A): OVER the fused relevance
 		// order — query mode, and only when the order IS the rerank order (no explicit sort, or the
-		// relevance sort). A STABLE PARTITION by StatusKind tier (open → terminalok → terminalcancel),
-		// preserving the relevance order WITHIN each tier: it demotes terminal nodes, it never re-sorts
-		// the whole list, applies no score multiplier, and hides nothing (a tier is not a cliff). It is
-		// a POLICY in the presentation slot — it changes ORDER, never SELECTION (the facet already
-		// selected). Named only by StatusKind, so terminalok/accepted never folds in with terminalcancel.
+		// relevance sort). A STABLE PARTITION by StatusKind tier — TWO tiers: {open, terminalok} → 0,
+		// terminalcancel → 1 — preserving the relevance order WITHIN each tier: it demotes only dead
+		// work (terminalcancel), it never re-sorts the whole list, applies no score multiplier, and
+		// hides nothing (a tier is not a cliff). It is a POLICY in the presentation slot — it changes
+		// ORDER, never SELECTION (the facet already selected). Named only by StatusKind, so
+		// terminalok/accepted never folds in with terminalcancel.
 		if (query is not null && (req.Sort is null || req.Sort.Value.By == TaskSortBy.Relevance))
 		{
 			var kindByBoard = boardsMeta.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
