@@ -66,6 +66,14 @@ public enum VerdictKind
 // partial-mode retry loop retires from the batch.
 public sealed record MethodologyVerdict(string Node, string Message, VerdictKind Kind);
 
+// One RESOLVED link edge the write door produces (spec methodology-link-kinds-declared): the
+// writer node (`WriterKey`, the upserted node of the board's kind) links `TargetNodeId` via
+// relation kind `Kind`. `WriterIsFrom` fixes the stored edge's orientation — true = the writer is
+// relations.from (work→spec task_spec), false = the writer is relations.to (idea→spec idea_spec,
+// blocker→task blocks). The generic resolver derives this from the link kind's Direction (which
+// end's kind equals the writer's kind); a direction-less builtin (`blocks`) fixes it to false.
+public sealed record ResolvedLink(string Kind, string WriterKey, string TargetNodeId, bool WriterIsFrom);
+
 // The engine's OUTPUT: pre-write verdicts ONLY (condition 1). There is no `effectsToApply` and
 // there never can be — the post-write effects run over `landed`, which is decided by
 // TemporalStore's conflicts and is unknowable before the write.
@@ -73,22 +81,15 @@ public sealed record MethodologyVerdict(string Node, string Message, VerdictKind
 // `Verdicts` is FAIL-FAST: the engine stops at the first refusal, exactly where the old code
 // threw, so it carries at most one entry today. That is not a limitation to relax casually —
 // running on past a refusal would mean judging with a half-resolved ref map and manufacturing
-// verdicts that never existed (a failed specRef resolution would make RequireDefinitionLinks
-// "discover" a missing specRef). The list shape is what lets a later slice widen this
-// deliberately, per guard, with its own parity evidence.
+// verdicts that never existed (a failed link resolution would make RequireDefinitionLinks
+// "discover" a missing link). The list shape is what lets a later slice widen this deliberately.
 //
-// The resolved ref maps are pre-write DATA, not effects: they are what the specRef/ideaRef/
-// blockedBy resolution produced (condition 3), and the post-write edge writes consume them.
-// They are only meaningful when `Verdicts` is empty.
+// `Links` is pre-write DATA, not effects: the resolved link edges (condition 3) the post-write
+// edge writes (LinkRefsAsync) consume. Only meaningful when `Verdicts` is empty.
 public sealed record MethodologyEngineDecision(
 	IReadOnlyList<MethodologyVerdict> Verdicts,
-	IReadOnlyDictionary<string, string> SpecRefs,
-	IReadOnlyDictionary<string, string> BlockedBy,
-	IReadOnlyDictionary<string, string> IdeaRefs)
+	IReadOnlyList<ResolvedLink> Links)
 {
 	public static MethodologyEngineDecision Refused(MethodologyVerdict v) =>
-		new([v], EmptyRefs, EmptyRefs, EmptyRefs);
-
-	static readonly IReadOnlyDictionary<string, string> EmptyRefs =
-		new Dictionary<string, string>(StringComparer.Ordinal);
+		new([v], []);
 }

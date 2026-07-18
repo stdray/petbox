@@ -714,7 +714,7 @@ public sealed record MethodologyKindView(
 public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);
 
 // Mirrors MethodologyDeliveryDef 1:1 — the output-side counterpart of MethodologyDeliveryInput.
-public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes);
+public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes, string Link);
 
 // "A new <type> on this kind's boards must carry a <link> at creation" (link =
 // task_spec|blocks|idea_spec — the upsert-expressible kinds). `targetKind`/

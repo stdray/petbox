@@ -28,11 +28,6 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 
 	static bool IsStatusSlug(string? s) => s is not null && StatusSlugRegex().IsMatch(s);
 
-	// Link kinds a creation constraint may name: the ones expressible IN the upsert call
-	// (task_spec = specRef, blocks = blockedBy, idea_spec = ideaRef). Any other kind is
-	// wired post-hoc via relations_create and therefore can't gate creation.
-	static readonly string[] UpsertExpressibleLinks = ["task_spec", "blocks", "idea_spec"];
-
 	// A transition-effect direction relative to the OWNING node's edge.
 	static readonly string[] EffectDirections = ["incoming", "outgoing"];
 
@@ -56,9 +51,15 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 				// against the whole relation-kind vocabulary (builtin process + neutral +
 				// definition-declared), and a constraint's TargetKind/TargetStatuses resolve
 				// against the definition's OWN kinds when it declares the target.
+				// Known link kinds for constraint/effect references: the direction-less builtin
+				// structural process + neutral kinds, the quartet's declared-in-data process trio
+				// (idea_spec/task_spec/issue_task — builtin fallback so a materialized quartet whose
+				// stored constraints/effects name them still validates before the migrator declares
+				// them), plus this definition's own linkKinds.
 				var knownLinks = new HashSet<string>(
 					MethodologyRuntime.ProcessRelationKinds
 						.Concat(MethodologyRuntime.NeutralRelationKinds)
+						.Concat(MethodologyPresets.QuartetLinkKinds.Select(lk => lk.Slug))
 						.Concat((ctx.InstanceToValidate.LinkKinds ?? []).Select(lk => lk.Slug ?? "")),
 					StringComparer.OrdinalIgnoreCase);
 				var declaredKindStatuses = (kinds ?? [])
@@ -213,8 +214,11 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		var seenConstraints = new HashSet<(string, string)>();
 		foreach (var c in kind.LinkConstraints ?? [])
 		{
-			if (!UpsertExpressibleLinks.Contains(c.Link, StringComparer.OrdinalIgnoreCase))
-				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): only upsert-expressible link kinds can be creation constraints ({string.Join("|", UpsertExpressibleLinks)}) — a post-hoc relation kind can't gate creation");
+			// Every link is expressible through the generic links:{kind:ref} door now, so a
+			// creation constraint may name ANY known relation kind (builtin structural + neutral,
+			// the quartet trio, or a definition-declared kind) — an unknown slug is the only reject.
+			if (!knownLinks.Contains(c.Link))
+				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): link '{c.Link}' is not a relation kind this project knows (builtin: {string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds).Concat(MethodologyPresets.QuartetLinkKinds.Select(lk => lk.Slug)))}; or declare it in linkKinds)");
 			else if (!seenTypes.Contains(c.Type))
 				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): type '{c.Type}' is not declared by this kind's workflow blocks (types: {string.Join("|", seenTypes)})");
 			else if (!seenConstraints.Add((c.Type.ToLowerInvariant(), c.Link.ToLowerInvariant())))
@@ -224,7 +228,7 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 
 		ValidateEffects(kind, KindStatuses(kind), knownLinks, ctx);
 		ValidateAutoWire(kind, ctx);
-		ValidateDelivery(kind, ctx);
+		ValidateDelivery(kind, knownLinks, ctx);
 		ValidateDefaultView(kind, ctx);
 		ValidateOutlineReveal(kind, ctx);
 		ValidateBoardName(kind, ctx);
@@ -277,10 +281,16 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 	// not_started and the declaration is noise); every type is a valid slug. Types name
 	// LINKED tasks (typically of another kind), so they are NOT required to appear in this
 	// kind's workflow blocks.
-	static void ValidateDelivery(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	static void ValidateDelivery(MethodologyKindDef kind, HashSet<string> knownLinks, ValidationContext<MethodologyDefinition> ctx)
 	{
 		if (kind.Delivery is null) return;
 		var d = kind.Delivery;
+		// Delivery.Link (spec methodology-link-kinds-declared): the relation kind whose inbound
+		// edges the roll-up sweeps — mandatory (no default) and must be a known relation kind.
+		if (string.IsNullOrWhiteSpace(d.Link))
+			ctx.AddFailure($"kind '{kind.Kind}': delivery.link is required — name the relation kind the roll-up sweeps (e.g. task_spec)");
+		else if (!knownLinks.Contains(d.Link))
+			ctx.AddFailure($"kind '{kind.Kind}': delivery.link '{d.Link}' is not a relation kind this project knows (builtin: {string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds).Concat(MethodologyPresets.QuartetLinkKinds.Select(lk => lk.Slug)))}; or declare it in linkKinds)");
 		if (d.RequiredTypes is not { Count: > 0 })
 		{
 			ctx.AddFailure($"kind '{kind.Kind}': delivery.requiredTypes must be non-empty (omit delivery for no roll-up)");

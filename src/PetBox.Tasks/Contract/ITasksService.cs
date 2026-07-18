@@ -245,7 +245,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// presets (never methodology_defs). Returns the normalized (lowercased) kind; an
 	// unknown kind throws, listing every valid kind for that scope. RelationTools calls
 	// this after resolving the from-node (the store itself is not definition-aware).
-	Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, CancellationToken ct = default);
+	Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, string? toNodeId = null, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it

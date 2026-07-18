@@ -1192,8 +1192,11 @@ public static class TasksTools
 				// node's full commit set — same semantics as Tags.
 				Commits = n.Commits,
 				Priority = n.Priority,
-				SpecRef = n.SpecRef,
-				IdeaRef = n.IdeaRef,
+				// links:{kind:ref|ref[]} → kind -> normalized string list (the converter already
+				// flattened a bare ref to a one-element list). Empty-value kinds are dropped.
+				Links = n.Links is null ? null : n.Links
+					.Where(kv => kv.Value.Values.Count > 0)
+					.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Values, StringComparer.Ordinal),
 				BlockedBy = n.BlockedBy,
 				PartOf = n.PartOf,
 				Supersedes = n.Supersedes,

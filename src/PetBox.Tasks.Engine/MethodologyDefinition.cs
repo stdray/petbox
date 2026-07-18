@@ -140,13 +140,18 @@ public sealed record MethodologyKindDef(
 // last-blocker-release Effect (declared in Effects, not derived here) sets a released node to.
 public sealed record MethodologyBlocksGateDef(string Status, string ReleaseTo);
 
-// Delivery roll-up as DATA (spec primitives-enum-residual): how linked task_spec nodes
-// contribute to a board's computed delivery. `RequiredTypes` drive progress (none present
-// → not_started; any non-TerminalOk → in_progress; all TerminalOk → candidate for done);
-// any `DefectTypes` still Open while requireds are done yield done_with_defects.
+// Delivery roll-up as DATA (spec primitives-enum-residual + link-kinds-declared): how linked
+// nodes contribute to a board's computed delivery. `Link` is the relation kind whose INBOUND
+// edges name the delivering tasks (the quartet spec preset rolls up over the work→spec link);
+// it is DATA, not a literal — ComputeSpecDeliveryAsync sweeps this kind's edges. `RequiredTypes`
+// drive progress (none present → not_started; any non-TerminalOk → in_progress; all TerminalOk →
+// candidate for done); any `DefectTypes` still Open while requireds are done yield
+// done_with_defects. There is no default `Link` — a delivery declaration must name the link it
+// rolls up over (the migrator backfills `Link` on a pre-field stored document to the old literal).
 public sealed record MethodologyDeliveryDef(
 	IReadOnlyList<string> RequiredTypes,
-	IReadOnlyList<string> DefectTypes);
+	IReadOnlyList<string> DefectTypes,
+	string Link);
 
 // "A NEW node of type `Type` on a board of this kind must carry a link of kind `Link` at
 // creation" — the work preset states it as data (feature/bug must have specRef; chore

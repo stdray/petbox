@@ -690,15 +690,21 @@ public sealed partial class TasksService : ITasksService
 		return new MethodologyGuideView(md, [], "ambiguous", null);
 	}
 
-	// A specBoard link only makes sense on a work board and must point at an existing spec board.
+	// A specBoard link only makes sense on a work board (a kind that auto-wires to a spec) and must
+	// point at an existing spec board. Both checks are DATA now, not the BoardKind enum: the source
+	// is a work board iff its kind declares AutoWireSpecFrom, and the target is a spec board iff
+	// IsSpecKind — the latter fixes the presetkind-spec-blind-spot for a definition-resolved spec
+	// kind (ParseKind == BoardKind.Spec reads wrong for a custom-named spec kind).
 	async Task ValidateSpecBoardAsync(string projectKey, string kind, string? specBoard, CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(specBoard)) return;
-		if (MethodologyPresets.ParseKind(kind) != BoardKind.Work)
+		var runtime = await RuntimeAsync(projectKey, ct);
+		if (runtime.AutoWireSpecFrom(kind) is null)
 			throw new ArgumentException($"specBoard applies only to a work board (this board's kind is '{kind}')");
 		var target = await _boards.FindAsync(projectKey, specBoard, ct)
 			?? throw new ArgumentException($"spec board '{specBoard}' not found in project '{projectKey}'");
-		if (MethodologyPresets.ParseKind(target.Kind) != BoardKind.Spec)
+		var targetRuntime = await RuntimeForBoardAsync(projectKey, target, ct);
+		if (!targetRuntime.IsSpecKind(target.Kind))
 			throw new ArgumentException($"'{specBoard}' is not a spec board (kind is '{target.Kind}')");
 	}
 
@@ -779,23 +785,29 @@ public sealed partial class TasksService : ITasksService
 		var fromByNode = allEdges.ToLookup(e => e.FromNodeId, StringComparer.Ordinal);
 		var toByNode = allEdges.ToLookup(e => e.ToNodeId, StringComparer.Ordinal);
 
+		// The typed link fields are DATA-driven now (methodology-link-kinds-declared), not the
+		// task_spec literal: `Spec` = this node's OUTGOING edges of any declared link kind whose
+		// direction runs from THIS board's kind to a spec kind (quartet: task_spec, work→spec);
+		// `LinkedTasks` = the INCOMING edges of the spec kind's delivery link (deliveryDef.Link,
+		// task_spec) — non-null only on a delivery-bearing (spec) board.
+		var specLinkKinds = runtime.EffectiveLinkKinds()
+			.Where(lk => lk.Direction is { } d
+				&& string.Equals(d.FromKind, meta.Kind, StringComparison.OrdinalIgnoreCase)
+				&& d.ToKind is { } tk && runtime.IsSpecKind(tk))
+			.Select(lk => lk.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var deliveryLink = deliveryDef?.Link;
+
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
 		{
 			var fromEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)fromByNode[n.NodeId] : [];
 			var toEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)toByNode[n.NodeId] : [];
-			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
+			var spec = fromEdges.Where(e => specLinkKinds.Contains(e.Kind)).Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
 			// Symmetric counterpart (kanban-blocked-signal review finding): this node's OWN
 			// outgoing "blocks" edges — the nodes IT holds up, not the nodes holding it up.
 			var blocks = fromEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.ToNodeId, index)).ToList();
-			// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07,
-			// presetkind-spec-blind-spot): PresetKind nulls out for any DEFINED kind, and a real
-			// project's spec board is virtually always definition-resolved — see
-			// MethodologyRuntime.IsSpecKind's own comment. The old guard read `null != BoardKind.Spec`
-			// (actually `== BoardKind.Spec` was always false) on $system's real spec board, so
-			// linkedTasks silently dropped off every spec node's response there.
-			var linkedTasks = runtime.IsSpecKind(meta.Kind) ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			var linkedTasks = deliveryLink is not null ? toEdges.Where(e => e.Kind == deliveryLink).Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
 			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
 			nodes.Add(new PlanNodeView(
@@ -899,8 +911,9 @@ public sealed partial class TasksService : ITasksService
 		var relIndex = await BuildNodeIndexAsync(projectKey, ct);
 		var fromEdges = await _relations.ListAsync(projectKey, nodeId, "from", ct: ct);
 		var toEdges = await _relations.ListAsync(projectKey, nodeId, "to", ct: ct);
+		var panelRuntime = await RuntimeForBoardAsync(projectKey, (await _boards.FindAsync(projectKey, board, ct))!, ct);
 		var relations = new List<NodeRelationGroup>();
-		foreach (var (kind, fromSide, label) in RelationPanelSpecs)
+		foreach (var (kind, fromSide, label) in RelationPanelSpecs(panelRuntime))
 		{
 			var targets = fromSide
 				? fromEdges.Where(e => e.Kind == kind).Select(e => e.ToNodeId)
@@ -919,21 +932,26 @@ public sealed partial class TasksService : ITasksService
 	// The node detail page's relation panel: every relation kind × direction, in reading order.
 	// FromSide=true → this node is the edge's FROM (target = ToNodeId); false → this node is the TO
 	// (target = FromNodeId). part_of-forward (the parent) is intentionally absent — the breadcrumb
-	// already shows the ancestor chain. Kinds match MethodologyRuntime.ProcessRelationKinds.
-	static readonly (string Kind, bool FromSide, string Label)[] RelationPanelSpecs =
-	[
-		("part_of", false, "children"),
-		("blocks", false, "blocked by"),
-		("blocks", true, "blocks"),
-		("task_spec", true, "implements (spec)"),
-		("task_spec", false, "linked tasks"),
-		("idea_spec", true, "spec"),
-		("idea_spec", false, "idea"),
-		("issue_task", true, "tasks"),
-		("issue_task", false, "from issue"),
-		("supersedes", true, "supersedes"),
-		("supersedes", false, "superseded by"),
-	];
+	// already shows the ancestor chain. The direction-less structural builtins (part_of/blocks/
+	// supersedes) keep fixed reading labels; the declared/directed kinds are DATA now
+	// (methodology-link-kinds-declared) — each contributes an outgoing and an incoming row labelled
+	// from its Direction.Label (falling back to the slug), so a project-declared kind shows up in
+	// the panel without a code change.
+	static IEnumerable<(string Kind, bool FromSide, string Label)> RelationPanelSpecs(MethodologyRuntime runtime)
+	{
+		yield return ("part_of", false, "children");
+		yield return ("blocks", false, "blocked by");
+		yield return ("blocks", true, "blocks");
+		foreach (var lk in runtime.EffectiveLinkKinds())
+		{
+			if (lk.Direction is not { } d) continue;
+			var label = d.Label is { Length: > 0 } ? d.Label : lk.Slug;
+			yield return (lk.Slug, true, $"{lk.Slug}: {label} →");
+			yield return (lk.Slug, false, $"{lk.Slug}: ← {label}");
+		}
+		yield return ("supersedes", true, "supersedes");
+		yield return ("supersedes", false, "superseded by");
+	}
 
 	public async Task<NodeDetailView?> GetNodeBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default)
 	{
@@ -1068,7 +1086,7 @@ public sealed partial class TasksService : ITasksService
 	// linkKinds declared on the FROM node's board instance. The store no longer validates
 	// the vocabulary itself — this is the one door for user-supplied kinds.
 	// Transitional: no fromNodeId / no board membership → project-singleton definition.
-	public async Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, CancellationToken ct = default)
+	public async Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, string? toNodeId = null, CancellationToken ct = default)
 	{
 		var k = (kind ?? "").Trim().ToLowerInvariant();
 		var (runtime, scopeLabel) = await RuntimeForRelationAsync(projectKey, fromNodeId, ct);
@@ -1076,7 +1094,29 @@ public sealed partial class TasksService : ITasksService
 			throw new ArgumentException(
 				$"invalid relation kind '{kind}'; valid for {scopeLabel}: {string.Join("|", runtime.KnownRelationKinds())}" +
 				" (declare additional kinds on the methodology instance's linkKinds)");
+		// Direction enforcement (spec methodology-link-kinds-declared): a kind with a non-empty
+		// Direction constrains the KINDS at the ends of the stored edge — the `from` node must be a
+		// FromKind node, the `to` node a ToKind node (a null end is unconstrained). Only checkable
+		// when both endpoints are in hand (relations_create resolves them before calling).
+		if (fromNodeId is not null && toNodeId is not null && runtime.LinkKind(k)?.Direction is { } dir
+			&& (dir.FromKind is not null || dir.ToKind is not null))
+		{
+			var fromKind = await NodeBoardKindAsync(projectKey, fromNodeId, ct);
+			var toKind = await NodeBoardKindAsync(projectKey, toNodeId, ct);
+			if (dir.FromKind is not null && fromKind is not null && !string.Equals(runtime.KindName(fromKind), dir.FromKind, StringComparison.OrdinalIgnoreCase))
+				throw new ArgumentException($"relation '{k}' runs {dir.FromKind}->{dir.ToKind ?? "*"}, but its `from` node is a '{runtime.KindName(fromKind)}' node (expected a {dir.FromKind} node) — reverse the edge or fix the kind");
+			if (dir.ToKind is not null && toKind is not null && !string.Equals(runtime.KindName(toKind), dir.ToKind, StringComparison.OrdinalIgnoreCase))
+				throw new ArgumentException($"relation '{k}' runs {dir.FromKind ?? "*"}->{dir.ToKind}, but its `to` node is a '{runtime.KindName(toKind)}' node (expected a {dir.ToKind} node) — reverse the edge or fix the kind");
+		}
 		return k;
+	}
+
+	// A node's board kind (for relation direction enforcement), or null when the node/board is gone.
+	async Task<string?> NodeBoardKindAsync(string projectKey, string nodeId, CancellationToken ct)
+	{
+		var boardName = await _boards.FindBoardByNodeIdAsync(projectKey, nodeId, ct);
+		if (boardName is null) return null;
+		return (await _boards.FindAsync(projectKey, boardName, ct))?.Kind;
 	}
 
 	// Resolve the runtime that owns a relation's declared-kind vocabulary: the FROM
@@ -1255,9 +1295,9 @@ public sealed partial class TasksService : ITasksService
 			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0) nodes.Add(new NodeState(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type));
 
-		// tasksOf: inbound task_spec edges, grouped at the boundary — Relation is a linq2db
-		// entity and does not cross into the engine (condition 4).
-		var tasksOf = (await _relations.ListByKindAsync(projectKey, "task_spec", ct))
+		// tasksOf: inbound delivery-link edges (def.Link — DATA, the quartet spec's task_spec),
+		// grouped at the boundary — Relation is a linq2db entity and does not cross into the engine.
+		var tasksOf = (await _relations.ListByKindAsync(projectKey, def.Link, ct))
 			.GroupBy(e => e.ToNodeId, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(e => e.FromNodeId).ToList(), StringComparer.Ordinal);
 
@@ -1319,7 +1359,7 @@ public sealed partial class TasksService : ITasksService
 			.ToDictionary(g => g.Key, g => g.First().Version, StringComparer.Ordinal);
 		var live = upsertPatches;
 		PlanNode[] desired;
-		IReadOnlyDictionary<string, string> specRefs, blockedBy, ideaRefs;
+		IReadOnlyList<ResolvedLink> resolvedLinks;
 
 		// EVERY row the resolvers and guards need, fetched ONCE for the whole call
 		// (methodology-engine-extraction, slice 3): the node index, the boards, the inbound
@@ -1338,19 +1378,17 @@ public sealed partial class TasksService : ITasksService
 				ValidateChanges(desired, prior);
 				using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 				{
-					// ONE pure decision replaces the seven inline resolve/guard calls that each used
-					// to fetch for themselves. The engine resolves the slug refs (specRef/ideaRef/
-					// blockedBy) and judges, in the historical order, and STOPS at the first refusal
-					// — so this seam still produces exactly one exception per pass, naming one node,
-					// which is all the partial-mode catch below ever saw.
+					// ONE pure decision replaces the inline resolve/guard calls that each used to
+					// fetch for themselves. The engine resolves every link (the generic links:{} door
+					// plus the blockedBy sugar) and judges, in the historical order, STOPPING at the
+					// first refusal — so this seam still produces exactly one exception per pass,
+					// naming one node, which is all the partial-mode catch below ever saw.
 					var decision = GuardEngine.Decide(engineContext, desired.Select(ToNodeState).ToList(), priorStates,
-						LinkFields(live, p => p.SpecRef), LinkFields(live, p => p.BlockedBy), LinkFields(live, p => p.IdeaRef));
+						LinksRaw(live), LinkFields(live, p => p.BlockedBy));
 					if (decision.Verdicts.Count > 0) throw ToRefusal(decision.Verdicts[0]);
-					// The resolved maps hold NodeIds only — the post-write edge writes (LinkRefsAsync)
+					// The resolved edges hold NodeIds only — the post-write edge writes (LinkRefsAsync)
 					// read them and must never see a raw slug.
-					specRefs = decision.SpecRefs;
-					blockedBy = decision.BlockedBy;
-					ideaRefs = decision.IdeaRefs;
+					resolvedLinks = decision.Links;
 				}
 				break;
 			}
@@ -1488,9 +1526,7 @@ public sealed partial class TasksService : ITasksService
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.links"))
 			{
 				await _boards.TouchAsync(projectKey, board, ct);
-				await LinkRefsAsync(projectKey, "task_spec", landed, specRefs, blockerIsFrom: false, ct);
-				await LinkRefsAsync(projectKey, "blocks", landed, blockedBy, blockerIsFrom: true, ct);
-				await LinkRefsAsync(projectKey, "idea_spec", landed, ideaRefs, blockerIsFrom: true, ct);
+				await LinkRefsAsync(projectKey, landed, resolvedLinks, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
@@ -2058,6 +2094,25 @@ public sealed partial class TasksService : ITasksService
 		return map;
 	}
 
+	// The generic links door as the engine reads it: nodeKey -> (kind slug -> refs). Empty-ref
+	// kinds are dropped; only nodes carrying at least one link appear.
+	static Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> LinksRaw(IReadOnlyList<NodePatch> nodes)
+	{
+		var map = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>(StringComparer.Ordinal);
+		foreach (var p in nodes)
+		{
+			if (p.Links is not { Count: > 0 }) continue;
+			var byKind = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+			foreach (var (kind, refs) in p.Links)
+			{
+				var vals = (refs ?? []).Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+				if (vals.Count > 0) byKind[kind] = vals;
+			}
+			if (byKind.Count > 0) map[p.Key] = byKind;
+		}
+		return map;
+	}
+
 	// A pure verdict, re-raised as the exception the guard used to throw at this very spot: same
 	// TYPE (load-bearing — NodeRejection.cs), same message, same indicted node key. This is the
 	// ONLY glue between the engine's verdict contract and UpsertAsync's exception-driven partial
@@ -2198,10 +2253,11 @@ public sealed partial class TasksService : ITasksService
 		var upserts = nodes.Where(p => !p.Deleted).ToList();
 		var deletes = nodes.Where(p => p.Deleted).ToList();
 
-		// The node index + the board list serve specRef resolution, ideaRef resolution and the
-		// link-target guard alike; all three are dead unless the batch carries a ref field, which
-		// is precisely when the old code built the index at all.
-		var needsIndex = upserts.Any(p => !string.IsNullOrWhiteSpace(p.SpecRef) || !string.IsNullOrWhiteSpace(p.IdeaRef));
+		// The node index + the board list serve the generic links resolution and the link-target
+		// guard alike; both are dead unless the batch carries a `links` field (the blockedBy sugar
+		// resolves same-board off prior, needing neither), which is precisely when the old code
+		// built the index at all.
+		var needsIndex = upserts.Any(p => p.Links is { Count: > 0 });
 		IReadOnlyDictionary<string, NodeIndexEntry> nodeIndex = new Dictionary<string, NodeIndexEntry>(StringComparer.Ordinal);
 		IReadOnlyList<EngineBoard> boards = [];
 		if (needsIndex)
@@ -2277,17 +2333,19 @@ public sealed partial class TasksService : ITasksService
 		return ids;
 	}
 
-	// Create relation edges from a per-node field after the upsert applies. task_spec
-	// (specRef): task -> spec. blocks (blockedBy): blocker -> task. Idempotent.
-	async Task LinkRefsAsync(string projectKey, string kind, PlanNode[] desired, IReadOnlyDictionary<string, string> refs, bool blockerIsFrom, CancellationToken ct)
+	// Create the relation edges the engine RESOLVED, after the upsert applies. Each ResolvedLink
+	// carries its own kind, target NodeId and orientation (WriterIsFrom) — so the once-hardcoded
+	// task_spec/blocks/idea_spec calls collapse into one generic sweep over every declared/builtin
+	// link the batch expressed. Idempotent (RelationStore.CreateAsync returns an identical edge).
+	async Task LinkRefsAsync(string projectKey, PlanNode[] desired, IReadOnlyList<ResolvedLink> links, CancellationToken ct)
 	{
-		if (refs.Count == 0) return;
+		if (links.Count == 0) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var (key, other) in refs)
-			if (byKey.TryGetValue(key, out var nid) && nid.Length > 0)
+		foreach (var link in links)
+			if (byKey.TryGetValue(link.WriterKey, out var nid) && nid.Length > 0)
 			{
-				var (from, to) = blockerIsFrom ? (other, nid) : (nid, other);
-				await _relations.CreateAsync(projectKey, kind, from, to, ct);
+				var (from, to) = link.WriterIsFrom ? (nid, link.TargetNodeId) : (link.TargetNodeId, nid);
+				await _relations.CreateAsync(projectKey, link.Kind, from, to, ct);
 			}
 	}
 

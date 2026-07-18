@@ -105,7 +105,7 @@ static class MethodologyWire
 				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom, e.OnLeave, e.Description)).ToList()
 				: null,
 			AutoWireSpecFrom: k.AutoWireSpecFrom,
-			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes),
+			Delivery: k.Delivery is null ? null : new MethodologyDeliveryView(k.Delivery.RequiredTypes, k.Delivery.DefectTypes, k.Delivery.Link),
 			DefaultView: k.DefaultView,
 			OutlineReveal: k.OutlineReveal,
 			Singleton: k.Singleton,
@@ -164,7 +164,8 @@ static class MethodologyWire
 			AutoWireSpecFrom = k.AutoWireSpecFrom,
 			Delivery = k.Delivery is null ? null : new MethodologyDeliveryDef(
 				(k.Delivery.RequiredTypes ?? []).Select(t => t ?? string.Empty).ToList(),
-				(k.Delivery.DefectTypes ?? []).Select(t => t ?? string.Empty).ToList()),
+				(k.Delivery.DefectTypes ?? []).Select(t => t ?? string.Empty).ToList(),
+				k.Delivery.Link ?? string.Empty),
 			DefaultView = k.DefaultView,
 			OutlineReveal = k.OutlineReveal,
 			Singleton = k.Singleton,

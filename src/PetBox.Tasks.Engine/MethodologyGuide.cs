@@ -207,14 +207,17 @@ public static class MethodologyGuide
 		md.AppendLine();
 		foreach (var c in constraints)
 		{
-			// Cadence follows the link kind's builtin semantics (mirrors RequireDefinitionLinks):
-			// idea_spec is a PROVENANCE link required on every write; the rest gate creation only.
-			var cadence = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase)
-				? $"- EVERY write of a `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in each upsert — it names the authorizing node)"
-				: $"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert)";
+			// Cadence follows the constraint's own data (mirrors RequireDefinitionLinks): a
+			// constraint that pins a target STATUS is a PROVENANCE link required on every write; the
+			// rest gate creation only. Every link is addressed through the generic `links.<kind>`
+			// door — there are no sugar fields anymore.
+			var everyWrite = c.TargetStatuses is { Count: > 0 };
+			var cadence = everyWrite
+				? $"- EVERY write of a `{c.Type}` must carry a `{c.Link}` link (provide `links.{c.Link}` in each upsert — it names the authorizing node)"
+				: $"- A new `{c.Type}` must carry a `{c.Link}` link (provide `links.{c.Link}` in the creating upsert)";
 			var note = c.Description is { Length: > 0 } d ? $" — {d}" : "";
-			md.AppendLine($"{cadence}{TargetProse(c)}{note}.{(string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) ? "" : " Edits don't re-require it.")}");
-			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} ({LinkField(c.Link)}){TargetDetail(c)}"));
+			md.AppendLine($"{cadence}{TargetProse(c)}{note}.{(everyWrite ? "" : " Edits don't re-require it.")}");
+			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} (links.{c.Link}){TargetDetail(c)}"));
 		}
 	}
 
@@ -287,7 +290,7 @@ public static class MethodologyGuide
 		md.AppendLine();
 		md.AppendLine("### Delivery roll-up");
 		md.AppendLine();
-		md.AppendLine("- Delivery is COMPUTED from inbound `task_spec` links (and rolled up the part_of tree):");
+		md.AppendLine($"- Delivery is COMPUTED from inbound `{delivery.Link}` links (and rolled up the part_of tree):");
 		md.AppendLine($"  - required types ({required}): none → not_started; any non-terminal-ok → in_progress; all terminal-ok → done candidate");
 		md.AppendLine(defects.Length > 0
 			? $"  - defect types ({defects}): any still open while requireds are done → done_with_defects"
@@ -300,12 +303,14 @@ public static class MethodologyGuide
 		md.AppendLine();
 		md.AppendLine("## Relation kinds");
 		md.AppendLine();
-		md.AppendLine($"- Process (FSM effects and guards key on these): {string.Join(", ", MethodologyRuntime.ProcessRelationKinds)}");
+		md.AppendLine($"- Structural (FSM effects and guards key on these, direction-less builtins): {string.Join(", ", MethodologyRuntime.ProcessRelationKinds)}");
 		md.AppendLine($"- Neutral (free semantic edges, no process meaning): {string.Join(", ", MethodologyRuntime.NeutralRelationKinds)}");
-		var declared = runtime.DeclaredLinkKinds;
+		// The directed link kinds (the quartet's declared process trio + any project-declared kind),
+		// each with its category and stored-edge orientation — addressed via links:{kind:ref}.
+		var declared = runtime.EffectiveLinkKinds();
 		md.AppendLine(declared.Count > 0
-			? $"- Project-declared (free semantic edges): {string.Join(", ", declared.Select(RenderDeclaredLinkKind))}"
-			: "- Project-declared: none.");
+			? $"- Declared (address via links:{{kind:ref}}): {string.Join(", ", declared.Select(RenderDeclaredLinkKind))}"
+			: "- Declared: none.");
 	}
 
 	// One declared relation kind as human-readable text. A direction-less NEUTRAL kind keeps the
@@ -341,16 +346,6 @@ public static class MethodologyGuide
 		md.AppendLine("- Code blocks with triple backticks: ` ``` ` (language tag optional).");
 		md.AppendLine("- Inline code with single backticks: `` `code` ``.");
 	}
-
-	// The upsert field that expresses a creation-gating link kind (the validator limits
-	// constraints to exactly these three, so the fallback arm is defensive only).
-	static string LinkField(string link) => link.ToLowerInvariant() switch
-	{
-		"task_spec" => "specRef",
-		"blocks" => "blockedBy",
-		"idea_spec" => "ideaRef",
-		_ => link,
-	};
 
 	// A block whose transition set is the COMPLETE from≠to pairing over its statuses, with
 	// no gates on any edge, models free transitions (MethodologyPresets.AllPairs). The

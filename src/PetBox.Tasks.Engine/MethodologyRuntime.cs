@@ -23,10 +23,15 @@ public sealed class MethodologyRuntime
 	public static MethodologyRuntime From(MethodologyDefinition? definition) =>
 		definition is null ? PresetsOnly : new(definition);
 
-	// Builtin relation kinds with PROCESS meaning (FSM effects / guards key on these):
-	// task_spec (specRef), issue_task (intake auto-close), idea_spec (ideaRef), blocks
-	// (gating + unblock effect), part_of (decomposition), supersedes (obsoletion).
-	public static readonly string[] ProcessRelationKinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of", "supersedes"];
+	// Builtin relation kinds with PROCESS meaning that stay CODE (structural edges the engine
+	// consumes directly, direction-less): blocks (gating + unblock effect), part_of
+	// (decomposition), supersedes (obsoletion). The quartet's other three process kinds —
+	// idea_spec/task_spec/issue_task — moved OUT of this array and are now DECLARED relation kinds
+	// with direction (MethodologyPresets.QuartetLinkKinds), addressed through links:{kind:ref} and
+	// resolved by their stored-edge orientation (spec methodology-link-kinds-declared). The atomic
+	// swap: the validator's collision-check keys off THIS array, so removing the trio here is
+	// exactly what lets a stored document DECLARE them as linkKinds without a collision failure.
+	public static readonly string[] ProcessRelationKinds = ["blocks", "part_of", "supersedes"];
 
 	// Builtin NEUTRAL kinds, available to EVERY project: free semantic edges between any
 	// nodes — no FSM effects, no process meaning (spec primitives-link-kinds).
@@ -193,13 +198,27 @@ public sealed class MethodologyRuntime
 	public IReadOnlyList<MethodologyTagAxisDef> TagAxes(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? _tagAxes : MethodologyPresets.TagAxes(MethodologyPresets.ParseKind(kindSlug));
 
-	// Every relation kind this runtime accepts: builtin process + neutral kinds plus the
-	// definition-declared ones (order = error-message order). Scope = the instance (or
-	// legacy project singleton) that built this runtime.
+	// Every relation kind this runtime accepts: builtin process + neutral kinds, the quartet's
+	// declared-in-data process trio (idea_spec/task_spec/issue_task — builtin fallback so a
+	// preset-resolved or not-yet-migrated board still accepts them), plus the definition-declared
+	// ones (order = error-message order). A definition that DECLARES the trio adds nothing new
+	// (Distinct collapses the duplicate slug). Scope = the instance (or legacy project singleton)
+	// that built this runtime.
 	public IEnumerable<string> KnownRelationKinds() =>
 		ProcessRelationKinds
 			.Concat(NeutralRelationKinds)
-			.Concat(_linkKinds.Select(k => k.Slug));
+			.Concat(MethodologyPresets.QuartetLinkKinds.Select(k => k.Slug))
+			.Concat(_linkKinds.Select(k => k.Slug))
+			.Distinct(StringComparer.OrdinalIgnoreCase);
+
+	// The declared relation kind for a slug, direction and all: the definition's when it declares
+	// one (declared wins), else the quartet's builtin process trio (MethodologyPresets.QuartetLinkKinds),
+	// else null (a direction-less builtin process/neutral kind, or an unknown slug). The one place
+	// the generic link resolver and relations_create direction-enforcement read a link's orientation.
+	public MethodologyLinkKindDef? LinkKind(string? slug) =>
+		slug is null ? null
+			: _linkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase))
+				?? MethodologyPresets.QuartetLinkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase));
 
 	public bool IsValidRelationKind(string kind) =>
 		KnownRelationKinds().Contains(kind, StringComparer.OrdinalIgnoreCase);
@@ -253,6 +272,19 @@ public sealed class MethodologyRuntime
 	// section; KnownRelationKinds flattens these to slugs). Instance-scoped when the
 	// runtime was built from an instance rules document.
 	public IReadOnlyList<MethodologyLinkKindDef> DeclaredLinkKinds => _linkKinds;
+
+	// The relation kinds the guide DOCUMENTS with direction/category: the quartet's builtin process
+	// trio (idea_spec/task_spec/issue_task) plus every definition-declared kind, the declared one
+	// winning on a slug collision. A preset-resolved or not-yet-migrated instance therefore still
+	// renders the trio's orientation, and a project that has customized one reads its own.
+	public IReadOnlyList<MethodologyLinkKindDef> EffectiveLinkKinds()
+	{
+		var declaredSlugs = _linkKinds.Select(k => k.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		return MethodologyPresets.QuartetLinkKinds
+			.Where(q => !declaredSlugs.Contains(q.Slug))
+			.Concat(_linkKinds)
+			.ToList();
+	}
 
 	// Builtin + defined kind slugs (for board-create error messages).
 	public IEnumerable<string> KnownKinds() =>
