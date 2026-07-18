@@ -36,6 +36,15 @@
 		box-shadow: inset 2px 0 0 oklch(var(--p));
 	}
 
+	/* comment-permalink-anchor: the brief highlight ts/commentThread.ts adds to the comment a
+	   `#comment-{id}` hash targets (on load, or after clicking another comment's own permalink
+	   timestamp mid-page). Reuses the SAME event-live-flash keyframe as .event-live above — one
+	   fewer animation to keep in sync, and the fade-to-transparent means the class can just be
+	   left on the element afterward with no visible trace, no removal needed. */
+	.comment-permalink-flash {
+		animation: event-live-flash 1.4s ease-out;
+	}
+
 	/* The memory-entry card a …/memory/{store}#{key} URL points at (memory-entry-url). The
 	   card carries id={key}, so :target is the whole highlight mechanism — no JS, and it
 	   survives a reload/share. scroll-margin keeps it clear of the sticky header. */

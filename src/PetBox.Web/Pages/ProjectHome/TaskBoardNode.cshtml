@@ -204,7 +204,13 @@
 				}
 			}
 
-			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, MemoryRefs: Model.MemoryRefs))" />
+			@* comment-permalink-anchor: the canonical detail-page URL (NOT wherever this partial
+			   happens to render — same scheme+host+path idiom as Logs/Index.cshtml's ingestUrl),
+			   so a copied comment link always points at the shared-target page even if a future
+			   list view starts rendering this partial too (ShowAddForm: false, per the doc comment
+			   in _CommentThread.cshtml). *@
+			@{ var nodeUrl = $"{ViewContext.HttpContext.Request.Scheme}://{ViewContext.HttpContext.Request.Host}{Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Detail.Board, node.Key)}"; }
+			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, MemoryRefs: Model.MemoryRefs, NodeUrl: nodeUrl))" />
 		</article>
 	</div>
 </div>
