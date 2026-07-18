@@ -190,13 +190,22 @@ public sealed record TaskNodeFilter(
 // CurrentVersion — null on a project-wide read), and retriever provenance (null in listing
 // mode; filled in query mode — which retrievers ran and whether the answer is degraded,
 // e.g. embedding unavailable so only lexical ran).
+//
+// `EffectiveStatusKind` (spec search-echo-effective-statuskind-filter): the statusKind facet
+// that ACTUALLY applied — echoed EXACTLY as TasksSearchDocs.ResolveStatusKindFacet resolved it
+// (one authority, never a parallel recompute), so a caller relying on the DEFAULT never guesses
+// the visibility it got. Set in BOTH modes (listing and query) — not just query, unlike
+// Retrievers — because the default facet narrows in listing too ([open]) and that default must
+// be observable there as well. null = the resolver returned NEUTRAL (includeClosed:true — no
+// facet applied, every kind); a non-empty set is the resolved facet, defaulted or explicit alike.
 public sealed record TaskSearchResult(
 	IReadOnlyList<TaskSearchHit> Hits,
 	string? Board = null,
 	string? Kind = null,
 	string? SpecBoard = null,
 	long? CurrentVersion = null,
-	PetBox.Core.Search.SearchRetrievers? Retrievers = null);
+	PetBox.Core.Search.SearchRetrievers? Retrievers = null,
+	IReadOnlyList<string>? EffectiveStatusKind = null);
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by
