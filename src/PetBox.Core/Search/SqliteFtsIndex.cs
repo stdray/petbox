@@ -8,12 +8,15 @@ namespace PetBox.Core.Search;
 // The trivial Class-A index that gives the contract an end-to-end pass: a local SQLite
 // FTS5 mirror, written INSIDE the entity's transaction (Synchronous consistency) so a
 // committed entity is never lexically-stale, and rolled back with it on abort
-// (spec: search-lexical-floor). Entity-addressed by (Scope, Type, Id); Text/Tags/Key are the
+// (spec: search-lexical-floor). Entity-addressed by (Scope, Type, Id); Text/Tags/Key/Title are the
 // indexed columns (Key: search-key-column-everywhere — the entity's own business key/slug,
-// tokenized in its OWN column instead of prose, so a query built from the key's words reaches
-// the entity per-word without inflating Text's term frequencies). Tokenizer fix for ru/en lives
+// tokenized in its OWN column instead of prose; Title: search-doc-model-title-weights — the
+// entity's title in its OWN column so a title hit can be weighted above a body hit, instead of
+// being spliced into `Text` where bm25 could not tell them apart). Tokenizer fix for ru/en lives
 // in the shared FtsQuery helper. MATCH with no column filter searches every indexed column
-// (Text, Tags, Key) as one term space, so a key-word query is found with zero query-side change.
+// (Text, Tags, Key, Title) as one term space, so a key-word or title-word query is found with zero
+// query-side change; the column WEIGHTS (FtsColumnWeights) then rank a title/key hit above a body
+// hit within that same matched set.
 //
 // Reads open their own connection via the supplied factory; writes ride the caller's `tx`.
 // This is the floor, not the ceiling — vector/episodic indexes are separate Class-B work.
@@ -45,19 +48,21 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		await db.GetTable<Row>()
 			.Where(r => r.Scope == doc.Scope && r.Type == doc.Type && r.Id == doc.Id)
 			.DeleteAsync(ct);
-		// The indexed text carries the tokens' snowball stems as shadow terms, so a
+		// The indexed prose carries the tokens' snowball stems as shadow terms, so a
 		// stemmed query token lands on any wordform (spec: search-lexical-multilingual).
-		// Appending keeps the fts5 schema untouched; Text is never read back (hits carry
-		// only the entity address), so the shadow can't leak into display.
-		var shadow = TokenStemmer.ShadowTerms(doc.Text);
+		// Appending keeps the fts5 schema untouched; neither column is read back (hits carry
+		// only the entity address), so the shadow can't leak into display. Title is prose in its
+		// OWN column now, so it gets the SAME stemming shadow the body does — a stemmed query token
+		// must reach a title wordform too, not only a body one.
 		await db.InsertAsync(new Row
 		{
 			Scope = doc.Scope,
 			Type = doc.Type,
 			Id = doc.Id,
-			Text = shadow.Length == 0 ? doc.Text : doc.Text + "\n" + shadow,
+			Text = WithShadow(doc.Text),
 			Tags = doc.Tags ?? string.Empty,
 			Key = doc.Key,
+			Title = WithShadow(doc.Title),
 		}, token: ct);
 	}
 
@@ -98,22 +103,46 @@ public sealed class SqliteFtsIndex : ISearchIndex
 				.Any(m => m.Scope == scope && m.Type == r.Type && m.Id == r.Id && kinds.Contains(m.StatusKind)));
 		}
 
-		// FTS5 bm25 rank: more-negative = more relevant. Order ascending (best first), and
-		// surface a higher-is-better score for honest provenance. NO Take(k): an enumerable leg
-		// returns its FULL matched set (search-leg-classification) — the facade truncates the fused
-		// pool for a relevance selection, and a scan selection needs every match, so truncating here
-		// would silently cap the enumerable set. `k` is the caller's fusion-pool hint, not a cap on
-		// this leg's membership — so it is intentionally not applied here.
+		// FTS5 COLUMN-WEIGHTED bm25 (spec: search-doc-model-title-weights): more-negative = more
+		// relevant. The per-column weights (FtsColumnWeights) rank a Key/Title hit above a Body hit
+		// within the matched set — one default across every family, positional over the declared
+		// columns. Order ascending (best first), and surface a higher-is-better score for honest
+		// provenance. NO Take(k): an enumerable leg returns its FULL matched set
+		// (search-leg-classification) — the facade truncates the fused pool for a relevance
+		// selection, and a scan selection needs every match, so truncating here would silently cap
+		// the enumerable set. `k` is the caller's fusion-pool hint, not a cap on this leg's
+		// membership — so it is intentionally not applied here.
+		// The bm25 weight arguments are POSITIONAL over the search_fts columns in DECLARED order —
+		// [Scope, Type, Id, Text, Tags, Key, Title] — the UNINDEXED address columns included (they
+		// score nothing but still occupy positions 0..2). The VALUES live once in FtsColumnWeights;
+		// they are `const` so the compiler inlines them as the literals fts5's bm25() spread requires.
 		var rows = await q
-			.OrderBy(r => Sql.Ext.SQLite().Rank(r))
-			.Select(r => new { r.Type, r.Id, Rank = Sql.Ext.SQLite().Rank(r) })
+			.OrderBy(r => Sql.Ext.SQLite().FTS5bm25(r,
+				FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed,
+				FtsColumnWeights.Body, FtsColumnWeights.Tags, FtsColumnWeights.Key, FtsColumnWeights.Title))
+			.Select(r => new
+			{
+				r.Type,
+				r.Id,
+				Rank = Sql.Ext.SQLite().FTS5bm25(r,
+				FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed,
+				FtsColumnWeights.Body, FtsColumnWeights.Tags, FtsColumnWeights.Key, FtsColumnWeights.Title)
+			})
 			.ToListAsync(ct);
 
-		return rows.Select(r => new Hit(r.Type, r.Id, -(r.Rank ?? 0d), "lexical")).ToList();
+		return rows.Select(r => new Hit(r.Type, r.Id, -r.Rank, "lexical")).ToList();
 	}
 
 	static DataConnection Tx(DataConnection? tx) =>
 		tx ?? throw new InvalidOperationException("SqliteFtsIndex is Class-A (transactional): a write must ride the entity's transaction (tx).");
+
+	// Append the snowball-stem shadow terms to a prose field (empty in → empty out).
+	static string WithShadow(string prose)
+	{
+		if (string.IsNullOrEmpty(prose)) return prose ?? string.Empty;
+		var shadow = TokenStemmer.ShadowTerms(prose);
+		return shadow.Length == 0 ? prose : prose + "\n" + shadow;
+	}
 
 	[Table("search_fts")]
 	sealed class Row
@@ -124,5 +153,6 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		[Column] public string Text { get; set; } = string.Empty;
 		[Column] public string Tags { get; set; } = string.Empty;
 		[Column] public string Key { get; set; } = string.Empty;
+		[Column] public string Title { get; set; } = string.Empty;
 	}
 }

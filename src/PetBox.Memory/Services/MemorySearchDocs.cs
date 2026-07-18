@@ -31,8 +31,18 @@ public static class MemorySearchDocs
 	// a Text-splice of its own (search-slug-words-gap only ever touched the tasks tier) — the key
 	// simply had NO lexical leg before this, and memory has no exact-identifier retriever either,
 	// so an English memory key never bridged into a Russian-titled query by any path until now.
-	public const long LexicalProjectionVersion = 2;
+	//
+	// Bumped to 3 by search-doc-model-title-weights: an entry's Description IS its title (a free
+	// port), so it now projects into its own indexed `Title` column instead of being spliced onto the
+	// front of `Text` (M013_SearchTitleColumn adds the column — a schema change no version bump can
+	// express; this bump reprojects every existing entry's Description/Body into the two-column shape
+	// on the next search, no re-save needed).
+	public const long LexicalProjectionVersion = 3;
 
+	// Description IS a memory entry's title — a free port to the declared Title column (search-doc-
+	// model-title-weights): it lands in `Title` (weighted above the body), Body alone is `Text`, and
+	// EmbedInput recombines them as Description\nBody — the exact string the old spliced Text carried,
+	// so the semantic vectors are unchanged.
 	public static SearchDoc ToDoc(MemoryEntry e, string scope) =>
-		new(scope, e.Store, e.Key, e.Description + "\n" + e.Body, e.Tags, Key: e.Key);
+		new(scope, e.Store, e.Key, e.Body, e.Tags, Key: e.Key, Title: e.Description);
 }

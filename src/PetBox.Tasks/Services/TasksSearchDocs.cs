@@ -31,7 +31,13 @@ public static class TasksSearchDocs
 	// (vector) half only catches up incrementally as the async-vectorization worker drains forward,
 	// so a project with old terminal nodes may need an explicit search_reindex to backfill their
 	// vectors.
-	public const long LexicalProjectionVersion = 3;
+	//
+	// Bumped to 4 by search-doc-model-title-weights: the node's title (Name) moved OUT of the spliced
+	// `Text` blob into its own indexed `Title` column (M020_SearchTitleColumn adds the column — a
+	// schema change no version bump can express; this bump is what reprojects every existing node's
+	// Text/Title into the new two-column shape on the next search, so a deployed file's titles land in
+	// the Title column without any node being re-saved).
+	public const long LexicalProjectionVersion = 4;
 
 	// The META projection's schema version (search-index-authority) — the reference-layer twin of
 	// LexicalProjectionVersion, gating EnsureMetaBackfillAsync's rebuild of search_meta. Bump this
@@ -76,8 +82,12 @@ public static class TasksSearchDocs
 	// pre-split here would only produce the same terms one layer earlier (and could drift from it).
 	// The slug is NOT re-matchable as one whole term — that address is the exact retriever's job,
 	// which reads the temporal store, not this index.
+	// Title (n.Name) and Body (n.Body) are now DECLARED as SEPARATE fields (search-doc-model-title-
+	// weights), not spliced into one `Text` blob: the lexical leg weights a title hit above a body hit
+	// (FtsColumnWeights), and the embed-template (SearchDoc.EmbedInput) recombines them as Name\nBody
+	// — the exact string the old spliced Text carried, so the semantic vectors are unchanged.
 	public static SearchDoc ToDoc(PlanNode n, string scope, IReadOnlyList<string> tags) =>
-		new(scope, n.Board, n.Key, n.Name + "\n" + n.Body, string.Join(' ', tags), Key: n.Key);
+		new(scope, n.Board, n.Key, n.Body, string.Join(' ', tags), Key: n.Key, Title: n.Name);
 
 	// Namespace prefix for a comment's FTS Id. A node slug is `[a-z][a-z0-9_-]*` (no colon
 	// ever), so "c:" + commentKey is collision-free within the same Type=board partition — a
@@ -90,7 +100,10 @@ public static class TasksSearchDocs
 	// null; the read path resolves the hit to its OWNER node regardless. Key is left at its
 	// default ("") ON PURPOSE (search-key-column-everywhere): a comment's OWN key (CommentRow.Key)
 	// is a random GUID, not an English/Russian lexicon word a caller would type — populating it
-	// would only add noise tokens, not a search bridge like a node's slug is.
+	// would only add noise tokens, not a search bridge like a node's slug is. Title is likewise left
+	// "" (search-doc-model-title-weights): a comment is a titleless doc-type — it has a body and no
+	// title, so its whole prose is Body, weighted as body. EmbedInput then collapses to that body
+	// alone, exactly as it embedded before the Title field existed.
 	public static SearchDoc CommentToDoc(CommentRow c, string scope) =>
 		new(scope, c.Board, CommentIdPrefix + c.Key, c.Body, null);
 

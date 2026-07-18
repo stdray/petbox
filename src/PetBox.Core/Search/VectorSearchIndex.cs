@@ -49,7 +49,12 @@ public sealed class VectorSearchIndex : ISearchIndex
 	// this index is Class-B.
 	public async Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default)
 	{
-		var batch = await _embedder.EmbedAsync([doc.Text], ct);
+		// The embed-template is DECLARED on the doc (spec: search-doc-model): the entity's MEANING is
+		// Title + Body (doc.EmbedInput), not "whichever column is named Text". Now that Title lives in
+		// its own lexical column, Text alone is the body — so embedding must read the declared
+		// template, or the title would silently drop out of the semantic vector. EmbedInput reproduces
+		// the exact Title\nBody string the old spliced `Text` carried, so existing vectors stay valid.
+		var batch = await _embedder.EmbedAsync([doc.EmbedInput], ct);
 		var vec = Truncate(batch.Vectors[0], _dim);
 
 		var (db, own) = Open(tx);
