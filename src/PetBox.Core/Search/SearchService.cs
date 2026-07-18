@@ -21,11 +21,22 @@ public sealed partial class SearchService
 	// (MemoryService, TasksService, …). Null → the degradation is still REPORTED in the response
 	// provenance, just not logged.
 	readonly ILogger? _log;
+	// The штатный PRECISION mode (spec: search-rerank-in-loop): when a reranker is supplied, a
+	// RELEVANCE selection reranks the deduped candidate union with a cross-encoder and reports
+	// Reranked=true. Null → the facade stays pure RRF (DegradedRrf), Reranked=false — an honest
+	// degradation, and the seam a test uses to force RRF ordering (pass no reranker).
+	readonly IReranker? _reranker;
+	// The candidate pool the reranker is allowed to carry, DERIVED from the latency bar (≈500 warm)
+	// — the cap that keeps the enumerable lexical leg's full matched set from flooding the
+	// cross-encoder past the 5s bar. Only the top `budget` of the fused pool reaches the reranker.
+	readonly RerankCandidateBudget _budget;
 
-	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null)
+	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null, IReranker? reranker = null, RerankCandidateBudget? budget = null)
 	{
 		_indexes = indexes.ToList();
 		_log = log;
+		_reranker = reranker;
+		_budget = budget ?? new RerankCandidateBudget();
 	}
 
 	public async Task IndexAsync(DataConnection tx, SearchDoc doc, CancellationToken ct = default)
@@ -50,7 +61,8 @@ public sealed partial class SearchService
 	//     WITHOUT truncation, and report `semantic:false` — a visible contract limit, not a silent
 	//     drop. The consumer decides presentation order + its own limit.
 	public async Task<SearchResponse> SearchAsync(string scope, string query, SearchFilter filter, int k,
-		SearchSelection selection = SearchSelection.Relevance, CancellationToken ct = default)
+		SearchSelection selection = SearchSelection.Relevance,
+		CandidateTextResolver? resolveCandidateText = null, CancellationToken ct = default)
 	{
 		var rankings = new List<IReadOnlyList<string>>();
 		var byId = new Dictionary<string, Hit>();
@@ -95,10 +107,59 @@ public sealed partial class SearchService
 		// WHOLE matched set (no truncation — the leg is enumerable precisely so scan gets all of it)
 		// and reports semantic:false, since the vector leg categorically did not participate.
 		var fused = HybridMerge.RrfScored([.. rankings]);
+
+		// PRECISION mode (spec: search-rerank-in-loop) — the штатный path when a reranker is wired and
+		// this is a RELEVANCE selection. The deduped candidate UNION (byId, everything the legs
+		// surfaced) is ordered by RRF, capped to the latency-derived candidate budget (so the
+		// enumerable «лексическая нога»'s full set can't flood the cross-encoder), then rescored by the
+		// cross-encoder on ONE model → top-N. Reranked=true is the honest provenance. Anything that
+		// goes wrong here — no rerank route, an outage, a resolver failure — falls THROUGH to the RRF
+		// path below with Reranked=false: RRF is honest degradation (DegradedRrf), and a rerank outage
+		// must NEVER take search down.
+		if (selection == SearchSelection.Relevance && _reranker is not null && resolveCandidateText is not null
+			&& byId.Count > 0 && await IsRerankAvailableAsync(scope, ct))
+		{
+			var pool = fused.Take(_budget.Candidates()).Select(f => byId[f.Key] with { Score = f.Score }).ToList();
+			try
+			{
+				var texts = await resolveCandidateText(pool, ct);
+				if (texts.Count != pool.Count)
+					throw new InvalidOperationException($"candidate-text resolver returned {texts.Count} texts for {pool.Count} candidates");
+				var reranked = await _reranker.RerankAsync(query, texts, k, ct);
+				// Map the reranked GLOBAL indices back to the candidate hits, carrying the cross-encoder
+				// score. Guard against an out-of-range index rather than trusting the adapter blindly.
+				var rerankedHits = reranked
+					.Where(r => r.Index >= 0 && r.Index < pool.Count)
+					.Select(r => pool[r.Index] with { Score = r.Score })
+					.ToList();
+				return new SearchResponse(rerankedHits, new SearchRetrievers(lexical, semantic, degraded, reason, Reranked: true));
+			}
+			catch (Exception ex) when (ex is not OperationCanceledException)
+			{
+				// Honest RRF degradation (DegradedRrf). Log WHY so a rerank outage is visible on day one
+				// instead of reading as a silent quality drop, then fall through to the RRF path.
+				var code = ex is SearchDegradedException sde ? sde.Reason : ex.GetType().Name;
+				if (_log is not null) LogRerankDegraded(_log, scope, code, ex);
+			}
+		}
+
 		var ranked = selection == SearchSelection.Enumerable ? fused : fused.Take(k);
 		var hitsOut = ranked.Select(f => byId[f.Key] with { Score = f.Score }).ToList();
 		if (selection == SearchSelection.Enumerable) semantic = false;
 		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded, reason));
+	}
+
+	// Fast-down gate on the precision pass: skip rerank (and its candidate-text resolution) when no
+	// rerank route is live, so a project with no reranker degrades to RRF without a wasted resolve. A
+	// probe that itself throws is treated as "unavailable" — it must never sink the search.
+	async Task<bool> IsRerankAvailableAsync(string scope, CancellationToken ct)
+	{
+		try { return await _reranker!.IsAvailableAsync(ct); }
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			if (_log is not null) LogRerankDegraded(_log, scope, "rerank-probe-failed", ex);
+			return false;
+		}
 	}
 
 	// Fusion identity = the entity address (type, id) within the queried scope. The unit
@@ -108,4 +169,11 @@ public sealed partial class SearchService
 	[LoggerMessage(EventId = 400, Level = LogLevel.Warning,
 		Message = "search: index {Index} ({Capability}) failed in scope '{Scope}' → degraded, reason {Reason}")]
 	static partial void LogIndexDegraded(ILogger logger, string index, string capability, string scope, string reason, Exception ex);
+
+	// The precision pass fell back to RRF (spec: search-rerank-in-loop): the cross-encoder was
+	// unavailable or errored, so the result is DegradedRrf (Reranked=false). Logged so a rerank outage
+	// is queryable, not a silent quality drop the owner only notices by feel.
+	[LoggerMessage(EventId = 401, Level = LogLevel.Warning,
+		Message = "search: rerank precision pass unavailable in scope '{Scope}' → RRF degradation, reason {Reason}")]
+	static partial void LogRerankDegraded(ILogger logger, string scope, string reason, Exception ex);
 }

@@ -173,6 +173,109 @@ public sealed class SearchServiceTests : IDisposable
 		enumSel.Retrievers.Semantic.Should().BeFalse();
 	}
 
+	[Fact]
+	public async Task RelevanceWithReranker_ReordersToRerankerOrder_AndReportsReranked()
+	{
+		// PRECISION mode (spec: search-rerank-in-loop): a reranker reorders the deduped candidate union
+		// and the result carries Reranked=true. The stub orders by document string DESC — independent of
+		// the RRF/bm25 order — so the reranked output must differ from what fusion alone would produce.
+		var reranker = new StubReranker(docs => docs
+			.Select((d, i) => (d, i))
+			.OrderByDescending(x => x.d, StringComparer.Ordinal)
+			.Select(x => new RerankedHit(x.i, 1.0)).ToList());
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker);
+		await IndexAsync(svc, commit: true,
+			Doc("a", "alpha one"), Doc("b", "alpha two"), Doc("c", "alpha three"));
+
+		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
+
+		res.Hits.Select(h => h.Id).Should().Equal("c", "b", "a");
+		res.Retrievers.Reranked.Should().BeTrue();
+		res.Retrievers.Lexical.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task RerankOutage_FallsBackToRrf_SearchStaysUp_RerankedFalse()
+	{
+		// A rerank outage must NEVER take search down: the pass throws SearchDegradedException, the
+		// facade falls back to the honest RRF degradation (DegradedRrf), and the search still answers.
+		var reranker = new StubReranker(_ =>
+			throw new SearchDegradedException(SearchDegradedReason.RerankUnavailable, "rerank boom"));
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker);
+		await IndexAsync(svc, commit: true, Doc("a", "alpha keyword"), Doc("b", "completely unrelated"));
+
+		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
+
+		res.Hits.Select(h => h.Id).Should().Equal("a");
+		res.Retrievers.Reranked.Should().BeFalse();
+		res.Retrievers.Degraded.Should().BeFalse(); // the LEGS answered fine; only the precision layer degraded
+	}
+
+	[Fact]
+	public async Task RerankUnavailable_SkipsPrecisionPass_WithoutResolvingText()
+	{
+		// Fast-down (llm-fast-down): when no rerank route is live the facade skips the precision pass
+		// UP FRONT — no candidate-text resolution, no thrown exception — and reports Reranked=false.
+		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList()) { Available = false };
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker);
+		await IndexAsync(svc, commit: true, Doc("a", "alpha keyword"));
+
+		var resolverCalled = false;
+		CandidateTextResolver resolve = (cands, _) =>
+		{
+			resolverCalled = true;
+			return Task.FromResult<IReadOnlyList<string>>(cands.Select(h => h.Id).ToList());
+		};
+		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: resolve);
+
+		res.Hits.Select(h => h.Id).Should().Equal("a");
+		res.Retrievers.Reranked.Should().BeFalse();
+		resolverCalled.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task CandidateBudget_CapsWhatReachesTheReranker()
+	{
+		// The latency-derived candidate budget caps the pool reaching the cross-encoder (so the
+		// enumerable lexical leg's full set can't flood it past the 5s bar): a budget of 2 lets only the
+		// top 2 fused candidates through, even with 3 matches.
+		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList());
+		var budget = new RerankCandidateBudget { LatencyBarMs = 369 };
+		budget.Candidates().Should().Be(2);
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker, budget: budget);
+		await IndexAsync(svc, commit: true,
+			Doc("a", "alpha one"), Doc("b", "alpha two"), Doc("c", "alpha three"));
+
+		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
+
+		reranker.LastDocs!.Count.Should().Be(2);
+		res.Hits.Count.Should().Be(2);
+		res.Retrievers.Reranked.Should().BeTrue();
+	}
+
+	// The candidate-text resolver used by the rerank tests: the stub reranker only needs SOMETHING
+	// deterministic to order by, so each candidate's text is just its Id.
+	static Task<IReadOnlyList<string>> IdAsText(IReadOnlyList<Hit> candidates, CancellationToken ct) =>
+		Task.FromResult<IReadOnlyList<string>>(candidates.Select(h => h.Id).ToList());
+
+	// A pluggable IReranker for the precision-path tests: records the documents it was handed (to prove
+	// the budget cap) and reorders them by a supplied ranking function; a function that throws models a
+	// rerank outage. Available toggles the fast-down probe.
+	sealed class StubReranker(Func<IReadOnlyList<string>, IReadOnlyList<RerankedHit>> rank) : IReranker
+	{
+		public bool Available = true;
+		public List<string>? LastDocs;
+
+		public Task<bool> IsAvailableAsync(CancellationToken ct = default) => Task.FromResult(Available);
+
+		public Task<IReadOnlyList<RerankedHit>> RerankAsync(string query, IReadOnlyList<string> documents, int topN, CancellationToken ct = default)
+		{
+			LastDocs = documents.ToList();
+			IReadOnlyList<RerankedHit> ranked = rank(documents).Take(topN).ToList();
+			return Task.FromResult(ranked);
+		}
+	}
+
 	// A pluggable Class-B (TopK) index that always surfaces one fixed vector-only hit — models the
 	// vector leg for the participation-rule test without an embedder. LegClass defaults to TopK
 	// (Capability=Vector), so an enumerable selection skips it.

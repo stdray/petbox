@@ -1774,7 +1774,44 @@ public sealed partial class TasksService : ITasksService
 		var facets = includeClosed
 			? (FacetFilter?)null
 			: new FacetFilter(ExcludeStatusKinds: [TasksSearchDocs.TerminalCancelFacet]);
-		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, ct: ct);
+
+		// PRECISION mode (spec: search-rerank-in-loop): the cross-encoder reranks the candidate union
+		// as the штатный path when an LLM route is configured. The candidate-text resolver fetches each
+		// candidate's INDEXED text for the budget-capped pool, aligned to candidate order — a NODE
+		// (Type=board, Id=slug) resolves to Name + Body (the ToDoc shape) and a COMMENT (Id "c:"+key)
+		// to its Body (CommentToDoc's shape); two reads over the ACTIVE rows, missing → "". No LLM
+		// route → reranker null → honest RRF (DegradedRrf).
+		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		CandidateTextResolver resolveText = (candidates, _) =>
+		{
+			var slugs = candidates
+				.Where(h => !h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal))
+				.Select(h => h.Id).Distinct().ToList();
+			var nodeText = slugs.Count == 0
+				? new Dictionary<(string, string), string>()
+				: ctx.PlanNodes
+					.Where(n => n.ActiveTo == null && slugs.Contains(n.Key))
+					.Select(n => new { n.Board, n.Key, n.Name, n.Body })
+					.ToList()
+					.ToDictionary(n => (n.Board, n.Key), n => n.Name + "\n" + n.Body);
+			var cKeys = candidates
+				.Where(h => h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal))
+				.Select(h => h.Id[TasksSearchDocs.CommentIdPrefix.Length..]).Distinct().ToList();
+			var commentText = cKeys.Count == 0
+				? new Dictionary<string, string>(StringComparer.Ordinal)
+				: ctx.GetTable<CommentRow>()
+					.Where(c => c.ActiveTo == null && cKeys.Contains(c.Key))
+					.Select(c => new { c.Key, c.Body })
+					.ToList()
+					.ToDictionary(c => c.Key, c => c.Body, StringComparer.Ordinal);
+			IReadOnlyList<string> texts = candidates.Select(h =>
+				h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal)
+					? commentText.GetValueOrDefault(h.Id[TasksSearchDocs.CommentIdPrefix.Length..], "")
+					: nodeText.GetValueOrDefault((h.Type, h.Id), "")).ToList();
+			return Task.FromResult(texts);
+		};
+		var resp = await new SearchService(indexes, _log, reranker)
+			.SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, resolveCandidateText: resolveText, ct: ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
 		// No semantic floor (spec: search-leg-classification — the tau membership threshold is gone):

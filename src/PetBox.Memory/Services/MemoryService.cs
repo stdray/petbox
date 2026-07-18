@@ -468,7 +468,26 @@ public sealed class MemoryService : IMemoryService
 		// The store filter rides the index (Type IN …), so a store outside the scope can never eat
 		// a slot in the top-k — the recall the old per-file fan-out got by construction.
 		var filter = new SearchFilter(Types: stores);
-		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, filter, k, ct: ct);
+
+		// PRECISION mode (spec: search-rerank-in-loop): the cross-encoder reranks the candidate union
+		// as the штатный path when an LLM route is configured. The candidate-text resolver fetches each
+		// candidate's INDEXED text (Description + Body — the SAME shape MemorySearchDocs.ToDoc indexes)
+		// for the budget-capped (store,key) pool, aligned to the candidate order; one read over the
+		// active entries, missing → "". No LLM route → reranker is null → honest RRF (DegradedRrf).
+		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		CandidateTextResolver resolveText = (candidates, _) =>
+		{
+			var keys = candidates.Select(h => h.Id).Distinct().ToList();
+			var byAddr = ctx.Entries
+				.Where(e => e.ActiveTo == null && stores.Contains(e.Store) && keys.Contains(e.Key))
+				.Select(e => new { e.Store, e.Key, e.Description, e.Body })
+				.ToList()
+				.ToDictionary(r => (r.Store, r.Key), r => r.Description + "\n" + r.Body);
+			IReadOnlyList<string> texts = candidates.Select(h => byAddr.GetValueOrDefault((h.Type, h.Id), "")).ToList();
+			return Task.FromResult(texts);
+		};
+		var resp = await new SearchService(indexes, _log, reranker)
+			.SearchAsync(projectKey, query, filter, k, resolveCandidateText: resolveText, ct: ct);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is
