@@ -278,7 +278,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		var result = await page.OnPostEditAsync("S edited", "req2", version, default);
 
 		result.Should().BeOfType<PageResult>();
-		page.Error.Should().Contain("ideaRef");
+		page.Error.Should().Contain("idea_spec");
 		(await _tasks.GetNodeAsync(Proj, id))!.Node.Title.Should().Be("S"); // unchanged
 	}
 

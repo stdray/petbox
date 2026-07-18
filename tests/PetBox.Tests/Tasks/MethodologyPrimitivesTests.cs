@@ -169,7 +169,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		var bare = await Upsert("helpdesk", new { key = "outage2", type = "incident", title = "DB down again", body = "x" });
 		IsErr(bare).Should().BeTrue(Text(bare));
 		Text(bare).Should().Contain("must carry a blocks link", "the constraint names the link kind");
-		Text(bare).Should().Contain("blockedBy", "…and the upsert field that expresses it");
+		Text(bare).Should().Contain("links.blocks", "…and the generic links door that expresses it");
 		Text(bare).Should().Contain("outage2");
 
 		// The unconstrained type needs nothing.
@@ -181,10 +181,12 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		IsErr(edit).Should().BeFalse(Text(edit));
 	}
 
-	// 2a. a constraint naming a link kind that is NOT expressible in the upsert call can't
-	// gate creation and is rejected by the definition validator.
+	// 2a. a constraint naming a link kind the project does NOT know (not builtin, not the quartet
+	// trio, not declared) is rejected by the definition validator — every constraint link must be a
+	// known relation kind (spec methodology-link-kinds-declared: the generic links door made every
+	// KNOWN kind expressible, so the gate is "known", not the old three-slug allowlist).
 	[Fact]
-	public async Task Validator_ConstraintOnNonUpsertExpressibleLink_Rejected()
+	public async Task Validator_ConstraintOnUnknownLink_Rejected()
 	{
 		var def = new
 		{
@@ -195,14 +197,13 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 				{
 					kind = "support",
 					workflows = SupportWorkflows(),
-					linkConstraints = new object[] { new { type = "incident", link = "relates_to" } },
+					linkConstraints = new object[] { new { type = "incident", link = "made_up_link" } },
 				},
 			},
 		};
 		var r = await DefUpsert(def);
 		IsErr(r).Should().BeTrue(Text(r));
-		Text(r).Should().Contain("only upsert-expressible link kinds can be creation constraints");
-		Text(r).Should().Contain("task_spec|blocks|idea_spec");
+		Text(r).Should().Contain("is not a relation kind this project knows");
 	}
 
 	// 2b. a constraint type outside the kind's workflow blocks, and a duplicated

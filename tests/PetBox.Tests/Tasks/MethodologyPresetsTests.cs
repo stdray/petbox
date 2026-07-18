@@ -527,11 +527,11 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 
 		var feature = () => Upsert("work", new NodePatch { Key = "f", Type = "feature", Title = "F", Body = "x" });
 		(await feature.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("a work feature must link a spec node — provide specRef (node 'f')");
+			.WithMessage("a new work feature must carry a task_spec link — provide links.task_spec — points at a `spec` node (node 'f')");
 
 		var bug = () => Upsert("work", new NodePatch { Key = "b", Type = "bug", Title = "B", Body = "x" });
 		(await bug.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("a work bug must link a spec node — provide specRef (node 'b')");
+			.WithMessage("a new work bug must carry a task_spec link — provide links.task_spec — points at a `spec` node (node 'b')");
 
 		// chore needs no spec link (below-spec hygiene) — the preset simply has no
 		// constraint for it; feature/bug pass once specRef is supplied.

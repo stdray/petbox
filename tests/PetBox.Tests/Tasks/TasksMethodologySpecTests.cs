@@ -186,7 +186,8 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x" })
 		});
 		IsErr(r).Should().BeTrue();
-		Text(r).Should().Contain("accepted idea");
+		Text(r).Should().Contain("must carry a idea_spec link");
+		Text(r).Should().Contain("in status accepted");
 	}
 
 	// 23. a spec node referencing a NOT-yet-accepted idea (still exploring) is rejected.

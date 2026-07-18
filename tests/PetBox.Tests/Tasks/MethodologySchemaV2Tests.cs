@@ -358,11 +358,13 @@ public sealed class MethodologyGuideSchemaV2Tests
 	{
 		var guide = Render();
 
+		// The constraint pins a target STATUS (defined), so it renders as a PROVENANCE (every-write)
+		// rule now, addressed through the generic links door (methodology-link-kinds-declared).
 		guide.Markdown.Should().Contain(
-			"A new `ticket` must carry a `task_spec` link (provide `specRef` in the creating upsert) — it must link a `spec` node in status defined. Edits don't re-require it.");
+			"EVERY write of a `ticket` must carry a `task_spec` link (provide `links.task_spec` in each upsert — it names the authorizing node) — it must link a `spec` node in status defined.");
 
 		guide.Invariants.Should().Contain(new MethodologyInvariant("support", "link_constraint",
-			"ticket requires task_spec (specRef) -> spec[defined]"));
+			"ticket requires task_spec (links.task_spec) -> spec[defined]"));
 	}
 
 	[Fact]

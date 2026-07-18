@@ -94,6 +94,7 @@ static class MethodologyReference
 			{
 				["requiredTypes"] = "The type slugs that DRIVE progress (e.g. [\"feature\"]): none linked → not_started; any not in a terminalok status → in_progress; all terminalok → a done candidate.",
 				["defectTypes"] = "The type slugs counted as defects (e.g. [\"bug\"]): once the requireds are done, any defect still in an OPEN status turns the verdict into done_with_defects. Omitted/empty = done has no defect variant.",
+				["link"] = "The relation kind whose INBOUND edges name the delivering nodes (the quartet spec rolls up over task_spec). Required — no default; the roll-up sweeps this kind's edges (spec methodology-link-kinds-declared).",
 			}),
 		Describe<MethodologyWorkflowInput>(
 			"One state machine shared by every type slug in `types`. Convention: statuses[0] is the initial status.",
@@ -142,13 +143,13 @@ static class MethodologyReference
 				["artifacts"] = "Omitted = true (reason/precondition artifacts are hard today, unconditionally — this reproduces that). false demotes the gate to a convention the guide states but the server does not block.",
 			}),
 		Describe<MethodologyLinkConstraintInput>(
-			"\"A NEW node of `type` must carry a link of kind `link` at creation.\" Only upsert-expressible links can gate creation: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).",
+			"\"A NEW node of `type` must carry a link of kind `link` at creation\" (and on EVERY write when the constraint pins a target status — provenance). The link is addressed through the generic links:{kind:ref} door; `link` may be any relation kind the project knows.",
 			new()
 			{
 				["type"] = "The type slug the constraint binds (must be declared by this kind's workflow blocks).",
-				["link"] = "task_spec | blocks | idea_spec — the link kinds expressible in the create call itself.",
-				["targetKind"] = "Optionally, the kind the linked node must be (e.g. a specRef must point at a spec node). Omitted = any kind.",
-				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an ideaRef must point at an ACCEPTED idea). Omitted = any status.",
+				["link"] = $"The required relation kind — any kind the project knows ({BuiltinRelationKinds}, the quartet's task_spec/idea_spec/issue_task, or a declared linkKind). Expressed at write time via links:{{<link>:ref}}.",
+				["targetKind"] = "Optionally, the kind the linked node must be (e.g. a task_spec must point at a spec node). Omitted = any kind.",
+				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an idea_spec must point at an ACCEPTED idea) — pinning a status also makes the link required on EVERY write, not just creation. Omitted = any status.",
 				["description"] = "Optional free-form prose about why this constraint exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
 			}),
 		Describe<MethodologyEffectInput>(

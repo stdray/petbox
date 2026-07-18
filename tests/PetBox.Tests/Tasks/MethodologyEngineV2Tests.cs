@@ -203,7 +203,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 
 		var missing = () => Upsert("job", new NodePatch { Key = "j3", Type = "job", Status = "Todo", Title = "J", Body = "x" });
 		(await missing.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("a new job must carry a task_spec link — provide links.task_spec — points at a `ticket` node (node 'j3')");
+			.WithMessage("every write of a job must carry a task_spec link — provide links.task_spec — points at a `ticket` node in status Open (node 'j3')");
 	}
 
 	// ── 3. enforceApproval through the MCP door: the SESSION key's scopes decide ──

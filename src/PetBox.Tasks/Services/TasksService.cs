@@ -786,14 +786,13 @@ public sealed partial class TasksService : ITasksService
 		var toByNode = allEdges.ToLookup(e => e.ToNodeId, StringComparer.Ordinal);
 
 		// The typed link fields are DATA-driven now (methodology-link-kinds-declared), not the
-		// task_spec literal: `Spec` = this node's OUTGOING edges of any declared link kind whose
-		// direction runs from THIS board's kind to a spec kind (quartet: task_spec, work→spec);
-		// `LinkedTasks` = the INCOMING edges of the spec kind's delivery link (deliveryDef.Link,
-		// task_spec) — non-null only on a delivery-bearing (spec) board.
+		// task_spec literal: `Spec` = this node's OUTGOING edges of any declared link kind that
+		// POINTS AT a spec kind (quartet: task_spec, work→spec) — kind-agnostic on the source, so a
+		// task linked to a spec surfaces its spec on any board; `LinkedTasks` = the INCOMING edges of
+		// the spec kind's delivery link (deliveryDef.Link, task_spec) — non-null only on a
+		// delivery-bearing (spec) board.
 		var specLinkKinds = runtime.EffectiveLinkKinds()
-			.Where(lk => lk.Direction is { } d
-				&& string.Equals(d.FromKind, meta.Kind, StringComparison.OrdinalIgnoreCase)
-				&& d.ToKind is { } tk && runtime.IsSpecKind(tk))
+			.Where(lk => lk.Direction is { ToKind: { } tk } && runtime.IsSpecKind(tk))
 			.Select(lk => lk.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var deliveryLink = deliveryDef?.Link;
 
