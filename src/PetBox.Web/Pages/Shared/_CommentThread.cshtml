@@ -50,7 +50,12 @@
 	   visual noise of a full button row on every comment. `mt-1` replaces the old wrapper's
 	   flex-col `gap-1` (same 0.25rem Tailwind spacing step) now that comments are direct
 	   siblings under the shared <article> rather than flex children of a removed wrapper. *@
-	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
+	@* comment-permalink-anchor: `id="comment-{id}"` is the anchor `<url-detail>#comment-{id}`
+	   scrolls to — native, works with JS off. `scroll-mt-20` (5rem, same value MemoryStore's
+	   `.memory-entry:target` uses) keeps the landing clear of a possible sticky header. Does
+	   NOT touch data-comment-id/data-comment-version/data-testid="comment" below — e2e and
+	   commentThread.ts key off those. *@
+	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1 scroll-mt-20" id="comment-@c.Id" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
 		<div class="flex items-baseline gap-2 flex-wrap">
 			@* rv-noscore: a bare <div class="flex items-baseline …"> full of only inline children
 			   (span/time/button/form) is exactly what Readability's node-prep pass converts into a
@@ -66,7 +71,12 @@
 				   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
 				   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
 				   carries the edit time in its title. Keeps the thread's chronology legible. *@
-				<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
+				@* comment-permalink-anchor: GitHub idiom — the timestamp itself is the per-comment
+				   permalink. A plain `<a href="#comment-{id}">`: native, no JS, and clicking it
+				   drops the shareable hash straight into the address bar. *@
+				<a href="#comment-@c.Id" class="link link-hover" data-testid="comment-permalink" title="Link to this comment">
+					<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
+				</a>
 				@if (c.Updated > c.Created)
 				{
 					<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
@@ -77,6 +87,14 @@
 					<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
 				}
 				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
+					@* comment-permalink-anchor, opt (4): only when the caller handed down an absolute
+					   NodeUrl (currently just the node detail page — see TaskBoardNode.cshtml). Reuses
+					   the global [data-copy] handler (ts/config.ts, document-level — see the identical
+					   node-slug-copy button above in TaskBoardNode.cshtml): no extra JS wiring needed. *@
+					@if (!string.IsNullOrEmpty(Model.NodeUrl))
+					{
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-permalink-copy" data-copy="@(Model.NodeUrl)#comment-@c.Id" title="Copy link to this comment">link</button>
+					}
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
 					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">

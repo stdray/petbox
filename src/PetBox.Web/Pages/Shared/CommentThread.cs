@@ -29,7 +29,14 @@ public sealed record CommentThreadModel(
 	bool ShowAddForm = true,
 	// Memory-key mentions in comment bodies link exactly as they do in node bodies
 	// (memory-key-mention-link); null = plain text.
-	IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null);
+	IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null,
+	// comment-permalink-anchor: the node's OWN absolute canonical URL (scheme+host+the
+	// TaskBoardNodeBySlug path), so each comment's "copy link" button can build an absolute
+	// `{NodeUrl}#comment-{id}` permalink that works pasted outside the page (Slack, another
+	// agent). Null = the copy button doesn't render — a caller that can't cheaply produce an
+	// absolute URL (or doesn't want to) still gets the native `#comment-{id}` hash-anchor link
+	// on the timestamp for free, no JS required.
+	string? NodeUrl = null);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.

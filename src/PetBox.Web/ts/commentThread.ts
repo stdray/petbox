@@ -7,6 +7,33 @@
 export function initCommentThreads(): void {
 	const threads = document.querySelectorAll<HTMLElement>("[data-testid='node-comments']");
 	for (const root of Array.from(threads)) wireThread(root);
+
+	// comment-permalink-anchor: the anchor scroll itself is native (id="comment-{id}" +
+	// `<a href="#comment-{id}">`, no JS needed) — this only adds the brief flash so the
+	// target comment is obvious, not just scrolled-to. Runs on initial load AND on
+	// "hashchange" so clicking a comment's own timestamp permalink (same page, hash-only
+	// navigation — no reload, so initCommentThreads doesn't re-run) re-flashes it too,
+	// mirroring GitHub's click-timestamp-to-highlight idiom.
+	flashCommentFromHash();
+	window.addEventListener("hashchange", flashCommentFromHash);
+}
+
+const COMMENT_HASH = /^#comment-(.+)$/;
+const FLASH_CLASS = "comment-permalink-flash";
+
+function flashCommentFromHash(): void {
+	const id = COMMENT_HASH.exec(location.hash)?.[1];
+	if (!id) return;
+	const target = document.getElementById(`comment-${id}`);
+	if (!(target instanceof HTMLElement)) return;
+
+	// Restart the animation even if the same hash fires twice in a row (e.g. clicking a
+	// permalink whose hash already matches the current one doesn't fire "hashchange" at
+	// all, but re-clicking a DIFFERENT comment's link right after does, and re-adding the
+	// class mid-animation would otherwise be a no-op).
+	target.classList.remove(FLASH_CLASS);
+	void target.offsetWidth; // force reflow so the removal above takes effect first
+	target.classList.add(FLASH_CLASS);
 }
 
 function setDisplay(el: Element | null, visible: boolean): void {
