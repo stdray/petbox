@@ -17,12 +17,17 @@ namespace PetBox.Tests.Search;
 //
 // This is the direct, cheap version instead: assert the PROJECTION shape (Text excludes the key's
 // words, Key carries them) rather than an end-to-end ranking outcome. It needs no DB, no FTS, no
-// BM25 weights — it fails the instant either ToDoc goes back to `key + "\n" + name + "\n" + body`,
+// BM25 weights — it fails the instant either ToDoc goes back to splicing key/title into `Text`,
 // independent of how ranking happens to shake out for any particular corpus.
+//
+// search-doc-model-title-weights extended the same discipline to the TITLE: the title is its own
+// declared field (Title column), `Text` is the BODY alone, and the embed-template (EmbedInput)
+// recombines Title+Body — so these assertions also pin that the title is neither missing nor
+// re-spliced into the body, and that the semantic input is unchanged from the old spliced Text.
 public sealed class SearchDocKeyProjectionTests
 {
 	[Fact]
-	public void Tasks_ToDoc_CarriesKeyWordsOnlyInKeyColumn_NotInText()
+	public void Tasks_ToDoc_SeparatesKey_Title_And_Body()
 	{
 		var node = new PlanNode
 		{
@@ -37,15 +42,19 @@ public sealed class SearchDocKeyProjectionTests
 
 		var doc = TasksSearchDocs.ToDoc(node, "proj", tags: []);
 
+		// Key words: only in Key, never spliced into Text.
 		doc.Key.Should().Be("kql-spans-query");
-		doc.Text.Should().NotContain("kql");
-		doc.Text.Should().NotContain("spans");
-		doc.Text.Should().NotContain("query");
-		doc.Text.Should().Be("Заголовок\nТело узла без латиницы.");
+		doc.Text.Should().NotContain("kql").And.NotContain("spans").And.NotContain("query");
+		// Title is its own field; Text is the body ALONE (no title splice).
+		doc.Title.Should().Be("Заголовок");
+		doc.Text.Should().Be("Тело узла без латиницы.");
+		// The declared embed-template recombines Title+Body — byte-identical to the old spliced Text,
+		// so existing semantic vectors stay valid.
+		doc.EmbedInput.Should().Be("Заголовок\nТело узла без латиницы.");
 	}
 
 	[Fact]
-	public void Memory_ToDoc_CarriesKeyWordsOnlyInKeyColumn_NotInText()
+	public void Memory_ToDoc_SeparatesKey_Title_And_Body()
 	{
 		var entry = new MemoryEntry
 		{
@@ -59,9 +68,10 @@ public sealed class SearchDocKeyProjectionTests
 		var doc = MemorySearchDocs.ToDoc(entry, "proj");
 
 		doc.Key.Should().Be("kql-spans-query");
-		doc.Text.Should().NotContain("kql");
-		doc.Text.Should().NotContain("spans");
-		doc.Text.Should().NotContain("query");
-		doc.Text.Should().Be("Заголовок\nТело записи без латиницы.");
+		doc.Text.Should().NotContain("kql").And.NotContain("spans").And.NotContain("query");
+		// A memory entry's Description IS its title — a free port to the Title field.
+		doc.Title.Should().Be("Заголовок");
+		doc.Text.Should().Be("Тело записи без латиницы.");
+		doc.EmbedInput.Should().Be("Заголовок\nТело записи без латиницы.");
 	}
 }

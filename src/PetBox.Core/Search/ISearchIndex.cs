@@ -62,6 +62,14 @@ public enum SearchSelection
 // entity back from (type, id) is the consumer's job; the contract only carries the searchable
 // text + optional free tags. (spec: search-entity-addressed.)
 //
+// This is the DECLARED document model (spec: search-doc-model): each field is an explicit facet of
+// the entity's lexicon, NOT an accident of which prose happened to be concatenated into one blob.
+// `Title` is the entity's title in its OWN column — n.Name for a task node, e.Description for a
+// memory entry (Description IS a memory's title, a free port). `Text` is the BODY alone. Keeping
+// them apart is what lets the lexical leg weight a title hit above a body hit (search-doc-model-
+// title-weights) — a splice into one `Text` blob makes that impossible. Every family declares its
+// Title; a doc-type with no natural title (a task comment) simply leaves it "".
+//
 // `Key` (search-key-column-everywhere) is the entity's own business key/slug — n.Key for a task
 // node, e.Key for a memory entry — projected into its OWN indexed column instead of being spliced
 // into `Text`. Slugs are English kebab while titles/bodies are often Russian; a dedicated column
@@ -71,8 +79,18 @@ public enum SearchSelection
 // comment is a namespaced "c:"+guid, not a word a caller would type. `Key` is OPTIONAL (default
 // "") — an entity with no meaningful lexicon key (e.g. a comment, addressed by a random GUID)
 // simply leaves it empty; an index with no dedicated Key column (none yet outside SqliteFtsIndex)
-// ignores it.
-public readonly record struct SearchDoc(string Scope, string Type, string Id, string Text, string? Tags = null, string Key = "");
+// ignores it. `Title` is OPTIONAL the same way.
+public readonly record struct SearchDoc(string Scope, string Type, string Id, string Text, string? Tags = null, string Key = "", string Title = "")
+{
+	// The EMBED-TEMPLATE, DECLARED (spec: search-doc-model): "what represents this entity's MEANING"
+	// for the vector (Class-B) leg = Title + Body. This is a first-class mapping property, NOT a side
+	// effect of which column an index happens to call `Text`. The lexical leg weights the fields
+	// apart (Title vs Body columns); the semantic leg embeds them AS ONE meaning-bearing string, so
+	// the declaration lives here on the doc rather than being re-derived at each embed call site.
+	// Title-then-Body, newline-joined; an empty Title collapses to just the Body (a titleless comment
+	// embeds its body alone, exactly as before this field existed).
+	public string EmbedInput => Title.Length == 0 ? Text : Title + "\n" + Text;
+}
 
 // A single match: the entity identity (type, id), a per-index relevance score (scales differ
 // across indexes — the facade fuses by RANK, not raw score), and which retriever produced it.

@@ -26,3 +26,4 @@
 10 LIVE M010_MergeLegacyStoreFiles
 11 LIVE M011_DeliveryEvents
 12 LIVE M012_SearchKeyColumn
+13 LIVE M013_SearchTitleColumn
