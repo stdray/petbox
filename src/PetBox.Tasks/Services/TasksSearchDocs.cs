@@ -157,6 +157,19 @@ public static class TasksSearchDocs
 	//        includeClosed:true             → null            (facet omitted = everything)
 	//        includeClosed:false + query    → [open, terminalok]   (a query only ever hid terminal-CANCEL)
 	//        includeClosed:false + listing  → [open]               (a listing hid ALL terminal)
+	// The presentation TIER ordinal for a StatusKind (spec tasks-search-statuskind-presentation-tiers):
+	// open → terminalok → terminalcancel. Tiers are named ONLY by StatusKind — the word "closed" is
+	// FORBIDDEN here: it would fold terminalok (accepted/Done, a SUCCESS state search-before-rework
+	// must reach) into one tier with terminalcancel (rejected/cancelled), and the склейка the whole
+	// facet redesign removed would sneak back through presentation. A lower ordinal ranks higher.
+	public static int StatusKindTier(StatusKind kind) => kind switch
+	{
+		StatusKind.Open => 0,
+		StatusKind.TerminalOk => 1,
+		StatusKind.TerminalCancel => 2,
+		_ => 0,
+	};
+
 	// The stored facet string for a node's live status under a runtime — the SAME projection
 	// ToMetaDoc stamps into search_meta. Used where a read must classify a hydrated node WITHOUT
 	// the опорный слой (the tasks_search listing path today, consistent with FilterVisible's own

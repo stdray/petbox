@@ -46,6 +46,26 @@ public sealed record SearchOrderingPolicies
 	public DiversityOptions Diversity { get; init; } = new();
 }
 
+// A STABLE PARTITION of an already-ordered result into contiguous TIERS — a PRESENTATION policy in
+// the ordering slot (spec tasks-search-statuskind-presentation-tiers). It is NOT a selection: it
+// reorders, it never drops (a tier is not a cliff — lower tiers are demoted, not hidden; Linear
+// precedent). It sits OVER the fused/reranked order and preserves the incoming order WITHIN each
+// tier — so it is NOT a re-sort of the whole list, and NOT a score multiplier (RRF scores are
+// near-flat, ~0.033/0.030/0.017, so a multiplier would be a no-op or a hidden partition). `tierOf`
+// returns a small ordinal (0 = the top tier); the caller names the tiers by DOMAIN meaning (never a
+// boolean "closed"), so a demotion can never fold two distinct domain states into one.
+public static class Tiering
+{
+	// Reorder `items` so lower `tierOf` ordinals come first, keeping the incoming relative order
+	// inside each tier (a stable partition). Everything in stays in — only the order changes.
+	public static List<T> StablePartition<T>(IReadOnlyList<T> items, Func<T, int> tierOf) =>
+		items.Select((item, index) => (item, index))
+			.OrderBy(x => tierOf(x.item))
+			.ThenBy(x => x.index)
+			.Select(x => x.item)
+			.ToList();
+}
+
 public static class RecencyDecay
 {
 	// Exponential half-life freshness weight in (0, 1]. weight = 2^(-ageDays / halfLife):

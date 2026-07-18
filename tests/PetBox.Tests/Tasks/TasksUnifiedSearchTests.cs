@@ -287,6 +287,40 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		(await Search(q: "quokka", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
 	}
 
+	// ---- presentation tiers (spec tasks-search-statuskind-presentation-tiers) ----
+
+	// The tier is a STABLE PARTITION over the fused relevance order (open → terminalok →
+	// terminalcancel): it demotes terminal nodes but preserves the relevance order WITHIN each tier
+	// (not a re-sort), hides nothing (not a cliff), and never folds terminalok in with terminalcancel.
+	[Fact]
+	public async Task PresentationTiers_StablePartition_NotResort_NotCliff()
+	{
+		await Seed("b", """
+			[{"key":"op-a","status":"Todo","title":"pangolin a","body":"pangolin pangolin pangolin"},
+			 {"key":"op-b","status":"Todo","title":"pangolin b","body":"pangolin"},
+			 {"key":"ok-c","status":"Todo","title":"pangolin c","body":"pangolin pangolin"},
+			 {"key":"can-d","status":"Todo","title":"pangolin d","body":"pangolin pangolin"}]
+			""");
+		await Seed("b", """[{"key":"ok-c","status":"Done","version":1}]"""); // terminalok
+		await Seed("b", """[{"key":"can-d","status":"Cancelled","version":1}]"""); // terminalcancel
+
+		// The open tier, in pure relevance order (op-a is more keyword-dense than op-b).
+		var openOrder = (await Search(q: "pangolin", statusKind: ["open"])).Nodes.Select(n => n.Key).ToArray();
+		openOrder.Should().Equal("op-a", "op-b");
+
+		// All three tiers present: the partition reorders, it never drops (not a cliff).
+		var all = (await Search(q: "pangolin", statusKind: ["open", "terminalok", "terminalcancel"]))
+			.Nodes.Select(n => n.Key).ToList();
+		all.Should().BeEquivalentTo(new[] { "op-a", "op-b", "ok-c", "can-d" });
+
+		// Partition-not-resort: the open tier leads, in the SAME relevance order it had alone (a global
+		// re-sort would have reshuffled it) — and the terminal tiers follow, terminalok BEFORE
+		// terminalcancel (accepted/Done never folded in with rejected/cancelled).
+		all.Take(2).Should().Equal(openOrder);              // open tier first, relevance order preserved
+		all.IndexOf("ok-c").Should().BeLessThan(all.IndexOf("can-d")); // terminalok tier before terminalcancel
+		all.IndexOf("op-b").Should().BeLessThan(all.IndexOf("ok-c"));  // whole open tier above any terminal
+	}
+
 	// ---- entity predicates (spec tasks-search-entity-predicates-under-commit) ----
 
 	// `under` (part_of subtree) and `commit` are predicates the опорный слой cannot express, applied
