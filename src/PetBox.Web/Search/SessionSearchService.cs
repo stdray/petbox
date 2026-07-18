@@ -55,13 +55,13 @@ public sealed class SessionSearchService
 	// Discovery re-ranking policy. `_rerank` is the SHARED freshness+diversity policy (config
 	// `Search:Recency`/`Search:Diversity`) — session discovery has the same semantics as memory
 	// ("fresher wins at comparable relevance", "no near-duplicate sessions crowd the head"), so it
-	// reuses the exact primitives. `_floor` is the session-specific semantic-noise guard.
+	// reuses the exact primitives. There is NO semantic floor: a vector-only digest hit enters as a
+	// peer (spec: search-leg-classification — the tau membership threshold is gone).
 	readonly SearchRerankOptions _rerank;
-	readonly SessionSearchOptions _floor;
 
 	public SessionSearchService(IMemoryService memory, ISessionEpisodicIndex episodic,
 		ISessionTermIndex termIndex, ISessionFullScanIndex fullScanIndex, ISettingsResolver settings,
-		ISessionService sessionsSvc, SearchRerankOptions? rerank = null, SessionSearchOptions? options = null)
+		ISessionService sessionsSvc, SearchRerankOptions? rerank = null)
 	{
 		_memory = memory;
 		_episodic = episodic;
@@ -70,7 +70,6 @@ public sealed class SessionSearchService
 		_settings = settings;
 		_sessionsSvc = sessionsSvc;
 		_rerank = rerank ?? new SearchRerankOptions();
-		_floor = options ?? new SessionSearchOptions();
 	}
 
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
@@ -173,7 +172,7 @@ public sealed class SessionSearchService
 			}
 		}
 
-		var ranked = RankDiscovery(pool, _rerank, _floor);
+		var ranked = RankDiscovery(pool, _rerank);
 
 		var candidates = new List<SessionSearchCandidate>();
 		foreach (var digest in ranked.Take(sessions))
@@ -209,22 +208,19 @@ public sealed class SessionSearchService
 		return project.ProjectEnabled;
 	}
 
-	// The discovery re-ranking policy, applied to the raw digest pool BEFORE the session cut:
-	//   1. Semantic FLOOR — drop a hit surfaced by the semantic leg ALONE (no lexical confirmation)
-	//      whose RAW fused relevance (the RRF score, before decay) is below the floor: the low-score
-	//      semantic-only false hits the plain hybrid otherwise floats up. A lexically-confirmed hit
-	//      is NEVER floored (the lexical leg vouched for it), and without an embedder every hit is
-	//      confirmed, so the floor silently no-ops — degradation stays quiet.
-	//   2. Freshness DECAY — multiply the fused score by an exp half-life weight on the digest's
+	// The discovery re-ranking policy, applied to the raw digest pool BEFORE the session cut. This
+	// is the PRESENTATION reshape of an already-selected pool — it reorders, it never gates
+	// membership (spec: search-selection-vs-presentation):
+	//   1. Freshness DECAY — multiply the fused score by an exp half-life weight on the digest's
 	//      Updated, so at comparable relevance the fresher session ranks higher.
-	//   3. MMR DIVERSITY — reorder so near-duplicate sessions don't crowd the head; silently
+	//   2. MMR DIVERSITY — reorder so near-duplicate sessions don't crowd the head; silently
 	//      identity without digest vectors (no embedder / unvectorized store).
+	// There is NO semantic floor (spec: search-leg-classification — the tau membership threshold is
+	// gone): a vector-only digest hit ENTERS as a peer, bounded only by the pool and the session cut.
 	internal static List<MemoryScoredHit> RankDiscovery(IReadOnlyList<MemoryScoredHit> hits,
-		SearchRerankOptions rerank, SessionSearchOptions floor)
+		SearchRerankOptions rerank)
 	{
 		if (hits.Count == 0) return hits.ToList();
-
-		var kept = hits.Where(h => h.LexicalConfirmed || h.Score >= floor.SemanticFloor).ToList();
 
 		var now = DateTime.UtcNow;
 		var recency = rerank.Recency;
@@ -232,7 +228,7 @@ public sealed class SessionSearchService
 			? h.Score * RecencyDecay.Weight(h.Updated, now, recency.HalfLifeDays)
 			: h.Score;
 
-		var blended = kept
+		var blended = hits
 			.OrderByDescending(Blended)
 			.ThenByDescending(h => h.Updated)
 			.ThenBy(h => h.Entry.Key, StringComparer.Ordinal)
@@ -275,18 +271,6 @@ public sealed record SessionSearchCandidate(
 	IReadOnlyList<SessionEpisodicHit> Hits,
 	SearchRetrievers Retrievers,
 	IReadOnlyList<string> Sources);
-
-// Session-discovery re-ranking knobs bound from config `Search:Sessions:*` (sibling of the shared
-// `Search:Recency`/`Search:Diversity` that drive decay + MMR). `SemanticFloor` is the minimum RAW
-// fused RRF relevance a SEMANTIC-ONLY digest hit must clear to survive — a lexically-confirmed hit
-// is never floored. The default is conservative on the RRF scale: a single-leg hit scores
-// 1/(K+rank) with K=60, so a lone semantic hit tops out at 1/60 ≈ 0.0167 (rank 0) and thins toward
-// 0.010 by rank ~40; 0.013 keeps the strong semantic-only head (≈ top-17 ranks) and trims the weak
-// deep tail. Raise it to cut more aggressively, 0 to disable the floor entirely.
-public sealed record SessionSearchOptions
-{
-	public double SemanticFloor { get; init; } = 0.013;
-}
 
 // Distilled=false → the project has no digest store yet (background distillation
 // hasn't run); an honest "not indexed yet", distinct from "nothing matched". `Reason`

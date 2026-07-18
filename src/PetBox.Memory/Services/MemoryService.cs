@@ -296,8 +296,8 @@ public sealed class MemoryService : IMemoryService
 
 	// One selection candidate: its owning store, the entry, the fused relevance Score (query
 	// mode; 0 in a listing), the entry's vector (for MMR; null without an embedder / in a
-	// listing), and whether the lexical leg confirmed it (query mode — drives the semantic-noise
-	// floor + retriever provenance; always false in a listing, where the floor never runs). A
+	// listing), and whether the lexical leg confirmed it (query mode — drives retriever provenance,
+	// i.e. lexical vs vector-only; always false in a listing). A
 	// record-struct so it slots into the existing list-building cheaply. ScoreRaw is the fused
 	// score BEFORE the freshness decay: RankRelevance rewrites Score with the decayed blend (and
 	// MMR then reorders on it), so the raw fusion value would otherwise be unrecoverable — the
@@ -305,23 +305,21 @@ public sealed class MemoryService : IMemoryService
 	// count freshness twice.
 	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector, bool LexicalConfirmed = false, double ScoreRaw = 0);
 
-	// GLOBAL query relevance ordering across every store's candidate pool (spec memoverhaul):
+	// The SELECTION axis (spec: search-selection-vs-presentation): GLOBAL query relevance ordering
+	// across every store's candidate pool (spec memoverhaul). This decides WHAT is selected and its
+	// relevance rank; SortSelected below is the PRESENTATION axis and never changes this set.
 	//   1. Freshness decay — multiply the fused RRF score by an exp half-life weight on Updated,
 	//      so at comparable relevance the fresher fact wins (listing mode never reaches here).
 	//   2. Global order by that blended score (a rank-based RRF score is comparable across
 	//      stores → the single best hit wins regardless of container), ties → fresher, then key.
 	//   3. MMR diversification so the head is not a wall of near-duplicates (vector proximity;
 	//      silently identity without an embedder — no vectors were loaded).
+	// There is NO semantic floor: a vector-only (semantic) candidate ENTERS as a peer under this
+	// relevance selection (spec: search-leg-classification — the tau membership threshold is gone);
+	// decay + MMR reshape the order but never gate membership.
 	List<Candidate> RankRelevance(List<Candidate> candidates)
 	{
 		if (candidates.Count == 0) return candidates;
-
-		// Semantic-noise floor (spec search-relevance-floor): FIRST drop a hit the lexical leg did
-		// NOT confirm whose RAW fused score is below the floor — the floor operates on the raw RRF
-		// score (decay only reorders survivors, it must not push a hit under the floor), mirroring
-		// SessionSearchService. A lexically-confirmed hit is never floored; floor <= 0 disables.
-		var floor = _rerank.Floor.SemanticFloor;
-		if (floor > 0) candidates = candidates.Where(c => c.LexicalConfirmed || c.Score >= floor).ToList();
 
 		var now = DateTime.UtcNow;
 		var recency = _rerank.Recency;
@@ -343,8 +341,11 @@ public sealed class MemoryService : IMemoryService
 		return blended;
 	}
 
-	// Final ordering of the selected set. No sort: query mode keeps the fused RELEVANCE order
-	// (global fusion + decay + MMR, already applied), a listing defaults to Updated desc (the
+	// The PRESENTATION axis (spec: search-selection-vs-presentation): the final ORDER shown, over
+	// the already-selected set — it reorders, never re-selects (form-1 «most relevant about X,
+	// freshest-first» = relevance selection above, date presentation here). No sort: query mode
+	// keeps the fused RELEVANCE order (global fusion + decay + MMR, already applied), a listing
+	// defaults to Updated desc (the
 	// freshest fact first — keys are opaque generated ids, so key order carries no meaning). An
 	// explicit created/updated sort reorders WITHIN the selected set; Relevance = keep the fused
 	// order (guarded to query mode; `desc` is meaningless there and ignored). Ties break on key
@@ -467,7 +468,7 @@ public sealed class MemoryService : IMemoryService
 		// The store filter rides the index (Type IN …), so a store outside the scope can never eat
 		// a slot in the top-k — the recall the old per-file fan-out got by construction.
 		var filter = new SearchFilter(Types: stores);
-		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, filter, k, ct);
+		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, filter, k, ct: ct);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is

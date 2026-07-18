@@ -27,6 +27,9 @@ public sealed class SqliteFtsIndex : ISearchIndex
 
 	public SearchConsistency ConsistencyClass => SearchConsistency.Synchronous;
 	public SearchCapability Capability => SearchCapability.Lexical;
+	// ENUMERABLE (spec: search-leg-classification): an FTS MATCH is a boolean predicate, so this
+	// leg can return its ENTIRE matched set. It does — the read below carries NO top-K truncation.
+	public SearchLegClass LegClass => SearchLegClass.Enumerable;
 
 	// No EnsureSchema here: the search_fts virtual table is DDL, and DDL is born in exactly one
 	// place — the owning module's migration (memory M006_SearchTables, tasks M009_SearchTables).
@@ -96,10 +99,13 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		}
 
 		// FTS5 bm25 rank: more-negative = more relevant. Order ascending (best first), and
-		// surface a higher-is-better score for honest provenance.
+		// surface a higher-is-better score for honest provenance. NO Take(k): an enumerable leg
+		// returns its FULL matched set (search-leg-classification) — the facade truncates the fused
+		// pool for a relevance selection, and a scan selection needs every match, so truncating here
+		// would silently cap the enumerable set. `k` is the caller's fusion-pool hint, not a cap on
+		// this leg's membership — so it is intentionally not applied here.
 		var rows = await q
 			.OrderBy(r => Sql.Ext.SQLite().Rank(r))
-			.Take(k)
 			.Select(r => new { r.Type, r.Id, Rank = Sql.Ext.SQLite().Rank(r) })
 			.ToListAsync(ct);
 

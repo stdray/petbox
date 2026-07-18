@@ -35,6 +35,10 @@ public sealed class VectorSearchIndex : ISearchIndex
 
 	public SearchConsistency ConsistencyClass => SearchConsistency.Eventual;
 	public SearchCapability Capability => SearchCapability.Vector;
+	// TOP-K (spec: search-leg-classification): cosine ranks every candidate — there is no boolean
+	// "matched / did not match", only the K nearest — so this leg has no enumerable membership and
+	// participates only in a RELEVANCE selection, never a scan.
+	public SearchLegClass LegClass => SearchLegClass.TopK;
 
 	// No EnsureSchema here: search_vec is DDL, and DDL is born in exactly one place — the owning
 	// module's migration (memory M006_SearchTables, tasks M009_SearchTables).

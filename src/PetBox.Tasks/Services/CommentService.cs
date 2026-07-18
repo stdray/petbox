@@ -153,7 +153,7 @@ public sealed class CommentService : ICommentService
 		// a FRESH connection (SqliteFtsIndex disposes it) — never the cached request context.
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewEnsuredConnection(projectKey)) };
 		var k = limit > 0 ? Math.Max(limit * 3, 50) : 200;
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, q, new SearchFilter(board), k, ct);
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, q, new SearchFilter(board), k, ct: ct);
 
 		// The FTS covers node docs AND comment docs in the same (scope, board) partition — keep
 		// only comment hits ("c:"+key), in fused-rank order, dedup by key.

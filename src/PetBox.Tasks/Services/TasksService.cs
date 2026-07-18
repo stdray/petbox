@@ -35,10 +35,6 @@ public sealed partial class TasksService : ITasksService
 	// Null → semantic search disabled and embed-on-write skipped (lexical-only); never throws.
 	readonly ILlmClient? _llm;
 	// Relevance re-ranking policy — here only the semantic-noise floor is consumed (query search).
-	// Bound from the `Search` config section; defaults are conservative, so an un-wired
-	// construction (tests, other adapters) still gets the shipped flooring (same pattern as
-	// MemoryService).
-	readonly SearchRerankOptions _rerank;
 	// Optional (DI fills it). Handed to the per-query SearchService so a degraded retriever leg
 	// (e.g. no Embed route → semantic never ran) is logged, not merely flagged in the response.
 	readonly ILogger<TasksService>? _log;
@@ -61,7 +57,7 @@ public sealed partial class TasksService : ITasksService
 	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
 	const int VectorDim = 1024;
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null, SearchRerankOptions? rerank = null,
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null,
 		ILogger<TasksService>? log = null)
 	{
 		_boards = boards;
@@ -70,7 +66,6 @@ public sealed partial class TasksService : ITasksService
 		_comments = comments;
 		_llm = llm;
 		_log = log;
-		_rerank = rerank ?? new SearchRerankOptions();
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
@@ -1779,16 +1774,13 @@ public sealed partial class TasksService : ITasksService
 		var facets = includeClosed
 			? (FacetFilter?)null
 			: new FacetFilter(ExcludeStatusKinds: [TasksSearchDocs.TerminalCancelFacet]);
-		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, ct);
+		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, ct: ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
-		// Semantic-noise floor (spec search-relevance-floor): a hit the lexical leg did NOT confirm
-		// must clear the fused RRF floor to survive — the limit is a ceiling, not a plan, so the
-		// vector-only tail is cut here rather than padded out. A lexically-confirmed hit bypasses
-		// the floor (the lexical leg vouched for it); floor <= 0 disables.
-		var floor = _rerank.Floor.SemanticFloor;
-		var floored = resp.Hits.Where(h => h.Retriever == "lexical" || floor <= 0 || h.Score >= floor).ToList();
-		if (floored.Count == 0) return ([], resp.Retrievers);
+		// No semantic floor (spec: search-leg-classification — the tau membership threshold is gone):
+		// under this RELEVANCE selection a vector-only hit ENTERS as a peer, bounded only by the fused
+		// pool `k` and the caller's limit. The whole fused pool flows through to resolve.
+		var floored = resp.Hits;
 
 		// Resolve comment hits (tasks-search-comments): a doc with Id "c:<key>" is a COMMENT, not
 		// a node — map its key to the owner node (one query over the ACTIVE comment rows) and

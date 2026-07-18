@@ -367,7 +367,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 		scoped.Hits[0].Board.Should().Be("a");
 	}
 
-	// ---- per-row score/retriever + semantic floor (search-fusion-floor-impl) ----
+	// ---- per-row score/retriever + vector-as-peer selection (search-leg-classification) ----
 
 	[Fact]
 	public async Task Query_RowsCarryScoreAndRetriever_ListingLeavesThemNull()
@@ -394,7 +394,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Floor_DropsSemanticOnlyTail_LimitIsCeilingNotPlan()
+	public async Task VectorOnlyCandidates_EnterAsPeers_NoSemanticFloor()
 	{
 		var tasks = Service(new FakeLlmClient());
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
@@ -407,8 +407,9 @@ public sealed class TasksHybridSearchTests : IDisposable
 		await DrainVectors(new FakeLlmClient(), "b");
 
 		// A token that appears in NO body: the lexical leg confirms nothing, the vector leg alone
-		// surfaces all eight. Even with a generous limit the answer is NOT padded to eight — the
-		// sub-floor semantic-only tail is dropped, so only the ~top-5 candidates survive.
+		// surfaces all eight. The tau/SemanticFloor membership threshold is REJECTED (spec:
+		// search-leg-classification) — the vector leg selects as a PEER, so every vector-only
+		// candidate ENTERS; the limit (not a cosine/RRF floor) is the only bound.
 		var res = await tasks.SearchNodesAsync(Proj,
 			new PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy>
 			{
@@ -418,8 +419,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 			});
 
 		res.Hits.Should().OnlyContain(h => h.Retriever == "semantic");
-		res.Hits.Count.Should().BeInRange(1, 5,
-			"sub-floor semantic-only hits are cut, so limit is a ceiling not a plan");
+		res.Hits.Count.Should().Be(8, "no floor: all vector-only peers enter, bounded only by the limit");
 	}
 
 	[Fact]

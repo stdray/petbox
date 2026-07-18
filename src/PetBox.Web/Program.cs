@@ -183,10 +183,10 @@ public partial class Program
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
 		// Search relevance re-ranking policy (freshness decay + MMR diversity) — bound from the
-		// `Search` section (Search:Recency:*, Search:Diversity:*, Search:Floor:*); enabled with
-		// conservative defaults when absent. Now carries the semantic floor too, and is injected
-		// into MemoryService AND TasksService (each optional ctor param resolves this singleton;
-		// SessionSearchService reuses it as well).
+		// `Search` section (Search:Recency:*, Search:Diversity:*); enabled with conservative defaults
+		// when absent. Injected into MemoryService; SessionSearchService reuses it as well. There is
+		// no membership floor — the tau/SemanticFloor threshold was removed (spec:
+		// search-leg-classification): the vector leg selects as a peer, not behind a threshold.
 		builder.Services.AddSingleton(
 			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchRerankOptions>() ?? new PetBox.Core.Search.SearchRerankOptions());
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
@@ -253,10 +253,8 @@ public partial class Program
 			maxAvgKRel: builder.Configuration.GetValue<double?>("Memory:QuarantineGc:MaxAvgKRel")));
 		// Two-stage session search: digest discovery (memory) → episodic hydration. Discovery
 		// re-ranking reuses the shared `Search:Recency`/`Search:Diversity` policy (already a
-		// singleton above) for decay + MMR; the session-specific semantic-noise floor binds from
-		// `Search:Sessions:*` (conservative default when absent — spec search-fair-fusion).
-		builder.Services.AddSingleton(
-			builder.Configuration.GetSection("Search:Sessions").Get<PetBox.Web.Search.SessionSearchOptions>() ?? new PetBox.Web.Search.SessionSearchOptions());
+		// singleton above) for decay + MMR. No semantic floor — removed (spec:
+		// search-leg-classification); a vector-only digest hit enters as a peer.
 		// Full-scan escape hatch (spec: session-fullscan-optin): opt-in only, permission-gated
 		// (SessionFullScanSettings, resolved via ISettingsResolver — system AND project must
 		// both allow it). The scan cap binds from `Search:Sessions:FullScan:*`.
@@ -270,8 +268,7 @@ public partial class Program
 			sp.GetRequiredService<PetBox.Sessions.Search.ISessionFullScanIndex>(),
 			sp.GetRequiredService<PetBox.Core.Settings.ISettingsResolver>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
-			sp.GetRequiredService<PetBox.Core.Search.SearchRerankOptions>(),
-			sp.GetRequiredService<PetBox.Web.Search.SessionSearchOptions>()));
+			sp.GetRequiredService<PetBox.Core.Search.SearchRerankOptions>()));
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
 		// out by idleness. Singleton — it IS the hydration cache. The stage-2 in-session
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec
