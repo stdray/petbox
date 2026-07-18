@@ -62,6 +62,113 @@ public sealed partial class CapabilityRouter : ILlmClient
 		return new RerankResult(hits, new ModelIdentity(route.Model), served);
 	}
 
+	// Query-level model AFFINITY (spec: search-rerank-single-model). The correctness invariant is
+	// ONE SEARCH QUERY = ONE MODEL FOR ALL ITS CHUNKS: when a query's candidate pool is chunked
+	// across several rerank calls, every chunk MUST be scored by the same model — otherwise two
+	// score scales land in one fused result set and NOTHING notices (the two-scales hole).
+	//
+	// Today a whole document list ships as a single POST (RerankAsync above), so that safety is a
+	// property of the CALL FORM, not a guarantee: the moment a candidate pool exceeds one provider
+	// call and chunking is introduced, per-chunk chain-walking (each chunk its own RerankAsync)
+	// would route sibling chunks to different models on the FIRST fallback. This method is that
+	// guarantee made STRUCTURAL. It resolves the chain ONCE and, per route in priority order, scores
+	// EVERY chunk on THAT route's model. Fallback is WHOLE-QUERY only: a transient failure on ANY
+	// chunk discards the route's partial work and replays the ENTIRE query on the NEXT route — never
+	// a per-chunk "as it comes" mix, never a config-pin (which would kill home-preference + fallback).
+	public async Task<RerankResult> RerankQueryAsync(string projectKey, RerankQueryRequest request, CancellationToken ct = default)
+	{
+		var resolved = await _resolver.ResolveAsync(projectKey, ct);
+		var routes = resolved.Registry.Routes
+			.Where(r => r.Capability == LlmCapability.Rerank && TierMatches(r.Tier, request.Tier))
+			.OrderBy(r => r.Priority)
+			.ToList();
+
+		if (routes.Count == 0)
+		{
+			var reason = resolved.NoRouteMessage(LlmCapability.Rerank) + (request.Tier is null ? "" : $" (tier '{request.Tier}')");
+			LogNoRoute(_log, LlmCapability.Rerank, projectKey, resolved.WorkspaceKey, request.Tier ?? "-",
+				resolved.Level?.ToString() ?? "none", resolved.InheritanceBlocked, reason);
+			throw new LlmRouterException(LlmCapability.Rerank, false, reason, null, noRoute: true);
+		}
+
+		var chunks = Chunk(request.Documents, request.ChunkSize);
+
+		var attempt = 0;
+		Exception? last = null;
+		foreach (var route in routes)
+		{
+			var ep = resolved.Registry.Endpoints.FirstOrDefault(e => e.Name == route.Endpoint);
+			if (ep is null)
+			{
+				LogUnknownEndpoint(_log, LlmCapability.Rerank, route.Endpoint);
+				continue;
+			}
+			if (_breaker.IsOpen(ep.Name))
+			{
+				LogCircuitOpen(_log, LlmCapability.Rerank, ep.Name);
+				continue;
+			}
+
+			attempt++;
+			try
+			{
+				var http = _clients.Get(ep);
+				var apiKey = resolved.ApiKeys.GetValueOrDefault(ep.Name);
+				// Score EVERY chunk on THIS route's model before returning anything. A chunk that
+				// throws aborts the whole route (the partial `merged` is dropped), so no result ever
+				// carries hits from two models — the invariant is enforced by construction here, not
+				// hoped for. TopN is deferred to the merge, so each chunk asks for all its hits.
+				var merged = new List<RerankHit>(request.Documents.Count);
+				foreach (var (offset, docs) in chunks)
+				{
+					var hits = await _upstream.RerankAsync(http, ep.BaseUrl, apiKey, route.Model, request.Query, docs, null, ct);
+					foreach (var h in hits) merged.Add(new RerankHit(offset + h.Index, h.Score));
+				}
+				_breaker.RecordSuccess(ep.Name);
+				LogServed(_log, LlmCapability.Rerank, ep.Name, route.Model, attempt);
+				// One model scored the whole pool → the scores share one scale, so a global order and
+				// TopN across chunks are now meaningful. Stable '>' keeps earlier hits on score ties.
+				var ordered = merged.OrderByDescending(h => h.Score).ToList();
+				if (request.TopN is { } n && n >= 0 && n < ordered.Count) ordered = ordered.Take(n).ToList();
+				return new RerankResult(ordered, new ModelIdentity(route.Model), new ServedBy(ep.Name, route.Model, attempt, false));
+			}
+			catch (LlmUpstreamException ux) when (!ux.Transient)
+			{
+				LogNonTransient(_log, LlmCapability.Rerank, ep.Name, ux);
+				throw new LlmRouterException(LlmCapability.Rerank, false, $"Rerank failed on '{ep.Name}': {ux.Message}", ux);
+			}
+			catch (LlmUpstreamException ux)
+			{
+				last = ux;
+				_breaker.RecordFailure(ep.Name);
+				// Whole-query fallback: the NEXT route replays ALL chunks from scratch. A 429 keeps its
+				// own classified event (event 306), exactly as RunChainAsync.
+				if (ux.RateLimited) LogRateLimited(_log, LlmCapability.Rerank, ep.Name, ux.Message);
+				else LogTransient(_log, LlmCapability.Rerank, ep.Name, ux.Message);
+			}
+		}
+
+		var rateLimited = (last as LlmUpstreamException)?.RateLimited ?? false;
+		throw new LlmRouterException(LlmCapability.Rerank, true,
+			$"all {routes.Count} Rerank provider(s) failed (last attempt {attempt})", last, rateLimited: rateLimited);
+	}
+
+	// Contiguous, index-preserving chunking of a candidate pool. A non-positive size or a pool that
+	// already fits in one chunk yields a SINGLE chunk at offset 0 — the degenerate single-POST form,
+	// so the affinity path is a superset of today's behavior, not a fork of it.
+	static List<(int Offset, IReadOnlyList<string> Docs)> Chunk(IReadOnlyList<string> docs, int chunkSize)
+	{
+		var chunks = new List<(int Offset, IReadOnlyList<string> Docs)>();
+		if (chunkSize <= 0 || docs.Count <= chunkSize)
+		{
+			chunks.Add((0, docs));
+			return chunks;
+		}
+		for (var off = 0; off < docs.Count; off += chunkSize)
+			chunks.Add((off, docs.Skip(off).Take(Math.Min(chunkSize, docs.Count - off)).ToList()));
+		return chunks;
+	}
+
 	public async Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 	{
 		var (text, served, route) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,

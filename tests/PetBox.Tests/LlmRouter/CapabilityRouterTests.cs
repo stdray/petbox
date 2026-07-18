@@ -37,6 +37,16 @@ public sealed class CapabilityRouterTests
 				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20, EmbedSpaceId: "home-space"),
 			]));
 
+	// Two rerank providers, home (priority 10) then fallback (priority 20) — for the query-level
+	// affinity walk (spec: search-rerank-single-model).
+	static ResolvedRegistryLevel TwoRerank() => Level(
+		new LlmRegistry(
+			[new LlmEndpoint("primary", "https://p"), new LlmEndpoint("secondary", "https://s")],
+			[
+				new LlmRoute(LlmCapability.Rerank, "primary", "home-rr", 10),
+				new LlmRoute(LlmCapability.Rerank, "secondary", "fallback-rr", 20),
+			]));
+
 	static CapabilityRouter Build(ILlmRegistryLevelResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
 		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, NullLogger<CapabilityRouter>.Instance);
 
@@ -170,6 +180,86 @@ public sealed class CapabilityRouterTests
 		res.Model.Model.Should().Be("reranker-v1", "rerank identity is the provider model — EmbedSpaceId is embed-only");
 	}
 
+	// ---- query-level rerank AFFINITY (search-rerank-single-model): one query = one model for ALL
+	// its chunks; fallback is whole-query, never a per-chunk "as it comes" mix (two scales). ----
+
+	[Fact]
+	public async Task RerankQuery_scores_every_chunk_on_one_model()
+	{
+		var upstream = new FakeUpstream();
+		// home answers every chunk; one hit per doc, local index preserved so the remap is visible.
+		upstream.RerankBehaviour["https://p"] = docs => docs.Select((_, i) => new RerankHit(i, 1.0 - i * 0.01)).ToList();
+		var router = Build(new FakeResolver(TwoRerank()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankQueryAsync("proj",
+			new RerankQueryRequest("q", ["d0", "d1", "d2", "d3", "d4"], ChunkSize: 2));
+
+		res.ServedBy.Endpoint.Should().Be("primary");
+		res.Model.Model.Should().Be("home-rr");
+		// 5 docs / chunk 2 → three chunks, EVERY one on home — the fallback model never touched a chunk.
+		upstream.RerankCalls.Select(c => c.BaseUrl).Should().OnlyContain(u => u == "https://p");
+		upstream.RerankCalls.Select(c => c.DocCount).Should().Equal(2, 2, 1);
+		// Hit indices are GLOBAL positions across chunks, not per-chunk offsets.
+		res.Hits.Select(h => h.Index).Should().BeEquivalentTo(new[] { 0, 1, 2, 3, 4 });
+	}
+
+	[Fact]
+	public async Task RerankQuery_falls_back_whole_query_never_mixing_models()
+	{
+		var upstream = new FakeUpstream();
+		// home SUCCEEDS on the first chunk but THROWS transient on the chunk carrying "d3".
+		upstream.RerankBehaviour["https://p"] = docs =>
+			docs.Contains("d3") ? throw new LlmUpstreamException(true, "home blip")
+				: docs.Select((_, i) => new RerankHit(i, 0.5)).ToList();
+		upstream.RerankBehaviour["https://s"] = docs => docs.Select((_, i) => new RerankHit(i, 0.9 - i * 0.01)).ToList();
+		var router = Build(new FakeResolver(TwoRerank()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankQueryAsync("proj",
+			new RerankQueryRequest("q", ["d0", "d1", "d2", "d3"], ChunkSize: 2));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.ServedBy.AttemptCount.Should().Be(2);
+		res.Model.Model.Should().Be("fallback-rr");
+		// The load-bearing assertion: home scored chunk0 then threw on chunk1 → the WHOLE route was
+		// abandoned and the fallback replayed BOTH chunks. Call order proves whole-query replay, and
+		// the 4-hit result proves home's chunk0 partial was DISCARDED (a mix would be 6 hits / 2 scales).
+		upstream.RerankCalls.Select(c => c.BaseUrl).Should().Equal("https://p", "https://p", "https://s", "https://s");
+		res.Hits.Should().HaveCount(4);
+		res.Hits.Select(h => h.Index).Should().BeEquivalentTo(new[] { 0, 1, 2, 3 });
+	}
+
+	[Fact]
+	public async Task RerankQuery_topN_is_applied_across_the_whole_pool_after_merge()
+	{
+		var upstream = new FakeUpstream();
+		// score = 10 − the doc's number, so d0 is the strongest globally; one model scores all.
+		upstream.RerankBehaviour["https://p"] = docs => docs.Select((d, i) => new RerankHit(i, 10 - int.Parse(d[1..]))).ToList();
+		var router = Build(new FakeResolver(TwoRerank()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankQueryAsync("proj",
+			new RerankQueryRequest("q", ["d0", "d1", "d2", "d3"], ChunkSize: 2, TopN: 2));
+
+		// Two chunks, yet TopN spans the merged pool: the top 2 are d0,d1 — NOT one-per-chunk (d0,d2),
+		// which is what a per-chunk topN would wrongly return.
+		res.Hits.Should().HaveCount(2);
+		res.Hits.Select(h => h.Index).Should().Equal(0, 1);
+	}
+
+	[Fact]
+	public async Task RerankQuery_is_a_single_call_when_the_pool_fits_one_chunk()
+	{
+		var upstream = new FakeUpstream();
+		upstream.RerankBehaviour["https://p"] = docs => docs.Select((_, i) => new RerankHit(i, 1.0)).ToList();
+		var router = Build(new FakeResolver(TwoRerank()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankQueryAsync("proj",
+			new RerankQueryRequest("q", ["d0", "d1"], ChunkSize: 10));
+
+		// The degenerate single-POST form (today's behaviour) is a special case of the same path.
+		upstream.RerankCalls.Should().ContainSingle().Which.DocCount.Should().Be(2);
+		res.ServedBy.Endpoint.Should().Be("primary");
+	}
+
 	[Fact]
 	public async Task Chat_identity_is_the_provider_model_unchanged()
 	{
@@ -246,6 +336,11 @@ public sealed class CapabilityRouterTests
 		public string ChatReply { get; init; } = "";
 		public List<LlmThinking?> ChatThinking { get; } = [];
 		public IReadOnlyList<RerankHit> RerankReply { get; init; } = [];
+		// Per-endpoint rerank behaviour (keyed by baseUrl) — a func of the chunk's documents so a
+		// fake can score by content or THROW; when absent, RerankReply is the default. RerankCalls
+		// records (baseUrl, docCount) in order so a test can prove which model scored which chunk.
+		public Dictionary<string, Func<IReadOnlyList<string>, IReadOnlyList<RerankHit>>> RerankBehaviour { get; } = new(StringComparer.Ordinal);
+		public List<(string BaseUrl, int DocCount)> RerankCalls { get; } = [];
 
 		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct)
 		{
@@ -253,8 +348,11 @@ public sealed class CapabilityRouterTests
 			return Task.FromResult(EmbedBehaviour[baseUrl]());
 		}
 
-		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
-			Task.FromResult(RerankReply);
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct)
+		{
+			RerankCalls.Add((baseUrl, documents.Count));
+			return Task.FromResult(RerankBehaviour.TryGetValue(baseUrl, out var f) ? f(documents) : RerankReply);
+		}
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct)
 		{
