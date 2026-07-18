@@ -89,18 +89,18 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		// containers sharing this index, instead of one query per container.
 		if (filter.Types is { Count: > 0 } types) q = q.Where(r => types.Contains(r.Type));
 
-		// Facet pushdown (spec search-facet-pushdown): drop candidates a facet predicate excludes
+		// Facet pushdown (search-facet-pushdown / tasks-search-statuskind-facet): keep only candidates whose StatusKind is IN the allowed set
 		// BEFORE the Take(k) below, joined to the search_meta reference layer by the entity address
 		// (Scope, Type, Id = search_meta's primary key) — a correlated NOT EXISTS so it stays one
 		// SQL query and the join is a per-row PK seek. StatusKind is a residual filter over the tiny
 		// MATCH result, not a seek key, so no index on it is needed. An entity with NO meta row (a
-		// comment doc) has no matching `m`, so the NOT EXISTS keeps it — a facet it does not carry
+		// comment doc) has no matching DISALLOWED `m`, so the NOT EXISTS keeps it — a facet it does not carry
 		// cannot hide it. Neutral when no facet is set (memory passes none → no join emitted).
-		if (filter.Facets is { ExcludeStatusKinds: { Count: > 0 } excluded })
+		if (filter.Facets is { StatusKinds: { Count: > 0 } kinds })
 		{
-			string[] kinds = [.. excluded];
+			string[] allowed = [.. kinds];
 			q = q.Where(r => !db.GetTable<SearchMetaRow>()
-				.Any(m => m.Scope == scope && m.Type == r.Type && m.Id == r.Id && kinds.Contains(m.StatusKind)));
+				.Any(m => m.Scope == scope && m.Type == r.Type && m.Id == r.Id && !allowed.Contains(m.StatusKind)));
 		}
 
 		// FTS5 COLUMN-WEIGHTED bm25 (spec: search-doc-model-title-weights): more-negative = more

@@ -768,24 +768,31 @@ public static class TasksTools
 
 		MODES. Without `q`: a DETERMINISTIC listing — `board` scopes to one board (the
 		response then carries the board context: `kind`, `specBoard`, `currentVersion`);
-		omit `board` for a project-wide list. Default order: priority then key. Terminal/
-		closed nodes are HIDDEN unless includeClosed=true (closed part_of ancestors of a
-		visible node are kept so the tree stays connected). With `q`: a RELEVANCE selection
-		via hybrid search over name/body/tags (lexical FTS5 ⊕ semantic vectors, RRF-fused;
-		semantic is silently absent when no embedding is configured); the fused ranking
-		supplies a bounded candidate pool of max(3×limit, 50). A default query already
+		omit `board` for a project-wide list. Default order: priority then key. A default
+		listing shows only `open` nodes (terminal part_of ancestors of a visible node are kept
+		so the tree stays connected); widen with the `statusKind` facet. With `q`: a RELEVANCE
+		selection via hybrid search over name/body/tags (lexical FTS5 ⊕ semantic vectors,
+		RRF-fused; semantic is silently absent when no embedding is configured); the fused
+		ranking supplies a bounded candidate pool of max(3×limit, 50). A default query already
 		reaches terminal-OK nodes (accepted on ideas, Done on work — a SUCCESS state, not
-		"closed"; search-before-rework needs to find these). Terminal-CANCEL nodes
-		(rejected/cancelled) stay hidden unless includeClosed=true, same as listing. Default
-		order: relevance; the response carries `retrievers` {lexical, semantic, degraded}.
+		"closed"; search-before-rework needs to find these). Default order: relevance; the
+		response carries `retrievers` {lexical, semantic, degraded}.
+
+		VISIBILITY (`statusKind`, both modes). Status visibility is a facet, NOT a boolean
+		"closed": `statusKind` is a SET over open | terminalok | terminalcancel (open = not
+		finished; terminalok = accepted/Done; terminalcancel = rejected/cancelled). Omitting it
+		is NEUTRAL — a default query returns open+terminalok (so accepted/Done are always
+		findable), a default listing returns open. `includeClosed` is a DEPRECATED alias:
+		true → the facet is omitted (every kind); false + q → [open, terminalok]; false without
+		q → [open]. An explicit `statusKind` OVERRIDES `includeClosed`.
 
 		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
 		empty result, never an error): `under` = a part_of subtree root (slug or NodeId; a slug
 		resolves on `board`, or project-wide when board is omitted; a root that matches nothing →
 		an empty result, an ambiguous slug → the union of its subtrees); `status` = keep only
 		these slugs (case-insensitive; naming a TERMINAL status returns its nodes even without
-		includeClosed — an explicit ask; an unknown slug is silently dropped, and an all-unknown
-		set → an empty result); `keys` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
+		widening the statusKind facet — an explicit ask; an unknown slug is silently dropped, and
+		an all-unknown set → an empty result); `keys` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
 		is silently dropped (NOT an error), an ambiguous cross-board slug contributes ALL its
 		matches, terminal nodes are included, and an all-missing keys set yields an empty result;
 		`commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
@@ -837,13 +844,14 @@ public static class TasksTools
 		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? under = null,
 		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
 		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? keys = null,
-		[LogArg][Description("Include terminal-CANCEL (rejected/cancelled) nodes. Works in BOTH modes: widens a listing to every closed node; with q, additionally surfaces terminal-CANCEL nodes in the relevance selection (a default query already reaches terminal-OK — accepted/Done — regardless of this flag).")] bool includeClosed = false,
+		[LogArg][Description("DEPRECATED alias for statusKind — prefer statusKind. Maps onto the facet: includeClosed:true → omit the facet (every kind); includeClosed:false + q → statusKind:[open,terminalok]; includeClosed:false without q → statusKind:[open]. Ignored when statusKind is set. (A default query already reaches terminal-OK — accepted/Done — regardless of this flag.)")] bool includeClosed = false,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
+		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = NEUTRAL (every kind; a default read still finds accepted/Done). This is the first-class replacement for the deprecated includeClosed and OVERRIDES it when set; an unknown value is an error.")] string[]? statusKind = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -867,7 +875,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed, commit),
+			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed, commit, statusKind),
 			Sort = ParseSort(sort),
 			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below

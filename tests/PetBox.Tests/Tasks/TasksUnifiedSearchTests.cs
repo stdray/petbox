@@ -80,9 +80,10 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 	Task<TaskSearchResultView> Search(
 		string? q = null, string? board = null, string? under = null, string[]? status = null,
 		string[]? keys = null, bool includeClosed = false, SortInput? sort = null,
-		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false) =>
+		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false,
+		string[]? statusKind = null) =>
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, under, status, keys,
-			includeClosed, sort, groupBy, bodyLen, limit, includeUrl);
+			includeClosed, sort, groupBy, bodyLen, limit, includeUrl, statusKind: statusKind);
 
 	// ---- listing mode (no q) ----
 
@@ -194,6 +195,96 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		// An unknown status is silently dropped (soft filter); an all-unknown set → an empty result.
 		var bogus = await Search(board: "b", status: ["bogus"]);
 		bogus.Nodes.Should().BeEmpty();
+	}
+
+	// ---- statusKind facet + includeClosed deprecation (spec tasks-search-statuskind-facet) ----
+
+	// The single place the deprecated includeClosed alias maps onto the statusKind vocabulary.
+	// A naive includeClosed:true → [terminalcancel] would return ONLY closed and break callers;
+	// the mapping below is the contract, proven directly on the pure resolver.
+	[Fact]
+	public void StatusKind_IncludeClosedAlias_MapsExactlyThreeCases()
+	{
+		// includeClosed:true → NEUTRAL (facet omitted, every kind) in either mode.
+		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: true, hasQuery: true).Should().BeNull();
+		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: true, hasQuery: false).Should().BeNull();
+		// includeClosed:false + query → [open, terminalok] (a query only ever hid terminal-CANCEL).
+		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: false, hasQuery: true)
+			.Should().BeEquivalentTo("open", "terminalok");
+		// includeClosed:false + listing → [open] (a listing hid ALL terminal).
+		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: false, hasQuery: false)
+			.Should().BeEquivalentTo("open");
+		// An explicit statusKind WINS over the alias (validated + lowercased), in either mode.
+		TasksSearchDocs.ResolveStatusKindFacet(["TerminalCancel"], includeClosed: false, hasQuery: false)
+			.Should().BeEquivalentTo("terminalcancel");
+	}
+
+	[Fact]
+	public void StatusKind_UnknownValue_IsError() =>
+		FluentActions.Invoking(() => TasksSearchDocs.ResolveStatusKindFacet(["closed"], false, true))
+			.Should().Throw<ArgumentException>().WithMessage("*closed*status kind*");
+
+	// HARD FRAME INVARIANT: accepted/Done (terminal-OK) MUST be found by a DEFAULT query — this is
+	// what search-before-rework and the ideaRef gate stand on. No includeClosed, no statusKind.
+	[Fact]
+	public async Task Query_Default_FindsTerminalOk_FrameInvariant()
+	{
+		await Seed("b", """[{"key":"axolotl-node","status":"Todo","title":"axolotl marker","body":"axolotl body"}]""");
+		await Seed("b", """[{"key":"axolotl-node","status":"Done","version":1}]"""); // Done = terminalok on simple
+
+		var res = await Search(q: "axolotl"); // default: no includeClosed, no statusKind
+		res.Nodes.Select(n => n.Key).Should().Equal("axolotl-node");
+		res.Nodes[0].Status.Should().Be("Done");
+	}
+
+	// A default query hides terminal-CANCEL; the statusKind facet surfaces it — no boolean closed.
+	[Fact]
+	public async Task Query_Default_HidesTerminalCancel_StatusKindSurfacesIt()
+	{
+		await Seed("b", """
+			[{"key":"narwhal-open","status":"Todo","title":"narwhal one","body":"narwhal"},
+			 {"key":"narwhal-gone","status":"Todo","title":"narwhal two","body":"narwhal"}]
+			""");
+		await Seed("b", """[{"key":"narwhal-gone","status":"Cancelled","version":1}]"""); // terminalcancel
+
+		(await Search(q: "narwhal")).Nodes.Select(n => n.Key).Should().Equal("narwhal-open");
+		(await Search(q: "narwhal", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key).Should().Equal("narwhal-gone");
+		// The union is reachable by naming both kinds — the facet is a SET.
+		(await Search(q: "narwhal", statusKind: ["open", "terminalcancel"])).Nodes.Select(n => n.Key)
+			.Should().BeEquivalentTo("narwhal-open", "narwhal-gone");
+	}
+
+	// An explicit statusKind OVERRIDES the deprecated includeClosed (first-class wins).
+	[Fact]
+	public async Task Query_StatusKind_FirstClass_OverridesIncludeClosed()
+	{
+		await Seed("b", """
+			[{"key":"gecko-open","status":"Todo","title":"gecko one","body":"gecko"},
+			 {"key":"gecko-done","status":"Todo","title":"gecko two","body":"gecko"}]
+			""");
+		await Seed("b", """[{"key":"gecko-done","status":"Cancelled","version":1}]""");
+
+		// includeClosed:true would widen to all, but statusKind:[open] wins → only the open node.
+		var res = await Search(q: "gecko", includeClosed: true, statusKind: ["open"]);
+		res.Nodes.Select(n => n.Key).Should().Equal("gecko-open");
+	}
+
+	// Listing and query evaluate the SAME statusKind facet with the SAME semantics (parity).
+	[Fact]
+	public async Task StatusKind_ListingAndQuery_SameFacetSemantics()
+	{
+		await Seed("b", """
+			[{"key":"quokka-open","status":"Todo","title":"quokka one","body":"quokka"},
+			 {"key":"quokka-done","status":"Todo","title":"quokka two","body":"quokka"}]
+			""");
+		await Seed("b", """[{"key":"quokka-done","status":"Done","version":1}]"""); // terminalok
+
+		// statusKind:[open] excludes the Done node in BOTH modes.
+		(await Search(board: "b", statusKind: ["open"])).Nodes.Select(n => n.Key).Should().Equal("quokka-open");
+		(await Search(q: "quokka", statusKind: ["open"])).Nodes.Select(n => n.Key).Should().Equal("quokka-open");
+		// statusKind:[terminalok] keeps ONLY the Done node in BOTH modes.
+		(await Search(board: "b", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
+		(await Search(q: "quokka", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
 	}
 
 	// ---- query mode (q) ----
