@@ -41,7 +41,12 @@
 		     parses markdown → HTML; HtmlSanitizer (Ganss.Xss) sanitizes the output (parity with the
 		     client DOMPurify path) — strips <script>/event handlers, restricts URL schemes. -->
 		<PackageVersion Include="Markdig" Version="0.42.0" />
-		<PackageVersion Include="HtmlSanitizer" Version="9.0.892" />
+		<!-- Prerelease chosen deliberately: the stable line (9.0.892, latest) transitively hard-pins
+		     AngleSharp [0.17.1], which carries the mXSS advisory GHSA-pgww-w46g-26qg (patched 1.5.0).
+		     9.1.949-beta is the first HtmlSanitizer to move onto the AngleSharp 1.x line — it drags in
+		     AngleSharp 1.5.1 (patched) + AngleSharp.Css 1.0.0-beta.216, closing the bypass at the
+		     upstream level instead of suppressing NU1902. No bespoke AngleSharp pin needed. -->
+		<PackageVersion Include="HtmlSanitizer" Version="9.1.949-beta" />
 		<!-- RS0030: bans a SYMBOL outright, so "this table has one owning service" is a compile
 		     error rather than a convention. Wired for every project in Directory.Build.props; the
 		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->
