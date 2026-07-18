@@ -747,7 +747,9 @@ public static class TasksTools
 		Nodes are FLAT (a single slug `key`); hierarchy is the part_of edge (parentSlug/`depth`).
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
-		output budget — overflow rows are prefix-cut + flagged. Requires tasks:read.
+		output budget — overflow rows are prefix-cut + flagged. `statusKind` visibility defaults
+		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
+		applied set as `effectiveStatusKind`, so the default is never silent. Requires tasks:read.
 
 		Cost — your context pays it. Same query, same rows: bodyLen:0 = 1x, default snippet
 		~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long node body can add
@@ -784,7 +786,12 @@ public static class TasksTools
 		is NEUTRAL — a default query returns open+terminalok (so accepted/Done are always
 		findable), a default listing returns open. `includeClosed` is a DEPRECATED alias:
 		true → the facet is omitted (every kind); false + q → [open, terminalok]; false without
-		q → [open]. An explicit `statusKind` OVERRIDES `includeClosed`.
+		q → [open]. An explicit `statusKind` OVERRIDES `includeClosed`. The response echoes
+		`effectiveStatusKind`: the facet that ACTUALLY applied, including when defaulted — a
+		default query surfaces `["open","terminalok"]`, a default listing `["open"]`, an explicit
+		`statusKind` is echoed back resolved (normalized/deduped), and `includeClosed:true` with
+		no explicit `statusKind` echoes `null` (NEUTRAL — no facet applied, every kind). Defaulted
+		visibility is never silent.
 
 		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
 		empty result, never an error): `under` = a part_of subtree root (slug or NodeId; a slug
@@ -892,7 +899,8 @@ public static class TasksTools
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Reranked) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
-			Hint: omitted > 0 ? SearchBudgetHint : null);
+			Hint: omitted > 0 ? SearchBudgetHint : null,
+			EffectiveStatusKind: res.EffectiveStatusKind);
 	}
 
 	// With a query the result is capped even when the caller asks for nothing specific —

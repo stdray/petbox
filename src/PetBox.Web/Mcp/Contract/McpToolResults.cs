@@ -503,6 +503,13 @@ public sealed record TaskSearchNodeView(
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/
 //                    CurrentVersion) when the read was board-scoped;
 //   query          → `Retrievers` provenance (null in listing mode);
+//   listing/query  → `EffectiveStatusKind`, the statusKind facet that ACTUALLY applied — echoed
+//                    verbatim from TasksSearchDocs.ResolveStatusKindFacet (spec
+//                    search-echo-effective-statuskind-filter), so a defaulted visibility (no
+//                    statusKind passed) is OBSERVABLE instead of silent: default query →
+//                    [open,terminalok], default listing → [open], explicit statusKind → echoed
+//                    resolved set, includeClosed:true → null (NEUTRAL, no facet applied — every
+//                    kind). null on the groupBy tag-projection branch (no rows selected by facet).
 //   groupBy        → `GroupBy`+`Groups` (the tag projection; `Nodes` empty);
 //   any            → the response-budget markers Truncated/Omitted/Hint (null = complete).
 public sealed record TaskSearchResultView(
@@ -516,7 +523,8 @@ public sealed record TaskSearchResultView(
 	RetrieverInfo? Retrievers = null,
 	bool? Truncated = null,
 	int? Omitted = null,
-	string? Hint = null);
+	string? Hint = null,
+	IReadOnlyList<string>? EffectiveStatusKind = null);
 
 // tasks_workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind, string? Description = null);

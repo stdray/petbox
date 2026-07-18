@@ -224,6 +224,66 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		FluentActions.Invoking(() => TasksSearchDocs.ResolveStatusKindFacet(["closed"], false, true))
 			.Should().Throw<ArgumentException>().WithMessage("*closed*status kind*");
 
+	// ---- effective statusKind echo (spec search-echo-effective-statuskind-filter) ----
+	//
+	// The DEFAULT visibility facet must be OBSERVABLE in the response, not a silent mechanism —
+	// the response's `effectiveStatusKind` echoes EXACTLY what TasksSearchDocs.ResolveStatusKindFacet
+	// resolved (one authority, never a recomputed parallel value).
+
+	// A default QUERY narrows to open+terminalok (the frame invariant: accepted/Done stay findable) —
+	// that default must be echoed back, not silently applied.
+	[Fact]
+	public async Task Query_Default_EchoesEffectiveStatusKind_OpenTerminalOk()
+	{
+		await Seed("b", """[{"key":"echo-q","status":"Todo","title":"echoquery marker","body":"x"}]""");
+
+		var res = await Search(q: "echoquery");
+
+		res.EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open", "terminalok" });
+	}
+
+	// A default LISTING narrows to open ONLY — a different default than query mode — and it too
+	// must be echoed.
+	[Fact]
+	public async Task Listing_Default_EchoesEffectiveStatusKind_Open()
+	{
+		await Seed("b", """[{"key":"echo-l","status":"Todo","title":"L","body":"x"}]""");
+
+		var res = await Search(board: "b");
+
+		res.EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
+	}
+
+	// An explicit statusKind WINS over the default and is echoed back exactly as resolved
+	// (validated/normalized/deduped), in BOTH modes.
+	[Fact]
+	public async Task ExplicitStatusKind_EchoedAsResolved_BothModes()
+	{
+		await Seed("b", """[{"key":"echo-e","status":"Todo","title":"echoexplicit marker","body":"x"}]""");
+
+		var listing = await Search(board: "b", statusKind: ["TerminalCancel", "TerminalCancel"]);
+		listing.EffectiveStatusKind.Should().BeEquivalentTo(new[] { "terminalcancel" }); // normalized + deduped
+
+		var query = await Search(q: "echoexplicit", statusKind: ["Open"]);
+		query.EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
+	}
+
+	// The deprecated includeClosed alias maps onto the SAME resolver the echo reads: includeClosed:true
+	// is NEUTRAL (no facet applied — every kind) and echoes null (there is no "effective narrowing" to
+	// report); includeClosed:false reproduces the mode default and is echoed explicitly, exactly like
+	// the no-argument default above.
+	[Fact]
+	public async Task IncludeClosedAlias_MappedAndEchoed()
+	{
+		await Seed("b", """[{"key":"echo-ic","status":"Todo","title":"echoinclosed marker","body":"x"}]""");
+
+		(await Search(board: "b", includeClosed: true)).EffectiveStatusKind.Should().BeNull();
+		(await Search(q: "echoinclosed", includeClosed: true)).EffectiveStatusKind.Should().BeNull();
+		(await Search(board: "b", includeClosed: false)).EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
+		(await Search(q: "echoinclosed", includeClosed: false)).EffectiveStatusKind
+			.Should().BeEquivalentTo(new[] { "open", "terminalok" });
+	}
+
 	// HARD FRAME INVARIANT: accepted/Done (terminal-OK) MUST be found by a DEFAULT query — this is
 	// what search-before-rework and the ideaRef gate stand on. No includeClosed, no statusKind.
 	[Fact]

@@ -1701,6 +1701,10 @@ public sealed partial class TasksService : ITasksService
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
 		long? currentVersion = null;
+		// search-echo-effective-statuskind-filter: the facet ResolveStatusKindFacet ACTUALLY
+		// resolved for this read, captured verbatim from whichever branch below computes it — so
+		// the response echoes the true applied value (including when defaulted), never a recompute.
+		IReadOnlyList<string>? effectiveStatusKind;
 		if (query is null)
 		{
 			// LISTING: full PlanNodeView enrichment per board (links/delivery/parent/commits).
@@ -1718,6 +1722,7 @@ public sealed partial class TasksService : ITasksService
 			// listing still HYDRATES + ORDERS entity-side (default priority/key is an entity
 			// specialization); only the facet SELECTION moved onto the reference layer.
 			var listingFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: false);
+			effectiveStatusKind = listingFacet;
 			var explicitStatusKind = f.StatusKind is { Count: > 0 };
 			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null || explicitStatusKind;
 			Dictionary<string, Dictionary<string, string>>? statusKindByBoard = null;
@@ -1761,6 +1766,7 @@ public sealed partial class TasksService : ITasksService
 			// (accepted/Done) is never excluded — it is a success state, not "closed", so a default
 			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
 			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
+			effectiveStatusKind = queryFacet;
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
 				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, ct);
 
@@ -1814,7 +1820,8 @@ public sealed partial class TasksService : ITasksService
 			Kind: meta is null ? null : runtime.KindName(meta.Kind),
 			SpecBoard: meta?.SpecBoard,
 			CurrentVersion: currentVersion,
-			Retrievers: retrievers);
+			Retrievers: retrievers,
+			EffectiveStatusKind: effectiveStatusKind);
 	}
 
 	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with

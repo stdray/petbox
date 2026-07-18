@@ -96,11 +96,15 @@ public sealed class TasksGetBudgetTests : IDisposable
 		view.Truncated.Should().BeNull();
 		view.Omitted.Should().BeNull();
 		view.Hint.Should().BeNull();
+		// search-echo-effective-statuskind-filter: a default listing's effective facet is [open] —
+		// not null, unlike the (genuinely absent) budget markers above.
+		view.EffectiveStatusKind.Should().BeEquivalentTo(["open"]);
 		// Byte-for-byte: the marker fields are null → the wire serializer omits them entirely.
 		var json = JsonSerializer.Serialize(view, Wire);
 		json.Should().NotContainAny("truncated", "omitted", "hint");
 		json.Should().Be(JsonSerializer.Serialize(new TaskSearchResultView(
-			view.Nodes, view.Board, view.Kind, view.SpecBoard, view.CurrentVersion), Wire));
+			view.Nodes, view.Board, view.Kind, view.SpecBoard, view.CurrentVersion,
+			EffectiveStatusKind: ["open"]), Wire));
 	}
 
 	[Fact]
