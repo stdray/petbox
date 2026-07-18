@@ -44,6 +44,33 @@ static class EngineFixture
 
 	public static readonly Dictionary<string, string> NoRefs = new(StringComparer.Ordinal);
 
+	// The generic links door as the engine reads it: (nodeKey, linkKind, refs) tuples folded into
+	// nodeKey -> (kind -> refs). Refs may be a slug or a NodeId; a single value is just one element.
+	public static Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> Links(
+		params (string Key, string Kind, string[] Refs)[] entries)
+	{
+		var map = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>(StringComparer.Ordinal);
+		foreach (var (key, kind, refs) in entries)
+		{
+			if (!map.TryGetValue(key, out var byKind))
+				map[key] = byKind = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+			((Dictionary<string, IReadOnlyList<string>>)byKind)[kind] = refs;
+		}
+		return map;
+	}
+
+	// One (nodeKey, kind, singleRef) link — the common case.
+	public static Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> Link(string key, string kind, string @ref) =>
+		Links((key, kind, [@ref]));
+
+	public static readonly Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> NoLinks = new(StringComparer.Ordinal);
+
+	// Resolved `blocks` edges (blocker→task, writer is the TO end) for the RequireBlockers guard.
+	public static List<ResolvedLink> Blocks(params (string Key, string TargetId)[] pairs) =>
+		pairs.Select(p => new ResolvedLink("blocks", p.Key, p.TargetId, WriterIsFrom: false)).ToList();
+
+	public static readonly List<ResolvedLink> NoResolvedLinks = [];
+
 	// A context over the quartet's three linked boards, indexed by whatever nodes the test names.
 	public static MethodologyEngineContext Ctx(
 		MethodologyRuntime? runtime = null,

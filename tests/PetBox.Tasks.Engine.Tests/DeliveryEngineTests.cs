@@ -9,7 +9,7 @@ namespace PetBox.Tasks.Engine.Tests;
 public class DeliveryEngineTests
 {
 	// The quartet spec kind's own roles: `feature` drives progress, `bug` is the defect type.
-	static readonly MethodologyDeliveryDef Def = new(["feature"], ["bug"]);
+	static readonly MethodologyDeliveryDef Def = new(["feature"], ["bug"], "task_spec");
 
 	static readonly MethodologyRuntime Runtime = EngineFixture.Quartet;
 

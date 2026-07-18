@@ -223,7 +223,9 @@ public static class GuardEngine
 				if (!isNew && !everyWrite) continue;
 				if (provided.Contains((n.Key, c.Link.ToLowerInvariant())) || provided.Contains((n.Key, c.Link)))
 					continue;
-				var cadence = everyWrite ? $"every write of a {kindName} {type}" : $"a new {kindName} {type}";
+				// "work feature" / "spec" (a single-type kind reads its kind name once, not "spec spec").
+				var subject = string.Equals(kindName, type, StringComparison.OrdinalIgnoreCase) ? kindName : $"{kindName} {type}";
+				var cadence = everyWrite ? $"every write of a {subject}" : $"a new {subject}";
 				var target = TargetClause(c);
 				return Bad(n.Key, $"{cadence} must carry a {c.Link} link — provide links.{c.Link}{target} (node '{n.Key}')");
 			}
