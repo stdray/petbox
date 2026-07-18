@@ -100,11 +100,11 @@ public sealed class TasksMethodologyBoardsTests : TasksMethodologySmokeBase, ICl
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "login");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Review", title = "Build login", body = "x", specRef = specId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Review", title = "Build login", body = "x", links = new { task_spec = specId } }) });
 
 		var get = await Agent("tasks_search", new { projectKey = ProjectKey, board = "work" });
 		Text(get).Should().Contain("\"kind\":\"work\"");
@@ -119,15 +119,15 @@ public sealed class TasksMethodologyBoardsTests : TasksMethodologySmokeBase, ICl
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "login");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		(await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", specRef = specId }) }))
+		(await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", links = new { task_spec = specId } }) }))
 			.IsError.Should().NotBe(true);
 
 		// Editing the feature into a bug must be rejected — type can't change after creation.
-		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "bug", version = 1, title = "Build login", body = "x", specRef = specId }) });
+		var r = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "bug", version = 1, title = "Build login", body = "x", links = new { task_spec = specId } }) });
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("immutable");
 	}

@@ -227,8 +227,8 @@ public sealed class TasksTreeContractTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "spec",
 			McpInputs.Nodes(new object[]
 			{
-				new { key = "old", status = "defined", title = "Old req", body = "x", ideaRef = ir },
-				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", ideaRef = ir },
+				new { key = "old", status = "defined", title = "Old req", body = "x", links = new { idea_spec = ir } },
+				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", links = new { idea_spec = ir } },
 			}));
 
 		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "spec", includeClosed: true);

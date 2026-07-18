@@ -2,14 +2,20 @@ using static PetBox.Tasks.Engine.Tests.EngineFixture;
 
 namespace PetBox.Tasks.Engine.Tests;
 
-// The slug-or-NodeId resolution of specRef / blockedBy / ideaRef (acceptance condition 3: the
-// resolvers are part of the DECISION, so their failures are verdicts with ForNode, not IO-side
-// errors). Every negative assertion pins the EXACT message and VerdictKind, because the service
-// re-raises those verbatim (ToRefusal → the exception type/message the partial-mode retry loop
-// and the existing DB-bound suite already match on). Condition 5's "equality of error strings"
-// is these assertions.
+// The slug-or-NodeId resolution of the generic links door + the blockedBy sugar (acceptance
+// condition 3: the resolver is part of the DECISION, so its failures are verdicts with ForNode,
+// not IO-side errors). Every negative assertion pins the message shape, because the service
+// re-raises those verbatim (ToRefusal → the exception the partial-mode retry loop matches on).
+// Resolution is exercised through GuardEngine.Decide, the only public seam now that the per-sugar
+// resolvers collapsed into one generic ResolveLinks.
 public sealed class GuardEngineResolveTests
 {
+	static MethodologyEngineDecision Decide(
+		MethodologyEngineContext ctx, NodeState[] desired, Dictionary<string, NodeState>? prior = null,
+		Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>? links = null,
+		Dictionary<string, string>? blockedBy = null) =>
+		GuardEngine.Decide(ctx, desired, prior ?? NoPrior, links ?? NoLinks, blockedBy ?? NoRefs);
+
 	// ---- LooksLikeNodeId: the one definition both engine and NodeRefResolver key on ----
 
 	[Theory]
@@ -23,225 +29,161 @@ public sealed class GuardEngineResolveTests
 	public void LooksLikeNodeId_IsLength32AndHex(string value, bool expected) =>
 		GuardEngine.LooksLikeNodeId(value).Should().Be(expected);
 
-	// ---- ResolveSpecRefs ----
+	// ---- task_spec (work→spec) via links door ----
 
 	[Fact]
-	public void ResolveSpecRefs_Empty_IsNoOp()
-	{
-		var v = GuardEngine.ResolveSpecRefs(Ctx(), NoRefs, out var resolved);
-		v.Should().BeNull();
-		resolved.Should().BeEmpty();
-	}
-
-	[Fact]
-	public void ResolveSpecRefs_Slug_ResolvesOnLinkedSpecBoard()
+	public void TaskSpec_Slug_ResolvesOnTheInstanceSpecBoard()
 	{
 		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth-tokens", "defined", "spec")]);
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", "auth-tokens")), out var resolved);
-		v.Should().BeNull();
-		resolved["t1"].Should().Be(Id("spec1"));
+		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "auth-tokens"));
+		d.Verdicts.Should().BeEmpty();
+		var link = d.Links.Single(l => l.Kind == "task_spec");
+		link.WriterKey.Should().Be("t1");
+		link.TargetNodeId.Should().Be(Id("spec1"));
+		link.WriterIsFrom.Should().BeTrue(); // work is the FROM end of work→spec
 	}
 
 	[Fact]
-	public void ResolveSpecRefs_Slug_IsCaseInsensitiveAndTrimmed()
+	public void TaskSpec_Slug_IsCaseInsensitiveAndTrimmed()
 	{
 		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth-tokens", "defined", "spec")]);
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", "  AUTH-Tokens  ")), out var resolved);
-		v.Should().BeNull();
-		resolved["t1"].Should().Be(Id("spec1"));
+		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "  AUTH-Tokens  "));
+		d.Verdicts.Should().BeEmpty();
+		d.Links.Single(l => l.Kind == "task_spec").TargetNodeId.Should().Be(Id("spec1"));
 	}
 
 	[Fact]
-	public void ResolveSpecRefs_NodeId_PassesThroughUntouched()
+	public void TaskSpec_NodeId_PassesThroughUntouched()
 	{
-		// A NodeId-shaped value is NOT looked up here — resolution only turns slugs into ids;
-		// whether the id exists is ValidateLinkTargets' question.
-		var ctx = Ctx();
+		// A NodeId-shaped value is not looked up here — resolution only turns slugs into ids; whether
+		// the id exists is ValidateLinkTargets' question, so a bare NodeId on a chore (no constraint)
+		// resolves clean.
 		var id = Id("deadbeef");
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", $" {id} ")), out var resolved);
-		v.Should().BeNull();
-		resolved["t1"].Should().Be(id);
+		var ctx = Ctx(index: [Node("deadbeef", SpecBoardName, "spec", "x", "defined", "spec")]);
+		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", $" {id} "));
+		d.Verdicts.Should().BeEmpty();
+		d.Links.Single(l => l.Kind == "task_spec").TargetNodeId.Should().Be(id);
 	}
 
 	[Fact]
-	public void ResolveSpecRefs_Slug_WithoutLinkedSpecBoard_IsRefused()
+	public void TaskSpec_Slug_NoMatchOnSpecBoard_IsRefused()
 	{
-		var ctx = Ctx(specBoard: null);
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", "auth-tokens")), out _);
-		v.Should().Be(new MethodologyVerdict("t1",
-			"specRef 'auth-tokens' (node 't1') is a slug, but this board has no linked spec board — provide the spec node's NodeId",
-			VerdictKind.InvalidArgument));
-	}
-
-	[Fact]
-	public void ResolveSpecRefs_Slug_NoMatchOnSpecBoard_IsRefused()
-	{
-		// The node exists — on the WRONG board. specRef slugs resolve only against the linked
-		// spec board, so this is a miss, not a cross-board hit.
 		var ctx = Ctx(index: [Node("w1", WorkBoardName, "work", "auth-tokens", "Pending", "feature")]);
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", "auth-tokens")), out _);
-		v.Should().Be(new MethodologyVerdict("t1",
-			"specRef 'auth-tokens' (node 't1') does not match any node on spec board 'spec'",
-			VerdictKind.InvalidArgument));
+		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "auth-tokens"));
+		var v = d.Verdicts.Single();
+		v.Message.Should().Be("links.task_spec 'auth-tokens' (node 't1') does not match any node on spec board 'spec'");
+		v.Kind.Should().Be(VerdictKind.InvalidArgument);
 	}
 
 	[Fact]
-	public void ResolveSpecRefs_ErrorNamesTheRawValue_NotTheTrimmedOne()
+	public void TaskSpec_ErrorNamesTheRawValue_NotTheTrimmedOne()
 	{
-		var ctx = Ctx(specBoard: null);
-		var v = GuardEngine.ResolveSpecRefs(ctx, Refs(("t1", " Nope ")), out _);
-		v!.Message.Should().StartWith("specRef ' Nope ' (node 't1')");
+		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth", "defined", "spec")]);
+		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", " Nope "));
+		d.Verdicts.Single().Message.Should().StartWith("links.task_spec ' Nope ' (node 't1')");
 	}
 
-	// ---- ResolveBlockedBy ----
+	// ---- blockedBy (blocks) sugar — same-board resolution ----
 
 	[Fact]
-	public void ResolveBlockedBy_Slug_ResolvesAgainstPriorRowsOnThisBoard()
+	public void BlockedBy_Slug_ResolvesAgainstPriorRowsOnThisBoard()
 	{
 		var prior = Prior(State("blocker", "InProgress", "feature", nodeId: Id("b1")));
-		var v = GuardEngine.ResolveBlockedBy(Ctx(), [], prior, Refs(("t1", "blocker")), out var resolved);
-		v.Should().BeNull();
-		resolved["t1"].Should().Be(Id("b1"));
+		var d = Decide(Ctx(), [], prior, blockedBy: Refs(("t1", "blocker")));
+		d.Verdicts.Should().BeEmpty();
+		var link = d.Links.Single(l => l.Kind == "blocks");
+		link.WriterKey.Should().Be("t1");
+		link.TargetNodeId.Should().Be(Id("b1"));
+		link.WriterIsFrom.Should().BeFalse(); // blocker→task, the task is the TO end
 	}
 
 	[Fact]
-	public void ResolveBlockedBy_Slug_ResolvesAgainstANodeBornInTheSameBatch()
+	public void BlockedBy_Slug_ResolvesAgainstANodeBornInTheSameBatch()
 	{
-		// The desired overlay is what makes "create the blocker and the blocked task in one call"
-		// work: the blocker has no prior row, only a desired one carrying its fresh NodeId.
-		var desired = new[] { State("blocker", "Pending", "feature", nodeId: Id("b2")) };
-		var v = GuardEngine.ResolveBlockedBy(Ctx(), desired, NoPrior, Refs(("t1", "blocker")), out var resolved);
-		v.Should().BeNull();
-		resolved["t1"].Should().Be(Id("b2"));
+		var desired = new[] { State("blocker", "Pending", "chore", nodeId: Id("b2")) };
+		var d = Decide(Ctx(), desired, NoPrior, blockedBy: Refs(("t1", "blocker")));
+		d.Verdicts.Should().BeEmpty();
+		d.Links.Single(l => l.Kind == "blocks").TargetNodeId.Should().Be(Id("b2"));
 	}
 
 	[Fact]
-	public void ResolveBlockedBy_DesiredOverlay_WinsOverPrior()
-	{
-		var prior = Prior(State("blocker", "InProgress", "feature", nodeId: Id("old")));
-		var desired = new[] { State("blocker", "InProgress", "feature", nodeId: Id("new")) };
-		GuardEngine.ResolveBlockedBy(Ctx(), desired, prior, Refs(("t1", "blocker")), out var resolved).Should().BeNull();
-		resolved["t1"].Should().Be(Id("new"));
-	}
-
-	[Fact]
-	public void ResolveBlockedBy_RowsWithoutANodeId_AreNotResolutionCandidates()
-	{
-		// A desired row's NodeId is assigned inside the temporal upsert; an empty one can't be a
-		// blocker target (the map would otherwise bind a slug to "").
-		var desired = new[] { State("blocker", "Pending", "feature") };
-		var v = GuardEngine.ResolveBlockedBy(Ctx(), desired, NoPrior, Refs(("t1", "blocker")), out _);
-		v!.Kind.Should().Be(VerdictKind.InvalidArgument);
-	}
-
-	[Fact]
-	public void ResolveBlockedBy_NodeId_PassesThroughUntouched()
+	public void BlockedBy_NodeId_PassesThroughUntouched()
 	{
 		var id = Id("cafe");
-		GuardEngine.ResolveBlockedBy(Ctx(), [], NoPrior, Refs(("t1", id)), out var resolved).Should().BeNull();
-		resolved["t1"].Should().Be(id);
+		var d = Decide(Ctx(), [], NoPrior, blockedBy: Refs(("t1", id)));
+		d.Verdicts.Should().BeEmpty();
+		d.Links.Single(l => l.Kind == "blocks").TargetNodeId.Should().Be(id);
 	}
 
 	[Fact]
-	public void ResolveBlockedBy_UnknownSlug_IsRefused_NamingTheBoard()
+	public void BlockedBy_UnknownSlug_IsRefused_NamingTheBoard()
 	{
-		var v = GuardEngine.ResolveBlockedBy(Ctx(), [], NoPrior, Refs(("t1", "ghost")), out _);
-		v.Should().Be(new MethodologyVerdict("t1",
-			"blockedBy 'ghost' (node 't1') does not match any node on board 'work' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board",
-			VerdictKind.InvalidArgument));
+		var d = Decide(Ctx(), [], NoPrior, blockedBy: Refs(("t1", "ghost")));
+		d.Verdicts.Single().Message.Should().Be(
+			"blockedBy 'ghost' (node 't1') does not match any node on board 'work' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
 	}
 
 	[Fact]
-	public void ResolveBlockedBy_Empty_IsNoOp()
+	public void Blocks_SetTwoWays_IsRefused()
 	{
-		GuardEngine.ResolveBlockedBy(Ctx(), [], NoPrior, NoRefs, out var resolved).Should().BeNull();
-		resolved.Should().BeEmpty();
+		// blockedBy sugar AND links.blocks on one node — one link, one way.
+		var prior = Prior(State("blocker", "InProgress", "feature", nodeId: Id("b1")));
+		var d = Decide(Ctx(), [], prior, links: Link("t1", "blocks", Id("b1")), blockedBy: Refs(("t1", "blocker")));
+		d.Verdicts.Single().Message.Should().Contain("sets the `blocks` link two ways");
 	}
 
-	// ---- ResolveIdeaRefs ----
+	// ---- idea_spec (ideas→spec) via links door, from a spec writer ----
 
 	[Fact]
-	public void ResolveIdeaRefs_Slug_ResolvesOnTheInstancesIdeaBoard()
+	public void IdeaSpec_Slug_ResolvesOnTheInstancesIdeaBoard()
 	{
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "faster-search", "accepted", "idea")]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "faster-search")), out var resolved);
-		v.Should().BeNull();
-		resolved["s1"].Should().Be(Id("i1"));
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
+		d.Verdicts.Should().BeEmpty();
+		var link = d.Links.Single(l => l.Kind == "idea_spec");
+		link.TargetNodeId.Should().Be(Id("i1"));
+		link.WriterIsFrom.Should().BeFalse(); // spec is the TO end of ideas→spec, so idea→spec
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_AnyActiveStatusResolves_TheStatusRuleRunsLater()
+	public void IdeaSpec_AnyActiveStatusResolves_TheStatusRuleRunsLater()
 	{
 		// Resolution is status-blind on purpose: a `raw` idea RESOLVES, and ValidateLinkTargets is
 		// what then refuses it for not being `accepted`. Two rules, two messages.
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "half-baked", "raw", "idea")]);
-		GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "half-baked")), out var resolved).Should().BeNull();
-		resolved["s1"].Should().Be(Id("i1"));
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "half-baked"));
+		// The target-status rule speaks (raw ≠ accepted), but the RESOLUTION found the node.
+		d.Verdicts.Single().Message.Should().Contain("target is 'raw', not accepted");
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_NodeId_PassesThroughTrimmed()
+	public void IdeaSpec_NoIdeaBoardInTheInstance_IsRefused()
 	{
-		var id = Id("beef");
-		GuardEngine.ResolveIdeaRefs(Ctx(kindSlug: "spec"), Refs(("s1", $" {id} ")), out var resolved).Should().BeNull();
-		resolved["s1"].Should().Be(id);
-	}
-
-	[Fact]
-	public void ResolveIdeaRefs_NoIdeaBoardInTheInstance_IsRefused()
-	{
-		// The ideas board exists — in ANOTHER methodology instance. Instance membership is the
-		// bucket, so this project's spec board sees no idea board at all.
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
 			boards:
 			[
 				new EngineBoard(SpecBoardName, "spec", Instance, Closed: false),
 				new EngineBoard(IdeasBoardName, "ideas", "other-instance", Closed: false),
 			]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "faster-search")), out _);
-		v.Should().Be(new MethodologyVerdict("s1",
-			"ideaRef 'faster-search' (node 's1') is a slug, but no active ideas board exists alongside board 'spec' in methodology instance 'inst-1' — create one or provide the idea node's NodeId",
-			VerdictKind.InvalidArgument));
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
+		d.Verdicts.Single().Message.Should().Be(
+			"links.idea_spec 'faster-search' (node 's1') is a slug, but no active ideas board exists alongside board 'spec' in methodology instance 'inst-1' — create one or provide the target node's NodeId");
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_ClosedIdeaBoard_DoesNotCount()
-	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
-			boards:
-			[
-				new EngineBoard(SpecBoardName, "spec", Instance, Closed: false),
-				new EngineBoard(IdeasBoardName, "ideas", Instance, Closed: true),
-			]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "faster-search")), out _);
-		v!.Message.Should().Contain("no active ideas board exists alongside board 'spec'");
-	}
-
-	[Fact]
-	public void ResolveIdeaRefs_NoInstance_OmitsTheInstanceSuffix()
+	public void IdeaSpec_NoInstance_OmitsTheInstanceSuffix()
 	{
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName, instance: "",
 			boards: [new EngineBoard(SpecBoardName, "spec", "", Closed: false)]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "faster-search")), out _);
-		v!.Message.Should().Be(
-			"ideaRef 'faster-search' (node 's1') is a slug, but no active ideas board exists alongside board 'spec' — create one or provide the idea node's NodeId");
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
+		d.Verdicts.Single().Message.Should().Be(
+			"links.idea_spec 'faster-search' (node 's1') is a slug, but no active ideas board exists alongside board 'spec' — create one or provide the target node's NodeId");
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_NoMatch_IsRefused_NamingTheSingleBoard()
-	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
-			index: [Node("i1", IdeasBoardName, "ideas", "something-else", "accepted", "idea")]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "ghost")), out _);
-		v.Should().Be(new MethodologyVerdict("s1",
-			"ideaRef 'ghost' (node 's1') does not match any node on ideas board 'ideas'",
-			VerdictKind.InvalidArgument));
-	}
-
-	[Fact]
-	public void ResolveIdeaRefs_NoMatch_AcrossSeveralIdeaBoards_PluralizesAndListsThem()
+	public void IdeaSpec_NoMatch_AcrossSeveralIdeaBoards_PluralizesAndListsThem()
 	{
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
 			boards:
@@ -250,13 +192,12 @@ public sealed class GuardEngineResolveTests
 				new EngineBoard("ideas-b", "ideas", Instance, Closed: false),
 				new EngineBoard("ideas-a", "ideas", Instance, Closed: false),
 			]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "ghost")), out _);
-		// Ordinal-sorted board list, "board" pluralized.
-		v!.Message.Should().Be("ideaRef 'ghost' (node 's1') does not match any node on ideas boards 'ideas-a, ideas-b'");
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "ghost"));
+		d.Verdicts.Single().Message.Should().Be("links.idea_spec 'ghost' (node 's1') does not match any node on ideas boards 'ideas-a, ideas-b'");
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_SameSlugOnTwoIdeaBoards_IsAmbiguous()
+	public void IdeaSpec_SameSlugOnTwoIdeaBoards_IsAmbiguous()
 	{
 		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
 			index:
@@ -270,39 +211,40 @@ public sealed class GuardEngineResolveTests
 				new EngineBoard("ideas-b", "ideas", Instance, Closed: false),
 				new EngineBoard("ideas-a", "ideas", Instance, Closed: false),
 			]);
-		var v = GuardEngine.ResolveIdeaRefs(ctx, Refs(("s1", "faster-search")), out _);
-		v.Should().Be(new MethodologyVerdict("s1",
-			"ambiguous ideaRef 'faster-search' (node 's1') — the slug matches nodes on boards: [ideas-a, ideas-b]; pass the idea node's NodeId instead",
-			VerdictKind.InvalidArgument));
+		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
+		d.Verdicts.Single().Message.Should().Be(
+			"ambiguous links.idea_spec 'faster-search' (node 's1') — the slug matches nodes on boards: [ideas-a, ideas-b]; pass the target node's NodeId instead");
 	}
 
 	[Fact]
-	public void ResolveIdeaRefs_TargetKindComesFromTheKindsIdeaSpecConstraint()
+	public void Directed_TargetKindComesFromTheDeclaredDirection()
 	{
-		// The target kind is DATA, not the literal `ideas`: a definition whose idea_spec
-		// constraint names another kind resolves slugs against THAT kind's boards.
+		// The target end is DATA — a definition whose custom `doc` kind links a custom `rfc` kind via
+		// a declared link kind resolves slugs against THAT kind's boards.
 		var def = new MethodologyDefinition("custom",
 		[
 			new MethodologyKindDef("doc", QuickAddAllowed: true,
-				[new MethodologyWorkflowDef(["doc"], [new WorkflowStatus("draft", "Draft", StatusKind.Open)], [])])
-			{
-				LinkConstraints = [new MethodologyLinkConstraintDef("doc", "idea_spec") { TargetKind = "rfc" }],
-			},
+				[new MethodologyWorkflowDef(["doc"], [new WorkflowStatus("draft", "Draft", StatusKind.Open)], [])]),
 			new MethodologyKindDef("rfc", QuickAddAllowed: true,
 				[new MethodologyWorkflowDef(["rfc"], [new WorkflowStatus("open", "Open", StatusKind.Open)], [])]),
-		]);
-		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs",
+		])
+		{
+			LinkKinds = [new MethodologyLinkKindDef("doc_rfc", "doc realizes an rfc", LinkCategory.Process,
+				new MethodologyLinkDirectionDef("doc", "rfc", "realizes"))],
+		};
+		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs", specBoard: null,
 			index: [Node("r1", "rfcs", "rfc", "streaming", "open", "rfc")],
 			boards:
 			[
 				new EngineBoard("docs", "doc", Instance, Closed: false),
 				new EngineBoard("rfcs", "rfc", Instance, Closed: false),
 			]);
-		GuardEngine.ResolveIdeaRefs(ctx, Refs(("d1", "streaming")), out var resolved).Should().BeNull();
-		resolved["d1"].Should().Be(Id("r1"));
+		var d = Decide(ctx, [State("d1", "draft", "doc", nodeId: Id("d1"))], links: Link("d1", "doc_rfc", "streaming"));
+		d.Verdicts.Should().BeEmpty();
+		d.Links.Single(l => l.Kind == "doc_rfc").TargetNodeId.Should().Be(Id("r1"));
 
-		// ...and the miss message names that declared kind, not `ideas`.
-		GuardEngine.ResolveIdeaRefs(ctx, Refs(("d1", "ghost")), out _)!.Message
-			.Should().Be("ideaRef 'ghost' (node 'd1') does not match any node on rfc board 'rfcs'");
+		// ...and the miss message names that declared target kind, not `ideas`.
+		var miss = Decide(ctx, [State("d1", "draft", "doc", nodeId: Id("d1"))], links: Link("d1", "doc_rfc", "ghost"));
+		miss.Verdicts.Single().Message.Should().Be("links.doc_rfc 'ghost' (node 'd1') does not match any node on rfc board 'rfcs'");
 	}
 }

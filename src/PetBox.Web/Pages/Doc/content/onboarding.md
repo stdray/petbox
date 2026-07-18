@@ -54,9 +54,9 @@ First, **right-size the rails to the work** (see the [methodology](/doc/methodol
 
 Use the standard boards (named for their kind: `ideas`, `spec`, `work`, `intake`) — create them explicitly **with the right kind**, not by a bare write (a cold write makes a plain `simple` board and the kind can't change).
 
-Capture the work as a short idea on `ideas` and accept it; record the requirement(s) it settles into on `spec` and note each `nodeId`; then create a `work` feature that links one by passing that `nodeId` as `specRef`. Move the feature `Pending → InProgress → Review` as you go, and stop at `Review`. The [methodology](/doc/methodology) spells out the contract if anything is unfamiliar.
+Capture the work as a short idea on `ideas` and accept it; record the requirement(s) it settles into on `spec` and note each `nodeId`; then create a `work` feature that links one by passing it as `links:{task_spec: <nodeId>}`. Move the feature `Pending → InProgress → Review` as you go, and stop at `Review`. The [methodology](/doc/methodology) spells out the contract if anything is unfamiliar.
 
-**Check:** the work node shows a live link to the spec node, and the spec leaf's computed delivery reads `in_progress`. If delivery still says `not_started`, the link didn't take (recheck the `specRef` id) or the feature never left `Pending`. The agent should **not** have set `Done` — the maintainer reviews and sets it from the UI, which closes the loop.
+**Check:** the work node shows a live link to the spec node, and the spec leaf's computed delivery reads `in_progress`. If delivery still says `not_started`, the link didn't take (recheck the `links.task_spec` id) or the feature never left `Pending`. The agent should **not** have set `Done` — the maintainer reviews and sets it from the UI, which closes the loop.
 
 ## From here
 

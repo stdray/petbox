@@ -1,4 +1,44 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace PetBox.Web.Mcp.Contract;
+
+// One value of the `links` map: a single ref OR an array of refs. Accepts the wire shape
+// `{ "task_spec": "slug" }` and `{ "task_spec": ["a", "b"] }` alike, normalizing to a string list
+// on parse (spec methodology-link-kinds-declared). Serializes as an array.
+[JsonConverter(typeof(LinkRefsConverter))]
+public sealed record LinkRefs(IReadOnlyList<string> Values);
+
+// string|array -> LinkRefs. A JSON string becomes a one-element list; a JSON array reads its
+// string elements (nulls skipped); null/anything else becomes an empty list (the service reports
+// the actionable error, not the deserializer).
+public sealed class LinkRefsConverter : JsonConverter<LinkRefs>
+{
+	public override LinkRefs Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+	{
+		switch (reader.TokenType)
+		{
+			case JsonTokenType.String:
+				return new LinkRefs([reader.GetString() ?? ""]);
+			case JsonTokenType.StartArray:
+				var list = new List<string>();
+				while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+					if (reader.TokenType == JsonTokenType.String && reader.GetString() is { } s)
+						list.Add(s);
+				return new LinkRefs(list);
+			default:
+				reader.Skip();
+				return new LinkRefs([]);
+		}
+	}
+
+	public override void Write(Utf8JsonWriter writer, LinkRefs value, JsonSerializerOptions options)
+	{
+		writer.WriteStartArray();
+		foreach (var v in value.Values) writer.WriteStringValue(v);
+		writer.WriteEndArray();
+	}
+}
 
 // Typed MCP tool-INPUT records (typed-surface Phase 4 — typed inputs). The structural
 // array params of tasks_upsert (`nodes`) and memory_upsert (`entries`) used to arrive as a
@@ -33,10 +73,15 @@ public sealed record PlanNodeInput
 	// Vertical decomposition: parent slug | NodeId. null = omit, "" = detach to root.
 	public string? PartOf { get; init; }
 
-	// Per-node links. specRef → spec NodeId implemented; ideaRef → accepted idea (spec boards);
-	// blockedBy → blocking NodeId; supersedes → slug|NodeId this node replaces.
-	public string? SpecRef { get; init; }
-	public string? IdeaRef { get; init; }
+	// Per-node links, addressed by relation-kind slug (spec methodology-link-kinds-declared):
+	// { "<kind>": ref } or { "<kind>": [ref, …] }, each ref a slug or NodeId. Replaces the removed
+	// specRef/ideaRef sugar — a spec write passes `links:{ idea_spec: <idea> }`, a work task
+	// `links:{ task_spec: <spec> }`. The target end and edge orientation come from the kind's
+	// declared Direction. `blockedBy` stays as sugar (builtin `blocks`); `links.blocks` is also
+	// accepted, but not both on one node.
+	public Dictionary<string, LinkRefs>? Links { get; init; }
+	// blockedBy → a blocking NodeId|slug (builtin `blocks`); supersedes → slug|NodeId this node
+	// replaces. Kept as sugar for the direction-less builtin structural edges.
 	public string? BlockedBy { get; init; }
 	public string? Supersedes { get; init; }
 
@@ -149,10 +194,14 @@ public sealed record MethodologyDeliveryInput
 {
 	public string[]? RequiredTypes { get; init; }
 	public string[]? DefectTypes { get; init; }
+	// Mirrors MethodologyDeliveryDef.Link: the relation kind the roll-up sweeps inbound edges of
+	// (the quartet spec rolls up over task_spec). Required — no default.
+	public string? Link { get; init; }
 }
 
 // "A NEW node of type `type` must carry a link of kind `link` at creation." `link` must
-// be upsert-expressible: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).
+// be upsert-expressible: any declared/builtin link, addressed via links:{kind:ref};
+// blockedBy is builtin-blocks sugar.
 // `targetKind`/`targetStatuses` optionally declare what the link must point at: a node of
 // that kind and/or in one of those statuses (declaration only in this wave).
 public sealed record MethodologyLinkConstraintInput
@@ -185,11 +234,26 @@ public sealed record MethodologyEffectInput
 }
 
 // A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not
-// collide with a builtin process/neutral kind.
+// collide with a builtin process/neutral kind. `category` is neutral|process (default
+// neutral); `direction` optionally declares the stored edge's orientation.
 public sealed record MethodologyLinkKindInput
 {
 	public string? Slug { get; init; }
 	public string? Description { get; init; }
+	// Mirrors MethodologyLinkKindDef.Category: neutral|process (default neutral when null).
+	// v1 declaration only — parsed to the LinkCategory enum by MethodologyWire.
+	public string? Category { get; init; }
+	// Mirrors MethodologyLinkKindDef.Direction: the stored-edge orientation. Null = none.
+	public MethodologyLinkDirectionInput? Direction { get; init; }
+}
+
+// The stored-edge orientation of a declared relation kind (mirrors MethodologyLinkDirectionDef):
+// fromKind/toKind constrain the node kind at each end of relations.from→to; null = unconstrained.
+public sealed record MethodologyLinkDirectionInput
+{
+	public string? FromKind { get; init; }
+	public string? ToKind { get; init; }
+	public string? Label { get; init; }
 }
 
 // A declared tag namespace (axis) for the project's definition-resolved boards.

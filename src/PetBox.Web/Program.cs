@@ -826,6 +826,18 @@ public partial class Program
 			new PetBox.Tasks.Data.WorkDeferredStatusMigrator(coreDbFactory, tasksFactory, deferredLog).Migrate();
 		}
 
+		// One-time, idempotent (spec methodology-link-kinds-declared): the quartet's process link
+		// kinds (idea_spec/task_spec/issue_task) moved out of MethodologyRuntime.ProcessRelationKinds
+		// and are now DECLARED relation kinds with direction; delivery roll-up names its link kind as
+		// DATA (delivery.link, no default). A stored methodology document materialized before this
+		// change references the trio + rolls up delivery by an implicit literal but declares neither —
+		// this backfills those stored documents (definition + instances + templates) so guide,
+		// DeclaredLinkKinds and delivery read the trio/link straight from the data.
+		{
+			var linkKindsLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.LinkKindsDeclaredMigrator");
+			new PetBox.Tasks.Data.LinkKindsDeclaredMigrator(coreDbFactory, tasksFactory, linkKindsLog).Migrate();
+		}
+
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
 		// module (config/$system.db: the `llm/registry` JSON binding + one `llm/secret/{endpoint}`
 		// binding per api key) into core.db's llm_endpoints/llm_routes at level System:$. A startup

@@ -227,7 +227,7 @@ public static class MethodologyPresets
 		],
 		// primitives-enum-residual: delivery type roles are DATA (feature drives progress;
 		// open bug → done_with_defects). Computed by TasksService.ComputeSpecDeliveryAsync.
-		Delivery = new MethodologyDeliveryDef(["feature"], ["bug"]),
+		Delivery = new MethodologyDeliveryDef(["feature"], ["bug"], "task_spec"),
 		// methodology-default-view-field: spec opens in outline (heading hierarchy) by
 		// default. Renderer not shipped yet — degrades to Tree until it is.
 		DefaultView = BoardViewModeNames.Outline,
@@ -324,6 +324,32 @@ public static class MethodologyPresets
 	// enforce, simple/classic don't" without a second mechanism.
 	public static IReadOnlyList<MethodologyTagAxisDef> TagAxes(BoardKind kind) =>
 		kind is BoardKind.Simple or BoardKind.Classic ? [] : BuiltinAxes;
+
+	// ---- the quartet's PROCESS relation kinds as DATA (spec methodology-link-kinds-declared) ----
+	//
+	// idea_spec/task_spec/issue_task used to be builtin string literals in
+	// MethodologyRuntime.ProcessRelationKinds; they are now DECLARED relation kinds carried on the
+	// quartet definition's LinkKinds, each with its stored-edge Direction. This is the SANCTIONED
+	// literal home for the trio (criterion-0): the runtime falls back here for the trio's direction
+	// and vocabulary, the validator admits the trio in effects/constraints, and RenderPresetDefinition
+	// seeds them into a quartet document. A project may override any of them by declaring its own
+	// linkKind with the same slug (declared wins over this preset fallback). Descriptions/labels are
+	// from doc/methodology-redesign/02-expressed §1.1.
+	public static readonly IReadOnlyList<MethodologyLinkKindDef> QuartetLinkKinds =
+	[
+		new MethodologyLinkKindDef("idea_spec",
+			"Спека реализует принятую идею — провенанс: каждый лист спеки восходит к идее, которую владелец принял.",
+			LinkCategory.Process,
+			new MethodologyLinkDirectionDef("ideas", "spec", "реализует")),
+		new MethodologyLinkKindDef("task_spec",
+			"Задача поставляет обещание спеки — feature/bug несут способность/дефект против листа спеки; chore не несёт.",
+			LinkCategory.Process,
+			new MethodologyLinkDirectionDef("work", "spec", "поставляет")),
+		new MethodologyLinkKindDef("issue_task",
+			"Задача закрывает интейк-issue — когда работа доходит до Done, входящий issue автозакрывается.",
+			LinkCategory.Process,
+			new MethodologyLinkDirectionDef("intake", "work", "закрывает")),
+	];
 
 	// ---- resolution helpers over the preset data ----
 
@@ -459,6 +485,11 @@ public static class MethodologyPresets
 			// The axes of the preset's OWN kinds (quartet → the builtin area/concern pair;
 			// classic → none = free-form), so the copy keeps the preset's tag posture.
 			TagAxes = preset.Kinds.SelectMany(TagAxes).DistinctBy(a => a.Namespace).ToList(),
+			// The quartet's process relation kinds as DATA (methodology-link-kinds-declared): the
+			// trio (idea_spec/task_spec/issue_task with direction) is materialized into the stored
+			// document only when the preset carries the pipeline kinds those directions reference —
+			// classic/simple carry no process trio.
+			LinkKinds = preset.Kinds.Contains(BoardKind.Work) ? QuartetLinkKinds : [],
 		};
 	}
 

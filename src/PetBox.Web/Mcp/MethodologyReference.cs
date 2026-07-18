@@ -48,6 +48,7 @@ static class MethodologyReference
 		[typeof(MethodologyValueMapInput)] = "valueMap",
 		[typeof(MethodologyRequiredArtifactInput)] = "requiredArtifact",
 		[typeof(MethodologyGateEnforcementInput)] = "gateEnforcement",
+		[typeof(MethodologyLinkDirectionInput)] = "linkDirection",
 	};
 
 	public static readonly IReadOnlyList<Entity> Entities =
@@ -71,7 +72,7 @@ static class MethodologyReference
 				["workflows"] = "The kind's workflow blocks — at least one. A type slug maps to exactly one block across the kind.",
 				["linkConstraints"] = "Per-type creation link requirements (\"a NEW <type> must carry a <link>\"). Omitted = no requirement; constraints are opt-in per type.",
 				["effects"] = "Declared transition effects — cross-node automation the server executes when a node of this kind enters the trigger status.",
-				["autoWireSpecFrom"] = "Auto-wire this kind's boards to the sole active board of the named kind (e.g. work → \"spec\"), so specRef resolves without naming a board. Omitted = no auto-wire.",
+				["autoWireSpecFrom"] = "Auto-wire this kind's boards to the sole active board of the named kind (e.g. work → \"spec\"), so the task_spec link resolves without naming a board. Omitted = no auto-wire.",
 				["delivery"] = "The bottom-up delivery roll-up for this kind (a spec node's verdict computed from the work nodes linked to it). Omitted = this kind computes no delivery.",
 				["defaultView"] = "The board's initial view mode when a viewer has no saved preference. Omitted = the builtin default.",
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
@@ -93,6 +94,7 @@ static class MethodologyReference
 			{
 				["requiredTypes"] = "The type slugs that DRIVE progress (e.g. [\"feature\"]): none linked → not_started; any not in a terminalok status → in_progress; all terminalok → a done candidate.",
 				["defectTypes"] = "The type slugs counted as defects (e.g. [\"bug\"]): once the requireds are done, any defect still in an OPEN status turns the verdict into done_with_defects. Omitted/empty = done has no defect variant.",
+				["link"] = "The relation kind whose INBOUND edges name the delivering nodes (the quartet spec rolls up over task_spec). Required — no default; the roll-up sweeps this kind's edges (spec methodology-link-kinds-declared).",
 			}),
 		Describe<MethodologyWorkflowInput>(
 			"One state machine shared by every type slug in `types`. Convention: statuses[0] is the initial status.",
@@ -141,13 +143,13 @@ static class MethodologyReference
 				["artifacts"] = "Omitted = true (reason/precondition artifacts are hard today, unconditionally — this reproduces that). false demotes the gate to a convention the guide states but the server does not block.",
 			}),
 		Describe<MethodologyLinkConstraintInput>(
-			"\"A NEW node of `type` must carry a link of kind `link` at creation.\" Only upsert-expressible links can gate creation: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).",
+			"\"A NEW node of `type` must carry a link of kind `link` at creation\" (and on EVERY write when the constraint pins a target status — provenance). The link is addressed through the generic links:{kind:ref} door; `link` may be any relation kind the project knows.",
 			new()
 			{
 				["type"] = "The type slug the constraint binds (must be declared by this kind's workflow blocks).",
-				["link"] = "task_spec | blocks | idea_spec — the link kinds expressible in the create call itself.",
-				["targetKind"] = "Optionally, the kind the linked node must be (e.g. a specRef must point at a spec node). Omitted = any kind.",
-				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an ideaRef must point at an ACCEPTED idea). Omitted = any status.",
+				["link"] = $"The required relation kind — any kind the project knows ({BuiltinRelationKinds}, the quartet's task_spec/idea_spec/issue_task, or a declared linkKind). Expressed at write time via links:{{<link>:ref}}.",
+				["targetKind"] = "Optionally, the kind the linked node must be (e.g. a task_spec must point at a spec node). Omitted = any kind.",
+				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an idea_spec must point at an ACCEPTED idea) — pinning a status also makes the link required on EVERY write, not just creation. Omitted = any status.",
 				["description"] = "Optional free-form prose about why this constraint exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
 			}),
 		Describe<MethodologyEffectInput>(
@@ -168,6 +170,16 @@ static class MethodologyReference
 			{
 				["slug"] = $"The relation kind's {SlugSpec}; must not collide with a builtin kind.",
 				["description"] = "Optional human description (shown in the process guide's relation dictionary).",
+				["category"] = "neutral | process (default neutral). Declaration only in v1 — process marks the edge as process-bearing for the guide; it does not yet change effect/guard behavior.",
+				["direction"] = "Optional stored-edge orientation (fromKind/toKind name the node kinds at each end of relations.from→to). Omitted = the edge is unoriented.",
+			}),
+		Describe<MethodologyLinkDirectionInput>(
+			"The STORED orientation of a declared relation kind's edge (spec methodology-link-kinds-declared). fromKind/toKind constrain the node KIND at each end of the stored edge (relations.from→to), NOT a semantic reading — the human reading goes in label.",
+			new()
+			{
+				["fromKind"] = "The kind of the node at the FROM end of the stored edge (must be a kind this definition declares). Omitted = that end is unconstrained.",
+				["toKind"] = "The kind of the node at the TO end of the stored edge (must be a kind this definition declares). Omitted = that end is unconstrained.",
+				["label"] = "The human reading of the edge (e.g. \"delivers to\"), shown in the process guide's relation dictionary.",
 			}),
 		Describe<MethodologyTagAxisInput>(
 			"A declared tag namespace: with axes declared, every tag on a definition-resolved board must be <namespace>:value.",

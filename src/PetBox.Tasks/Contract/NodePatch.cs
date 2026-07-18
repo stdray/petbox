@@ -41,15 +41,16 @@ public sealed record NodePatch
 	// 7..40 chars) by the service.
 	public IReadOnlyList<string>? Commits { get; init; }
 
-	// Per-node link fields. specRef → the spec NodeId this task implements (task_spec).
-	// blockedBy → a NodeId that blocks this task (blocks). Null/empty = no link given.
-	public string? SpecRef { get; init; }
-	public string? BlockedBy { get; init; }
+	// Per-node links addressed by relation-kind slug (spec methodology-link-kinds-declared): kind
+	// slug -> the refs (slug|NodeId) this node links via that kind. The generic write door that
+	// replaced the specRef/ideaRef sugar — a work task carries `task_spec`, a spec write carries
+	// `idea_spec`. The target end and edge orientation come from the kind's declared Direction.
+	// null/empty = no links given.
+	public IReadOnlyDictionary<string, IReadOnlyList<string>>? Links { get; init; }
 
-	// Spec boards only: the NodeId of the `accepted` idea this spec create/change is made
-	// under — becomes the idea_spec edge. Required on every spec node (governance: no spec
-	// change without an accepted idea). Null/empty = no link given.
-	public string? IdeaRef { get; init; }
+	// blockedBy → a NodeId|slug that blocks this task (builtin `blocks`, direction-less structural
+	// edge). Kept as sugar; also expressible as links.blocks (not both). Null/empty = no link.
+	public string? BlockedBy { get; init; }
 
 	// Enforced tags ("namespace:value", namespaces area|concern). null = OMIT (leave the
 	// node's tags as-is); a non-null list (incl. empty) REPLACES the node's full tag set.

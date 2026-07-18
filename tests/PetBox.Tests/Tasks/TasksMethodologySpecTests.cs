@@ -21,9 +21,9 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 			projectKey = ProjectKey,
 			board = "spec",
 			nodes = Nodes(
-				new { key = "auth", status = "defined", title = "Auth", body = "auth area", ideaRef = ir },
-				new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "login flow", ideaRef = ir },
-				new { key = "mfa", partOf = "login", status = "defined", title = "MFA", body = "second factor", ideaRef = ir }),
+				new { key = "auth", status = "defined", title = "Auth", body = "auth area", links = new { idea_spec = ir } },
+				new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "login flow", links = new { idea_spec = ir } },
+				new { key = "mfa", partOf = "login", status = "defined", title = "MFA", body = "second factor", links = new { idea_spec = ir } }),
 		})).IsError.Should().NotBe(true);
 
 		var tree = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
@@ -41,7 +41,7 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 		var ideaId = await AcceptedIdeaId("want-x");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "defined", ideaRef = ideaId }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "defined", links = new { idea_spec = ideaId } }) });
 		spec.IsError.Should().NotBe(true);
 		var specId = NodeId(spec, "x");
 
@@ -62,24 +62,24 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 			projectKey = ProjectKey,
 			board = "spec",
 			nodes = Nodes(
-			new { key = "auth", status = "defined", title = "Auth", body = "x", ideaRef = ir },
-			new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "x", ideaRef = ir })
+			new { key = "auth", status = "defined", title = "Auth", body = "x", links = new { idea_spec = ir } },
+			new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } })
 		});
 		var loginId = NodeId(await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" }), "login");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = loginId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", links = new { task_spec = loginId } }) });
 
 		var s1 = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s1, "login", "delivery").Should().Be("in_progress");
 		FieldOf(s1, "auth", "delivery").Should().Be("in_progress", "parent aggregates the part_of subtree");
 
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", version = 1, title = "F", body = "x", specRef = loginId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", version = 1, title = "F", body = "x", links = new { task_spec = loginId } }) });
 		var s2 = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s2, "login", "delivery").Should().Be("done");
 		FieldOf(s2, "auth", "delivery").Should().Be("done");
 
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "bug1", type = "bug", status = "Pending", title = "Bug", body = "x", specRef = loginId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "bug1", type = "bug", status = "Pending", title = "Bug", body = "x", links = new { task_spec = loginId } }) });
 		var s3 = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s3, "login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
 		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
@@ -98,17 +98,17 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 			projectKey = ProjectKey,
 			board = "spec",
 			nodes = Nodes(
-				new { key = "umbrella", status = "defined", title = "Umbrella", body = "x", ideaRef = ir },
-				new { key = "leaf1", partOf = "umbrella", status = "defined", title = "Leaf1", body = "x", ideaRef = ir },
-				new { key = "leaf2", partOf = "umbrella", status = "defined", title = "Leaf2", body = "x", ideaRef = ir },
-				new { key = "leaf3", partOf = "umbrella", status = "defined", title = "Leaf3", body = "x", ideaRef = ir })
+				new { key = "umbrella", status = "defined", title = "Umbrella", body = "x", links = new { idea_spec = ir } },
+				new { key = "leaf1", partOf = "umbrella", status = "defined", title = "Leaf1", body = "x", links = new { idea_spec = ir } },
+				new { key = "leaf2", partOf = "umbrella", status = "defined", title = "Leaf2", body = "x", links = new { idea_spec = ir } },
+				new { key = "leaf3", partOf = "umbrella", status = "defined", title = "Leaf3", body = "x", links = new { idea_spec = ir } })
 		});
 		var searchAfterCreate = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		var leaf1Id = NodeId(searchAfterCreate, "leaf1");
 
 		// leaf2 and leaf3 get NO linked tasks at all; only leaf1 gets a Done feature.
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", title = "F", body = "x", specRef = leaf1Id }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", title = "F", body = "x", links = new { task_spec = leaf1Id } }) });
 
 		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s, "leaf1", "delivery").Should().Be("done");
@@ -131,11 +131,11 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "login");
 
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = specId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", links = new { task_spec = specId } }) });
 
 		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		using var doc = JsonDocument.Parse(Text(s));
@@ -159,10 +159,10 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 	{
 		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "spquartet", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "login");
 
-		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = specId }) });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", links = new { task_spec = specId } }) });
 
 		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
 		using var doc = JsonDocument.Parse(Text(s));
@@ -186,7 +186,8 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x" })
 		});
 		IsErr(r).Should().BeTrue();
-		Text(r).Should().Contain("accepted idea");
+		Text(r).Should().Contain("must carry a idea_spec link");
+		Text(r).Should().Contain("in status accepted");
 	}
 
 	// 23. a spec node referencing a NOT-yet-accepted idea (still exploring) is rejected.
@@ -205,7 +206,7 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = ideaId })
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = ideaId } })
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not accepted");
@@ -221,7 +222,7 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "x", status = "draft", title = "X", body = "x", ideaRef = ir })
+			nodes = Nodes(new { key = "x", status = "draft", title = "X", body = "x", links = new { idea_spec = ir } })
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("draft"); // error enumerates valid statuses (defined|deprecated)

@@ -50,7 +50,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		{
 			projectKey = ProjectKey,
 			board = "spec",
-			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }),
+			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }),
 		});
 		var specId = NodeId(spec, "login");
 
@@ -68,7 +68,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", title = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", title = "Fix login", body = "x", links = new { task_spec = specId } }),
 		});
 		var taskId = NodeId(work, "fix-login");
 		await Agent("relations_create", new { projectKey = ProjectKey, kind = "issue_task", fromNodeId = issueId, toNodeId = taskId });
@@ -78,7 +78,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", version = 1, title = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", version = 1, title = "Fix login", body = "x", links = new { task_spec = specId } }),
 		});
 		IsErr(done).Should().BeFalse();
 
@@ -99,7 +99,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 
@@ -107,7 +107,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", links = new { task_spec = specId } }),
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("block");
@@ -128,14 +128,14 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	{
 		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "wfquartet", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
 
 		var r = await Agent("tasks_upsert", new
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", links = new { task_spec = specId } }),
 		});
 		IsErr(r).Should().BeTrue(
 			"a Blocked work task must still name a blocker on a REAL quartet-provisioned " +
@@ -150,17 +150,17 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 
-		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", specRef = specId }) });
+		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", links = new { task_spec = specId } }) });
 		var aId = NodeId(a, "a");
-		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", links = new { task_spec = specId }, blockedBy = aId }) });
 		IsErr(b).Should().BeFalse();
 
 		// blocker A → Done (baseline version 1: A was the first node on the work board)
-		var done = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, title = "A", body = "x", specRef = specId }) });
+		var done = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, title = "A", body = "x", links = new { task_spec = specId } }) });
 		IsErr(done).Should().BeFalse();
 
 		var get = await Agent("tasks_search", new { projectKey = ProjectKey, board = "work" });
@@ -180,25 +180,25 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		var ir = await AcceptedIdeaId();
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 
-		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", specRef = specId }) });
+		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", links = new { task_spec = specId } }) });
 		var aId = NodeId(a, "a");
-		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", links = new { task_spec = specId }, blockedBy = aId }) });
 		IsErr(b).Should().BeFalse();
 
 		// B leaves Blocked on its own (not because A reached Done) — the incoming blocks edge
 		// closes. Baseline version 2: the board-wide write cursor stamps a's creation 1, b's
 		// creation 2 (TemporalStore.MaxVersionAsync + 1 per commit — a's own baseline in the
 		// AutoUnblocksWhenBlockerDone test above is 1 for the SAME reason).
-		var leave = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "InProgress", version = 2, title = "B", body = "x", specRef = specId }) });
+		var leave = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "InProgress", version = 2, title = "B", body = "x", links = new { task_spec = specId } }) });
 		IsErr(leave).Should().BeFalse();
 
 		// Re-entering Blocked without a fresh blockedBy is refused: the old edge is closed, not
 		// live. Baseline version 3: the leave commit above is the board's third write.
-		var reenter = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", version = 3, title = "B", body = "x", specRef = specId }) });
+		var reenter = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", version = 3, title = "B", body = "x", links = new { task_spec = specId } }) });
 		IsErr(reenter).Should().BeTrue("the manually-closed blocks edge must not still count as an active blocker");
 		Text(reenter).Should().Contain("block");
 	}
@@ -218,18 +218,18 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	{
 		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "wfquartet2", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
-		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
 
-		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", specRef = specId }) });
+		var a = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", links = new { task_spec = specId } }) });
 		var aId = NodeId(a, "a");
-		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		var b = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", links = new { task_spec = specId }, blockedBy = aId }) });
 		IsErr(b).Should().BeFalse();
 
-		var leave = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "InProgress", version = 2, title = "B", body = "x", specRef = specId }) });
+		var leave = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "InProgress", version = 2, title = "B", body = "x", links = new { task_spec = specId } }) });
 		IsErr(leave).Should().BeFalse();
 
-		var reenter = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", version = 3, title = "B", body = "x", specRef = specId }) });
+		var reenter = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", version = 3, title = "B", body = "x", links = new { task_spec = specId } }) });
 		IsErr(reenter).Should().BeTrue(
 			"unblock-on-leave must fire on a REAL quartet-provisioned (definition-resolved) work " +
 			"board too, not just the bare-preset shape — a fix living only in the WorkKind preset's " +
@@ -286,7 +286,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		});
 		// (the envelope '-escapes quotes, so assert around the quoted node key)
 		IsErr(bug).Should().BeTrue();
-		Text(bug).Should().Contain("a work bug must link a spec node — provide specRef (node");
+		Text(bug).Should().Contain("a new work bug must carry a task_spec link — provide links.task_spec");
 		Text(bug).Should().Contain("b\\u0027)");
 
 		var feature = await Agent("tasks_upsert", new
@@ -296,7 +296,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 			nodes = Nodes(new { key = "f", type = "feature", status = "Pending", title = "F", body = "x" })
 		});
 		IsErr(feature).Should().BeTrue();
-		Text(feature).Should().Contain("a work feature must link a spec node — provide specRef (node");
+		Text(feature).Should().Contain("a new work feature must carry a task_spec link — provide links.task_spec");
 		Text(feature).Should().Contain("f\\u0027)");
 	}
 

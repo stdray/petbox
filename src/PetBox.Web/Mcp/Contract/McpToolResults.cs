@@ -714,7 +714,7 @@ public sealed record MethodologyKindView(
 public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);
 
 // Mirrors MethodologyDeliveryDef 1:1 — the output-side counterpart of MethodologyDeliveryInput.
-public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes);
+public sealed record MethodologyDeliveryView(IReadOnlyList<string> RequiredTypes, IReadOnlyList<string> DefectTypes, string Link);
 
 // "A new <type> on this kind's boards must carry a <link> at creation" (link =
 // task_spec|blocks|idea_spec — the upsert-expressible kinds). `targetKind`/
@@ -731,8 +731,17 @@ public sealed record MethodologyEffectView(
 	string On, string Link, string Direction, string? Set, string? OnlyFrom = null, bool OnLeave = false,
 	string? Description = null);
 
-// A project-declared relation kind (free semantic edge, no FSM effects).
-public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
+// A project-declared relation kind (free semantic edge, no FSM effects). `category` is the
+// camelCase string neutral|process; `direction` is the stored-edge orientation (null = none).
+public sealed record MethodologyLinkKindView(
+	string Slug, string? Description = null,
+	string? Category = null,
+	MethodologyLinkDirectionView? Direction = null);
+
+// The stored-edge orientation of a declared relation kind (mirrors MethodologyLinkDirectionDef):
+// fromKind/toKind constrain the node kind at each end of relations.from→to; null = unconstrained.
+public sealed record MethodologyLinkDirectionView(
+	string? FromKind = null, string? ToKind = null, string? Label = null);
 
 // A declared tag namespace for definition-resolved boards.
 public sealed record MethodologyTagAxisView(string Namespace, string? Description = null);

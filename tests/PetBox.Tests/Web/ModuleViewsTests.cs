@@ -1933,7 +1933,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("doc-onboarding");
 		html.Should().Contain("PETBOX_"); // per-project env-var step
-		html.Should().Contain("specRef"); // spec-link step content
+		html.Should().Contain("task_spec"); // spec-link step content
 	}
 
 	// ── ui-dashboard-zone-jumps ──────────────────────────────────────────────

@@ -26,146 +26,167 @@ public static class GuardEngine
 	public static bool NeedsCommentTags(MethodologyRuntime runtime, string? kindSlug) =>
 		runtime.Types(kindSlug).Any(w => w.Transitions.Any(t => t.PreconditionArtifact is not null));
 
-	// ONE decision per pass of the upsert's retry loop: resolve the refs, then judge, in the
-	// order the service used to call them (ResolveSpecRefs -> ResolveBlockedBy -> ResolveIdeaRefs
-	// -> RequireDefinitionLinks -> ValidateLinkTargets -> RequireBlockers ->
-	// RequirePreconditionArtifacts). That order IS the order of indictment when a batch violates
-	// several rules at once, and it is preserved here by construction.
+	// ONE decision per pass of the upsert's retry loop: resolve the links, then judge, in the
+	// order of indictment when a batch violates several rules at once (ResolveLinks ->
+	// RequireDefinitionLinks -> ValidateLinkTargets -> RequireBlockers ->
+	// RequirePreconditionArtifacts). specRef/ideaRef are GONE — every link (structural or
+	// provenance) now arrives through the generic `links:{kind:ref[]}` door plus the blockedBy
+	// sugar, and is resolved by its declared Direction (spec methodology-link-kinds-declared).
 	public static MethodologyEngineDecision Decide(
 		MethodologyEngineContext ctx,
 		IReadOnlyList<NodeState> desired,
 		IReadOnlyDictionary<string, NodeState> prior,
-		IReadOnlyDictionary<string, string> specRefsRaw,
-		IReadOnlyDictionary<string, string> blockedByRaw,
-		IReadOnlyDictionary<string, string> ideaRefsRaw)
+		IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> linksRaw,
+		IReadOnlyDictionary<string, string> blockedByRaw)
 	{
-		if (ResolveSpecRefs(ctx, specRefsRaw, out var specRefs) is { } v1)
+		if (ResolveLinks(ctx, desired, prior, linksRaw, blockedByRaw, out var links) is { } v1)
 			return MethodologyEngineDecision.Refused(v1);
-		if (ResolveBlockedBy(ctx, desired, prior, blockedByRaw, out var blockedBy) is { } v2)
+		if (RequireDefinitionLinks(ctx, desired, prior, links) is { } v2)
 			return MethodologyEngineDecision.Refused(v2);
-		if (ResolveIdeaRefs(ctx, ideaRefsRaw, out var ideaRefs) is { } v3)
+		if (ValidateLinkTargets(ctx, links) is { } v3)
 			return MethodologyEngineDecision.Refused(v3);
-		if (RequireDefinitionLinks(ctx, desired, prior, specRefs, blockedBy, ideaRefs) is { } v4)
+		if (RequireBlockers(ctx, desired, links) is { } v4)
 			return MethodologyEngineDecision.Refused(v4);
-		if (ValidateLinkTargets(ctx, specRefs, ideaRefs) is { } v5)
+		if (RequirePreconditionArtifacts(ctx, desired, prior) is { } v5)
 			return MethodologyEngineDecision.Refused(v5);
-		if (RequireBlockers(ctx, desired, blockedBy) is { } v6)
-			return MethodologyEngineDecision.Refused(v6);
-		if (RequirePreconditionArtifacts(ctx, desired, prior) is { } v7)
-			return MethodologyEngineDecision.Refused(v7);
-		return new MethodologyEngineDecision([], specRefs, blockedBy, ideaRefs);
+		return new MethodologyEngineDecision([], links);
 	}
 
 	static MethodologyVerdict Bad(string node, string message) => new(node, message, VerdictKind.InvalidArgument);
 
-	// specRef accepts the spec node's slug OR its NodeId, mirroring part_of (ResolveParentId).
-	// A slug resolves against the board's linked spec board (SpecBoard); the returned map holds
-	// NodeIds only. NodeId-shaped values pass through untouched (existing behavior).
-	public static MethodologyVerdict? ResolveSpecRefs(
-		MethodologyEngineContext ctx, IReadOnlyDictionary<string, string> raw,
-		out IReadOnlyDictionary<string, string> resolved)
-	{
-		var map = new Dictionary<string, string>(raw, StringComparer.Ordinal);
-		resolved = map;
-		if (map.Count == 0) return null;
-		foreach (var (key, val) in raw)
-		{
-			var v = val.Trim();
-			if (LooksLikeNodeId(v)) { map[key] = v; continue; }
-			if (ctx.SpecBoard is not { Length: > 0 } sb)
-				return Bad(key, $"specRef '{val}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId");
-			var slug = v.ToLowerInvariant();
-			var target = ctx.NodeIndex.Values.FirstOrDefault(n =>
-				string.Equals(n.Board, sb, StringComparison.Ordinal) && string.Equals(n.Slug, slug, StringComparison.Ordinal));
-			if (target is null)
-				return Bad(key, $"specRef '{val}' (node '{key}') does not match any node on spec board '{sb}'");
-			map[key] = target.NodeId;
-		}
-		return null;
-	}
-
-	// blockedBy accepts the blocker's slug OR its NodeId, mirroring specRef. A slug resolves on
-	// THIS board (blockers are usually siblings) over the active rows overlaid with this batch, so
-	// a blocker created in the same call resolves too. The returned map holds NodeIds only.
-	public static MethodologyVerdict? ResolveBlockedBy(
+	// The one link resolver (spec methodology-link-kinds-declared): the blockedBy sugar plus the
+	// generic `links:{kind:ref[]}` door, each edge resolved to a real target NodeId with its stored
+	// orientation. Two strategies:
+	//   • `blocks` (direction-less builtin, via blockedBy sugar OR links.blocks): the blocker's
+	//     slug resolves on THIS board over prior overlaid with the batch (a blocker created in the
+	//     same call resolves too); the writer is the edge's TO (blocker -> task).
+	//   • a directed kind (idea_spec/task_spec/issue_task or a project-declared kind with a
+	//     Direction): the writer occupies the END whose kind equals its own; the TARGET is the
+	//     opposite end, resolved by SLUG against the boards of that end's kind IN THE ACTIVE
+	//     METHODOLOGY-INSTANCE BUCKET (never across instances), NodeId-shaped values passing
+	//     through. The orientation follows which end the writer sits on.
+	// A node that sets `blocks` both ways (blockedBy and links.blocks) is refused — one link, one way.
+	static MethodologyVerdict? ResolveLinks(
 		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, NodeState> prior,
-		IReadOnlyDictionary<string, string> raw, out IReadOnlyDictionary<string, string> resolved)
+		IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> linksRaw,
+		IReadOnlyDictionary<string, string> blockedByRaw,
+		out List<ResolvedLink> resolved)
 	{
-		var map = new Dictionary<string, string>(raw, StringComparer.Ordinal);
-		resolved = map;
-		if (map.Count == 0) return null;
+		resolved = [];
+
+		// Same-board slug->id (prior overlaid with the batch) for the direction-less `blocks` kind.
 		var slugToId = prior.Values.Where(n => n.NodeId.Length > 0)
 			.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var n in desired.Where(n => n.NodeId.Length > 0))
 			slugToId[n.Key] = n.NodeId;
-		foreach (var (key, val) in raw)
+
+		var blocksSetBy = new HashSet<string>(StringComparer.Ordinal); // double-spec guard
+
+		foreach (var (key, val) in blockedByRaw)
 		{
-			var v = val.Trim();
-			if (LooksLikeNodeId(v)) { map[key] = v; continue; }
-			if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var id))
-				return Bad(key, $"blockedBy '{val}' (node '{key}') does not match any node on board '{ctx.Board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
-			map[key] = id;
+			if (ResolveSameBoard(ctx, slugToId, key, "blockedBy", val, out var id) is { } v) return v;
+			resolved.Add(new ResolvedLink("blocks", key, id, WriterIsFrom: false));
+			blocksSetBy.Add(key);
+		}
+
+		foreach (var (key, byKind) in linksRaw)
+		{
+			foreach (var (kindRaw, refs) in byKind)
+			{
+				if (refs.Count == 0) continue;
+				var kind = (kindRaw ?? "").Trim().ToLowerInvariant();
+				if (kind.Length == 0) continue;
+				if (string.Equals(kind, "blocks", StringComparison.OrdinalIgnoreCase))
+				{
+					if (!blocksSetBy.Add(key))
+						return Bad(key, $"node '{key}' sets the `blocks` link two ways (blockedBy and links.blocks) — provide it one way");
+					foreach (var r in refs)
+					{
+						if (ResolveSameBoard(ctx, slugToId, key, "links.blocks", r, out var id) is { } v) return v;
+						resolved.Add(new ResolvedLink("blocks", key, id, WriterIsFrom: false));
+					}
+					continue;
+				}
+				if (ResolveDirected(ctx, key, kind, refs, resolved) is { } vd) return vd;
+			}
 		}
 		return null;
 	}
 
-	// ideaRef accepts the idea node's slug OR its NodeId, mirroring specRef. There is no
-	// SpecBoard-style pin for ideas, so a slug resolves against the board(s) whose kind is the
-	// idea_spec target kind (`ideas`) INSIDE THIS BOARD'S methodology-instance bucket — the same
-	// membership grouping AutoWireSpec wires work->spec within, so a multi-instance project never
-	// resolves an ideaRef across instances. Any active row matches: no status filter (the only
-	// legal target is TERMINAL `accepted`; the kind/status constraint still runs afterwards in
-	// ValidateLinkTargets). NodeId-shaped values pass through untouched.
-	public static MethodologyVerdict? ResolveIdeaRefs(
-		MethodologyEngineContext ctx, IReadOnlyDictionary<string, string> raw,
-		out IReadOnlyDictionary<string, string> resolved)
+	// A slug|NodeId that resolves on THIS board (the `blocks` sugar's home). NodeId passes through.
+	static MethodologyVerdict? ResolveSameBoard(
+		MethodologyEngineContext ctx, Dictionary<string, string> slugToId,
+		string key, string field, string val, out string id)
 	{
-		var map = new Dictionary<string, string>(raw.Count, StringComparer.Ordinal);
-		resolved = map;
-		if (raw.Count == 0) return null;
-		// Every value is trimmed, NodeId-shaped or not (historical behavior).
-		var slugRefs = new List<KeyValuePair<string, string>>();
-		foreach (var (key, val) in raw)
+		id = "";
+		var v = val.Trim();
+		if (LooksLikeNodeId(v)) { id = v; return null; }
+		if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var found))
+			return Bad(key, $"{field} '{val}' (node '{key}') does not match any node on board '{ctx.Board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
+		id = found;
+		return null;
+	}
+
+	// Resolve a DIRECTED link kind's refs. The writer node (kind = ctx.KindSlug) must occupy one
+	// end of the kind's Direction; the target is the opposite end. A slug resolves against the
+	// active boards of the target-end kind in THIS instance bucket (mirrors the old ideaRef
+	// resolution, now generic); NodeId-shaped values pass through untouched (ValidateLinkTargets
+	// checks they resolve). Orientation: writer on the FROM end => writer is relations.from.
+	static MethodologyVerdict? ResolveDirected(
+		MethodologyEngineContext ctx, string writerKey, string kind, IReadOnlyList<string> refs,
+		List<ResolvedLink> resolved)
+	{
+		var writerKind = ctx.Runtime.KindName(ctx.KindSlug);
+		var dir = ctx.Runtime.LinkKind(kind)?.Direction;
+
+		bool writerIsFrom = true;
+		string? targetKind = null;
+		if (dir is not null)
 		{
-			map[key] = val.Trim();
-			if (!LooksLikeNodeId(val.Trim())) slugRefs.Add(new(key, val));
+			var onFrom = dir.FromKind is not null && string.Equals(dir.FromKind, writerKind, StringComparison.OrdinalIgnoreCase);
+			var onTo = dir.ToKind is not null && string.Equals(dir.ToKind, writerKind, StringComparison.OrdinalIgnoreCase);
+			if (onFrom && !onTo) { writerIsFrom = true; targetKind = dir.ToKind; }
+			else if (onTo && !onFrom) { writerIsFrom = false; targetKind = dir.FromKind; }
+			// The writer matches NEITHER end (a project reusing a builtin slug with its own kinds) or
+			// an end whose opposite is null (unconstrained): fall through to the constraint's target
+			// below, keeping the historical writer-is-FROM orientation.
 		}
-		if (slugRefs.Count == 0) return null;
+		// A null opposite end or a direction-less/mismatched kind falls back to the writer kind's
+		// link constraint for its target kind; without either there is nothing to resolve a slug against.
+		targetKind ??= ctx.Runtime.LinkConstraints(ctx.KindSlug)
+			.FirstOrDefault(c => string.Equals(c.Link, kind, StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)?.TargetKind;
+		if (targetKind is null)
+			return Bad(writerKey, $"link '{kind}' has no direction to resolve against from a '{writerKind}' node — declare its direction (fromKind/toKind), or pass a NodeId (node '{writerKey}')");
 
-		// The target kind is DATA: the writing kind's idea_spec constraint names it (spec preset:
-		// `ideas`); a definition that declares no target falls back to the preset ideas kind.
-		// (The old code read `board.Kind` here and `kindSlug` in the other guards — UpsertAsync
-		// binds `kindSlug = meta.Kind`, so they are the same value; one field expresses it.)
-		var targetKind = ctx.Runtime.LinkConstraints(ctx.KindSlug)
-			.FirstOrDefault(c => string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)
-			?.TargetKind ?? BoardKind.Ideas.ToString().ToLowerInvariant();
-
+		// The target-kind boards of this instance bucket (built only for a slug ref).
 		var instance = ctx.MethodologyInstance;
-		var ideaBoards = ctx.Boards
-			.Where(b => !b.Closed
-				&& string.Equals(b.MethodologyInstance, instance, StringComparison.OrdinalIgnoreCase)
-				&& string.Equals(ctx.Runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase))
-			.Select(b => b.Name)
-			.OrderBy(n => n, StringComparer.Ordinal)
-			.ToList();
-
-		var (firstKey, firstRaw) = slugRefs[0];
-		if (ideaBoards.Count == 0)
-			return Bad(firstKey, $"ideaRef '{firstRaw}' (node '{firstKey}') is a slug, but no active {targetKind} board exists alongside board '{ctx.BoardName}'{InstanceSuffix(instance)} — create one or provide the idea node's NodeId");
-
-		var boardList = string.Join(", ", ideaBoards);
-		var boardSet = ideaBoards.ToHashSet(StringComparer.Ordinal);
-		foreach (var (key, val) in slugRefs)
+		List<string>? boards = null;
+		HashSet<string>? boardSet = null;
+		foreach (var raw in refs)
 		{
-			var slug = val.Trim().ToLowerInvariant();
+			var v = (raw ?? "").Trim();
+			if (v.Length == 0) continue;
+			if (LooksLikeNodeId(v)) { resolved.Add(new ResolvedLink(kind, writerKey, v, writerIsFrom)); continue; }
+			if (boards is null)
+			{
+				boards = ctx.Boards
+					.Where(b => !b.Closed
+						&& string.Equals(b.MethodologyInstance, instance, StringComparison.OrdinalIgnoreCase)
+						&& string.Equals(ctx.Runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase))
+					.Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+				boardSet = boards.ToHashSet(StringComparer.Ordinal);
+			}
+			if (boards.Count == 0)
+				return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') is a slug, but no active {targetKind} board exists alongside board '{ctx.BoardName}'{InstanceSuffix(instance)} — create one or provide the target node's NodeId");
+			var slug = v.ToLowerInvariant();
 			var hits = ctx.NodeIndex.Values
-				.Where(n => boardSet.Contains(n.Board) && string.Equals(n.Slug, slug, StringComparison.Ordinal))
+				.Where(n => boardSet!.Contains(n.Board) && string.Equals(n.Slug, slug, StringComparison.Ordinal))
 				.ToList();
 			switch (hits.Count)
 			{
-				case 1: map[key] = hits[0].NodeId; break;
-				case 0: return Bad(key, $"ideaRef '{val}' (node '{key}') does not match any node on {targetKind} board{(ideaBoards.Count > 1 ? "s" : "")} '{boardList}'");
-				default: return Bad(key, $"ambiguous ideaRef '{val}' (node '{key}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the idea node's NodeId instead");
+				case 1: resolved.Add(new ResolvedLink(kind, writerKey, hits[0].NodeId, writerIsFrom)); break;
+				case 0: return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') does not match any node on {targetKind} board{(boards.Count > 1 ? "s" : "")} '{string.Join(", ", boards)}'");
+				default: return Bad(writerKey, $"ambiguous links.{kind} '{raw}' (node '{writerKey}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the target node's NodeId instead");
 			}
 		}
 		return null;
@@ -175,102 +196,91 @@ public static class GuardEngine
 		instance.Length == 0 ? "" : $" in methodology instance '{instance}'";
 
 	// DATA-DRIVEN link constraints (primitives-link-constraints): a NEW node of a constrained type
-	// must carry the constrained link in THIS call (task_spec = specRef, blocks = blockedBy,
-	// idea_spec = ideaRef — the validator admits only these). CADENCE follows the builtin link
-	// kind's semantics: task_spec/blocks are STRUCTURAL edges, required at creation only (edits
-	// don't re-require them); idea_spec is a PROVENANCE edge — every write of a constrained type
-	// must name the idea that authorizes it (the spec-write governance, now as data).
-	public static MethodologyVerdict? RequireDefinitionLinks(
+	// must carry the constrained link in THIS call — and a PROVENANCE constraint (one that pins a
+	// TARGET STATUS, like spec's idea_spec -> accepted) is re-required on EVERY write, not just at
+	// creation. All messages are built FROM THE DATA (the constraint + its declared target), naming
+	// the generic `links.<kind>` field — the compensation for the removed specRef/ideaRef sugar.
+	static MethodologyVerdict? RequireDefinitionLinks(
 		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, NodeState> prior,
-		IReadOnlyDictionary<string, string> specRefs, IReadOnlyDictionary<string, string> blockedBy,
-		IReadOnlyDictionary<string, string> ideaRefs)
+		List<ResolvedLink> links)
 	{
 		var constraints = ctx.Runtime.LinkConstraints(ctx.KindSlug);
 		if (constraints.Count == 0) return null;
+		var provided = links.Select(l => (l.WriterKey, Kind: l.Kind)).ToHashSet();
+		var kindName = ctx.Runtime.KindName(ctx.KindSlug);
 		foreach (var n in desired)
 		{
 			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
 			// The node's EFFECTIVE type: single-FSM preset kinds accept untyped nodes (an untyped
-			// spec node IS a `spec`), so an empty type resolves to the kind's default before
-			// constraint matching — the old kind-wide guard's reach, as data.
-			// The MESSAGES below interpolate THIS, never n.Type: the verdict must name the type it
-			// matched on, or an untyped node reads "a work  must link ..." — indicted by a rule it
-			// refuses to name. Matching and wording share one variable so they can't drift apart.
+			// spec node IS a `spec`), so an empty type resolves to the kind's default before matching.
 			var type = n.Type.Length == 0 ? ctx.Runtime.DefaultType(ctx.KindSlug) : n.Type;
 			foreach (var c in constraints)
 			{
 				if (!string.Equals(c.Type, type, StringComparison.OrdinalIgnoreCase)) continue;
-				var everyWrite = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase);
+				// PROVENANCE = the constraint pins a target STATUS: the authorizing node must exist in
+				// that status on every write (the old idea_spec `every write` cadence, now data).
+				var everyWrite = c.TargetStatuses is { Count: > 0 };
 				if (!isNew && !everyWrite) continue;
-				var kindName = ctx.Runtime.KindName(ctx.KindSlug);
-				// task_spec keeps the historical, target-naming wording; idea_spec states the
-				// provenance rule with the declared target; the generic form names the link kind
-				// + the upsert field that expresses it.
-				var message = c.Link.ToLowerInvariant() switch
-				{
-					"task_spec" when !specRefs.ContainsKey(n.Key) =>
-						$"a {kindName} {type} must link a {c.TargetKind ?? "spec"} node — provide specRef (node '{n.Key}')",
-					"blocks" when !blockedBy.ContainsKey(n.Key) =>
-						$"a {kindName} {type} must carry a {c.Link} link at creation — provide blockedBy (node '{n.Key}')",
-					// idea_spec — the validator admits no other kind
-					"idea_spec" when !ideaRefs.ContainsKey(n.Key) =>
-						c.TargetStatuses is { Count: > 0 } ts
-							? $"a {kindName} change must be made under {string.Join("|", ts)} {c.TargetKind ?? c.Link} — provide ideaRef (node '{n.Key}')"
-							: $"a {kindName} {type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
-					_ => null,
-				};
-				if (message is not null) return Bad(n.Key, message);
+				if (provided.Contains((n.Key, c.Link.ToLowerInvariant())) || provided.Contains((n.Key, c.Link)))
+					continue;
+				// "work feature" / "spec" (a single-type kind reads its kind name once, not "spec spec").
+				var subject = string.Equals(kindName, type, StringComparison.OrdinalIgnoreCase) ? kindName : $"{kindName} {type}";
+				var cadence = everyWrite ? $"every write of a {subject}" : $"a new {subject}";
+				var target = TargetClause(c);
+				return Bad(n.Key, $"{cadence} must carry a {c.Link} link — provide links.{c.Link}{target} (node '{n.Key}')");
 			}
 		}
 		return null;
 	}
 
-	// DATA-DRIVEN link-target guard (schema v2, was ValidateSpecRefs + RequireAcceptedIdeaForSpec):
-	// every PROVIDED ref must resolve to a real node, and when the writing kind's constraints
-	// declare a target for that link kind (TargetKind / TargetStatuses), the target's EFFECTIVE
-	// kind and status must match. The target rule is KIND-level, not type-level: the constraint's
-	// Type says who MUST carry the link, its target says what the link points at for this kind —
-	// so a voluntary ref (e.g. a chore's specRef) is validated by the same rule. The SpecBoard
-	// binding stays alongside: it is the quartet auto-wire's board pin, data on the board meta
-	// rather than the methodology.
-	public static MethodologyVerdict? ValidateLinkTargets(
-		MethodologyEngineContext ctx,
-		IReadOnlyDictionary<string, string> specRefs, IReadOnlyDictionary<string, string> ideaRefs)
-	{
-		if (specRefs.Count == 0 && ideaRefs.Count == 0) return null;
-		var constraints = ctx.Runtime.LinkConstraints(ctx.KindSlug);
-
-		if (ValidateRefs("specRef", "task_spec", specRefs) is { } v) return v;
-		if (ValidateRefs("ideaRef", "idea_spec", ideaRefs) is { } v2) return v2;
-
-		// Auto-wire pin: when this board links a specific spec board, every specRef must live on
-		// it (same message as always).
-		if (ctx.SpecBoard is { Length: > 0 } sb)
-			foreach (var (key, refId) in specRefs)
-				if (ctx.NodeIndex.TryGetValue(refId, out var t) && !string.Equals(t.Board, sb, StringComparison.Ordinal))
-					return Bad(key, $"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
-		return null;
-
-		MethodologyVerdict? ValidateRefs(string field, string link, IReadOnlyDictionary<string, string> refs)
+	// The constraint's declared target as a compact " — points at a `<kind>` node [in status a|b]"
+	// clause (empty when the constraint pins neither) for the require/target messages.
+	static string TargetClause(MethodologyLinkConstraintDef c) =>
+		(c.TargetKind, c.TargetStatuses) switch
 		{
-			if (refs.Count == 0) return null;
-			// The kind's target rule for this link kind: the first constraint declaring one (the
-			// validator keeps (type, link) pairs unique; quartet declares one rule per link).
+			(null, null or { Count: 0 }) => "",
+			({ } k, null or { Count: 0 }) => $" — points at a `{k}` node",
+			(null, { } s) => $" — points at a node in status {string.Join("|", s)}",
+			({ } k, { } s) => $" — points at a `{k}` node in status {string.Join("|", s)}",
+		};
+
+	// DATA-DRIVEN link-target guard (was ValidateSpecRefs + RequireAcceptedIdeaForSpec): every
+	// resolved DIRECTED link must resolve to a real node, and when the writing kind's constraints
+	// declare a target for that link kind (TargetKind / TargetStatuses), the target's EFFECTIVE
+	// kind and status must match. `blocks` edges are same-board rows already resolved, not target-
+	// checked here. The SpecBoard auto-wire pin stays alongside, now DATA-driven: it binds any link
+	// whose target kind is the writer kind's AutoWireSpecFrom (work->spec) to the pinned board.
+	static MethodologyVerdict? ValidateLinkTargets(
+		MethodologyEngineContext ctx, List<ResolvedLink> links)
+	{
+		if (links.Count == 0) return null;
+		var constraints = ctx.Runtime.LinkConstraints(ctx.KindSlug);
+		var kindName = ctx.Runtime.KindName(ctx.KindSlug);
+		var autoWire = ctx.Runtime.AutoWireSpecFrom(ctx.KindSlug);
+		foreach (var link in links)
+		{
+			if (string.Equals(link.Kind, "blocks", StringComparison.OrdinalIgnoreCase)) continue;
+			if (!ctx.NodeIndex.TryGetValue(link.TargetNodeId, out var t))
+				return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') does not resolve to any node");
+			var targetKindName = ctx.Runtime.KindName(t.BoardKind);
 			var rule = constraints.FirstOrDefault(c =>
-				string.Equals(c.Link, link, StringComparison.OrdinalIgnoreCase)
+				string.Equals(c.Link, link.Kind, StringComparison.OrdinalIgnoreCase)
 				&& (c.TargetKind is not null || c.TargetStatuses is { Count: > 0 }));
-			foreach (var (key, refId) in refs)
+			if (rule is not null)
 			{
-				if (!ctx.NodeIndex.TryGetValue(refId, out var t))
-					return Bad(key, $"{field} '{refId}' (node '{key}') does not resolve to any node");
-				if (rule is null) continue;
-				if (rule.TargetKind is not null && !string.Equals(ctx.Runtime.KindName(t.BoardKind), rule.TargetKind, StringComparison.OrdinalIgnoreCase))
-					return Bad(key, $"{field} '{refId}' (node '{key}') points to board '{t.Board}', which is not a {rule.TargetKind} board");
+				if (rule.TargetKind is not null && !string.Equals(targetKindName, rule.TargetKind, StringComparison.OrdinalIgnoreCase))
+					return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') points to board '{t.Board}', which is not a {rule.TargetKind} board");
 				if (rule.TargetStatuses is { Count: > 0 } ts && !ts.Contains(t.Status, StringComparer.OrdinalIgnoreCase))
-					return Bad(key, $"{field} '{refId}' (node '{key}') target is '{t.Status}', not {string.Join("|", ts)} — a {ctx.Runtime.KindName(ctx.KindSlug)} change needs a {rule.TargetKind ?? link} node in status {string.Join("|", ts)}");
+					return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') target is '{t.Status}', not {string.Join("|", ts)} — a {kindName} change needs a {rule.TargetKind ?? link.Kind} node in status {string.Join("|", ts)}");
 			}
-			return null;
+			// Auto-wire board pin: a work board that links a specific spec board requires its
+			// task_spec targets to live on it (the kind's AutoWireSpecFrom names that target kind).
+			if (autoWire is not null && ctx.SpecBoard is { Length: > 0 } sb
+				&& string.Equals(targetKindName, autoWire, StringComparison.OrdinalIgnoreCase)
+				&& !string.Equals(t.Board, sb, StringComparison.Ordinal))
+				return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') is on board '{t.Board}', but this board links spec board '{sb}'");
 		}
+		return null;
 	}
 
 	// Invariant: a node in the kind's blocking-gate status (MethodologyKindDef.BlocksGate,
@@ -283,13 +293,15 @@ public static class GuardEngine
 	// the quartet's four kinds). A definition-declared kind can opt into this same invariant
 	// under its own gate status by declaring BlocksGate; today only the `work` preset does.
 	public static MethodologyVerdict? RequireBlockers(
-		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, string> blockedBy)
+		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, List<ResolvedLink> links)
 	{
 		if (ctx.Runtime.BlocksGate(ctx.KindSlug) is not { } gate) return null;
+		var blockedKeys = links.Where(l => string.Equals(l.Kind, "blocks", StringComparison.OrdinalIgnoreCase))
+			.Select(l => l.WriterKey).ToHashSet(StringComparer.Ordinal);
 		foreach (var n in desired)
 		{
 			if (!string.Equals(n.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) continue;
-			if (blockedBy.ContainsKey(n.Key)) continue;
+			if (blockedKeys.Contains(n.Key)) continue;
 			// A node born in this call carries a fresh NodeId, so it is absent from the prefetched
 			// edge map — exactly as the old per-node live read came back empty for it.
 			var hasActiveBlocker = ctx.BlockerEdgesByNodeId.TryGetValue(n.NodeId, out var edges) && edges.Count > 0;

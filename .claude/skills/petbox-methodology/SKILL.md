@@ -5,7 +5,7 @@ description: >-
   on the `$system` project via the `petbox` MCP server. Use when creating or refining IDEAS,
   writing or changing the SPEC, creating WORK tasks, triaging INTAKE, or planning a PetBox
   module/feature. Encodes the gate rules (an idea needs a spec_plan artifact to reach review;
-  the maintainer accepts; the spec is defined-only and every write needs ideaRef→an accepted
+  the maintainer accepts; the spec is defined-only and every write needs links.idea_spec→an accepted
   idea; the agent never self-sets Done/accepted), the spec-writing format, and the exact MCP
   tool sequences + gotchas. Canon: doc/methodology.md.
 ---
@@ -54,7 +54,7 @@ tasks_upsert($system, ideas, [{key, version:<v>, status:"review"}])             
 ```
 
 ### 2. SPEC (board `spec`) — the requirements tree, written ONLY under an accepted idea
-- **GATE: every spec node create/change/deprecate REQUIRES `ideaRef`** → the NodeId of an
+- **GATE: every spec node create/change/deprecate REQUIRES `links.idea_spec`** → the NodeId of an
   **`accepted`** idea. The service verifies it and auto-creates the `idea_spec` edge; with no
   accepted idea the write is **rejected**. You cannot touch the spec without idea→accept.
 - **Lifecycle: a spec node is born `defined`** (a worked-out requirement) and can only retire
@@ -72,10 +72,10 @@ tasks_upsert($system, ideas, [{key, version:<v>, status:"review"}])             
   handful. An umbrella node + a few leaves (`partOf`). Don't pre-atomize implementation.
 
 ```
-# under an accepted idea (ideaRef on EVERY node):
+# under an accepted idea (links.idea_spec on EVERY node):
 tasks_upsert($system, spec, [
-  {key:"feature-x", type:"spec", status:"defined", title, body, tags:["area:..."], ideaRef:<accepted idea NodeId>},
-  {key:"req-a", partOf:"feature-x", type:"spec", status:"defined", title, body, tags:["concern:..."], ideaRef:<same>},
+  {key:"feature-x", type:"spec", status:"defined", title, body, tags:["area:..."], links:{idea_spec:<accepted idea NodeId>}},
+  {key:"req-a", partOf:"feature-x", type:"spec", status:"defined", title, body, tags:["concern:..."], links:{idea_spec:<same>}},
 ])
 ```
 
@@ -83,11 +83,11 @@ tasks_upsert($system, spec, [
 - **Create the work task BEFORE writing any code** (status `InProgress` while you work).
   The chain accepted-idea → spec → work must exist before implementation starts — see the
   process-order gotcha below.
-- A work `feature|bug` **REQUIRES `specRef`** → a spec NodeId (creates the `task_spec` edge).
+- A work `feature|bug` **REQUIRES `links.task_spec`** → a spec NodeId (creates the `task_spec` edge).
   No spec link → rejected.
 - **Link a task to EACH requirement it delivers (M:N)**, not just the umbrella — else the
-  leaves read `not_started` and per-requirement `delivery` is hidden. Use `specRef` for one +
-  `relations_create(kind:"task_spec", from:<task>, to:<leaf>)` for the rest.
+  leaves read `not_started` and per-requirement `delivery` is hidden. Pass
+  `links:{task_spec:[leaf1, leaf2]}` — a value may be a list.
 - FSM: `Pending → InProgress → Review → Done` (+ Blocked/Cancelled).
   **The agent's ceiling is `Review`; the maintainer confirms `Done`.** Move to Review when
   implemented + tests green + deployed; STOP — and give the maintainer the task's `url`
@@ -101,12 +101,13 @@ tasks_upsert($system, spec, [
 - Use intake when the routing is unknown or you don't want to route now (noticed mid-task —
   park it). When the destination is already obvious — the maintainer reports it, or your
   diagnosis is clear — SKIP intake and create the node at the destination: hygiene → work
-  `chore` (spec-less, no specRef); a bug violating an EXISTING spec node → work `bug` +
-  specRef; no spec reflection → idea. Destination rules protect the chain by themselves.
+  `chore` (spec-less, no links.task_spec); a bug violating an EXISTING spec node → work `bug` +
+  links.task_spec; no spec reflection → idea. Destination rules protect the chain by themselves.
 - Triage → **reject** (reason) | **promote to a task** (ONLY if a matching spec node already
-  exists — link specRef + `issue_task`; spec-less hygiene → `chore`) | **escalate to an idea**
-  (NO spec reflection → the requirement was never specced → idea → gate → spec → work). An
-  item with no spec gets **no shortcut into work** (work feature/bug needs specRef).
+  exists — `links:{task_spec:X, issue_task:Y}`; spec-less hygiene → `chore`) | **escalate to
+  an idea** (NO spec reflection → the requirement was never specced → idea → gate → spec →
+  work). An item with no spec gets **no shortcut into work** (work feature/bug needs
+  links.task_spec).
 
 ## Hard gotchas
 - **THE FIX NEVER PRECEDES THE REQUIREMENT — no code before accept.** Implementation of new
@@ -124,9 +125,9 @@ tasks_upsert($system, spec, [
   accept/Done approval is convention — don't abuse it.)
 - **Deleting an erroneous node: `tasks_upsert` with `{key, deleted:true}`** (soft
   temporal-close, history kept; children first or the whole subtree in one batch; spec-node
-  deletes need no ideaRef — erasing junk is not a spec change, retiring a requirement stays
-  `deprecated`). Sessions: `session.delete`. Avoid creating junk that needs deleting.
-- **Don't write the spec in `draft` or without `ideaRef`** — both are rejected now. If you
+  deletes need no links.idea_spec — erasing junk is not a spec change, retiring a requirement
+  stays `deprecated`). Sessions: `session.delete`. Avoid creating junk that needs deleting.
+- **Don't write the spec in `draft` or without `links.idea_spec`** — both are rejected now. If you
   catch yourself wanting to "dump a spec subtree", you skipped the idea→accept gate.
 - **Spec body = requirement (promise), not implementation.** If your spec node says "table X,
   M007 migration, ParentId column", it's at the wrong altitude — move that to the work task.
@@ -144,7 +145,7 @@ tasks_upsert($system, spec, [
 
 ## Tools (petbox MCP)
 - `tasks_methodology_get` / `tasks_get` / `tasks_workflow` (read) · `tasks_upsert` (write:
-  status/body/partOf/tags/specRef/ideaRef/supersedes) · `tasks_board_create|close|reopen`.
+  status/body/partOf/tags/links/blockedBy/supersedes) · `tasks_board_create|close|reopen`.
 - **`include_url:true`** on `tasks_methodology_get` / `tasks_get` / `tasks_upsert` / `tasks_delta`
   adds an absolute `url` permalink to each returned node (its `/ui/.../tasks/node/{nodeId}`
   detail page) — off by default.

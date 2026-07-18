@@ -133,7 +133,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		// The idea-review gate, born from PreconditionArtifact.
 		md.Should().Contain("Add an `artifact:spec_plan` comment on the node before exploring -> review");
 		// The work creation constraint, born from LinkConstraints.
-		md.Should().Contain("A new `feature` must carry a `task_spec` link (provide `specRef`");
+		md.Should().Contain("A new `feature` must carry a `task_spec` link (provide `links.task_spec`");
 		// Quartet tag axes.
 		md.Should().Contain("area, concern");
 		// Simple's all-pairs block collapses instead of listing 20 edges.
@@ -157,8 +157,8 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		inv.Should().Contain(("ideas", "approval_gate", "review -> accepted"));
 		inv.Should().Contain(("ideas", "precondition_artifact", "exploring -> review requires artifact:spec_plan"));
 		// engine-v2: constraints carry their declared target, effects render as invariants.
-		inv.Should().Contain(("work", "link_constraint", "feature requires task_spec (specRef) -> spec"));
-		inv.Should().Contain(("spec", "link_constraint", "spec requires idea_spec (ideaRef) -> ideas[accepted]"));
+		inv.Should().Contain(("work", "link_constraint", "feature requires task_spec (links.task_spec) -> spec"));
+		inv.Should().Contain(("spec", "link_constraint", "spec requires idea_spec (links.idea_spec) -> ideas[accepted]"));
 		inv.Should().Contain(("work", "transition_effect", "Done: incoming issue_task -> done"));
 		inv.Should().Contain(("work", "transition_effect", "Done: outgoing blocks from Blocked -> InProgress"));
 		inv.Should().Contain(("work", "tag_axes", "area|concern"));
@@ -199,7 +199,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().Contain("Open -> Junk requires a reason");
 		md.Should().Contain("Add an `artifact:triage-note` comment on the node before New -> Open");
 		md.Should().Contain("note: Triage assigns severity.", "a transition's Description renders as a note alongside its other gates");
-		md.Should().Contain("A new `incident` must carry a `blocks` link (provide `blockedBy`");
+		md.Should().Contain("A new `incident` must carry a `blocks` link (provide `links.blocks`");
 		md.Should().Contain("Every incident names a related outage.", "a link constraint's Description renders alongside its cadence sentence");
 		md.Should().Contain("severity, channel");
 		md.Should().Contain("escalates (support escalation edge)");
@@ -209,7 +209,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		inv.Should().Contain(("support", "approval_gate", "Open -> Resolved"));
 		inv.Should().Contain(("support", "reason_required", "Open -> Junk"));
 		inv.Should().Contain(("support", "precondition_artifact", "New -> Open requires artifact:triage-note"));
-		inv.Should().Contain(("support", "link_constraint", "incident requires blocks (blockedBy)"));
+		inv.Should().Contain(("support", "link_constraint", "incident requires blocks (links.blocks)"));
 		inv.Should().Contain(("support", "tag_axes", "severity|channel"));
 		inv.Should().Contain(("work", "approval_gate", "Review -> Done"), "preset invariants stay alongside the definition's");
 	}

@@ -57,7 +57,7 @@ public static class RelationTools
 				// only checks structure.
 				var from = await tasks.ResolveNodeRefAsync(projectKey, fromRef, ct: ct);
 				var to = await tasks.ResolveNodeRefAsync(projectKey, toRef, ct: ct);
-				var k = await tasks.ValidateRelationKindAsync(projectKey, item.Kind, from, ct);
+				var k = await tasks.ValidateRelationKindAsync(projectKey, item.Kind, from, to, ct);
 				resolved.Add((k, from, to));
 			}
 			catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
