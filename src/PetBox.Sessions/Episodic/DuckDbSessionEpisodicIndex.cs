@@ -256,26 +256,20 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		if (llm is not null && await llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
 			indexes.Add(new VectorLeg(entry, q => EnsureVectorsAndEmbedQueryAsync(llm, projectKey, entry, q, ct)));
 
-		// OVER-FETCH, then floor, then cut to k: fetching only k and then dropping semantic
-		// noise would return SHORT. A pool of max(3k, 20) (naturally bounded by the session's
-		// message count) leaves substantive hits to refill the quota after the floor trims the
-		// junk. The floor mirrors stage-1 discovery (RankDiscovery, spec: search-fair-fusion).
+		// OVER-FETCH, then cut to k: a pool of max(3k, 20) (naturally bounded by the session's
+		// message count) keeps recall sane. There is NO semantic floor (spec:
+		// search-leg-classification — the tau membership threshold is gone): a vector-only message
+		// hit ENTERS as a peer. The junk it once guarded against ("Записано.", "```") never reaches
+		// the semantic candidate set in the first place — that is MinSemanticChars' job upstream, a
+		// content-length exclusion, not a cosine threshold.
 		var pool = Math.Max(3 * k, 20);
-		var resp = await new SearchService(indexes, _logger).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct);
+		var resp = await new SearchService(indexes, _logger).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct: ct);
 
 		var byVersion = entry.Messages.ToDictionary(m => m.Version);
 		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)
 		{
 			if (hits.Count >= k) break;
-			// W5 semantic floor: drop a hit surfaced by the semantic leg ALONE whose fused RRF
-			// relevance is below the floor. The lexical index is registered FIRST, so — exactly
-			// as MemoryService.SearchStoreAsync documents — Retriever=="lexical" ⟺ lexically
-			// confirmed (never floored, the lexical leg vouched for it), "semantic" ⟺ vector-only
-			// (unconfirmed, a caller may floor it). This only trims the weak tail: rank-0 junk is
-			// already kept OUT of the semantic candidate set upstream (MinSemanticChars), because
-			// its 1/60 ≈ 0.0167 fused score would clear any sane floor.
-			if (_options.SemanticFloor > 0 && h.Retriever != "lexical" && h.Score < _options.SemanticFloor) continue;
 			if (!long.TryParse(h.Id, out var ordinal) || !byVersion.TryGetValue(ordinal, out var msg)) continue;
 			hits.Add(new SessionEpisodicHit(ordinal, msg.Role, Snippet(msg.Content, query), h.Score, h.Retriever));
 		}

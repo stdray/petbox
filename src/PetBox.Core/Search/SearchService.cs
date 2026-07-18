@@ -42,7 +42,15 @@ public sealed partial class SearchService
 				await ix.DeleteAsync(tx, scope, type, id, ct);
 	}
 
-	public async Task<SearchResponse> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
+	// `selection` is the SELECTION axis (spec: search-leg-classification / search-selection-vs-presentation):
+	//   Relevance  — the fused top-K ask: poll EVERY leg, RRF-fuse, truncate to k. Vector-only
+	//     candidates enter the output as peers.
+	//   Enumerable — the scan/field ask: poll only ENUMERABLE legs (the TopK/vector leg is
+	//     categorically excluded because it has no "all that matched"), return the FULL fused set
+	//     WITHOUT truncation, and report `semantic:false` — a visible contract limit, not a silent
+	//     drop. The consumer decides presentation order + its own limit.
+	public async Task<SearchResponse> SearchAsync(string scope, string query, SearchFilter filter, int k,
+		SearchSelection selection = SearchSelection.Relevance, CancellationToken ct = default)
 	{
 		var rankings = new List<IReadOnlyList<string>>();
 		var byId = new Dictionary<string, Hit>();
@@ -51,6 +59,10 @@ public sealed partial class SearchService
 
 		foreach (var ix in _indexes)
 		{
+			// Participation is DERIVED from the leg classification: an enumerable selection needs the
+			// full matched set, which a TopK leg cannot supply, so it never runs there.
+			if (selection == SearchSelection.Enumerable && ix.LegClass != SearchLegClass.Enumerable)
+				continue;
 			try
 			{
 				var hits = await ix.SearchAsync(scope, query, filter, k, ct);
@@ -79,8 +91,13 @@ public sealed partial class SearchService
 		// Fuse by rank and carry the FUSED RRF score on each hit (overwriting the per-index Score,
 		// which is meaningless post-fusion) — a rank-based score comparable across separate
 		// SearchService calls, so a consumer can globally merge several per-container pools by it.
+		// Relevance selection truncates to k (the fused top-K); an enumerable selection returns the
+		// WHOLE matched set (no truncation — the leg is enumerable precisely so scan gets all of it)
+		// and reports semantic:false, since the vector leg categorically did not participate.
 		var fused = HybridMerge.RrfScored([.. rankings]);
-		var hitsOut = fused.Take(k).Select(f => byId[f.Key] with { Score = f.Score }).ToList();
+		var ranked = selection == SearchSelection.Enumerable ? fused : fused.Take(k);
+		var hitsOut = ranked.Select(f => byId[f.Key] with { Score = f.Score }).ToList();
+		if (selection == SearchSelection.Enumerable) semantic = false;
 		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded, reason));
 	}
 

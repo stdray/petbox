@@ -26,23 +26,20 @@ public sealed record DiversityOptions
 	public double Lambda { get; init; } = 0.7;
 }
 
-// Semantic-noise floor: a fused hit NOT confirmed by the lexical leg must clear this fused
-// RRF score to be returned at all (limit is a ceiling, not a plan — spec search-relevance-floor).
-// RRF is rank-based (1/(60+rank)), so 0.0155 keeps roughly the top-5 semantic-only candidates
-// of a fused pool and cuts the tail the vector leg pads with. 0 disables.
-public sealed record FloorOptions
-{
-	public double SemanticFloor { get; init; } = 0.0155;
-}
+// NOTE — there is deliberately NO semantic/cosine floor here. A `cosine >= tau` (or fused-RRF)
+// membership threshold on vector-only hits is REJECTED by the pipeline contract
+// (spec: search-leg-classification): it forges a boolean membership the TopK leg does not have,
+// and is the SemanticFloor through the back door. The vector leg selects as a peer under a
+// RELEVANCE selection (limit is the ceiling); a scan/field selection excludes it outright and
+// says so via `semantic:false`. Recency + MMR reshape the fused order but never gate membership.
 
 // The whole search re-ranking policy, bound from the `Search` config section
-// (Search:Recency:*, Search:Diversity:*, Search:Floor:*). Both sub-knobs default enabled with
-// conservative parameters, so wiring it changes ranking but not the contract.
+// (Search:Recency:*, Search:Diversity:*). Both sub-knobs default enabled with conservative
+// parameters, so wiring it changes ranking but not the contract.
 public sealed record SearchRerankOptions
 {
 	public RecencyOptions Recency { get; init; } = new();
 	public DiversityOptions Diversity { get; init; } = new();
-	public FloorOptions Floor { get; init; } = new();
 }
 
 public static class RecencyDecay

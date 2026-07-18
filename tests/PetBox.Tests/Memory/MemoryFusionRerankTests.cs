@@ -190,14 +190,14 @@ public sealed class MemoryFusionRerankTests : IDisposable
 		res.Retrievers!.Value.Degraded.Should().BeFalse();
 	}
 
-	// ---- per-row retriever provenance + semantic floor (search-fusion-floor-impl) ----
+	// ---- per-row retriever provenance + vector-as-peer selection (search-leg-classification) ----
 
 	[Fact]
 	public async Task Retriever_LabelsLexicalConfirmedVsSemanticOnly()
 	{
 		// "lex" carries the query token (lexically confirmed); "sem" only sits on the query vector
 		// (AAA → [1,0], the query embeds to [1,0] too) without the token, so the vector leg alone
-		// surfaces it. Floor default active (decay/MMR off): with just two candidates both survive.
+		// surfaces it. No floor: the vector-only hit enters as a peer (decay/MMR off).
 		var llm = new ScriptedEmbedder();
 		var memory = new MemoryService(_store, llm, Off);
 		await memory.CreateStoreAsync(Proj, "notes", null);
@@ -214,10 +214,13 @@ public sealed class MemoryFusionRerankTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Floor_CutsSemanticOnlyTail_LexicalConfirmedSurvives()
+	public async Task VectorOnlyCandidates_EnterAsPeers_NoSemanticFloor()
 	{
 		// One lexically-confirmed entry + eight semantic-only entries (all embed to [1,0], on the
-		// query vector, but only "lex" carries the token). Floor default active (decay/MMR off).
+		// query vector, but only "lex" carries the token). The tau/SemanticFloor membership
+		// threshold is REJECTED (spec: search-leg-classification): under a relevance selection the
+		// vector leg selects as a PEER, so EVERY vector-only candidate enters — bounded only by the
+		// limit, never cut by a cosine/RRF floor.
 		var llm = new ScriptedEmbedder();
 		var memory = new MemoryService(_store, llm, Off);
 		await memory.CreateStoreAsync(Proj, "notes", null);
@@ -229,10 +232,9 @@ public sealed class MemoryFusionRerankTests : IDisposable
 		var hits = (await memory.SearchEntriesAsync(Proj, Query("portal", limit: 50))).Hits;
 		var keys = hits.Select(h => h.Entry.Key).ToList();
 
-		// A lexically-confirmed hit is NEVER floored, whatever its score.
 		keys.Should().Contain("lex");
-		// The semantic-only tail is cut — NOT all eight survive (limit is a ceiling, not a plan).
-		keys.Count(k => k.StartsWith("sem-")).Should().BeInRange(1, 5);
+		// No floor: all eight vector-only peers enter (the limit, not a threshold, is the only bound).
+		keys.Count(k => k.StartsWith("sem-")).Should().Be(8);
 		hits.Where(h => h.Entry.Key.StartsWith("sem-")).Should().OnlyContain(h => h.Retriever == "semantic");
 	}
 

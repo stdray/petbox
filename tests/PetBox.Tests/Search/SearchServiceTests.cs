@@ -145,6 +145,48 @@ public sealed class SearchServiceTests : IDisposable
 		res.Retrievers.Degraded.Should().BeTrue();
 	}
 
+	[Fact]
+	public async Task EnumerableSelection_ExcludesTopKLeg_ReturnsFullSet_SemanticFalse()
+	{
+		// Participation rule (spec: search-leg-classification / search-selection-vs-presentation):
+		// a RELEVANCE selection runs BOTH legs and the vector-only candidate enters as a peer; an
+		// ENUMERABLE selection needs the full matched set, so the TopK (vector) leg is categorically
+		// excluded — its candidate never appears — and provenance says `semantic:false`. The
+		// enumerable leg is NOT truncated to k: every match is returned for the scan.
+		var svc = new SearchService([new SqliteFtsIndex(Connect), new StubVectorIndex("v-only")]);
+		await IndexAsync(svc, commit: true,
+			Doc("a", "alpha keyword one"),
+			Doc("b", "alpha keyword two"),
+			Doc("c", "alpha keyword three"));
+
+		// Relevance: both legs; the vector-only "v-only" enters as a peer; semantic:true.
+		var rel = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, SearchSelection.Relevance);
+		rel.Hits.Select(h => h.Id).Should().Contain("v-only");
+		rel.Retrievers.Semantic.Should().BeTrue();
+
+		// Enumerable: only the enumerable (lexical) leg; the vector candidate is excluded; the FULL
+		// lexical set survives a tiny k (no truncation); semantic:false is the visible contract limit.
+		var enumSel = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 1, SearchSelection.Enumerable);
+		enumSel.Hits.Select(h => h.Id).Should().BeEquivalentTo(["a", "b", "c"]);
+		enumSel.Hits.Select(h => h.Id).Should().NotContain("v-only");
+		enumSel.Retrievers.Lexical.Should().BeTrue();
+		enumSel.Retrievers.Semantic.Should().BeFalse();
+	}
+
+	// A pluggable Class-B (TopK) index that always surfaces one fixed vector-only hit — models the
+	// vector leg for the participation-rule test without an embedder. LegClass defaults to TopK
+	// (Capability=Vector), so an enumerable selection skips it.
+	sealed class StubVectorIndex(string id) : ISearchIndex
+	{
+		public SearchConsistency ConsistencyClass => SearchConsistency.Eventual;
+		public SearchCapability Capability => SearchCapability.Vector;
+		public Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default) => Task.CompletedTask;
+		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default) =>
+			Task.FromResult<IReadOnlyList<Hit>>([new Hit("note", id, 0.5, "semantic")]);
+	}
+
 	// A pluggable Class-B index that is unavailable at query time. Eventual consistency → the
 	// facade never drives it on write; here it only models a failing read leg.
 	sealed class ThrowingVectorIndex : ISearchIndex

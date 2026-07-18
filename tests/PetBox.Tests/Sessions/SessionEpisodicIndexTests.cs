@@ -243,22 +243,17 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 	}
 
 	[Fact]
-	public async Task SemanticOnlyHit_BelowFloor_IsDropped_UnlessDisabled()
+	public async Task SemanticOnlyHit_EntersAsPeer_NoFloor()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(
 			$"уникальное содержательное сообщение про дизайн и планы {EpisodicEmbedFake.NearQueryMarker}"));
 
-		// A lone semantic-only hit fuses to 1/60 ≈ 0.0167 at rank 0; a floor above that drops it —
-		// the score floor CAN trim a rank-0 hit, it just cannot catch junk cheaper than the floor.
-		using var strict = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake(),
-			options: new SessionEpisodicOptions { SemanticFloor = 0.02 });
-		var dropped = await strict.SearchAsync(Proj, "s1", "паравозик", k: 5);
-		dropped!.Hits.Should().BeEmpty();
-
-		// Disabling both knobs (0) restores the old behavior — the semantic hit survives.
-		using var lax = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake(),
-			options: new SessionEpisodicOptions { SemanticFloor = 0, MinSemanticChars = 0 });
-		var kept = await lax.SearchAsync(Proj, "s1", "паравозик", k: 5);
+		// The tau/SemanticFloor membership threshold is REJECTED (spec: search-leg-classification):
+		// a substantive semantic-only paraphrase hit ENTERS as a peer under the default options — no
+		// cosine/RRF floor can drop it. (Junk is kept out earlier by MinSemanticChars, a
+		// content-length exclusion, not a score threshold — covered by the junk test above.)
+		using var index = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake());
+		var kept = await index.SearchAsync(Proj, "s1", "паравозик", k: 5);
 		kept!.Hits.Should().Contain(h => h.Message == 1 && h.Retriever == "semantic");
 	}
 

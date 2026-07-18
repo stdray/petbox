@@ -66,7 +66,7 @@ public static class SearchEvalHarness
 
 		foreach (var q in queries)
 		{
-			var res = await svc.SearchAsync(q.Scope, q.Query, q.Filter, k, ct);
+			var res = await svc.SearchAsync(q.Scope, q.Query, q.Filter, k, ct: ct);
 			var returned = res.Hits.Select(h => new EvalJudgment(h.Type, h.Id)).ToList();
 			var relevant = q.Relevant.ToHashSet();
 

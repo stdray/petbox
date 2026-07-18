@@ -26,6 +26,38 @@ public enum SearchCapability
 	Vector = 2,
 }
 
+// The MEMBERSHIP class of a leg — the load-bearing distinction the pipeline contract makes
+// explicit (spec: search-leg-classification). It is NOT about which retriever ran (that is
+// Capability/provenance); it is about whether the leg has a notion of "ALL that matched":
+//   Enumerable = identity + lexical. Can return its ENTIRE matched set — a boolean membership
+//     predicate (this entity matched, that one did not). A field/scan selection that needs the
+//     FULL set can therefore be answered by an enumerable leg alone.
+//   TopK       = the vector leg. Cosine ranks EVERY candidate; there is no "matched / did not
+//     match", only the K nearest. It has NO boolean membership, so it can never supply "all that
+//     matched". A cosine >= tau threshold would FORGE one — REJECTED (that is the SemanticFloor
+//     through the back door); the vector leg participates only in RELEVANCE selection, as a peer.
+public enum SearchLegClass
+{
+	Enumerable,
+	TopK,
+}
+
+// The SELECTION axis of a read (spec: search-selection-vs-presentation) — WHAT enters the output,
+// kept separate from the PRESENTATION axis (the order shown, decided by the consumer's sort). The
+// two are split precisely because mixing them silently drops results.
+//   Relevance  = the fused top-K ask: EVERY leg selects and vector-only candidates ENTER as peers
+//     (they are not merely reordering what lexical found). The facade fuses all legs by RRF and
+//     truncates to k.
+//   Enumerable = the scan/field ask: it needs the FULL matched set, which only enumerable legs can
+//     supply, so the TopK (vector) leg is categorically excluded — a VISIBLE contract limit carried
+//     as `semantic:false` in provenance, never a silent omission. No truncation: the whole set is
+//     returned and the consumer presents/limits it.
+public enum SearchSelection
+{
+	Relevance,
+	Enumerable,
+}
+
 // A document to index, addressed by ENTITY (scope, type, id) — never by row. Resolving the
 // entity back from (type, id) is the consumer's job; the contract only carries the searchable
 // text + optional free tags. (spec: search-entity-addressed.)
@@ -82,6 +114,12 @@ public interface ISearchIndex
 {
 	SearchConsistency ConsistencyClass { get; }
 	SearchCapability Capability { get; }
+
+	// The leg's membership class (spec: search-leg-classification). Defaulted off Capability so
+	// every existing/test index classifies correctly without a change: a Vector-capable leg is
+	// TopK (cosine has no boolean membership), everything else (identity, lexical) is Enumerable.
+	// An index may override to state its class outright.
+	SearchLegClass LegClass => Capability.HasFlag(SearchCapability.Vector) ? SearchLegClass.TopK : SearchLegClass.Enumerable;
 
 	Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default);
 	Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default);
