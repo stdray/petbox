@@ -287,6 +287,32 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		(await Search(q: "quokka", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
 	}
 
+	// Listing evaluates the statusKind facet against the SAME опорный слой (search_meta) the query
+	// leg uses — one authority, identical membership in both modes — while KEEPING the entity default
+	// ORDER (priority then key) that is a listing specialization, not an опорный-слой property.
+	[Fact]
+	public async Task Listing_StatusKindParity_SharedAuthority_KeepsEntityOrder()
+	{
+		await Seed("b", """
+			[{"key":"z-open","status":"Todo","title":"z","body":"quux","priority":30},
+			 {"key":"a-open","status":"Todo","title":"a","body":"quux","priority":10},
+			 {"key":"m-done","status":"Todo","title":"m","body":"quux","priority":20},
+			 {"key":"q-cancel","status":"Todo","title":"q","body":"quux","priority":5}]
+			""");
+		await Seed("b", """[{"key":"m-done","status":"Done","version":1}]""");     // terminalok
+		await Seed("b", """[{"key":"q-cancel","status":"Cancelled","version":1}]"""); // terminalcancel
+
+		// Default listing ORDER stays the entity specialization: priority (10 before 30), then key.
+		(await Search(board: "b", statusKind: ["open"])).Nodes.Select(n => n.Key).Should().Equal("a-open", "z-open");
+
+		// Mixed set: listing and query select the SAME members from the shared authority (parity).
+		var mixed = new[] { "open", "terminalcancel" };
+		var listing = (await Search(board: "b", statusKind: mixed)).Nodes.Select(n => n.Key).ToHashSet();
+		var query = (await Search(q: "quux", board: "b", statusKind: mixed)).Nodes.Select(n => n.Key).ToHashSet();
+		listing.Should().BeEquivalentTo(new[] { "a-open", "z-open", "q-cancel" }); // terminalok m-done excluded in both
+		query.Should().BeEquivalentTo(listing);
+	}
+
 	// ---- presentation tiers (spec tasks-search-statuskind-presentation-tiers) ----
 
 	// The tier is a STABLE PARTITION over the fused relevance order (open → terminalok →

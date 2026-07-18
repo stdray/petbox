@@ -170,13 +170,6 @@ public static class TasksSearchDocs
 		_ => 0,
 	};
 
-	// The stored facet string for a node's live status under a runtime — the SAME projection
-	// ToMetaDoc stamps into search_meta. Used where a read must classify a hydrated node WITHOUT
-	// the опорный слой (the tasks_search listing path today, consistent with FilterVisible's own
-	// live classification; tasks-listing-search-predicate-parity moves both onto search_meta).
-	public static string StatusKindFacetOf(MethodologyRuntime runtime, string? kindSlug, string status) =>
-		StatusKindFacet(runtime.StatusKindOf(kindSlug, status));
-
 	public static IReadOnlyList<string>? ResolveStatusKindFacet(
 		IReadOnlyList<string>? statusKind, bool includeClosed, bool hasQuery)
 	{

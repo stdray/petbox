@@ -1689,12 +1689,27 @@ public sealed partial class TasksService : ITasksService
 			// An EXPLICIT statusKind widens the pool to every terminal node, then selects by the facet;
 			// otherwise the deprecated includeClosed alias decides (includeClosed:false + listing → the
 			// [open] set, which the existing FilterVisible already yields — so the default path is
-			// unchanged). The listing classifies the hydrated node with the runtime, consistent with
-			// FilterVisible's own live classification; tasks-listing-search-predicate-parity moves this
-			// selection onto search_meta (the same authority the query leg already uses).
+			// unchanged). PARITY (spec tasks-listing-search-predicate-parity): an explicit statusKind is
+			// evaluated against the ОПОРНЫЙ СЛОЙ (search_meta) — the SAME authority the query leg's facet
+			// pushdown joins — NOT a live classifier recompute on read (one fact, one authority). The
+			// listing still HYDRATES + ORDERS entity-side (default priority/key is an entity
+			// specialization); only the facet SELECTION moved onto the reference layer.
 			var listingFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: false);
 			var explicitStatusKind = f.StatusKind is { Count: > 0 };
 			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null || explicitStatusKind;
+			Dictionary<string, Dictionary<string, string>>? statusKindByBoard = null;
+			if (explicitStatusKind)
+			{
+				// Self-heal the reference layer once on the same read-time trigger the query path uses,
+				// then read the stored StatusKind facet per board (Id → facet). A node with no meta row
+				// is KEPT — matching the pushdown's "a facet it does not carry cannot hide it".
+				using var metaCtx = _boards.NewEnsuredConnection(projectKey);
+				await EnsureLexicalBackfillAsync(metaCtx, projectKey, runtime, ct);
+				await EnsureMetaBackfillAsync(metaCtx, projectKey, runtime, ct);
+				statusKindByBoard = new(StringComparer.Ordinal);
+				foreach (var b in boardsMeta)
+					statusKindByBoard[b.Name] = await SqliteMetaIndex.StatusKindsByTypeAsync(metaCtx, projectKey, b.Name, ct);
+			}
 			hits = new List<TaskSearchHit>();
 			foreach (var b in boardsMeta)
 			{
@@ -1702,7 +1717,10 @@ public sealed partial class TasksService : ITasksService
 				if (boardFilter is not null) currentVersion = view.CurrentVersion;
 				var rows = view.Nodes.AsEnumerable();
 				if (explicitStatusKind)
-					rows = rows.Where(n => listingFacet!.Contains(TasksSearchDocs.StatusKindFacetOf(runtime, b.Kind, n.Status)));
+				{
+					var kinds = statusKindByBoard![b.Name];
+					rows = rows.Where(n => !kinds.TryGetValue(n.Key, out var facet) || listingFacet!.Contains(facet));
+				}
 				hits.AddRange(rows.Select(n => new TaskSearchHit(b.Name, n)));
 			}
 		}
