@@ -94,12 +94,14 @@ public sealed class MethodologyDefinitionService
 		// not version arithmetic), while a future baseline still conflicts (wrong-scope quote).
 		var sameDefinition = current is not null && JsonSerializer.Serialize(current.Definition, DefinitionJson) == row.Json;
 		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		var affected = new List<TaskBoardMeta>();
 		if (!sameDefinition)
 		{
 			var boards = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
 			MethodologyLiveMigration.Validate(migration ?? [], newRuntime, boards);
 			rewrites = MethodologyLiveMigration.Plan(ctx, current?.Definition, def, newRuntime, migration ?? [], boards,
 				subject: "methodology definition change");
+			affected = MethodologyLiveMigration.AffectedBoards(current?.Definition, def, boards).ToList();
 		}
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, ct: ct);
@@ -125,6 +127,11 @@ public sealed class MethodologyDefinitionService
 		var migrated = 0;
 		foreach (var (board, nodes) in rewrites)
 			migrated += await _live.RewriteAsync(ctx, projectKey, board, nodes, newRuntime, ct);
+		// tasks-reindex-on-methodology-vocab-change: a reclassification can flip a node's StatusKind
+		// without changing its status string (no rewrite above), so reproject each affected board's
+		// facet layer under the new vocabulary — otherwise the stored statusKind facet lies silently.
+		foreach (var b in affected)
+			await MethodologyLiveMigration.ReindexBoardMetaAsync(ctx, projectKey, b.Name, b.Kind, newRuntime, ct);
 		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Inserted > 0, Migrated: migrated);
 	}
 
@@ -156,6 +163,11 @@ public sealed class MethodologyDefinitionService
 				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_def_get and retry the delete against the current version",
 			});
 		}
+		// tasks-reindex-on-methodology-vocab-change: the delete reverts every declared board to its
+		// preset resolution — a status the old definition classified one way may classify differently
+		// under the presets — so reproject those boards' facet layer under PresetsOnly.
+		foreach (var b in MethodologyLiveMigration.AffectedBoards(current.Definition, newDef: null, boards))
+			await MethodologyLiveMigration.ReindexBoardMetaAsync(ctx, projectKey, b.Name, b.Kind, MethodologyRuntime.PresetsOnly, ct);
 		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Closed > 0);
 	}
 }

@@ -336,4 +336,52 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 		result.Migrated.Should().Be(1);
 		(await NodeOnBoard(board, "t-open")).Status.Should().Be("Active");
 	}
+
+	// tasks-reindex-on-methodology-vocab-change: the SAME status slug "Open" is reclassified from
+	// StatusKind.Open to TerminalCancel. The node's status STRING does not change, so the migration
+	// rewrites NOTHING (Migrated == 0) — the exact case RewriteAsync misses. The stored statusKind
+	// facet (search_meta, read by the query-mode facet pushdown) must still flip, or the опорный слой
+	// lies. Query mode reads search_meta, so it is the honest probe.
+	static MethodologyDefinition SupportDefOpenReclassifiedTerminal() => new("support-process",
+	[
+		new MethodologyKindDef("support", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(
+				["ticket", "incident"],
+				[
+					new WorkflowStatus("New", "New", StatusKind.Open),
+					new WorkflowStatus("Open", "Open", StatusKind.TerminalCancel), // SAME slug, new kind
+					new WorkflowStatus("Resolved", "Resolved", StatusKind.TerminalOk),
+				],
+				[
+					new MethodologyTransitionDef("New", "Open"),
+				]),
+		]),
+	]);
+
+	[Fact]
+	public async Task RulesEdit_ReclassifiesStatusKind_ReindexesFacet_NoStatusStringChange()
+	{
+		var (inst, board) = await SeedSupportInstanceAsync(); // t-open is status "Open" (StatusKind.Open)
+		var http = Http("tasks:read");
+
+		async Task<string[]> Query(string[] statusKind) =>
+			(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, q: "flight", board: board,
+				under: null, status: null, keys: null, includeClosed: false, sort: null, groupBy: null,
+				bodyLen: null, limit: null, includeUrl: false, statusKind: statusKind))
+			.Nodes.Select(n => n.Key).ToArray();
+
+		// Before: "Open" is StatusKind.Open — the query-mode facet finds t-open under [open], not [terminalcancel].
+		(await Query(["open"])).Should().Contain("t-open");
+		(await Query(["terminalcancel"])).Should().NotContain("t-open");
+
+		// Reclassify "Open" → TerminalCancel (no status-string change → NOTHING is rewritten).
+		var before = await _tasks.GetMethodologyInstanceRulesAsync(Proj, inst);
+		var ack = await _tasks.DefineMethodologyInstanceRulesAsync(Proj, inst, SupportDefOpenReclassifiedTerminal(), before!.Version);
+		ack.Migrated.Should().Be(0); // the reclassification rewrote no node — the RewriteAsync gap
+
+		// After: search_meta was reprojected → the same node now classifies terminalcancel, not open.
+		(await Query(["terminalcancel"])).Should().Contain("t-open");
+		(await Query(["open"])).Should().NotContain("t-open");
+	}
 }
