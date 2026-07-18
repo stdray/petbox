@@ -52,16 +52,16 @@ public sealed class SessionSearchService
 	readonly ISessionFullScanIndex _fullScanIndex;
 	readonly ISettingsResolver _settings;
 	readonly ISessionService _sessionsSvc;
-	// Discovery re-ranking policy. `_rerank` is the SHARED freshness+diversity policy (config
+	// Discovery re-ranking policy. `_ordering` is the SHARED freshness+diversity policy (config
 	// `Search:Recency`/`Search:Diversity`) — session discovery has the same semantics as memory
 	// ("fresher wins at comparable relevance", "no near-duplicate sessions crowd the head"), so it
 	// reuses the exact primitives. There is NO semantic floor: a vector-only digest hit enters as a
 	// peer (spec: search-leg-classification — the tau membership threshold is gone).
-	readonly SearchRerankOptions _rerank;
+	readonly SearchOrderingPolicies _ordering;
 
 	public SessionSearchService(IMemoryService memory, ISessionEpisodicIndex episodic,
 		ISessionTermIndex termIndex, ISessionFullScanIndex fullScanIndex, ISettingsResolver settings,
-		ISessionService sessionsSvc, SearchRerankOptions? rerank = null)
+		ISessionService sessionsSvc, SearchOrderingPolicies? rerank = null)
 	{
 		_memory = memory;
 		_episodic = episodic;
@@ -69,7 +69,7 @@ public sealed class SessionSearchService
 		_fullScanIndex = fullScanIndex;
 		_settings = settings;
 		_sessionsSvc = sessionsSvc;
-		_rerank = rerank ?? new SearchRerankOptions();
+		_ordering = rerank ?? new SearchOrderingPolicies();
 	}
 
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
@@ -172,7 +172,7 @@ public sealed class SessionSearchService
 			}
 		}
 
-		var ranked = RankDiscovery(pool, _rerank);
+		var ranked = RankDiscovery(pool, _ordering);
 
 		var candidates = new List<SessionSearchCandidate>();
 		foreach (var digest in ranked.Take(sessions))
@@ -218,7 +218,7 @@ public sealed class SessionSearchService
 	// There is NO semantic floor (spec: search-leg-classification — the tau membership threshold is
 	// gone): a vector-only digest hit ENTERS as a peer, bounded only by the pool and the session cut.
 	internal static List<MemoryScoredHit> RankDiscovery(IReadOnlyList<MemoryScoredHit> hits,
-		SearchRerankOptions rerank)
+		SearchOrderingPolicies rerank)
 	{
 		if (hits.Count == 0) return hits.ToList();
 

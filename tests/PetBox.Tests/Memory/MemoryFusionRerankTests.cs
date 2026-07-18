@@ -44,7 +44,7 @@ public sealed class MemoryFusionRerankTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	static SearchRerankOptions Off => new()
+	static SearchOrderingPolicies Off => new()
 	{
 		Recency = new RecencyOptions { Enabled = false },
 		Diversity = new DiversityOptions { Enabled = false },
@@ -116,7 +116,7 @@ public sealed class MemoryFusionRerankTests : IDisposable
 			"without decay the stronger lexical match leads");
 
 		// Fresh store dir for the decay-on run so the backdate is re-applied cleanly.
-		var withDecay = new MemoryService(_store, llm: null, new SearchRerankOptions
+		var withDecay = new MemoryService(_store, llm: null, new SearchOrderingPolicies
 		{
 			Recency = new RecencyOptions { Enabled = true, HalfLifeDays = 30 },
 			Diversity = new DiversityOptions { Enabled = false },
@@ -142,7 +142,7 @@ public sealed class MemoryFusionRerankTests : IDisposable
 		async Task<List<string>> Run(bool mmr)
 		{
 			await _store.DeleteAsync(Proj, "notes");
-			var memory = new MemoryService(_store, llm, new SearchRerankOptions
+			var memory = new MemoryService(_store, llm, new SearchOrderingPolicies
 			{
 				Recency = new RecencyOptions { Enabled = false },
 				Diversity = new DiversityOptions { Enabled = mmr, Lambda = 0.7 },

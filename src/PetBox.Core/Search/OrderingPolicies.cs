@@ -33,10 +33,14 @@ public sealed record DiversityOptions
 // RELEVANCE selection (limit is the ceiling); a scan/field selection excludes it outright and
 // says so via `semantic:false`. Recency + MMR reshape the fused order but never gate membership.
 
-// The whole search re-ranking policy, bound from the `Search` config section
-// (Search:Recency:*, Search:Diversity:*). Both sub-knobs default enabled with conservative
-// parameters, so wiring it changes ranking but not the contract.
-public sealed record SearchRerankOptions
+// The whole search ORDERING policy, bound from the `Search` config section
+// (Search:Recency:*, Search:Diversity:*). Named for what it is — floor/recency/MMR reshape the
+// fused ORDER; there is deliberately no cross-encoder reranker in the search path, and the former
+// name `SearchRerankOptions` wrongly implied one (rename-searchrerankoptions-to-orderingpolicies).
+// Both sub-knobs default enabled with conservative parameters, so wiring it changes ordering but
+// not the contract. This is the presentation-slot that tasks-search-statuskind-presentation-tiers
+// fills with a stable partition over the fused order.
+public sealed record SearchOrderingPolicies
 {
 	public RecencyOptions Recency { get; init; } = new();
 	public DiversityOptions Diversity { get; init; } = new();
