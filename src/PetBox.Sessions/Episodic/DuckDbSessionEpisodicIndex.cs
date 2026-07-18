@@ -263,9 +263,22 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		// the semantic candidate set in the first place — that is MinSemanticChars' job upstream, a
 		// content-length exclusion, not a cosine threshold.
 		var pool = Math.Max(3 * k, 20);
-		var resp = await new SearchService(indexes, _logger).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct: ct);
-
 		var byVersion = entry.Messages.ToDictionary(m => m.Version);
+
+		// PRECISION mode (spec: search-rerank-in-loop): rerank the candidate messages with the
+		// cross-encoder when a rerank route is live. The candidate text is the message CONTENT, already
+		// in memory (no extra read), aligned to candidate order; an unparsable/absent version → "". No
+		// route → reranker null → honest RRF (DegradedRrf).
+		IReranker? reranker = llm is not null ? new LlmClientReranker(llm, projectKey) : null;
+		CandidateTextResolver resolveText = (candidates, _) =>
+		{
+			IReadOnlyList<string> texts = candidates
+				.Select(h => long.TryParse(h.Id, out var ord) && byVersion.TryGetValue(ord, out var m) ? m.Content : "")
+				.ToList();
+			return Task.FromResult(texts);
+		};
+		var resp = await new SearchService(indexes, _logger, reranker)
+			.SearchAsync(projectKey, query, new SearchFilter(null), pool, resolveCandidateText: resolveText, ct: ct);
 		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)
 		{

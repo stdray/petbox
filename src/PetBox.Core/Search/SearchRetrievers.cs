@@ -16,9 +16,10 @@ namespace PetBox.Core.Search;
 // leg (0) from one behind by N. Null when no semantic leg ran (lexical-only / no embedder /
 // degraded — nothing answered, so there is no coverage to be behind on).
 //
-// `Reranked` is laid into the contract NOW even though the reranker slice (B5) is deferred: turning
-// it on later must not be a contract change. Default false = "no rerank pass ran" — which today is
-// ALWAYS the case, and stays an honest answer until the reranker is wired.
+// `Reranked` marks the PRECISION mode (spec: search-rerank-in-loop): true = the cross-encoder rescored
+// the candidate union on one model (the штатный path when a rerank route is live), false = the honest
+// RRF degradation (DegradedRrf) ran instead — no route, a rerank outage, or an enumerable selection.
+// It is provenance the caller can always trust to tell precision from degradation, never dressed up.
 public readonly record struct SearchRetrievers(
 	bool Lexical,
 	bool Semantic,
@@ -54,6 +55,14 @@ public static class SearchDegradedReason
 
 	// Anything else an index threw while answering (SQL error, corrupt file, …).
 	public const string IndexError = "index-error";
+
+	// No Rerank route is configured for the project → the precision pass (spec: search-rerank-in-loop)
+	// is structurally dead here, so search runs the honest RRF degradation (DegradedRrf). NOT a blip.
+	public const string RerankNoRoute = "rerank-no-route";
+
+	// A Rerank route EXISTS but the whole chain failed (transient/4xx/429) at query time → the precision
+	// pass could not run this time; search degrades to RRF (DegradedRrf). May well fix itself next call.
+	public const string RerankUnavailable = "rerank-unavailable";
 
 	// Maps an embedding failure to its code. The LLM-router exception types stay OUT of Core
 	// (llm-consumer-decoupling) — the per-consumer embedder adapter passes the facts. A 429 is

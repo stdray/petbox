@@ -11,10 +11,10 @@ public enum SearchPrecisionMode
 	// pass rescores the union → top-N. The rerank pass rescores every candidate on ONE model (see
 	// the router's query-level affinity), so the final order is one honest scale.
 	//
-	// NOTE: enabling the rerank pass IN THE LOOP is a DEFERRED slice (search-rerank-in-loop «б»)
-	// behind an eval gate — a weak home model must be shown to beat RRF on a real log before
-	// "home always preferred / reranker gates the output" is switched on. This enum NAMES the mode;
-	// it does not by itself flip that switch.
+	// WIRED IN THE LOOP (search-rerank-in-loop «б», owner reversed the deferral 2026-07-18): the
+	// facade runs this pass whenever a rerank route is live (SearchService + IReranker), reporting
+	// Reranked=true. The premise is that rerank IS needed; the weak-home-vs-RRF eval on a real log is
+	// SEPARATE later work, NOT a precondition and NOT a gate here.
 	Precision,
 
 	// DEGRADED (реранкер недоступен): plain RRF fusion of the legs' ranked lists. This is a HONEST
