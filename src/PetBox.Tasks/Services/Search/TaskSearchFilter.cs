@@ -6,9 +6,20 @@ namespace PetBox.Tasks.Services.Search;
 // Composable post-select filters for the unified tasks read. Pure: takes candidate hits +
 // resolved criteria and returns the filtered set. Shared status-slug resolution is also here
 // so GetAsync (single-kind) and SearchNodesAsync (cross-kind) apply the same soft rules.
+//
+// ENTITY PREDICATES (spec tasks-search-entity-predicates-under-commit). `under` (the part_of
+// subtree — a graph only the tasks entity has) and `commit` (reverse commit lookup — a tasks-only
+// attribute) are predicates the опорный слой (search_meta) CANNOT express: search_meta carries the
+// StatusKind facet + the identity alias set, not the part_of edges or the commit trailers. So they
+// are declared entity-specific and applied HERE, at the pipeline's RE-FILTER step, over the pool the
+// опорный слой already selected. Their existence does NOT grant selecting PAST that layer: they only
+// ever NARROW the already-selected/faceted candidates (a `Where`), never widen the pool nor reach a
+// row the statusKind facet excluded. `status` (a slug predicate) and `keys` (soft addressing) ride
+// the same re-filter step for the same reason.
 public static class TaskSearchFilter
 {
-	// Apply every non-null predicate in criteria order (under → status → keys → commit).
+	// Apply every non-null predicate in criteria order (under → status → keys → commit). Every one
+	// is a pure NARROWING `Where` over the incoming pool — the re-filter step, never a re-selection.
 	public static List<TaskSearchHit> Apply(IEnumerable<TaskSearchHit> hits, TaskSearchCriteria criteria)
 	{
 		IEnumerable<TaskSearchHit> q = hits;

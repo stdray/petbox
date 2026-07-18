@@ -81,9 +81,9 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		string? q = null, string? board = null, string? under = null, string[]? status = null,
 		string[]? keys = null, bool includeClosed = false, SortInput? sort = null,
 		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false,
-		string[]? statusKind = null) =>
+		string[]? statusKind = null, string? commit = null) =>
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, under, status, keys,
-			includeClosed, sort, groupBy, bodyLen, limit, includeUrl, statusKind: statusKind);
+			includeClosed, sort, groupBy, bodyLen, limit, includeUrl, commit: commit, statusKind: statusKind);
 
 	// ---- listing mode (no q) ----
 
@@ -285,6 +285,44 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		// statusKind:[terminalok] keeps ONLY the Done node in BOTH modes.
 		(await Search(board: "b", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
 		(await Search(q: "quokka", statusKind: ["terminalok"])).Nodes.Select(n => n.Key).Should().Equal("quokka-done");
+	}
+
+	// ---- entity predicates (spec tasks-search-entity-predicates-under-commit) ----
+
+	// `under` (part_of subtree) and `commit` are predicates the опорный слой cannot express, applied
+	// at the re-filter step. They NARROW the already-faceted pool — they must NOT resurrect a node the
+	// statusKind facet excluded (no selecting past the опорный слой). Orthogonal to the facet: naming
+	// the excluded kind restores it, proving the entity predicate itself is a pure narrowing filter.
+	[Fact]
+	public async Task EntityPredicate_Under_DoesNotSelectPastStatusKindFacet()
+	{
+		await Seed("b", """
+			[{"key":"burrow","status":"Todo","title":"wombat root","body":"wombat"},
+			 {"key":"kid-open","status":"Todo","title":"wombat kept","body":"wombat","partOf":"burrow"},
+			 {"key":"kid-gone","status":"Todo","title":"wombat lost","body":"wombat","partOf":"burrow"}]
+			""");
+		await Seed("b", """[{"key":"kid-gone","status":"Cancelled","version":1}]"""); // terminalcancel
+
+		// Default query under the subtree (the root is in its own subtree): the entity predicate keeps
+		// the subtree, the facet still hides the cancelled child — under did NOT select past the опорный слой.
+		(await Search(q: "wombat", under: "burrow")).Nodes.Select(n => n.Key)
+			.Should().BeEquivalentTo("burrow", "kid-open");
+		// Orthogonal: name terminalcancel and the SAME under predicate now yields the cancelled child.
+		(await Search(q: "wombat", under: "burrow", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key)
+			.Should().BeEquivalentTo("kid-gone");
+	}
+
+	[Fact]
+	public async Task EntityPredicate_Commit_DoesNotSelectPastStatusKindFacet()
+	{
+		await Seed("b", """[{"key":"shipped","status":"Todo","title":"dingo work","body":"dingo","commits":["deadbee1234567"]}]""");
+		await Seed("b", """[{"key":"shipped","status":"Cancelled","version":1}]"""); // terminalcancel, still carries the commit
+
+		// Default query + commit: the facet hides the cancelled node — commit did not select past it.
+		(await Search(q: "dingo", commit: "deadbee")).Nodes.Should().BeEmpty();
+		// Naming terminalcancel restores it — commit is a pure narrowing re-filter, orthogonal to the facet.
+		(await Search(q: "dingo", commit: "deadbee", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key)
+			.Should().Equal("shipped");
 	}
 
 	// ---- query mode (q) ----
