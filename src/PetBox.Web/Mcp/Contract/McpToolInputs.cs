@@ -200,7 +200,8 @@ public sealed record MethodologyDeliveryInput
 }
 
 // "A NEW node of type `type` must carry a link of kind `link` at creation." `link` must
-// be upsert-expressible: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).
+// be upsert-expressible: any declared/builtin link, addressed via links:{kind:ref};
+// blockedBy is builtin-blocks sugar.
 // `targetKind`/`targetStatuses` optionally declare what the link must point at: a node of
 // that kind and/or in one of those statuses (declaration only in this wave).
 public sealed record MethodologyLinkConstraintInput

@@ -72,7 +72,7 @@ static class MethodologyReference
 				["workflows"] = "The kind's workflow blocks — at least one. A type slug maps to exactly one block across the kind.",
 				["linkConstraints"] = "Per-type creation link requirements (\"a NEW <type> must carry a <link>\"). Omitted = no requirement; constraints are opt-in per type.",
 				["effects"] = "Declared transition effects — cross-node automation the server executes when a node of this kind enters the trigger status.",
-				["autoWireSpecFrom"] = "Auto-wire this kind's boards to the sole active board of the named kind (e.g. work → \"spec\"), so specRef resolves without naming a board. Omitted = no auto-wire.",
+				["autoWireSpecFrom"] = "Auto-wire this kind's boards to the sole active board of the named kind (e.g. work → \"spec\"), so the task_spec link resolves without naming a board. Omitted = no auto-wire.",
 				["delivery"] = "The bottom-up delivery roll-up for this kind (a spec node's verdict computed from the work nodes linked to it). Omitted = this kind computes no delivery.",
 				["defaultView"] = "The board's initial view mode when a viewer has no saved preference. Omitted = the builtin default.",
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",

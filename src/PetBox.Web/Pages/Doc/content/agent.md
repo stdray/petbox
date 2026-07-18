@@ -68,7 +68,7 @@ tasks_upsert board="spec" projectKey="<proj>" nodes=[
 ## 5. Tools
 
 - `tasks_board_create(kind?) / board_list / board_delete` — named boards; `kind` ∈ spec|work|ideas|intake|simple. A cold `tasks_upsert` auto-creates a simple board.
-- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `keys`, `under`) and `sort` work in both modes. Node fields incl. `specRef` / `blockedBy` create links.
+- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `keys`, `under`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
 - `relations_create / list / delete` — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the [cheatsheet](/doc/methodology).
 - `memory_store_list / store_create / store_delete` — named memory stores (a cold `memory_upsert` auto-creates the store).
@@ -121,10 +121,10 @@ RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
   small build      -> short idea -> a few thin spec leaves -> work
   ongoing project  -> ideas -> spec -> work + intake (deeper)
 
-WORK rules: a new feature/bug MUST link a spec node — pass specRef = the spec node's
-slug or nodeId; pin the spec board via board_create(specBoard) or board_set_spec.
+WORK rules: a new feature/bug MUST link a spec node — pass links:{task_spec: <spec node's
+slug or nodeId>}; pin the spec board via board_create(specBoard) or board_set_spec.
 Type `chore` (internal engineering hygiene: tests, flakes, refactoring, infra) is the
-one exception — same FSM, no specRef required. Statuses Pending->InProgress->Review->Done;
+one exception — same FSM, no task_spec link required. Statuses Pending->InProgress->Review->Done;
 your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
 
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one

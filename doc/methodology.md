@@ -91,21 +91,21 @@ reporter is not the router (external users, an agent without the context to diag
 for observations you don't want to route right now (noticed mid-task — park it, don't
 derail). When the reporter CAN route — the maintainer, or an agent with a clear diagnosis —
 and the destination is obvious, create the node at the destination directly and skip
-intake: engineering hygiene → a work `chore` (spec-less by design, no `specRef`); a bug
-violating an EXISTING spec node → a work `bug` with `specRef`; a product thought with no
+intake: engineering hygiene → a work `chore` (spec-less by design, no `links.task_spec`); a bug
+violating an EXISTING spec node → a work `bug` with `links.task_spec`; a product thought with no
 spec reflection → an idea. The chain's integrity is protected by the destination rules
-themselves (feature/bug still requires `specRef`, a spec write still requires an accepted
+themselves (feature/bug still requires `links.task_spec`, a spec write still requires an accepted
 idea) — an intake hop adds nothing when the routing is already known.
 
 **Triage** moves an item to exactly one of:
 
 - **reject** — `wontfix` / `duplicate`, with a reason (the record stays; thinking isn't lost).
 - **promote to a task** — *only when the item maps to an EXISTING spec node.* The work task
-  links that spec node (`specRef` → `task_spec`) and the intake issue (`issue_task`); the
+  links that spec node via `links.task_spec` and the intake issue via `links.issue_task`; the
   issue auto-closes when the task reaches `Done`. Spec-less engineering hygiene promotes to
   a `chore` (no spec node needed).
 - **escalate to an idea** — *when the item has NO reflection in the spec.* You can't make a
-  work task for it: a work feature/bug REQUIRES a `specRef`, and there is no spec node to
+  work task for it: a work feature/bug REQUIRES `links.task_spec`, and there is no spec node to
   point at. That absence IS the signal — the requirement was never specified. The item
   becomes the **seed of an Idea**, which runs the gate (`idea → review[+spec_plan] → accept
   → spec`) and only then spawns work. (E.g. "font too small" with no UI spec → an idea
@@ -180,7 +180,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
   there are only a handful. Do NOT pre-atomize implementation detail into nodes. Add a
   child node only when a part earns its own lifecycle / delivery.
 - **Link a task to each requirement it delivers (M:N), not just the umbrella.**
-  `task_spec` / `specRef` may point at ANY spec node; `delivery` aggregates a node's tasks
+  `links.task_spec` may point at ANY spec node; `delivery` aggregates a node's tasks
   over its whole `part_of` subtree, so leaf links automatically roll up to the block and
   root. Linking only at the umbrella node leaves the leaves at `not_started` and hides
   per-requirement progress — so link the leaves the task actually delivers (at the owner
@@ -195,7 +195,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 - **Lifecycle & gate (enforced in code):** a spec node is born `defined` (a worked-out
   requirement) and can only retire to `deprecated` — there is NO `draft`/in-flux status
   (undefined thinking lives in an Idea, not the spec tree). Every spec create / change /
-  deprecate requires **`ideaRef` → an `accepted` idea** (which auto-creates the `idea_spec`
+  deprecate requires **`links.idea_spec` → an `accepted` idea** (which auto-creates the `idea_spec`
   edge); a spec write with no accepted idea is rejected. You cannot touch the spec without
   going idea → accept first.
 

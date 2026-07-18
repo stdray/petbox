@@ -18,7 +18,7 @@ namespace PetBox.Web.Pages.ProjectHome;
 // (status, title, body) in place. Sibling of TaskBoard; named TaskBoardNode (not PlanNode) so it
 // doesn't shadow the PetBox.Tasks.Data.PlanNode record. Every read AND write goes through
 // ITasksService / ICommentService — the page never opens the DB context itself, and the edit
-// handlers route through UpsertAsync so a UI edit hits the SAME guards (FSM, ideaRef, concurrency)
+// handlers route through UpsertAsync so a UI edit hits the SAME guards (FSM, link constraints, concurrency)
 // as the MCP path (spec edit-respects-guards). NetArchTest enforces the door.
 // viewer-member-consistency: the class policy is WorkspaceViewer (a Viewer must be able to READ
 // the node) — every OnPost* handler (status change, title/body edit, comments) is a MUTATION and
