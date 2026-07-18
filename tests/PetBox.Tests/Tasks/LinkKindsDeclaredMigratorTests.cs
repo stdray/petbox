@@ -197,6 +197,36 @@ public sealed class LinkKindsDeclaredMigratorTests : IDisposable
 	}
 
 	[Fact]
+	public async Task NonQuartetReuseOfTrioSlug_WithoutCanonicalEndKinds_LeftUntouched()
+	{
+		// A project's OWN process reuses the slug `task_spec` on kinds that are NOT the quartet's
+		// work/spec — it declares neither. Injecting the canonical work→spec direction would silently
+		// start rejecting that edge's relations_create and, on the next rules_upsert, fail validation
+		// (the injected ends aren't its declared kinds), locking the owner out of their own
+		// methodology. The migrator must recognize this is not the quartet shape and leave it as-is.
+		var alpha = new MethodologyKindDef("alpha", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["a"], [new("open", "Open", StatusKind.Open)], []),
+		])
+		{
+			LinkConstraints = [new MethodologyLinkConstraintDef("a", "task_spec") { TargetKind = "beta" }],
+		};
+		var beta = new MethodologyKindDef("beta", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["b"], [new("open", "Open", StatusKind.Open)], []),
+		]);
+		var own = new MethodologyDefinition("own", [alpha, beta]);
+
+		await SeedProjectBoard();
+		await SeedInstance("own", own);
+
+		Migrator().Migrate().Should().Be(0,
+			"the trio slug is reused without the canonical work/spec end-kinds — not our quartet shape");
+		JsonSerializer.Serialize(await ReadInstance("own"), DefinitionJson)
+			.Should().Be(JsonSerializer.Serialize(own, DefinitionJson), "left byte-for-byte untouched");
+	}
+
+	[Fact]
 	public async Task DocumentThatReferencesNoTrio_AndHasNoDelivery_LeftUntouched()
 	{
 		// A project's own methodology that mentions none of the trio and rolls up nothing: nothing

@@ -680,7 +680,7 @@ public static class TasksTools
 		move), the GATES as behavioral invariants (owner-only transitions the agent NEVER
 		performs — marked enforced vs convention, reason-required moves, artifact:<slug>
 		comment preconditions, pre-transition checklists), creation link requirements
-		(specRef/blockedBy/ideaRef, incl. declared link targets), declared transition
+		(links:{kind:ref} for declared/process relation kinds + blockedBy, incl. declared link targets), declared transition
 		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
 		neutral vs instance-declared). `invariants` is the same derivation machine-readable:
 		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
@@ -712,7 +712,7 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
 		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex
-		NodeId (the same slug-or-NodeId convention as specRef/partOf). The answer carries the
+		NodeId (the same slug-or-NodeId convention as blockedBy/partOf). The answer carries the
 		owning `board`, its `kind`, the part_of `ancestors` chain (root→parent), and the
 		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
 		the `body` (COMPLETE by default — this is the pointed full read; the uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full), priority, version, tags, links (`spec`,
@@ -992,12 +992,15 @@ public static class TasksTools
 		==headings==); numbered lists as `1.`; markdown is client-rendered via
 		marked+DOMPurify (gfm:true, breaks:true — a bare newline becomes a <br>)). Other
 		fields: status (slug — see tasks_workflow), type (feature|bug|chore on work boards;
-		chore = spec-less engineering hygiene), specRef (the spec node the work task
-		implements, as its slug on the linked spec board or a NodeId — REQUIRED for a new
-		feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
-		`accepted` idea this create/change is made under — REQUIRED for every spec node; becomes
-		the idea_spec edge), blockedBy (the blocking node as its slug on THIS board or a
-		NodeId — the same slug-or-NodeId convention as specRef/partOf), supersedes
+		chore = spec-less engineering hygiene), links (a dict {relationKind: ref | ref[]}
+		expressing the active methodology's DECLARED/process relations — there are NO
+		methodology-named sugar fields. On the quartet: {"task_spec":"spec-leaf"} on a work
+		feature/bug, {"idea_spec":"<accepted idea NodeId>"} on a spec node; a ref is a slug on
+		the target kind's board or a NodeId, and a value may be a LIST for several targets of one
+		kind. Which relation kinds exist, their direction, and which are REQUIRED come from
+		tasks_methodology_guide and are enforced with data-generated errors), blockedBy (the
+		blocking node as its slug on THIS board or a NodeId — the same slug-or-NodeId convention
+		as partOf; may also be written as links.blocks, add-only), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
 		commits? (an ARRAY of commit SHAs — hex, 7..40 chars; null omits, [] clears, a list
 		REPLACES the node's full commit set, same PATCH semantics as tags), priority? (sparse
@@ -1016,7 +1019,7 @@ public static class TasksTools
 		regardless) — the node is soft-closed (history kept), its edges and tags are closed, and
 		its key appears in `removed[]`. A node with active part_of children is refused (Rejected
 		conflict) — delete the children first, or the whole subtree in one call. deleted cannot
-		combine with prevKey. Spec-node deletes need no ideaRef (erasing junk is not a spec
+		combine with prevKey. Spec-node deletes need no idea_spec link (erasing junk is not a spec
 		change — retiring a real requirement stays `deprecated`).
 
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
@@ -1040,7 +1043,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board,
-		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,

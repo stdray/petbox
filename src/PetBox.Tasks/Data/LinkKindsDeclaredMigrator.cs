@@ -169,8 +169,10 @@ public sealed class LinkKindsDeclaredMigrator
 		}
 
 		var declared = new HashSet<string>((def.LinkKinds ?? []).Select(lk => lk.Slug), StringComparer.OrdinalIgnoreCase);
+		var kindSlugs = new HashSet<string>(kinds.Select(k => k.Kind), StringComparer.OrdinalIgnoreCase);
 		var toDeclare = MethodologyPresets.QuartetLinkKinds
 			.Where(q => referenced.Contains(q.Slug) && !declared.Contains(q.Slug))
+			.Where(q => CanonicalEndsDeclared(q, kindSlugs, subject))
 			.ToList();
 
 		if (!changed && toDeclare.Count == 0) return false;
@@ -182,5 +184,25 @@ public sealed class LinkKindsDeclaredMigrator
 			_log?.LogInformation("Tasks methodology-link-kinds-declared: {Subject} — declaring {Slugs}",
 				subject, string.Join(", ", toDeclare.Select(t => t.Slug)));
 		return true;
+	}
+
+	// A referenced trio slug is DECLARED with its canonical quartet Direction only when the document
+	// already declares BOTH end-kinds of that direction (idea_spec: ideas→spec, task_spec: work→spec,
+	// issue_task: intake→work). A document that references the slug but is NOT the canonical quartet
+	// shape — a project's OWN process that happens to reuse the slug with different kinds — is left
+	// untouched: injecting a foreign orientation would silently start rejecting that edge's
+	// relations_create (direction-enforcement) and, on the next rules_upsert, fail validation because
+	// the injected ends aren't among that document's declared kinds, locking the owner out of their
+	// own methodology. Same "only touch OURS, untouched" discipline as WorkDeferredStatusMigrator.
+	bool CanonicalEndsDeclared(MethodologyLinkKindDef q, HashSet<string> kindSlugs, string subject)
+	{
+		var from = q.Direction?.FromKind;
+		var to = q.Direction?.ToKind;
+		if ((from is null || kindSlugs.Contains(from)) && (to is null || kindSlugs.Contains(to)))
+			return true;
+		_log?.LogInformation(
+			"Tasks methodology-link-kinds-declared: {Subject} references '{Slug}' but does not declare its canonical end-kinds ({From} -> {To}) — a non-quartet reuse of the slug, left as-is",
+			subject, q.Slug, from, to);
+		return false;
 	}
 }
