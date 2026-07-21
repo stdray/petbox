@@ -46,7 +46,7 @@ public sealed class TasksDeleteTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	static NodePatch Node(string key, string? partOf = null, string? title = null, string? blockedBy = null, string? status = null, IReadOnlyList<string>? tags = null, long version = 0) => new()
+	static NodePatch Node(string key, string? partOf = null, string? title = null, string? blockedBy = null, string? status = null, IReadOnlyList<string>? tags = null, long version = 0, string? type = null) => new()
 	{
 		Key = key,
 		PartOf = partOf,
@@ -54,6 +54,7 @@ public sealed class TasksDeleteTests : IDisposable
 		Body = "body of " + key,
 		BlockedBy = blockedBy,
 		Status = status,
+		Type = type,
 		Tags = tags,
 		Version = version,
 	};
@@ -181,6 +182,56 @@ public sealed class TasksDeleteTests : IDisposable
 		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
 		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
 		stuck.Status.Should().Be("InProgress"); // Blocked → InProgress, mirroring the Done effect
+	}
+
+	// PIN (work/delete-unblock-ungated-by-kind, measured pre-change on origin/main
+	// 9a9a9c7a): today's RunDeleteEffectsAsync unblocks on ANY board whose status vocabulary
+	// happens to name a status "Blocked", regardless of whether the kind declares
+	// MethodologyKindDef.BlocksGate — board "b" above auto-vivifies as kind `simple`
+	// (TaskBoardStore.EnsureAsync's "simple" default), which carries a "Blocked" status but
+	// NO BlocksGate (SimpleKind in MethodologyPresets.cs never sets it — Blocked is free/
+	// optional there, no state invariant). This test makes that explicit instead of relying
+	// on the implicit default, and exists purely as a behavior-lock net: it must stay GREEN
+	// across the blocksGate-data migration of this path, or the migration silently narrowed
+	// production scope.
+	[Fact]
+	public async Task Delete_Blocker_UnblocksTarget_OnExplicitSimpleKind_WhichDeclaresNoBlocksGate()
+	{
+		await _tasks.CreateBoardAsync(Proj, "sboard", "simple", null, null);
+		await _tasks.UpsertAsync(Proj, "sboard", new[] { Node("blocker") });
+		var (blockerId, _) = await NodeInfo("sboard", "blocker");
+		await _tasks.UpsertAsync(Proj, "sboard", new[] { Node("stuck", blockedBy: blockerId, status: "Blocked") });
+		var (stuckId, _) = await NodeInfo("sboard", "stuck");
+
+		var r = await _tasks.UpsertAsync(Proj, "sboard", new[] { Delete("blocker") });
+
+		r.Result.Applied.Should().BeTrue();
+		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
+		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
+		stuck.Status.Should().Be("InProgress");
+	}
+
+	// PIN, control side of the fork: the `work` kind DOES declare BlocksGate("Blocked",
+	// "InProgress") (MethodologyPresets.WorkBlocksGate), so this must keep passing under a
+	// data-driven rewrite of RunDeleteEffectsAsync just as much as the ungated case above —
+	// it is the case blocksGate(kindSlug) is meant to cover natively. `chore` is used because
+	// WorkKind's LinkConstraints require feature/bug to carry a task_spec link at creation;
+	// chore is the declared exemption (no spec-linking machinery needed for this fixture).
+	[Fact]
+	public async Task Delete_Blocker_UnblocksTarget_OnWorkKind_WhichDeclaresBlocksGate()
+	{
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("blocker", type: "chore") });
+		var (blockerId, _) = await NodeInfo("wboard", "blocker");
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("stuck", blockedBy: blockerId, status: "Blocked", type: "chore") });
+		var (stuckId, _) = await NodeInfo("wboard", "stuck");
+
+		var r = await _tasks.UpsertAsync(Proj, "wboard", new[] { Delete("blocker") });
+
+		r.Result.Applied.Should().BeTrue();
+		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
+		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
+		stuck.Status.Should().Be("InProgress");
 	}
 
 	[Fact]
