@@ -235,6 +235,28 @@ public sealed class QuartetTests : IDisposable
 			.Should().Equal("ideas", "spec");
 	}
 
+	// stage2-dup-arrays: the compact index's kind list is deliberately QUARTET-ONLY — it is
+	// derived from MethodologyRuntime's own pipeline-order data (Singleton process-role kinds),
+	// not a fresh hardcoded literal, so this pins that classic/simple (both in the SAME pipeline
+	// order, neither Singleton) never leak in even when they coexist with the quartet in the
+	// same project on a separate instance.
+	[Fact]
+	public async Task QuartetIndex_NeverIncludesNonSingletonPresetKinds_EvenWhenPresentInProject()
+	{
+		var http = Http("tasks:read,tasks:write,methodology:write");
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "classic", "builtin", "classic");
+
+		var idx = await _tasks.GetMethodologyAsync(Proj);
+		idx.Boards.Select(b => b.Kind).Should().Equal("intake", "ideas", "spec", "work");
+		idx.Enabled.Should().BeTrue(); // all four quartet members exist — the classic board is irrelevant to it
+
+		// A classic includeBoards name is an UNKNOWN name from this surface's point of view
+		// (soft filter, same as "bogus") — never resolves to a board.
+		var filtered = await _tasks.GetMethodologyAsync(Proj, includeBoards: ["classic"]);
+		filtered.Boards.Should().BeEmpty();
+	}
+
 	// spec bounded-result-sets / surface-economy: a board too large for the index budget is
 	// prefix-cut with STRUCTURAL markers (truncated/omitted per board + a narrowing hint on
 	// the view); the status histogram stays complete — the overview never lies about totals.

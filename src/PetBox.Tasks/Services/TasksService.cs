@@ -381,8 +381,20 @@ public sealed partial class TasksService : ITasksService
 		return new BoardWorkflowView(runtime.KindName(meta.Kind), runtime.Blocks(meta.Kind));
 	}
 
-	// Pipeline order of the quartet kinds.
-	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
+	// Pipeline order of the quartet kinds — read from MethodologyRuntime data instead of a
+	// fourth hardcoded literal (MethodologyDefinition.cs already documents two such arrays
+	// removed: `Methodological` here, `ProcessRoleKinds` in MethodologyInstanceService,
+	// spec methodology-kind-singleton). EnableMethodologyAsync/GetMethodologyAsync are a
+	// deliberately QUARTET-ONLY compat surface — not project-scoped — so this reads the
+	// PRESETS-ONLY runtime's pipeline order (Intake, Ideas, Spec, Work, Classic, Simple) and
+	// keeps only the Singleton (process-role) members. Classic/Simple never declare
+	// Singleton, so they never leak into this compat surface even though they're both in
+	// MethodologyRuntime's own pipeline order — the filter, not a fresh literal, is what
+	// keeps this quartet-only.
+	static readonly BoardKind[] Quartet = MethodologyRuntime.PresetsOnly.EffectiveKinds()
+		.Where(k => k.Singleton == true)
+		.Select(k => MethodologyPresets.ParseKind(k.Kind))
+		.ToArray();
 
 	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = MethodologyPresets.DefaultProvisioningPreset, CancellationToken ct = default)
 	{

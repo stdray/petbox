@@ -5,6 +5,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Tasks.Workflow;
@@ -206,6 +207,94 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		scratch!.MethodologyInstance.Should().Be("quartet");
 		// No extra instance minted.
 		(await _tasks.ListMethodologyInstancesAsync(Proj)).Should().ContainSingle(i => i.Name == "quartet");
+	}
+
+	// FORK pin (stage2/dup-arrays axis-2, item B — TasksService.ApplyWorkflow's
+	// `runtime.PresetKind(kindSlug) == BoardKind.Simple` door gate): the gate only fires while
+	// the board's runtime is PresetsOnly (never backfilled, or backfilled into an instance
+	// whose kinds don't declare "simple" verbatim). A LONE simple board — no process-role or
+	// classic siblings — backfills into an instance whose rules MATERIALIZE "simple" as a
+	// DECLARED kind (MethodologyPresets.RenderBuiltinTemplate("simple")), so
+	// `runtime.IsDefinedKind("simple")` flips true and `PresetKind(...)` reads null forever
+	// after (never == BoardKind.Simple again) — the same shape as the documented spec/
+	// PresetKind production regression IsSpecKind fixed. An invalid type is REJECTED on both
+	// sides either way (Merge already lowercases Type before ApplyWorkflow runs, so this is
+	// NOT a case-sensitivity gap) — but via two DIFFERENT code paths with two DIFFERENT
+	// ArgumentException messages: the explicit door gate's "invalid type 'x' for a simple
+	// board; valid: ..." vs. runtime.For() returning null and WorkflowEngine.Validate's generic
+	// "board kind 'simple' needs a known type (...); got 'x'". Replacing the enum comparison
+	// with an IsSpecKind-style `IsSimpleKind` data predicate (KindName == "simple" for declared
+	// AND preset kinds alike) would make the door gate ALSO fire in the materialized case,
+	// collapsing this message onto the door gate's wording — an observable (if minor) contract
+	// change, not a pure refactor. No MethodologyKindDef field distinguishes "needs the
+	// explicit door-side default+vocabulary check" from any other preset kind, and minting one
+	// is against the closed-spec instruction, so item B is left AS-IS; these two tests pin
+	// today's divergent message on both sides of the fork.
+	[Fact]
+	public async Task Simple_PresetsOnly_InvalidType_RejectedByTheExplicitDoorGate()
+	{
+		// Never backfilled: the board stays on the PresetsOnly runtime, so
+		// `PresetKind(kindSlug) == BoardKind.Simple` is true and TasksService.ApplyWorkflow's
+		// explicit door gate runs BEFORE runtime.For() ever resolves a workflow.
+		await SeedBoard(Proj, "scratch", "simple");
+		var act = () => _tasks.UpsertAsync(Proj, "scratch", new[]
+		{
+			new NodePatch { Key = "n1", Title = "N1", Body = "b", Type = "zzz" },
+		});
+		var ex = await act.Should().ThrowAsync<ArgumentException>();
+		ex.Which.Message.Should().Contain("invalid type 'zzz' for a simple board");
+	}
+
+	[Fact]
+	public async Task Simple_AfterBackfillMaterializesTheKind_InvalidType_RejectedByWorkflowEngineInstead()
+	{
+		// ProjB's "bag" is the ONLY board in its project — no process-role/classic siblings —
+		// so backfill's ResolvePrimaryRules picks the "simple" builtin template, whose rendered
+		// definition DECLARES "simple" as a kind. From then on `IsDefinedKind("simple")` is
+		// true, `PresetKind("simple")` reads null, and the door gate at TasksService.cs never
+		// fires again for this board — the STILL-invalid type is instead caught by
+		// runtime.For() returning null (no matching block) and WorkflowEngine.Validate's
+		// generic "needs a known type" refusal. Same outcome (rejected), different message.
+		await SeedBoard(ProjB, "bag", "simple");
+		Backfill().Migrate().Should().Be(1);
+		(await _boards.FindAsync(ProjB, "bag"))!.MethodologyInstance.Should().Be("simple");
+
+		var act = () => _tasks.UpsertAsync(ProjB, "bag", new[]
+		{
+			new NodePatch { Key = "n1", Title = "N1", Body = "b", Type = "zzz" },
+		});
+		var ex = await act.Should().ThrowAsync<ArgumentException>();
+		ex.Which.Message.Should().Contain("needs a known type");
+		ex.Which.Message.Should().NotContain("for a simple board"); // NOT the door gate's wording
+	}
+
+	// FORK pin, item C (TaskBoard.cshtml / TaskBoardNode.cshtml / ProjectTasks.cshtml's
+	// `Runtime.PresetKind(kindSlug) == BoardKind.Simple` badge-styling computation) — same root
+	// cause as item B just above, reached through the board-scoped runtime door
+	// (ITasksService.GetRuntimeForBoardAsync, what TaskBoard.cshtml.cs/TaskBoardNode.cshtml.cs
+	// actually call) instead of UpsertAsync's write path. Left AS-IS for the identical reason:
+	// no MethodologyKindDef field distinguishes "genuinely Simple" once the kind is declared,
+	// and swapping in an IsSpecKind-style IsSimpleKind predicate would flip the computed badge
+	// class/tooltip for every backfilled lone-simple-board project — an observable UI change.
+	//
+	// Also flagging a discrepancy for the maintainer: PresetKindProcessRoleGuardTests.cs's class
+	// doc states BoardKind.Simple comparisons are deliberately left unguarded because Simple
+	// "is reachable as a defined kind only via the raw tasks_methodology_create(source:builtin,
+	// sourceKey:simple) call, bypassing the UI-recommended path" — i.e. an intentional, rare
+	// escape hatch. This test shows a SECOND, ordinary path to the same state: any lone
+	// preexisting simple board (no process-role/classic siblings) reaches it automatically via
+	// MethodologyInstanceBackfill at every startup, no raw MCP call involved. Whether that
+	// broadens the guard's stated exposure is the maintainer's call, not this axis-2 pass's.
+	[Fact]
+	public async Task PresetKind_Simple_NullsOutOnceBackfillMaterializesTheKind_NotOnlyViaRawMcp()
+	{
+		await SeedBoard(ProjB, "bag", "simple");
+		var before = await _tasks.GetRuntimeForBoardAsync(ProjB, "bag");
+		before.PresetKind("simple").Should().Be(BoardKind.Simple); // badge computation reads Simple correctly
+
+		Backfill().Migrate().Should().Be(1);
+		var after = await _tasks.GetRuntimeForBoardAsync(ProjB, "bag");
+		after.PresetKind("simple").Should().BeNull(); // badge computation now reads "not simple" — no raw MCP call involved
 	}
 
 	[Fact]

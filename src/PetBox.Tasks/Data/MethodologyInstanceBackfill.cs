@@ -38,7 +38,16 @@ namespace PetBox.Tasks.Data;
 // Safe: per-project try/catch; never deletes boards or nodes; re-run leaves assigned boards alone.
 public sealed class MethodologyInstanceBackfill
 {
-	static readonly BoardKind[] ProcessRoles = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+	// Process-role kinds — read from MethodologyRuntime data (Singleton = process-role
+	// cardinality, spec methodology-kind-singleton) instead of a fourth hardcoded literal of
+	// the class MethodologyDefinition.cs documents as removed (`Methodological` in
+	// TasksService, `ProcessRoleKinds` in MethodologyInstanceService). Presets-only because
+	// backfill runs BEFORE any board has membership — there is no instance/project runtime to
+	// scope this to yet.
+	static readonly BoardKind[] ProcessRoles = MethodologyRuntime.PresetsOnly.EffectiveKinds()
+		.Where(k => k.Singleton == true)
+		.Select(k => MethodologyPresets.ParseKind(k.Kind))
+		.ToArray();
 
 	static readonly JsonSerializerOptions DefinitionJson = new(JsonSerializerDefaults.Web)
 	{
@@ -333,7 +342,14 @@ public sealed class MethodologyInstanceBackfill
 		string slug;
 		if (kinds.Any(ProcessRoles.Contains))
 			slug = "quartet";
-		else if (kinds.Contains(BoardKind.Classic))
+		// Classic has no distinguishing FIELD in MethodologyKindDef (same as Simple: no
+		// Singleton, no BlocksGate) — its only identity is its own kind SLUG, so the builtin-
+		// template choice reads the board's stored `Kind` slug directly instead of round-
+		// tripping it through BoardKind.Classic. `unassigned`'s process-role kinds are already
+		// excluded above; ParseKind(b.Kind) == Classic exactly when b.Kind case-insensitively
+		// equals "classic" (the only string that enum-parses to it), so this is the identical
+		// condition without the enum comparison.
+		else if (unassigned.Any(b => string.Equals(b.Kind, "classic", StringComparison.OrdinalIgnoreCase)))
 			slug = "classic";
 		else
 			slug = "simple";
@@ -342,12 +358,12 @@ public sealed class MethodologyInstanceBackfill
 		return (slug, JsonSerializer.Serialize(def, DefinitionJson));
 	}
 
-	static int PipelineRank(BoardKind kind) => kind switch
-	{
-		BoardKind.Intake => 0,
-		BoardKind.Ideas => 1,
-		BoardKind.Spec => 2,
-		BoardKind.Work => 3,
-		_ => 9,
-	};
+	// The fifth surviving duplicate of the quartet's pipeline order — replaced by an index
+	// lookup into `ProcessRoles` itself: that array is already derived from
+	// MethodologyRuntime.PresetsOnly.EffectiveKinds() in PIPELINE order (Intake, Ideas, Spec,
+	// Work — EffectiveKinds walks MethodologyRuntime.PipelineOrder and Singleton==true keeps
+	// exactly the quartet, in that order), so no second literal is needed to rank them. Only
+	// ever called on a kind already filtered through `ProcessRoles.Contains` above, so -1
+	// (not found) is unreachable.
+	static int PipelineRank(BoardKind kind) => Array.IndexOf(ProcessRoles, kind);
 }
