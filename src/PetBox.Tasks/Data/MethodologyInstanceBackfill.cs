@@ -38,7 +38,16 @@ namespace PetBox.Tasks.Data;
 // Safe: per-project try/catch; never deletes boards or nodes; re-run leaves assigned boards alone.
 public sealed class MethodologyInstanceBackfill
 {
-	static readonly BoardKind[] ProcessRoles = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+	// Process-role kinds — read from MethodologyRuntime data (Singleton = process-role
+	// cardinality, spec methodology-kind-singleton) instead of a fourth hardcoded literal of
+	// the class MethodologyDefinition.cs documents as removed (`Methodological` in
+	// TasksService, `ProcessRoleKinds` in MethodologyInstanceService). Presets-only because
+	// backfill runs BEFORE any board has membership — there is no instance/project runtime to
+	// scope this to yet.
+	static readonly BoardKind[] ProcessRoles = MethodologyRuntime.PresetsOnly.EffectiveKinds()
+		.Where(k => k.Singleton == true)
+		.Select(k => MethodologyPresets.ParseKind(k.Kind))
+		.ToArray();
 
 	static readonly JsonSerializerOptions DefinitionJson = new(JsonSerializerDefaults.Web)
 	{
