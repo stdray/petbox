@@ -268,6 +268,35 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		ex.Which.Message.Should().NotContain("for a simple board"); // NOT the door gate's wording
 	}
 
+	// FORK pin, item C (TaskBoard.cshtml / TaskBoardNode.cshtml / ProjectTasks.cshtml's
+	// `Runtime.PresetKind(kindSlug) == BoardKind.Simple` badge-styling computation) — same root
+	// cause as item B just above, reached through the board-scoped runtime door
+	// (ITasksService.GetRuntimeForBoardAsync, what TaskBoard.cshtml.cs/TaskBoardNode.cshtml.cs
+	// actually call) instead of UpsertAsync's write path. Left AS-IS for the identical reason:
+	// no MethodologyKindDef field distinguishes "genuinely Simple" once the kind is declared,
+	// and swapping in an IsSpecKind-style IsSimpleKind predicate would flip the computed badge
+	// class/tooltip for every backfilled lone-simple-board project — an observable UI change.
+	//
+	// Also flagging a discrepancy for the maintainer: PresetKindProcessRoleGuardTests.cs's class
+	// doc states BoardKind.Simple comparisons are deliberately left unguarded because Simple
+	// "is reachable as a defined kind only via the raw tasks_methodology_create(source:builtin,
+	// sourceKey:simple) call, bypassing the UI-recommended path" — i.e. an intentional, rare
+	// escape hatch. This test shows a SECOND, ordinary path to the same state: any lone
+	// preexisting simple board (no process-role/classic siblings) reaches it automatically via
+	// MethodologyInstanceBackfill at every startup, no raw MCP call involved. Whether that
+	// broadens the guard's stated exposure is the maintainer's call, not this axis-2 pass's.
+	[Fact]
+	public async Task PresetKind_Simple_NullsOutOnceBackfillMaterializesTheKind_NotOnlyViaRawMcp()
+	{
+		await SeedBoard(ProjB, "bag", "simple");
+		var before = await _tasks.GetRuntimeForBoardAsync(ProjB, "bag");
+		before.PresetKind("simple").Should().Be(BoardKind.Simple); // badge computation reads Simple correctly
+
+		Backfill().Migrate().Should().Be(1);
+		var after = await _tasks.GetRuntimeForBoardAsync(ProjB, "bag");
+		after.PresetKind("simple").Should().BeNull(); // badge computation now reads "not simple" — no raw MCP call involved
+	}
+
 	[Fact]
 	public async Task AlreadyAssigned_BoardsUntouched()
 	{
