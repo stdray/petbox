@@ -702,22 +702,24 @@ public sealed partial class TasksService : ITasksService
 		return new MethodologyGuideView(md, [], "ambiguous", null);
 	}
 
-	// A wiredBoard link only makes sense on a work board (a kind that auto-wires to a spec) and must
-	// point at an existing spec board. Both checks are DATA now, not the BoardKind enum: the source
-	// is a work board iff its kind declares AutoWireFrom, and the target is a spec board iff
-	// IsSpecKind — the latter fixes the presetkind-spec-blind-spot for a definition-resolved spec
-	// kind (ParseKind == BoardKind.Spec reads wrong for a custom-named spec kind).
+	// A wiredBoard link only makes sense on a work board (a kind that auto-wires to a target) and
+	// must point at a board of exactly that target kind. Both checks are DATA now, not the BoardKind
+	// enum: the source is a work board iff its kind declares AutoWireFrom, and the target board's
+	// kind must equal that AutoWireFrom slug — the SAME kind the auto-wire would pin. This is the
+	// precise set-target check (it accepts a custom-named target kind and rejects any other kind),
+	// not "is the target named spec": ParseKind == BoardKind.Spec reads wrong for a custom-named
+	// target, and a bare name check would accept a spec board that isn't THIS work kind's target.
 	async Task ValidateWiredBoardAsync(string projectKey, string kind, string? wiredBoard, CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(wiredBoard)) return;
 		var runtime = await RuntimeAsync(projectKey, ct);
-		if (runtime.AutoWireFrom(kind) is null)
+		var wanted = runtime.AutoWireFrom(kind);
+		if (wanted is null)
 			throw new ArgumentException($"wiredBoard applies only to a work board (this board's kind is '{kind}')");
 		var target = await _boards.FindAsync(projectKey, wiredBoard, ct)
 			?? throw new ArgumentException($"spec board '{wiredBoard}' not found in project '{projectKey}'");
-		var targetRuntime = await RuntimeForBoardAsync(projectKey, target, ct);
-		if (!targetRuntime.IsSpecKind(target.Kind))
-			throw new ArgumentException($"'{wiredBoard}' is not a spec board (kind is '{target.Kind}')");
+		if (!string.Equals(target.Kind, wanted, StringComparison.OrdinalIgnoreCase))
+			throw new ArgumentException($"'{wiredBoard}' is not a {wanted} board (kind is '{target.Kind}')");
 	}
 
 	async Task EnsureBoard(string projectKey, string board, CancellationToken ct)
@@ -799,12 +801,13 @@ public sealed partial class TasksService : ITasksService
 
 		// The typed link fields are DATA-driven now (methodology-link-kinds-declared), not the
 		// task_spec literal: `Spec` = this node's OUTGOING edges of any declared link kind that
-		// POINTS AT a spec kind (quartet: task_spec, work→spec) — kind-agnostic on the source, so a
-		// task linked to a spec surfaces its spec on any board; `LinkedTasks` = the INCOMING edges of
-		// the spec kind's delivery link (deliveryDef.Link, task_spec) — non-null only on a
-		// delivery-bearing (spec) board.
+		// POINTS AT a DELIVERY-BEARING kind (quartet: task_spec, work→spec — a spec kind is exactly
+		// one that carries a delivery roll-up) — kind-agnostic on the source, so a task linked to a
+		// spec surfaces its spec on any board; `LinkedTasks` = the INCOMING edges of the spec kind's
+		// delivery link (deliveryDef.Link, task_spec) — non-null only on a delivery-bearing (spec)
+		// board.
 		var specLinkKinds = runtime.EffectiveLinkKinds()
-			.Where(lk => lk.Direction is { ToKind: { } tk } && runtime.IsSpecKind(tk))
+			.Where(lk => lk.Direction is { ToKind: { } tk } && runtime.DeliveryOf(tk) is not null)
 			.Select(lk => lk.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var deliveryLink = deliveryDef?.Link;
 

@@ -16,10 +16,11 @@
 	// on a non-spec board the status badge above is always visible (StatusBadgeModel.Show is
 	// unconditionally true there), so the strikethrough was redundant.
 	var nodeTerminalCancel = Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status) == PetBox.Tasks.Workflow.StatusKind.TerminalCancel;
-	// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
-	// PresetKind nulls out for any DEFINED kind, and a real project's spec board is virtually
-	// always definition-resolved — see MethodologyRuntime.IsSpecKind's own comment.
-	var nodeIsSpecBoard = Model.Runtime.IsSpecKind(Model.Detail.Kind);
+	// A delivery-bearing kind (DeliveryOf(...) is not null — a spec board carries a delivery
+	// roll-up), NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07): PresetKind
+	// nulls out for any DEFINED kind, and a real project's spec board is virtually always
+	// definition-resolved.
+	var nodeIsSpecBoard = Model.Runtime.DeliveryOf(Model.Detail.Kind) is not null;
 	var nodeStrikethrough = nodeTerminalCancel && nodeIsSpecBoard;
 }
 
