@@ -16,7 +16,18 @@ namespace PetBox.Web.Mcp;
 // JSON node payload into typed NodePatch, and delegates every domain decision to
 // ITasksService (the single door to the task store). It must not touch the store or
 // DB context directly (a NetArchTest enforces this). Scopes: tasks:read / tasks:write.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT — ONE declaration for
+// all 29 verbs, which is the case the type-level carrier exists for. The alternative is 29 copies of
+// the same attribute, and 29 copies of one sentence is how a family ends up different by accident
+// (the ratchet's own carrier test says as much about exactly this family).
+//
+// Manual coverage was already complete: every one of the 29 opened with
+// ModuleMcp.AssertProject(http, projectKey) — the same ProjectScope.EvaluateAsync ITenantAuthorizer
+// runs — so enforcement moves no allow/deny outcome. It moves only WHERE: the refusal now precedes
+// the Feature.Tasks gate and the tool body, and precedes McpProjectExistsFilter, so a foreign key can
+// no longer read board/methodology existence out of an error message.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]

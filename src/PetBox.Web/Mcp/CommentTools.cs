@@ -23,7 +23,13 @@ namespace PetBox.Web.Mcp;
 //
 // Tools throw on a failed Assert* (or a business-rule reject, e.g. deleting a comment with
 // replies); McpErrorEnvelopeFilter renders the exception as the structured {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, for all five verbs.
+// Manual coverage was already complete (five AssertProject calls, one per verb, all against the same
+// ProjectScope the decision point uses), so enforcement changes no allow/deny outcome — only that the
+// refusal now precedes the feature gate, the node-ref resolution and the tool body. Those five calls
+// are removed here; the tasks:read / tasks:write scope guards stay (a different axis).
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class CommentTools
 {
 	[McpServerTool(Name = "comments_upsert", Title = "Upsert node comments", UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
@@ -70,7 +76,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// Resolve each CREATE item's node ref (slug on `board` → 32-hex NodeId) at the adapter, so
@@ -110,7 +115,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
@@ -142,7 +146,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var d = await comments.DeltaAsync(projectKey, board, sinceVersion, ct);
 		return new CommentsUpsertResult(
@@ -162,7 +165,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var c = await comments.GetAsync(projectKey, id, ct)
 			?? throw new InvalidOperationException($"comment '{id}' not found or already deleted in project '{projectKey}'");
@@ -177,7 +179,6 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new CommentDeleteResult(await comments.DeleteAsync(projectKey, board, id, ct));
 	}
