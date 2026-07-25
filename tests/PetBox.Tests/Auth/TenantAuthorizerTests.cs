@@ -87,15 +87,27 @@ public sealed class TenantAuthorizerTests
 		(await Authorizer.AuthorizeAsync(ApiKey(SandboxProj, sandboxOnly: true), TenantRef.Project(ProjB)))
 			.Should().Be(TenantAccess.NotAuthorized);
 
-	// A workspace is not a project and carries no sandbox flag, so a sandboxOnly key is contained out
-	// of every workspace target — including the workspace that OWNS its sandbox project, and
-	// including a wildcard key that passes the identity half.
+	// CONTAINMENT DOES NOT REACH A WORKSPACE TARGET — the owner's decision, reversing what this test
+	// used to pin (SandboxContainment for every workspace target).
+	//
+	// The old reading was defensible on its own terms: a workspace carries no Sandbox flag and is
+	// broader than any project inside it, so containment "cannot be satisfied". But it was STRICTER
+	// than anything the system actually does — no workspace-target check in the tree looks at the flag
+	// (ConfigApi.AuthorizeWorkspaceAsync does not; MemoryTools' AssertMemoryProjectAsync does not) — so
+	// letting the PEP enforce it would have REFUSED keys that work today, most visibly a sandboxOnly
+	// key curating its own workspace's shared memory. Acceptance criterion 1 of work
+	// `authz-default-deny-delivery` ("ключ, работавший до перехода, работает после") outranks being
+	// stricter, so the pre-existing outcome is preserved on purpose.
+	//
+	// The PROJECT axis is untouched and still contains — see the two cases above. Tightening the
+	// workspace axis is a separate decision with its own blast radius (shared memory, config, every
+	// workspace page), not a side effect of wiring up enforcement.
 	[Theory]
 	[InlineData("*")]
 	[InlineData(SandboxProj)]
-	public async Task SandboxOnlyKey_WorkspaceTarget_IsAlwaysContained(string claim) =>
+	public async Task SandboxOnlyKey_WorkspaceTarget_IsNotContained(string claim) =>
 		(await Authorizer.AuthorizeAsync(ApiKey(claim, sandboxOnly: true), TenantRef.Workspace(WsA)))
-			.Should().Be(TenantAccess.SandboxContainment);
+			.Should().Be(TenantAccess.Allowed);
 
 	// --- the unresolved target: a denial for everyone, wildcard included --------------------------
 

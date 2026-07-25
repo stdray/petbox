@@ -400,10 +400,21 @@ public sealed class AuthzDeclarationRatchetTests : IClassFixture<AuthzSurfaceHos
 			+ "under another name: any new verb would declare itself an exception and leave default-deny "
 			+ "with nobody noticing. Adding a class is a spec change — the owner's decision, not a PR");
 
+		// The SOURCE list is closed too, but by a different authority, and the distinction is the whole
+		// reason this assertion is worth making separately. The spec closes the EXEMPTION classes and
+		// says so ("Класс вне закрытого перечня объявить нельзя"); it never enumerates sources at all.
+		// So a source may be ADDED as an engineering decision inside a work item — but only by editing
+		// the enum and this line together, which is what stops it happening by accident.
+		//
+		// ArgumentOrContainer was added by the MCP declaration wave for the memory family, whose
+		// projectKey carries either a project key or a `$workspace`/`$ws-<key>` container. It is a
+		// source rather than a flag because it decides the tenant KIND per CALL, from the value.
 		Enum.GetNames<TenantSource>().Order(StringComparer.Ordinal).Should().Equal(
-			["Argument", "BodyField", "CallerDefault", "Route"],
+			["Argument", "ArgumentOrContainer", "BodyField", "CallerDefault", "Route"],
 			"a body field is as strict as a route value, and a tenant inferred from the caller's own claim "
-			+ "is as strict as one named explicitly — the four sources are the spec's, in full");
+			+ "is as strict as one named explicitly. Adding a source is allowed and deliberate; adding one "
+			+ "WITHOUT touching this line is not, because a source the PEP reads and nobody enumerated is "
+			+ "the same invisible surface this ratchet exists to prevent");
 	}
 
 	// The CARRIERS must actually carry. A declaration that does not reach Endpoint.Metadata is a

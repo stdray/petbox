@@ -51,9 +51,15 @@ public abstract class TenantDeclarationAttribute : Attribute
 // `TenantKind` (which of the two things a reference names) lives with the reference itself, in
 // TenantRef.cs — a declaration only points at a kind, it does not define one.
 
-// WHERE the target tenant comes from. Closed by the same reasoning as the exemption list: a new
-// source is a new way for a surface to name its tenant, i.e. something the decision point must
-// learn to read, not something a handler can invent.
+// WHERE the target tenant comes from.
+//
+// CLOSED, BUT NOT BY THE SPEC — and the difference matters. Spec `authz-scope-declaration` closes
+// exactly one list, the EXEMPTION CLASSES ("Класс вне закрытого перечня объявить нельзя"); it never
+// enumerates sources at all. This enum is closed by the same REASONING (a source is something the
+// decision point must learn to read, not something a handler can invent), which makes adding one an
+// engineering decision inside the work item rather than a change to a promise. It is still a
+// deliberate edit HERE, pinned by AuthzDeclarationRatchetTests.TheDeclarationType_IsClosed, so it
+// cannot happen by accident — which is the whole property that matters.
 public enum TenantSource
 {
 	// A route value: /api/data/{project}/... — the tenant is in the path.
@@ -61,6 +67,28 @@ public enum TenantSource
 
 	// A call argument: a query-string parameter, or an MCP tool parameter (`projectKey`).
 	Argument,
+
+	// A call argument that carries EITHER encoding of a tenant: an ordinary project key, or the
+	// `$workspace` / `$ws-<key>` PSEUDO-PROJECT that names a workspace's shared-memory container. The
+	// KIND is therefore decided per CALL, by the value, not per surface — which is why it is a source
+	// of its own instead of a flag on Argument.
+	//
+	// WHY IT EXISTS. Shared memory is addressed through the same `projectKey` parameter as a real
+	// project (spec authz-tenant-default-deny: "один и тот же смысл выражен двумя способами …
+	// псевдо-ключом проекта у разделяемой памяти"), and a container is reachable by a key of ANY
+	// project in its workspace (IWorkspaceMemoryDirectory.ReachableByAsync). Neither existing reading
+	// serves it: as a plain Argument the PEP refuses `$ws-x` for every non-wildcard key and breaks
+	// callers that work today; decoding containers in the RESOLVER instead would apply to every
+	// Argument surface and hand a project-scoped key `tasks/$ws-x.db` — a loosening, on the security
+	// axis, to fix one family.
+	//
+	// The decode is therefore attached to the DECLARATION, not to the transport: only a surface that
+	// says this word gets it. tasks_*, session_*, db_* and the rest stay plain Argument, so `$ws-x`
+	// remains a claim mismatch for them exactly as before. Unlike a tool-name list inside a filter
+	// (McpProjectExistsFilter.WildcardTools — the antipattern this work item exists to absorb), this
+	// is data ON the surface, read by the same mechanism as every other declaration and visible to the
+	// ratchet, so which surfaces have it can be ENUMERATED rather than remembered.
+	ArgumentOrContainer,
 
 	// A field of the request body. "Цель, пришедшая в теле запроса, проверяется так же строго,
 	// как пришедшая из маршрута" — the position of the parameter carries no leniency.
@@ -146,6 +174,14 @@ public sealed class TenantFromAttribute : TenantDeclarationAttribute
 			throw new ArgumentException(
 				"TenantFrom(CallerDefault) reads the caller's own claim — it names no parameter.", nameof(name));
 
+		// ArgumentOrContainer decides the KIND per call, from the value, so declaring one here is a
+		// contradiction rather than a refinement: whichever kind was written would be wrong half the
+		// time. `Tenant` stays at its Project default and is not read for this source.
+		if (source == TenantSource.ArgumentOrContainer && tenant != TenantKind.Project)
+			throw new ArgumentException(
+				$"TenantFrom({source}) resolves the tenant KIND from the value (a project key, or a "
+				+ "`$workspace`/`$ws-<key>` container), so it cannot also declare one.", nameof(tenant));
+
 		Source = source;
 		Name = named ? name!.Trim() : "";
 		Tenant = tenant;
@@ -158,10 +194,14 @@ public sealed class TenantFromAttribute : TenantDeclarationAttribute
 
 	public TenantKind Tenant { get; }
 
-	public override string Describe() =>
-		Source == TenantSource.CallerDefault
-			? $"tenant: {Tenant} from the caller's own claim"
-			: $"tenant: {Tenant} from {Source} '{Name}'";
+	public override string Describe() => Source switch
+	{
+		TenantSource.CallerDefault => $"tenant: {Tenant} from the caller's own claim",
+		// No kind is named on purpose — the value decides it, and printing "Project" here would be a
+		// lie on exactly the calls this source exists for.
+		TenantSource.ArgumentOrContainer => $"tenant: Project or Workspace container from Argument '{Name}'",
+		_ => $"tenant: {Tenant} from {Source} '{Name}'",
+	};
 }
 
 // "…либо к какому классу исключения она относится" — the exempting half of the union.

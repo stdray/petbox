@@ -1,3 +1,5 @@
+using PetBox.Core.Data;
+
 namespace PetBox.Core.Auth;
 
 // WHICH tenant a request is asking to touch. The access boundary is ONE boundary with two kinds of
@@ -46,6 +48,19 @@ public readonly record struct TenantRef
 	public static TenantRef Project(string? projectKey) => new(TenantKind.Project, projectKey);
 
 	public static TenantRef Workspace(string? workspaceKey) => new(TenantKind.Workspace, workspaceKey);
+
+	// THE decode of the `$ws-<key>` / `$workspace` PSEUDO-PROJECT — the second encoding named in this
+	// file's header, in one place so a PEP never re-derives it. A projectKey-shaped string that names
+	// a shared-memory container is a WORKSPACE reference; everything else is a project.
+	//
+	// Called ONLY for a surface declaring TenantSource.ArgumentOrContainer. That restriction is the
+	// security property, not a detail: applied to every project argument it would let a project-scoped
+	// key reach `$ws-x`-addressed storage in modules that have never accepted a container (tasks,
+	// sessions, data). Read the TenantSource.ArgumentOrContainer comment before widening the call set.
+	public static TenantRef FromProjectKeyOrContainer(string? key) =>
+		!string.IsNullOrWhiteSpace(key) && WorkspaceMemory.WorkspaceKeyOfContainer(key.Trim()) is { } workspaceKey
+			? Workspace(workspaceKey)
+			: Project(key);
 
 	public override string ToString() =>
 		$"{(Kind == TenantKind.Workspace ? "workspace" : "project")}:{Key}";

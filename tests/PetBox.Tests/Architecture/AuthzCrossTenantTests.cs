@@ -16,8 +16,8 @@ namespace PetBox.Tests.Architecture;
 // WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 217 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 140 addressed surfaces that already deny a foreign tenant today.
-//   * KnownDeviations       —  14 addressed surfaces that do NOT, each named, with the behaviour that
+//   * REFUSED               — 141 addressed surfaces that already deny a foreign tenant today.
+//   * KnownDeviations       —  13 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
@@ -27,7 +27,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 140 + 14 + 63 = 217, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 141 + 13 + 63 = 217, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -97,9 +97,12 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 				"InvalidOperationException \"Binding not found\" — an existence answer to an outsider"),
 			["mcp:apikey_create"] = (CrossTenantVerdict.ArgumentError,
 				"ArgumentException \"Unknown scopes: …\" — validates the scope list before the tenant"),
-			["mcp:memory_get"] = (CrossTenantVerdict.ArgumentError,
-				"ArgumentException \"key or keys is required\" — argument validation runs before the tenant check "
-				+ "(memory_search, same tool type, denies)"),
+
+			// mcp:memory_get was here — "ArgumentException 'key or keys is required', argument validation
+			// runs before the tenant check". FIXED by the MCP declaration wave rather than excused: the
+			// memory family now declares [TenantFrom(ArgumentOrContainer, "projectKey")] and the PEP
+			// refuses ahead of the tool body, so the argument is never reached. The list shrank by one,
+			// which is the only direction it is allowed to move.
 
 			// One route, two verbs, two answers: POST /api/config/{workspaceKey}/bindings returns 403,
 			// DELETE on the same route returns 400 — the authorize call sits after the binding.
@@ -356,10 +359,12 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(140,
+		refused.Should().Be(141,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
-			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose");
+			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
+			+ "It rose from 140 to 141 in the MCP declaration wave: memory_get stopped answering an argument "
+			+ "error to a foreign tenant and now denies, because the PEP decides ahead of the tool body");
 	}
 
 	// ── GUARD THE GUARD ──────────────────────────────────────────────────────────────────────────

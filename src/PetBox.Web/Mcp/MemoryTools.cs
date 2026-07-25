@@ -20,7 +20,27 @@ namespace PetBox.Web.Mcp;
 // payload, and delegates every domain decision (taxonomy, tags, FTS, temporal write)
 // to IMemoryService. It must not touch the store or DB context directly (a NetArchTest
 // enforces this). v1 is project-scoped. Scopes: memory:read / memory:write.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT — and the ONE surface
+// in the tree that declares TenantSource.ArgumentOrContainer, because it is the one whose projectKey
+// carries two encodings. A real project key names a project; `$workspace` / `$ws-<key>` names a
+// workspace's shared-memory container, which a key of ANY project in that workspace may reach. The
+// PEP decodes accordingly (TenantRef.FromProjectKeyOrContainer) and asks ITenantAuthorizer the
+// matching question — "does this claim authorize that project?" or "…that workspace?" — the second
+// of which is the same rule AssertMemoryProjectAsync below applies through
+// IWorkspaceMemoryDirectory.ReachableByAsync.
+//
+// THE MANUAL CHECKS STAY, and this is a justified remainder rather than belt-and-braces. The PEP
+// authorizes ONE target: the one named in the argument. These verbs then act on a container the
+// argument did not name:
+//   * `scope: workspace` redirects to the CALLER'S workspace container, derived after the PEP ran;
+//   * memory_search / memory_get / memory_delta / memory_store_list CASCADE over project ⊕ workspace
+//     and SKIP an unauthorized leg (catch UnauthorizedAccessException → continue) so that a foreign
+//     container silently contributes nothing instead of failing the read.
+// A single-target gate cannot express "authorize each leg of this cascade separately", so the per-leg
+// check is a different question, not a second answer to the same one. Deleting it would open the
+// cascade to every container the caller can name.
 [McpServerToolType]
+[TenantFrom(TenantSource.ArgumentOrContainer, "projectKey")]
 public static class MemoryTools
 {
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]

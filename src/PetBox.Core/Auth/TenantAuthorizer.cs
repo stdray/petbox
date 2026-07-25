@@ -61,7 +61,7 @@ public sealed class TenantAuthorizer(IProjectCatalog catalog) : ITenantAuthorize
 
 			return tenant.Kind == TenantKind.Project
 				? Map(await ProjectScope.EvaluateAsync(projectClaim, tenant.Key, sandboxOnly, catalog, ct))
-				: await KeyOnWorkspaceAsync(projectClaim, sandboxOnly, tenant.Key, ct);
+				: await KeyOnWorkspaceAsync(projectClaim, tenant.Key, ct);
 		}
 
 		return await UserAsync(principal, tenant, ct);
@@ -73,7 +73,7 @@ public sealed class TenantAuthorizer(IProjectCatalog catalog) : ITenantAuthorize
 	// WorkspaceRoleAuthorizationHandler; those call sites come out with the family enforcement, not
 	// here, and until then this must agree with them on the allow/deny outcome.
 	async Task<TenantAccess> KeyOnWorkspaceAsync(
-		string? projectClaim, bool sandboxOnly, string workspaceKey, CancellationToken ct)
+		string? projectClaim, string workspaceKey, CancellationToken ct)
 	{
 		if (string.IsNullOrEmpty(projectClaim)) return TenantAccess.NotAuthorized;
 
@@ -86,11 +86,26 @@ public sealed class TenantAuthorizer(IProjectCatalog catalog) : ITenantAuthorize
 				return TenantAccess.NotAuthorized;
 		}
 
-		// Containment, orthogonal to identity, exactly as for a project target: a sandboxOnly key may
-		// act only where Project.Sandbox is true. A WORKSPACE is not a project and carries no such
-		// flag — it is strictly broader than any single project inside it — so containment cannot be
-		// satisfied and the wildcard does not buy past it either.
-		return sandboxOnly ? TenantAccess.SandboxContainment : TenantAccess.Allowed;
+		// SANDBOX CONTAINMENT DOES NOT APPLY TO A WORKSPACE TARGET — the owner's decision, and the
+		// reasoning is worth keeping because the opposite reads as the safer choice.
+		//
+		// The tempting version: a workspace carries no Sandbox flag and is broader than any project in
+		// it, so containment "cannot be satisfied" and a sandboxOnly key is refused everywhere. That
+		// would be STRICTER than anything the system does today — no existing workspace-target check
+		// looks at the flag at all (ConfigApi.AuthorizeWorkspaceAsync doesn't; MemoryTools'
+		// AssertMemoryProjectAsync doesn't) — so switching it on with the PEP would REFUSE keys that
+		// work right now. Acceptance criterion 1 of work `authz-default-deny-delivery` ("ключ,
+		// работавший до перехода, работает после") outranks the wish to be stricter, so the current
+		// outcome is preserved deliberately rather than by omission.
+		//
+		// A PROJECT target is unaffected: ProjectScope.EvaluateAsync above still enforces containment
+		// there, wildcard claim included, which is where the write gate was actually specified
+		// (spec work/smoke-writes-into-real-projects). Tightening the workspace axis is a separate
+		// decision with its own blast radius — shared memory, config, every workspace page.
+		//
+		// The flag is therefore not a parameter of this method at all: an unused one would read as an
+		// oversight, and the next person would "fix" it.
+		return TenantAccess.Allowed;
 	}
 
 	// The cookie half of the same boundary. A signed-in user carries no `project` claim, so "may this

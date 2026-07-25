@@ -30,9 +30,9 @@ public static class TenantEnforcementAllowlist
 	// It STARTED at 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the
 	// moment the enforcement points were written, which is why enabling them changed behaviour on NONE
 	// of them. It shrinks one FAMILY at a time (work `authz-default-deny-delivery`, step 5); the MCP
-	// wave took 89 of the 97 tools out, leaving the 8 memory_* verbs (reason below, with the list) and
-	// the whole endpoint plane for their own waves. The live count is never a comment — run
-	// AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
+	// wave took ALL 97 tools out, so what is left below is the endpoint plane — 55 REST + 65 Razor —
+	// awaiting its own waves. The live count is never a comment: run AuthzDeclarationRatchetTests and
+	// read .tmp/authz-surface-inventory.txt.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
 		// REST — 55 minimal-API endpoints (METHOD + route pattern, as the caller addresses them).
@@ -159,48 +159,23 @@ public static class TenantEnforcementAllowlist
 		"page:/Search",
 		"page:/Share",
 	
-		// MCP — 8 of the 97 tools this list used to hold. 97 was the number the work card asked for:
-		// three independent human counts said 92 / 100 / 122, and none of them was right; 97 is
-		// cross-checked in TheMcpSweep_MatchesTheToolsTheServerActuallyRegisters against the
-		// McpServerTool instances a running host has in DI — i.e. against what the server actually
-		// serves, not a second count.
+		// MCP — NOTHING. All 97 tools left this list in the declaration wave (work
+		// `authz-default-deny-delivery`, step 5) and the whole plane is enforced by
+		// McpTenantEnforcementFilter.
 		//
-		// 89 of them are now DECLARED on their [McpServerToolType] class — [TenantFrom(Argument,
-		// "projectKey")] on the 66 that name a tenant, [TenantExempt] on the 23 that belong to a closed
-		// exemption class (11 provisioning, 9 fleet-wide, 2 identity, 1 feedback) — and enforced by
-		// McpTenantEnforcementFilter. Nothing that has left may come back: a NEW tool declares like the
-		// rest.
+		// 97 was the number the work card asked for: three independent human counts said 92 / 100 / 122
+		// and none of them was right. It is cross-checked in
+		// TheMcpSweep_MatchesTheToolsTheServerActuallyRegisters against the McpServerTool instances a
+		// running host has in DI — against what the server actually serves, not against a second count.
 		//
-		// THE 8 THAT REMAIN, and exactly what blocks them. The memory family is the ONE place where a
-		// `projectKey` argument does not always name a project: shared workspace memory is addressed
-		// through the SAME argument as a `$ws-<key>` / `$workspace` PSEUDO-PROJECT, and a key of ANY
-		// project in that workspace may reach it (IWorkspaceMemoryDirectory.ReachableByAsync). So the
-		// argument carries two ENCODINGS of two different tenant KINDS, chosen per call by its value.
+		// The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:
+		//   * 74 declare a tenant — 66 [TenantFrom(Argument, "projectKey")], plus the 8 memory_* verbs on
+		//     [TenantFrom(ArgumentOrContainer, "projectKey")], whose projectKey carries either a project
+		//     key or a `$workspace`/`$ws-<key>` shared-memory container;
+		//   * 23 are [TenantExempt] — 11 provisioning, 9 fleet-wide, 2 identity, 1 feedback.
 		//
-		// Neither reading of [TenantFrom(Argument, "projectKey")] is correct for it:
-		//   * as written today (a Project reference), the PEP would REFUSE `$ws-x` for every key whose
-		//     claim is not the wildcard — breaking acceptance criterion 1 for the primary user of
-		//     shared memory, which is this project itself;
-		//   * decoding `$ws-*` to a Workspace reference inside the MCP resolver would apply to EVERY
-		//     Project-declared tool, and would then GRANT a project-scoped key access to
-		//     `tasks/$ws-x.db` and friends — a loosening, on a security surface, to fix a different
-		//     family.
-		//
-		// Scoping the decode needs the declaration to be able to say "this argument may carry either
-		// encoding", and the closed vocabulary of spec `authz-scope-declaration` has no way to say it.
-		// A hardcoded per-tool list in the filter is exactly the McpProjectExistsFilter.WildcardTools
-		// antipattern the work card requires the declaration to ABSORB, not recreate. The work card
-		// also states the encodings are out of scope here ("обе кодировки продолжают жить"), and its
-		// stop rule is explicit: a surface that fits no source and no exemption class is a SPEC change,
-		// i.e. the owner's decision, not a line in a PR. Hence: declared debt, named here, 8 wide.
-		"mcp:memory_delta",
-		"mcp:memory_get",
-		"mcp:memory_remember",
-		"mcp:memory_search",
-		"mcp:memory_store_create",
-		"mcp:memory_store_delete",
-		"mcp:memory_store_list",
-		"mcp:memory_upsert",
+		// A NEW tool declares like the rest. Nothing from this plane may come back here: the entries
+		// above are surfaces that PREDATE the rule, and the ratchet fails a stale one.
 	};
 
 	// The question both PEPs ask, once per call, before they look at a declaration at all.

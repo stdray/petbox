@@ -199,14 +199,14 @@ public sealed class TenantEnforcementTests
 	const string FromCallerDefault = "probe_from_caller_default";
 	const string FromRoute = "probe_from_route";
 
-	static readonly IReadOnlyDictionary<string, IReadOnlyList<TenantDeclarationAttribute>> NoDeclarations =
-		new Dictionary<string, IReadOnlyList<TenantDeclarationAttribute>>(StringComparer.Ordinal);
+	const string FromArgumentOrContainer = "probe_from_argument_or_container";
 
 	static readonly Dictionary<string, IReadOnlyList<TenantDeclarationAttribute>> ProbeDeclarations = new(StringComparer.Ordinal)
 	{
 		[Undeclared] = [],
 		[Exempt] = [new TenantExemptAttribute(TenantExemption.Identity, "probe")],
 		[FromArgument] = [new TenantFromAttribute(TenantSource.Argument, "projectKey")],
+		[FromArgumentOrContainer] = [new TenantFromAttribute(TenantSource.ArgumentOrContainer, "projectKey")],
 		[FromCallerDefault] = [new TenantFromAttribute(TenantSource.CallerDefault)],
 		[FromRoute] = [new TenantFromAttribute(TenantSource.Route, "projectKey")],
 	};
@@ -224,25 +224,70 @@ public sealed class TenantEnforcementTests
 	public async Task Mcp_Exempt_PassesThrough() =>
 		(await McpAsync(Exempt, ApiKey(ProjA))).Allowed.Should().BeTrue();
 
+	// This used to be Mcp_Allowlisted_PassesThrough_WithoutADeclaration — the allowlist-before-
+	// declaration ORDER, proven against a real entry (mcp:tasks_upsert, then mcp:memory_upsert). The
+	// declaration wave took every MCP tool out of the allowlist, so there is no longer a real MCP
+	// surface to observe that order ON, and pinning it against a made-up key would prove only that the
+	// test can invent a string.
+	//
+	// What replaces it is the stronger statement the wave actually earned, and it is a ratchet: the
+	// MCP plane carries NO allowlist entries, so every tool call reaches the declaration path. If an
+	// `mcp:` entry ever comes back, this fails — and whoever adds it should restore the order test
+	// above it, because an allowlisted surface is exactly where the order matters.
+	//
+	// The order property itself is not lost: Endpoint_Allowlisted_PassesThrough_EvenUndeclared proves
+	// it on the endpoint plane, where 120 real entries remain, and both PEPs ask the same list the
+	// same way.
 	[Fact]
-	public async Task Mcp_Allowlisted_PassesThrough_WithoutADeclaration()
-	{
-		// A REAL entry, so the test proves the real list is consulted. It used to be mcp:tasks_upsert;
-		// the declaration wave took the whole tasks family out, and memory_* is what is left on the MCP
-		// plane (see the note in TenantEnforcementAllowlist for why). When memory_* leaves too, point
-		// this at whatever is still allowlisted then — the assertion below is about the ORDER, not
-		// about which surface happens to carry the debt.
-		TenantEnforcementAllowlist.Contains("mcp:memory_upsert").Should().BeTrue("fixture assumption");
-
-		// An EMPTY map: if the allowlist were consulted after the declaration, this would be refused.
-		(await McpAsync("memory_upsert", ApiKey(ProjA), declarations: NoDeclarations)).Allowed.Should().BeTrue();
-	}
+	public void Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist() =>
+		TenantEnforcementAllowlist.Keys.Where(k => k.StartsWith(AuthzSurfaceKey.McpPrefix, StringComparison.Ordinal))
+			.Should().BeEmpty(
+				"all 97 MCP tools declare a tenant source or an exemption class and are enforced by "
+				+ "McpTenantEnforcementFilter. An entry here would be a tool exempted from the rule by a list "
+				+ "instead of by a declaration — which is the opt-in hole this work item removed");
 
 	[Theory]
 	[InlineData(ProjA, true)]
 	[InlineData(ProjB, false)]
 	public async Task Mcp_TenantFromArgument_AnswersOnTheDecisionPoint(string argument, bool allowed) =>
 		(await McpAsync(FromArgument, ApiKey(ProjA), Args(("projectKey", argument)))).Allowed.Should().Be(allowed);
+
+	// ── TenantSource.ArgumentOrContainer: one argument, two encodings ────────────────────────────
+	//
+	// The memory family's shape. `$ws-<key>` / `$workspace` is a WORKSPACE wearing a projectKey's
+	// clothes, and a key of any project in that workspace may reach it; anything else is an ordinary
+	// project reference and is judged exactly as plain Argument judges it.
+	[Theory]
+	// A container of the caller's OWN workspace: reachable. wsa owns proja, so proja's key reaches it.
+	[InlineData("$ws-wsa", true)]
+	// A container of SOMEBODY ELSE's workspace: refused. This is the case the decode must not widen.
+	[InlineData("$ws-wsb", false)]
+	// Plain project keys keep the ordinary answer — the decode changes nothing for them.
+	[InlineData(ProjA, true)]
+	[InlineData(ProjB, false)]
+	public async Task Mcp_TenantFromArgumentOrContainer_ResolvesTheKindFromTheValue(string argument, bool allowed) =>
+		(await McpAsync(FromArgumentOrContainer, ApiKey(ProjA), Args(("projectKey", argument)))).Allowed
+			.Should().Be(allowed);
+
+	// THE SCOPING PROPERTY, and the reason the decode is attached to the DECLARATION rather than done
+	// in the resolver for every argument. A surface that declares plain Argument must keep treating a
+	// container as an ordinary project key — i.e. as a claim MISMATCH — or enforcement would hand a
+	// project-scoped key access to `$ws-x`-addressed storage in tasks/sessions/data, which have never
+	// accepted a container. Same caller, same value, two declarations, two answers: that difference IS
+	// the security boundary, so it is asserted rather than described.
+	[Fact]
+	public async Task Mcp_PlainArgument_DoesNotDecodeAContainer()
+	{
+		var container = Args(("projectKey", "$ws-wsa"));
+
+		(await McpAsync(FromArgumentOrContainer, ApiKey(ProjA), container)).Allowed.Should().BeTrue(
+			"the memory family declared the container encoding, so its own workspace's container resolves");
+
+		(await McpAsync(FromArgument, ApiKey(ProjA), container)).Allowed.Should().BeFalse(
+			"a surface that did NOT declare the container encoding must still read '$ws-wsa' as a project "
+			+ "key, which proja's claim does not authorize. If this ever passes, the decode has leaked out "
+			+ "of the declaration and every Argument surface just gained reach into shared-memory storage");
+	}
 
 	// An omitted argument falls back to the caller's own default — the SAME fallback the tool body
 	// takes (ModuleMcp.ResolveProject) and McpProjectExistsFilter validates. Authorizing an absent

@@ -100,8 +100,9 @@ static class McpTenantEnforcementFilter
 			// A tool ARGUMENT. When the caller supplied none, the tenant is the caller's own default —
 			// the same fallback the tool itself will take (ModuleMcp.ResolveProject) and the same one
 			// McpProjectExistsFilter validates. Authorizing the argument while the tool acts on the
-			// default would check a tenant nobody touches.
-			TenantSource.Argument => Argument(arguments, from.Name)
+			// default would check a tenant nobody touches. ArgumentOrContainer reads the SAME argument
+			// the same way; it differs only in how the VALUE is then interpreted, below.
+			TenantSource.Argument or TenantSource.ArgumentOrContainer => Argument(arguments, from.Name)
 				?? CallerTenant.DefaultProjectOf(user),
 
 			TenantSource.CallerDefault => CallerTenant.DefaultProjectOf(user),
@@ -111,6 +112,13 @@ static class McpTenantEnforcementFilter
 			// MIS-DECLARATION, and it resolves to nothing — i.e. it is refused, not waved through.
 			_ => null,
 		};
+
+		// The pseudo-project decode, applied ONLY where the surface declared it. Scoping it to the
+		// declaration is what keeps this from being a loosening: a project-scoped key still cannot
+		// aim `$ws-x` at tasks_*/session_*/db_*, because those declare plain Argument and a container
+		// stays a claim mismatch for them.
+		if (from.Source == TenantSource.ArgumentOrContainer)
+			return ValueTask.FromResult(TenantRef.FromProjectKeyOrContainer(key));
 
 		return ValueTask.FromResult(
 			from.Tenant == TenantKind.Workspace ? TenantRef.Workspace(key) : TenantRef.Project(key));
