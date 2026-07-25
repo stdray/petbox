@@ -12,7 +12,19 @@ namespace PetBox.Web.Mcp;
 // MCP surface for portable agent-definition documents (agent-definition-as-data).
 // Project-scoped named temporal docs in the Core DB. Scopes: agents:read / agents:write.
 // Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): the target tenant is the `projectKey` ARGUMENT,
+// on all four verbs — hence one declaration on the TYPE rather than four identical ones on the
+// methods, which is how families end up different by accident.
+//
+// This family goes early in the rollout because its manual coverage was already COMPLETE: every one
+// of the four called ModuleMcp.AssertProject(http, projectKey) as its first act, against the very
+// same ProjectScope.EvaluateAsync that ITenantAuthorizer now runs. So enforcement here changes the
+// allow/deny outcome on nothing at all — only WHERE the refusal happens (in the filter, before the
+// tool body and before McpProjectExistsFilter) and what it SAYS. The four AssertProject calls are
+// deleted in this same commit: a check kept "just in case" behind a live PEP is a second source of
+// truth, and the day the two disagree the wrong one wins silently.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class AgentDefTools
 {
 	[McpServerTool(Name = "agent_def_list", Title = "List agent definitions", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(AgentDefListResult))]
@@ -21,7 +33,6 @@ public static class AgentDefTools
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsRead);
 		var items = await svc.ListAsync(projectKey, ct);
 		return new AgentDefListResult(
@@ -36,7 +47,6 @@ public static class AgentDefTools
 		[Description("Definition slug key (e.g. default).")] string key,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsRead);
 		var view = await svc.GetAsync(projectKey, key, ct);
 		if (view is null)
@@ -67,7 +77,6 @@ public static class AgentDefTools
 		[Description("Watermark baseline: version from last agent_def_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
 		// Parse from JsonElement so role.model is rejected on the wire shape.
 		var def = ParseDefinition(definition);
@@ -130,7 +139,6 @@ public static class AgentDefTools
 		[Description("Watermark baseline from last agent_def_get; 0 = delete current regardless.")] long version = 0,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
 		var ack = await svc.DeleteAsync(projectKey, key, version, ct);
 		return new AgentDefDeleteResult(ack.Key, Deleted: ack.Changed, ack.Version);

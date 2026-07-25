@@ -163,14 +163,10 @@ public static class TenantEnforcementAllowlist
 		// in TheMcpSweep_MatchesTheToolsTheServerActuallyRegisters against the McpServerTool instances a
 		// running host has in DI — i.e. against what the server actually serves, not a second count.
 		//
-		// Every one of them is now DECLARED on its [McpServerToolType] class ([TenantFrom] for the 66
-		// that name a tenant, [TenantExempt] for the 31 that belong to a closed exemption class) and
+		// Every one of them is now DECLARED on its [McpServerToolType] class ([TenantFrom] for the 74
+		// that name a tenant, [TenantExempt] for the 23 that belong to a closed exemption class) and
 		// enforced by McpTenantEnforcementFilter. Nothing from the MCP plane may come back here: a NEW
 		// tool declares like the rest.
-		"mcp:agent_def_delete",
-		"mcp:agent_def_get",
-		"mcp:agent_def_list",
-		"mcp:agent_def_upsert",
 		"mcp:comments_delete",
 		"mcp:comments_delta",
 		"mcp:comments_get",
