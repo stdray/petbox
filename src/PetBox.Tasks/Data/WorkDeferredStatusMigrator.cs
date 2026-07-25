@@ -112,37 +112,29 @@ public sealed class WorkDeferredStatusMigrator
 		_log = log;
 	}
 
-	// Returns the number of project documents (definition + instance rows, summed) rewritten.
+	// The full tally of the most recent Migrate() call: touched/malformed documents and
+	// touched/failed projects, and the aggregate line already logged from it — see
+	// StartupMigrationRun. Read this after Migrate() for the counts NIT 1 asks for; Migrate()'s
+	// own return value stays the pre-existing "documents rewritten" count for source compat.
+	public StartupMigrationRun.Result LastRun { get; private set; }
+
+	// Returns the number of project documents (definition + instance rows, summed) rewritten. See
+	// LastRun for touched/malformed/failed project counts.
 	public int Migrate()
 	{
 		using var db = _dbf.Open();
-		var projects = db.TaskBoards
-			.Select(b => b.ProjectKey)
-			.Distinct()
-			.OrderBy(k => k)
-			.ToList();
-		var touched = 0;
-		foreach (var project in projects)
-		{
-			try
-			{
-				touched += MigrateProject(project);
-			}
-			catch (Exception ex)
-			{
-				_log?.LogError(ex,
-					"Tasks work-preset-drop-deferred migration failed for project {Project}; left as-is",
-					project);
-			}
-		}
-		return touched;
+		var projects = StartupMigrationRun.DiscoverProjects(db, _factory.BaseDir);
+		LastRun = StartupMigrationRun.Execute("work-preset-drop-deferred", projects, MigrateProject, _log);
+		return LastRun.DocumentsTouched;
 	}
 
-	// Exposed for tests: run a single project, return the number of documents rewritten.
-	internal int MigrateProject(string projectKey)
+	// Exposed for tests: run a single project, return the number of documents rewritten plus the
+	// number of stored documents that could not even be parsed (malformed — left for a human).
+	internal StartupMigrationRun.ProjectOutcome MigrateProject(string projectKey)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		var rewritten = 0;
+		var malformed = 0;
 		var allBoards = _boards.ListAsync(projectKey).GetAwaiter().GetResult();
 
 		var defRow = ctx.GetTable<MethodologyDefRow>()
@@ -155,7 +147,9 @@ public sealed class WorkDeferredStatusMigrator
 			// singleton predates, so scope liberally here (any Deferred straggler matters more
 			// than being precise about which boards "really" belong to the singleton).
 			var scope = allBoards.Where(b => string.Equals(b.Kind, WorkKind, StringComparison.OrdinalIgnoreCase)).ToList();
-			if (TryStrip(defRow.Json, subject, scope, projectKey, ctx, out var newDefJson, out var moved))
+			var qualifies = TryStrip(defRow.Json, subject, scope, projectKey, ctx, out var newDefJson, out var moved, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
 			{
 				var next = defRow with { Version = defRow.Version, Json = newDefJson };
 				var r = TemporalStore.UpsertAsync(ctx, new[] { next }).GetAwaiter().GetResult();
@@ -184,7 +178,9 @@ public sealed class WorkDeferredStatusMigrator
 			var scope = allBoards.Where(b =>
 				string.Equals(b.Kind, WorkKind, StringComparison.OrdinalIgnoreCase)
 				&& string.Equals(b.MethodologyInstance, row.Key, StringComparison.OrdinalIgnoreCase)).ToList();
-			if (!TryStrip(row.Json, subject, scope, projectKey, ctx, out var newJson, out var moved)) continue;
+			var qualifies = TryStrip(row.Json, subject, scope, projectKey, ctx, out var newJson, out var moved, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (!qualifies) continue;
 			var next = row with { Version = row.Version, Json = newJson };
 			var r = TemporalStore.UpsertAsync(ctx, new[] { next }).GetAwaiter().GetResult();
 			if (r.Applied)
@@ -202,7 +198,7 @@ public sealed class WorkDeferredStatusMigrator
 			}
 		}
 
-		return rewritten;
+		return new StartupMigrationRun.ProjectOutcome(rewritten, malformed);
 	}
 
 	// Deserializes `json`, and IF its `work`-slug kind has a workflow block that matches
@@ -216,20 +212,35 @@ public sealed class WorkDeferredStatusMigrator
 	// the skip is visible, not silent, and NEITHER the document NOR its nodes are touched.
 	bool TryStrip(
 		string json, string subject, IReadOnlyList<TaskBoardMeta> scope, string projectKey, TasksDb ctx,
-		out string result, out int moved)
+		out string result, out int moved, out bool malformed)
 	{
 		result = json;
 		moved = 0;
+		malformed = false;
 		MethodologyDefinition? def;
 		try
 		{
 			def = JsonSerializer.Deserialize<MethodologyDefinition>(json, DefinitionJson);
 		}
-		catch (JsonException)
+		catch (JsonException ex)
 		{
-			return false; // not a shape we understand — leave it for a human, not a crash loop
+			// not a shape we understand — leave it for a human, not a crash loop. But say so
+			// (elevated Warning) instead of vanishing: NIT 1, a battled document used to collapse
+			// into "nothing to migrate" with zero signal.
+			malformed = true;
+			_log?.LogWarning(ex,
+				"Tasks work-preset-drop-deferred: {Subject} is not valid methodology JSON — left as-is, needs a human",
+				subject);
+			return false;
 		}
-		if (def is null) return false;
+		if (def is null)
+		{
+			malformed = true;
+			_log?.LogWarning(
+				"Tasks work-preset-drop-deferred: {Subject} deserialized to null — left as-is, needs a human",
+				subject);
+			return false;
+		}
 
 		var changed = false;
 		var kinds = def.Kinds.Select(kind =>

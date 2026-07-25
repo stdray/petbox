@@ -54,61 +54,66 @@ public sealed class AutoWireFieldRenamedMigrator
 		_log = log;
 	}
 
-	// Returns the number of stored documents (definition + instance + template rows, summed) rewritten.
+	// The full tally of the most recent Migrate() call: touched/malformed documents and
+	// touched/failed projects, and the aggregate line already logged from it — see
+	// StartupMigrationRun. Read this after Migrate() for the counts NIT 1 asks for; Migrate()'s
+	// own return value stays the pre-existing "documents rewritten" count for source compat.
+	public StartupMigrationRun.Result LastRun { get; private set; }
+
+	// Returns the number of stored documents (definition + instance + template rows, summed)
+	// rewritten. See LastRun for touched/malformed/failed project counts.
 	public int Migrate()
 	{
 		using var db = _dbf.Open();
-		var projects = db.TaskBoards
-			.Select(b => b.ProjectKey)
-			.Distinct()
-			.OrderBy(k => k)
-			.ToList();
-		var touched = 0;
-		foreach (var project in projects)
-		{
-			try
-			{
-				touched += MigrateProject(project);
-			}
-			catch (Exception ex)
-			{
-				_log?.LogError(ex,
-					"Tasks delivery-autowire-field-rename migration failed for project {Project}; left as-is",
-					project);
-			}
-		}
-		return touched;
+		var projects = StartupMigrationRun.DiscoverProjects(db, _factory.BaseDir);
+		LastRun = StartupMigrationRun.Execute("delivery-autowire-field-rename", projects, MigrateProject, _log);
+		return LastRun.DocumentsTouched;
 	}
 
-	// Exposed for tests: run a single project, return the number of documents rewritten.
-	internal int MigrateProject(string projectKey)
+	// Exposed for tests: run a single project, return the number of documents rewritten plus the
+	// number of stored documents that could not even be parsed (malformed — left for a human).
+	internal StartupMigrationRun.ProjectOutcome MigrateProject(string projectKey)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		var rewritten = 0;
+		var malformed = 0;
 
 		var defRow = ctx.GetTable<MethodologyDefRow>()
 			.FirstOrDefault(r => r.Key == MethodologyDefRow.SingletonKey && r.ActiveTo == null);
-		if (defRow is not null && TryRename(defRow.Json, out var newDefJson))
+		if (defRow is not null)
 		{
-			var r = TemporalStore.UpsertAsync(ctx, new[] { defRow with { Version = defRow.Version, Json = newDefJson } }).GetAwaiter().GetResult();
-			rewritten += LogWrite(r.Applied, projectKey, "project methodology definition");
+			var qualifies = TryRename(defRow.Json, "project methodology definition", projectKey, out var newDefJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
+			{
+				var r = TemporalStore.UpsertAsync(ctx, new[] { defRow with { Version = defRow.Version, Json = newDefJson } }).GetAwaiter().GetResult();
+				rewritten += LogWrite(r.Applied, projectKey, "project methodology definition");
+			}
 		}
 
 		foreach (var row in ctx.GetTable<MethodologyInstanceRow>().Where(r => r.ActiveTo == null).ToList())
-			if (TryRename(row.Json, out var newJson))
+		{
+			var qualifies = TryRename(row.Json, $"methodology instance '{row.Key}'", projectKey, out var newJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
 			{
 				var r = TemporalStore.UpsertAsync(ctx, new[] { row with { Version = row.Version, Json = newJson } }).GetAwaiter().GetResult();
 				rewritten += LogWrite(r.Applied, projectKey, $"methodology instance '{row.Key}'");
 			}
+		}
 
 		foreach (var row in ctx.GetTable<MethodologyTemplateRow>().Where(r => r.ActiveTo == null).ToList())
-			if (TryRename(row.Json, out var newJson))
+		{
+			var qualifies = TryRename(row.Json, $"methodology template '{row.Key}'", projectKey, out var newJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
 			{
 				var r = TemporalStore.UpsertAsync(ctx, new[] { row with { Version = row.Version, Json = newJson } }).GetAwaiter().GetResult();
 				rewritten += LogWrite(r.Applied, projectKey, $"methodology template '{row.Key}'");
 			}
+		}
 
-		return rewritten;
+		return new StartupMigrationRun.ProjectOutcome(rewritten, malformed);
 	}
 
 	int LogWrite(bool applied, string projectKey, string subject)
@@ -128,17 +133,35 @@ public sealed class AutoWireFieldRenamedMigrator
 
 	// Parse `json` as a raw JsonNode and rename the `autoWireSpecFrom` key to `autoWireFrom` on every
 	// kind object that carries it (value preserved verbatim). Returns false (result = input) when
-	// nothing carries the old key — already migrated, or never touched auto-wire. A bad shape is left
-	// for a human, not a crash loop. Deliberately RAW-node, not the typed deserializer: the renamed
-	// MethodologyKindDef no longer binds `autoWireSpecFrom`, so a deserialize-then-reserialize would
-	// DROP the value — the exact silent break this migrator exists to prevent.
-	static bool TryRename(string json, out string result)
+	// nothing carries the old key — already migrated, or never touched auto-wire. A bad shape
+	// (`malformed` set true) is left for a human, not a crash loop — but it is now LOGGED (elevated
+	// Warning) instead of vanishing silently, and counted into the caller's malformed tally (NIT 1:
+	// a battled document used to collapse into "nothing to migrate" with zero signal). Deliberately
+	// RAW-node, not the typed deserializer: the renamed MethodologyKindDef no longer binds
+	// `autoWireSpecFrom`, so a deserialize-then-reserialize would DROP the value — the exact silent
+	// break this migrator exists to prevent.
+	bool TryRename(string json, string subject, string projectKey, out string result, out bool malformed)
 	{
 		result = json;
+		malformed = false;
 		JsonNode? root;
 		try { root = JsonNode.Parse(json); }
-		catch (JsonException) { return false; }
-		if (root is not JsonObject obj || obj["kinds"] is not JsonArray kinds) return false;
+		catch (JsonException ex)
+		{
+			malformed = true;
+			_log?.LogWarning(ex,
+				"Tasks delivery-autowire-field-rename: the {Subject} of project {Project} is not valid JSON — left as-is, needs a human",
+				subject, projectKey);
+			return false;
+		}
+		if (root is not JsonObject obj || obj["kinds"] is not JsonArray kinds)
+		{
+			malformed = true;
+			_log?.LogWarning(
+				"Tasks delivery-autowire-field-rename: the {Subject} of project {Project} has no 'kinds' array — not a methodology document shape, left as-is, needs a human",
+				subject, projectKey);
+			return false;
+		}
 
 		var changed = false;
 		foreach (var node in kinds)

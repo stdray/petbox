@@ -111,11 +111,14 @@ public sealed class WorkDeferredStatusMigratorTests : IDisposable
 
 	WorkDeferredStatusMigrator Migrator() => new(_db.Factory(), _factory);
 
-	// Migrate() discovers the projects to scan from Core's TaskBoards catalog (same as
-	// MethodologyInstanceBackfill) — a project with no board at all never gets visited. Every
-	// test that expects the migrator to actually reach `Proj` seeds one board first.
-	// `methodologyInstance` binds the board into a named instance's scope (needed for the
-	// node-move tests — the migrator scopes an instance's node search to its member boards).
+	// Migrate() discovers the projects to scan from the union of Core's TaskBoards catalog and
+	// every project with an on-disk tasks file (StartupMigrationRun.DiscoverProjects — chore
+	// work/linkkinds-migrator-observability-gaps: a project can carry methodology rows with zero
+	// boards, e.g. all its boards closed/deleted after the document was provisioned). Every test
+	// in this suite still seeds a board first regardless, since `methodologyInstance` binds the
+	// board into a named instance's scope (needed for the node-move tests — the migrator scopes an
+	// instance's node search to its member boards) — see LinkKindsDeclaredMigratorTests for a
+	// direct test of the board-less discovery path.
 	async Task SeedProjectBoard(string? methodologyInstance = null) =>
 		await _boards.CreateAsync(Proj, "work", description: null, kind: "work", methodologyInstance: methodologyInstance);
 
