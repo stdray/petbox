@@ -58,7 +58,21 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 	{
 		var level = await OwnLevelAsync(projectKey, ct);
 		var registry = await _admin.GetAsync(level.Scope, level.ScopeKey, ct);
-		return new LlmRegistryDeclaration(registry, await _admin.GetVersionAsync(level.Scope, level.ScopeKey, ct));
+		var version = await _admin.GetVersionAsync(level.Scope, level.ScopeKey, ct);
+
+		// The level DECLARES something -> it is its own, and there is nothing being inherited past it.
+		if (registry.Endpoints.Count > 0 || registry.Routes.Count > 0)
+			return new LlmRegistryDeclaration(registry, version, level.ToString());
+
+		// Nothing of its own. An empty read used to be indistinguishable from "this project has no
+		// registry at all", which is the reading that makes an inheriting level look like free space —
+		// and declaring one row here would SHADOW the inherited level whole. Name what actually serves
+		// it (the resolver's answer, so this cannot disagree with the router), exactly as ViewAsync does
+		// for the admin page. Sequential reads, each on its own connection, no transaction held — see
+		// the class comment.
+		var resolved = await _resolver.ResolveAsync(projectKey, ct);
+		var servedBy = resolved.Level is { } from && from != level ? from.ToString() : null;
+		return new LlmRegistryDeclaration(registry, version, level.ToString(), servedBy);
 	}
 
 	public async Task<LlmRegistryDeclaration> PatchAsync(
@@ -86,9 +100,13 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		var newVersion = await _admin.SetSnapshotAsync(
 			level.Scope, level.ScopeKey, mergedEndpoints, mergedRoutes, apiKeys, expectedVersion: version, ct: ct);
 
+		// The level is named in the RESULT as well as in the read. A write that reports only "ok, v2"
+		// leaves the caller to re-derive where v2 lives, and re-deriving it from the projectKey is the
+		// mistake this whole card is about.
 		return new LlmRegistryDeclaration(
 			new LlmRegistry(mergedEndpoints, mergedRoutes.Select(r => r.Route).ToList()),
-			newVersion);
+			newVersion,
+			level.ToString());
 	}
 
 	public async Task SetAsync(

@@ -18,15 +18,24 @@ namespace PetBox.Web.Mcp;
 //
 // llm_config_* used to write ILlmRegistryAdmin (the old ConfigBindings store), which the router
 // stopped reading at the flip — an upsert reported success and changed nothing the runtime could
-// see. They now edit the LEVELLED registry the router resolves through. The SHAPE is unchanged:
-// llm_config_get still returns a plain LlmRegistry (the one DECLARED at the project's own level).
-// Adding level/inherited/owner to it is a breaking contract change and waits on the owner (llm-l5
-// item 5).
+// see. They now edit the LEVELLED registry the router resolves through.
+//
+// Both config results now also name their LEVEL (llm-l5 item 5, decided by work
+// llm-config-get-level-derivation-trap). The level is derived from the project's WORKSPACE, so
+// "the project's own level" — what these descriptions used to promise — is a phrase with no
+// referent: `smoke`, the sandbox project, reads and writes the live `System:$` byte for byte like
+// `$system` does, and an operator who trusted the old wording was one call from editing production.
+// Naming the actual container in the answer is the contract memory already keeps (memory_search
+// labels every row with its scope; memory_remember returns the container it wrote into) — this is
+// that model applied here, not a new nomenclature.
 [McpServerToolType]
 public static class LlmRouterTools
 {
-	// Web defaults (camelCase, case-insensitive); LlmCapability carries its own string
-	// converter so routes read/write "embed"/"rerank"/"chat".
+	// Web defaults: camelCase PROPERTY names, case-insensitive property matching. Enum VALUES are a
+	// separate axis — LlmCapability/LlmThinking carry a JsonStringEnumConverter with no naming
+	// policy, so they WRITE the declared member name ("Embed" / "Disabled") and READ any casing
+	// (Enum.TryParse with ignoreCase). That asymmetry is why llm_config_get's Capitalized output
+	// feeds back into llm_config_upsert unchanged; LlmRegistryJsonTests pins both directions.
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
 	// The config_upsert payload. Endpoints/Routes are NULLABLE and that is the contract, not an
@@ -40,9 +49,18 @@ public static class LlmRouterTools
 
 	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigGetResult))]
 	[Description("""
-		Return the LLM router registry DECLARED at this project's own level (endpoints + routes),
-		WITHOUT secrets, plus `version` — the CAS baseline for llm_config_upsert. Inherited levels
-		are not shown; version 0 means this level declares nothing yet. Requires llm:admin.
+		Return the LLM router registry DECLARED at the level THIS PROJECT READS AND WRITES (endpoints
+		+ routes), WITHOUT secrets, plus `version` (the CAS baseline for llm_config_upsert) and
+		`level` — the level you are actually looking at. Requires llm:admin.
+		THE LEVEL COMES FROM THE PROJECT'S WORKSPACE, NOT FROM THE PROJECT. There is no per-project
+		level: every project of workspace `$system` — INCLUDING the sandbox project `smoke` — reads
+		and writes `System:$`, the live registry every other workspace inherits. Any other workspace
+		resolves to `Workspace:<workspaceKey>`, shared by every project in it. Read `level` before
+		you write: a projectKey that looks isolated is not evidence that the level is.
+		`version` 0 means THIS LEVEL declares nothing yet — NOT that the project has no registry.
+		In that case `servedBy` names the level actually serving it, and declaring even one row here
+		SHADOWS that inherited level WHOLE (levels resolve atomically, they never merge) for every
+		project of this workspace.
 		""")]
 	public static async Task<LlmConfigGetResult> ConfigGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
@@ -52,12 +70,24 @@ public static class LlmRouterTools
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 		var declared = await registry.GetDeclaredAsync(projectKey, ct);
-		return new LlmConfigGetResult(declared.Registry.Endpoints, declared.Registry.Routes, declared.Version);
+		return new LlmConfigGetResult(
+			declared.Registry.Endpoints, declared.Registry.Routes, declared.Version,
+			declared.Level, declared.ServedBy);
 	}
 
 	[McpServerTool(Name = "llm_config_upsert", Title = "Upsert LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
-		PATCH the project's LLM router registry, with optimistic concurrency. Requires llm:admin.
+		PATCH the LLM router registry AT THE LEVEL THIS PROJECT WRITES TO, with optimistic
+		concurrency. Requires llm:admin.
+		WHERE THIS WRITE LANDS — read it before anything else. The target level is derived from the
+		project's WORKSPACE, not from the project: every project of workspace `$system`, the sandbox
+		project `smoke` INCLUDED, writes `System:$` — the live registry every other workspace
+		inherits. Any other workspace writes `Workspace:<workspaceKey>`, shared by all its projects.
+		There is no per-project level, so no projectKey isolates this write. Call llm_config_get
+		first and read its `level` (this call returns `level` too, but by then it is written).
+		Writing to a level that currently declares nothing (`version` 0, `servedBy` set) does not
+		"add" to what serves the project: the new level SHADOWS the inherited one WHOLE — routes and
+		api keys gone — for every project of that workspace.
 		WRITE SEMANTICS, in full — this edits the LIVE router configuration and there is no undo:
 		  * An OMITTED top-level part stays UNCHANGED. Omit `endpoints` and the stored endpoints
 		    (and their api keys) are kept; omit `routes` and the stored routes are kept, ids and all.
@@ -73,10 +103,14 @@ public static class LlmRouterTools
 		    // embedSpaceId (embed routes only): the canonical vector-index key. Omit/null = use model.
 		    // Give two embed routes the SAME embedSpaceId to make their vectors share one index space.
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; an endpoint absent here keeps its stored key }
+		`capability` and `thinking` are CASE-INSENSITIVE on input: "embed" and "Embed" both parse, as
+		do "disabled" and "Disabled". llm_config_get emits them Capitalized ("Embed" / "Disabled"),
+		so its output can be edited and fed straight back — read-modify-write is the intended and
+		safe cycle, and it does not need case conversion in between.
 		The MERGED registry (kept parts + sent parts) is validated as a whole before anything is
 		written — an unknown endpoint in a route, a bad URL, etc. is an error and nothing changes.
-		Returns { ok, endpoints, routes, version } where `version` is the new baseline for your next
-		upsert.
+		Returns { ok, endpoints, routes, version, level } — `version` is the new baseline for your
+		next upsert, `level` is the level this call actually wrote.
 		""")]
 	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
@@ -100,7 +134,8 @@ public static class LlmRouterTools
 			projectKey, input.Endpoints, input.Routes,
 			input.ApiKeys ?? new Dictionary<string, string>(), version, ct);
 		return new LlmConfigSetResult(
-			true, written.Registry.Endpoints.Count, written.Registry.Routes.Count, written.Version);
+			true, written.Registry.Endpoints.Count, written.Registry.Routes.Count, written.Version,
+			written.Level);
 	}
 
 	[McpServerTool(Name = "llm_embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]

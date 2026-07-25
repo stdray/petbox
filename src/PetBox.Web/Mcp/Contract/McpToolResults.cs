@@ -157,14 +157,32 @@ public sealed record DataExecResult(int Affected);
 
 // ---- llm.* ---------------------------------------------------------------------------
 
-// `Version` is the level's CAS baseline — pass it back as llm_config_upsert's `version`. 0 = this
-// project's level declares nothing yet. The endpoints/routes shape is unchanged (llm-l5 item 5 keeps
-// level/inherited/owner off this surface until the owner rules on it); Version is purely additive,
-// and without it a caller has no way to obtain a baseline at all.
-public sealed record LlmConfigGetResult(IReadOnlyList<LlmEndpoint> Endpoints, IReadOnlyList<LlmRoute> Routes, long Version);
+// `Version` is the level's CAS baseline — pass it back as llm_config_upsert's `version`. 0 = the
+// level declares nothing yet.
+//
+// `Level` is the level these rows were read FROM and that an upsert with this projectKey would write
+// TO ("System:$" / "Workspace:<workspaceKey>"). It is here because it is NOT derivable from the
+// projectKey by anyone but the server: the level comes from the project's WORKSPACE, so `smoke` —
+// the sandbox project — resolves to the LIVE `System:$` exactly like `$system` does, and the surface
+// used to describe that as "this project's own level" (work llm-config-get-level-derivation-trap;
+// this is llm-l5 item 5, now decided). Reporting where the caller actually landed is the same
+// contract memory_search keeps when it labels every row with the scope it came from.
+//
+// `ServedBy` is populated ONLY when this level declares nothing and something above it does — the
+// level actually serving the project. It answers the question `Version: 0` used to answer wrongly:
+// an empty level is not an empty registry, and writing a single row here shadows the inherited one
+// WHOLE for every project of this workspace.
+public sealed record LlmConfigGetResult(
+	IReadOnlyList<LlmEndpoint> Endpoints,
+	IReadOnlyList<LlmRoute> Routes,
+	long Version,
+	string Level,
+	string? ServedBy = null);
 
 // `Version` is the level's NEW version after this write — the baseline for the caller's NEXT upsert.
-public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes, long Version);
+// `Level` is the level that was actually written ("System:$" / "Workspace:<workspaceKey>"), so the
+// write reports its own target instead of leaving the caller to re-derive it from the projectKey.
+public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes, long Version, string Level);
 
 // ---- log.* lifecycle (replaces entity.* type "log") ----------------------------------
 
