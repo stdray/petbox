@@ -306,8 +306,26 @@ public sealed class LlmAdminPageTests : IDisposable
 		public int SaveCalls { get; private set; }
 		public Exception? ThrowOnSave { get; set; }
 
+		public long Version { get; set; }
+
 		public Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default) =>
 			Task.FromResult(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()));
+
+		public Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default) =>
+			Task.FromResult(new LlmRegistryDeclaration(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version));
+
+		public async Task<LlmRegistryDeclaration> PatchAsync(
+			string projectKey, IReadOnlyList<LlmEndpoint>? endpoints, IReadOnlyList<LlmRoute>? routes,
+			IReadOnlyDictionary<string, string> apiKeys, long version, CancellationToken ct = default)
+		{
+			await SaveAsync(
+				projectKey,
+				endpoints ?? Endpoints,
+				routes is null ? Routes : routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(),
+				apiKeys, ct);
+			Version++;
+			return new LlmRegistryDeclaration(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version);
+		}
 
 		public Task<LlmRegistryView> ViewAsync(string projectKey, CancellationToken ct = default) =>
 			Task.FromResult(new LlmRegistryView(

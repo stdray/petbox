@@ -36,6 +36,12 @@ public sealed class PetBoxDb : DataConnection
 	// LlmRegistryStore still serves production.
 	public ITable<LlmEndpointRow> LlmEndpoints => this.GetTable<LlmEndpointRow>();
 	public ITable<LlmRouteRow> LlmRoutes => this.GetTable<LlmRouteRow>();
+	// The per-LEVEL write watermark (M047) — one row per (Scope, ScopeKey), bumped by every replace.
+	// It is the CAS baseline llm_config_get hands out and llm_config_upsert checks; it lives in its
+	// own table (rather than on the endpoint/route rows) so that EMPTYING a level cannot reset the
+	// counter — a version must never go backwards, or a baseline read before the emptying would be
+	// accepted again afterwards.
+	public ITable<LlmRegistryLevelRow> LlmRegistryLevels => this.GetTable<LlmRegistryLevelRow>();
 
 	// Foreign Keys=True turns on per-connection FK enforcement — SQLite defaults it OFF, and an
 	// unenforced FK is decoration. core.db had no foreign keys at all until llm_routes' composite FK

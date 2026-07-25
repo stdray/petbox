@@ -33,6 +33,23 @@ public sealed record LlmEndpointRow
 	[Column, Nullable] public long? UpdatedBy { get; init; }
 }
 
+// THE CAS BASELINE OF ONE LEVEL (M047). A level is written WHOLE (endpoints + routes replaced in one
+// transaction), so the unit a concurrent edit must be detected on is the LEVEL, not a row — and the
+// rows themselves cannot carry it: a level that is emptied has no rows left to hold a counter, and a
+// version that resets to 0 would silently re-admit a baseline read before the emptying. So the
+// counter is its own row, created on the level's first write and never deleted; Version starts at 1
+// and is incremented by every replace (an unwritten level reads 0 = "declares nothing yet").
+[Table("llm_registry_levels")]
+public sealed record LlmRegistryLevelRow
+{
+	[Column, PrimaryKey(0), NotNull] public string Scope { get; init; } = string.Empty;
+	[Column, PrimaryKey(1), NotNull] public string ScopeKey { get; init; } = string.Empty;
+
+	[Column, NotNull] public long Version { get; init; }
+	[Column, NotNull] public DateTime UpdatedAt { get; init; }
+	[Column, Nullable] public long? UpdatedBy { get; init; }
+}
+
 // One link in a capability's provider chain, pinned to the level it was declared at. The
 // composite FK (Scope, ScopeKey, Endpoint) -> llm_endpoints(Scope, ScopeKey, Name) is declared in
 // the migration and enforced by SQLite (PetBoxDb turns foreign_keys ON): a route CANNOT reference

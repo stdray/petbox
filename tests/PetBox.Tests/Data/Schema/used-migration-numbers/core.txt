@@ -59,3 +59,4 @@
 44 LIVE M044_UserWorkspaceQuota
 45 LIVE M045_LogRetentionDays
 46 LIVE M046_LlmRouteEmbedSpaceId
+47 LIVE M047_LlmRegistryLevelVersion

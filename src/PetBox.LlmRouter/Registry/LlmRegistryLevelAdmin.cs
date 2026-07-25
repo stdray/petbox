@@ -71,26 +71,37 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		return new LlmLevelSnapshot(endpoints, routes);
 	}
 
+	public async Task<long> GetVersionAsync(Scope scope, string scopeKey, CancellationToken ct = default)
+	{
+		var level = Validate(scope, scopeKey);
+		var name = level.Scope.ToString();
+
+		using var db = _factory.Open();
+		return await VersionAsync(db, name, level.ScopeKey, ct);
+	}
+
 	// A whole-registry replace: every route is a new row, so every id is fresh.
-	public Task SetAsync(
+	public Task<long> SetAsync(
 		Scope scope,
 		string scopeKey,
 		LlmRegistry registry,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		long? updatedBy = null,
 		CancellationToken ct = default) =>
 		SetSnapshotAsync(
 			scope, scopeKey,
 			registry.Endpoints,
 			registry.Routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(),
-			apiKeys, updatedBy, ct);
+			apiKeys, expectedVersion, updatedBy, ct);
 
-	public async Task SetSnapshotAsync(
+	public async Task<long> SetSnapshotAsync(
 		Scope scope,
 		string scopeKey,
 		IReadOnlyList<LlmEndpoint> endpoints,
 		IReadOnlyList<IdentifiedRoute> routes,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		long? updatedBy = null,
 		CancellationToken ct = default)
 	{
@@ -122,6 +133,15 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 				.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey)
 				.ToListAsync(ct))
 			.ToDictionary(e => e.Name, StringComparer.Ordinal);
+
+		// THE CAS BASELINE, read on the same connection and BEFORE the transaction (same reason as
+		// the key read above). It is checked twice on purpose: here, so a mismatch is a clear,
+		// well-worded refusal that never opens a transaction; and again inside the transaction as a
+		// conditional UPDATE, which is what actually makes it atomic against a writer that commits
+		// between this read and the replace.
+		var current = await VersionAsync(db, name, level.ScopeKey, ct);
+		if (expectedVersion is { } expected && expected != current)
+			throw Conflict(level, expected, current);
 
 		var endpointRows = new List<LlmEndpointRow>(registry.Endpoints.Count);
 		foreach (var ep in registry.Endpoints)
@@ -180,6 +200,36 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		// endpoints would take them anyway, but doing it explicitly keeps the order legible.
 		await using var tx = await db.BeginTransactionAsync(ct);
 
+		// The version bump goes FIRST, as a WRITE conditioned on the baseline — never as a read
+		// followed by a write. `UPDATE … WHERE Version = @current` either matches one row (nobody
+		// committed in between: we own the level for this transaction) or matches none, which means
+		// another writer got here first and the whole replace rolls back untouched. A level with no
+		// row yet (version 0) is INSERTed instead; a concurrent insert loses on the primary key, and
+		// that too rolls the replace back.
+		var next = current + 1;
+		if (current == 0)
+		{
+			await db.InsertAsync(new LlmRegistryLevelRow
+			{
+				Scope = name,
+				ScopeKey = level.ScopeKey,
+				Version = next,
+				UpdatedAt = now,
+				UpdatedBy = updatedBy,
+			}, token: ct);
+		}
+		else
+		{
+			var bumped = await db.LlmRegistryLevels
+				.Where(l => l.Scope == name && l.ScopeKey == level.ScopeKey && l.Version == current)
+				.Set(l => l.Version, next)
+				.Set(l => l.UpdatedAt, now)
+				.Set(l => l.UpdatedBy, updatedBy)
+				.UpdateAsync(ct);
+			if (bumped != 1)
+				throw Conflict(level, expectedVersion ?? current, await VersionAsync(db, name, level.ScopeKey, ct));
+		}
+
 		await db.LlmRoutes.Where(r => r.Scope == name && r.ScopeKey == level.ScopeKey).DeleteAsync(ct);
 		await db.LlmEndpoints.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey).DeleteAsync(ct);
 
@@ -190,7 +240,26 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		foreach (var row in routeRows) await db.InsertAsync(row, token: ct);
 
 		await tx.CommitAsync(ct);
+		return next;
 	}
+
+	// 0 = this level has never been written (it "declares nothing yet").
+	static async Task<long> VersionAsync(PetBoxDb db, string scope, string scopeKey, CancellationToken ct) =>
+		await db.LlmRegistryLevels
+			.Where(l => l.Scope == scope && l.ScopeKey == scopeKey)
+			.Select(l => l.Version)
+			.FirstOrDefaultAsync(ct);
+
+	// The refusal, worded like every other CAS refusal in PetBox (compare
+	// MethodologyInstanceService.DefineRulesAsync): it names the baseline that was quoted, the
+	// version the level is actually at, and the READ verb to rebase from. A caller that only ever
+	// sees this message still has everything it needs to retry correctly.
+	static InvalidOperationException Conflict(RegistryLevel level, long expected, long current) =>
+		new(current == 0
+			? $"llm registry level {level} conflict: your baseline version {expected} does not exist — this level declares nothing yet, so pass version 0 to create it"
+			: expected > current
+				? $"llm registry level {level} conflict: your baseline version {expected} is ahead of this level's version {current} — re-read with llm_config_get and resubmit against the current version"
+				: $"llm registry level {level} conflict: your baseline version {expected} is stale — the current version is {current}; re-read with llm_config_get and resubmit against it. NOTHING was written");
 
 	// The only place a level is admitted. Scope.Project is RESERVED in the schema (the resolver
 	// walks it) but nothing may write it yet — accepting a write there now would create rows no

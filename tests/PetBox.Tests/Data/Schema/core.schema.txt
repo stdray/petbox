@@ -206,6 +206,14 @@ TABLE llm_endpoints
   COL UpdatedBy INTEGER NULL
   INDEX sqlite_autoindex_llm_endpoints_1 UNIQUE origin=pk (Scope, ScopeKey, Name)
 
+TABLE llm_registry_levels
+  COL Scope TEXT NOT NULL PK1
+  COL ScopeKey TEXT NOT NULL PK2
+  COL UpdatedAt DATETIME NOT NULL
+  COL UpdatedBy INTEGER NULL
+  COL Version INTEGER NOT NULL
+  INDEX sqlite_autoindex_llm_registry_levels_1 UNIQUE origin=pk (Scope, ScopeKey)
+
 TABLE llm_routes
   COL Capability TEXT NOT NULL
   COL EmbedSpaceId TEXT NULL

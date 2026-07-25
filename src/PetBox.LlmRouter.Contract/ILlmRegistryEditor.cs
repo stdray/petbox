@@ -36,15 +36,45 @@ public sealed record LlmRegistryView(
 	IReadOnlyList<LlmEndpoint> Endpoints,
 	IReadOnlyList<IdentifiedRoute> Routes);
 
+// The registry declared at a project's own level TOGETHER WITH the level's CAS version — the pair a
+// caller needs to edit safely: what is there, and the baseline to quote back when replacing it.
+// Version 0 means the level has never been written (it declares nothing yet).
+public sealed record LlmRegistryDeclaration(LlmRegistry Registry, long Version);
+
 public interface ILlmRegistryEditor
 {
 	// The registry DECLARED at this project's own level — no inheritance, no secrets. Empty when the
 	// level declares nothing (even if the project is being served by a level above).
 	Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default);
 
+	// The same read, plus the level's CAS version — what llm_config_get returns, so that an agent
+	// that reads before it writes always holds a baseline.
+	Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default);
+
+	// THE CHECKED EDIT behind llm_config_upsert. Two things distinguish it from SetAsync:
+	//
+	//   * OMISSION MEANS "KEEP", not "clear". `endpoints`/`routes` are nullable: null leaves that
+	//     part of the level exactly as it is (routes keep their row ids too), an EMPTY list clears
+	//     it. This is the memory_upsert/tasks_upsert contract — an omitted field stays unchanged, a
+	//     field passed explicitly empty is cleared — and it is here because the opposite cost us a
+	//     card: a caller sending only `routes` silently wiped every endpoint, api keys and all.
+	//   * `version` is the CAS baseline from GetDeclaredAsync (0 = the level declares nothing yet).
+	//     A baseline that is not the level's current version refuses the whole write.
+	//
+	// The merged registry is validated as a WHOLE before anything is written, so "keep the endpoints,
+	// replace the routes" cannot land a route pointing at an endpoint that is not there.
+	Task<LlmRegistryDeclaration> PatchAsync(
+		string projectKey,
+		IReadOnlyList<LlmEndpoint>? endpoints,
+		IReadOnlyList<LlmRoute>? routes,
+		IReadOnlyDictionary<string, string> apiKeys,
+		long version,
+		CancellationToken ct = default);
+
 	// Replace this project's own level with `registry`. Routes get fresh ids (a whole-registry
 	// replace has no rows to keep identity with). `apiKeys` maps endpoint Name -> plaintext key;
 	// an endpoint absent from the map keeps the key it already had AT THIS LEVEL.
+	// UNCHECKED: no CAS baseline — the caller is asserting the whole level. Prefer PatchAsync.
 	Task SetAsync(
 		string projectKey,
 		LlmRegistry registry,

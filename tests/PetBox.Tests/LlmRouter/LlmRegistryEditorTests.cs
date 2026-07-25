@@ -94,14 +94,174 @@ public sealed class LlmRegistryEditorTests : IDisposable
 	[Fact]
 	public async Task McpUpsert_replaces_the_level_whole_so_an_edited_model_actually_changes_the_route()
 	{
-		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+		var first = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
 			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "old-model", 50)));
 
 		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
-			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "new-model", 50)));
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "new-model", 50)),
+			version: first.Version);
 
 		var resolved = await _resolver.ResolveAsync(Proj);
 		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("new-model");
+	}
+
+	// ---- write semantics: an omitted part is KEPT, not wiped (work llm-config-upsert-full-replace-no-cas) ----
+
+	// THE CARD. An upsert that names only `routes` used to leave the level with ZERO endpoints — and
+	// an endpoint row carries its api key, so the credentials went with it. The routes then pointed
+	// at nothing and the project resolved no provider at all.
+	[Fact]
+	public async Task An_upsert_that_omits_endpoints_KEEPS_them_instead_of_wiping_the_level()
+	{
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234" } ],
+				  "routes":    [ { "capability": "chat", "endpoint": "home", "model": "old-model" } ],
+				  "apiKeys":   { "home": "sk-secret" } }
+				"""));
+
+		// Only the routes are named. `endpoints` is ABSENT from the JSON — not empty, absent.
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""{ "routes": [ { "capability": "chat", "endpoint": "home", "model": "new-model" } ] }"""),
+			version: created.Version);
+
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		got.Endpoints.Should().ContainSingle(e => e.Name == "home" && e.BaseUrl == "https://home:1234");
+		got.Routes.Should().ContainSingle().Which.Model.Should().Be("new-model");
+
+		// And the runtime still has a usable provider — endpoint AND its key.
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Endpoints.Should().ContainSingle(e => e.Name == "home");
+		resolved.ApiKeys.Should().ContainKey("home").WhoseValue.Should().Be("sk-secret");
+	}
+
+	[Fact]
+	public async Task An_upsert_that_omits_routes_KEEPS_them_and_their_row_ids()
+	{
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234" } ],
+				  "routes":    [ { "capability": "chat", "endpoint": "home", "model": "chat-model" } ] }
+				"""));
+		var idBefore = (await _editor.ViewAsync(Proj)).Routes.Single().Id;
+
+		// Re-declare the endpoint only (a timeout tweak). The routes must survive it.
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234", "requestTimeoutMs": 90000 } ] }"""),
+			version: created.Version);
+
+		var view = await _editor.ViewAsync(Proj);
+		view.Endpoints.Should().ContainSingle().Which.RequestTimeoutMs.Should().Be(90000);
+		view.Routes.Should().ContainSingle().Which.Route.Model.Should().Be("chat-model");
+		view.Routes.Single().Id.Should().Be(idBefore, "a route nobody touched keeps its handle");
+	}
+
+	// The other half of the contract: EXPLICITLY empty still clears, or there would be no way to
+	// delete the last route.
+	[Fact]
+	public async Task An_explicitly_empty_routes_array_CLEARS_the_routes()
+	{
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234" } ],
+				  "routes":    [ { "capability": "chat", "endpoint": "home", "model": "chat-model" } ] }
+				"""));
+
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""{ "routes": [] }"""), version: created.Version);
+
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		got.Routes.Should().BeEmpty();
+		got.Endpoints.Should().ContainSingle("clearing the routes must not take the endpoints with them");
+	}
+
+	// ---- CAS ----
+
+	[Fact]
+	public async Task A_concurrent_write_with_a_STALE_version_is_refused_and_nothing_is_written()
+	{
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)));
+
+		// Both agents read the same baseline. The first one wins.
+		var baseline = created.Version;
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-b", 50)),
+			version: baseline);
+
+		// The second arrives holding the version it read BEFORE that write.
+		var act = async () => await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-c", 50)),
+			version: baseline);
+
+		(await act.Should().ThrowAsync<InvalidOperationException>())
+			.Which.Message.Should().Contain("stale").And.Contain("llm_config_get");
+
+		// The winner's write stands, untouched — a refused call writes NOTHING.
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-b");
+	}
+
+	// version 0 means "this level declares nothing yet". Against a level that already serves the
+	// router it is not a create, it is a blind overwrite — which is exactly what the tool used to do
+	// on EVERY call, because it had no version parameter at all.
+	[Fact]
+	public async Task Version_0_against_a_level_that_already_exists_is_refused()
+	{
+		await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)));
+
+		var act = async () => await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "clobbered", 50)));
+
+		await act.Should().ThrowAsync<InvalidOperationException>();
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-a");
+	}
+
+	[Fact]
+	public async Task The_version_from_llm_config_get_is_the_baseline_a_correct_write_quotes()
+	{
+		// An unwritten level declares nothing: version 0, which is the baseline that CREATES it.
+		var empty = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		empty.Version.Should().Be(0);
+
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)),
+			version: empty.Version);
+		created.Version.Should().Be(1);
+
+		// Read → write → read: the version the read hands out is the one the write accepts, and the
+		// write's echo is the next read's baseline.
+		var read = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		read.Version.Should().Be(created.Version);
+
+		var second = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-b", 50)),
+			version: read.Version);
+		second.Version.Should().Be(2);
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-b");
+	}
+
+	// A version must never go BACKWARDS, or a baseline read before an emptying would be accepted
+	// after it — which is why the counter lives in its own row instead of on the endpoint/route rows
+	// that a replace deletes.
+	[Fact]
+	public async Task Emptying_a_level_does_not_reset_its_version()
+	{
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)));
+
+		var emptied = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""{ "endpoints": [], "routes": [] }"""), version: created.Version);
+
+		emptied.Version.Should().Be(2);
+		(await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj)).Version.Should().Be(2);
+
+		// The baseline from before the emptying is still refused.
+		var act = async () => await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "resurrected", 50)),
+			version: created.Version);
+		await act.Should().ThrowAsync<InvalidOperationException>();
 	}
 
 	// The reserved built-in workspace IS the system level — the one every inheriting workspace is
@@ -244,6 +404,10 @@ public sealed class LlmRegistryEditorTests : IDisposable
 	static JsonElement Config(LlmEndpoint endpoint, LlmRoute route) =>
 		JsonSerializer.SerializeToElement(
 			new LlmRouterTools.ConfigSetInput([endpoint], [route]), Web);
+
+	// Raw JSON, so a test can leave a property genuinely ABSENT — which is the whole distinction the
+	// write semantics turn on (absent = keep, [] = clear) and one a serialized record cannot express.
+	static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
 	static IHttpContextAccessor Http(string scopes, string project) =>
 		new HttpContextAccessor
