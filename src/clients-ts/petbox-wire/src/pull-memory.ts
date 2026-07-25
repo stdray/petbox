@@ -30,6 +30,7 @@ import {
   logBudgetOverage,
   SESSION_BANNER_BUDGET_BYTES,
 } from "./session-budget.ts";
+import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 // Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
 // module comment above.
@@ -85,6 +86,12 @@ async function main(): Promise<void> {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
 
+    // Started concurrently, NOT awaited yet — its git-only latency hides behind the
+    // agent-def/canon fetch sequence below rather than stacking in front of it. It is
+    // git-only and independent of SESSION_FETCH_BUDGET_MS, so it is deliberately not folded
+    // into that budget or its overage accounting (see worktree-base-guard.ts).
+    const stalePromise = buildStaleBaseWarning({ cwd: cwd || process.cwd() });
+
     // Sequential under one shared budget (not Promise.all): whatever the first fetch doesn't
     // spend is what the second gets, so the combined worst case is bounded by
     // SESSION_FETCH_BUDGET_MS instead of stacking two independent timeouts.
@@ -116,7 +123,11 @@ async function main(): Promise<void> {
           `Shrink the canon (memory_upsert store canon key index) or raise the budget deliberately.`,
       );
     }
-    await writeStdout(banner.text);
+    // Resolve the guard now (it had the whole fetch sequence above to run in the background)
+    // and prepend it: highest priority, tiny, so it must survive any tail truncation of the
+    // rest of the banner rather than risk being the part that gets cut.
+    const staleWarn = await stalePromise;
+    await writeStdout(staleWarn + banner.text);
   } catch {
     // best-effort
   }

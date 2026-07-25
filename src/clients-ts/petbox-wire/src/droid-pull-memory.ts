@@ -32,6 +32,7 @@ import { fetchCanonBlock } from "./canon.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
+import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 // Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
 // module comment above. Kept in step with pull-memory.ts: short on purpose, because the LKG
@@ -81,6 +82,11 @@ async function main(): Promise<void> {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
 
+    // Started concurrently, NOT awaited yet — same pattern as pull-memory.ts (its Claude Code
+    // counterpart): the guard's git-only latency hides behind the fetch sequence below instead
+    // of stacking in front of it, and it stays out of SESSION_FETCH_BUDGET_MS entirely.
+    const stalePromise = buildStaleBaseWarning({ cwd: cwd || process.cwd() });
+
     // Sequential under one shared budget (not Promise.all): whatever the first fetch doesn't
     // spend is what the second gets, so the combined worst case is bounded by
     // SESSION_FETCH_BUDGET_MS instead of stacking two independent timeouts.
@@ -98,6 +104,9 @@ async function main(): Promise<void> {
     });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     if (canon) context += `\n\n${canon}`;
+    // Prepend the stale-base warning, highest priority so it heads the context.
+    const staleWarn = await stalePromise;
+    context = staleWarn + context;
     const out = {
       hookSpecificOutput: {
         hookEventName: "SessionStart",

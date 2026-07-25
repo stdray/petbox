@@ -30,6 +30,7 @@ import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
+import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // Resolve the active project once at load. null → both hooks no-op.
@@ -100,6 +101,12 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     // Port of pull-memory — make the memory protocol part of the system prompt.
     "experimental.chat.system.transform": async (_input, output) => {
       if (!resolved) return;
+      // Stale-base warning first, so it stays prominent — see worktree-base-guard.ts. This
+      // handler can fire on EVERY turn (opencode is long-lived), so the module throttles its
+      // own best-effort git fetch internally; only the instant, network-free rev-list count
+      // runs unthrottled here.
+      const staleWarn = await buildStaleBaseWarning({ cwd: directory ?? "" });
+      if (staleWarn) output.system.push(staleWarn);
       output.system.push(
         buildProtocol(resolved.project, opencodePetboxTool, {
           harness: "opencode",
