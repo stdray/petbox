@@ -225,7 +225,6 @@ public static class TenantEnforcementAllowlist
 		"mcp:relations_create",
 		"mcp:relations_delete",
 		"mcp:relations_list",
-		"mcp:report_issue",
 		"mcp:search_reindex",
 		"mcp:session_append",
 		"mcp:session_delete",

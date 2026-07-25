@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
 using PetBox.Web.Mcp.Contract;
@@ -15,7 +16,15 @@ namespace PetBox.Web.Mcp;
 // (the /mcp endpoint already requires one) is enough. The write goes through the
 // single tasks door (ITasksService); this adapter only composes the report body.
 // Throws on a failed feature assert; McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): `feedback` — "доклад сопровождающему в
+// фиксированный арендатор". The report lands in $system/client-issues NO MATTER which project the
+// caller's key names, so the target tenant is a constant of the surface rather than an input: there
+// is nothing here for a caller to aim, and the tool takes no projectKey at all. The class is what
+// makes the write into a foreign tenant ($system) a DECLARED property instead of an accident — the
+// paragraph above ("intentionally NOT project-scoped") was the comment version of it, and a comment
+// is invisible to the ratchet.
 [McpServerToolType]
+[TenantExempt(TenantExemption.Feedback, "files into the maintainer's fixed $system/client-issues board, never the caller's tenant")]
 public static class ReportTools
 {
 	const string IssuesProject = "$system";
