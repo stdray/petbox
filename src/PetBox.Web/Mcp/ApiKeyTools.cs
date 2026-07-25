@@ -14,7 +14,19 @@ namespace PetBox.Web.Mcp;
 // admin:provision scope, NO per-project claim (cross-project onboarding). create returns the
 // raw key ONCE (never retrievable again). Tools throw on a failed Assert*/validation;
 // McpErrorEnvelopeFilter renders the exception as the structured {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): `provisioning` — "кросс-арендаторная выдача
+// ресурсов". Minting, listing, patching and revoking keys is the act that HANDS OUT access to
+// tenants; it cannot itself be confined to one, which is why the file already said "NO per-project
+// claim (cross-project onboarding)". The gate is `admin:provision`, on the scope axis, untouched.
+//
+// THE SHARP EDGE, declared rather than hidden: apikey_create can mint a key on ANY project (or the
+// wildcard '*'), so `admin:provision` is de facto root over every tenant. The work card names this
+// as an explicit open question for the owner ("Вне скоупа": narrowing it is a separate idea and a
+// stop-and-ask, not a line in a PR). This attribute is the declaring half — the reach becomes a
+// counted member of the `provisioning` class instead of an unstated property of one scope.
 [McpServerToolType]
+[TenantExempt(TenantExemption.Provisioning,
+	"hands out API keys ACROSS tenants (admin:provision); a key-minting verb cannot be confined to the tenant it mints for")]
 public static class ApiKeyTools
 {
 	[McpServerTool(Name = "apikey_create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]

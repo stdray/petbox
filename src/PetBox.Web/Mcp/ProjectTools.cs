@@ -13,7 +13,20 @@ namespace PetBox.Web.Mcp;
 // Provisioning ops: admin:provision scope, NO per-project claim — these are cross-project
 // onboarding ops. project has no delete (entity.* refused it too: would orphan logs/dbs/keys).
 // Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): `provisioning` — "кросс-арендаторная выдача
+// ресурсов". project_create MAKES a tenant (inside a named workspace) and project_list ENUMERATES
+// them; neither can be scoped to the tenant it is about, which is what the header above already
+// meant by "NO per-project claim — these are cross-project onboarding ops". Gate: admin:provision,
+// on the scope axis, untouched by the exemption.
+//
+// `workspaceKey` on project_create is NOT declared as a tenant on purpose. Declaring it would make
+// project_create refusable — an admin:provision key whose claim names one project would stop being
+// able to create anywhere else, which is the entire job of the verb. The cross-tenant probe records
+// what that costs today (project_create CREATED a project inside the victim's workspace); this
+// exemption is what makes that a number in the `provisioning` class rather than a surprise.
 [McpServerToolType]
+[TenantExempt(TenantExemption.Provisioning,
+	"creates and enumerates tenants themselves (admin:provision); a tenant-creating verb has no tenant to be scoped to")]
 public static partial class ProjectTools
 {
 	// Project keys: starts a-z, then a-z/0-9/_/- up to 100 chars (same spec as the old entity.*).
