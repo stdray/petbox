@@ -197,12 +197,6 @@ public static class TenantEnforcementAllowlist
 		"mcp:relations_delete",
 		"mcp:relations_list",
 		"mcp:search_reindex",
-		"mcp:session_append",
-		"mcp:session_delete",
-		"mcp:session_delta",
-		"mcp:session_get",
-		"mcp:session_search",
-		"mcp:session_upsert",
 	};
 
 	// The question both PEPs ask, once per call, before they look at a declaration at all.

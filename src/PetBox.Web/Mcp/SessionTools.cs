@@ -24,7 +24,18 @@ namespace PetBox.Web.Mcp;
 // Tools just THROW on a failed Assert* (or any deeper error); McpErrorEnvelopeFilter
 // converts the exception into the structured {error} body centrally. Return types stay
 // concrete; the success schema is advertised via [McpServerTool(OutputSchemaType)].
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all six verbs.
+//
+// Five of them take a REQUIRED projectKey and had a matching AssertProject; the sixth,
+// session_search, takes an OPTIONAL one and resolves the caller's own default first
+// (ModuleMcp.ResolveProject). The PEP reads the same fallback from the same place —
+// McpTenantEnforcementFilter resolves an absent Argument to CallerTenant.DefaultProjectOf, which IS
+// what ResolveProject uses — so one declaration covers both shapes and cannot disagree with either.
+//
+// ResolveProject STAYS on session_search: it is the resolver whose RETURN VALUE the body then uses,
+// not a check that can be deleted. Its now-redundant AssertProject on the line below it goes.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class SessionTools
 {
 	[McpServerTool(Name = "session_upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
@@ -44,7 +55,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// MCP is the degenerate single-blob writer; store it as one message. Latest-snapshot
@@ -78,7 +88,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var inputs = messages
@@ -114,7 +123,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
 		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
@@ -164,7 +172,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Resolve (throws on ambiguity) so a prefix can never delete the wrong session; a miss
 		// stays the idempotent { deleted: false }.
@@ -182,7 +189,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		// Sessions have no store-wide monotonic version — `Updated` (bumped to UtcNow on every
@@ -272,7 +278,6 @@ public static class SessionTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		projectKey = await ModuleMcp.ResolveProject(http, projectKey, ct);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		if (string.IsNullOrWhiteSpace(q))
