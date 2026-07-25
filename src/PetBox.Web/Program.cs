@@ -141,6 +141,12 @@ public partial class Program
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
 		// file yet and kept working the ghost file of a deleted one. Scoped: it reads PetBoxDb.
 		builder.Services.AddScoped<IProjectCatalog, ProjectCatalog>();
+		// THE tenant access decision — (principal, TenantRef) -> TenantAccess, one rule for both kinds
+		// of target (spec authz-tenant-default-deny). Scoped, not singleton: it holds the SCOPED
+		// IProjectCatalog, and a singleton over a scoped dependency is a captive dependency
+		// (CaptiveDependencyTests fails the build on one). Stateless, so a per-request instance costs
+		// nothing.
+		builder.Services.AddScoped<ITenantAuthorizer, TenantAuthorizer>();
 		// Portable agent-definition store (Core DB, always on — no feature flag).
 		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
 		// Write door to the append-only HealthReports table, for the push endpoint (POST /api/health):
