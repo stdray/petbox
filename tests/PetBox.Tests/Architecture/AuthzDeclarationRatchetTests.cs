@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Web;
+using PetBox.Web.Mcp;
 using Xunit;
 
 namespace PetBox.Tests.Architecture;
@@ -259,6 +260,32 @@ public sealed class AuthzDeclarationRatchetTests : IClassFixture<AuthzSurfaceHos
 			+ "all of them — on a route that lacks it the tenant resolves to nothing and the request is "
 			+ "REFUSED. Declare the value the page's routes share (often workspaceKey + "
 			+ "Tenant = TenantKind.Workspace), or split the page:\n" + string.Join("\n", broken));
+	}
+
+	// The MCP PEP re-reads the tool attributes by reflection (it has a tool NAME, not a MethodInfo, so
+	// it cannot borrow the sweep's result). Two readers of the same attributes are two chances to
+	// diverge — and a divergence here is silent in the worst direction: the ratchet would demand a
+	// declaration the PEP does not see, or honour one the PEP misses.
+	[Fact]
+	public void TheEnforcementLookup_AgreesWithTheInventory()
+	{
+		var enforcement = McpTenantEnforcementFilter.Scan(typeof(Program).Assembly);
+
+		enforcement.Keys.Should().BeEquivalentTo(_host.McpTools.Select(s => s.Id),
+			"the PEP and the inventory sweep the same assembly for the same [McpServerTool] methods");
+
+		// Compared by Describe(), not by instance: reflection hands out a FRESH attribute object per read,
+		// so the two sides can never be reference-equal — what has to match is what they SAY.
+		var disagreements = _host.McpTools
+			.Where(s => !enforcement[s.Id].Select(d => d.Describe())
+				.SequenceEqual(s.Declarations.Select(d => d.Describe()), StringComparer.Ordinal))
+			.Select(s => $"  {s.Key}: inventory={s.Describe()} vs PEP="
+				+ string.Join(" + ", enforcement[s.Id].Select(d => d.Describe())))
+			.ToList();
+
+		disagreements.Should().BeEmpty(
+			"the method-wins-then-type lookup order must be identical on both sides:\n"
+			+ string.Join("\n", disagreements));
 	}
 
 	// ── THE MACHINE INVENTORY ────────────────────────────────────────────────────────────────────

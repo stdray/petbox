@@ -385,6 +385,12 @@ public partial class Program
 																		 // is exactly where the projectKey injection must sit: inside McpTracingFilter, so the
 																		 // ambient Activity is the `mcp.tool <name>` span the misroute marker belongs on.
 				PetBox.Web.Mcp.McpProjectDefaultFilter.Register(filters); // the key's default project: inject + honest schema
+																		  // ORDER, not taste: the tenant PEP goes here, ABOVE (= outside) the existence check below,
+																		  // so an unauthorized caller gets an authorization refusal instead of "does not exist / did
+																		  // you mean 'X'?". See McpProjectExistsFilter.cs:114-120 — swapping these two lines turns the
+																		  // project registry into an existence oracle for any key. It also has to be BELOW the default
+																		  // filter, which is what resolves the projectKey it authorizes.
+				PetBox.Web.Mcp.McpTenantEnforcementFilter.Register(filters); // default-deny by tenant (spec authz-tenant-default-deny)
 				PetBox.Web.Mcp.McpProjectExistsFilter.Register(filters);  // …and the RESOLVED project must exist (W3)
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
@@ -978,6 +984,21 @@ public partial class Program
 		// App-wide request logging into the self-log (after auth so the project claim is
 		// available; below UseExceptionHandler so it logs+rethrows unhandled exceptions).
 		app.UseMiddleware<PetBox.Web.Logging.RequestLoggingMiddleware>();
+
+		// spec authz-tenant-default-deny — PEP #1 of 2: the endpoint plane (REST *and* Razor; they are
+		// the same endpoints by now). Reads HttpContext.GetEndpoint()?.Metadata, so it covers every
+		// route regardless of how it was mapped.
+		//
+		// Placement is deliberate on both sides. AFTER UseRouting/UseAuthentication/UseAuthorization:
+		// there is no endpoint before routing and no principal before authentication, and letting the
+		// orthogonal SCOPE axis answer first keeps a browser's login redirect and a scope refusal in
+		// their current shapes instead of collapsing them into a tenant refusal. INSIDE
+		// RequestLoggingMiddleware, so a refusal is a logged request like any other — and above the
+		// yb_ws/yb_project cookie writers below, so a refused request never persists a workspace or
+		// project switch it was not allowed to make.
+		//
+		// Refuses nothing today: all 217 surfaces sit in TenantEnforcementAllowlist.
+		app.UseMiddleware<PetBox.Core.Auth.TenantEnforcementMiddleware>();
 
 		// Persist URL-driven workspace switch into the yb_ws cookie. Without
 		// this, visiting /ui/{ws}/... shows that workspace for one render but

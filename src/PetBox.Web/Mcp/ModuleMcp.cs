@@ -67,15 +67,11 @@ static class ModuleMcp
 	// RequestContext carries a ClaimsPrincipal and no HttpContext) ask this exact question — the
 	// injected argument and the advertised schema then agree with ResolveProject by construction
 	// rather than by a re-implementation that can drift.
-	public static string? DefaultProjectOf(ClaimsPrincipal? user) =>
-		user?.Claims.FirstOrDefault(c => c.Type == "project")?.Value switch
-		{
-			null or "" => null,
-			ProjectScope.AllProjects => Blank(user.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value),
-			var single => Blank(single),
-		};
-
-	static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+	//
+	// The reading itself moved to PetBox.Core.Auth.CallerTenant when the endpoint-plane PEP needed the
+	// same answer for a [TenantFrom(CallerDefault)] declaration; this stays as the MCP surface's name
+	// for it. One reading, three callers (injection, existence check, both PEPs).
+	public static string? DefaultProjectOf(ClaimsPrincipal? user) => CallerTenant.DefaultProjectOf(user);
 
 	public static void AssertScope(IHttpContextAccessor http, string required)
 	{
