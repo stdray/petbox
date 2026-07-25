@@ -4,6 +4,10 @@ namespace PetBox.Core.Auth;
 // target (spec authz-tenant-default-deny): a project, or a workspace. Not two subsystems — a
 // caller's claim authorizes a workspace exactly when it authorizes a project belonging to it, so
 // both kinds are answered by one decision point (ITenantAuthorizer) against one reference type.
+//
+// This is the TYPE of the reference, not its ENCODING. The two encodings in the tree today — a
+// separate workspaceKey parameter (Config) and the `$ws-<key>` pseudo-project (shared memory) —
+// both keep working and both are declared as Workspace; unifying them is separate work.
 public enum TenantKind
 {
 	Project,

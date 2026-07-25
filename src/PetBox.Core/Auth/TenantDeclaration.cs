@@ -48,18 +48,8 @@ public abstract class TenantDeclarationAttribute : Attribute
 	public abstract string Describe();
 }
 
-// Which of the two things a tenant reference names. ONE access boundary, two target kinds (spec
-// `authz-tenant-default-deny`: "клейм вызывающего авторизует workspace тогда и только тогда, когда
-// авторизует проект, этому workspace принадлежащий").
-//
-// This is the TYPE of the reference, not its ENCODING. The two encodings in the tree today — a
-// separate workspaceKey parameter (Config) and the `$ws-<key>` pseudo-project (shared memory) —
-// both keep working and both are declared as Workspace; unifying them is separate work.
-public enum TenantKind
-{
-	Project,
-	Workspace,
-}
+// `TenantKind` (which of the two things a reference names) lives with the reference itself, in
+// TenantRef.cs — a declaration only points at a kind, it does not define one.
 
 // WHERE the target tenant comes from. Closed by the same reasoning as the exemption list: a new
 // source is a new way for a surface to name its tenant, i.e. something the decision point must
