@@ -321,9 +321,12 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		reordered.Routes[0].Id.Should().Be(neighbourId);
 		reordered.Routes[1].Id.Should().Be(editedId);
 
-		// Now the user's form arrives, carrying the id it was rendered with (NOT an index).
+		// Now the user's form arrives, carrying the id it was rendered with (NOT an index) and the
+		// CAS baseline for the version the concurrent save above just produced (work
+		// llm-admin-page-no-cas — a page submit always quotes back the level's current version).
+		var currentVersion = (await _editor.GetDeclaredAsync(Proj)).Version;
 		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
-		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, editedId);
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, editedId, currentVersion);
 
 		var after = await _editor.ViewAsync(Proj);
 		after.Routes.Single(r => r.Id == editedId).Route.Model.Should().Be("chat-model-v2");
@@ -342,8 +345,9 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		var view = await _editor.ViewAsync(Proj);
 		var doomed = view.Routes.Single(r => r.Route.Model == "embed-model").Id;
 
+		var currentVersion = (await _editor.GetDeclaredAsync(Proj)).Version;
 		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
-		await page.OnPostDeleteRouteAsync(doomed);
+		await page.OnPostDeleteRouteAsync(doomed, currentVersion);
 
 		var resolved = await _resolver.ResolveAsync(Proj);
 		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("chat-model");
