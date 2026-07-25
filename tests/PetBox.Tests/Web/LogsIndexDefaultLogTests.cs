@@ -60,7 +60,13 @@ public sealed class LogsIndexDefaultLogTests : IDisposable
 
 	// PageContext must be wired: OnGetAsync reads Request.Headers (the HX-Request htmx check) on
 	// its normal-path return — an unwired PageModel's Request throws NullReferenceException.
-	IndexModel NewModel() => new(_store, _db.Factory().Projects(), _db.Factory().SavedQueries())
+	// The page now takes ILogService, not the store. The real LogService wraps the real store, so
+	// this still exercises actual event queries; ILogQueryService is never reached (the page drives
+	// KqlTransformer itself, through ILogService), hence the null.
+	IndexModel NewModel() => new(
+		new PetBox.Log.Core.Services.LogService(_store, queries: null!),
+		_db.Factory().Projects(),
+		_db.Factory().SavedQueries())
 	{
 		WorkspaceKey = "ws",
 		ProjectKeyRoute = Proj,

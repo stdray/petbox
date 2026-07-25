@@ -1,9 +1,9 @@
 using System.Text.Json;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
 
@@ -15,9 +15,9 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class TraceModel : PageModel
 {
-	readonly ILogStore _logStore;
+	readonly ILogService _logs;
 
-	public TraceModel(ILogStore logStore) => _logStore = logStore;
+	public TraceModel(ILogService logs) => _logs = logs;
 
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
@@ -97,19 +97,25 @@ public sealed class TraceModel : PageModel
 		// /ui/wsA/proj-of-wsB/traces/{id}) is enforced for EVERY page carrying both route values by
 		// ProjectWorkspaceBindingFilter, before this handler runs — so it is not re-checked here.
 
-		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		var logs = (await _logs.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
 		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
 			? LogName
 			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
 		SelectedLog = selectedLog;
 		if (selectedLog is null) { TraceNotFound = true; return; }
 
-		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, selectedLog);
-
-		var spans = await logDb.Spans
-			.Where(s => s.TraceId == TraceId)
-			.OrderBy(s => s.StartUnixNs)
-			.ToListAsync(ct);
+		IReadOnlyList<SpanRecord> spans;
+		try
+		{
+			spans = await _logs.ListTraceSpansAsync(EffectiveProjectKey, selectedLog, TraceId, ct);
+		}
+		catch (LogSchemaMissingException)
+		{
+			// A log that has never received a span has no spans table — no trace to show, which
+			// is the same empty-state as an unknown trace id.
+			TraceNotFound = true;
+			return;
+		}
 
 		if (spans.Count == 0)
 		{

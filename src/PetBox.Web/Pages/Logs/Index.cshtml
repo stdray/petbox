@@ -222,7 +222,7 @@ else if (Model.IsShapeChanged)
 			<table class="table table-sm">
 				<thead>
 					<tr>
-						@foreach (var col in Model.KqlResult!.Columns)
+						@foreach (var col in Model.KqlColumns)
 						{
 							<th class="font-mono text-xs">@col.Name</th>
 						}

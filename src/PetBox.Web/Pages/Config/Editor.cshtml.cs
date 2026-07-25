@@ -1,24 +1,21 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Config;
-using PetBox.Config.Data;
 using PetBox.Core.Auth;
 using PetBox.Core.Models;
-using BindingContentHash = PetBox.Config.BindingContentHash;
 
 namespace PetBox.Web.Pages.Config;
 
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class EditorModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigDirectory _config;
 	readonly ISecretEncryptor _encryptor;
 
-	public EditorModel(IConfigDbFactory configFactory, ISecretEncryptor encryptor)
+	public EditorModel(IConfigDirectory config, ISecretEncryptor encryptor)
 	{
-		_configFactory = configFactory;
+		_config = config;
 		_encryptor = encryptor;
 	}
 
@@ -52,14 +49,13 @@ public sealed class EditorModel : PageModel
 	public string? ConflictMessage { get; set; }
 	public bool SecretsAvailable => _encryptor.IsAvailable;
 
-	public IActionResult OnGet()
+	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
 		if (BindingId is { } id and > 0)
 		{
-			using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-			var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
+			var binding = await _config.GetBindingAsync(EffectiveWorkspaceKey, id, ct);
 			if (binding is null)
 			{
 				ErrorMessage = $"Binding #{id} not found.";
@@ -80,7 +76,7 @@ public sealed class EditorModel : PageModel
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostSaveAsync()
+	public async Task<IActionResult> OnPostSaveAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
@@ -115,117 +111,35 @@ public sealed class EditorModel : PageModel
 			return Page();
 		}
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var now = DateTime.UtcNow;
-		var actor = User.Identity?.Name ?? "system";
-
-		string storedValue;
+		// Encryption stays HERE: ISecretEncryptor is a crypto concern, not a database one, so the
+		// config door receives an already-sealed bundle rather than the plaintext.
 		string? cipher = null;
 		string? iv = null;
 		string? authTag = null;
-
 		if (Kind == BindingKind.Secret)
 		{
 			var bundle = _encryptor.Encrypt(Value);
 			cipher = bundle.Ciphertext;
 			iv = bundle.Iv;
 			authTag = bundle.AuthTag;
-			storedValue = string.Empty;
-		}
-		else
-		{
-			storedValue = Value;
 		}
 
-		var newHash = BindingContentHash.Compute(Path, canonicalTags, Kind, storedValue, cipher);
+		var draft = new ConfigBindingDraft(
+			BindingId, Path, canonicalTags, Kind, Value, cipher, iv, authTag);
 
-		long savedId = BindingId ?? 0;
+		var result = await _config.SaveBindingAsync(
+			EffectiveWorkspaceKey, draft, User.Identity?.Name ?? "system", ct);
 
-		if (BindingId is { } id and > 0)
+		if (result.NotFound)
 		{
-			var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id);
-			if (existing is null)
-			{
-				ErrorMessage = $"Binding #{id} not found.";
-				return Page();
-			}
-
-			// Skip Version bump on no-op edits (same content + same tags + same kind).
-			var isNoOp = string.Equals(existing.ContentHash, newHash, StringComparison.Ordinal)
-				&& !existing.IsDeleted;
-
-			var updated = existing with
-			{
-				Path = Path,
-				Tags = canonicalTags,
-				Kind = Kind,
-				Value = storedValue,
-				Ciphertext = cipher,
-				Iv = iv,
-				AuthTag = authTag,
-				Version = isNoOp ? existing.Version : existing.Version + 1,
-				ContentHash = newHash,
-				IsDeleted = false,
-				DeletedAt = null,
-				UpdatedAt = now,
-			};
-			await configDb.UpdateAsync(updated);
-
-			if (!isNoOp)
-			{
-				await configDb.InsertAsync(new ConfigBindingHistoryEntry
-				{
-					BindingId = id,
-					Action = existing.IsDeleted ? "Undelete" : "Update",
-					Path = Path,
-					Tags = canonicalTags,
-					Kind = Kind,
-					OldValue = existing.Kind == BindingKind.Plain ? existing.Value : "(secret)",
-					NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
-					Actor = actor,
-					At = now,
-				});
-			}
-		}
-		else
-		{
-			var newId = await configDb.InsertWithInt64IdentityAsync(new ConfigBinding
-			{
-				Path = Path,
-				Tags = canonicalTags,
-				Kind = Kind,
-				Value = storedValue,
-				Ciphertext = cipher,
-				Iv = iv,
-				AuthTag = authTag,
-				Version = 1,
-				ContentHash = newHash,
-				CreatedAt = now,
-				UpdatedAt = now,
-			});
-
-			await configDb.InsertAsync(new ConfigBindingHistoryEntry
-			{
-				BindingId = newId,
-				Action = "Create",
-				Path = Path,
-				Tags = canonicalTags,
-				Kind = Kind,
-				OldValue = null,
-				NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
-				Actor = actor,
-				At = now,
-			});
-
-			savedId = newId;
+			ErrorMessage = $"Binding #{BindingId} not found.";
+			return Page();
 		}
 
-		// Use the just-persisted id as self — for a NEW binding BindingId is still null,
-		// so without this the row would match itself and report a spurious duplicate.
-		var conflict = DetectConflict(configDb, Path, canonicalTags, savedId);
-		if (conflict is not null)
+		if (result.DuplicateOfId is { } duplicateId)
 		{
-			ConflictMessage = conflict;
+			ConflictMessage =
+				$"Binding #{duplicateId} has the same Path and Tags. Saved as a duplicate — older wins by Id.";
 			return Page();
 		}
 
@@ -261,17 +175,5 @@ public sealed class EditorModel : PageModel
 
 		pairs.Sort((a, b) => string.CompareOrdinal(a.Item1, b.Item1));
 		return (string.Join(",", pairs.Select(p => $"{p.Item1}:{p.Item2}")), null);
-	}
-
-	static string? DetectConflict(ConfigDb db, string path, string tags, long? selfId)
-	{
-		var sameKey = db.Bindings.Where(b => b.Path == path).ToList();
-		foreach (var other in sameKey)
-		{
-			if (other.Id == selfId) continue;
-			if (string.Equals(other.Tags, tags, StringComparison.Ordinal))
-				return $"Binding #{other.Id} has the same Path and Tags. Saved as a duplicate — older wins by Id.";
-		}
-		return null;
 	}
 }

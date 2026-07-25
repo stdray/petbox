@@ -62,6 +62,46 @@ public interface IConfigDirectory
 	// stay in the caller (ISecretEncryptor/IMemoryCache are not database concerns).
 	Task RecordRevealAsync(string workspaceKey, ConfigBinding binding, string actor, CancellationToken ct = default);
 
+	// EVERY binding in the workspace, deleted rows included — the input the resolve pipeline and
+	// the tag-vocabulary aggregation both want (each does its own IsDeleted filtering, and the
+	// preview page must be able to explain a path that resolves to nothing).
+	Task<IReadOnlyList<ConfigBinding>> ListAllBindingsAsync(string workspaceKey, CancellationToken ct = default);
+
+	// How many ACTIVE bindings the workspace has. `tag`, when given, counts only bindings carrying
+	// that exact comma-separated token (e.g. "project:acme") — the project-home counter's filter.
+	Task<int> CountActiveBindingsAsync(string workspaceKey, string? tag = null, CancellationToken ct = default);
+
+	// The editor's save: insert-or-update a binding AND write its history row, in one context.
+	//
+	// This is deliberately one call rather than the page orchestrating get/update/insert-history,
+	// because the three steps have to agree on `now`, on the Version bump and on the no-op rule —
+	// which is precisely what drifted while this logic lived inline in the page.
+	//
+	// Semantics preserved verbatim from the page it replaces: a save whose content hash matches the
+	// live row is a NO-OP (no Version bump, no history row); re-saving a soft-deleted binding
+	// revives it and logs "Undelete"; a Secret binding's value is redacted to "(secret)" in history.
+	Task<ConfigBindingSaveResult> SaveBindingAsync(
+		string workspaceKey, ConfigBindingDraft draft, string actor, CancellationToken ct = default);
+
+	// --- History ---------------------------------------------------------------
+
+	// History rows for the workspace, newest first, capped at `limit`. `pathSubstring` filters on
+	// a substring of Path when given.
+	Task<IReadOnlyList<ConfigBindingHistoryEntry>> ListHistoryAsync(
+		string workspaceKey, string? pathSubstring = null, int limit = 500, CancellationToken ct = default);
+
+	// --- Tag vocabulary --------------------------------------------------------
+
+	// The workspace's DECLARED tag keys, ordered by key. Distinct from the tag values actually in
+	// use, which are aggregated from the binding set (ListAllBindingsAsync).
+	Task<IReadOnlyList<TagVocabularyEntry>> ListTagsAsync(string workspaceKey, CancellationToken ct = default);
+
+	// Declare a tag key. Idempotent — an already-declared key is silently left alone.
+	Task DeclareTagAsync(string workspaceKey, string tagKey, string? description, CancellationToken ct = default);
+
+	// Remove a declared tag key by row id. Does NOT touch bindings already carrying it.
+	Task RetireTagAsync(string workspaceKey, long id, CancellationToken ct = default);
+
 	// --- Saved config filters (core.db SavedConfigFilters — the config page's named tag-filter
 	// chips; workspace-scoped, unrelated to ConfigDb). ---
 
@@ -72,6 +112,27 @@ public interface IConfigDirectory
 
 	Task DeleteFilterAsync(string workspaceKey, long id, CancellationToken ct = default);
 }
+
+// What the editor wants written. `Id` null (or <= 0) means "insert a new binding".
+//
+// Encryption happens in the CALLER (ISecretEncryptor is not a database concern, exactly as
+// RecordRevealAsync already assumes), so a Secret binding arrives here with Value empty and the
+// Ciphertext/Iv/AuthTag triple filled in.
+public sealed record ConfigBindingDraft(
+	long? Id,
+	string Path,
+	string Tags,
+	BindingKind Kind,
+	string Value,
+	string? Ciphertext = null,
+	string? Iv = null,
+	string? AuthTag = null);
+
+// `NotFound` = the draft named an Id that no longer exists (someone deleted it in another tab).
+// `DuplicateOfId` = the save succeeded, but another binding now has the SAME (Path, Tags); the
+// resolve pipeline breaks that tie by id (older wins), so this is a warning to surface, not a
+// failure to roll back — same as the page behaved before.
+public sealed record ConfigBindingSaveResult(long SavedId, bool NotFound, long? DuplicateOfId);
 
 public sealed class ConfigDirectory(IConfigDbFactory configFactory, ICoreDbFactory coreFactory) : IConfigDirectory
 {
@@ -181,6 +242,173 @@ public sealed class ConfigDirectory(IConfigDbFactory configFactory, ICoreDbFacto
 			Actor = actor,
 			At = DateTime.UtcNow,
 		}, token: ct);
+	}
+
+	public async Task<IReadOnlyList<ConfigBinding>> ListAllBindingsAsync(string workspaceKey, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		return await configDb.Bindings.ToListAsync(ct);
+	}
+
+	public async Task<int> CountActiveBindingsAsync(
+		string workspaceKey, string? tag = null, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		var active = configDb.Bindings.Where(b => !b.IsDeleted);
+		if (string.IsNullOrEmpty(tag))
+			return await active.CountAsync(ct);
+
+		// Tags is a comma-separated string, so the token test cannot be expressed in SQL without
+		// a false positive on "project:acme-two" when filtering "project:acme". Materialize the
+		// active set and match tokens in memory — the same trade the page made inline.
+		var rows = await active.Select(b => b.Tags).ToListAsync(ct);
+		return rows.Count(t => HasTag(t, tag));
+	}
+
+	static bool HasTag(string tags, string tag)
+	{
+		foreach (var t in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			if (string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))
+				return true;
+		return false;
+	}
+
+	public async Task<ConfigBindingSaveResult> SaveBindingAsync(
+		string workspaceKey, ConfigBindingDraft draft, string actor, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		var now = DateTime.UtcNow;
+		var storedValue = draft.Kind == BindingKind.Secret ? string.Empty : draft.Value;
+		var newHash = BindingContentHash.Compute(draft.Path, draft.Tags, draft.Kind, storedValue, draft.Ciphertext);
+
+		long savedId;
+
+		if (draft.Id is { } id and > 0)
+		{
+			var existing = await configDb.Bindings.FirstOrDefaultAsync(b => b.Id == id, ct);
+			if (existing is null)
+				return new ConfigBindingSaveResult(0, NotFound: true, DuplicateOfId: null);
+
+			// Skip the Version bump on no-op edits (same content + same tags + same kind). A
+			// soft-deleted row never counts as a no-op — reviving it IS a change.
+			var isNoOp = string.Equals(existing.ContentHash, newHash, StringComparison.Ordinal)
+				&& !existing.IsDeleted;
+
+			await configDb.UpdateAsync(existing with
+			{
+				Path = draft.Path,
+				Tags = draft.Tags,
+				Kind = draft.Kind,
+				Value = storedValue,
+				Ciphertext = draft.Ciphertext,
+				Iv = draft.Iv,
+				AuthTag = draft.AuthTag,
+				Version = isNoOp ? existing.Version : existing.Version + 1,
+				ContentHash = newHash,
+				IsDeleted = false,
+				DeletedAt = null,
+				UpdatedAt = now,
+			}, token: ct);
+
+			if (!isNoOp)
+			{
+				await configDb.InsertAsync(new ConfigBindingHistoryEntry
+				{
+					BindingId = id,
+					Action = existing.IsDeleted ? "Undelete" : "Update",
+					Path = draft.Path,
+					Tags = draft.Tags,
+					Kind = draft.Kind,
+					OldValue = existing.Kind == BindingKind.Plain ? existing.Value : "(secret)",
+					NewValue = draft.Kind == BindingKind.Plain ? storedValue : "(secret)",
+					Actor = actor,
+					At = now,
+				}, token: ct);
+			}
+
+			savedId = id;
+		}
+		else
+		{
+			savedId = await configDb.InsertWithInt64IdentityAsync(new ConfigBinding
+			{
+				Path = draft.Path,
+				Tags = draft.Tags,
+				Kind = draft.Kind,
+				Value = storedValue,
+				Ciphertext = draft.Ciphertext,
+				Iv = draft.Iv,
+				AuthTag = draft.AuthTag,
+				Version = 1,
+				ContentHash = newHash,
+				CreatedAt = now,
+				UpdatedAt = now,
+			}, token: ct);
+
+			await configDb.InsertAsync(new ConfigBindingHistoryEntry
+			{
+				BindingId = savedId,
+				Action = "Create",
+				Path = draft.Path,
+				Tags = draft.Tags,
+				Kind = draft.Kind,
+				OldValue = null,
+				NewValue = draft.Kind == BindingKind.Plain ? storedValue : "(secret)",
+				Actor = actor,
+				At = now,
+			}, token: ct);
+		}
+
+		// The duplicate probe uses the JUST-PERSISTED id as self — for a new binding the draft's
+		// Id is still null, so without this the fresh row would match itself and report a spurious
+		// duplicate.
+		var duplicate = await configDb.Bindings
+			.Where(b => b.Path == draft.Path && b.Tags == draft.Tags && b.Id != savedId)
+			.Select(b => (long?)b.Id)
+			.FirstOrDefaultAsync(ct);
+
+		return new ConfigBindingSaveResult(savedId, NotFound: false, DuplicateOfId: duplicate);
+	}
+
+	public async Task<IReadOnlyList<ConfigBindingHistoryEntry>> ListHistoryAsync(
+		string workspaceKey, string? pathSubstring = null, int limit = 500, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		var query = configDb.History.AsQueryable();
+		if (!string.IsNullOrWhiteSpace(pathSubstring))
+		{
+			var p = pathSubstring;
+			query = query.Where(h => h.Path.Contains(p));
+		}
+		return await query.OrderByDescending(h => h.At).Take(limit).ToListAsync(ct);
+	}
+
+	public async Task<IReadOnlyList<TagVocabularyEntry>> ListTagsAsync(string workspaceKey, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		return await configDb.Tags.OrderBy(t => t.TagKey).ToListAsync(ct);
+	}
+
+	public async Task DeclareTagAsync(
+		string workspaceKey, string tagKey, string? description, CancellationToken ct = default)
+	{
+		var key = tagKey.Trim();
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		if (await configDb.Tags.AnyAsync(t => t.TagKey == key, ct))
+			return;
+
+		await configDb.InsertAsync(new TagVocabularyEntry
+		{
+			TagKey = key,
+			Description = description?.Trim(),
+			CreatedAt = DateTime.UtcNow,
+		}, token: ct);
+	}
+
+	public async Task RetireTagAsync(string workspaceKey, long id, CancellationToken ct = default)
+	{
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
+		await configDb.Tags.Where(t => t.Id == id).DeleteAsync(ct);
 	}
 
 	public async Task<IReadOnlyList<SavedConfigFilter>> ListSavedFiltersAsync(string workspaceKey, CancellationToken ct = default)

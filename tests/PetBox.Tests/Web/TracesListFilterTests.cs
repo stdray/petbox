@@ -58,7 +58,12 @@ public sealed class TracesListFilterTests : IDisposable
 		});
 	}
 
-	TracesModel NewModel() => new(new ProjectDirectory(_db.Factory()), _store)
+	// The page now takes ILogService, not the store. The real LogService wraps the real store, so
+	// this still exercises actual span queries; ILogQueryService is never reached (the traces page
+	// runs no KQL), hence the null.
+	TracesModel NewModel() => new(
+		new ProjectDirectory(_db.Factory()),
+		new PetBox.Log.Core.Services.LogService(_store, queries: null!))
 	{
 		WorkspaceKey = "ws",
 		ProjectKey = Proj,

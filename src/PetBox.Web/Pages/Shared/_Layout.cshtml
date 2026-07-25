@@ -2,7 +2,7 @@
 @inject PetBox.Tasks.Contract.ITasksService Tasks
 @inject PetBox.Web.Settings.IUiState UiState
 @inject PetBox.Data.Contract.IDataDbCatalog DataDbCatalog
-@inject PetBox.Log.Core.Data.ILogStore LogStore
+@inject PetBox.Log.Core.Contract.ILogService Logs
 @{
 	// Null when the user is a member of no workspace at all — the sidebar's workspace/project
 	// sections are then skipped entirely (there is nothing to link to; the old "$system" fallback
@@ -37,7 +37,7 @@
 	var showLogsNode = false;
 	if (!string.IsNullOrEmpty(currentProject))
 	{
-		var logs = await LogStore.ListAsync(currentProject, Context.RequestAborted);
+		var logs = await Logs.ListAsync(currentProject, Context.RequestAborted);
 		showLogsNode = logs.Count > 0;
 	}
 	var path = Context.Request.Path.Value ?? string.Empty;

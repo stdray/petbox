@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
 using PetBox.Data.Contract;
-using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Contract;
 using PetBox.Web.Auth;
 using PetBox.Web.Navigation;
 
@@ -19,17 +19,17 @@ namespace PetBox.Web.Pages.Nav;
 public sealed class TreeModel : PageModel
 {
 	readonly IProjectDirectory _projects;
-	readonly ILogStore _logStore;
+	readonly ILogService _logs;
 	readonly IDataDbCatalog _dataDbs;
 	readonly INavigationContext _nav;
 	readonly FeatureFlags _features;
 
 	public TreeModel(
-		IProjectDirectory projects, ILogStore logStore, IDataDbCatalog dataDbs,
+		IProjectDirectory projects, ILogService logs, IDataDbCatalog dataDbs,
 		INavigationContext nav, FeatureFlags features)
 	{
 		_projects = projects;
-		_logStore = logStore;
+		_logs = logs;
 		_dataDbs = dataDbs;
 		_nav = nav;
 		_features = features;
@@ -58,7 +58,7 @@ public sealed class TreeModel : PageModel
 	public async Task<IActionResult> OnGetLogsAsync(string project, CancellationToken ct)
 	{
 		if (!await CanAccessProjectAsync(project, ct)) return NotFound();
-		Names = [.. (await _logStore.ListAsync(project, ct)).Select(l => l.Name)];
+		Names = [.. (await _logs.ListAsync(project, ct)).Select(l => l.Name)];
 		return Partial("_LogNodes", this);
 	}
 

@@ -1,10 +1,9 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Log.Core;
-using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Contract;
 
 namespace PetBox.Web.Pages.Logs;
 
@@ -28,12 +27,12 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize(Policy = "ApiKeyOrCookie")]
 public sealed class EventDetailsModel : PageModel
 {
-	readonly ILogStore _logStore;
+	readonly ILogService _logs;
 	readonly IProjectCatalog _catalog;
 
-	public EventDetailsModel(ILogStore logStore, IProjectCatalog catalog)
+	public EventDetailsModel(ILogService logs, IProjectCatalog catalog)
 	{
-		_logStore = logStore;
+		_logs = logs;
 		_catalog = catalog;
 	}
 
@@ -45,15 +44,14 @@ public sealed class EventDetailsModel : PageModel
 			return new EmptyResult();
 		}
 
-		if (!await _logStore.ExistsAsync(projectKey, logName, ct))
+		if (!await _logs.ExistsAsync(projectKey, logName, ct))
 			return NotFound();
 
 		// The id lookup runs against THIS project+log's own SQLite file (one file per
 		// project/log pair) — an id from another project's log simply does not exist here, so
 		// there is no cross-project row to leak even before AuthorizeProjectViewerAsync's
 		// project-scope check is considered.
-		using var logDb = _logStore.NewEnsuredContext(projectKey, logName);
-		var record = await logDb.LogEntries.FirstOrDefaultAsync(e => e.Id == id, ct);
+		var record = await _logs.GetEventAsync(projectKey, logName, id, ct);
 		if (record is null)
 			return NotFound();
 
