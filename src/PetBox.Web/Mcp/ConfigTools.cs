@@ -27,7 +27,30 @@ namespace PetBox.Web.Mcp;
 // MAX id, which config_binding_delta reads as `sinceVersion`. See the config_binding_upsert essay.
 //
 // Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): `provisioning`, as the spec has it today — and
+// this is the one declaration in the MCP wave that records a KNOWN DISAGREEMENT rather than a settled
+// design. Read the whole note before changing it.
+//
+// WHAT IS TRUE. These five verbs take a `workspaceKey` and check NOTHING about it: the only gate is
+// ModuleMcp.AssertScope(admin:provision). So an admin:provision key scoped to one project reads and
+// WRITES any workspace's config store. The cross-tenant probe measures exactly that
+// (config_binding_upsert wrote the victim workspace's config; _search/_delta read it).
+//
+// WHY IT IS NOT [TenantFrom(Argument, "workspaceKey", Tenant = TenantKind.Workspace)] — which is what
+// the parameter looks like. Declaring that would START REFUSING calls that work today, and acceptance
+// criterion 1 of the work card ("ключ, работавший до перехода, работает после") outranks the urge to
+// be stricter mid-wave. The class is what the spec assigns; a PR is not where it gets reassigned.
+//
+// THE DISAGREEMENT, on the record (intake `config-binding-mcp-vs-rest-disagree`): the REST twin over
+// the SAME data — POST/DELETE /api/config/{workspaceKey}/bindings — DENIES the identical call, 403,
+// via ConfigApi.AuthorizeWorkspaceAsync (project claim → Project.WorkspaceKey → compare; wildcard
+// passes). Same operation, two transports, opposite answers. Closing that gap means moving these
+// verbs out of `provisioning`, which is a change to the CLOSED list of exemption classes — the
+// owner's decision and a new idea, not a line in this PR. Declaring the class is what makes the
+// divergence declared and countable instead of merely true.
 [McpServerToolType]
+[TenantExempt(TenantExemption.Provisioning,
+	"config stores are provisioned across workspaces under admin:provision; the REST twin denies the same call — see intake `config-binding-mcp-vs-rest-disagree`")]
 public static class ConfigTools
 {
 	[McpServerTool(Name = "config_binding_upsert", Title = "Upsert config bindings", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsUpsertResult))]
