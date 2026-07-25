@@ -16,7 +16,12 @@ namespace PetBox.Web.Mcp;
 // context), erroring on ambiguity. Scopes: tasks:read / tasks:write. Feature: Tasks.
 // Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the exception as
 // the structured {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all three verbs.
+// Worth one sentence of its own here: these tools carry NO board context and resolve a slug across
+// the WHOLE project, so the projectKey is the entire address — which is exactly why the refusal
+// belongs in front of the resolution rather than after it. The three AssertProject calls go.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationsCreatedResult))]
@@ -31,7 +36,6 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var (batch, singleForm) = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
@@ -87,7 +91,6 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var id = await tasks.ResolveNodeRefOrNullAsync(projectKey, nodeId, ct: ct);
 		if (id is null) return new RelationsListResult([]); // a node that isn't there → no edges (soft read), never an error
@@ -105,7 +108,6 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var batch = NormalizeDeleteIds(ids, id);

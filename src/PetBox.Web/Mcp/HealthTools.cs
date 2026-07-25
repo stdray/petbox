@@ -19,7 +19,12 @@ namespace PetBox.Web.Mcp;
 // is persisted by SQLite as a space-separated text timestamp ('2026-07-02 06:15:34.279'), so
 // staleness/age are computed in memory from the materialized DateTime (never a SQL string
 // comparison against a 'T'-shaped literal, which silently mismatches the stored space form).
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT. The tool's own
+// [Description] already promised the rule to every MCP client — "must match the calling ApiKey's
+// project claim (a '*' key may name any project)" — and the attribute is the machine-readable half
+// of the same sentence, now the thing that enforces it. The AssertProject it replaces is deleted.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class HealthTools
 {
 	[McpServerTool(Name = "health_search", Title = "Read service health reports", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(HealthSearchResultView))]
@@ -34,7 +39,6 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.HealthRead);
 
 		if (staleThresholdSeconds < 0) throw new ArgumentException("staleThresholdSeconds must be >= 0");

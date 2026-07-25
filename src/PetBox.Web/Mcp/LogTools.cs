@@ -20,7 +20,12 @@ namespace PetBox.Web.Mcp;
 // for events, or from the await-foreach over streamed Table rows — and deliberately flow
 // to the same envelope, so the agent sees { error: { type, message, traceId|detail } } with the
 // failure class instead of the framework's opaque "An error occurred invoking 'log_query'.".
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT. Its own
+// [Description] has always said "must match the calling ApiKey's project claim" — the attribute is
+// that sentence in the form the ratchet and the PEP can read, and it is now what ENFORCES it, so the
+// AssertProject that used to open the body is gone.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class LogTools
 {
 	// Property values are serialized for a tool result an agent reads: the default encoder
@@ -38,7 +43,6 @@ public static class LogTools
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 
 		LogQueryResult result;

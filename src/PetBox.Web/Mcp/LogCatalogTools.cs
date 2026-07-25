@@ -14,7 +14,11 @@ namespace PetBox.Web.Mcp;
 // ILogQueryService). This type owns the catalog the same way RelationTools owns relations.
 // Scopes: logs:admin (create/delete) / logs:query (list), project-scoped. Tools throw on a
 // failed Assert*; McpErrorEnvelopeFilter renders the exception as the structured {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all four verbs —
+// "project-scoped" in the line above, said in the form the ratchet and the PEP read. The four
+// AssertProject calls that used to open the bodies are removed with it.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class LogCatalogTools
 {
 	[McpServerTool(Name = "log_create", Title = "Create a named log", UseStructuredContent = true, OutputSchemaType = typeof(LogCreatedResult))]
@@ -26,7 +30,6 @@ public static class LogCatalogTools
 		[Description("Optional per-log retention window in days. Omit to use the project/workspace/system cascade.")] int? retentionDays = null,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		if (await logStore.ExistsAsync(projectKey, name, ct))
@@ -41,7 +44,6 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 		var rows = await logStore.ListAsync(projectKey, ct);
 		return new LogListResult(rows.Select(l => new LogRow(l.Name, l.Description, l.CreatedAt, l.UpdatedAt, l.RetentionDays)).ToList());
@@ -55,7 +57,6 @@ public static class LogCatalogTools
 		[Description("Positive = set the log's own retention window in days. 0 = clear the override (revert to the cascade).")] int retentionDays,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		var meta = await logStore.UpdateRetentionDaysAsync(projectKey, name, retentionDays, ct)
@@ -69,7 +70,6 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		var deleted = await logStore.DeleteAsync(projectKey, name, ct);
