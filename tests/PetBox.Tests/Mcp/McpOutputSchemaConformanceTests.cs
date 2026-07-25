@@ -159,7 +159,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["search_reindex"] = "external: needs a live Embed route (refuses otherwise, by design)",
 		// pending: chained/complex state — tracked in mcp-conformance-exhaustive
 		["session_append"] = "pending: message-array shape not yet wired",
-		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
+		["tasks_board_set_wire"] = "pending: needs a spec board seeded",
 		["tasks_methodology_template_upsert"] = "pending: full methodology-definition JSON",
 		["tasks_methodology_template_snapshot"] = "pending: write path covered by MethodologyTemplateTests",
 		// instance surface (create/list/get/close + rules) — covered by MethodologyInstance*Tests

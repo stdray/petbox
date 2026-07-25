@@ -163,7 +163,7 @@ public sealed class GuardEnginePreconditionArtifactTests
 	[Fact]
 	public void EnforceArtifactsFalse_DemotesTheGateToConvention_NotBlocked()
 	{
-		var ctx = Ctx(runtime: SoftArtifactsRuntime, kindSlug: "gated", board: "gated-board", specBoard: null);
+		var ctx = Ctx(runtime: SoftArtifactsRuntime, kindSlug: "gated", board: "gated-board", wiredBoard: null);
 		var prior = Prior(State("g1", "raw", "item", nodeId: Id("g1")));
 		// No artifact:spec_plan comment anywhere in this context, and yet:
 		GuardEngine.RequirePreconditionArtifacts(ctx, [State("g1", "reviewed", "item")], prior).Should().BeNull();

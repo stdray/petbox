@@ -122,7 +122,7 @@ RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
   ongoing project  -> ideas -> spec -> work + intake (deeper)
 
 WORK rules: a new feature/bug MUST link a spec node — pass links:{task_spec: <spec node's
-slug or nodeId>}; pin the spec board via board_create(specBoard) or board_set_spec.
+slug or nodeId>}; pin the spec board via board_create(wiredBoard) or board_set_wire.
 Type `chore` (internal engineering hygiene: tests, flakes, refactoring, infra) is the
 one exception — same FSM, no task_spec link required. Statuses Pending->InProgress->Review->Done;
 your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
@@ -130,7 +130,7 @@ your ceiling is Review — never set Done, the maintainer confirms it. Blocked n
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one
 board, omit for the project), with q a hybrid relevance search; both modes take status[],
 keys[] (slug|nodeId), under=<slug> (subtree) and sort{by,desc}. A board listing carries
-kind, specBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
+kind, wiredBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
 HIDES terminal nodes by default — includeClosed=true to include. One full node:
 tasks_node_get. Partial update: send only what changes — a status change needs just
 key + version + status.
@@ -143,7 +143,7 @@ MEMORY READING: memory_search is THE read verb — without q a deterministic lis
 over every store. One full entry: memory_get.
 
 Depth: /doc/methodology (contract) + /doc/overview (modules).
-Tools: tasks_board_create/board_list/board_delete/board_set_spec/board_close/board_reopen/
+Tools: tasks_board_create/board_list/board_delete/board_set_wire/board_close/board_reopen/
 search/node_get/upsert/delta/workflow, relations_create/list/delete,
 memory_store_*/search/remember/get/upsert/delta, session_search/get/upsert/append/delete.
 ```

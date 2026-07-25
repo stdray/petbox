@@ -28,16 +28,16 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// for a project with no methodology instance yet (pre-backfill bootstrap); once any
 	// instance exists, a caller MUST say which world explicitly. Process-role singleton
 	// is enforced inside whichever world is targeted (instance, or the utility bucket).
-	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default);
+	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default);
 	// Move/adopt a board into a (different) open methodology instance, OR release it into
 	// the project's utility layer when `methodologyInstance` is the reserved
 	// `TaskBoardMeta.UtilityWorld` sentinel (spec methodology-utility-kinds) — the board's
 	// world changes exactly once per call, never to "no world". Enforces process-role
 	// singleton inside the target (instance, or the utility bucket).
 	Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default);
-	// Set (or clear, when specBoard is null/empty) a work board's spec board. Returns
+	// Set (or clear, when wiredBoard is null/empty) a work board's spec board. Returns
 	// whether the row changed and the normalized spec board value.
-	Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default);
+	Task<(bool Set, string? WiredBoard)> SetWiredBoardAsync(string projectKey, string board, string? wiredBoard, CancellationToken ct = default);
 	Task<IReadOnlyList<TaskBoardMeta>> ListBoardsAsync(string projectKey, CancellationToken ct = default);
 	Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default);
 
@@ -286,7 +286,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// Filter fields (board/under/status/keys/includeClosed) narrow the pool in both modes;
 	// a terminal status named in Status — and any node addressed via Keys — returns without
 	// IncludeClosed (an explicit ask). BodyLen slices row bodies (0 = full); Limit caps rows
-	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
+	// (0 = unbounded listing / the adapter's query default). Board context (kind/wiredBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
 	// Exact-identifier surfacing for SEARCH surfaces (spec exact-identifier-search-surfacing):

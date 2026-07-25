@@ -134,9 +134,9 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 	public async Task AdoptToUtility_ReleasesBoardFromInstance_EnforcesSingletonInUtilityBucket()
 	{
 		var ack = await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "builtin", "quartet");
-		var specBoard = ack.Boards.Single(b => b.Kind == "spec").Name;
+		var wiredBoard = ack.Boards.Single(b => b.Kind == "spec").Name;
 
-		var released = await _tasks.AdoptBoardAsync(Proj, specBoard, TaskBoardMeta.UtilityWorld);
+		var released = await _tasks.AdoptBoardAsync(Proj, wiredBoard, TaskBoardMeta.UtilityWorld);
 		released.MethodologyInstance.Should().Be(TaskBoardMeta.UtilityWorld);
 
 		// spec is a Singleton kind (methodology-kind-singleton) — a second spec board cannot
@@ -145,7 +145,7 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 		(await dup.Should().ThrowAsync<ArgumentException>()).WithMessage("*utility*");
 
 		// Idempotent: releasing an already-utility board again is a no-op, not an error.
-		var again = await _tasks.AdoptBoardAsync(Proj, specBoard, TaskBoardMeta.UtilityWorld);
+		var again = await _tasks.AdoptBoardAsync(Proj, wiredBoard, TaskBoardMeta.UtilityWorld);
 		again.MethodologyInstance.Should().Be(TaskBoardMeta.UtilityWorld);
 	}
 

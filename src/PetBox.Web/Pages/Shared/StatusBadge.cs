@@ -12,14 +12,14 @@ public sealed record StatusBadgeModel(MethodologyRuntime Runtime, string? KindSl
 	// Spec boards suppress the status badge for every non-terminal status: on a spec board
 	// `defined` is the ~universal default → pure noise, so a badge shows only for a non-default
 	// (terminal `deprecated`) state (spec-board-status-noise #9). Every other board always shows
-	// the status. IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression,
+	// the status. A "spec board" is identified by DATA — a kind that carries a delivery roll-up
+	// (DeliveryOf(...) is not null) — NOT PresetKind(...) == BoardKind.Spec (production regression,
 	// 2026-07, presetkind-spec-blind-spot): PresetKind nulls out for any DEFINED kind, and a real
-	// project's spec board is virtually always definition-resolved — see
-	// MethodologyRuntime.IsSpecKind's own comment. The old guard read `null != BoardKind.Spec`
-	// == true there, so `Show` was ALWAYS true regardless of terminality on $system's real spec
-	// board — the noise suppression silently never fired.
+	// project's spec board is virtually always definition-resolved. The old guard read
+	// `null != BoardKind.Spec` == true there, so `Show` was ALWAYS true regardless of terminality on
+	// $system's real spec board — the noise suppression silently never fired.
 	public bool Show =>
-		!Runtime.IsSpecKind(KindSlug) || Runtime.IsTerminalStatus(KindSlug, Status);
+		Runtime.DeliveryOf(KindSlug) is null || Runtime.IsTerminalStatus(KindSlug, Status);
 
 	// Human label for the badge — the stored slug resolved to its declared status Name via the
 	// runtime (e.g. `InProgress` → "In progress", `defined` → "Defined"). Slug is unchanged; the

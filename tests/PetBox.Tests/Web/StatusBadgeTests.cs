@@ -19,9 +19,12 @@ namespace PetBox.Tests.Web;
 public sealed class StatusBadgeTests
 {
 	// Mirrors MethodologyPresets' own SpecKind shape (kind slug "spec": defined ->
-	// deprecated) — exactly what RenderPresetDefinition materializes for a real
-	// quartet-provisioned project, just declared directly here instead of via the
-	// (internal) preset renderer.
+	// deprecated, and the feature/bug delivery roll-up) — exactly what RenderPresetDefinition
+	// materializes for a real quartet-provisioned project, just declared directly here instead
+	// of via the (internal) preset renderer. The Delivery config is part of that shape and is
+	// what now IDENTIFIES a spec board to the presentation layer (StatusBadgeModel.Show reads
+	// DeliveryOf(...) is not null, not a "spec" name literal): a real spec board always carries
+	// it, so the noise suppression fires exactly as it does in production.
 	static readonly MethodologyDefinition SpecDefinitionResolved = new("spec-def-resolved",
 	[
 		new MethodologyKindDef("spec", QuickAddAllowed: false,
@@ -32,11 +35,14 @@ public sealed class StatusBadgeTests
 					new("deprecated", "Deprecated", StatusKind.TerminalCancel),
 				],
 				[new("defined", "deprecated")]),
-		]),
+		])
+		{
+			Delivery = new MethodologyDeliveryDef(["feature"], ["bug"], "task_spec"),
+		},
 	]);
 
 	[Fact]
-	public void Show_BarePresetSpecBoard_HidesDefined_ShowsDeprecated()
+	public void Show_BarePresetWiredBoard_HidesDefined_ShowsDeprecated()
 	{
 		var badgeDefined = new StatusBadgeModel(MethodologyRuntime.PresetsOnly, "spec", "defined");
 		var badgeDeprecated = new StatusBadgeModel(MethodologyRuntime.PresetsOnly, "spec", "deprecated");
@@ -50,7 +56,7 @@ public sealed class StatusBadgeTests
 	// built before (spec board fixtures were always the bare preset string), which is
 	// exactly why the old PresetKind-based guard's blind spot went unnoticed.
 	[Fact]
-	public void Show_DefinitionResolvedSpecBoard_HidesDefined_ShowsDeprecated()
+	public void Show_DefinitionResolvedWiredBoard_HidesDefined_ShowsDeprecated()
 	{
 		var runtime = new MethodologyRuntime(SpecDefinitionResolved);
 		var badgeDefined = new StatusBadgeModel(runtime, "spec", "defined");

@@ -79,8 +79,8 @@ public sealed class MethodologyRuntime
 
 	// Auto-wire target of a kind (primitives-enum-residual): the definition's when it
 	// declares the kind, else the preset's (work → "spec"). Null = no auto-wire.
-	public string? AutoWireSpecFrom(string? kindSlug) =>
-		ResolvedKind(kindSlug)?.AutoWireSpecFrom;
+	public string? AutoWireFrom(string? kindSlug) =>
+		ResolvedKind(kindSlug)?.AutoWireFrom;
 
 	// Delivery roll-up config of a kind (primitives-enum-residual): the definition's when
 	// it declares the kind, else the preset's (spec: required=feature, defect=bug). Null =
@@ -162,7 +162,7 @@ public sealed class MethodologyRuntime
 		DeclaredField(kindSlug, k => k.BoardName) ?? PresetField(kindSlug, k => k.BoardName);
 
 	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
-	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
+	// AutoWireFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
 	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).
 	// Deliberately whole-object, unlike DefaultView/OutlineReveal above: a declared kind's
 	// process fields (link constraints, effects, delivery roll-up, auto-wire target) are
@@ -237,21 +237,6 @@ public sealed class MethodologyRuntime
 	// exactly like ParseKind always did).
 	public string KindName(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? kindSlug! : MethodologyPresets.ParseKind(kindSlug).ToString().ToLowerInvariant();
-
-	// Whether a board's EFFECTIVE kind is `spec` — works for a DEFINED kind too (production
-	// regression, board-ui-review-findings #2, 2026-07): `PresetKind(...) == BoardKind.Spec`
-	// reads null for any defined kind, and a project's `spec` board is virtually always
-	// definition-resolved in practice — the quartet preset renders its kinds VERBATIM into a
-	// methodology instance's stored definition at creation time (RenderPresetDefinition), so
-	// `spec` becomes a "defined" kind slug there, not a bare preset one. `PresetKind(...) ==
-	// BoardKind.Spec` therefore never matches on a real quartet-provisioned project — exactly
-	// the trap `OutlineReveal`'s own comment above already warns against ("PresetKind would
-	// read null for a perfectly ordinary `spec` board"). `KindName` already resolves correctly
-	// for both shapes (a defined kind's own canonical slug, else the parsed preset's lowercase
-	// name) — this just names the spec-board comparison once so callers don't each re-derive
-	// (and re-break) it.
-	public bool IsSpecKind(string? kindSlug) =>
-		string.Equals(KindName(kindSlug), "spec", StringComparison.OrdinalIgnoreCase);
 
 	// The preset kinds in guide order: the quartet pipeline first, then the standalone
 	// kinds (`classic`, `simple` last).

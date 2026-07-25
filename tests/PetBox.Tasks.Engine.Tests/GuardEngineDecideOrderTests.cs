@@ -23,7 +23,7 @@ public sealed class GuardEngineDecideOrderTests
 	[Fact]
 	public void ACleanBatch_ProducesNoVerdicts_AndTheResolvedLinks()
 	{
-		var ctx = Ctx(index: [Node("s1", SpecBoardName, "spec", "auth", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("s1", WiredBoardName, "spec", "auth", "defined", "spec")]);
 		var prior = Prior(State("blocker", "InProgress", "chore", nodeId: Id("b1")));
 		var d = Decide(ctx,
 			[State("t1", "Blocked", "feature", nodeId: Id("t1"))],
@@ -102,7 +102,7 @@ public sealed class GuardEngineDecideOrderTests
 	[Fact]
 	public void RequireBlockers_OutranksRequirePreconditionArtifacts()
 	{
-		var ctx = Ctx(runtime: GatedWork, kindSlug: "work", specBoard: null);
+		var ctx = Ctx(runtime: GatedWork, kindSlug: "work", wiredBoard: null);
 		var prior = Prior(State("t1", "InProgress", "task", nodeId: Id("t1")));
 		var d = Decide(ctx, [State("t1", "Blocked", "task", nodeId: Id("t1"))], prior);
 		var v = d.Verdicts.Single();
@@ -113,7 +113,7 @@ public sealed class GuardEngineDecideOrderTests
 	[Fact]
 	public void RequirePreconditionArtifacts_SpeaksWhenNothingBeforeItDoes()
 	{
-		var ctx = Ctx(runtime: GatedWork, kindSlug: "work", specBoard: null);
+		var ctx = Ctx(runtime: GatedWork, kindSlug: "work", wiredBoard: null);
 		var prior = Prior(State("t1", "InProgress", "task", nodeId: Id("t1")));
 		var d = Decide(ctx, [State("t1", "Blocked", "task", nodeId: Id("t1"))], prior, blockedBy: Refs(("t1", Id("b1"))));
 		var v = d.Verdicts.Single();

@@ -466,11 +466,11 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task BoardSetSpec_WithoutMethodologyWrite_Throws()
+	public async Task BoardSetWire_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardSetSpecAsync(http, Flags(), _tasks, Proj, "b", "s"));
+			TasksTools.BoardSetWireAsync(http, Flags(), _tasks, Proj, "b", "s"));
 	}
 
 	// set_active moves the pointer tasks_methodology_guide resolves through. Board membership

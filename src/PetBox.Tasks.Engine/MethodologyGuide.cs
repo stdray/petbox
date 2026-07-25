@@ -95,7 +95,7 @@ public static class MethodologyGuide
 		if (kind.Effects is { Count: > 0 } effects)
 			AppendEffects(md, kind.Kind, effects, invariants);
 
-		if (kind.AutoWireSpecFrom is { Length: > 0 } from)
+		if (kind.AutoWireFrom is { Length: > 0 } from)
 			AppendAutoWire(md, kind.Kind, from, invariants);
 
 		if (kind.Delivery is { } delivery)
@@ -270,14 +270,14 @@ public static class MethodologyGuide
 		return $"On {trigger} {e.On}, {e.Direction} {link} nodes{scope} {action}.{note}";
 	}
 
-	// SpecBoard auto-wire as DATA (primitives-enum-residual) — when exactly one board of
-	// each kind is active and SpecBoard is empty, the server wires them.
+	// WiredBoard auto-wire as DATA (primitives-enum-residual) — when exactly one board of
+	// each kind is active and WiredBoard is empty, the server wires them.
 	static void AppendAutoWire(StringBuilder md, string kind, string fromKind, List<MethodologyInvariant> invariants)
 	{
 		md.AppendLine();
 		md.AppendLine("### Auto-wire");
 		md.AppendLine();
-		md.AppendLine($"- When exactly one active `{kind}` board and one active `{fromKind}` board exist and SpecBoard is empty, the server auto-wires SpecBoard of the `{kind}` board to the `{fromKind}` board.");
+		md.AppendLine($"- When exactly one active `{kind}` board and one active `{fromKind}` board exist and WiredBoard is empty, the server auto-wires WiredBoard of the `{kind}` board to the `{fromKind}` board.");
 		invariants.Add(new(kind, "auto_wire", fromKind));
 	}
 

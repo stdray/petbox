@@ -79,7 +79,7 @@ public sealed class MethodologyInstanceTests : IDisposable
 
 		// work→spec auto-wired within the instance.
 		var work = boards.Single(b => b.Kind == "work");
-		work.SpecBoard.Should().Be(boards.Single(b => b.Kind == "spec").Name);
+		work.WiredBoard.Should().Be(boards.Single(b => b.Kind == "spec").Name);
 
 		// Nodes writable on a provisioned board.
 		var ideaBoard = boards.Single(b => b.Kind == "ideas").Name;

@@ -500,16 +500,16 @@ public sealed partial class MethodologyInstanceService
 				projectKey, boardName,
 				description: $"methodology {instanceName}/{kindSlug}",
 				kind: kindSlug,
-				specBoard: null,
+				wiredBoard: null,
 				methodologyInstance: instanceName,
 				ct: ct);
 			created.Add(ToBoardRow(meta));
 		}
 
-		// Auto-wire SpecBoard within this instance only (work→spec etc. from kind data).
+		// Auto-wire WiredBoard within this instance only (work→spec etc. from kind data).
 		await AutoWireWithinInstanceAsync(projectKey, instanceName, def, ct);
 
-		// Re-read for SpecBoard after auto-wire.
+		// Re-read for WiredBoard after auto-wire.
 		var after = await _boards.ListAsync(projectKey, ct);
 		return after
 			.Where(b => string.Equals(b.MethodologyInstance, instanceName, StringComparison.OrdinalIgnoreCase))
@@ -528,11 +528,11 @@ public sealed partial class MethodologyInstanceService
 			.ToList();
 		foreach (var kind in runtime.EffectiveKinds())
 		{
-			if (kind.AutoWireSpecFrom is not { Length: > 0 } fromKind) continue;
+			if (kind.AutoWireFrom is not { Length: > 0 } fromKind) continue;
 			var self = active.Where(b => string.Equals(b.Kind, kind.Kind, StringComparison.OrdinalIgnoreCase)).ToList();
 			var target = active.Where(b => string.Equals(b.Kind, fromKind, StringComparison.OrdinalIgnoreCase)).ToList();
-			if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].SpecBoard))
-				await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { SpecBoard = target[0].Name }, ct);
+			if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].WiredBoard))
+				await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { WiredBoard = target[0].Name }, ct);
 		}
 	}
 
@@ -605,7 +605,7 @@ public sealed partial class MethodologyInstanceService
 	}
 
 	static MethodologyInstanceBoard ToBoardRow(TaskBoardMeta m) =>
-		new(m.Name, m.Kind, m.ClosedAt is not null, m.SpecBoard);
+		new(m.Name, m.Kind, m.ClosedAt is not null, m.WiredBoard);
 
 	static MethodologyDefinition Deserialize(string projectKey, MethodologyInstanceRow row) =>
 		JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)

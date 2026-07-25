@@ -14,7 +14,7 @@ namespace PetBox.Tasks.Engine.Tests;
 // precisely how the blocker invariant once shipped never firing on a real board.
 static class EngineFixture
 {
-	public const string SpecBoardName = "spec";
+	public const string WiredBoardName = "spec";
 	public const string WorkBoardName = "work";
 	public const string IdeasBoardName = "ideas";
 	public const string Instance = "inst-1";
@@ -76,7 +76,7 @@ static class EngineFixture
 		MethodologyRuntime? runtime = null,
 		string kindSlug = "work",
 		string board = WorkBoardName,
-		string? specBoard = SpecBoardName,
+		string? wiredBoard = WiredBoardName,
 		string instance = Instance,
 		IEnumerable<NodeIndexEntry>? index = null,
 		IEnumerable<EngineBoard>? boards = null,
@@ -88,7 +88,7 @@ static class EngineFixture
 			kindSlug,
 			board,
 			board,
-			specBoard,
+			wiredBoard,
 			instance,
 			(index ?? []).ToDictionary(n => n.NodeId, n => n, StringComparer.Ordinal),
 			(boards ?? DefaultBoards).ToList(),
@@ -99,7 +99,7 @@ static class EngineFixture
 	public static readonly EngineBoard[] DefaultBoards =
 	[
 		new(WorkBoardName, "work", Instance, Closed: false),
-		new(SpecBoardName, "spec", Instance, Closed: false),
+		new(WiredBoardName, "spec", Instance, Closed: false),
 		new(IdeasBoardName, "ideas", Instance, Closed: false),
 	];
 

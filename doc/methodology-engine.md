@@ -71,7 +71,7 @@ quick-add; порядок объявления значим. Валидация 
 Enum `BoardKind` (Intake|Ideas|Spec|Work|Simple) остался, но только как **process-role** для
 семантик, которые пока не примитивы: гейт accepted-идеи на запись в спеку, FSM-эффекты
 (авто-закрытие интейка по `issue_task` при work→Done, разблокировка `blocks`), правило
-синглтона квартетных досок, вычисляемый roll-up `delivery` на спек-доске, валидация `specBoard`. Кастомный
+синглтона квартетных досок, вычисляемый roll-up `delivery` на спек-доске, валидация `wiredBoard`. Кастомный
 kind process-role не имеет (эффекты на нём не срабатывают).
 
 ## Пресеты: MethodologyPresets

@@ -20,18 +20,18 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance name, or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance name, or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? specBoard = null,
+		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? wiredBoard = null,
 		[Description("The board's world: a methodology instance name, or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, specBoard, methodologyInstance, ct);
-		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt, meta.MethodologyInstance);
+		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, ct);
+		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance);
 	}
 
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance, or release it to the utility layer", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
@@ -53,27 +53,27 @@ public static class TasksTools
 		return new BoardAdoptResult(meta.Name, meta.Kind, meta.MethodologyInstance);
 	}
 
-	[McpServerTool(Name = "tasks_board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
-	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. GOVERNANCE: re-targets or severs the edge that link-constraints and delivery resolve through for every node already on the board — requires tasks:write AND methodology:write.")]
-	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
+	[McpServerTool(Name = "tasks_board_set_wire", Title = "Set the board a work board is wired into", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetWireResult))]
+	[Description("Set (or clear, when wiredBoard is omitted) the board a work board's tasks link into (the work->spec wiring). The target must be a board of the work kind's wire target — a spec board in the quartet. Makes the work->spec link explicit. GOVERNANCE: re-targets or severs the edge that link-constraints and delivery resolve through for every node already on the board — requires tasks:write AND methodology:write.")]
+	public static async Task<BoardSetWireResult> BoardSetWireAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
+		string projectKey, string board, string? wiredBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when specBoard is
+		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when wiredBoard is
 		// omitted, SEVERS) the link the rules' link-constraints and delivery roll-up resolve
 		// through, for every node already on the board. This one meets even the narrow original
 		// criterion — I had excluded it before on the reading that it edits no rules document.
 		// It does not need to: it changes what the rules MEAN for existing nodes. Gated.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
-		var (set, norm) = await tasks.SetSpecBoardAsync(projectKey, board, specBoard, ct);
-		return new BoardSetSpecResult(set, norm);
+		var (set, norm) = await tasks.SetWiredBoardAsync(projectKey, board, wiredBoard, ct);
+		return new BoardSetWireResult(set, norm);
 	}
 
 	[McpServerTool(Name = "tasks_board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
-	[Description("List task boards in a project, each with its kind, specBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
+	[Description("List task boards in a project, each with its kind, wiredBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
 	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, CancellationToken ct = default)
@@ -82,7 +82,7 @@ public static class TasksTools
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
-		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
+		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
@@ -167,13 +167,13 @@ public static class TasksTools
 		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, name, source, sourceKey, ct);
 		return new MethodologyInstanceCreateResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
-			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
+			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
 	}
 
 	[McpServerTool(Name = "tasks_methodology_list", Title = "List methodology instances", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceListResult))]
 	[Description("""
 		List methodology INSTANCES in the project as a compact INDEX: name, closed, kinds,
-		boards (name/kind/closed/specBoard), status histogram counts — no node bodies.
+		boards (name/kind/closed/wiredBoard), status histogram counts — no node bodies.
 		Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceListResult> MethodologyListAsync(
@@ -233,7 +233,7 @@ public static class TasksTools
 		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, name, ct);
 		return new MethodologyInstanceCloseResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
-			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
+			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
 	}
 
 	[McpServerTool(Name = "tasks_methodology_active_get", Title = "Get the project's active methodology instance pointer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveGetResult))]
@@ -304,7 +304,7 @@ public static class TasksTools
 
 	static MethodologyInstanceViewResult ProjectInstance(MethodologyInstanceView v) => new(
 		v.Name, v.Closed, v.Version, v.Created, v.Updated, v.ClosedAt, v.DefinitionName, v.Kinds,
-		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList(),
+		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList(),
 		v.Counts);
 
 	[McpServerTool(Name = "tasks_methodology_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
@@ -769,7 +769,7 @@ public static class TasksTools
 		done_with_defects).
 
 		MODES. Without `q`: a DETERMINISTIC listing — `board` scopes to one board (the
-		response then carries the board context: `kind`, `specBoard`, `currentVersion`);
+		response then carries the board context: `kind`, `wiredBoard`, `currentVersion`);
 		omit `board` for a project-wide list. Default order: priority then key. A default
 		listing shows only `open` nodes (terminal part_of ancestors of a visible node are kept
 		so the tree stays connected); widen with the `statusKind` facet. With `q`: a RELEVANCE
@@ -849,7 +849,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
-		[Description("Scope to one board (listing then carries kind/specBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
+		[Description("Scope to one board (listing then carries kind/wiredBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
 		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? under = null,
 		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
 		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? keys = null,
@@ -895,7 +895,7 @@ public static class TasksTools
 		var rows = res.Hits.Select(h => SearchRow(h, bodyLen, lean: hasQuery)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new TaskSearchResultView(
-			kept, res.Board, res.Kind, res.SpecBoard, res.CurrentVersion,
+			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Reranked) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,

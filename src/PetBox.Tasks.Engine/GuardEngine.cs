@@ -248,15 +248,15 @@ public static class GuardEngine
 	// resolved DIRECTED link must resolve to a real node, and when the writing kind's constraints
 	// declare a target for that link kind (TargetKind / TargetStatuses), the target's EFFECTIVE
 	// kind and status must match. `blocks` edges are same-board rows already resolved, not target-
-	// checked here. The SpecBoard auto-wire pin stays alongside, now DATA-driven: it binds any link
-	// whose target kind is the writer kind's AutoWireSpecFrom (work->spec) to the pinned board.
+	// checked here. The WiredBoard auto-wire pin stays alongside, now DATA-driven: it binds any link
+	// whose target kind is the writer kind's AutoWireFrom (work->spec) to the pinned board.
 	static MethodologyVerdict? ValidateLinkTargets(
 		MethodologyEngineContext ctx, List<ResolvedLink> links)
 	{
 		if (links.Count == 0) return null;
 		var constraints = ctx.Runtime.LinkConstraints(ctx.KindSlug);
 		var kindName = ctx.Runtime.KindName(ctx.KindSlug);
-		var autoWire = ctx.Runtime.AutoWireSpecFrom(ctx.KindSlug);
+		var autoWire = ctx.Runtime.AutoWireFrom(ctx.KindSlug);
 		foreach (var link in links)
 		{
 			if (string.Equals(link.Kind, "blocks", StringComparison.OrdinalIgnoreCase)) continue;
@@ -274,8 +274,8 @@ public static class GuardEngine
 					return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') target is '{t.Status}', not {string.Join("|", ts)} — a {kindName} change needs a {rule.TargetKind ?? link.Kind} node in status {string.Join("|", ts)}");
 			}
 			// Auto-wire board pin: a work board that links a specific spec board requires its
-			// task_spec targets to live on it (the kind's AutoWireSpecFrom names that target kind).
-			if (autoWire is not null && ctx.SpecBoard is { Length: > 0 } sb
+			// task_spec targets to live on it (the kind's AutoWireFrom names that target kind).
+			if (autoWire is not null && ctx.WiredBoard is { Length: > 0 } sb
 				&& string.Equals(targetKindName, autoWire, StringComparison.OrdinalIgnoreCase)
 				&& !string.Equals(t.Board, sb, StringComparison.Ordinal))
 				return Bad(link.WriterKey, $"links.{link.Kind} '{link.TargetNodeId}' (node '{link.WriterKey}') is on board '{t.Board}', but this board links spec board '{sb}'");

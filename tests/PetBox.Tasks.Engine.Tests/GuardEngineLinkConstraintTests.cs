@@ -52,7 +52,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void NewFeature_WithTaskSpec_Passes()
 	{
-		var ctx = Ctx(index: [Node("s1", SpecBoardName, "spec", "auth", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("s1", WiredBoardName, "spec", "auth", "defined", "spec")]);
 		Decide(ctx, [State("t1", "Pending", "feature", nodeId: Id("t1"))], links: Link("t1", "task_spec", "auth")).Should().BeNull();
 	}
 
@@ -82,7 +82,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void NewSpecNode_WithoutIdeaSpec_IsRefused()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName);
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName);
 		Decide(ctx, [State("s1", "defined", "spec")])!.Message
 			.Should().Be("every write of a spec must carry a idea_spec link — provide links.idea_spec — points at a `ideas` node in status accepted (node 's1')");
 	}
@@ -90,7 +90,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void EditingASpecNode_STILL_RequiresIdeaSpec()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName);
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName);
 		var prior = Prior(State("s1", "defined", "spec", nodeId: Id("s1")));
 		Decide(ctx, [State("s1", "defined", "spec")], prior)!.Message
 			.Should().StartWith("every write of a spec must carry a idea_spec link");
@@ -99,7 +99,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void UntypedSpecNode_ResolvesToTheKindsDefaultType_AndIsStillConstrained()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName);
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName);
 		Decide(ctx, [State("s1", "defined")])!.Message
 			.Should().StartWith("every write of a spec must carry a idea_spec link");
 	}
@@ -107,7 +107,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void SpecNode_WithIdeaSpec_Passes()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "good", "accepted", "idea")]);
 		Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "good")).Should().BeNull();
 	}
@@ -137,7 +137,7 @@ public sealed class GuardEngineLinkConstraintTests
 				LinkConstraints = [new MethodologyLinkConstraintDef("item", "blocks")],
 			},
 		]);
-		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "gated", board: "g", specBoard: null);
+		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "gated", board: "g", wiredBoard: null);
 		Decide(ctx, [State("g1", "open", "item")])!.Message
 			.Should().Be("a new gated item must carry a blocks link — provide links.blocks (node 'g1')");
 
@@ -156,7 +156,7 @@ public sealed class GuardEngineLinkConstraintTests
 				LinkConstraints = [new MethodologyLinkConstraintDef("doc", "idea_spec") { TargetKind = "ideas" }],
 			},
 		]);
-		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs", specBoard: null);
+		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs", wiredBoard: null);
 		Decide(ctx, [State("d1", "draft", "doc")])!.Message
 			.Should().Be("a new doc must carry a idea_spec link — provide links.idea_spec — points at a `ideas` node (node 'd1')");
 	}
@@ -175,7 +175,7 @@ public sealed class GuardEngineLinkConstraintTests
 	}
 
 	[Fact]
-	public void TaskSpec_ToANonSpecBoard_IsRefused()
+	public void TaskSpec_ToANonWiredBoard_IsRefused()
 	{
 		var ctx = Ctx(index: [Node("w2", WorkBoardName, "work", "other-task", "Pending", "feature")]);
 		Decide(ctx, [State("t1", "Pending", "feature", nodeId: Id("t1"))], links: Link("t1", "task_spec", Id("w2")))!.Message
@@ -185,7 +185,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void TaskSpec_ToASpecNode_Passes()
 	{
-		var ctx = Ctx(index: [Node("s1", SpecBoardName, "spec", "auth", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("s1", WiredBoardName, "spec", "auth", "defined", "spec")]);
 		Decide(ctx, [State("t1", "Pending", "feature", nodeId: Id("t1"))], links: Link("t1", "task_spec", Id("s1"))).Should().BeNull();
 	}
 
@@ -202,7 +202,7 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void IdeaSpec_ToANonAcceptedIdea_IsRefused_NamingTheRequiredStatus()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "half-baked", "raw", "idea")]);
 		Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", Id("i1")))!.Message
 			.Should().Be($"links.idea_spec '{Id("i1")}' (node 's1') target is 'raw', not accepted — a spec change needs a ideas node in status accepted");
@@ -211,13 +211,13 @@ public sealed class GuardEngineLinkConstraintTests
 	[Fact]
 	public void IdeaSpec_ToAnAcceptedIdea_Passes()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "good", "accepted", "idea")]);
 		Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", Id("i1"))).Should().BeNull();
 	}
 
 	[Fact]
-	public void TaskSpec_OnTheWrongSpecBoard_TripsTheAutoWirePin()
+	public void TaskSpec_OnTheWrongWiredBoard_TripsTheAutoWirePin()
 	{
 		var ctx = Ctx(index: [Node("s9", "spec-legacy", "spec", "auth", "defined", "spec")]);
 		Decide(ctx, [State("t1", "Pending", "feature", nodeId: Id("t1"))], links: Link("t1", "task_spec", Id("s9")))!.Message
@@ -225,9 +225,9 @@ public sealed class GuardEngineLinkConstraintTests
 	}
 
 	[Fact]
-	public void TaskSpec_WithNoSpecBoardPinned_SkipsThePin()
+	public void TaskSpec_WithNoWiredBoardPinned_SkipsThePin()
 	{
-		var ctx = Ctx(specBoard: null, index: [Node("s9", "spec-legacy", "spec", "auth", "defined", "spec")]);
+		var ctx = Ctx(wiredBoard: null, index: [Node("s9", "spec-legacy", "spec", "auth", "defined", "spec")]);
 		Decide(ctx, [State("t1", "Pending", "feature", nodeId: Id("t1"))], links: Link("t1", "task_spec", Id("s9"))).Should().BeNull();
 	}
 
@@ -236,7 +236,7 @@ public sealed class GuardEngineLinkConstraintTests
 	{
 		// `ideas` declares no link constraints, so an idea_spec link FROM an ideas node (ideas is the
 		// FROM end of ideas→spec) is checked for existence and nothing more.
-		var ctx = Ctx(kindSlug: "ideas", board: IdeasBoardName, specBoard: null,
+		var ctx = Ctx(kindSlug: "ideas", board: IdeasBoardName, wiredBoard: null,
 			index: [Node("w1", WorkBoardName, "work", "task", "Pending", "feature")]);
 		Decide(ctx, [State("i1", "raw", "idea", nodeId: Id("i1"))], links: Link("i1", "idea_spec", Id("w1"))).Should().BeNull();
 	}

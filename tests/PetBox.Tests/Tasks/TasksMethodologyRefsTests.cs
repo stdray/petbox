@@ -84,7 +84,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 	// (The spec kind is now a per-project singleton, so the old two-spec-boards mismatch is
 	// unreachable; the meaningful guard is "the target must live on the spec board".)
 	[Fact]
-	public async Task SpecRef_NonSpecBoardNode_Rejected()
+	public async Task SpecRef_NonWiredBoardNode_Rejected()
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		// A node on a NON-spec (free) board — not a valid spec target.
@@ -115,7 +115,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		});
 		var specId = NodeId(spec, "login");
 
-		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires SpecBoard=spec
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires WiredBoard=spec
 		var work = await Agent("tasks_upsert", new
 		{
 			projectKey = ProjectKey,
@@ -139,10 +139,10 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 
 	// 29. an unknown slug specRef is rejected, and the error names the spec board it searched.
 	[Fact]
-	public async Task SpecRef_UnknownSlug_RejectedNamingSpecBoard()
+	public async Task SpecRef_UnknownSlug_RejectedNamingWiredBoard()
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires SpecBoard=spec
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires WiredBoard=spec
 		var r = await Agent("tasks_upsert", new
 		{
 			projectKey = ProjectKey,
@@ -157,7 +157,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 	// 30. a slug specRef on a work board with NO linked spec board can't resolve — rejected
 	// with a clear "provide a NodeId" error (a NodeId-form specRef would still be accepted).
 	[Fact]
-	public async Task SpecRef_SlugWithoutSpecBoard_Rejected()
+	public async Task SpecRef_SlugWithoutWiredBoard_Rejected()
 	{
 		// no spec board exists in this test instance → board_create does not auto-wire one
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });

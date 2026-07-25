@@ -100,7 +100,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		// Board context: the former tasks.get header fields.
 		res.Board.Should().Be("b");
 		res.Kind.Should().Be("simple");
-		res.SpecBoard.Should().BeNull();
+		res.WiredBoard.Should().BeNull();
 		res.CurrentVersion.Should().BeGreaterThan(0);
 		res.Retrievers.Should().BeNull(); // a listing involves no retriever
 		res.GroupBy.Should().BeNull();
