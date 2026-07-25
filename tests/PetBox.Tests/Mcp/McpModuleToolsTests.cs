@@ -156,11 +156,12 @@ public sealed class McpModuleToolsTests : IDisposable
 		(await TasksTools.SearchAsync(star, Flags(), _tasks, Proj, board: "x"))
 			.Kind.Should().Be("simple");
 
-		// ...while a key scoped to a different project is rejected for this one (throws;
-		// the filter renders it as {error} on the wire).
-		var other = Http("tasks:read,tasks:write", project: "other");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardListAsync(other, Flags(), _tasks, Proj));
+		// ...while a key scoped to a different project is rejected for this one. Since the declaration
+		// wave (work `authz-default-deny-delivery`, step 5) that rejection is made by
+		// McpTenantEnforcementFilter ahead of the tool, not by an AssertProject inside it, so this
+		// asserts on the PEP's verdict — the thing that actually decides — and the wildcard half above
+		// keeps proving the same gate lets a legitimate caller through.
+		await McpTenantPep.RefusesAsync(TestProjectCatalog.Instance, "tasks_board_list", Proj, claim: "other");
 	}
 
 	[Fact]

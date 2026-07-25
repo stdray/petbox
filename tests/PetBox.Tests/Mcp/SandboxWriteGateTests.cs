@@ -173,10 +173,13 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 		var result = await SessionUpsertAsync(_fx.ScopedSandbox, SandboxWriteGateFixture.RealProject, "s-scoped-bad");
 		result.IsError.Should().Be(true);
 
-		// A claim mismatch, not a containment failure — the message must say "not scoped", not
-		// blame sandboxing (that would be misleading: this key's claim genuinely doesn't cover
-		// RealProject, regardless of any sandbox flag).
-		Text(result).Should().Contain("not scoped to project", Text(result));
+		// A claim mismatch, not a containment failure — the message must NOT blame sandboxing (that
+		// would be misleading: this key's claim genuinely doesn't cover RealProject, regardless of any
+		// sandbox flag). The wording itself changed with the declaration wave — the four denial FORMS
+		// were collapsed into the PEP's one, deliberately (work `authz-default-deny-delivery`,
+		// acceptance criterion 1 keeps the allow/deny OUTCOME, not the text) — so what is pinned is
+		// the DISTINCTION, which is the thing that has diagnostic value.
+		Text(result).Should().Contain("Not authorized for project:", Text(result));
 		Text(result).Should().NotContain("sandboxOnly", Text(result));
 	}
 

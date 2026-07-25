@@ -47,6 +47,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	// FLEET-WIDE"). That is the `Provisioning` / `FleetWide` exemption of spec `authz-scope-declaration`
 	// showing up as a measured number rather than a footnote — acceptance criterion 5. Three of the
 	// seven MUTATE the other tenant, which is the part of that number worth staring at.
+	//
+	// Since the MCP declaration wave (step 5) those exemptions are no longer an interpretation of this
+	// list: every one of the eleven MCP entries below is now [TenantExempt(...)] on its own tool type,
+	// or — for memory_get alone — still on the allowlist with its reason written there. The list did
+	// not move a single verdict when enforcement went live on those 89 tools, which is the property
+	// step 5 was supposed to have: the families that came out had complete manual coverage already, so
+	// the PEP reproduces their allow/deny exactly and only relocates the refusal.
 	static readonly IReadOnlyDictionary<string, (CrossTenantVerdict Verdict, string Observed)> KnownDeviations =
 		new Dictionary<string, (CrossTenantVerdict, string)>(StringComparer.Ordinal)
 		{

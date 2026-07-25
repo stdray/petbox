@@ -227,10 +227,15 @@ public sealed class TenantEnforcementTests
 	[Fact]
 	public async Task Mcp_Allowlisted_PassesThrough_WithoutADeclaration()
 	{
-		TenantEnforcementAllowlist.Contains("mcp:tasks_upsert").Should().BeTrue("fixture assumption");
+		// A REAL entry, so the test proves the real list is consulted. It used to be mcp:tasks_upsert;
+		// the declaration wave took the whole tasks family out, and memory_* is what is left on the MCP
+		// plane (see the note in TenantEnforcementAllowlist for why). When memory_* leaves too, point
+		// this at whatever is still allowlisted then — the assertion below is about the ORDER, not
+		// about which surface happens to carry the debt.
+		TenantEnforcementAllowlist.Contains("mcp:memory_upsert").Should().BeTrue("fixture assumption");
 
 		// An EMPTY map: if the allowlist were consulted after the declaration, this would be refused.
-		(await McpAsync("tasks_upsert", ApiKey(ProjA), declarations: NoDeclarations)).Allowed.Should().BeTrue();
+		(await McpAsync("memory_upsert", ApiKey(ProjA), declarations: NoDeclarations)).Allowed.Should().BeTrue();
 	}
 
 	[Theory]

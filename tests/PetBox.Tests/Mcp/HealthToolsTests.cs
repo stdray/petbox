@@ -100,10 +100,11 @@ public sealed class HealthToolsTests : IDisposable
 	{
 		Push("api", Proj, "ok", DateTime.UtcNow);
 
-		// A key scoped to another project may not read this project.
-		var other = Http("health:read", project: "other");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			HealthTools.SearchAsync(other, _db.Factory().HealthReports(), Proj));
+		// A key scoped to another project may not read this project. The refusal moved out of the tool
+		// body into the MCP PEP with the declaration wave (work `authz-default-deny-delivery`, step 5),
+		// so it is asserted where it now happens — McpTenantEnforcementFilter, reading health_search's
+		// own [TenantFrom(Argument, "projectKey")].
+		await McpTenantPep.RefusesAsync(TestProjectCatalog.Instance, "health_search", Proj, claim: "other");
 	}
 
 	[Fact]

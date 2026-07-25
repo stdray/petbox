@@ -18,6 +18,10 @@ namespace PetBox.Tests.Mcp;
 //      translated tools (db_*, health_search, memory_*). It is the IDOR class we spent a day closing
 //      in the UI: a service that takes a projectKey must treat it as an ADDRESS, so a foreign one
 //      simply finds nothing, and the claim check must still run BEFORE the service is asked at all.
+//      Since the MCP declaration wave (work `authz-default-deny-delivery`, step 5) that claim check
+//      lives in McpTenantEnforcementFilter rather than in each tool body, so the isolation half of
+//      these tests asks the PEP (McpTenantPep) while the ADDRESS half still calls the tool directly —
+//      the two are genuinely different properties and only one of them moved.
 //   2. SCOPE — the provisioning verbs still demand admin:provision. The services carry no scope check
 //      of their own (they cannot: they serve pages too), so a tool that forgot its AssertScope would
 //      hand a data:read key the whole provisioning surface. These tests fail if one ever does.
@@ -79,11 +83,16 @@ public sealed class McpToolServiceIsolationTests : IDisposable
 
 		var a = Key(ProjA, $"{ApiKeyScopes.DataRead},{ApiKeyScopes.DataSchema}");
 
-		// Every db_* verb, addressed at B, refuses on the CLAIM — before the catalog is ever asked.
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => DataDbTools.ListAsync(a, catalog, ProjB));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => DataDbTools.DescribeAsync(a, catalog, ProjB, "secrets"));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => DataDbTools.DeleteAsync(a, catalog, ProjB, "secrets"));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => DataDbTools.CreateAsync(a, catalog, ProjB, "planted"));
+		// Every db_* verb, addressed at B, refuses on the CLAIM — and the refusal now happens in the
+		// MCP PEP, before the tool is entered and therefore before the catalog is ever asked. Asked of
+		// McpTenantEnforcementFilter itself (see McpTenantPep) rather than of a direct method call:
+		// the direct call no longer refuses, because the check is not in the body any more.
+		foreach (var tool in new[] { "db_list", "db_describe", "db_delete", "db_create" })
+			await McpTenantPep.RefusesAsync(TestProjectCatalog.Instance, tool, ProjB, claim: ProjA);
+
+		// …and A's own project passes the same gate, so the four refusals above are about the TENANT
+		// and not about a PEP that refuses everything.
+		await McpTenantPep.AllowsAsync(TestProjectCatalog.Instance, "db_list", ProjA, claim: ProjA);
 
 		// B's catalog is untouched: nothing deleted, nothing planted.
 		(await catalog.ListAsync(ProjB)).Select(d => d.Name).Should().Equal("secrets");
@@ -103,8 +112,7 @@ public sealed class McpToolServiceIsolationTests : IDisposable
 		PushHealth("api", ProjB);
 
 		var a = Key(ProjA, ApiKeyScopes.HealthRead);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			HealthTools.SearchAsync(a, _db.Factory().HealthReports(), ProjB));
+		await McpTenantPep.RefusesAsync(TestProjectCatalog.Instance, "health_search", ProjB, claim: ProjA);
 
 		// Same service name in both projects — the answer for A must be A's report alone.
 		var mine = await HealthTools.SearchAsync(a, _db.Factory().HealthReports(), ProjA);

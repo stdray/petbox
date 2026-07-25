@@ -81,14 +81,28 @@ public static class TenantGate
 		}
 	}
 
-	// The two things a refused caller may learn, and the line between them is the same one
-	// TenantAuthorizer draws: a SYNTACTICALLY absent target is reported as absent (it leaks nothing —
-	// the caller already knows it named no tenant), while every other outcome collapses into one
-	// "not authorized". A named-but-unknown tenant is deliberately indistinguishable from a
-	// wrong-tenant denial, so no surface becomes an existence oracle for another tenant's keys.
+	// What a refused caller may learn. The line is the same one TenantAuthorizer draws, and it is drawn
+	// by WHOSE fact the reason is:
+	//
+	//   * NoTenant — a SYNTACTICALLY absent target. Leaks nothing: the caller already knows it named
+	//     no tenant, and saying so is the difference between a fixable call and a mystery.
+	//   * SandboxContainment — a fact about the CALLER'S OWN KEY (it is sandboxOnly), not about what
+	//     exists on the other side, so it discloses nothing either. It is reported because the
+	//     alternative is actively misleading: a sandboxOnly WILDCARD key IS authorized for the project
+	//     by identity, and telling its holder "not authorized" sends them to chase claims instead of
+	//     noticing they wrote outside the sandbox (AGENTS.md rule 7). One refusal SHAPE, one honest
+	//     reason — the work card collapses the four denial forms, not the diagnosis. Single-sourced on
+	//     ProjectScope.SandboxDenialMessage so this and the module surfaces cannot word it differently.
+	//   * everything else collapses into one "not authorized": a named-but-UNKNOWN tenant must stay
+	//     indistinguishable from a wrong-tenant denial, or the surface becomes an existence oracle for
+	//     another tenant's keys.
 	static string Message(TenantAccess access, TenantFromAttribute from, TenantRef tenant, string surfaceKey) =>
-		access == TenantAccess.NoTenant
-			? $"'{surfaceKey}' takes its {from.Tenant.ToString().ToLowerInvariant()} from {from.Describe()}, and this "
-				+ "call named none. A request without an authorized tenant does not reach the handler."
-			: $"Not authorized for {tenant}.";
+		access switch
+		{
+			TenantAccess.NoTenant =>
+				$"'{surfaceKey}' takes its {from.Tenant.ToString().ToLowerInvariant()} from {from.Describe()}, and this "
+				+ "call named none. A request without an authorized tenant does not reach the handler.",
+			TenantAccess.SandboxContainment => ProjectScope.SandboxDenialMessage(tenant.Key),
+			_ => $"Not authorized for {tenant}.",
+		};
 }
