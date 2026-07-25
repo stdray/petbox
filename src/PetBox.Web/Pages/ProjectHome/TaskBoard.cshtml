@@ -6,14 +6,11 @@
 	// Effective kind via MethodologyRuntime (definition first, preset fallback) — a
 	// definition-declared custom kind shows its own slug, not the Simple fallback.
 	var kindName = Model.KindName;
-	var isSimple = Model.Runtime.PresetKind(Model.KindSlug) == PetBox.Tasks.Workflow.BoardKind.Simple;
-	// Surface the board kind explicitly so its statuses read as "this is a simple/methodology
-	// board", not "the statuses are broken". Simple = a lightweight preset (fixed vocab, free
-	// transitions); methodology kinds add gates.
-	var kindBadgeClass = isSimple ? "badge-info badge-outline" : "badge-neutral";
-	var kindTitle = isSimple
-		? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
-		: $"{kindName} board — statuses follow the {kindName} workflow";
+	// Surface the board kind explicitly so its statuses read as "this is a {kind} board", not
+	// "the statuses are broken" — a single neutral badge for every kind (all kinds are strict
+	// data presets now; none gets special-cased styling here).
+	var kindBadgeClass = "badge-neutral";
+	var kindTitle = $"{kindName} board — statuses follow the {kindName} workflow";
 }
 
 @if (Model.Error is not null)

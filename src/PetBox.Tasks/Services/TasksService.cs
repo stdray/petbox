@@ -2144,15 +2144,6 @@ public sealed partial class TasksService : ITasksService
 	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior, TasksActor actor, string? reason)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
-		// Simple boards: type is a label from a small fixed set; empty defaults to `task`, and an
-		// out-of-set type is rejected. (Work validates type via For(); Simple's For() ignores type,
-		// so the vocabulary is enforced here. Definition kinds validate type via For(), like Work.)
-		if (runtime.PresetKind(kindSlug) == BoardKind.Simple)
-		{
-			type ??= "task";
-			if (!MethodologyPresets.SimpleTypes.Contains(type))
-				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {MethodologyPresets.ValidTypes(BoardKind.Simple)}").ForNode(node.Key);
-		}
 		var wf = runtime.For(kindSlug, type);
 		// Materialize the resolved default type at WRITE time (spec quick-add-stores-default-
 		// type): a single-FSM kind (every preset kind but Work — ideas/spec/intake/classic)

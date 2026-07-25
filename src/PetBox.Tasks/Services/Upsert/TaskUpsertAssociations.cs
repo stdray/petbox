@@ -142,7 +142,7 @@ public sealed class TaskUpsertAssociations
 			await _relations.CreateAsync(projectKey, "supersedes", newId, targetId, ct);
 			// Obsolete the superseded node: move it to its workflow's terminal-cancel status.
 			await _effects.SetActiveNodeStatusAsync(projectKey, targetId, runtime,
-				(wf, node, isTerminal) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
+				(wf, node, isTerminal, _) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
 		}
 	}
 

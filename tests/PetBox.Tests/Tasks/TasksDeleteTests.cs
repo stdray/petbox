@@ -168,8 +168,12 @@ public sealed class TasksDeleteTests : IDisposable
 		await renamed.Should().ThrowAsync<ArgumentException>().WithMessage("*renamed and deleted*");
 	}
 
+	// The edge still closes on delete regardless of gating (dangling-structure cleanup is
+	// unconditional); the STATUS move is gated (see the pinned pair below) — board "b" auto-
+	// vivifies as kind `simple`, which declares no BlocksGate, so the target's status is left
+	// untouched here.
 	[Fact]
-	public async Task Delete_Blocker_ClosesEdge_AndUnblocksTarget()
+	public async Task Delete_Blocker_ClosesEdge_StatusUnchanged_OnSimpleKind_NoBlocksGate()
 	{
 		await _tasks.UpsertAsync(Proj, "b", new[] { Node("blocker") });
 		var (blockerId, _) = await NodeInfo("b", "blocker");
@@ -181,21 +185,22 @@ public sealed class TasksDeleteTests : IDisposable
 		r.Result.Applied.Should().BeTrue();
 		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
 		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
-		stuck.Status.Should().Be("InProgress"); // Blocked → InProgress, mirroring the Done effect
+		stuck.Status.Should().Be("Blocked"); // no BlocksGate declared for `simple` -> no auto-unblock (stage2/simple-narrow)
 	}
 
-	// PIN (work/delete-unblock-ungated-by-kind, measured pre-change on origin/main
-	// 9a9a9c7a): today's RunDeleteEffectsAsync unblocks on ANY board whose status vocabulary
-	// happens to name a status "Blocked", regardless of whether the kind declares
-	// MethodologyKindDef.BlocksGate — board "b" above auto-vivifies as kind `simple`
-	// (TaskBoardStore.EnsureAsync's "simple" default), which carries a "Blocked" status but
-	// NO BlocksGate (SimpleKind in MethodologyPresets.cs never sets it — Blocked is free/
-	// optional there, no state invariant). This test makes that explicit instead of relying
-	// on the implicit default, and exists purely as a behavior-lock net: it must stay GREEN
-	// across the blocksGate-data migration of this path, or the migration silently narrowed
-	// production scope.
+	// PIN (work/delete-unblock-ungated-by-kind — FLIPPED by stage2/simple-narrow, change 4):
+	// RunDeleteEffectsAsync now reads the unblock gate from MethodologyRuntime.BlocksGate
+	// (targetKindSlug) — the SAME data the Done-effect path and GuardEngine.RequireBlockers
+	// read — instead of the local "Blocked"/"InProgress" literals it used to carry. Board
+	// "sboard" is an EXPLICIT `simple` kind board (TaskBoardStore.EnsureAsync's "simple"
+	// default), which carries a "Blocked" status but declares NO BlocksGate (SimpleKind in
+	// MethodologyPresets.cs never sets one — simple is a strict data preset, no state
+	// invariant). A kind with no declared gate now gets NO auto-unblock on delete — this test
+	// makes that explicit instead of relying on the implicit default, and exists purely as a
+	// behavior-lock net: it must stay GREEN going forward, or a future change silently
+	// widened auto-unblock back past the gate.
 	[Fact]
-	public async Task Delete_Blocker_UnblocksTarget_OnExplicitSimpleKind_WhichDeclaresNoBlocksGate()
+	public async Task Delete_Blocker_DoesNotUnblockTarget_OnExplicitSimpleKind_WhichDeclaresNoBlocksGate()
 	{
 		await _tasks.CreateBoardAsync(Proj, "sboard", "simple", null, null);
 		await _tasks.UpsertAsync(Proj, "sboard", new[] { Node("blocker") });
@@ -206,9 +211,9 @@ public sealed class TasksDeleteTests : IDisposable
 		var r = await _tasks.UpsertAsync(Proj, "sboard", new[] { Delete("blocker") });
 
 		r.Result.Applied.Should().BeTrue();
-		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
+		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty(); // edge still closes
 		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
-		stuck.Status.Should().Be("InProgress");
+		stuck.Status.Should().Be("Blocked"); // no BlocksGate on `simple` -> status left as-is
 	}
 
 	// PIN, control side of the fork: the `work` kind DOES declare BlocksGate("Blocked",

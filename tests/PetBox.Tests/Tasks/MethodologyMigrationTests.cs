@@ -373,7 +373,10 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 
 	// 7. DROPPING a kind whose boards still exist: those boards fall back to the presets
 	// (unknown slug → simple), so their nodes hit the same rejection/mapping machinery —
-	// unmapped is rejected, a mapping onto the preset vocabulary repairs them.
+	// unmapped is rejected, a mapping onto the preset vocabulary repairs them. Simple is a
+	// STRICT data preset (stage2/simple-narrow): the fallen-back board's `ticket` type is
+	// ALSO out of simple's vocabulary (task|bug|feature|chore|issue), same as its `New`
+	// status — both need a mapping now, not just the status.
 	[Fact]
 	public async Task KindDropped_BoardsFallBackToPresets_SameMachineryCatches()
 	{
@@ -381,24 +384,31 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 		IsErr(await Upsert("helpdesk", new { key = "tk", type = "ticket", title = "Ticket", body = "x" })).Should().BeFalse();
 		var ver = await RulesVersion();
 
-		// Without a mapping: `New` is unknown to the simple preset the board now resolves to.
+		// Without a mapping: `ticket` doesn't resolve any workflow under the simple preset
+		// the board now falls back to (type is strict there too).
 		var dropped = await DefUpsert(FlowOnlyDefinition(), version: ver);
 		IsErr(dropped).Should().BeTrue(Text(dropped));
 		Text(dropped).Should().Contain("helpdesk");
 		Text(dropped).Should().Contain("tk");
-		Text(dropped).Should().Contain("New");
+		Text(dropped).Should().Contain("ticket");
 		Parse(await DefGet()).GetProperty("definitionName").GetString().Should().Be("support-process", "nothing was written");
 
 		// The migration entry keys on the BOARD's kind slug (the dropped `support`), mapping
-		// onto the preset vocabulary it now resolves to.
+		// both the type and the status onto the preset vocabulary it now resolves to.
 		var mapped = await DefUpsert(FlowOnlyDefinition(), version: ver, migration: new object[]
 		{
-			new { kind = "support", statuses = new object[] { new { from = "New", to = "Todo" } } },
+			new
+			{
+				kind = "support",
+				types = new object[] { new { from = "ticket", to = "task" } },
+				statuses = new object[] { new { from = "New", to = "Todo" } },
+			},
 		});
 		IsErr(mapped).Should().BeFalse(Text(mapped));
 		Parse(mapped).GetProperty("migrated").GetInt64().Should().Be(1);
 
 		var node = await NodeGet("helpdesk", "tk");
+		node.GetProperty("type").GetString().Should().Be("task");
 		node.GetProperty("status").GetString().Should().Be("Todo");
 		Parse(await DefGet()).GetProperty("definitionName").GetString().Should().Be("flow-only");
 	}

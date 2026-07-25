@@ -68,7 +68,7 @@ public sealed class TaskTransitionEffects
 					}
 					if (e.Set is null) continue;
 					await SetActiveNodeStatusAsync(projectKey, linkedId, runtime,
-						(wf, node, isTerminal) =>
+						(wf, node, isTerminal, _) =>
 							isTerminal ? null
 							: e.OnlyFrom is not null && !string.Equals(node.Status, e.OnlyFrom, StringComparison.OrdinalIgnoreCase) ? null
 							: wf?.Status(e.Set)?.Slug, ct);
@@ -80,14 +80,11 @@ public sealed class TaskTransitionEffects
 	// Delete effect: a temporal-closed node must not leave dangling structure behind — close
 	// every edge touching it (both directions, any kind) and its tags. Unblocking mirrors the
 	// Done effect: when the deleted node was a blocker, a target left with no blockers moves
-	// Blocked → InProgress. System action (no gate).
-	// NOTE (methodology-blocks-gate-data, scope boundary): this "Blocked"/"InProgress" literal
-	// is intentionally NOT threaded through MethodologyRuntime.BlocksGate in this pass — unlike
-	// RunTransitionEffectsAsync's blocks-effect above, this path runs UNGATED by kind (any board
-	// whose preset happens to name a "Blocked" status gets this unblock-on-delete, including
-	// non-gated kinds like `simple`); gating it on BlocksGate(kindSlug) would silently NARROW
-	// that behavior with no test net proving today's cross-kind reach is even intentional. Filed
-	// as a finding under work/umbrella-methodology-engine rather than changed here.
+	// off its kind's blocking-gate status to the gate's ReleaseTo. System action (no gate).
+	// Gated by MethodologyRuntime.BlocksGate(targetKindSlug) — the SAME data the Done-effect
+	// path (RunTransitionEffectsAsync) and GuardEngine.RequireBlockers read, no local literal.
+	// A kind that does not declare a blocks gate (e.g. `simple`, a strict data preset) gets NO
+	// auto-unblock on delete, matching that it never gated the block in the first place.
 	public async Task RunDeleteEffectsAsync(
 		string projectKey, string board, IReadOnlyList<NodePatch> deletePatches,
 		Dictionary<string, PlanNode> prior, MethodologyRuntime runtime, CancellationToken ct)
@@ -103,7 +100,9 @@ public sealed class TaskTransitionEffects
 					var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
 					if (!stillBlocked)
 						await SetActiveNodeStatusAsync(projectKey, e.ToNodeId, runtime,
-							(_, node, _) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+							(_, node, _, kindSlug) => runtime.BlocksGate(kindSlug) is { } gate
+								&& string.Equals(node.Status, gate.Status, StringComparison.OrdinalIgnoreCase)
+								? gate.ReleaseTo : null, ct);
 				}
 			}
 			// An empty list REPLACES the node's full tag set — i.e. soft-closes every active tag.
@@ -113,11 +112,13 @@ public sealed class TaskTransitionEffects
 
 	// Find the active node with this NodeId across the project's boards and move it to a
 	// target status chosen by `pick` (null = leave as-is). System action (no gate). The
-	// pick receives the target board's runtime-resolved workflow and whether the node's
-	// CURRENT status is terminal for its board (per-kind classification).
+	// pick receives the target board's runtime-resolved workflow, whether the node's
+	// CURRENT status is terminal for its board (per-kind classification), and the target
+	// board's kind slug (for gate lookups keyed by kind, e.g. RunDeleteEffectsAsync's
+	// BlocksGate read below).
 	public async Task SetActiveNodeStatusAsync(
 		string projectKey, string nodeId, MethodologyRuntime runtime,
-		Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, bool, string?> pick, CancellationToken ct)
+		Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, bool, string?, string?> pick, CancellationToken ct)
 	{
 		// NodeId is unique across the project, so find the active row directly in the one
 		// project file; its Board tells us which partition to write back into.
@@ -126,7 +127,7 @@ public sealed class TaskTransitionEffects
 		if (node is null) return;
 		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
 		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
-		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status));
+		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status), meta?.Kind);
 		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
 		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, partition: n => n.Board == node.Board, ct: ct);
 		await _boards.TouchAsync(projectKey, node.Board, ct);
