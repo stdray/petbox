@@ -20,7 +20,13 @@ namespace PetBox.Web.Mcp;
 // live in one place, inside the Data module. This type never opens a connection itself;
 // a NetArchTest keeps it off Microsoft.Data.Sqlite entirely. Tools throw on a failed
 // Assert* (or a denied PRAGMA / SQL error); McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all three verbs —
+// and this is the family where the ORDER the PEP restores matters most. data_query / data_exec /
+// data_schema_apply hand raw SQL to a project's own database file; a check that ran inside the body
+// was a check that ran after the call had already been bound. It now runs before the tool is entered
+// at all. Same decision, same ProjectScope.EvaluateAsync, same sandbox containment.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class DataTools
 {
 	[McpServerTool(Name = "data_schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true, OutputSchemaType = typeof(DataSchemaApplyResult))]
@@ -34,7 +40,6 @@ public static class DataTools
 		[Description("SQL to apply. Multi-statement OK; PRAGMA statements may not parse with the SQLite dialect parser.")] string sql,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, name, sql, ct);
@@ -53,7 +58,6 @@ public static class DataTools
 		[Description("Optional parameter list as a JSON array of { name, value }. Pet builds via linq2db's ToSqlQuery().Parameters.")] JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await dataSql.QueryAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataQueryResult(rows);
@@ -71,7 +75,6 @@ public static class DataTools
 		JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataWrite);
 		var affected = await dataSql.ExecAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataExecResult(affected);

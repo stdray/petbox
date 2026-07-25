@@ -18,7 +18,14 @@ namespace PetBox.Web.Mcp;
 // → the key's claim, incl. sandbox containment) and the scope second; the catalog then takes the
 // project as part of the address, so a call can only ever reach its own project's DataDbs.
 // Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the structured {error} body.
+//
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all four verbs. The
+// paragraph above already described the ordering the PEP now enforces — "the project is proven FIRST
+// … and the scope second" — except that the proof has moved OUT of the four bodies and in front of
+// them. Sandbox containment comes along unchanged: ITenantAuthorizer calls the same
+// ProjectScope.EvaluateAsync, so a sandboxOnly key is still refused on a non-sandbox project.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class DataDbTools
 {
 	[McpServerTool(Name = "db_create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
@@ -30,7 +37,6 @@ public static class DataDbTools
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 
@@ -50,7 +56,6 @@ public static class DataDbTools
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await catalog.ListAsync(projectKey, ct);
 		return new DataDbListResult(
@@ -63,7 +68,6 @@ public static class DataDbTools
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 
@@ -78,7 +82,6 @@ public static class DataDbTools
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 
 		var tables = await catalog.DescribeAsync(projectKey, dbName, ct)

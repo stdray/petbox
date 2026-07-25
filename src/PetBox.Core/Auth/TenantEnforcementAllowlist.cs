@@ -167,13 +167,6 @@ public static class TenantEnforcementAllowlist
 		// that name a tenant, [TenantExempt] for the 23 that belong to a closed exemption class) and
 		// enforced by McpTenantEnforcementFilter. Nothing from the MCP plane may come back here: a NEW
 		// tool declares like the rest.
-		"mcp:data_exec",
-		"mcp:data_query",
-		"mcp:data_schema_apply",
-		"mcp:db_create",
-		"mcp:db_delete",
-		"mcp:db_describe",
-		"mcp:db_list",
 		"mcp:health_search",
 		"mcp:llm_chat",
 		"mcp:llm_config_get",
