@@ -39,7 +39,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, ct);
 		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance);
@@ -54,7 +53,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Adopting an EXISTING board re-points its EXISTING nodes at another instance's
 		// rules — the criterion "changes the rules for existing nodes" is met even though
@@ -71,7 +69,6 @@ public static class TasksTools
 		string projectKey, string board, string? wiredBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when wiredBoard is
 		// omitted, SEVERS) the link the rules' link-constraints and delivery roll-up resolve
@@ -90,7 +87,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
 		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
@@ -103,7 +99,6 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Removes a process ROLE from a live instance and destroys its nodes with it. The most
 		// irreversible governance act on the surface — gated.
@@ -118,7 +113,6 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// A board is not "just data": in a methodology instance it IS a process role (the spec
 		// board, the work board). Closing one retires that role for everyone — close the spec
@@ -135,7 +129,6 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// The inverse of a gated act must be gated too, or the gate is one-way theatre: a
 		// deliberate governance freeze could be undone by any tasks:write key. Same scope as
@@ -168,7 +161,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Creating an instance AUTHORS a live rules document. On its own it governs only
 		// the boards it provisions — but create+board_adopt is the composed bypass of
@@ -192,7 +184,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var items = await tasks.ListMethodologyInstancesAsync(projectKey, ct);
 		return new MethodologyInstanceListResult(items.Select(ProjectInstance).ToList());
@@ -211,7 +202,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceAsync(projectKey, name, ct);
 		if (view is null)
@@ -233,7 +223,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Retires a whole live process: the instance AND every member board stop accepting
 		// writes. Changes no rules document, so the narrow "changes the rules for existing
@@ -264,7 +253,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetActiveMethodologyInstanceAsync(projectKey, ct);
 		return new MethodologyActiveGetResult(view.Name, view.Version);
@@ -293,7 +281,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// GOVERNANCE (spec methodology-write-scope, owner-widened criterion). Board membership
 		// always wins, so no node's ENFORCEMENT changes — under the narrow original criterion
@@ -334,7 +321,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
 		if (view is null)
@@ -381,7 +367,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// The paradigm case: rewrites the rules of a LIVE instance and migrates the live
 		// nodes on its member boards. Governance-gated.
@@ -410,7 +395,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
@@ -452,7 +436,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Same governance posture as rules_upsert: this rewrites the rules that already
 		// govern every live utility-homed node. Gated.
@@ -510,7 +493,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		// DELIBERATELY NOT methodology:write, though it writes a live instance's rules document
 		// through the same DefineMethodologyInstanceRulesAsync as the gated rules_upsert. The
 		// line is not "which service call" but "can it change the process":
@@ -578,7 +560,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.UpsertMethodologyTemplateAsync(projectKey, key, def, version, ct);
@@ -600,7 +581,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var ack = await tasks.DeleteMethodologyTemplateAsync(projectKey, key, version, ct);
 		return new MethodologyTemplateDeleteResult(ack.Key, Deleted: ack.Changed, ack.Version);
@@ -621,7 +601,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyTemplateAsync(projectKey, key, ct);
 		if (view is null)
@@ -643,7 +622,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var items = await tasks.ListMethodologyTemplatesAsync(projectKey, ct);
 		return new MethodologyTemplateListResult(
@@ -668,7 +646,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var ack = await tasks.SnapshotMethodologyTemplateAsync(projectKey, key, version, from, ct);
 		return new MethodologyTemplateUpsertResult(ack.Key, ack.Version, ack.Changed);
@@ -711,7 +688,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return await tasks.GetMethodologyGuideAsync(projectKey, name, ct);
 	}
@@ -744,7 +720,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		var detail = await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
@@ -875,7 +850,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
@@ -1061,7 +1035,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		await AssertBoardKnownAsync(tasks, projectKey, board, ct);
 		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
@@ -1082,7 +1055,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
@@ -1095,7 +1067,6 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		// Grouping (identical FSMs into one block) and catalog-vs-definition resolution
 		// happen in the service; this adapter only shapes the wire.
