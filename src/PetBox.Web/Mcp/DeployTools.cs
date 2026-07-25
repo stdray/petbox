@@ -14,7 +14,25 @@ namespace PetBox.Web.Mcp;
 // per-project claim); reads need deploy:read, writes deploy:write. Mirrors the REST/UI
 // operations: node registry + the desired-state grid. Node-agents do NOT use these (they
 // use /agent/*). Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the {error} body.
+// TENANT DECLARATION (spec authz-scope-declaration): `fleet-wide` — "операция над парком узлов, не
+// над арендатором". Declared on the TYPE, for all nine verbs: a node is addressed by its id and a
+// deployment by ITS id, and neither id belongs to a tenant. Eight of the nine have no tenant slot
+// at all, which is why the cross-tenant probe reports them as not addressable rather than as denied.
+//
+// deploy_upsert is the ninth and the one worth being explicit about: it DOES take a `projectKey`,
+// and that parameter is NOT an access boundary — it selects which project's config bindings resolve
+// into the container's env. Spec authz-scope-declaration: "Параметр, выглядящий границей доступа, но
+// ею не являющийся, объявляется данными там же, где объявлен сам параметр" — its [Description]
+// already says so to every MCP client, and this exemption is the machine-readable half. A
+// [TenantFrom(Argument, "projectKey")] here would be a LIE in the other direction: it would start
+// refusing the fleet operator whose key names one project, which is every deploy caller today.
+//
+// The exemption is not an endorsement. Work `deploy-tools-fleet-wide-undocumented` is about exactly
+// this reach (a deploy:write key operates any tenant's deployment); declaring the class turns that
+// from undocumented into counted — acceptance criterion 5.
 [McpServerToolType]
+[TenantExempt(TenantExemption.FleetWide,
+	"nodes and deployments are addressed by fleet id, not by tenant; deploy_upsert's projectKey is env-resolution input, not a boundary")]
 public static class DeployTools
 {
 	// node-key scopes minted by node_upsert (same as the REST enroll path): poll + heartbeat
