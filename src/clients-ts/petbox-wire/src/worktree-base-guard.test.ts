@@ -31,7 +31,7 @@ function makeStubGit(opts: {
   fetchThrows?: boolean;
 }): { runGit: GitRunner; calls: Call[] } {
   const calls: Call[] = [];
-  const runGit: GitRunner = (args, timeoutMs) => {
+  const runGit: GitRunner = async (args, timeoutMs) => {
     calls.push(timeoutMs === undefined ? { args } : { args, timeoutMs });
     if (args.includes("rev-parse")) {
       return opts.branch ? { code: 0, stdout: opts.branch } : { code: 1, stdout: "" };

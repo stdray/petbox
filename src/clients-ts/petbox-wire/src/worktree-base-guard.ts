@@ -20,14 +20,25 @@
 // a crash. The `.claude/allow-stale-base` marker lets a deliberately-stale checkout (a bisect,
 // a frozen demo) opt out without touching the owner's global settings.json.
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileP = promisify(execFile);
 
 // Injectable so tests need neither real git nor network — see worktree-base-guard.test.ts.
-// Synchronous by design: this mirrors apply-root.ts's defaultGitToplevel and lets the default
-// implementation be a plain execFileSync wrapper with no promise plumbing of its own.
-export type GitRunner = (args: string[], timeoutMs?: number) => { code: number; stdout: string };
+// ASYNC by design: buildStaleBaseWarning is started (not awaited) alongside the SessionStart
+// hook's agent-def/canon fetch sequence, and only an async git runner actually OVERLAPS with
+// those fetches — a synchronous execFileSync would block the single thread at the call site and
+// run the whole guard (up to a 3.5s fetch) BEFORE the server fetches even begin, turning "hides
+// behind the fetch sequence" into a pure additive latency on every session start. With execFile
+// the guard's subprocess I/O and the fetch() sockets are serviced by the same event loop
+// concurrently, so the guard costs ~max(guard, fetches), not their sum.
+export type GitRunner = (
+  args: string[],
+  timeoutMs?: number,
+) => Promise<{ code: number; stdout: string }>;
 
 const DEFAULT_FETCH_TIMEOUT_MS = 3500;
 const DEFAULT_THRESHOLD = 10;
@@ -48,23 +59,20 @@ const DEFAULT_FETCH_MIN_INTERVAL_MS = 60_000;
 let lastFetchMs = 0;
 
 /**
- * Default GitRunner: a real `git` invocation via execFileSync with a per-call timeout. Callers
- * (buildStaleBaseWarning below) are responsible for putting `-C <cwd>` first in `args` — this
- * function is a generic, unopinionated runner. On ANY failure (git missing, non-zero exit,
- * timeout-triggered kill) this returns {code:1, stdout:""} — never throws, same contract as
- * apply-root.ts's defaultGitToplevel.
+ * Default GitRunner: a real `git` invocation via execFile (async) with a per-call timeout.
+ * Callers (buildStaleBaseWarning below) are responsible for putting `-C <cwd>` first in `args` —
+ * this function is a generic, unopinionated runner. On ANY failure (git missing, non-zero exit,
+ * timeout-triggered kill) this resolves {code:1, stdout:""} — never rejects, same never-throw
+ * contract as apply-root.ts's defaultGitToplevel, just async so the guard can overlap with the
+ * hook's other fetches (see the GitRunner comment above).
  */
-export function defaultRunGit(
+export async function defaultRunGit(
   args: string[],
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
-): { code: number; stdout: string } {
+): Promise<{ code: number; stdout: string }> {
   try {
-    const out = execFileSync("git", args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: timeoutMs,
-    });
-    return { code: 0, stdout: out };
+    const { stdout } = await execFileP("git", args, { encoding: "utf8", timeout: timeoutMs });
+    return { code: 0, stdout };
   } catch {
     return { code: 1, stdout: "" };
   }
@@ -98,7 +106,7 @@ export async function buildStaleBaseWarning(opts: {
     // 2. Resolve the remote default branch ref; fall back to origin/main on ANY failure/empty
     // (missing remote, detached from any remote-tracking config, not a git repo at all).
     let branch = FALLBACK_BRANCH;
-    const headRef = runGit(["-C", cwd, "rev-parse", "--abbrev-ref", "origin/HEAD"]);
+    const headRef = await runGit(["-C", cwd, "rev-parse", "--abbrev-ref", "origin/HEAD"]);
     if (headRef.code === 0 && headRef.stdout.trim().length > 0) {
       branch = headRef.stdout.trim();
     }
@@ -118,14 +126,14 @@ export async function buildStaleBaseWarning(opts: {
       lastFetchMs = nowMs;
       const fetchTimeoutMs = parseIntEnv(env["PETBOX_STALE_BASE_FETCH_MS"], DEFAULT_FETCH_TIMEOUT_MS);
       try {
-        runGit(["-C", cwd, "fetch", "origin", branchShort, "--quiet"], fetchTimeoutMs);
+        await runGit(["-C", cwd, "fetch", "origin", branchShort, "--quiet"], fetchTimeoutMs);
       } catch {
         // ignore — offline/timeout is a legitimate, silent state
       }
     }
 
     // 4. Count ahead/behind against the (possibly stale, and that's fine) remote ref.
-    const counted = runGit(["-C", cwd, "rev-list", "--left-right", "--count", `HEAD...${branch}`]);
+    const counted = await runGit(["-C", cwd, "rev-list", "--left-right", "--count", `HEAD...${branch}`]);
     if (counted.code !== 0) return "";
     const parts = counted.stdout.trim().split(/\s+/);
     if (parts.length !== 2) return "";
