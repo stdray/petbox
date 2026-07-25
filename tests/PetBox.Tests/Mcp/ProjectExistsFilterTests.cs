@@ -408,7 +408,8 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 
 	// THE COUPLING the review found untested: the exists filter must stay INSIDE McpErrorEnvelopeFilter.
 	// Registered outside it, the throw would surface as the framework's opaque error and stop being the
-	// structured { error: { type, message, detail } } body every other reject uses — agents parse `.error`.
+	// structured { error: { type, message, traceId|detail } } body every other reject uses — agents
+	// parse `.error`.
 	[Fact]
 	public async Task Rejection_IsAStructuredErrorEnvelope()
 	{
@@ -420,7 +421,13 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 		var error = JsonDocument.Parse(Text(result)).RootElement.GetProperty("error");
 		error.GetProperty("type").GetString().Should().Be(nameof(InvalidOperationException));
 		error.GetProperty("message").GetString().Should().Contain("does not exist");
-		error.TryGetProperty("detail", out _).Should().BeTrue();
+		// The traceability invariant (work mcp-error-envelope-leaks-stack-traces): the reject carries
+		// EITHER a trace id to look the logged exception up by OR the exception itself — never neither,
+		// which is what would make a rejected call unattributable. WHICH of the two it is depends on the
+		// host (a self-log makes the trace id resolvable), so this asserts the invariant, not the branch;
+		// McpErrorEnvelopeTraceTests covers both branches deterministically.
+		error.TryGetProperty("traceId", out _).Should().NotBe(error.TryGetProperty("detail", out _),
+			"exactly one carrier must be present: " + Text(result));
 	}
 
 	// F2 (the other half) — deleting a project must not leave a DANGLING default on a surviving key.
