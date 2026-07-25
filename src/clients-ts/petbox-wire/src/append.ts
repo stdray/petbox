@@ -24,6 +24,12 @@
 // missing roles.json never fails the push. Server stores as session MetaJson observation
 // only; local roles.json remains the source of truth.
 //
+// subagentRuns (spec: subagent-run-provenance) rides the same free-form meta JSON, alongside
+// roleBinding: roleBinding is the machine's role→model INTENTION, subagentRuns is the FACT of
+// which subagents actually ran (from transcript.ts's collectSubagentRuns / droid-transcript.ts's
+// collectDroidSubagentRuns). Callers pass it in as `extraMeta`; absent/empty → key omitted
+// entirely, never an empty array on the wire.
+//
 // Plain TS for native node type-stripping: zero deps.
 
 import { resolveObservedBinding } from "./roles.ts";
@@ -45,20 +51,27 @@ export type PushTarget = {
 };
 
 /**
- * Pure helper: JSON for X-PetBox-Session-Meta, or null when no local binding / any error.
- * Shape: { roleBinding: { profile, agent, roles: { role: model } } }
+ * Pure helper: JSON for X-PetBox-Session-Meta, or null when there's nothing to say / any error.
+ * Shape: { roleBinding?: { profile, agent, roles: { role: model } }, ...extraMeta }
+ * `extraMeta` (e.g. { subagentRuns } — see transcript.ts) is merged in as-is; the caller is
+ * responsible for not passing empty/garbage keys (an empty subagentRuns array should never
+ * reach here — see push-session.ts / droid-push-session.ts).
  */
 export function buildSessionMetaHeader(
   agent: string,
   homeDir?: string,
+  extraMeta?: Record<string, unknown>,
 ): string | null {
   try {
     const obs =
       homeDir === undefined
         ? resolveObservedBinding(agent)
         : resolveObservedBinding(agent, homeDir);
-    if (!obs) return null;
-    return JSON.stringify({ roleBinding: obs });
+    const meta: Record<string, unknown> = {};
+    if (obs) meta.roleBinding = obs;
+    if (extraMeta) Object.assign(meta, extraMeta);
+    if (Object.keys(meta).length === 0) return null;
+    return JSON.stringify(meta);
   } catch {
     return null;
   }
@@ -105,6 +118,7 @@ export async function pushTranscript(
   t: PushTarget,
   msgs: readonly Msg[],
   knownLastOrdinal: number | null,
+  extraMeta?: Record<string, unknown>,
 ): Promise<number | null> {
   if (msgs.length === 0) return knownLastOrdinal;
 
@@ -113,8 +127,9 @@ export async function pushTranscript(
   if (knownLastOrdinal !== null && knownLastOrdinal >= msgs.length) return knownLastOrdinal;
 
   const base = `${t.baseUrl}/api/sessions/${t.project}/${encodeURIComponent(t.sessionId)}`;
-  // Stamp observed binding once per push; never let roles.json issues fail the transcript.
-  const metaHeader = buildSessionMetaHeader(t.agent);
+  // Stamp observed binding (+ any extra meta, e.g. subagentRuns) once per push; never let
+  // roles.json issues or extra-meta computation fail the transcript push itself.
+  const metaHeader = buildSessionMetaHeader(t.agent, undefined, extraMeta);
 
   let from =
     knownLastOrdinal !== null && knownLastOrdinal >= 0

@@ -15,7 +15,7 @@
 // exit 0 — never break the user's session.
 
 import { pushTranscript } from "./append.ts";
-import { buildDroidMessages } from "./droid-transcript.ts";
+import { buildDroidMessages, collectDroidSubagentRuns } from "./droid-transcript.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { resolveProject } from "./registry.ts";
 import type { Msg } from "./transcript.ts";
@@ -66,6 +66,17 @@ async function main(): Promise<void> {
     }
     if (msgs.length === 0) return; // empty body → server returns 400, don't push
 
+    // Best-effort: a failure to collect subagent-run provenance must never block the push.
+    // See droid-transcript.ts: role + spawn-time override are recoverable; actual model is NOT
+    // (droid never stamps `message.model` on any turn) — omitted, never guessed.
+    let subagentRuns: Awaited<ReturnType<typeof collectDroidSubagentRuns>> = [];
+    try {
+      subagentRuns = await collectDroidSubagentRuns(tp);
+    } catch {
+      subagentRuns = [];
+    }
+    const extraMeta = subagentRuns.length > 0 ? { subagentRuns } : undefined;
+
     // Fresh process each turn → no remembered cursor (null): pushTranscript guesses an
     // idempotent overlap window and self-heals off the server's structured gap reject.
     await pushTranscript(
@@ -79,6 +90,7 @@ async function main(): Promise<void> {
       },
       msgs,
       null,
+      extraMeta,
     );
   } catch {
     // best-effort: never break the user's session

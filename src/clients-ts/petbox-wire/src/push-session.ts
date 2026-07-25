@@ -15,9 +15,11 @@
 import { pushTranscript } from "./append.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { resolveProject } from "./registry.ts";
-import { buildMessages, type Msg } from "./transcript.ts";
+import { buildMessages, collectSubagentRuns, type Msg } from "./transcript.ts";
 // Observed role binding is stamped inside pushTranscript (X-PetBox-Session-Meta via
 // resolveObservedBinding) — server stores observation only; local roles.json is SoT.
+// subagentRuns (the FACT of who ran on what, vs. roleBinding's INTENTION) is collected here
+// from the same transcript and rides along as extra meta — see transcript.ts.
 
 const FETCH_TIMEOUT_MS = 12000;
 
@@ -65,6 +67,16 @@ async function main(): Promise<void> {
     }
     if (msgs.length === 0) return; // empty body → server returns 400, don't push
 
+    // Best-effort: a failure to collect subagent-run provenance must never block the push.
+    let subagentRuns: Awaited<ReturnType<typeof collectSubagentRuns>> = [];
+    try {
+      subagentRuns = await collectSubagentRuns(tp);
+    } catch {
+      subagentRuns = [];
+    }
+    // No spawns this turn → omit the key entirely (never an empty array on the wire).
+    const extraMeta = subagentRuns.length > 0 ? { subagentRuns } : undefined;
+
     // Fresh process each turn → no remembered cursor (null): pushTranscript guesses an
     // idempotent overlap window and self-heals off the server's structured gap reject.
     await pushTranscript(
@@ -78,6 +90,7 @@ async function main(): Promise<void> {
       },
       msgs,
       null,
+      extraMeta,
     );
   } catch {
     // best-effort: never break the user's session
