@@ -145,7 +145,6 @@ public sealed class MethodologyPresetsTests
 		typed.Statuses.Should().Equal(wf.Statuses);
 		typed.Transitions.Should().Equal(wf.Transitions);
 
-		MethodologyPresets.SimpleTypes.Should().Equal("task", "bug", "feature", "chore", "issue");
 		Runtime.ValidTypes("simple").Should().Be("task|bug|feature|chore|issue");
 	}
 

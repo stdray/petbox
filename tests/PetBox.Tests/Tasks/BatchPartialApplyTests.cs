@@ -105,7 +105,7 @@ public sealed class BatchPartialApplyTests : IDisposable
 		var c = r.Result.Conflicts.Should().ContainSingle().Subject;
 		c.Key.Should().Be("bad");
 		c.Kind.Should().Be(TemporalConflictKind.Rejected);
-		c.Reason.Should().Contain("invalid type 'zzz'");                     // the per-entry reason, verbatim
+		c.Reason.Should().Contain("needs a known type").And.Contain("'zzz'"); // the per-entry reason, verbatim (generic type-required message, stage2/simple-narrow)
 
 		(await KeysOnBoardAsync("b")).Should().Equal("ok", "ok2");           // the rejected node is NOT in the store
 	}
@@ -139,7 +139,7 @@ public sealed class BatchPartialApplyTests : IDisposable
 
 		var byKey = r.Result.Conflicts.ToDictionary(c => c.Key, c => c);
 		byKey.Keys.Should().BeEquivalentTo("bad", "child", "grandchild");
-		byKey["bad"].Reason.Should().Contain("invalid type");                    // the PRIMARY reason
+		byKey["bad"].Reason.Should().Contain("needs a known type");              // the PRIMARY reason (generic, stage2/simple-narrow)
 		byKey["child"].Reason.Should().Contain("depends on 'bad'");              // the CASCADE reason — distinguishable
 		byKey["grandchild"].Reason.Should().Contain("depends on 'child'");       // transitive
 	}

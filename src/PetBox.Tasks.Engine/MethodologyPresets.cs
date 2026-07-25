@@ -353,10 +353,6 @@ public static class MethodologyPresets
 
 	// ---- resolution helpers over the preset data ----
 
-	// Simple's fixed-but-small type vocabulary. Type does NOT branch the workflow (one
-	// lifecycle for all); it's a filter/badge label. Empty type defaults to `task`.
-	public static IReadOnlyList<string> SimpleTypes => SimpleKind.Workflows[0].Types;
-
 	// Board kinds where the bare board quick-add form is valid — preset data now, same
 	// policy as always: only Spec and Work reject it (their nodes need a LINK at birth).
 	public static bool QuickAddAllowed(BoardKind kind) => KindDef(kind).QuickAddAllowed;
@@ -368,16 +364,15 @@ public static class MethodologyPresets
 
 	// The workflow for a (kind, type). Work is STRICT: type selects the workflow and an
 	// unknown/empty type yields null (the "type required" contract). A SINGLE-BLOCK kind
-	// hosts one state machine — type is a label, not a branch, so any/empty type resolves
-	// the one FSM (the historical catalog semantics: an untyped or oddly-typed node on a
-	// spec/ideas/intake/simple board still resolves its kind's workflow; simple's type
-	// VOCABULARY is enforced separately at the write door). Classic is single-block too,
-	// but its type vocabulary is enforced HERE: empty resolves the default type, an
-	// out-of-vocab type yields null naming the valid ones — strict like Work, without a
-	// second write-door case. A MULTI-BLOCK non-Work kind (none among the presets today;
-	// the resolution stays preset-agnostic) is lenient only for the EMPTY type (→ the
-	// first block's default type); a non-empty type must select its block — an unknown
-	// type is ambiguous across blocks, so it yields null like Work does.
+	// hosts one state machine — type is a label, not a branch, so an EMPTY type resolves
+	// the one FSM (the historical catalog semantics: an untyped node on a spec/ideas/intake/
+	// simple board still resolves its kind's workflow). Any kind's type vocabulary is
+	// enforced HERE: an out-of-vocab type always yields null naming the valid ones — strict
+	// like the declared-kind path (MethodologyRuntime.For), no lazy fallback. A MULTI-BLOCK
+	// non-Work kind (none among the presets today; the resolution stays preset-agnostic) is
+	// lenient only for the EMPTY type (→ the first block's default type); a non-empty type
+	// must select its block — an unknown type is ambiguous across blocks, so it yields null
+	// like Work does.
 	public static Workflow? For(BoardKind kind, string? type)
 	{
 		var def = KindDef(kind);
@@ -385,9 +380,7 @@ public static class MethodologyPresets
 			return kind == BoardKind.Work ? null : def.Workflows[0].ToWorkflow(def.Workflows[0].Types[0]);
 		var label = type.ToLowerInvariant();
 		var block = def.Workflows.FirstOrDefault(b => b.Types.Contains(label, StringComparer.OrdinalIgnoreCase));
-		if (block is not null) return block.ToWorkflow(label);
-		return kind is not BoardKind.Work and not BoardKind.Classic && def.Workflows.Count == 1
-			? def.Workflows[0].ToWorkflow(label) : null;
+		return block?.ToWorkflow(label);
 	}
 
 	// All workflows hosted by a kind, one per type slug (status-filter validation).

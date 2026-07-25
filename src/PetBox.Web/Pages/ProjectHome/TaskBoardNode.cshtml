@@ -5,12 +5,10 @@
 	ViewData["Title"] = string.IsNullOrEmpty(node.Title) ? node.Key : node.Title;
 
 	var nodeKindName = Model.Detail.Kind; // the board's resolved KindName (custom kind verbatim)
-	var nodeIsSimple = Model.Runtime.PresetKind(Model.Detail.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
-	// Make the board kind explicit so its statuses read as a deliberate kind, not "broken".
-	var nodeKindBadgeClass = nodeIsSimple ? "badge-info badge-outline" : "badge-neutral";
-	var nodeKindTitle = nodeIsSimple
-		? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
-		: $"{nodeKindName} board — statuses follow the {nodeKindName} workflow";
+	// Make the board kind explicit so its statuses read as a deliberate kind, not "broken" — a
+	// single neutral badge for every kind (all kinds are strict data presets now).
+	var nodeKindBadgeClass = "badge-neutral";
+	var nodeKindTitle = $"{nodeKindName} board — statuses follow the {nodeKindName} workflow";
 	// board-terminal-negative-visible: the same invariant the board views enforce — a node in a
 	// terminal-cancel status reads as dead on its own detail page too, independent of the status
 	// badge's own visibility (StatusBadgeModel.Show, spec-board-status-noise).

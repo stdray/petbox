@@ -38,12 +38,17 @@ public sealed class WorkflowEngineTests
 	[Fact]
 	public void Free_HasPreset_FreeTransitions_RejectsUnknownStatus()
 	{
-		// Free carries a real preset workflow; type is a label, so For() ignores it (same FSM).
+		// Simple carries a real preset workflow; type is a label within its fixed vocabulary — it
+		// does not BRANCH the FSM, so any in-vocab type resolves the same one.
 		var untyped = MethodologyPresets.For(BoardKind.Simple, null);
 		untyped.Should().NotBeNull();
-		var typed = MethodologyPresets.For(BoardKind.Simple, "anything")!;
+		var typed = MethodologyPresets.For(BoardKind.Simple, "chore")!;
 		typed.Statuses.Should().Equal(untyped!.Statuses);
 		typed.Transitions.Should().Equal(untyped.Transitions);
+
+		// Simple is a STRICT data preset (behavior-narrowing, stage2/simple-narrow): an
+		// out-of-vocabulary type resolves to null, same as any other preset kind.
+		MethodologyPresets.For(BoardKind.Simple, "anything").Should().BeNull();
 
 		// Initial + free transitions: any valid status → any valid status (even straight to terminal).
 		Validate(BoardKind.Simple, null, null, "Todo").Ok.Should().BeTrue();

@@ -86,7 +86,7 @@ public sealed class EngineContextStabilityTests : IDisposable
 
 		var byKey = r.Result.Conflicts.ToDictionary(c => c.Key, c => c);
 		byKey.Keys.Should().BeEquivalentTo("bad", "parent");
-		byKey["bad"].Reason.Should().Contain("invalid type 'zzz'");  // the refusal that spent a pass
+		byKey["bad"].Reason.Should().Contain("needs a known type").And.Contain("'zzz'");  // the refusal that spent a pass (generic message, stage2/simple-narrow)
 		byKey["parent"].Kind.Should().Be(TemporalConflictKind.Rejected);
 		byKey["parent"].Reason.Should().Contain("active part_of children"); // the verdict that needs `nodes`
 

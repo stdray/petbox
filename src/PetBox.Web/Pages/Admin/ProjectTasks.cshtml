@@ -45,11 +45,8 @@
 							// preset kinds parse as before (legacy "free" shows as "simple" — M029 migrates it).
 							var boardRuntime = Model.BoardRuntimes.TryGetValue(b.Name, out var br) ? br : PetBox.Tasks.Workflow.MethodologyRuntime.PresetsOnly;
 							var listKind = boardRuntime.KindName(b.Kind);
-							var listIsSimple = boardRuntime.PresetKind(b.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
-							var listKindClass = listIsSimple ? "badge-info badge-outline" : "badge-neutral";
-							var listKindTitle = listIsSimple
-								? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
-								: $"{listKind} board — statuses follow the {listKind} workflow";
+							var listKindClass = "badge-neutral";
+							var listKindTitle = $"{listKind} board — statuses follow the {listKind} workflow";
 						}
 						<span class="badge @listKindClass badge-xs" data-testid="board-kind" title="@listKindTitle">@listKind</span>
 						@if (b.ClosedAt != null)

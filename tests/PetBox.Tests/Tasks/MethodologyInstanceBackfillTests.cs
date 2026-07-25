@@ -209,52 +209,38 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		(await _tasks.ListMethodologyInstancesAsync(Proj)).Should().ContainSingle(i => i.Name == "quartet");
 	}
 
-	// FORK pin (stage2/dup-arrays axis-2, item B — TasksService.ApplyWorkflow's
-	// `runtime.PresetKind(kindSlug) == BoardKind.Simple` door gate): the gate only fires while
-	// the board's runtime is PresetsOnly (never backfilled, or backfilled into an instance
-	// whose kinds don't declare "simple" verbatim). A LONE simple board — no process-role or
-	// classic siblings — backfills into an instance whose rules MATERIALIZE "simple" as a
-	// DECLARED kind (MethodologyPresets.RenderBuiltinTemplate("simple")), so
-	// `runtime.IsDefinedKind("simple")` flips true and `PresetKind(...)` reads null forever
-	// after (never == BoardKind.Simple again) — the same shape as the documented spec/
-	// PresetKind production regression IsSpecKind fixed. An invalid type is REJECTED on both
-	// sides either way (Merge already lowercases Type before ApplyWorkflow runs, so this is
-	// NOT a case-sensitivity gap) — but via two DIFFERENT code paths with two DIFFERENT
-	// ArgumentException messages: the explicit door gate's "invalid type 'x' for a simple
-	// board; valid: ..." vs. runtime.For() returning null and WorkflowEngine.Validate's generic
-	// "board kind 'simple' needs a known type (...); got 'x'". Replacing the enum comparison
-	// with an IsSpecKind-style `IsSimpleKind` data predicate (KindName == "simple" for declared
-	// AND preset kinds alike) would make the door gate ALSO fire in the materialized case,
-	// collapsing this message onto the door gate's wording — an observable (if minor) contract
-	// change, not a pure refactor. No MethodologyKindDef field distinguishes "needs the
-	// explicit door-side default+vocabulary check" from any other preset kind, and minting one
-	// is against the closed-spec instruction, so item B is left AS-IS; these two tests pin
-	// today's divergent message on both sides of the fork.
+	// FORMER fork pin (stage2/dup-arrays axis-2, item B), now CLOSED by stage2/simple-narrow:
+	// TasksService.ApplyWorkflow's explicit `runtime.PresetKind(kindSlug) == BoardKind.Simple`
+	// door gate (the "invalid type 'x' for a simple board" wording) is DELETED — simple is a
+	// strict data preset now, exactly like every other kind, with zero special-cased type
+	// vocabulary handling in TasksService. An invalid type is REJECTED on BOTH sides of the
+	// backfill fork (PresetsOnly and post-backfill-materialized), through the SAME single code
+	// path: runtime.For() returns null (no matching block) and WorkflowEngine.Validate's
+	// generic "board kind '...' needs a known type (...); got '...'" fires. These two tests
+	// pin that the message is now IDENTICAL on both sides of the fork, closing the divergence
+	// the old comment (and the two tests it introduced) used to pin.
 	[Fact]
-	public async Task Simple_PresetsOnly_InvalidType_RejectedByTheExplicitDoorGate()
+	public async Task Simple_PresetsOnly_InvalidType_RejectedByWorkflowEngine()
 	{
-		// Never backfilled: the board stays on the PresetsOnly runtime, so
-		// `PresetKind(kindSlug) == BoardKind.Simple` is true and TasksService.ApplyWorkflow's
-		// explicit door gate runs BEFORE runtime.For() ever resolves a workflow.
+		// Never backfilled: the board stays on the PresetsOnly runtime.
 		await SeedBoard(Proj, "scratch", "simple");
 		var act = () => _tasks.UpsertAsync(Proj, "scratch", new[]
 		{
 			new NodePatch { Key = "n1", Title = "N1", Body = "b", Type = "zzz" },
 		});
 		var ex = await act.Should().ThrowAsync<ArgumentException>();
-		ex.Which.Message.Should().Contain("invalid type 'zzz' for a simple board");
+		ex.Which.Message.Should().Contain("needs a known type");
 	}
 
 	[Fact]
-	public async Task Simple_AfterBackfillMaterializesTheKind_InvalidType_RejectedByWorkflowEngineInstead()
+	public async Task Simple_AfterBackfillMaterializesTheKind_InvalidType_RejectedByWorkflowEngine_SameMessage()
 	{
 		// ProjB's "bag" is the ONLY board in its project — no process-role/classic siblings —
 		// so backfill's ResolvePrimaryRules picks the "simple" builtin template, whose rendered
 		// definition DECLARES "simple" as a kind. From then on `IsDefinedKind("simple")` is
-		// true, `PresetKind("simple")` reads null, and the door gate at TasksService.cs never
-		// fires again for this board — the STILL-invalid type is instead caught by
-		// runtime.For() returning null (no matching block) and WorkflowEngine.Validate's
-		// generic "needs a known type" refusal. Same outcome (rejected), different message.
+		// true and `PresetKind("simple")` reads null — but ApplyWorkflow no longer branches on
+		// that at all, so the STILL-invalid type is caught the same way as the PresetsOnly case:
+		// runtime.For() returning null and WorkflowEngine.Validate's generic refusal.
 		await SeedBoard(ProjB, "bag", "simple");
 		Backfill().Migrate().Should().Be(1);
 		(await _boards.FindAsync(ProjB, "bag"))!.MethodologyInstance.Should().Be("simple");
@@ -265,17 +251,15 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		});
 		var ex = await act.Should().ThrowAsync<ArgumentException>();
 		ex.Which.Message.Should().Contain("needs a known type");
-		ex.Which.Message.Should().NotContain("for a simple board"); // NOT the door gate's wording
 	}
 
-	// FORK pin, item C (TaskBoard.cshtml / TaskBoardNode.cshtml / ProjectTasks.cshtml's
-	// `Runtime.PresetKind(kindSlug) == BoardKind.Simple` badge-styling computation) — same root
-	// cause as item B just above, reached through the board-scoped runtime door
-	// (ITasksService.GetRuntimeForBoardAsync, what TaskBoard.cshtml.cs/TaskBoardNode.cshtml.cs
-	// actually call) instead of UpsertAsync's write path. Left AS-IS for the identical reason:
-	// no MethodologyKindDef field distinguishes "genuinely Simple" once the kind is declared,
-	// and swapping in an IsSpecKind-style IsSimpleKind predicate would flip the computed badge
-	// class/tooltip for every backfilled lone-simple-board project — an observable UI change.
+	// FORMER fork pin, item C, now CLOSED by stage2/simple-narrow: TaskBoard.cshtml /
+	// TaskBoardNode.cshtml / ProjectTasks.cshtml's `PresetKind(kindSlug) == BoardKind.Simple`
+	// badge-styling branch is DELETED — every kind renders the same neutral "{kind} board —
+	// statuses follow the {kind} workflow" badge now, so PresetKind flipping null/non-null
+	// across the backfill fork no longer changes what the UI shows. This test still pins the
+	// PresetKind(...) API's own null-once-materialized behavior (GetRuntimeForBoardAsync,
+	// used by other, non-badge call sites) — that data-layer behavior is unchanged.
 	//
 	// Also flagging a discrepancy for the maintainer: PresetKindProcessRoleGuardTests.cs's class
 	// doc states BoardKind.Simple comparisons are deliberately left unguarded because Simple

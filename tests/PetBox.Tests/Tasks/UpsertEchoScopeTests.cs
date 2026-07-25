@@ -45,7 +45,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	}
 
 	static NodePatch Node(string key, string? title = null, string? status = null,
-		string? blockedBy = null, string? supersedes = null, long version = 0) => new()
+		string? blockedBy = null, string? supersedes = null, long version = 0, string? type = null) => new()
 		{
 			Key = key,
 			Title = title ?? key.ToUpperInvariant(),
@@ -54,6 +54,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 			BlockedBy = blockedBy,
 			Supersedes = supersedes,
 			Version = version,
+			Type = type,
 		};
 
 	// Seed a board with `count` foreign nodes (another writer's history).
@@ -131,9 +132,39 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	[Fact]
 	public async Task DeleteCascade_SubtreeRemoval_AndUnblock_VisibleInDefaultEcho()
 	{
-		await SeedForeignAsync("b", 3);
+		// `work` is used here (not the default `simple`-kind board "b" the other tests in this
+		// file use) because auto-unblock-on-delete now only fires for a kind that declares a
+		// BlocksGate (stage2/simple-narrow, change 4: RunDeleteEffectsAsync reads
+		// MethodologyRuntime.BlocksGate(targetKindSlug), no local "Blocked"/"InProgress"
+		// literal) — `work` declares one, `simple` does not, so `work` is what still exercises
+		// the unblock cascade this test is verifying stays visible in the scoped echo.
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "wboard",
+			Enumerable.Range(0, 3).Select(i => Node($"foreign-{i}", type: "chore")).ToArray());
 
 		// A blocker chain: deleting the blocker unblocks the stuck node (Blocked → InProgress).
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("blocker", type: "chore") });
+		var blockerId = (await _tasks.GetAsync(Proj, "wboard")).Nodes.Single(n => n.Key == "blocker").NodeId;
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("stuck", blockedBy: blockerId, status: "Blocked", type: "chore") });
+
+		var r = await _tasks.UpsertAsync(Proj, "wboard", new[] { new NodePatch { Key = "blocker", Deleted = true } });
+
+		r.Result.Applied.Should().BeTrue();
+		r.Result.Removed.Should().Equal("blocker"); // the deleted key, no foreign removals
+		var unblocked = r.Result.Updated.Should().ContainSingle().Subject; // the unblock cascade
+		unblocked.Key.Should().Be("stuck");
+		unblocked.Status.Should().Be("InProgress");
+	}
+
+	// The `simple`-kind counterpart of the test above: `simple` declares no BlocksGate, so a
+	// deleted blocker still closes the `blocks` edge (dangling-structure cleanup is
+	// unconditional) but does NOT move the target's status — no update lands, so the echo's
+	// Updated[] is empty (stage2/simple-narrow, change 4).
+	[Fact]
+	public async Task DeleteCascade_SubtreeRemoval_NoUnblock_OnSimpleKind_VisibleInDefaultEcho()
+	{
+		await SeedForeignAsync("b", 3);
+
 		await _tasks.UpsertAsync(Proj, "b", new[] { Node("blocker") });
 		var blockerId = (await _tasks.GetAsync(Proj, "b")).Nodes.Single(n => n.Key == "blocker").NodeId;
 		await _tasks.UpsertAsync(Proj, "b", new[] { Node("stuck", blockedBy: blockerId, status: "Blocked") });
@@ -142,8 +173,6 @@ public sealed class UpsertEchoScopeTests : IDisposable
 
 		r.Result.Applied.Should().BeTrue();
 		r.Result.Removed.Should().Equal("blocker"); // the deleted key, no foreign removals
-		var unblocked = r.Result.Updated.Should().ContainSingle().Subject; // the unblock cascade
-		unblocked.Key.Should().Be("stuck");
-		unblocked.Status.Should().Be("InProgress");
+		r.Result.Updated.Should().BeEmpty(); // no BlocksGate on `simple` -> no unblock cascade to echo
 	}
 }
