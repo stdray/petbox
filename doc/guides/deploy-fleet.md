@@ -81,7 +81,7 @@ deploy_upsert(service="bot", projectKey="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/bot:sha-abc123", running=true,
               requiredTags="net.x", configTags="env:prod")
 ```
-- `projectKey` — the PetBox project whose **config** applies; the agent's container env is resolved **server-side** from `(project, configTags)` via the same `/v1/conf` resolver, so the node key needs no `config:read`.
+- `projectKey` — the PetBox project whose **config** applies; the agent's container env is resolved **server-side** from `(project, configTags)` via the same `/v1/conf` resolver, so the node key needs no `config:read`. Unlike `projectKey` in config_binding/memory/tasks, this is **not an access boundary** — it only selects config, and the other `deploy_*` tools (`deploy_list`, `deploy_start`, `deploy_stop`, `deploy_move`, `deploy_delete`, `deploy_node_*`) don't take a `projectKey` at all: any `deploy:read`/`deploy:write` key sees and can act on the whole fleet, across every project.
 - `requiredTags` — the node's tags must cover these (also used when failover picks a new home).
 - `relocatable=true` — let failover move it to another matching node if this one goes silent.
 
