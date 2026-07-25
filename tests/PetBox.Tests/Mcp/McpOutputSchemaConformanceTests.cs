@@ -433,6 +433,29 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			.Should().Contain("definition must be a JSON object");
 	}
 
+	// workspace-curation-assertproject-bug (bonus finding). The card suspected store_delete /
+	// store_list / store_get were not wrapped in the old per-tool GuardAsync, so an auth reject
+	// "surfaced as an opaque exception". GuardAsync is gone entirely — McpErrorEnvelopeFilter
+	// now wraps EVERY tool call centrally — and it only ever shaped the ERROR, never gated
+	// access: the access check is the tool body's own Assert*. This pins both halves at once on
+	// the tool the card named: the reject HAPPENS (this fixture's key is project "conf" in
+	// workspace "test", foreign to the $system-owned "$workspace" container) and it arrives as a
+	// structural {error} envelope on the isError channel, not a framework "An error occurred
+	// invoking 'X'".
+	[Fact]
+	public async Task MemoryStoreDelete_ForeignWorkspaceContainer_IsStructuralAuthzError()
+	{
+		var res = await Call("memory_store_delete", new { projectKey = "$workspace", store = "canon" });
+
+		res.IsError.Should().BeTrue("a foreign-workspace key must not curate another workspace's shared container");
+		res.StructuredContent.Should().BeNull("an error must not pretend to conform to the success outputSchema");
+
+		var err = JsonDocument.Parse(Text(res)).RootElement.GetProperty("error");
+		err.GetProperty("type").GetString().Should().Be(nameof(UnauthorizedAccessException),
+			"the access check runs inside the tool body; the filter only shapes what it threw");
+		err.GetProperty("message").GetString().Should().Contain("workspace");
+	}
+
 	// Names exercised for success (seed writes + reads) — the coverage-gate source of truth.
 	static readonly string[] SuccessTools =
 	{

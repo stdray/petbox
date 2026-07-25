@@ -479,6 +479,78 @@ public sealed class MemoryVerbsTests : IDisposable
 		_db.Projects.Any(p => p.Key == "$ws-other-ws" && p.WorkspaceKey == "other-ws").Should().BeTrue();
 	}
 
+	// workspace-curation-assertproject-bug: the card's headline tools. memory_upsert/get were
+	// locked down by workspace-memory-authz-fix, but the STORE-lifecycle trio (store_create /
+	// store_list / store_delete) had no $workspace coverage at all — the very tools whose
+	// AssertProject reject forced curation through a temporary "*" key. They share
+	// AssertMemoryProjectAsync with upsert/get, so the access model is identical to
+	// remember/recall; these tests pin that it stays so.
+	[Fact]
+	public async Task StoreCreate_Then_StoreDelete_WorkspaceContainer_ByProjectScopedKey_Succeeds()
+	{
+		var http = Http("memory:read,memory:write");
+
+		var created = await MemoryTools.StoreCreateAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			MemoryTools.WorkspaceContainer, "curated");
+		created.ProjectKey.Should().Be(MemoryTools.WorkspaceContainer);
+		created.Name.Should().Be("curated");
+
+		var deleted = await MemoryTools.StoreDeleteAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			MemoryTools.WorkspaceContainer, "curated");
+		deleted.Deleted.Should().BeTrue("an ordinary project key of the container's workspace must be able to curate it");
+	}
+
+	// store_list addressed at the container directly (not via the cascade) — the read half of
+	// the same trio.
+	[Fact]
+	public async Task StoreList_WorkspaceContainer_ByProjectScopedKey_SeesItsStores()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.StoreCreateAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			MemoryTools.WorkspaceContainer, "curated");
+
+		var listed = await MemoryTools.StoreListAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			MemoryTools.WorkspaceContainer);
+		listed.Stores.Select(s => s.Name).Should().Contain("curated");
+	}
+
+	// The foreign-workspace boundary holds on the store trio exactly as it does on upsert:
+	// aligning curation with remember/recall must not widen WHO may reach a container.
+	[Fact]
+	public async Task StoreDelete_WorkspaceContainer_ByForeignWorkspaceKey_IsRejected()
+	{
+		await MemoryTools.StoreCreateAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(),
+			_memory, MemoryTools.WorkspaceContainer, "curated");
+
+		var foreign = Http("memory:read,memory:write", OtherProj);
+		var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			MemoryTools.StoreDeleteAsync(foreign, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+				MemoryTools.WorkspaceContainer, "curated"));
+		ex.Message.Should().Contain("workspace");
+	}
+
+	[Fact]
+	public async Task StoreCreate_WorkspaceContainer_ByForeignWorkspaceKey_IsRejected()
+	{
+		var foreign = Http("memory:read,memory:write", OtherProj);
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			MemoryTools.StoreCreateAsync(foreign, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+				MemoryTools.WorkspaceContainer, "intruder"));
+	}
+
+	// The scope gate is not consumed by the workspace pass: reaching the container still
+	// requires memory:write to write to it.
+	[Fact]
+	public async Task StoreDelete_WorkspaceContainer_WithoutWriteScope_IsRejected()
+	{
+		await MemoryTools.StoreCreateAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(),
+			_memory, MemoryTools.WorkspaceContainer, "curated");
+
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			MemoryTools.StoreDeleteAsync(Http("memory:read"), Flags(), _db.Factory().WorkspaceMemory(), _memory,
+				MemoryTools.WorkspaceContainer, "curated"));
+	}
+
 	IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
