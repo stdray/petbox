@@ -28,7 +28,19 @@ namespace PetBox.Web.Mcp;
 // Naming the actual container in the answer is the contract memory already keeps (memory_search
 // labels every row with its scope; memory_remember returns the container it wrote into) — this is
 // that model applied here, not a new nomenclature.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT, all five verbs.
+//
+// It declares WHERE THE TENANT COMES FROM, and nothing more — deliberately, because on llm_config_*
+// the projectKey does NOT bound what the write reaches. The registry is LEVELLED and the level is
+// derived from the project's WORKSPACE, which is why the descriptions above stopped promising a
+// per-project level ("no projectKey isolates this write"). The tenant check answers "may this caller
+// act as THIS project?"; which level that project resolves to is the router's own question and stays
+// exactly where it is. Declaring a tenant is not a claim that the blast radius equals it.
+//
+// Coverage was already complete (five AssertProject calls, same ProjectScope), so no allow/deny
+// outcome moves; the five calls come out here.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class LlmRouterTools
 {
 	// Web defaults: camelCase PROPERTY names, case-insensitive property matching. Enum VALUES are a
@@ -67,7 +79,6 @@ public static class LlmRouterTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 		var declared = await registry.GetDeclaredAsync(projectKey, ct);
 		return new LlmConfigGetResult(
@@ -121,7 +132,6 @@ public static class LlmRouterTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 
 		var input = Deserialize<ConfigSetInput>(config)
@@ -151,7 +161,6 @@ public static class LlmRouterTools
 		string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var texts = Deserialize<List<string>>(inputs) ?? throw new ArgumentException("inputs must be a JSON array of strings");
@@ -171,7 +180,6 @@ public static class LlmRouterTools
 		int? topN = null, string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var docs = Deserialize<List<string>>(documents) ?? throw new ArgumentException("documents must be a JSON array of strings");
@@ -193,7 +201,6 @@ public static class LlmRouterTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var msgs = Deserialize<List<ChatMessage>>(messages);
