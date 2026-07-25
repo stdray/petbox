@@ -32,9 +32,9 @@ public sealed class GuardEngineResolveTests
 	// ---- task_spec (work→spec) via links door ----
 
 	[Fact]
-	public void TaskSpec_Slug_ResolvesOnTheInstanceSpecBoard()
+	public void TaskSpec_Slug_ResolvesOnTheInstanceWiredBoard()
 	{
-		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth-tokens", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("spec1", WiredBoardName, "spec", "auth-tokens", "defined", "spec")]);
 		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "auth-tokens"));
 		d.Verdicts.Should().BeEmpty();
 		var link = d.Links.Single(l => l.Kind == "task_spec");
@@ -46,7 +46,7 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void TaskSpec_Slug_IsCaseInsensitiveAndTrimmed()
 	{
-		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth-tokens", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("spec1", WiredBoardName, "spec", "auth-tokens", "defined", "spec")]);
 		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "  AUTH-Tokens  "));
 		d.Verdicts.Should().BeEmpty();
 		d.Links.Single(l => l.Kind == "task_spec").TargetNodeId.Should().Be(Id("spec1"));
@@ -59,14 +59,14 @@ public sealed class GuardEngineResolveTests
 		// the id exists is ValidateLinkTargets' question, so a bare NodeId on a chore (no constraint)
 		// resolves clean.
 		var id = Id("deadbeef");
-		var ctx = Ctx(index: [Node("deadbeef", SpecBoardName, "spec", "x", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("deadbeef", WiredBoardName, "spec", "x", "defined", "spec")]);
 		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", $" {id} "));
 		d.Verdicts.Should().BeEmpty();
 		d.Links.Single(l => l.Kind == "task_spec").TargetNodeId.Should().Be(id);
 	}
 
 	[Fact]
-	public void TaskSpec_Slug_NoMatchOnSpecBoard_IsRefused()
+	public void TaskSpec_Slug_NoMatchOnWiredBoard_IsRefused()
 	{
 		var ctx = Ctx(index: [Node("w1", WorkBoardName, "work", "auth-tokens", "Pending", "feature")]);
 		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", "auth-tokens"));
@@ -78,7 +78,7 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void TaskSpec_ErrorNamesTheRawValue_NotTheTrimmedOne()
 	{
-		var ctx = Ctx(index: [Node("spec1", SpecBoardName, "spec", "auth", "defined", "spec")]);
+		var ctx = Ctx(index: [Node("spec1", WiredBoardName, "spec", "auth", "defined", "spec")]);
 		var d = Decide(ctx, [State("t1", "Pending", "chore", nodeId: Id("t1"))], links: Link("t1", "task_spec", " Nope "));
 		d.Verdicts.Single().Message.Should().StartWith("links.task_spec ' Nope ' (node 't1')");
 	}
@@ -137,7 +137,7 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void IdeaSpec_Slug_ResolvesOnTheInstancesIdeaBoard()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "faster-search", "accepted", "idea")]);
 		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
 		d.Verdicts.Should().BeEmpty();
@@ -151,7 +151,7 @@ public sealed class GuardEngineResolveTests
 	{
 		// Resolution is status-blind on purpose: a `raw` idea RESOLVES, and ValidateLinkTargets is
 		// what then refuses it for not being `accepted`. Two rules, two messages.
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index: [Node("i1", IdeasBoardName, "ideas", "half-baked", "raw", "idea")]);
 		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "half-baked"));
 		// The target-status rule speaks (raw ≠ accepted), but the RESOLUTION found the node.
@@ -161,10 +161,10 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void IdeaSpec_NoIdeaBoardInTheInstance_IsRefused()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			boards:
 			[
-				new EngineBoard(SpecBoardName, "spec", Instance, Closed: false),
+				new EngineBoard(WiredBoardName, "spec", Instance, Closed: false),
 				new EngineBoard(IdeasBoardName, "ideas", "other-instance", Closed: false),
 			]);
 		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
@@ -175,8 +175,8 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void IdeaSpec_NoInstance_OmitsTheInstanceSuffix()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName, instance: "",
-			boards: [new EngineBoard(SpecBoardName, "spec", "", Closed: false)]);
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName, instance: "",
+			boards: [new EngineBoard(WiredBoardName, "spec", "", Closed: false)]);
 		var d = Decide(ctx, [State("s1", "defined", "spec", nodeId: Id("s1"))], links: Link("s1", "idea_spec", "faster-search"));
 		d.Verdicts.Single().Message.Should().Be(
 			"links.idea_spec 'faster-search' (node 's1') is a slug, but no active ideas board exists alongside board 'spec' — create one or provide the target node's NodeId");
@@ -185,10 +185,10 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void IdeaSpec_NoMatch_AcrossSeveralIdeaBoards_PluralizesAndListsThem()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			boards:
 			[
-				new EngineBoard(SpecBoardName, "spec", Instance, Closed: false),
+				new EngineBoard(WiredBoardName, "spec", Instance, Closed: false),
 				new EngineBoard("ideas-b", "ideas", Instance, Closed: false),
 				new EngineBoard("ideas-a", "ideas", Instance, Closed: false),
 			]);
@@ -199,7 +199,7 @@ public sealed class GuardEngineResolveTests
 	[Fact]
 	public void IdeaSpec_SameSlugOnTwoIdeaBoards_IsAmbiguous()
 	{
-		var ctx = Ctx(kindSlug: "spec", board: SpecBoardName,
+		var ctx = Ctx(kindSlug: "spec", board: WiredBoardName,
 			index:
 			[
 				Node("i1", "ideas-b", "ideas", "faster-search", "accepted", "idea"),
@@ -207,7 +207,7 @@ public sealed class GuardEngineResolveTests
 			],
 			boards:
 			[
-				new EngineBoard(SpecBoardName, "spec", Instance, Closed: false),
+				new EngineBoard(WiredBoardName, "spec", Instance, Closed: false),
 				new EngineBoard("ideas-b", "ideas", Instance, Closed: false),
 				new EngineBoard("ideas-a", "ideas", Instance, Closed: false),
 			]);
@@ -232,7 +232,7 @@ public sealed class GuardEngineResolveTests
 			LinkKinds = [new MethodologyLinkKindDef("doc_rfc", "doc realizes an rfc", LinkCategory.Process,
 				new MethodologyLinkDirectionDef("doc", "rfc", "realizes"))],
 		};
-		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs", specBoard: null,
+		var ctx = Ctx(runtime: MethodologyRuntime.From(def), kindSlug: "doc", board: "docs", wiredBoard: null,
 			index: [Node("r1", "rfcs", "rfc", "streaming", "open", "rfc")],
 			boards:
 			[

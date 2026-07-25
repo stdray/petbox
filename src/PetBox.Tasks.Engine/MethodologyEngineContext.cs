@@ -22,7 +22,7 @@ public sealed record MethodologyEngineContext(
 	// silently changes shape if a lookup ever normalizes case.
 	string Board,
 	string BoardName,
-	string? SpecBoard,
+	string? WiredBoard,
 	string MethodologyInstance,
 	// nodeId -> the node it addresses, across EVERY board of the project (links bind to NodeId,
 	// which is globally unique). Empty when this batch carries no specRef/ideaRef at all — the

@@ -443,11 +443,11 @@ public sealed record SessionDeltaResult(
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
-public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt, string? MethodologyInstance = null);
+public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, string? MethodologyInstance = null);
 
-public sealed record BoardSetSpecResult(bool Set, string? SpecBoard);
+public sealed record BoardSetWireResult(bool Set, string? WiredBoard);
 
-public sealed record BoardRow(string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt, bool Closed, string? MethodologyInstance = null);
+public sealed record BoardRow(string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, bool Closed, string? MethodologyInstance = null);
 
 public sealed record BoardListResult(IReadOnlyList<BoardRow> Boards);
 
@@ -500,7 +500,7 @@ public sealed record TaskSearchNodeView(
 	string? MatchedIn = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
-//   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/
+//   listing/query  → `Nodes` (final order), plus board context (Board/Kind/WiredBoard/
 //                    CurrentVersion) when the read was board-scoped;
 //   query          → `Retrievers` provenance (null in listing mode);
 //   listing/query  → `EffectiveStatusKind`, the statusKind facet that ACTUALLY applied — echoed
@@ -516,7 +516,7 @@ public sealed record TaskSearchResultView(
 	IReadOnlyList<TaskSearchNodeView> Nodes,
 	string? Board = null,
 	string? Kind = null,
-	string? SpecBoard = null,
+	string? WiredBoard = null,
 	long? CurrentVersion = null,
 	IReadOnlyList<string>? GroupBy = null,
 	IReadOnlyList<TagGroup>? Groups = null,
@@ -603,7 +603,7 @@ public sealed record MethodologyTemplateListItemView(
 
 // ---- methodology instances (methodology-instance-core) --------------------------------
 
-public sealed record MethodologyInstanceBoardView(string Name, string Kind, bool Closed, string? SpecBoard = null);
+public sealed record MethodologyInstanceBoardView(string Name, string Kind, bool Closed, string? WiredBoard = null);
 
 public sealed record MethodologyInstanceViewResult(
 	string Name,
@@ -694,14 +694,14 @@ public sealed record MethodologyDescribeResult(string Name, string Primitive, lo
 // STANDARD rules_upsert/template_upsert read-edit-write cycle, so a domain field this view
 // omits is invisible to a caller building the next upsert from this output, and gets wiped
 // on the very next honest edit (work/mcp-rules-get-is-lossy-so-the-round-trip-still-
-// destroys — AutoWireSpecFrom/Delivery/DefaultView/OutlineReveal were missing here even
+// destroys — AutoWireFrom/Delivery/DefaultView/OutlineReveal were missing here even
 // after the INPUT side already carried them). Add a domain field → add it here too, or the
 // {Def, View} half of MethodologyKindContractParityTests goes red.
 public sealed record MethodologyKindView(
 	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows,
 	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null,
 	IReadOnlyList<MethodologyEffectView>? Effects = null,
-	string? AutoWireSpecFrom = null,
+	string? AutoWireFrom = null,
 	MethodologyDeliveryView? Delivery = null,
 	string? DefaultView = null,
 	string? OutlineReveal = null,

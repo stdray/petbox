@@ -266,15 +266,15 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 			ctx.AddFailure($"kind '{kind.Kind}': outlineReveal '{kind.OutlineReveal}' is not a known reveal mode ({string.Join("|", OutlineRevealModeNames.All)})");
 	}
 
-	// AutoWireSpecFrom is a kind slug naming the board to wire SpecBoard to. Format-checked
+	// AutoWireFrom is a kind slug naming the board to wire WiredBoard to. Format-checked
 	// only (the target may be a preset kind outside this definition); cannot equal self.
 	static void ValidateAutoWire(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
 	{
-		if (kind.AutoWireSpecFrom is null) return;
-		if (!IsSlug(kind.AutoWireSpecFrom))
-			ctx.AddFailure($"kind '{kind.Kind}': autoWireSpecFrom '{kind.AutoWireSpecFrom}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
-		else if (string.Equals(kind.AutoWireSpecFrom, kind.Kind, StringComparison.OrdinalIgnoreCase))
-			ctx.AddFailure($"kind '{kind.Kind}': autoWireSpecFrom cannot name the same kind");
+		if (kind.AutoWireFrom is null) return;
+		if (!IsSlug(kind.AutoWireFrom))
+			ctx.AddFailure($"kind '{kind.Kind}': autoWireFrom '{kind.AutoWireFrom}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+		else if (string.Equals(kind.AutoWireFrom, kind.Kind, StringComparison.OrdinalIgnoreCase))
+			ctx.AddFailure($"kind '{kind.Kind}': autoWireFrom cannot name the same kind");
 	}
 
 	// Delivery type roles: RequiredTypes non-empty (otherwise the roll-up is always

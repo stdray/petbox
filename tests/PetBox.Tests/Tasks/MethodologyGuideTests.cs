@@ -165,7 +165,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		// primitives-enum-residual: auto-wire + delivery type roles are DATA-born.
 		inv.Should().Contain(("work", "auto_wire", "spec"));
 		inv.Should().Contain(("spec", "delivery", "required:feature; defects:bug"));
-		md.Should().Contain("auto-wires SpecBoard of the `work` board to the `spec` board");
+		md.Should().Contain("auto-wires WiredBoard of the `work` board to the `spec` board");
 		md.Should().Contain("required types (feature)");
 		md.Should().Contain("defect types (bug)");
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");

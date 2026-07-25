@@ -93,7 +93,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
 		// World: a real instance name, the reserved UtilityWorld sentinel (spec methodology-
 		// utility-kinds — always legal, first-class regardless of how many instances exist),
@@ -153,8 +153,8 @@ public sealed partial class TasksService : ITasksService
 				" tasks_methodology_create/tasks_methodology_rules_upsert for a process kind, or on" +
 				" the project's utility layer via tasks_methodology_utility_upsert for a project-homed one)");
 		}
-		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, instanceName, ct);
+		await ValidateWiredBoardAsync(projectKey, canonical, wiredBoard, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceName, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
@@ -286,9 +286,9 @@ public sealed partial class TasksService : ITasksService
 		return await RuntimeForBoardAsync(projectKey, meta, ct);
 	}
 
-	// Data-driven SpecBoard auto-wire (primitives-enum-residual): for every kind that
-	// declares AutoWireSpecFrom, when exactly one active board of that kind and one of the
-	// target kind exist WITHIN THE SAME INSTANCE membership bucket and SpecBoard is empty,
+	// Data-driven WiredBoard auto-wire (primitives-enum-residual): for every kind that
+	// declares AutoWireFrom, when exactly one active board of that kind and one of the
+	// target kind exist WITHIN THE SAME INSTANCE membership bucket and WiredBoard is empty,
 	// wire them. The quartet work→spec rule is preset DATA on the work KindDef.
 	async Task AutoWireSpecAsync(string projectKey, CancellationToken ct)
 	{
@@ -307,22 +307,22 @@ public sealed partial class TasksService : ITasksService
 			var active = group.ToList();
 			foreach (var kind in runtime.EffectiveKinds())
 			{
-				if (kind.AutoWireSpecFrom is not { Length: > 0 } fromKind) continue;
+				if (kind.AutoWireFrom is not { Length: > 0 } fromKind) continue;
 				var self = active.Where(b => string.Equals(b.Kind, kind.Kind, StringComparison.OrdinalIgnoreCase)).ToList();
 				var target = active.Where(b => string.Equals(b.Kind, fromKind, StringComparison.OrdinalIgnoreCase)).ToList();
-				if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].SpecBoard))
-					await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { SpecBoard = target[0].Name }, ct);
+				if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].WiredBoard))
+					await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { WiredBoard = target[0].Name }, ct);
 			}
 		}
 	}
 
-	public async Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default)
+	public async Task<(bool Set, string? WiredBoard)> SetWiredBoardAsync(string projectKey, string board, string? wiredBoard, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		await ValidateSpecBoardAsync(projectKey, meta.Kind, specBoard, ct);
-		var norm = string.IsNullOrWhiteSpace(specBoard) ? null : specBoard;
-		var set = await _boards.UpdateAsync(projectKey, board, m => m with { SpecBoard = norm }, ct);
+		await ValidateWiredBoardAsync(projectKey, meta.Kind, wiredBoard, ct);
+		var norm = string.IsNullOrWhiteSpace(wiredBoard) ? null : wiredBoard;
+		var set = await _boards.UpdateAsync(projectKey, board, m => m with { WiredBoard = norm }, ct);
 		return (set, norm);
 	}
 
@@ -702,22 +702,22 @@ public sealed partial class TasksService : ITasksService
 		return new MethodologyGuideView(md, [], "ambiguous", null);
 	}
 
-	// A specBoard link only makes sense on a work board (a kind that auto-wires to a spec) and must
+	// A wiredBoard link only makes sense on a work board (a kind that auto-wires to a spec) and must
 	// point at an existing spec board. Both checks are DATA now, not the BoardKind enum: the source
-	// is a work board iff its kind declares AutoWireSpecFrom, and the target is a spec board iff
+	// is a work board iff its kind declares AutoWireFrom, and the target is a spec board iff
 	// IsSpecKind — the latter fixes the presetkind-spec-blind-spot for a definition-resolved spec
 	// kind (ParseKind == BoardKind.Spec reads wrong for a custom-named spec kind).
-	async Task ValidateSpecBoardAsync(string projectKey, string kind, string? specBoard, CancellationToken ct)
+	async Task ValidateWiredBoardAsync(string projectKey, string kind, string? wiredBoard, CancellationToken ct)
 	{
-		if (string.IsNullOrWhiteSpace(specBoard)) return;
+		if (string.IsNullOrWhiteSpace(wiredBoard)) return;
 		var runtime = await RuntimeAsync(projectKey, ct);
-		if (runtime.AutoWireSpecFrom(kind) is null)
-			throw new ArgumentException($"specBoard applies only to a work board (this board's kind is '{kind}')");
-		var target = await _boards.FindAsync(projectKey, specBoard, ct)
-			?? throw new ArgumentException($"spec board '{specBoard}' not found in project '{projectKey}'");
+		if (runtime.AutoWireFrom(kind) is null)
+			throw new ArgumentException($"wiredBoard applies only to a work board (this board's kind is '{kind}')");
+		var target = await _boards.FindAsync(projectKey, wiredBoard, ct)
+			?? throw new ArgumentException($"spec board '{wiredBoard}' not found in project '{projectKey}'");
 		var targetRuntime = await RuntimeForBoardAsync(projectKey, target, ct);
 		if (!targetRuntime.IsSpecKind(target.Kind))
-			throw new ArgumentException($"'{specBoard}' is not a spec board (kind is '{target.Kind}')");
+			throw new ArgumentException($"'{wiredBoard}' is not a spec board (kind is '{target.Kind}')");
 	}
 
 	async Task EnsureBoard(string projectKey, string board, CancellationToken ct)
@@ -848,7 +848,7 @@ public sealed partial class TasksService : ITasksService
 				UpdatedAt: n.Updated,
 				Blocks: blocks.Count > 0 ? blocks : null));
 		}
-		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.SpecBoard, nodes);
+		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
 	}
 
 	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
@@ -1866,7 +1866,7 @@ public sealed partial class TasksService : ITasksService
 			hits,
 			Board: meta?.Name,
 			Kind: meta is null ? null : runtime.KindName(meta.Kind),
-			SpecBoard: meta?.SpecBoard,
+			WiredBoard: meta?.WiredBoard,
 			CurrentVersion: currentVersion,
 			Retrievers: retrievers,
 			EffectiveStatusKind: effectiveStatusKind);
@@ -2318,7 +2318,7 @@ public sealed partial class TasksService : ITasksService
 				commentTags[g.Key] = g.SelectMany(c => c.Tags).ToList();
 
 		return new MethodologyEngineContext(
-			runtime, kindSlug, board, meta.Name, meta.SpecBoard, meta.MethodologyInstance ?? "",
+			runtime, kindSlug, board, meta.Name, meta.WiredBoard, meta.MethodologyInstance ?? "",
 			nodeIndex, boards, blockerEdges, partOfChildren, commentTags);
 	}
 

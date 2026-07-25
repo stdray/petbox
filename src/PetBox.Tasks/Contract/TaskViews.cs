@@ -35,7 +35,7 @@ public sealed record PlanNodeView(
 // (SearchNodesAsync → tasks_search) composes per-board views from it; the wire budget
 // markers live on the unified result, not here.
 public sealed record PlanBoardView(
-	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
+	long CurrentVersion, string Kind, string? WiredBoard, IReadOnlyList<PlanNodeView> Nodes);
 
 // board-search-stem-lookup: a SCALAR "has this board changed" probe for a cache/ETag check —
 // see ITasksService.GetBoardChangeStampAsync for why it's TWO numbers, not one. Two boards with
@@ -186,7 +186,7 @@ public sealed record TaskNodeFilter(
 	IReadOnlyList<string>? StatusKind = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their
-// final order, the board context when the read was board-scoped (Kind/SpecBoard/
+// final order, the board context when the read was board-scoped (Kind/WiredBoard/
 // CurrentVersion — null on a project-wide read), and retriever provenance (null in listing
 // mode; filled in query mode — which retrievers ran and whether the answer is degraded,
 // e.g. embedding unavailable so only lexical ran).
@@ -202,7 +202,7 @@ public sealed record TaskSearchResult(
 	IReadOnlyList<TaskSearchHit> Hits,
 	string? Board = null,
 	string? Kind = null,
-	string? SpecBoard = null,
+	string? WiredBoard = null,
 	long? CurrentVersion = null,
 	PetBox.Core.Search.SearchRetrievers? Retrievers = null,
 	IReadOnlyList<string>? EffectiveStatusKind = null);
@@ -291,7 +291,7 @@ public sealed record MethodologyTemplateListItem(
 
 // One board membership row on an instance index (no node bodies).
 public sealed record MethodologyInstanceBoard(
-	string Name, string Kind, bool Closed, string? SpecBoard = null);
+	string Name, string Kind, bool Closed, string? WiredBoard = null);
 
 // Compact INDEX of one instance: identity, boards, status, computed summary — no node bodies
 // (spec methodology-instance-list-get). Counts = status histogram over open boards' active nodes.

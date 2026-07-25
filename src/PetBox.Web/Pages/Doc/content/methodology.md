@@ -31,9 +31,9 @@ tasks_upsert board="spec" projectKey="<proj>" nodes=[
 
 Edges bind to the stable `nodeId` (in every upsert/read response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; `relations_list ... includeHistory=true`). `tasks_search` surfaces them inline per node: `spec` (what a task implements), `blockedBy`, and on spec nodes `linkedTasks` — each resolved to its board + slug + title.
 
-**Finding the spec board:** set it once per work board with `tasks_board_set_spec` (or `specBoard` on `board_create`); then `tasks_search`/`board_list` report it as `specBoard` and the `task_spec` link is validated to point at that board. No mapping = the agent picks any `kind=spec` board and links by nodeId.
+**Finding the spec board:** set it once per work board with `tasks_board_set_wire` (or `wiredBoard` on `board_create`); then `tasks_search`/`board_list` report it as `wiredBoard` and the `task_spec` link is validated to point at that board. No mapping = the agent picks any `kind=spec` board and links by nodeId.
 
-- **`task_spec`** — set `links:{task_spec: <spec slug|nodeId>}` on a work feature/bug: links it to the spec node it implements. **Required** for a new work feature/bug (spec-link invariant — no work without a spec node); `chore` is exempt. The target is validated: it must be an existing node on a spec board (and on the board's `specBoard` if set).
+- **`task_spec`** — set `links:{task_spec: <spec slug|nodeId>}` on a work feature/bug: links it to the spec node it implements. **Required** for a new work feature/bug (spec-link invariant — no work without a spec node); `chore` is exempt. The target is validated: it must be an existing node on a spec board (and on the board's `wiredBoard` if set).
 - **`blocks`** — set `blockedBy` (a nodeId) on a work task you move to `Blocked`. A Blocked task MUST name a blocker.
 - **`issue_task`** — a confirmed intake issue spawns a work task; link them so the issue auto-closes when the task is done.
 - **`idea_spec`** — an accepted idea produced this spec node/version.
@@ -62,14 +62,14 @@ Fast capture lives on ideas/intake (no spec link); committed work lives on the w
 Match the structure to the work — the full rails pay off on a long-lived, multi-agent project where the spec is the asset; don't over-ceremony a small one-off.
 
 - **Scratch / spike / throwaway** → one `simple` board. No idea, no spec, lightweight statuses. Use when the work is exploratory or won't be maintained.
-- **Small self-contained build** (a small game, a script, a single feature) → start with a *short* idea on `ideas`, let it settle into a few *thin* `spec` leaves (acceptance criteria, one line each), then `work` features linked (`specBoard` set). Skip `intake` until reports actually arrive.
+- **Small self-contained build** (a small game, a script, a single feature) → start with a *short* idea on `ideas`, let it settle into a few *thin* `spec` leaves (acceptance criteria, one line each), then `work` features linked (`wiredBoard` set). Skip `intake` until reports actually arrive.
 - **Ongoing / multi-session / multi-agent project** → the full rails: `ideas` → `spec` → `work` + `intake`, with deeper deliberation and a real requirement tree.
 
 A tier scales *how deep* the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a `simple` board). The spec-link invariant on `work` holds at every tier — it's the forcing function.
 
 ## Tools
 
-- `tasks_board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen` — boards (all report kind, specBoard, closed).
+- `tasks_board_create(kind?, wiredBoard?) / board_list / board_delete / board_set_wire / board_close / board_reopen` — boards (all report kind, wiredBoard, closed).
 - `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; plus surfaced links and on spec boards `delivery`). `search` is the one read verb: without `q` a deterministic listing (board-scoped responses carry the board `kind`), with `q` a hybrid relevance search; both modes take `status`/`keys`/`under` filters and `sort`. It hides terminal nodes by default — pass `includeClosed=true`. **Partial update:** a field omitted from `upsert` keeps its prior value, so a status change needs only the key + `version` + `status`.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
 - `relations_create / list / delete` — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).

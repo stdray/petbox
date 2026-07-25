@@ -55,11 +55,11 @@ public sealed record MethodologyKindDef(
 	// cross-board automation (intake auto-close, blocks auto-unblock) as DATA. Default
 	// empty. Executed by TasksService.RunTransitionEffectsAsync.
 	public IReadOnlyList<MethodologyTransitionEffectDef> Effects { get; init; } = [];
-	// When set: auto-wire this kind's SpecBoard to the sole active board of
-	// `AutoWireSpecFrom` when this kind also has exactly one active board and SpecBoard
+	// When set: auto-wire this kind's WiredBoard to the sole active board of
+	// `AutoWireFrom` when this kind also has exactly one active board and WiredBoard
 	// is empty (the quartet work→spec auto-wire, as data — spec primitives-enum-residual).
 	// Null = no auto-wire. Executed by TasksService.AutoWireSpecAsync.
-	public string? AutoWireSpecFrom { get; init; }
+	public string? AutoWireFrom { get; init; }
 	// When set: boards of this kind compute a bottom-up delivery status from inbound
 	// task_spec links using the declared type roles (the quartet feature/bug roll-up, as
 	// data). Null = no delivery computation for this kind.

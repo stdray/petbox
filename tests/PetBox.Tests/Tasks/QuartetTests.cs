@@ -59,7 +59,7 @@ public sealed class QuartetTests : IDisposable
 		// work board auto-wired to the spec board.
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var work = boards.Single(b => b.Kind == "work");
-		work.SpecBoard.Should().Be("spec");
+		work.WiredBoard.Should().Be("spec");
 		work.MethodologyInstance.Should().Be("quartet");
 
 		// Re-create of the same name is rejected (create is not enable-style idempotent).
@@ -91,7 +91,7 @@ public sealed class QuartetTests : IDisposable
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var classic = boards.Should().ContainSingle().Subject;
 		classic.Kind.Should().Be("classic");
-		classic.SpecBoard.Should().BeNull("classic is outside the spec/work auto-wire");
+		classic.WiredBoard.Should().BeNull("classic is outside the spec/work auto-wire");
 
 		// classic is NOT a process-role singleton — more boards may be created on the same instance.
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic",

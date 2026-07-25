@@ -43,12 +43,12 @@ public sealed class EngineEnumResidualTests : IDisposable
 	// ── preset data ──────────────────────────────────────────────────────────
 
 	[Fact]
-	public void PresetWork_DeclaresAutoWireSpecFrom()
+	public void PresetWork_DeclaresAutoWireFrom()
 	{
 		var work = MethodologyPresets.KindDef(BoardKind.Work);
-		work.AutoWireSpecFrom.Should().Be("spec");
-		MethodologyRuntime.PresetsOnly.AutoWireSpecFrom("work").Should().Be("spec");
-		MethodologyRuntime.PresetsOnly.AutoWireSpecFrom("classic").Should().BeNull();
+		work.AutoWireFrom.Should().Be("spec");
+		MethodologyRuntime.PresetsOnly.AutoWireFrom("work").Should().Be("spec");
+		MethodologyRuntime.PresetsOnly.AutoWireFrom("classic").Should().BeNull();
 	}
 
 	[Fact]
@@ -68,7 +68,7 @@ public sealed class EngineEnumResidualTests : IDisposable
 	public void RenderPresetDefinition_Quartet_CarriesAutoWireAndDelivery()
 	{
 		var def = MethodologyPresets.RenderPresetDefinition("quartet");
-		def.Kinds.Single(k => k.Kind == "work").AutoWireSpecFrom.Should().Be("spec");
+		def.Kinds.Single(k => k.Kind == "work").AutoWireFrom.Should().Be("spec");
 		var delivery = def.Kinds.Single(k => k.Kind == "spec").Delivery;
 		delivery.Should().NotBeNull();
 		delivery!.RequiredTypes.Should().Equal("feature");
@@ -83,10 +83,10 @@ public sealed class EngineEnumResidualTests : IDisposable
 		await _tasks.CreateBoardAsync(Proj, "spec", "spec", "s", null);
 		await _tasks.CreateBoardAsync(Proj, "work", "work", "w", null);
 		var work = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Name == "work");
-		work.SpecBoard.Should().Be("spec");
+		work.WiredBoard.Should().Be("spec");
 	}
 
-	// A custom definition kind pair with AutoWireSpecFrom wires without any BoardKind
+	// A custom definition kind pair with AutoWireFrom wires without any BoardKind
 	// enum involvement — the multi-instance honesty precondition.
 	[Fact]
 	public async Task AutoWire_CustomKinds_WiresFromDefinitionData()
@@ -106,7 +106,7 @@ public sealed class EngineEnumResidualTests : IDisposable
 					[new("Todo", "Done")]),
 			])
 			{
-				AutoWireSpecFrom = "requirements",
+				AutoWireFrom = "requirements",
 			},
 		]);
 		await _tasks.UpsertMethodologyTemplateAsync(Proj, "wire-tmpl", def, 0);
@@ -115,15 +115,15 @@ public sealed class EngineEnumResidualTests : IDisposable
 		// Create provisions boards named after kind slugs and auto-wires within the instance.
 		var deliv = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "delivery");
 		var reqs = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "requirements");
-		deliv.SpecBoard.Should().Be(reqs.Name, "AutoWireSpecFrom=requirements on the delivery kind");
+		deliv.WiredBoard.Should().Be(reqs.Name, "AutoWireFrom=requirements on the delivery kind");
 	}
 
 	[Fact]
-	public async Task AutoWire_NoTargetBoard_LeavesSpecBoardEmpty()
+	public async Task AutoWire_NoTargetBoard_LeavesWiredBoardEmpty()
 	{
 		await _tasks.CreateBoardAsync(Proj, "work", "work", "w", null);
 		var work = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Name == "work");
-		work.SpecBoard.Should().BeNull("no active spec board → nothing to wire");
+		work.WiredBoard.Should().BeNull("no active spec board → nothing to wire");
 	}
 
 	// ── delivery from data ───────────────────────────────────────────────────
@@ -183,7 +183,7 @@ public sealed class EngineEnumResidualTests : IDisposable
 					new MethodologyLinkConstraintDef("story", "task_spec") { TargetKind = "spec" },
 					new MethodologyLinkConstraintDef("defect", "task_spec") { TargetKind = "spec" },
 				],
-				AutoWireSpecFrom = "spec",
+				AutoWireFrom = "spec",
 			},
 		]);
 		await _tasks.UpsertMethodologyTemplateAsync(Proj, "delivery-tmpl", def, 0);
@@ -252,11 +252,11 @@ public sealed class EngineEnumResidualTests : IDisposable
 					[]),
 			])
 			{
-				AutoWireSpecFrom = "work", // self
+				AutoWireFrom = "work", // self
 			},
 		]);
 		var act = () => _tasks.DefineMethodologyAsync(Proj, def, 0);
-		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*autoWireSpecFrom cannot name the same kind*");
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*autoWireFrom cannot name the same kind*");
 	}
 
 	[Fact]

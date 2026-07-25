@@ -188,7 +188,7 @@ public static class MethodologyPresets
 			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: WorkBlocksGate.ReleaseTo, OnlyFrom: WorkBlocksGate.Status),
 		],
 		// primitives-enum-residual: work→spec auto-wire is DATA (executed by AutoWireSpecAsync).
-		AutoWireSpecFrom = "spec",
+		AutoWireFrom = "spec",
 		// methodology-default-view-field: work opens in kanban (stage columns) by default.
 		// The renderer isn't shipped yet (board-view-mode-framework) — until it is,
 		// BoardViewModeRegistry.Resolve degrades this to Tree, so the board still works.

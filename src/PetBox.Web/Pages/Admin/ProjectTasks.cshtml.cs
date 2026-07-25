@@ -116,7 +116,7 @@ public sealed class ProjectTasksModel : PageModel
 					"no open methodology instance — create or reopen one (Enable methodology / tasks_methodology_create) before adding a board");
 
 			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "simple", description,
-				specBoard: null, methodologyInstance: instance, ct);
+				wiredBoard: null, methodologyInstance: instance, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{

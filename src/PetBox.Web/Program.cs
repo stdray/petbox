@@ -838,6 +838,18 @@ public partial class Program
 			new PetBox.Tasks.Data.LinkKindsDeclaredMigrator(coreDbFactory, tasksFactory, linkKindsLog).Migrate();
 		}
 
+		// One-time, idempotent (delivery-autowire-still-hardcoded-spec): the auto-wire target field
+		// was renamed AutoWireSpecFrom -> AutoWireFrom (JSON key autoWireSpecFrom -> autoWireFrom) when
+		// the wired/set_wire contract dropped "spec" from its surface. A stored methodology document
+		// (the live quartet v16 included) still carries the OLD key, which the renamed deserializer no
+		// longer binds — auto-wire and set-wire validation would silently go dead. This renames the key
+		// in every stored document (definition + instances + templates); the value (a kind slug) is
+		// unchanged.
+		{
+			var autoWireLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.AutoWireFieldRenamedMigrator");
+			new PetBox.Tasks.Data.AutoWireFieldRenamedMigrator(coreDbFactory, tasksFactory, autoWireLog).Migrate();
+		}
+
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
 		// module (config/$system.db: the `llm/registry` JSON binding + one `llm/secret/{endpoint}`
 		// binding per api key) into core.db's llm_endpoints/llm_routes at level System:$. A startup

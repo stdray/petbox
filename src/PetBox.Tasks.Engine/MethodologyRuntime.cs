@@ -79,8 +79,8 @@ public sealed class MethodologyRuntime
 
 	// Auto-wire target of a kind (primitives-enum-residual): the definition's when it
 	// declares the kind, else the preset's (work → "spec"). Null = no auto-wire.
-	public string? AutoWireSpecFrom(string? kindSlug) =>
-		ResolvedKind(kindSlug)?.AutoWireSpecFrom;
+	public string? AutoWireFrom(string? kindSlug) =>
+		ResolvedKind(kindSlug)?.AutoWireFrom;
 
 	// Delivery roll-up config of a kind (primitives-enum-residual): the definition's when
 	// it declares the kind, else the preset's (spec: required=feature, defect=bug). Null =
@@ -162,7 +162,7 @@ public sealed class MethodologyRuntime
 		DeclaredField(kindSlug, k => k.BoardName) ?? PresetField(kindSlug, k => k.BoardName);
 
 	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
-	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
+	// AutoWireFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
 	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).
 	// Deliberately whole-object, unlike DefaultView/OutlineReveal above: a declared kind's
 	// process fields (link constraints, effects, delivery roll-up, auto-wire target) are

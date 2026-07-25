@@ -14,7 +14,7 @@ namespace PetBox.Tests.Tasks;
 // stored MethodologyKindDef after the write — silently, no error, no diagnostic. That is not a
 // bug in any one edit; it is a structural property of "input type is a subset of the domain
 // type, write is a full replace". It bit prod TWICE under two different names before the
-// shared cause was found (AutoWireSpecFrom/Delivery from the quartet verdict-gate rewrite;
+// shared cause was found (AutoWireFrom/Delivery from the quartet verdict-gate rewrite;
 // DefaultView from board-view-defaults-not-applied-existing-instances, which patched the
 // SYMPTOM with a resolve-time merge and left the wire itself still lossy).
 //
@@ -102,7 +102,7 @@ public sealed class MethodologyKindContractParityTests
 				{
 					Kind = "work",
 					Workflows = [new MethodologyWorkflowInput { Types = ["chore"], Statuses = [new MethodologyStatusInput { Slug = "open" }] }],
-					AutoWireSpecFrom = "spec",
+					AutoWireFrom = "spec",
 					Delivery = new MethodologyDeliveryInput { RequiredTypes = ["feature"], DefectTypes = ["bug"] },
 					DefaultView = "kanban",
 					OutlineReveal = "navigate",
@@ -113,7 +113,7 @@ public sealed class MethodologyKindContractParityTests
 		var def = MethodologyWire.ParseDefinition(input);
 		var kind = def.Kinds.Single();
 
-		kind.AutoWireSpecFrom.Should().Be("spec");
+		kind.AutoWireFrom.Should().Be("spec");
 		kind.Delivery.Should().NotBeNull();
 		kind.Delivery!.RequiredTypes.Should().Equal("feature");
 		kind.Delivery.DefectTypes.Should().Equal("bug");
@@ -128,7 +128,7 @@ public sealed class MethodologyKindContractParityTests
 	// MethodologyReference: "the same shape ... rules_get return and rules_upsert accept").
 	// The {Def, Input} pairs above proved the WRITE side carries every domain field; they say
 	// nothing about the READ side — MethodologyKindView shipped with only 5 of
-	// MethodologyKindDef's 9 fields (Delivery/AutoWireSpecFrom/DefaultView/OutlineReveal
+	// MethodologyKindDef's 9 fields (Delivery/AutoWireFrom/DefaultView/OutlineReveal
 	// missing) for exactly this reason: nothing was asserting {Def, View} parity.
 	public static TheoryData<Type, Type> ViewPairs() => new()
 	{
@@ -231,7 +231,7 @@ public sealed class MethodologyKindContractParityTests
 					// coerces null to "" instead of carrying it through.
 					new MethodologyTransitionEffectDef("open", "blocks", "incoming", null, OnLeave: true),
 				],
-				AutoWireSpecFrom = "spec",
+				AutoWireFrom = "spec",
 				Delivery = new MethodologyDeliveryDef(RequiredTypes: ["feature"], DefectTypes: ["bug"], Link: "task_spec"),
 				DefaultView = "kanban",
 				OutlineReveal = "navigate",

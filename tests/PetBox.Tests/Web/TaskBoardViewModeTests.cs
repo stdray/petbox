@@ -232,9 +232,9 @@ public sealed class TaskBoardViewModeTests : IDisposable
 	public async Task Outline_SpecKind_ViaStandardQuartetTemplate_UsesInlineLazyRevealMode()
 	{
 		await _tasks.EnableMethodologyAsync(Proj, "quartet", default);
-		var specBoard = (await _store.ListAsync(Proj, default)).Single(b => string.Equals(b.Kind, "spec", StringComparison.Ordinal));
+		var wiredBoard = (await _store.ListAsync(Proj, default)).Single(b => string.Equals(b.Kind, "spec", StringComparison.Ordinal));
 
-		var m = Model(specBoard.Name);
+		var m = Model(wiredBoard.Name);
 		m.ViewMode = BoardViewModeNames.Outline;
 		await m.OnGetAsync(default);
 

@@ -35,11 +35,18 @@ public sealed record TaskBoardMeta
 	[Column, Nullable]
 	public DateTime? ClosedAt { get; init; }
 
-	// For a work board: the name of the spec board its tasks link into (task_spec).
+	// For a work board: the name of the wired board its tasks link into (task_spec).
 	// Makes the work->spec relationship explicit so an agent doesn't guess among several
 	// spec boards; specRef targets are validated against this board. Null = unset.
-	[Column, Nullable]
-	public string? SpecBoard { get; init; }
+	//
+	// PHYSICAL COLUMN stays "SpecBoard" (created by M027): the C# property was renamed
+	// WiredBoard for the wired/set_wire contract rename, but the live column carries real
+	// wiring on client-issues/work boards — an ALTER RENAME COLUMN risks that data on the
+	// SQLite engine, so the property is MAPPED onto the existing column instead. The column
+	// name never leaks to any surface (MCP/JSON/UI all resolve through this property + the
+	// wire DTOs), so it is invisible to the contract.
+	[Column("SpecBoard"), Nullable]
+	public string? WiredBoard { get; init; }
 
 	// The world this board is a member of (methodology-board-membership /
 	// methodology-utility-kinds): a real methodology instance's name, OR the reserved

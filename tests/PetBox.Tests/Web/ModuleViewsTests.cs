@@ -812,7 +812,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// DEFAULT request instead asserts board-terminal-negative-visible — reqb (terminal `deprecated`)
 	// reads as struck-through regardless, reqa (non-terminal `defined`) does not.
 	[Fact]
-	public async Task SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated()
+	public async Task WiredBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated()
 	{
 		const string board = "specnoise";
 		using (var scope = _factory.Services.CreateScope())
@@ -858,7 +858,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		withStatusHtml.Should().Contain("data-testid=\"node-status\">Deprecated");
 	}
 
-	// REGRESSION (production, commit a99c2fb): `SpecBoard_SuppressesDefaultDefinedStatus_
+	// REGRESSION (production, commit a99c2fb): `WiredBoard_SuppressesDefaultDefinedStatus_
 	// ShowsTerminalDeprecated` above creates its board with the bare kind string "spec" and NO
 	// methodology instance — `RuntimeForBoardAsync` then falls through to the PROJECT's open
 	// instances (none, in that test), so `Runtime.IsDefinedKind("spec")` is false there and
@@ -877,7 +877,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// has it — kind "spec" declared by a real methodology instance — to make that shape
 	// reproducible in CI.
 	[Fact]
-	public async Task SpecBoard_DefinitionResolvedKind_StillStrikesThroughDeprecated()
+	public async Task WiredBoard_DefinitionResolvedKind_StillStrikesThroughDeprecated()
 	{
 		const string board = "specdefres";
 		const string instance = "specdefres-instance";
@@ -1145,7 +1145,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// scoped to the spec board only — this board's kind is "archivist" (not spec), so `dead`
 	// must carry data-terminal-cancel="true" (the raw fact, unchanged) everywhere, WITHOUT
 	// line-through ever actually rendering on it, on any view or the detail page. The spec-board
-	// counterpart (SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated above) proves
+	// counterpart (WiredBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated above) proves
 	// the positive case.
 	[Fact]
 	public async Task TerminalCancelFact_TracksStatusKindData_ButStrikethroughIsSpecBoardOnly()

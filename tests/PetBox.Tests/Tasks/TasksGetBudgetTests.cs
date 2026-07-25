@@ -103,7 +103,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 		var json = JsonSerializer.Serialize(view, Wire);
 		json.Should().NotContainAny("truncated", "omitted", "hint");
 		json.Should().Be(JsonSerializer.Serialize(new TaskSearchResultView(
-			view.Nodes, view.Board, view.Kind, view.SpecBoard, view.CurrentVersion,
+			view.Nodes, view.Board, view.Kind, view.WiredBoard, view.CurrentVersion,
 			EffectiveStatusKind: ["open"]), Wire));
 	}
 
