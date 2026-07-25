@@ -717,7 +717,7 @@ public sealed partial class TasksService : ITasksService
 		if (wanted is null)
 			throw new ArgumentException($"wiredBoard applies only to a work board (this board's kind is '{kind}')");
 		var target = await _boards.FindAsync(projectKey, wiredBoard, ct)
-			?? throw new ArgumentException($"spec board '{wiredBoard}' not found in project '{projectKey}'");
+			?? throw new ArgumentException($"board '{wiredBoard}' not found in project '{projectKey}'");
 		if (!string.Equals(target.Kind, wanted, StringComparison.OrdinalIgnoreCase))
 			throw new ArgumentException($"'{wiredBoard}' is not a {wanted} board (kind is '{target.Kind}')");
 	}
