@@ -21,7 +21,17 @@ namespace PetBox.Web.Mcp;
 //     on its own to rewind cursors whenever it smelled an empty index would be a foot-gun with a
 //     hair trigger (and would fight the very dead-letter protection it is built to undo).
 // It is a THIN adapter: guards + tier parsing, all state work in SearchReindexService.
+// TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT — OPTIONAL here, so
+// the PEP falls back to CallerTenant.DefaultProjectOf, which is the same fallback
+// ModuleMcp.ResolveProject takes two lines down. One answer to "which project is this key's own?",
+// asked twice, by construction rather than by two implementations that happen to agree.
+//
+// ResolveProject STAYS: its RETURN VALUE is the project the reindex runs against, so it is the
+// resolver, not a duplicate check. Its authorization side is now redundant on this tool — but the
+// same method is still the resolver for the memory family, which is not enforced yet (see the note in
+// TenantEnforcementAllowlist), so it keeps its guard until that family lands.
 [McpServerToolType]
+[TenantFrom(TenantSource.Argument, "projectKey")]
 public static class SearchTools
 {
 	[McpServerTool(Name = "search_reindex", Title = "Rebuild a project's search index",
