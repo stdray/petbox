@@ -23,6 +23,11 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	public const string ApiKeyHeader = "X-Api-Key";
 	public const string LegacyApiKeyHeader = "X-YobaConf-ApiKey";
 
+	// The claim carrying ApiKey.ProjectKey — the tenant this key is scoped to, or the cross-project
+	// wildcard ProjectScope.AllProjects. Always emitted. Named here because this handler is what
+	// emits it; TenantAuthorizer reads it off THIS identity rather than off the merged principal.
+	public const string ProjectClaim = "project";
+
 	// The claim carrying ApiKey.DefaultProjectKey — the project a cross-project ("*") key falls
 	// back to when a tool's optional projectKey is omitted. Present only when the key has one.
 	public const string DefaultProjectClaim = "project_default";
