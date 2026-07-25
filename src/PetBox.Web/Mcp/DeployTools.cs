@@ -22,7 +22,7 @@ public static class DeployTools
 	const string NodeKeyScopes = ApiKeyScopes.AgentPoll + "," + ApiKeyScopes.AgentHeartbeat + "," + ApiKeyScopes.LogsIngest;
 
 	[McpServerTool(Name = "deploy_node_list", Title = "List fleet nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployNodesResult))]
-	[Description("Lists every node in the fleet (id, tags, online, last-seen, deployment count). Requires deploy:read.")]
+	[Description("Lists every node in the fleet (id, tags, online, last-seen, deployment count) — ALL nodes across ALL projects, not just yours: there is no `projectKey` parameter and none is accepted as a filter. Requires deploy:read.")]
 	public static async Task<DeployNodesResult> NodeListAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
@@ -31,7 +31,7 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
-	[Description("Registers or updates a node. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
+	[Description("Registers or updates a node. FLEET-WIDE: a node has no owning project — there is no `projectKey`, and a deploy:write key can create/edit ANY node in the fleet, not just ones hosting your project's deployments. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
 	public static async Task<DeployNodeResult> NodeUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, AgentKeyAdminService keys,
 		[Description("Node id (slug), e.g. 'vdsina-1'.")] string id,
@@ -55,7 +55,7 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_node_delete", Title = "Delete a node", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
-	[Description("Deletes a node and cascades its deployments. Requires deploy:write.")]
+	[Description("Deletes a node and cascades ALL of its deployments — across every project hosted on it, not just yours. FLEET-WIDE and DESTRUCTIVE: there is no `projectKey` to scope this to one project's deployments; unlike config_binding/memory/tasks, a deploy:write key is not confined to a project here — it reaches every node in the fleet. Requires deploy:write.")]
 	public static async Task<DeployDeletedResult> NodeDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Node id to delete.")] string id,
@@ -68,7 +68,7 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_list", Title = "List deployments", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentsResult))]
-	[Description("Lists deployments (desired + last actual state), optionally filtered by node and/or service. Requires deploy:read.")]
+	[Description("Lists deployments (desired + last actual state) across the WHOLE fleet, optionally filtered by node and/or service — NOT by project: there is no `projectKey` parameter, and the result spans every project's deployments a deploy:read key can see. Requires deploy:read.")]
 	public static async Task<DeployDeploymentsResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Filter by node id.")] string? nodeId = null,
@@ -81,14 +81,14 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Creates (omit id) or updates a deployment of a service on a node. One copy per (service, node). Requires deploy:write.")]
+	[Description("Creates (omit id) or updates a deployment of a service on a node. One copy per (service, node). `projectKey` here is NOT an access boundary the way it is in config_binding/memory/tasks — it is resolution input ONLY (picks which project's config bindings resolve into the container's env); a deploy:write key can create/update a deployment naming ANY projectKey, on ANY node, regardless of the calling key's own project claim. Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Service name (slug).")] string service,
 		// NAMED projectKey, not `project`: every project-routing MCP arg is spelled `projectKey`, and
 		// McpProjectDefaultFilter keys the key's-default injection on exactly that name — an odd one
 		// out would silently sit outside the coverage.
-		[Description("Project the service belongs to (its config applies).")] string projectKey,
+		[Description("Project whose config resolves into the container's env — resolution input ONLY, not an access boundary: any project name is accepted regardless of the calling key's own project claim.")] string projectKey,
 		[Description("Target node id.")] string nodeId,
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
@@ -130,19 +130,19 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_start", Title = "Start a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Sets a deployment's desired state to running. Requires deploy:write.")]
+	[Description("Sets a deployment's desired state to running. FLEET-WIDE: `id` addresses a deployment directly with no project check — a deploy:write key can start ANY deployment on ANY node, not just your project's. Requires deploy:write.")]
 	public static Task<DeployDeploymentResult> StartAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Running, ct);
 
 	[McpServerTool(Name = "deploy_stop", Title = "Stop a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Sets a deployment's desired state to stopped. Requires deploy:write.")]
+	[Description("Sets a deployment's desired state to stopped — stops the live container on its node. FLEET-WIDE and effectively DESTRUCTIVE: `id` addresses a deployment directly with no project check — a deploy:write key can stop ANY deployment on ANY node in the fleet, not just one belonging to your project. Requires deploy:write.")]
 	public static Task<DeployDeploymentResult> StopAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Stopped, ct);
 
 	[McpServerTool(Name = "deploy_move", Title = "Move a deployment to another node", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Moves a deployment to a different node (the agents reconcile the move). Requires deploy:write.")]
+	[Description("Moves a deployment to a different node (the agents reconcile the move). FLEET-WIDE: `id`/`toNodeId` address the fleet directly with no project check — a deploy:write key can relocate ANY deployment to ANY node, not just your project's. Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> MoveAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id,
@@ -157,7 +157,7 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_delete", Title = "Delete a deployment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
-	[Description("Deletes a deployment (the owning node's agent then removes the container). Requires deploy:write.")]
+	[Description("Deletes a deployment (the owning node's agent then removes the container). FLEET-WIDE and DESTRUCTIVE: `id` addresses a deployment directly with no project check — a deploy:write key can delete ANY deployment on ANY node in the fleet, not just one belonging to your project. Requires deploy:write.")]
 	public static async Task<DeployDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id to delete.")] string id,
