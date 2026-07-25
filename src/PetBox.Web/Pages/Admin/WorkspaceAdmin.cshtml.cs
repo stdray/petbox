@@ -1,8 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Config.Data;
+using PetBox.Config;
 using PetBox.Core.Auth;
 using PetBox.Core.Models;
 using PetBox.Web.Auth;
@@ -15,18 +14,18 @@ public sealed class WorkspaceAdminModel : PageModel
 	readonly IWorkspaceAdminService _workspaces;
 	readonly IProjectDirectory _projects;
 	readonly IWorkspaceMembershipService _members;
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigDirectory _config;
 
 	public WorkspaceAdminModel(
 		IWorkspaceAdminService workspaces,
 		IProjectDirectory projects,
 		IWorkspaceMembershipService members,
-		IConfigDbFactory configFactory)
+		IConfigDirectory config)
 	{
 		_workspaces = workspaces;
 		_projects = projects;
 		_members = members;
-		_configFactory = configFactory;
+		_config = config;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -51,7 +50,6 @@ public sealed class WorkspaceAdminModel : PageModel
 		ProjectCount = Projects.Count;
 		MemberCount = await _members.CountMembersAsync(WorkspaceKey);
 
-		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
-		BindingCount = configDb.Bindings.Count(b => !b.IsDeleted);
+		BindingCount = await _config.CountActiveBindingsAsync(WorkspaceKey);
 	}
 }

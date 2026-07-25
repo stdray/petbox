@@ -155,6 +155,9 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Log.Core.Query.ILogQueryService, PetBox.Log.Core.Query.LogQueryService>();
 		// The saved-KQL-query door (Pages/Logs/Index.cshtml.cs) — SavedQueries had no owner before this.
 		builder.Services.AddScoped<PetBox.Log.Core.Data.ISavedQueryStore, PetBox.Log.Core.Data.SavedQueryStore>();
+		// THE page-facing door for PetBox.Log.Core — the log pages go through this instead of
+		// holding ILogStore and opening log SQLite files inline (see ILogService).
+		builder.Services.AddScoped<PetBox.Log.Core.Contract.ILogService, PetBox.Log.Core.Services.LogService>();
 		builder.Services.AddSingleton<IScopedDbFactory<ConfigDb>>(sp => new ScopedDbFactory<ConfigDb>(
 				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
 				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));

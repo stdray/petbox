@@ -1,3 +1,4 @@
+using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Web.Pages.Config;
 
@@ -21,30 +22,36 @@ public sealed class ConfigPreviewNullInputTests
 		Directory.CreateDirectory(dir);
 		var cs = $"Data Source={Path.Combine(dir, "cfg.db")}";
 		ConfigSchema.Ensure(cs);
+		// The page now goes through IConfigDirectory rather than holding the factory, so the stub
+		// factory is wrapped in the real directory — this keeps the test exercising a real (empty)
+		// ConfigDb read rather than a hand-written fake of the resolve path.
+		// The core-db factory is never reached: ListAllBindingsAsync, the only call this page
+		// makes, touches the CONFIG database only.
+		var config = new ConfigDirectory(new StubConfigDbFactory(cs), coreFactory: null!);
 		// WorkspaceKey set so ResolveWorkspace() never reads User claims (no HttpContext in test).
-		return new PreviewModel(new StubConfigDbFactory(cs)) { WorkspaceKey = "$system" };
+		return new PreviewModel(config) { WorkspaceKey = "$system" };
 	}
 
 	[Fact]
-	public void OnPost_NullPaths_DoesNotThrow_AndReturnsNoResults()
+	public async Task OnPost_NullPaths_DoesNotThrow_AndReturnsNoResults()
 	{
 		var model = NewModel();
 		model.TagsInput = "ws:$system";
 		model.PathsInput = null!; // mirrors empty-textarea model binding
 
-		model.OnPost();
+		await model.OnPostAsync(CancellationToken.None);
 
 		Assert.Empty(model.Results);
 	}
 
 	[Fact]
-	public void OnPost_NullTags_DoesNotThrow()
+	public async Task OnPost_NullTags_DoesNotThrow()
 	{
 		var model = NewModel();
 		model.TagsInput = null!;
 		model.PathsInput = "some.path";
 
-		model.OnPost();
+		await model.OnPostAsync(CancellationToken.None);
 
 		// Path has no matching binding in the empty store → single (no match) row, no throw.
 		Assert.Single(model.Results);

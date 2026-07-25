@@ -1,7 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 
@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class TagsModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigDirectory _config;
 
-	public TagsModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
+	public TagsModel(IConfigDirectory config) => _config = config;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -24,52 +24,40 @@ public sealed class TagsModel : PageModel
 		new Dictionary<string, IReadOnlyList<string>>();
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet()
+	public async Task OnGetAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		Load();
+		await LoadAsync(ct);
 	}
 
-	public async Task<IActionResult> OnPostDeclareAsync(string TagKey, string? Description)
+	public async Task<IActionResult> OnPostDeclareAsync(string TagKey, string? Description, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
 		if (string.IsNullOrWhiteSpace(TagKey))
 		{
 			ErrorMessage = "Tag key is required.";
-			Load();
+			await LoadAsync(ct);
 			return Page();
 		}
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var exists = configDb.Tags.Any(t => t.TagKey == TagKey);
-		if (!exists)
-		{
-			await configDb.InsertAsync(new TagVocabularyEntry
-			{
-				TagKey = TagKey.Trim(),
-				Description = Description?.Trim(),
-				CreatedAt = DateTime.UtcNow,
-			});
-		}
+		await _config.DeclareTagAsync(EffectiveWorkspaceKey, TagKey, Description, ct);
 
 		return RedirectToPage(new { workspaceKey = EffectiveWorkspaceKey });
 	}
 
-	public async Task<IActionResult> OnPostRetireAsync(long id)
+	public async Task<IActionResult> OnPostRetireAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		await configDb.Tags.Where(t => t.Id == id).DeleteAsync();
+		await _config.RetireTagAsync(EffectiveWorkspaceKey, id, ct);
 		return RedirectToPage(new { workspaceKey = EffectiveWorkspaceKey });
 	}
 
-	void Load()
+	async Task LoadAsync(CancellationToken ct)
 	{
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		Declared = configDb.Tags.OrderBy(t => t.TagKey).ToList();
+		Declared = await _config.ListTagsAsync(EffectiveWorkspaceKey, ct);
 
-		var bindings = configDb.Bindings.ToList();
+		var bindings = await _config.ListAllBindingsAsync(EffectiveWorkspaceKey, ct);
 		UsedKeyValues = AggregateUsedValues(bindings.Select(b => b.Tags));
 	}
 

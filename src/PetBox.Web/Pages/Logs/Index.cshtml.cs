@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
 using PetBox.Web.Auth;
@@ -19,13 +20,13 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
-	readonly ILogStore _logStore;
+	readonly ILogService _logs;
 	readonly IProjectDirectory _projects;
 	readonly ISavedQueryStore _savedQueries;
 
-	public IndexModel(ILogStore logStore, IProjectDirectory projects, ISavedQueryStore savedQueries)
+	public IndexModel(ILogService logs, IProjectDirectory projects, ISavedQueryStore savedQueries)
 	{
-		_logStore = logStore;
+		_logs = logs;
 		_projects = projects;
 		_savedQueries = savedQueries;
 	}
@@ -67,7 +68,9 @@ public sealed class IndexModel : PageModel
 
 	// The shape-changed row accumulation hit KqlLimits.MaxTake and was cut (memory guard).
 	public bool KqlTruncated { get; private set; }
-	public KqlResult? KqlResult { get; private set; }
+
+	// Column headers for the shape-changed table render. Empty until a shape-changing query runs.
+	public IReadOnlyList<KqlColumn> KqlColumns { get; private set; } = [];
 	public string? NextCursor { get; private set; }
 	public List<string> Services { get; private set; } = [];
 	public List<SavedQuery> SavedQueries { get; private set; } = [];
@@ -98,7 +101,7 @@ public sealed class IndexModel : PageModel
 		// Named logs available in this project; pick the requested one, else the sole log,
 		// else the conventional `default`, else the oldest (see DefaultLogSelector for why
 		// "oldest", not "alphabetically first" — logs-traces-default-log).
-		var logMetas = await _logStore.ListAsync(ProjectKey, ct);
+		var logMetas = await _logs.ListAsync(ProjectKey, ct);
 		AvailableLogs = logMetas.Select(l => l.Name).ToList();
 		SelectedLog = DefaultLogSelector.Resolve(logMetas, LogNameRoute);
 		if (SelectedLog is null)
@@ -178,32 +181,27 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		using var logDb = _logStore.NewEnsuredContext(ProjectKey, SelectedLog);
-
 		try
 		{
 			if (IsShapeChanged)
 			{
-				KqlResult = isSpans
-					? KqlTransformer.ExecuteSpans(logDb.Spans, code)
-					: isMetrics
-						? KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code)
-						: KqlTransformer.Execute(logDb.LogEntries, code);
-				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
-				{
-					if (KqlRows.Count >= KqlLimits.MaxTake)
-					{
-						KqlTruncated = true;
-						break;
-					}
-					KqlRows.Add(row);
-				}
+				var target = isSpans
+					? KqlTransformer.SpansTable
+					: isMetrics ? KqlTransformer.MetricsTable : KqlTransformer.EventsTable;
+
+				var table = await _logs.QueryTableAsync(
+					ProjectKey, SelectedLog, code, target, KqlLimits.MaxTake, ct);
+
+				KqlColumns = table.Columns;
+				KqlRows.AddRange(table.Rows);
+				KqlTruncated = table.Truncated;
 			}
 			else
 			{
-				var query = KqlTransformer.Apply(logDb.LogEntries, code);
-				var list = await query.ToListAsync(ct);
-				foreach (var r in list)
+				// No extra cap here: AppendPageLimits already welded `| take PageSize + 1` into the
+				// KQL, and the extra row is how the next-page cursor is probed.
+				var records = await _logs.QueryEventsAsync(ProjectKey, SelectedLog, code, ct: ct);
+				foreach (var r in records)
 					Events.Add(LogEntryViewModel.FromRecord(r));
 
 				if (Events.Count > PageSize)
@@ -213,8 +211,10 @@ public sealed class IndexModel : PageModel
 					NextCursor = EncodeCursor(last.Timestamp, last.Id);
 				}
 			}
+
+			Services = [.. await _logs.ListServiceKeysAsync(ProjectKey, SelectedLog, ct)];
 		}
-		catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 1)
+		catch (LogSchemaMissingException)
 		{
 			SchemaMissing = true;
 			return Page();
@@ -224,12 +224,6 @@ public sealed class IndexModel : PageModel
 			KqlError = ex.Message;
 			return Page();
 		}
-
-		Services = await logDb.LogEntries
-			.Select(e => e.ServiceKey)
-			.Distinct()
-			.OrderBy(s => s)
-			.ToListAsync(ct);
 
 		if (Request.Headers.ContainsKey("HX-Request") && !IsShapeChanged)
 			return Partial("_RowsFragment", this);

@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Sharing;
 
@@ -17,12 +17,12 @@ namespace PetBox.Web.Pages;
 public sealed class ShareModel : PageModel
 {
 	readonly IShareLinkDirectory _shareLinks;
-	readonly ILogStore _logStore;
+	readonly ILogService _logs;
 
-	public ShareModel(IShareLinkDirectory shareLinks, ILogStore logStore)
+	public ShareModel(IShareLinkDirectory shareLinks, ILogService logs)
 	{
 		_shareLinks = shareLinks;
-		_logStore = logStore;
+		_logs = logs;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -60,11 +60,11 @@ public sealed class ShareModel : PageModel
 			kv => kv.Key, kv => kv.Value, StringComparer.Ordinal));
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
-		using var logDb = _logStore.NewEnsuredContext(share.ProjectKey, share.LogName);
 		try
 		{
 			// Memory guard only (KqlLimits.MaxTake, no default take) — same bound as the TSV export.
-			var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(KqlLimits.MaxTake).ToListAsync(ct);
+			var records = await _logs.QueryEventsAsync(
+				share.ProjectKey, share.LogName, code, KqlLimits.MaxTake, ct);
 			var visible = columns.Where(c => policy.ModeFor(c) != MaskMode.Hide).ToArray();
 			Columns = visible;
 

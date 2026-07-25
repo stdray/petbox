@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class PreviewModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigDirectory _config;
 
-	public PreviewModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
+	public PreviewModel(IConfigDirectory config) => _config = config;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -35,7 +35,7 @@ public sealed class PreviewModel : PageModel
 		TagsInput = $"ws:{EffectiveWorkspaceKey}";
 	}
 
-	public void OnPost()
+	public async Task OnPostAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
@@ -51,8 +51,8 @@ public sealed class PreviewModel : PageModel
 			.Split([',', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.ToList();
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var bindings = configDb.Bindings.ToList();
+		// Deleted rows included on purpose — ResolvePipeline does its own IsDeleted filtering.
+		var bindings = await _config.ListAllBindingsAsync(EffectiveWorkspaceKey, ct);
 
 		var results = new List<PreviewRow>();
 		foreach (var path in paths)
