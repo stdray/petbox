@@ -54,6 +54,43 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		return await _admin.GetAsync(level.Scope, level.ScopeKey, ct);
 	}
 
+	public async Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default)
+	{
+		var level = await OwnLevelAsync(projectKey, ct);
+		var registry = await _admin.GetAsync(level.Scope, level.ScopeKey, ct);
+		return new LlmRegistryDeclaration(registry, await _admin.GetVersionAsync(level.Scope, level.ScopeKey, ct));
+	}
+
+	public async Task<LlmRegistryDeclaration> PatchAsync(
+		string projectKey,
+		IReadOnlyList<LlmEndpoint>? endpoints,
+		IReadOnlyList<LlmRoute>? routes,
+		IReadOnlyDictionary<string, string> apiKeys,
+		long version,
+		CancellationToken ct = default)
+	{
+		var level = await OwnLevelAsync(projectKey, ct);
+
+		// What the level holds now — the base an omitted part is kept from. Read on its own
+		// connection, which is closed before the write opens its transaction (see the class comment).
+		var snapshot = await _admin.GetSnapshotAsync(level.Scope, level.ScopeKey, ct);
+
+		var mergedEndpoints = endpoints ?? snapshot.Endpoints;
+		// Omitted routes keep their ROWS, ids included, so an edit that only touches endpoints does
+		// not invalidate the handles the admin page rendered its route rows with. Supplied routes are
+		// a whole replacement of that list and get fresh ids, exactly as SetAsync does.
+		var mergedRoutes = routes is null
+			? snapshot.Routes
+			: routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList();
+
+		var newVersion = await _admin.SetSnapshotAsync(
+			level.Scope, level.ScopeKey, mergedEndpoints, mergedRoutes, apiKeys, expectedVersion: version, ct: ct);
+
+		return new LlmRegistryDeclaration(
+			new LlmRegistry(mergedEndpoints, mergedRoutes.Select(r => r.Route).ToList()),
+			newVersion);
+	}
+
 	public async Task SetAsync(
 		string projectKey,
 		LlmRegistry registry,

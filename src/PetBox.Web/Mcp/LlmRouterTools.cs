@@ -29,40 +29,61 @@ public static class LlmRouterTools
 	// converter so routes read/write "embed"/"rerank"/"chat".
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-	// The config_set payload: endpoints + routes (-> LlmRegistry) plus write-only api keys.
+	// The config_upsert payload. Endpoints/Routes are NULLABLE and that is the contract, not an
+	// accident of deserialization: a property the caller omitted arrives here as null and means
+	// "keep what is stored", while an empty array means "clear it". Both used to collapse to `[]`,
+	// which is how an upsert that named only routes wiped every endpoint and its api key.
 	public sealed record ConfigSetInput(
-		IReadOnlyList<LlmEndpoint> Endpoints,
-		IReadOnlyList<LlmRoute> Routes,
+		IReadOnlyList<LlmEndpoint>? Endpoints = null,
+		IReadOnlyList<LlmRoute>? Routes = null,
 		Dictionary<string, string>? ApiKeys = null);
 
-	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
-	[Description("Return the LLM router registry DECLARED at this project's own level (endpoints + routes), WITHOUT secrets. Inherited levels are not shown. Requires llm:admin.")]
-	public static async Task<LlmRegistry> ConfigGetAsync(
+	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigGetResult))]
+	[Description("""
+		Return the LLM router registry DECLARED at this project's own level (endpoints + routes),
+		WITHOUT secrets, plus `version` — the CAS baseline for llm_config_upsert. Inherited levels
+		are not shown; version 0 means this level declares nothing yet. Requires llm:admin.
+		""")]
+	public static async Task<LlmConfigGetResult> ConfigGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
-		return await registry.GetAsync(projectKey, ct);
+		var declared = await registry.GetDeclaredAsync(projectKey, ct);
+		return new LlmConfigGetResult(declared.Registry.Endpoints, declared.Registry.Routes, declared.Version);
 	}
 
 	[McpServerTool(Name = "llm_config_upsert", Title = "Upsert LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
-		Replace the project's LLM router registry. Requires llm:admin.
+		PATCH the project's LLM router registry, with optimistic concurrency. Requires llm:admin.
+		WRITE SEMANTICS, in full — this edits the LIVE router configuration and there is no undo:
+		  * An OMITTED top-level part stays UNCHANGED. Omit `endpoints` and the stored endpoints
+		    (and their api keys) are kept; omit `routes` and the stored routes are kept, ids and all.
+		  * A part you DO send REPLACES that whole list — there is no per-item merge. To drop one
+		    route, send the routes you want to keep; to clear a part entirely, send it as [].
+		  * `version` is the CAS baseline from your last llm_config_get (0 = this level declares
+		    nothing yet). A baseline that is not the level's current version REFUSES the whole call
+		    and writes NOTHING — re-read with llm_config_get and resubmit. This is what makes a
+		    concurrent edit a conflict instead of a silent overwrite.
 		`config` is a JSON object:
-		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ],
-		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "embedSpaceId"? } ],
+		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ]?,  // omit = keep existing, [] = clear
+		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"?, "embedSpaceId"? } ]?,  // omit = keep existing, [] = clear
 		    // embedSpaceId (embed routes only): the canonical vector-index key. Omit/null = use model.
 		    // Give two embed routes the SAME embedSpaceId to make their vectors share one index space.
-		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; omit to keep existing }
-		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
+		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; an endpoint absent here keeps its stored key }
+		The MERGED registry (kept parts + sent parts) is validated as a whole before anything is
+		written — an unknown endpoint in a route, a bad URL, etc. is an error and nothing changes.
+		Returns { ok, endpoints, routes, version } where `version` is the new baseline for your next
+		upsert.
 		""")]
 	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
 		string projectKey,
 		[McpJsonShape("object")]
-		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,
+		[Description("JSON object { endpoints[]?, routes[]?, apiKeys? } — an omitted part is KEPT, a sent part REPLACES that whole list, [] clears it.")] JsonElement config,
+		[Description("CAS baseline: the `version` from your last llm_config_get (0 = this level declares nothing yet). A stale baseline refuses the whole call.")] long version = 0,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
@@ -70,13 +91,16 @@ public static class LlmRouterTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 
 		var input = Deserialize<ConfigSetInput>(config)
-			?? throw new ArgumentException("config must be a JSON object with endpoints + routes");
-		var declared = new LlmRegistry(input.Endpoints ?? [], input.Routes ?? []);
-		// Replaces the project's own level WHOLE — endpoints, routes and (for endpoints named in
-		// apiKeys) their keys. A whole-level declaration is the only safe kind: a level resolves
-		// atomically, so a half-declared one is a registry with routes pointing at keyless endpoints.
-		await registry.SetAsync(projectKey, declared, input.ApiKeys ?? new Dictionary<string, string>(), ct);
-		return new LlmConfigSetResult(true, declared.Endpoints.Count, declared.Routes.Count);
+			?? throw new ArgumentException("config must be a JSON object with endpoints and/or routes");
+		// The level is still WRITTEN whole — it resolves atomically, so a half-declared one is a
+		// registry with routes pointing at keyless endpoints. What changed is where the "whole" comes
+		// from: the parts the caller did not send are read back from the stored level instead of
+		// being silently replaced with nothing.
+		var written = await registry.PatchAsync(
+			projectKey, input.Endpoints, input.Routes,
+			input.ApiKeys ?? new Dictionary<string, string>(), version, ct);
+		return new LlmConfigSetResult(
+			true, written.Registry.Endpoints.Count, written.Registry.Routes.Count, written.Version);
 	}
 
 	[McpServerTool(Name = "llm_embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]

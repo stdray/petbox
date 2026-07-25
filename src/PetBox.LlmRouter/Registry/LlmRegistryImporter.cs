@@ -217,6 +217,19 @@ public sealed partial class LlmRegistryImporter
 			foreach (var row in endpointRows) core.Insert(row);
 			foreach (var row in routeRows) core.Insert(row);
 
+			// The level's CAS baseline (M047) starts at 1, not 0: 0 means "declares nothing yet", and
+			// an imported registry is the live one — an agent that quotes 0 must be told to re-read,
+			// not allowed to replace it sight-unseen. The import runs only into EMPTY tables, so
+			// there is never a row here to collide with.
+			core.Insert(new LlmRegistryLevelRow
+			{
+				Scope = scope,
+				ScopeKey = level.ScopeKey,
+				Version = 1,
+				UpdatedAt = now,
+				UpdatedBy = null,
+			});
+
 			core.Insert(new Setting
 			{
 				Scope = scope,

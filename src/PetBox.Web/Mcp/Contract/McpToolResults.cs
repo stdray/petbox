@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 
 namespace PetBox.Web.Mcp.Contract;
@@ -156,7 +157,14 @@ public sealed record DataExecResult(int Affected);
 
 // ---- llm.* ---------------------------------------------------------------------------
 
-public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes);
+// `Version` is the level's CAS baseline — pass it back as llm_config_upsert's `version`. 0 = this
+// project's level declares nothing yet. The endpoints/routes shape is unchanged (llm-l5 item 5 keeps
+// level/inherited/owner off this surface until the owner rules on it); Version is purely additive,
+// and without it a caller has no way to obtain a baseline at all.
+public sealed record LlmConfigGetResult(IReadOnlyList<LlmEndpoint> Endpoints, IReadOnlyList<LlmRoute> Routes, long Version);
+
+// `Version` is the level's NEW version after this write — the baseline for the caller's NEXT upsert.
+public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes, long Version);
 
 // ---- log.* lifecycle (replaces entity.* type "log") ----------------------------------
 

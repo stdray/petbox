@@ -80,14 +80,27 @@ public interface ILlmRegistryLevelAdmin
 	// The same rows, each route with its stable id — what an editor addresses rows by.
 	Task<LlmLevelSnapshot> GetSnapshotAsync(Scope scope, string scopeKey, CancellationToken ct = default);
 
+	// This level's CAS watermark: 0 when the level has never been written, otherwise the version its
+	// last replace produced. It is the baseline a caller quotes back to a write (see expectedVersion).
+	Task<long> GetVersionAsync(Scope scope, string scopeKey, CancellationToken ct = default);
+
 	// Replace this level, PRESERVING each route's id. A route with a blank id is a new row and gets
 	// a fresh one. Otherwise identical to SetAsync (which is this, with every id blank).
-	Task SetSnapshotAsync(
+	//
+	// `expectedVersion` is the OPTIMISTIC-CONCURRENCY baseline (work
+	// llm-config-upsert-full-replace-no-cas): the version the caller last READ for this level. NULL
+	// opts out of the check — that is for surfaces that address individual ROWS by their stable id
+	// (the admin page reads-modifies-writes a whole level to edit one route, and the id is what keeps
+	// that edit on the row it was rendered from). Any other value must equal the level's current
+	// version or the write is refused with an InvalidOperationException naming the current one, and
+	// NOTHING is written. Returns the level's NEW version.
+	Task<long> SetSnapshotAsync(
 		Scope scope,
 		string scopeKey,
 		IReadOnlyList<LlmEndpoint> endpoints,
 		IReadOnlyList<IdentifiedRoute> routes,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		long? updatedBy = null,
 		CancellationToken ct = default);
 
@@ -96,11 +109,12 @@ public interface ILlmRegistryLevelAdmin
 	// starts keyless). Routes may only reference endpoints in `registry` — the validator says so,
 	// and the composite FK enforces it in the database. Throws on validation failure, and on any
 	// scope other than System/Workspace.
-	Task SetAsync(
+	Task<long> SetAsync(
 		Scope scope,
 		string scopeKey,
 		LlmRegistry registry,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		long? updatedBy = null,
 		CancellationToken ct = default);
 }
