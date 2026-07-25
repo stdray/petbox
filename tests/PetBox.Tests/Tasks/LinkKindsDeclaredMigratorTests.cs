@@ -134,6 +134,41 @@ public sealed class LinkKindsDeclaredMigratorTests : IDisposable
 		return JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)!;
 	}
 
+	// defs-singleton and templates rows run through the SAME TryDeclare code path as instance rows
+	// (MigrateProject loops all three), but only the instance path had a direct test — NIT 3
+	// (chore work/linkkinds-migrator-observability-gaps).
+	async Task SeedDef(MethodologyDefinition def)
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		(await TemporalStore.UpsertAsync(ctx, new[]
+		{
+			new MethodologyDefRow { Key = MethodologyDefRow.SingletonKey, Version = 0, Json = JsonSerializer.Serialize(def, DefinitionJson) },
+		})).Applied.Should().BeTrue();
+	}
+
+	async Task<MethodologyDefinition> ReadDef()
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		var row = (await ctx.GetTable<MethodologyDefRow>().Where(r => r.Key == MethodologyDefRow.SingletonKey && r.ActiveTo == null).ToListAsync()).Single();
+		return JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)!;
+	}
+
+	async Task SeedTemplate(string key, MethodologyDefinition def)
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		(await TemporalStore.UpsertAsync(ctx, new[]
+		{
+			new MethodologyTemplateRow { Key = key, Version = 0, Json = JsonSerializer.Serialize(def, DefinitionJson) },
+		})).Applied.Should().BeTrue();
+	}
+
+	async Task<MethodologyDefinition> ReadTemplate(string key)
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		var row = (await ctx.GetTable<MethodologyTemplateRow>().Where(r => r.Key == key && r.ActiveTo == null).ToListAsync()).Single();
+		return JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)!;
+	}
+
 	static MethodologyLinkKindDef Quartet(string slug) =>
 		MethodologyPresets.QuartetLinkKinds.Single(k => k.Slug == slug);
 
@@ -162,6 +197,64 @@ public sealed class LinkKindsDeclaredMigratorTests : IDisposable
 		// The document still resolves as a valid runtime (the trio is a valid vocabulary).
 		var runtime = new MethodologyRuntime(def);
 		runtime.LinkKind("task_spec")!.Direction!.ToKind.Should().Be("spec");
+	}
+
+	// NIT 3 (chore work/linkkinds-migrator-observability-gaps): MigrateProject loops the def
+	// singleton, every instance row AND every template row through the SAME TryDeclare — only the
+	// instance path had a direct test above. Same assertions, def-row subject.
+	[Fact]
+	public async Task PreChangeDefinitionSingleton_DeclaresTheTrioWithDirection_AndBackfillsDeliveryLink()
+	{
+		await SeedProjectBoard();
+		await SeedDef(PreQuartet);
+
+		Migrator().Migrate().Should().Be(1);
+
+		var def = await ReadDef();
+		foreach (var slug in new[] { "idea_spec", "task_spec", "issue_task" })
+			def.LinkKinds.Should().Contain(lk => lk.Slug == slug, $"'{slug}' is referenced by a constraint/effect, so it must be declared");
+		def.Kinds.Single(k => k.Kind == "spec").Delivery!.Link.Should().Be("task_spec");
+	}
+
+	// Same code path, template-row subject.
+	[Fact]
+	public async Task PreChangeTemplateRow_DeclaresTheTrioWithDirection_AndBackfillsDeliveryLink()
+	{
+		await SeedProjectBoard();
+		await SeedTemplate("tmpl", PreQuartet);
+
+		Migrator().Migrate().Should().Be(1);
+
+		var def = await ReadTemplate("tmpl");
+		foreach (var slug in new[] { "idea_spec", "task_spec", "issue_task" })
+			def.LinkKinds.Should().Contain(lk => lk.Slug == slug, $"'{slug}' is referenced by a constraint/effect, so it must be declared");
+		def.Kinds.Single(k => k.Kind == "spec").Delivery!.Link.Should().Be("task_spec");
+	}
+
+	// NIT 2 (chore work/linkkinds-migrator-observability-gaps): `db.TaskBoards.Select(ProjectKey)`
+	// alone never visits a project whose methodology rows outlived (or predate) every board.
+	// Discovery now unions that with every project that already has an on-disk tasks file
+	// (StartupMigrationRun.DiscoverProjects). No board is ever created for this project.
+	[Fact]
+	public async Task ProjectWithMethodologyRows_ButNoBoards_IsStillDiscoveredAndMigrated()
+	{
+		const string boardlessProj = "proj-no-boards";
+		_db.Insert(new Project { Key = boardlessProj, WorkspaceKey = "ws", Name = "P2", Description = "" });
+
+		using (var ctx = _factory.NewEnsuredConnection(boardlessProj))
+		{
+			(await TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new MethodologyInstanceRow { Key = "quartet", Version = 0, Json = JsonSerializer.Serialize(PreQuartet, DefinitionJson), ClosedAt = null },
+			})).Applied.Should().BeTrue();
+		}
+
+		Migrator().Migrate().Should().Be(1, "the boardless project's instance document is still discovered and migrated");
+
+		using var readCtx = _factory.NewEnsuredConnection(boardlessProj);
+		var row = (await readCtx.GetTable<MethodologyInstanceRow>().Where(r => r.Key == "quartet" && r.ActiveTo == null).ToListAsync()).Single();
+		var def = JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)!;
+		def.LinkKinds.Should().Contain(lk => lk.Slug == "task_spec");
 	}
 
 	[Fact]

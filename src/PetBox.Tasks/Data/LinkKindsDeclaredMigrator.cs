@@ -58,61 +58,66 @@ public sealed class LinkKindsDeclaredMigrator
 		_log = log;
 	}
 
-	// Returns the number of stored documents (definition + instance + template rows, summed) rewritten.
+	// The full tally of the most recent Migrate() call: touched/malformed documents and
+	// touched/failed projects, and the aggregate line already logged from it — see
+	// StartupMigrationRun. Read this after Migrate() for the counts NIT 1 asks for; Migrate()'s
+	// own return value stays the pre-existing "documents rewritten" count for source compat.
+	public StartupMigrationRun.Result LastRun { get; private set; }
+
+	// Returns the number of stored documents (definition + instance + template rows, summed)
+	// rewritten. See LastRun for touched/malformed/failed project counts.
 	public int Migrate()
 	{
 		using var db = _dbf.Open();
-		var projects = db.TaskBoards
-			.Select(b => b.ProjectKey)
-			.Distinct()
-			.OrderBy(k => k)
-			.ToList();
-		var touched = 0;
-		foreach (var project in projects)
-		{
-			try
-			{
-				touched += MigrateProject(project);
-			}
-			catch (Exception ex)
-			{
-				_log?.LogError(ex,
-					"Tasks methodology-link-kinds-declared migration failed for project {Project}; left as-is",
-					project);
-			}
-		}
-		return touched;
+		var projects = StartupMigrationRun.DiscoverProjects(db, _factory.BaseDir);
+		LastRun = StartupMigrationRun.Execute("methodology-link-kinds-declared", projects, MigrateProject, _log);
+		return LastRun.DocumentsTouched;
 	}
 
-	// Exposed for tests: run a single project, return the number of documents rewritten.
-	internal int MigrateProject(string projectKey)
+	// Exposed for tests: run a single project, return the number of documents rewritten plus the
+	// number of stored documents that could not even be parsed (malformed — left for a human).
+	internal StartupMigrationRun.ProjectOutcome MigrateProject(string projectKey)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		var rewritten = 0;
+		var malformed = 0;
 
 		var defRow = ctx.GetTable<MethodologyDefRow>()
 			.FirstOrDefault(r => r.Key == MethodologyDefRow.SingletonKey && r.ActiveTo == null);
-		if (defRow is not null && TryDeclare(defRow.Json, $"project {projectKey}'s methodology definition", out var newDefJson))
+		if (defRow is not null)
 		{
-			var r = TemporalStore.UpsertAsync(ctx, new[] { defRow with { Version = defRow.Version, Json = newDefJson } }).GetAwaiter().GetResult();
-			rewritten += LogWrite(r.Applied, projectKey, "project methodology definition");
+			var qualifies = TryDeclare(defRow.Json, $"project {projectKey}'s methodology definition", out var newDefJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
+			{
+				var r = TemporalStore.UpsertAsync(ctx, new[] { defRow with { Version = defRow.Version, Json = newDefJson } }).GetAwaiter().GetResult();
+				rewritten += LogWrite(r.Applied, projectKey, "project methodology definition");
+			}
 		}
 
 		foreach (var row in ctx.GetTable<MethodologyInstanceRow>().Where(r => r.ActiveTo == null).ToList())
-			if (TryDeclare(row.Json, $"methodology instance '{row.Key}' in project {projectKey}", out var newJson))
+		{
+			var qualifies = TryDeclare(row.Json, $"methodology instance '{row.Key}' in project {projectKey}", out var newJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
 			{
 				var r = TemporalStore.UpsertAsync(ctx, new[] { row with { Version = row.Version, Json = newJson } }).GetAwaiter().GetResult();
 				rewritten += LogWrite(r.Applied, projectKey, $"methodology instance '{row.Key}'");
 			}
+		}
 
 		foreach (var row in ctx.GetTable<MethodologyTemplateRow>().Where(r => r.ActiveTo == null).ToList())
-			if (TryDeclare(row.Json, $"methodology template '{row.Key}' in project {projectKey}", out var newJson))
+		{
+			var qualifies = TryDeclare(row.Json, $"methodology template '{row.Key}' in project {projectKey}", out var newJson, out var docMalformed);
+			if (docMalformed) malformed++;
+			if (qualifies)
 			{
 				var r = TemporalStore.UpsertAsync(ctx, new[] { row with { Version = row.Version, Json = newJson } }).GetAwaiter().GetResult();
 				rewritten += LogWrite(r.Applied, projectKey, $"methodology template '{row.Key}'");
 			}
+		}
 
-		return rewritten;
+		return new StartupMigrationRun.ProjectOutcome(rewritten, malformed);
 	}
 
 	int LogWrite(bool applied, string projectKey, string subject)
@@ -134,14 +139,31 @@ public sealed class LinkKindsDeclaredMigrator
 	// canonical trio slug the document references but does not yet declare. Returns false (result =
 	// input) when nothing qualifies — no trio reference the document doesn't already declare, and
 	// every delivery already names its link (already migrated, or never touched the quartet). A bad
-	// shape is left for a human, not a crash loop.
-	bool TryDeclare(string json, string subject, out string result)
+	// shape (`malformed` set true) is left for a human, not a crash loop — but it is now LOGGED
+	// (elevated Warning) instead of vanishing silently, and counted into the caller's malformed
+	// tally (NIT 1: a battled document used to collapse into "nothing to migrate" with zero signal).
+	bool TryDeclare(string json, string subject, out string result, out bool malformed)
 	{
 		result = json;
+		malformed = false;
 		MethodologyDefinition? def;
 		try { def = JsonSerializer.Deserialize<MethodologyDefinition>(json, DefinitionJson); }
-		catch (JsonException) { return false; }
-		if (def is null) return false;
+		catch (JsonException ex)
+		{
+			malformed = true;
+			_log?.LogWarning(ex,
+				"Tasks methodology-link-kinds-declared: {Subject} is not valid methodology JSON — left as-is, needs a human",
+				subject);
+			return false;
+		}
+		if (def is null)
+		{
+			malformed = true;
+			_log?.LogWarning(
+				"Tasks methodology-link-kinds-declared: {Subject} deserialized to null — left as-is, needs a human",
+				subject);
+			return false;
+		}
 
 		var changed = false;
 
