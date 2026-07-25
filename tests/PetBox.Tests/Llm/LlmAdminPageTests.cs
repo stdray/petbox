@@ -311,8 +311,13 @@ public sealed class LlmAdminPageTests : IDisposable
 		public Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default) =>
 			Task.FromResult(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()));
 
+		// The fake's level matches the one ViewAsync reports below — a declaration cannot be built
+		// without naming its level (work llm-config-get-level-derivation-trap).
+		const string FakeLevel = "Workspace:ws";
+
 		public Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default) =>
-			Task.FromResult(new LlmRegistryDeclaration(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version));
+			Task.FromResult(new LlmRegistryDeclaration(
+				new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version, FakeLevel));
 
 		public async Task<LlmRegistryDeclaration> PatchAsync(
 			string projectKey, IReadOnlyList<LlmEndpoint>? endpoints, IReadOnlyList<LlmRoute>? routes,
@@ -324,12 +329,13 @@ public sealed class LlmAdminPageTests : IDisposable
 				routes is null ? Routes : routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(),
 				apiKeys, ct);
 			Version++;
-			return new LlmRegistryDeclaration(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version);
+			return new LlmRegistryDeclaration(
+				new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version, FakeLevel);
 		}
 
 		public Task<LlmRegistryView> ViewAsync(string projectKey, CancellationToken ct = default) =>
 			Task.FromResult(new LlmRegistryView(
-				"Workspace:ws", Inherited, Inherited ? "System:$" : null, Endpoints, Routes));
+				FakeLevel, Inherited, Inherited ? "System:$" : null, Endpoints, Routes));
 
 		public Task SetAsync(string projectKey, LlmRegistry registry, IReadOnlyDictionary<string, string> apiKeys, CancellationToken ct = default) =>
 			SaveAsync(projectKey, registry.Endpoints,

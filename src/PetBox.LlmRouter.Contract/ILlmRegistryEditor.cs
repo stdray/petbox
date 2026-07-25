@@ -14,13 +14,18 @@ namespace PetBox.LlmRouter.Contract;
 // level it merely READ (the "I edited the inherited $system row and overwrote it for everyone"
 // bug has no expressible form here).
 //
-// Two things it deliberately does NOT do yet (owner's call, not the code's — llm-l5 items 4-6):
+// One thing it deliberately does NOT do yet (owner's call, not the code's — llm-l5 item 4):
 //   * OVERRIDE (copy an inherited level into this workspace, keys and all) — a PARTIAL fork is the
 //     one thing that must never happen (an endpoint without its key = an unauthenticated call), so
 //     until copy-on-write lands, an inheriting workspace is READ-ONLY here rather than
 //     half-editable.
-//   * a level/inherited/owner shape on llm_config_get — GetAsync keeps returning a plain
-//     LlmRegistry, so the MCP contract is unchanged by this fix.
+//
+// llm-l5 item 5 — "should llm_config_get expose level/inherited/owner?" — is DECIDED, yes (work
+// llm-config-get-level-derivation-trap). It is not a nicety: the level is derived from the project's
+// workspace, so without it a caller cannot tell `smoke` (which writes the LIVE `System:$`) from a
+// project that writes a level of its own. LlmRegistryDeclaration carries Level and ServedBy, and the
+// MCP results surface both. The INHERITANCE MODEL itself is unchanged — this exposes where a write
+// lands, it does not move it.
 
 // A route AS STORED: the row's own stable id plus the route. The admin surface addresses a row by
 // this id and never by its position in a list — a concurrent edit or a re-sort used to make
@@ -36,10 +41,28 @@ public sealed record LlmRegistryView(
 	IReadOnlyList<LlmEndpoint> Endpoints,
 	IReadOnlyList<IdentifiedRoute> Routes);
 
-// The registry declared at a project's own level TOGETHER WITH the level's CAS version — the pair a
-// caller needs to edit safely: what is there, and the baseline to quote back when replacing it.
-// Version 0 means the level has never been written (it declares nothing yet).
-public sealed record LlmRegistryDeclaration(LlmRegistry Registry, long Version);
+// The registry declared at the level a project reads and writes, TOGETHER WITH that level's CAS
+// version and — the part that used to be missing — WHICH LEVEL THAT IS.
+//
+// `Level` is not decoration. The level is derived from the project's WORKSPACE, so "this project's
+// own level" is a phrase with no referent: every project of workspace `$system` — the sandbox
+// project `smoke` included — reads and writes `System:$`, the live registry every other workspace
+// inherits. A caller that was told only "the registry declared at your own level" had no way to
+// learn that before the write landed, and a smoke planned against `smoke` was one call away from
+// editing production (work llm-config-get-level-derivation-trap). Level is therefore a REQUIRED
+// component of the declaration: nothing can hand a caller a registry without saying where it came
+// from and where a write would go.
+//
+// `Version` 0 means THIS LEVEL has never been written. It does NOT mean the project has no registry:
+// `ServedBy` then names the level that actually serves it through inheritance (null when the level
+// declares something of its own, or when nothing in the chain does). The distinction is load-bearing
+// in the other direction too — declaring one row at an inheriting level SHADOWS the inherited level
+// WHOLE, for every project of that workspace.
+public sealed record LlmRegistryDeclaration(
+	LlmRegistry Registry,
+	long Version,
+	string Level,
+	string? ServedBy = null);
 
 public interface ILlmRegistryEditor
 {
@@ -47,8 +70,10 @@ public interface ILlmRegistryEditor
 	// level declares nothing (even if the project is being served by a level above).
 	Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default);
 
-	// The same read, plus the level's CAS version — what llm_config_get returns, so that an agent
-	// that reads before it writes always holds a baseline.
+	// The same read, plus the level's CAS version and the NAME of the level it came from — what
+	// llm_config_get returns, so that an agent that reads before it writes holds both a baseline and
+	// the answer to "what am I about to overwrite?". When the level declares nothing, ServedBy names
+	// the level that serves the project instead (see LlmRegistryDeclaration).
 	Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default);
 
 	// THE CHECKED EDIT behind llm_config_upsert. Two things distinguish it from SetAsync:

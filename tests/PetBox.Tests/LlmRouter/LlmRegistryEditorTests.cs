@@ -388,6 +388,159 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("sys-model");
 	}
 
+	// ---- the level is NAMED in the answer (work llm-config-get-level-derivation-trap) ----
+
+	// THE CARD, as a test. A smoke was planned against the sandbox project `smoke` on the reasoning
+	// that a sandbox project has a level of its own. It does not — the level comes from the project's
+	// WORKSPACE, and `smoke` lives in `$system`, so its "own" level IS the live `System:$`. The
+	// surface described that as "this project's own level", which is what nearly turned a smoke into
+	// a production edit. What makes it non-repeatable is that the answer now says where it came from.
+	[Fact]
+	public async Task A_sandbox_project_in_the_system_workspace_reports_the_LIVE_System_level()
+	{
+		// A project whose KEY says "sandbox" and whose WORKSPACE says "$system" — the exact shape.
+		_db.Insert(new Project { Key = "smoke", WorkspaceKey = WorkspaceMemory.SystemWorkspace, Name = "smoke", Description = "" });
+
+		// $system declares the live registry.
+		await _editor.SetAsync(SysProj,
+			new LlmRegistry([new LlmEndpoint("home", "https://home:1234")], [new LlmRoute(LlmCapability.Chat, "home", "prod-model")]),
+			NoKeys);
+
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", "smoke"), Flags(), _editor, "smoke");
+
+		got.Level.Should().Be("System:$",
+			"the level is derived from the project's workspace — `smoke` is in `$system`, so it reads and writes the live level");
+		got.ServedBy.Should().BeNull("this level declares rows of its own; nothing is being inherited past it");
+		got.Routes.Should().ContainSingle().Which.Model.Should().Be("prod-model",
+			"byte for byte what `$system` returns — there is no per-project isolation here");
+		got.Version.Should().BeGreaterThan(0, "and it is NOT the 'declares nothing yet' state that reads as free space");
+	}
+
+	// The other half of the trap: an empty level is not an empty registry. `version: 0` used to be
+	// the only signal, and it reads as "free space" — but declaring one row here SHADOWS the whole
+	// inherited level for every project of the workspace. servedBy says what is really serving it.
+	[Fact]
+	public async Task An_empty_level_reports_version_0_AND_the_level_that_actually_serves_the_project()
+	{
+		await _editor.SetAsync(SysProj,
+			new LlmRegistry([new LlmEndpoint("home", "https://home:1234")], [new LlmRoute(LlmCapability.Chat, "home", "sys-model")]),
+			NoKeys);
+
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+
+		got.Version.Should().Be(0);
+		got.Endpoints.Should().BeEmpty("the DECLARED registry at this level is genuinely empty");
+		got.Level.Should().Be($"Workspace:{Ws}", "which is where a write with this projectKey would land");
+		got.ServedBy.Should().Be("System:$", "and this is what a write here would shadow, whole");
+	}
+
+	// Nothing anywhere: empty level, and no inherited level either. servedBy must stay null rather
+	// than inventing a source.
+	[Fact]
+	public async Task A_project_served_by_nothing_at_all_reports_no_servedBy()
+	{
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+
+		got.Version.Should().Be(0);
+		got.Level.Should().Be($"Workspace:{Ws}");
+		got.ServedBy.Should().BeNull();
+	}
+
+	// A write reports its own target. Without this the caller has to re-derive the level from the
+	// projectKey — the exact derivation that was wrong in every head that got it wrong.
+	[Fact]
+	public async Task An_upsert_reports_the_level_it_actually_wrote()
+	{
+		var wsWrite = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "m", 50)));
+		wsWrite.Level.Should().Be($"Workspace:{Ws}");
+
+		var sysWrite = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", SysProj), Flags(), _editor, SysProj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "m", 50)));
+		sysWrite.Level.Should().Be("System:$", "a project of the `$system` workspace writes the live system level");
+	}
+
+	// ---- read-modify-write round trip (work llm-config-capability-case-roundtrip) ----
+
+	// THE CARD. Since an upsert REPLACES each part it is sent, read-modify-write is the only safe way
+	// to edit a level — and nobody had ever run the loop end to end. llm_config_get emits enum values
+	// Capitalized ("Embed" / "Disabled") while the upsert description documented them lowercase, so if
+	// the parser were case-SENSITIVE this cycle would fail (or, worse, write something else) against
+	// the live level. This test takes the get output VERBATIM — serialized exactly as the tool emits
+	// it, no case fixing, no field pruning — feeds it straight back, and pins that the registry is
+	// unchanged and the version moved by exactly one.
+	[Fact]
+	public async Task The_verbatim_output_of_llm_config_get_feeds_straight_back_into_llm_config_upsert()
+	{
+		// Every field whose casing or omission could break the loop: all three capabilities, an
+		// explicit thinking mode, a tier, an embedSpaceId, and an api key that the get output does
+		// NOT carry (secrets are stripped).
+		var seeded = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234", "requestTimeoutMs": 90000 } ],
+				  "routes": [
+				    { "capability": "chat",   "endpoint": "home", "model": "chat-m",   "priority": 10, "thinking": "disabled" },
+				    { "capability": "embed",  "endpoint": "home", "model": "embed-m",  "priority": 20, "embedSpaceId": "space-1" },
+				    { "capability": "rerank", "endpoint": "home", "model": "rerank-m", "priority": 30, "tier": "fast" } ],
+				  "apiKeys": { "home": "sk-secret" } }
+				"""));
+
+		var before = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+
+		// What the caller literally sees on the wire. Pin the Capitalized emission the card reported —
+		// if this ever flips to lowercase the round trip below stops proving anything about case.
+		var wire = JsonSerializer.Serialize(before, Web);
+		wire.Should().Contain("\"capability\":\"Chat\"").And.Contain("\"capability\":\"Embed\"")
+			.And.Contain("\"capability\":\"Rerank\"").And.Contain("\"thinking\":\"Disabled\"");
+
+		// VERBATIM: the whole get payload, `version`/`level`/`servedBy` and all, handed back as
+		// `config`. No transformation whatsoever — this is what a read-modify-write with no edit is.
+		var echoed = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json(wire), version: before.Version);
+
+		echoed.Ok.Should().BeTrue();
+		echoed.Version.Should().Be(before.Version + 1, "one write, one version step — no retry, no double-apply");
+		echoed.Version.Should().Be(seeded.Version + 1);
+		echoed.Level.Should().Be(before.Level, "the write landed on the level the read came from");
+
+		var after = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		after.Version.Should().Be(before.Version + 1);
+		after.Level.Should().Be(before.Level);
+		after.Endpoints.Should().BeEquivalentTo(before.Endpoints, "an echo must not alter the endpoints");
+		after.Routes.Should().BeEquivalentTo(before.Routes, "…nor the routes: capability, thinking, tier and embedSpaceId all survive the loop");
+
+		// The runtime agrees, and the api key — which the get output never carried — is still there.
+		// A round trip that silently de-authenticated every endpoint would satisfy every assertion
+		// above and break the router.
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Routes.Should().HaveCount(3);
+		resolved.ApiKeys.Should().ContainKey("home").WhoseValue.Should().Be("sk-secret");
+	}
+
+	// The same loop with the DOCUMENTED lowercase form, so both spellings are pinned as accepted and
+	// neither the description nor the emitted output can drift into being the only one that works.
+	[Fact]
+	public async Task Capability_and_thinking_are_accepted_in_either_case()
+	{
+		var lower = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234" } ],
+				  "routes": [ { "capability": "chat", "endpoint": "home", "model": "m", "thinking": "disabled" } ] }
+				"""));
+
+		var upper = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Json("""
+				{ "endpoints": [ { "name": "home", "baseUrl": "https://home:1234" } ],
+				  "routes": [ { "capability": "Chat", "endpoint": "home", "model": "m", "thinking": "Disabled" } ] }
+				"""),
+			version: lower.Version);
+
+		upper.Ok.Should().BeTrue();
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj);
+		got.Routes.Should().ContainSingle().Which.Capability.Should().Be(LlmCapability.Chat);
+		got.Routes.Single().Thinking.Should().Be(LlmThinking.Disabled);
+	}
+
 	// ---- helpers ----
 
 	Task Seed() => _editor.SetAsync(Proj, new LlmRegistry(

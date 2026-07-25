@@ -60,6 +60,81 @@ public sealed class LlmRegistryJsonTests
 		parsed.Routes[2].EmbedSpaceId.Should().BeNull("a route that declares no space defaults to null");
 	}
 
+	// work llm-config-capability-case-roundtrip. The two sides of the surface disagreed IN PRINT:
+	// llm_config_upsert documented "embed|rerank|chat" / "enabled|disabled" lowercase, llm_config_get
+	// emitted "Embed" / "Disabled". Since an upsert replaces each part it is sent, read-modify-write
+	// is the only safe edit, so a case-SENSITIVE parser would have broken the one supported cycle
+	// against a live level. It is not sensitive — JsonStringEnumConverter with no naming policy reads
+	// through Enum.TryParse(ignoreCase: true) — and that is the fact these tests pin, in BOTH
+	// directions: any casing is read, the declared member name is written.
+	[Theory]
+	[InlineData("embed", LlmCapability.Embed)]
+	[InlineData("Embed", LlmCapability.Embed)]
+	[InlineData("EMBED", LlmCapability.Embed)]
+	[InlineData("rerank", LlmCapability.Rerank)]
+	[InlineData("Rerank", LlmCapability.Rerank)]
+	[InlineData("chat", LlmCapability.Chat)]
+	[InlineData("Chat", LlmCapability.Chat)]
+	public void Route_capability_parses_from_any_casing(string wire, LlmCapability expected)
+	{
+		var json = $$"""
+			{"endpoints":[{"name":"e","baseUrl":"https://e"}],
+			 "routes":[{"capability":"{{wire}}","endpoint":"e","model":"m"}]}
+			""";
+
+		JsonSerializer.Deserialize<LlmRegistry>(json, Json)!.Routes[0].Capability.Should().Be(expected);
+	}
+
+	[Theory]
+	[InlineData("enabled", LlmThinking.Enabled)]
+	[InlineData("Enabled", LlmThinking.Enabled)]
+	[InlineData("disabled", LlmThinking.Disabled)]
+	[InlineData("Disabled", LlmThinking.Disabled)]
+	[InlineData("DISABLED", LlmThinking.Disabled)]
+	public void Route_thinking_parses_from_any_casing(string wire, LlmThinking expected)
+	{
+		var json = $$"""
+			{"endpoints":[{"name":"e","baseUrl":"https://e"}],
+			 "routes":[{"capability":"chat","endpoint":"e","model":"m","thinking":"{{wire}}"}]}
+			""";
+
+		JsonSerializer.Deserialize<LlmRegistry>(json, Json)!.Routes[0].Thinking.Should().Be(expected);
+	}
+
+	// What makes "case-insensitive" a real finding rather than a vacuous one: an UNKNOWN value is
+	// still refused. If the converter quietly fell back to the zero member, every one of the casings
+	// above would have "parsed" — into Embed — and a chat route pasted back through the round trip
+	// would have been silently rewritten as an embed route.
+	[Theory]
+	[InlineData("\"capability\":\"summarize\"")]
+	[InlineData("\"capability\":\"\"")]
+	public void An_unknown_capability_is_REFUSED_not_defaulted_to_the_zero_member(string capability)
+	{
+		var json = $$"""
+			{"endpoints":[{"name":"e","baseUrl":"https://e"}],
+			 "routes":[{{{capability}},"endpoint":"e","model":"m"}]}
+			""";
+
+		var act = () => JsonSerializer.Deserialize<LlmRegistry>(json, Json);
+
+		act.Should().Throw<JsonException>();
+	}
+
+	// The WRITE side of the same fact. llm_config_get's output is Capitalized, and that is what a
+	// caller pastes back — so the round trip depends on the read above staying case-insensitive.
+	// If this ever changes to lowercase, the descriptions on LlmRouterTools must change with it.
+	[Fact]
+	public void Capability_and_thinking_serialize_as_the_declared_member_name()
+	{
+		var reg = new LlmRegistry(
+			[new LlmEndpoint("e", "https://e")],
+			[new LlmRoute(LlmCapability.Embed, "e", "m", 10, Thinking: LlmThinking.Disabled)]);
+
+		var wire = JsonSerializer.Serialize(reg, Json);
+
+		wire.Should().Contain("\"capability\":\"Embed\"").And.Contain("\"thinking\":\"Disabled\"");
+	}
+
 	// The wire form is camelCase and optional: a route JSON without embedSpaceId parses to null
 	// (backward compatibility — old config payloads have no such field).
 	[Fact]
