@@ -109,6 +109,48 @@ public sealed class LlmAdminPageTests : IDisposable
 		page.Error.Should().Contain("bad url");
 	}
 
+	// work llm-admin-page-no-cas: the page now quotes the level's version back on every write (a
+	// hidden `version` field, set from Model.Version at render time). A stale baseline — someone else
+	// saved since this page was loaded — must be refused with a human conflict message, and NOTHING
+	// written: the asymmetry the card exists to close (previously the page always won silently).
+	[Fact]
+	public async Task Save_with_a_stale_version_is_refused_and_writes_nothing()
+	{
+		var reg = new FakeEditor { Endpoints = [new LlmEndpoint("home", "https://old:1")], Version = 5 };
+		var page = Page(reg);
+
+		var result = await page.OnPostSaveAsync("home", "https://attacker:2", null, 2000, 60000, null, version: 1);
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().Contain("changed by someone else");
+		reg.SaveCalls.Should().Be(0, "a stale baseline must refuse the write entirely");
+		reg.Endpoints.Should().ContainSingle(e => e.BaseUrl == "https://old:1", "nothing was written");
+	}
+
+	[Fact]
+	public async Task Save_with_the_current_version_succeeds_and_bumps_it()
+	{
+		var reg = new FakeEditor { Endpoints = [new LlmEndpoint("home", "https://old:1")], Version = 5 };
+		var page = Page(reg);
+
+		var result = await page.OnPostSaveAsync("home", "https://new:2", null, 2000, 60000, null, version: 5);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		reg.Endpoints.Should().ContainSingle(e => e.BaseUrl == "https://new:2");
+		reg.Version.Should().Be(6);
+	}
+
+	[Fact]
+	public async Task OnGet_carries_the_levels_version_as_the_forms_baseline()
+	{
+		var reg = new FakeEditor { Version = 7 };
+		var page = Page(reg);
+
+		await page.OnGetAsync();
+
+		page.Version.Should().Be(7);
+	}
+
 	[Fact]
 	public async Task Delete_removes_endpoint()
 	{
@@ -153,6 +195,31 @@ public sealed class LlmAdminPageTests : IDisposable
 		reg.Routes[0].Route.Priority.Should().Be(10);
 		reg.Routes[0].Route.Tier.Should().Be("fast");
 		reg.Routes[0].Route.Thinking.Should().Be(LlmThinking.Disabled);
+	}
+
+	// THE ASYMMETRY THIS CARD CLOSES, at page level. Two admins load the page at version 3; one
+	// saves (version now 4); the other — still holding the stale baseline from their own render —
+	// submits an edit to the SAME route. Row-id addressing alone does not catch this (the id still
+	// exists), so without a version check this write would land silently over the first admin's
+	// change. It must be refused instead, and the row must be untouched.
+	[Fact]
+	public async Task SaveRoute_with_a_stale_version_is_refused_and_writes_nothing()
+	{
+		var reg = new FakeEditor
+		{
+			Endpoints = [new LlmEndpoint("home", "https://h")],
+			Routes = [new IdentifiedRoute("r1", new LlmRoute(LlmCapability.Chat, "home", "someone-elses-model", 100))],
+			Version = 4,
+		};
+		var page = Page(reg);
+
+		// This admin's form still carries the baseline (3) from before the other admin's save landed.
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "my-stale-edit", 100, null, null, routeId: "r1", version: 3);
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().Contain("changed by someone else");
+		reg.SaveCalls.Should().Be(0, "a stale baseline must refuse the write entirely");
+		reg.Routes.Should().ContainSingle(r => r.Route.Model == "someone-elses-model", "the concurrent write must survive untouched");
 	}
 
 	// THE POSITION BUG, at page level. The row the user edited is `b`; between render and submit the
@@ -322,8 +389,7 @@ public sealed class LlmAdminPageTests : IDisposable
 				projectKey,
 				endpoints ?? Endpoints,
 				routes is null ? Routes : routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(),
-				apiKeys, ct);
-			Version++;
+				apiKeys, expectedVersion: version, ct: ct);
 			return new LlmRegistryDeclaration(new LlmRegistry(Endpoints, Routes.Select(r => r.Route).ToList()), Version);
 		}
 
@@ -333,17 +399,24 @@ public sealed class LlmAdminPageTests : IDisposable
 
 		public Task SetAsync(string projectKey, LlmRegistry registry, IReadOnlyDictionary<string, string> apiKeys, CancellationToken ct = default) =>
 			SaveAsync(projectKey, registry.Endpoints,
-				registry.Routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(), apiKeys, ct);
+				registry.Routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(), apiKeys, ct: ct);
 
 		public Task SaveAsync(
 			string projectKey, IReadOnlyList<LlmEndpoint> endpoints, IReadOnlyList<IdentifiedRoute> routes,
-			IReadOnlyDictionary<string, string> apiKeys, CancellationToken ct = default)
+			IReadOnlyDictionary<string, string> apiKeys, long? expectedVersion = null, CancellationToken ct = default)
 		{
+			// Mirrors LlmRegistryLevelAdmin.SetSnapshotAsync's CAS check: a non-null baseline that
+			// disagrees with the current version refuses the whole write — nothing below this line runs.
+			if (expectedVersion is { } expected && expected != Version)
+				throw new InvalidOperationException(
+					$"llm registry level conflict: your baseline version {expected} is stale — the current version is {Version}; re-read and resubmit. NOTHING was written");
+
 			SaveCalls++;
 			if (ThrowOnSave is not null) throw ThrowOnSave;
 			Endpoints = endpoints;
 			Routes = routes;
 			LastApiKeys = apiKeys;
+			Version++;
 			return Task.CompletedTask;
 		}
 	}

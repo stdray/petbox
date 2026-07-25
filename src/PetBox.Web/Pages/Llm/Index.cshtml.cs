@@ -55,6 +55,12 @@ public sealed class IndexModel : PageModel
 	public string? Error { get; private set; }
 	public bool Saved { get; private set; }
 
+	// The CAS baseline (work llm-admin-page-no-cas): the level's version as of THIS render, carried
+	// in every form's hidden `version` field and quoted back on submit. A submit whose baseline no
+	// longer matches the level's current version is a conflict — see SaveAsync below — never a
+	// silent last-writer-wins.
+	public long Version { get; private set; }
+
 	public async Task<IActionResult> OnGetAsync(bool saved = false, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
@@ -68,7 +74,7 @@ public sealed class IndexModel : PageModel
 	// `newKey` sets/replaces that endpoint's api key; blank keeps the existing one. Routes unchanged.
 	public async Task<IActionResult> OnPostSaveAsync(
 		string name, [FromForm(Name = "baseUrl")] string baseAddress, string? certThumbprint,
-		int connectTimeoutMs, int requestTimeoutMs, string? newKey, CancellationToken ct = default)
+		int connectTimeoutMs, int requestTimeoutMs, string? newKey, long version = 0, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -92,11 +98,11 @@ public sealed class IndexModel : PageModel
 		var apiKeys = new Dictionary<string, string>(StringComparer.Ordinal);
 		if (!string.IsNullOrWhiteSpace(newKey)) apiKeys[endpoint.Name] = newKey.Trim();
 
-		return await SaveAsync(endpoints, view.Routes, apiKeys, ct);
+		return await SaveAsync(endpoints, view.Routes, apiKeys, version, ct);
 	}
 
 	// Remove an endpoint by name. Rejected by validation if a route still references it.
-	public async Task<IActionResult> OnPostDeleteAsync(string name, CancellationToken ct = default)
+	public async Task<IActionResult> OnPostDeleteAsync(string name, long version = 0, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -105,7 +111,7 @@ public sealed class IndexModel : PageModel
 		if (view.Inherited) return await InheritedRefusalAsync(view, ct);
 
 		var endpoints = view.Endpoints.Where(e => !string.Equals(e.Name, name, StringComparison.Ordinal)).ToList();
-		return await SaveAsync(endpoints, view.Routes, NoKeys, ct);
+		return await SaveAsync(endpoints, view.Routes, NoKeys, version, ct);
 	}
 
 	// Add a route, or — when `routeId` names an existing row — replace THAT row, wherever it now sits
@@ -113,7 +119,7 @@ public sealed class IndexModel : PageModel
 	// or replaced by someone else, and silently re-creating it is how a deleted route comes back.
 	public async Task<IActionResult> OnPostSaveRouteAsync(
 		LlmCapability capability, string endpoint, string model, int priority, string? tier,
-		string? thinking, string? routeId, CancellationToken ct = default)
+		string? thinking, string? routeId, long version = 0, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -142,12 +148,12 @@ public sealed class IndexModel : PageModel
 			routes[at] = new IdentifiedRoute(routeId, route);
 		}
 
-		return await SaveAsync(view.Endpoints, routes, NoKeys, ct);
+		return await SaveAsync(view.Endpoints, routes, NoKeys, version, ct);
 	}
 
 	// Remove a route by its row id. A row id that is gone means somebody already removed it — say so
 	// rather than quietly reporting success for a delete that deleted nothing.
-	public async Task<IActionResult> OnPostDeleteRouteAsync(string routeId, CancellationToken ct = default)
+	public async Task<IActionResult> OnPostDeleteRouteAsync(string routeId, long version = 0, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -158,23 +164,33 @@ public sealed class IndexModel : PageModel
 		var routes = view.Routes.Where(r => !string.Equals(r.Id, routeId, StringComparison.Ordinal)).ToList();
 		if (routes.Count == view.Routes.Count) return await StaleRowAsync(ct);
 
-		return await SaveAsync(view.Endpoints, routes, NoKeys, ct);
+		return await SaveAsync(view.Endpoints, routes, NoKeys, version, ct);
 	}
 
 	// No key changes — endpoints absent from the map keep their existing secret (contract).
 	static IReadOnlyDictionary<string, string> NoKeys => new Dictionary<string, string>(StringComparer.Ordinal);
 
+	// `version` is the CAS baseline the form quoted back (Model.Version at render time). It rides
+	// straight through to ILlmRegistryEditor.SaveAsync's `expectedVersion` — the level's actual
+	// write-time check (see LlmRegistryLevelAdmin.SetSnapshotAsync). A mismatch throws
+	// InvalidOperationException with "conflict" in the message (the same wording the MCP-side
+	// llm_config_upsert CAS refusal uses — see Conflict() there) and writes nothing; that specific
+	// shape is turned into a human conflict message here instead of the MCP-worded one.
 	async Task<IActionResult> SaveAsync(
 		IReadOnlyList<LlmEndpoint> endpoints, IReadOnlyList<IdentifiedRoute> routes,
-		IReadOnlyDictionary<string, string> apiKeys, CancellationToken ct)
+		IReadOnlyDictionary<string, string> apiKeys, long version, CancellationToken ct)
 	{
 		try
 		{
-			await _registry.SaveAsync(ProjectKey, endpoints, routes, apiKeys, ct);
+			await _registry.SaveAsync(ProjectKey, endpoints, routes, apiKeys, version, ct);
 		}
 		catch (ValidationException ex)
 		{
 			return await FailAsync(string.Join("; ", ex.Errors.Select(e => e.ErrorMessage)), ct);
+		}
+		catch (InvalidOperationException ex) when (ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase))
+		{
+			return await ConflictAsync(ct);
 		}
 		catch (InvalidOperationException ex)
 		{
@@ -182,6 +198,18 @@ public sealed class IndexModel : PageModel
 		}
 		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, saved = true });
 	}
+
+	// Somebody else's write landed on this level between this page's last load and this submit — the
+	// asymmetry this card exists to close (a page-side edit used to win silently over a concurrent
+	// one). Refuse rather than clobber: nothing was written, and LoadAsync below (via FailAsync)
+	// refreshes Endpoints/Routes/Version to the current state, so the redrawn form already carries a
+	// fresh baseline — reapplying the same edit is then a normal submit, not a fight with a stale form.
+	Task<IActionResult> ConflictAsync(CancellationToken ct) =>
+		FailAsync(
+			"This registry was changed by someone else since you loaded the page, so your edit was NOT "
+			+ "saved — saving it would have silently overwritten their change. The rows below now show "
+			+ "the current version; reapply your edit if it's still needed.",
+			ct);
 
 	// A POST that reached an inherited registry anyway (a stale form, or a hand-made request). The
 	// page renders no controls in that state, so this is the belt: refuse, do not half-fork.
@@ -209,6 +237,10 @@ public sealed class IndexModel : PageModel
 		Level = view.Level;
 		Inherited = view.Inherited;
 		InheritedFrom = view.InheritedFrom;
+
+		// The own level's CAS baseline (0 when it declares nothing yet). Read even when Inherited —
+		// harmless, and keeps this the one place Version is ever set.
+		Version = (await _registry.GetDeclaredAsync(ProjectKey, ct)).Version;
 	}
 
 	async Task<bool> ProjectExistsAsync(CancellationToken ct) =>

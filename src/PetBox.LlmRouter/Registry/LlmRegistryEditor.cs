@@ -129,10 +129,11 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		IReadOnlyList<LlmEndpoint> endpoints,
 		IReadOnlyList<IdentifiedRoute> routes,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		CancellationToken ct = default)
 	{
 		var level = await OwnLevelAsync(projectKey, ct);
-		await _admin.SetSnapshotAsync(level.Scope, level.ScopeKey, endpoints, routes, apiKeys, ct: ct);
+		await _admin.SetSnapshotAsync(level.Scope, level.ScopeKey, endpoints, routes, apiKeys, expectedVersion: expectedVersion, ct: ct);
 	}
 
 	// Opens, reads, and CLOSES — the connection does not outlive this method, so it is never held

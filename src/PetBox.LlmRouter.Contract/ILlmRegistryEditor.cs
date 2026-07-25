@@ -86,10 +86,18 @@ public interface ILlmRegistryEditor
 
 	// Replace this project's own level, PRESERVING each route's id (a route whose id is blank is a
 	// new row and gets one). This is the write behind an edit/delete of a single row.
+	//
+	// `expectedVersion` is the CAS baseline (work llm-admin-page-no-cas) — the version the caller
+	// last read via GetDeclaredAsync. NULL opts out (unchanged behavior for any other caller). Any
+	// other value must equal the level's current version or the write is refused with an
+	// InvalidOperationException naming the current one, and NOTHING is written. Unlike PatchAsync,
+	// this keeps every route's row id — PatchAsync cannot be used here without losing the identity
+	// the admin page addresses rows by.
 	Task SaveAsync(
 		string projectKey,
 		IReadOnlyList<LlmEndpoint> endpoints,
 		IReadOnlyList<IdentifiedRoute> routes,
 		IReadOnlyDictionary<string, string> apiKeys,
+		long? expectedVersion = null,
 		CancellationToken ct = default);
 }

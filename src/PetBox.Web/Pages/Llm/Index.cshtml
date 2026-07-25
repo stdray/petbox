@@ -71,6 +71,7 @@
 					{
 						<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
 							@Html.AntiForgeryToken()
+							<input type="hidden" name="version" value="@Model.Version" />
 							<label class="form-control"><span class="label-text">Name</span>
 								<input class="input input-bordered input-sm" name="name" value="@ep.Name" readonly /></label>
 							<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
@@ -87,6 +88,7 @@
 						</form>
 						<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete endpoint @ep.Name?')">
 							@Html.AntiForgeryToken()
+							<input type="hidden" name="version" value="@Model.Version" />
 							<input type="hidden" name="name" value="@ep.Name" />
 							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-delete">Delete &laquo;@ep.Name&raquo;</button>
 						</form>
@@ -101,6 +103,7 @@
 				<h2 class="font-semibold">Add provider</h2>
 				<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-add">
 					@Html.AntiForgeryToken()
+					<input type="hidden" name="version" value="@Model.Version" />
 					<label class="form-control"><span class="label-text">Name</span>
 						<input class="input input-bordered input-sm" name="name" placeholder="e.g. home" required /></label>
 					<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
@@ -148,6 +151,7 @@
 					{
 						<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
 							@Html.AntiForgeryToken()
+							<input type="hidden" name="version" value="@Model.Version" />
 							<input type="hidden" name="routeId" value="@row.Id" />
 							<label class="form-control"><span class="label-text">Capability</span>
 								<select class="select select-bordered select-sm" name="capability">
@@ -179,6 +183,7 @@
 						</form>
 						<form method="post" asp-page-handler="DeleteRoute" onsubmit="return confirm('Delete this route?')">
 							@Html.AntiForgeryToken()
+							<input type="hidden" name="version" value="@Model.Version" />
 							<input type="hidden" name="routeId" value="@row.Id" />
 							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-route-delete">Delete route</button>
 						</form>
@@ -199,6 +204,7 @@
 				{
 					<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-route-add">
 						@Html.AntiForgeryToken()
+						<input type="hidden" name="version" value="@Model.Version" />
 						<label class="form-control"><span class="label-text">Capability</span>
 							<select class="select select-bordered select-sm" name="capability">
 								@foreach (var cap in Enum.GetValues<PetBox.LlmRouter.Contract.LlmCapability>())
