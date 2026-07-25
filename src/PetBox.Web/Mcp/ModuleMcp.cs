@@ -102,7 +102,7 @@ static class ModuleMcp
 
 	// NOTE: tool bodies no longer wrap themselves — they just throw on a failed Assert* (or
 	// any deeper error), and McpErrorEnvelopeFilter converts the exception into the structured
-	// { error: { type, message, detail } } result centrally for every tool. Tools keep concrete
+	// { error: { type, message, traceId|detail } } result centrally for every tool. Tools keep concrete
 	// Task<T> return types; the success schema is advertised via [McpServerTool(OutputSchemaType)].
 
 	public static string? OptStr(JsonElement o, string name) =>
