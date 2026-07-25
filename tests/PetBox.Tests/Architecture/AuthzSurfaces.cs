@@ -47,13 +47,15 @@ public sealed record AuthzSurface(
 	string Owner,
 	IReadOnlyList<TenantDeclarationAttribute> Declarations)
 {
-	// The stable identity used by the ratchet's allowlist. Prefixed by transport so a route and a
-	// tool can never collide, and so the allowlist reads as an inventory.
+	// The stable identity used by the allowlist. Prefixed by transport so a route and a tool can never
+	// collide, and so the allowlist reads as an inventory. The prefixes come from PRODUCT code
+	// (AuthzSurfaceKey) because the enforcement points key the SAME allowlist and must compute the
+	// SAME string — a shared list read through two different key formats is two lists again.
 	public string Key => Transport switch
 	{
-		AuthzTransport.Rest => $"rest:{Id}",
-		AuthzTransport.Razor => $"page:{Id}",
-		AuthzTransport.Mcp => $"mcp:{Id}",
+		AuthzTransport.Rest => AuthzSurfaceKey.RestPrefix + Id,
+		AuthzTransport.Razor => AuthzSurfaceKey.PagePrefix + Id,
+		AuthzTransport.Mcp => AuthzSurfaceKey.McpPrefix + Id,
 		_ => throw new ArgumentOutOfRangeException(nameof(Transport)),
 	};
 
@@ -108,28 +110,20 @@ public static class AuthzSurfaces
 		return [.. surfaces.OrderBy(s => s.Key, StringComparer.Ordinal)];
 	}
 
-	// "METHOD[|METHOD] /route/{pattern}" — the identity a caller actually addresses. Methods are
-	// sorted so the id does not depend on the order MapMethods was handed them.
-	static string RestId(RouteEndpoint endpoint)
-	{
-		var methods = endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [];
-		var verb = methods.Count == 0 ? "ANY" : string.Join("|", methods.Order(StringComparer.Ordinal));
-		var pattern = endpoint.RoutePattern.RawText ?? "";
-		return $"{verb} {(pattern.StartsWith('/') ? pattern : "/" + pattern)}";
-	}
+	// "METHOD[|METHOD] /route/{pattern}" — the identity a caller actually addresses. The formatting
+	// itself lives in AuthzSurfaceKey (product code): TenantEnforcementMiddleware computes the very
+	// same string for a live endpoint, and if the two ever formatted it differently, a surface would
+	// be "allowlisted" for the ratchet and refused by the PEP.
+	static string RestId(RouteEndpoint endpoint) => AuthzSurfaceKey.RestId(
+		endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods, endpoint.RoutePattern.RawText);
 
 	// THE ONE EXCLUSION, and it is by construction rather than by allowlist — the same reasoning as
 	// DbLayerGuardTests' composition-root exclusion. /mcp is not a surface with a tenant: it is a
 	// TRANSPORT whose body names one of ~100 tools, each of which is enumerated on the MCP plane
 	// below. Allowlisting it would claim it is debt somebody should pay off; it is not. If the MCP
 	// sweep ever stops running, the guard-the-guard test is what fails — not this exclusion.
-	static bool IsMcpTransport(RouteEndpoint endpoint)
-	{
-		var pattern = endpoint.RoutePattern.RawText ?? "";
-		return pattern is "/mcp" or "mcp"
-			|| pattern.StartsWith("/mcp/", StringComparison.Ordinal)
-			|| pattern.StartsWith("mcp/", StringComparison.Ordinal);
-	}
+	// Shared with the endpoint PEP, which must skip the same door for the same reason.
+	static bool IsMcpTransport(RouteEndpoint endpoint) => AuthzSurfaceKey.IsMcpTransport(endpoint);
 
 	// Who to go to when a surface is undeclared. For a minimal-API endpoint the handler's method is
 	// in the metadata; the outermost declaring type is the *Api class that mapped it (a lambda is
