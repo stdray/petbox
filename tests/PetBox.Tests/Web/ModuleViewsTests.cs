@@ -1147,14 +1147,13 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// this test while a StatusKind-driven one passes. Exercises all four board views (tree default,
 	// kanban, outline, table) plus the node detail page in one pass.
 	//
-	// board-ui-review-findings #2 (review, 2026-07): the VISUAL strikethrough itself is now
-	// scoped to the spec board only — this board's kind is "archivist" (not spec), so `dead`
-	// must carry data-terminal-cancel="true" (the raw fact, unchanged) everywhere, WITHOUT
-	// line-through ever actually rendering on it, on any view or the detail page. The spec-board
-	// counterpart (WiredBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated above) proves
-	// the positive case.
+	// board-terminal-negative-visible (RESTORED 2026-07-13 after live acceptance): the VISUAL
+	// strikethrough is an invariant over the status CATEGORY on EVERY board kind — never a spec-board
+	// privilege. The spec-only scoping (board-ui-review-findings #2) left a Cancelled work task and a
+	// rejected idea reading as ALIVE in production; this board's kind is "archivist" (not spec) and
+	// its terminal-cancel node MUST still be struck through in every view and on the detail page.
 	[Fact]
-	public async Task TerminalCancelFact_TracksStatusKindData_ButStrikethroughIsSpecBoardOnly()
+	public async Task TerminalCancelStrikethrough_DrivenByStatusKindData_OnEveryBoardKind()
 	{
 		const string board = "archiveboard";
 		using (var scope = _factory.Services.CreateScope())
@@ -1191,7 +1190,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			}, partition: n => n.Board == board);
 		}
 
-		// Tree default view: Status field defaults OFF, and — non-spec board — no strikethrough.
+		// Tree default view: Status field defaults OFF — the strikethrough fires regardless (that is
+		// the whole point of the invariant: it does not depend on the status property being shown).
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
@@ -1199,17 +1199,21 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			html.Should().MatchRegex("data-node-key=\"live\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\""); // TerminalOk, NOT struck
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
-			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through",
-				"this board's kind is not spec — the fact is recorded but no longer rendered as a strikethrough");
+			// Anchored on the TITLE element itself (its text is unique), not a byte window after the
+			// row attributes — the card's data-* block alone is longer than any sane window.
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Archived note<",
+				"a terminal-cancel node reads as dead on EVERY board kind, not just spec");
+			html.Should().NotMatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Shipped note<",
+				"terminal-OK is not terminal-cancel — only the cancel category is struck");
 		}
 
-		// Kanban view: same fact-tracking, but no visual strikethrough (not the spec board).
+		// Kanban view: same fact, same strikethrough.
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
-			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Archived note<");
 		}
 
 		// Outline view.
@@ -1218,7 +1222,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
-			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Archived note<");
 		}
 
 		// Table view.
@@ -1227,16 +1231,73 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
-			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Archived note<");
 		}
 
-		// Node detail page — the fact still records, the strikethrough does not (not spec).
+		// Node detail page — the same invariant applies there too.
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/dead"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().Contain("data-testid=\"node-detail\"");
 			html.Should().MatchRegex("data-testid=\"node-detail\"[^>]*data-terminal-cancel=\"true\"");
-			html.Should().NotMatchRegex("data-testid=\"node-detail\"[\\s\\S]{0,600}line-through");
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*data-testid=\"node-name\">Archived note<");
+		}
+	}
+
+	// board-terminal-negative-visible on the REAL quartet boards — the exact production shape the
+	// live acceptance found broken: a `Cancelled` work task and a `rejected` idea read as ALIVE
+	// (no strikethrough) in every view, while `deprecated` on spec was struck. The sibling test
+	// above uses a custom methodology (proving the trigger is StatusKind data, not a status name);
+	// this one uses the builtin work/ideas presets (proving it is not a spec-BOARD privilege), and
+	// forces the Status property OFF (`fieldsSet=1` with no `fields`) to pin the spec's own wording:
+	// visually distinct NO MATTER HOW the user turned the status property off.
+	[Theory]
+	[InlineData("workstrike", "work", "chore", "Pending", "Cancelled")]
+	[InlineData("ideasstrike", "ideas", "idea", "raw", "rejected")]
+	public async Task TerminalCancelStrikethrough_OnQuartetBoards_EveryView_EvenWithStatusFieldOff(
+		string board, string kind, string type, string openStatus, string cancelStatus)
+	{
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, $"{kind} strike", kind);
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "alive", NodeId = $"id-{board}-alive", Version = 0, Status = openStatus, Type = type, Name = "Alive node", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = $"id-{board}-dead", Version = 0, Status = cancelStatus, Type = type, Name = "Dead node", Body = "", Priority = 2 },
+			}, partition: n => n.Board == board);
+		}
+
+		// Every view mode, plus each of them with the Status property explicitly turned OFF.
+		foreach (var view in new[] { "tree", "table", "kanban", "outline" })
+			foreach (var fields in new[] { "", "&fieldsSet=1" })
+			{
+				using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view={view}{fields}");
+				resp.StatusCode.Should().Be(HttpStatusCode.OK);
+				var html = await resp.Content.ReadAsStringAsync();
+				var where = $"{kind} board, {view} view, fields=[{fields}]";
+
+				html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"", where);
+				html.Should().MatchRegex("data-node-key=\"alive\"[^>]*data-terminal-cancel=\"false\"", where);
+				// Anchored on the TITLE ELEMENT itself (its text is unique per node), not on a byte window
+				// after the row attributes — a window can straddle the next row and lie in either direction.
+				html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Dead node<",
+					$"the terminal-cancel node's title must read as dead ({where})");
+				// …and the live one must NOT be struck (the strikethrough is a category signal, not
+				// decoration on every row).
+				html.Should().NotMatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*>Alive node<", where);
+				if (fields.Length > 0)
+					html.Should().NotContain("data-testid=\"node-status\"", because: "the Status property is off " + where);
+			}
+
+		// The node detail page carries the same invariant.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/dead"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-testid=\"node-detail\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().MatchRegex("class=\"[^\"]*line-through[^\"]*\"[^>]*data-testid=\"node-name\">Dead node<");
 		}
 	}
 
