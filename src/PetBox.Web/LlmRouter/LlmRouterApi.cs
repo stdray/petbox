@@ -58,7 +58,7 @@ public static class LlmRouterApi
 	sealed record ChatCompletionChoice
 	{
 		public int Index { get; init; }
-		public ChatCompletionResponseMessage Message { get; init; } = null!;
+		public required ChatCompletionResponseMessage Message { get; init; }
 
 		[JsonPropertyName("finish_reason")]
 		public string FinishReason { get; init; } = "stop";
