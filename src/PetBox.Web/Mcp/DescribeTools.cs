@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
+using PetBox.Core.Auth;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -10,7 +11,12 @@ namespace PetBox.Web.Mcp;
 // for one tool by name, read from the server's canonical ToolCollection (which keeps the full text
 // because the list filter clones rather than mutates). Reflection-free: the schemas come along for
 // free from the same ProtocolTool.
+// TENANT DECLARATION (spec authz-scope-declaration): `identity` — the class covers "метаданные
+// поверхности" as well as facts about the caller. tool_describe reads the server's own
+// ToolCollection: a tool's description and its JSON schemas. No tenant's data is touched, and the
+// same text is already served to every authenticated key by tools/list.
 [McpServerToolType]
+[TenantExempt(TenantExemption.Identity, "describes the SURFACE itself (tool text + schemas); touches no tenant's data")]
 public static class DescribeTools
 {
 	[McpServerTool(Name = "tool_describe", Title = "Describe an MCP tool (full text)", ReadOnly = true,

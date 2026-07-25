@@ -11,7 +11,13 @@ namespace PetBox.Web.Mcp;
 // or what it is allowed to do (dogfooding finding d2). Requires no scope — any
 // authenticated key may call it — and the A7b scope filter leaves it shown to every
 // key (unclassified tool → fail-open).
+// TENANT DECLARATION (spec authz-scope-declaration): `identity` — "сведения о вызывающем и о нём
+// самом". whoami answers with the caller's OWN claim and reads nothing else; there is no second
+// tenant it could be aimed at, which is why the cross-tenant probe records it as having no tenant
+// slot at all. The exemption suspends the TENANT axis only: /mcp still requires an authenticated
+// key, and the scope axis is untouched (this tool deliberately requires no scope).
 [McpServerToolType]
+[TenantExempt(TenantExemption.Identity, "answers with the caller's own claim; there is no other tenant to name")]
 public static class WhoAmITools
 {
 	[McpServerTool(Name = "whoami", Title = "Identify the calling ApiKey", ReadOnly = true, UseStructuredContent = true)]

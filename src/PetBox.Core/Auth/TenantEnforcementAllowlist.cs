@@ -27,8 +27,11 @@ namespace PetBox.Core.Auth;
 // human count the work card forbids.
 public static class TenantEnforcementAllowlist
 {
-	// 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the moment the
-	// enforcement points were written, which is why enabling them changes behaviour on NONE of them.
+	// It STARTED at 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the
+	// moment the enforcement points were written, which is why enabling them changed behaviour on NONE
+	// of them. It shrinks one FAMILY at a time (work `authz-default-deny-delivery`, step 5); the MCP
+	// wave took all 97 tools out, leaving the endpoint plane for its own waves. The live count is never
+	// a comment — run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
 		// REST — 55 minimal-API endpoints (METHOD + route pattern, as the caller addresses them).
@@ -155,10 +158,15 @@ public static class TenantEnforcementAllowlist
 		"page:/Search",
 		"page:/Share",
 	
-		// MCP — 97 tools. THIS is the number the work card asked for: three independent human counts
-		// said 92 / 100 / 122, and none of them was right. 97 is cross-checked in
-		// TheMcpSweep_MatchesTheToolsTheServerActuallyRegisters against the McpServerTool instances a
+		// MCP — the 97 tools this list used to hold. THIS was the number the work card asked for: three
+		// independent human counts said 92 / 100 / 122, and none of them was right; 97 is cross-checked
+		// in TheMcpSweep_MatchesTheToolsTheServerActuallyRegisters against the McpServerTool instances a
 		// running host has in DI — i.e. against what the server actually serves, not a second count.
+		//
+		// Every one of them is now DECLARED on its [McpServerToolType] class ([TenantFrom] for the 66
+		// that name a tenant, [TenantExempt] for the 31 that belong to a closed exemption class) and
+		// enforced by McpTenantEnforcementFilter. Nothing from the MCP plane may come back here: a NEW
+		// tool declares like the rest.
 		"mcp:agent_def_delete",
 		"mcp:agent_def_get",
 		"mcp:agent_def_list",
@@ -254,8 +262,6 @@ public static class TenantEnforcementAllowlist
 		"mcp:tasks_search",
 		"mcp:tasks_upsert",
 		"mcp:tasks_workflow",
-		"mcp:tool_describe",
-		"mcp:whoami",
 	};
 
 	// The question both PEPs ask, once per call, before they look at a declaration at all.
