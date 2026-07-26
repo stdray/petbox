@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Data.Contract;
 
 namespace PetBox.Data;
@@ -17,11 +17,17 @@ namespace PetBox.Data;
 // All endpoints require `data:schema` scope EXCEPT GET which uses `data:read`
 // (listing is harmless reconnaissance).
 //
-// This is a thin adapter over IDataDbCatalog: auth (ApiKey ProjectKey claim
-// cross-checked against the URL) and HTTP status mapping live here; the name
+// This is a thin adapter over IDataDbCatalog: HTTP status mapping lives here; the name
 // rules (regex, reserved names, quota floor), the project-existence check and
 // the row+file lifecycle live in the CATALOG, so every caller — REST, pages,
 // MCP db_create — gets the same rules. No db factory is opened here.
+//
+// THE TENANT IS DECLARED, NOT CHECKED HERE (spec authz-scope-declaration): every route below names
+// its project in the path, so each handler carries [TenantFrom(Route, "projectKey")] and
+// TenantEnforcementMiddleware refuses a caller not entitled to it BEFORE the handler runs. That is
+// what replaced DataAuth.AuthorizeProjectAsync — the same ProjectScope decision (claim identity +
+// sandbox containment), reached through ITenantAuthorizer, one call earlier, and now also ahead of
+// argument binding: a foreign tenant can no longer be answered "400 name is required" first.
 public static class DataDbsApi
 {
 	public static void MapDataDbsEndpoints(this IEndpointRouteBuilder app)
@@ -45,16 +51,13 @@ public static class DataDbsApi
 	public sealed record CreateDbRequest(string Name, string? Description, long? MaxPageCount);
 	public sealed record DbInfo(string Name, string? Description, long MaxPageCount, DateTime CreatedAt, DateTime UpdatedAt);
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CreateAsync(
-		HttpContext ctx,
 		string projectKey,
 		CreateDbRequest req,
 		IDataDbCatalog dataDbs,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
 		if (req is null)
 			return Results.BadRequest(new ErrorResponse("name is required"));
 
@@ -72,33 +75,25 @@ public static class DataDbsApi
 		};
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListAsync(
-		HttpContext ctx,
 		string projectKey,
 		IDataDbCatalog dataDbs,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
-
 		var rows = await dataDbs.ListAsync(projectKey, ct);
 		return Results.Ok(rows
 			.Select(d => new DbInfo(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))
 			.ToList());
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> DeleteAsync(
-		HttpContext ctx,
 		string projectKey,
 		string name,
 		IDataDbCatalog dataDbs,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
-
 		// The catalog deletes the row immediately and the file best-effort (orphan cleanup
 		// retries a locked file); (projectKey, name) is the address, so another project's
 		// DataDb simply is not found.

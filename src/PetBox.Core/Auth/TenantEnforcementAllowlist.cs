@@ -30,14 +30,14 @@ public static class TenantEnforcementAllowlist
 	// It STARTED at 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the
 	// moment the enforcement points were written, which is why enabling them changed behaviour on NONE
 	// of them. It shrinks one FAMILY at a time (work `authz-default-deny-delivery`, step 5); the MCP
-	// wave took ALL 97 tools out, so what is left below is the endpoint plane — 55 REST + 65 Razor —
-	// awaiting its own waves. The live count is never a comment: run AuthzDeclarationRatchetTests and
-	// read .tmp/authz-surface-inventory.txt.
+	// wave took ALL 97 tools out and the REST wave all but two of the 55, so what is left below is the
+	// Razor plane plus the two Seq-header-authenticated ingest routes. The live count is never a
+	// comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
-		// REST — 55 minimal-API endpoints (METHOD + route pattern, as the caller addresses them).
+		// REST — what is LEFT of the 55 minimal-API endpoints (METHOD + route pattern, as the caller
+		// addresses them). The wave's own accounting is in the note at the bottom of this list.
 		"rest:DELETE /api/config/{workspaceKey}/bindings",
-		"rest:DELETE /api/data/{projectKey}/dbs/{name}",
 		"rest:DELETE /api/logs/{projectKey}/logs/{name}",
 		"rest:DELETE /api/sessions/{projectKey}/{sessionId}",
 		"rest:DELETE /api/{projectKey}/agent-defs/{key}",
@@ -49,8 +49,6 @@ public static class TenantEnforcementAllowlist
 		"rest:GET /.well-known/openid-configuration/{*rest}",
 		"rest:GET /agent/poll",
 		"rest:GET /api/auth/validate",
-		"rest:GET /api/data/{projectKey}/dbs",
-		"rest:GET /api/data/{projectKey}/{dbName}/migrations",
 		"rest:GET /api/logs/{projectKey}/logs",
 		"rest:GET /api/logs/{projectKey}/{logName}/live-tail",
 		"rest:GET /api/logs/{projectKey}/{logName}/query",
@@ -67,10 +65,6 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /agent/heartbeat",
 		"rest:POST /api/auth/logout",
 		"rest:POST /api/config/{workspaceKey}/bindings",
-		"rest:POST /api/data/{projectKey}/dbs",
-		"rest:POST /api/data/{projectKey}/{dbName}/exec",
-		"rest:POST /api/data/{projectKey}/{dbName}/query",
-		"rest:POST /api/data/{projectKey}/{dbName}/schema",
 		"rest:POST /api/deploy/nodes",
 		"rest:POST /api/events/raw",
 		"rest:POST /api/health",

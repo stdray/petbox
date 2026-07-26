@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 
@@ -45,17 +45,14 @@ public static class SchemaApi
 	public sealed record SchemaApplyResponse(string Kind, string Hash, string? ExistingHash);
 	public sealed record MigrationEntry(long Id, string ScriptName, DateTime Applied, string Hash);
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ApplyAsync(
-		HttpContext ctx,
 		string projectKey,
 		string dbName,
 		SchemaApplyRequest req,
 		IDataSqlService sql,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new ErrorResponse("name is required"));
 		if (req.Sql is null)
@@ -78,17 +75,13 @@ public static class SchemaApi
 		};
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListMigrationsAsync(
-		HttpContext ctx,
 		string projectKey,
 		string dbName,
 		IDataDbCatalog dataDbs,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
-
 		// The catalog proves the (projectKey, dbName) address, opens the quota'd connection
 		// and reads __SchemaVersions; null = not this project's DataDb, [] = no journal yet.
 		var rows = await dataDbs.ListMigrationsAsync(projectKey, dbName, ct);

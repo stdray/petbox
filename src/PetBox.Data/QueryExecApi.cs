@@ -3,8 +3,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Data.Contract;
 
 namespace PetBox.Data;
@@ -25,6 +25,11 @@ namespace PetBox.Data;
 // /exec applies a PRAGMA deny-list (in the service). SQLite error → SqliteException →
 // mapped here to HTTP: SQLITE_FULL → 507, everything else → 400 with the raw message.
 // Body size limits are enforced here so an oversized JSON blob can't OOM the server.
+//
+// The tenant is DECLARED ([TenantFrom(Route, "projectKey")]) and enforced by
+// TenantEnforcementMiddleware ahead of the handler — see DataDbsApi's header for what that replaced.
+// The body-size guard deliberately stays FIRST inside the handler: it is a resource limit, not an
+// authorization decision, and by the time the handler runs the tenant has already been authorized.
 public static class QueryExecApi
 {
 	public const int DefaultTimeoutSeconds = 30;
@@ -66,13 +71,12 @@ public static class QueryExecApi
 	public sealed record QueryRequest(string Sql, SqlParam[]? Params);
 	public sealed record ExecResponse(int Affected);
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> QueryAsync(
 		HttpContext ctx, string projectKey, string dbName, QueryRequest req,
-		IDataSqlService sql, IProjectCatalog catalog, CancellationToken ct)
+		IDataSqlService sql, CancellationToken ct)
 	{
 		if (CheckBodySize(ctx, QueryBodyLimitBytes) is { } tooBig) return tooBig;
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
 			return Results.BadRequest(new ErrorResponse("sql is required"));
 
@@ -85,13 +89,12 @@ public static class QueryExecApi
 		catch (SqliteException ex) { return MapSqliteError(ex); }
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ExecAsync(
 		HttpContext ctx, string projectKey, string dbName, QueryRequest req,
-		IDataSqlService sql, IProjectCatalog catalog, CancellationToken ct)
+		IDataSqlService sql, CancellationToken ct)
 	{
 		if (CheckBodySize(ctx, ExecBodyLimitBytes) is { } tooBig) return tooBig;
-		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
-		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
 			return Results.BadRequest(new ErrorResponse("sql is required"));
 
