@@ -684,9 +684,18 @@ public partial class Program
 		// core.db lives in the service layer only: the binding filter and the claims transformation
 		// above ask these, they never open a connection themselves (db-access-layer-cleanup).
 		// SINGLETON, deliberately: it carries the project cache (db-cache-behind-services), and a
-		// cache inside a scoped service would be per-request and buy nothing. Its dependencies
-		// (ICoreDbFactory, IMemoryCache) are singletons — CaptiveDependencyTests guards this wiring.
+		// cache inside a scoped service would be per-request and buy nothing. Its DIRECT
+		// dependencies (ICoreDbFactory, IMemoryCache, IServiceScopeFactory) are all singleton-safe —
+		// CaptiveDependencyTests guards this wiring. The canon seed's Scoped IProjectCanonSeeder is
+		// deliberately NOT a direct dependency: CreateAsync rents it from IServiceScopeFactory per
+		// call instead (see ProjectDirectory's class comment).
 		builder.Services.AddSingleton<PetBox.Web.Auth.IProjectDirectory, PetBox.Web.Auth.ProjectDirectory>();
+		// The canon-seed door ProjectDirectory.CreateAsync rents per project creation (card
+		// canon-invisible-and-unfed). Scoped like the IMemoryService it wraps — kept OUT of
+		// ProjectDirectory.cs itself so that file never combines a workspace-container-deriving
+		// branch with an IMemoryService/MemoryDb door in the same file (see
+		// SandboxContainmentCallSiteGuardTests).
+		builder.Services.AddScoped<PetBox.Web.Memory.IProjectCanonSeeder, PetBox.Web.Memory.ProjectCanonSeeder>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
