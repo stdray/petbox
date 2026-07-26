@@ -6,6 +6,7 @@ description: >-
   task, or triaging intake. The gate rules — which boards exist, which transitions are blocked,
   which artifacts or links a gate requires — are PROJECT-SPECIFIC and fetched at runtime here,
   never assumed from another project.
+petbox: managed
 ---
 
 # PetBox methodology — read the live rules, don't assume them

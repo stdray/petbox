@@ -87,7 +87,7 @@ import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
-import { writeSkillFiles } from "./skill-files.ts";
+import { writeSkillFiles, type SkillWriteOutcome } from "./skill-files.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
@@ -377,6 +377,28 @@ type ApplyRunResult = {
 //   0 — full success: every known harness wrote all its roles, no skips
 //   1 — hard failure: invalid definition / unexpected throw, or a clobber refusal
 //   3 — truthfulness: policy blocked some roles/harnesses (partial write possible)
+// Best-effort workspace lookup for apply's skill refresh below (bug:
+// skill-files-clobber-and-apply-skips). UNLIKE validateKey (the full-wire path, step 3b), a
+// failure here must NEVER abort apply — skills are secondary to the agent artifacts apply exists
+// to write. Returns undefined on ANY failure (offline, unreachable, non-200, non-JSON, no
+// `workspace` field), and the caller then skips the skill refresh rather than inventing a
+// workspace apply was never given (same "never a hardcoded default" rule as wire-identity.ts).
+async function probeWorkspaceForApply(baseUrl: string, apiKey: string): Promise<string | undefined> {
+  try {
+    const resp = await fetch(`${baseUrl}/api/auth/validate`, {
+      method: "GET",
+      headers: { "X-Api-Key": apiKey },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return undefined;
+    const body: any = await resp.json();
+    const ws = body?.workspace ?? body?.Workspace;
+    return typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function performApply(opts: {
   definitionKey: string;
   offline: boolean;
@@ -475,6 +497,38 @@ async function performApply(opts: {
       else blockedHarnesses.push(plan.harness);
     } else if (writtenThisHarness > 0) {
       writtenHarnesses.push(plan.harness);
+    }
+  }
+
+  // Skills (bug: skill-files-clobber-and-apply-skips): a full `wire` was the ONLY thing that ever
+  // wrote these — `apply` skipped them entirely, so a template edit "drifted" until the next full
+  // wire (this is exactly what the owner observed for petbox-methodology). `apply` now refreshes
+  // them too, using the SAME origin-marker write guard as the agent files above; a blocked skill
+  // path folds into the same clobber-refusal exit path. Best-effort project identity: this is a
+  // registered project's directory or it is not — `apply` never re-derives one, same as the
+  // per-role definition fetch above (resolveApplyDefinition). `--offline` skips the network probe
+  // for workspace, same spirit as `--offline` skipping the definition fetch.
+  const resolvedForSkills = resolveProject(root);
+  if (opts.offline) {
+    log(`${opts.label}: skills — --offline, skipped (workspace requires a live /api/auth/validate).`);
+  } else if (!resolvedForSkills) {
+    log(`${opts.label}: skills — skipped (${root} is not a registered project; run \`wire\` here first).`);
+  } else {
+    const workspace = await probeWorkspaceForApply(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
+    if (!workspace) {
+      log(`${opts.label}: skills — skipped (could not resolve workspace via /api/auth/validate).`);
+    } else {
+      const skillOutcomes = writeSkillFiles(
+        root,
+        join(HERE, "templates"),
+        resolvedForSkills.project,
+        workspace,
+      );
+      const blockedSkillPaths = reportSkillOutcomes(opts.label, skillOutcomes);
+      if (blockedSkillPaths.length > 0) {
+        clobberBlocked = true;
+        clobberedPaths.push(...blockedSkillPaths);
+      }
     }
   }
 
@@ -1092,6 +1146,27 @@ function mergeMcpServer(path: string, name: string, server: unknown): void {
   writeJson(path, data);
 }
 
+// Log every writeSkillFiles outcome under `label` and return the absolute paths of any
+// "blocked" ones (bug: skill-files-clobber-and-apply-skips) — a real, non-PetBox file already
+// sat at that path and was left byte-for-byte untouched; the caller decides what a non-empty
+// return does to its own exit code.
+function reportSkillOutcomes(label: string, outcomes: SkillWriteOutcome[]): string[] {
+  const blocked: string[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.kind === "blocked") {
+      blocked.push(outcome.path);
+      console.error(
+        `${label}: REFUSED to overwrite skill ${outcome.path} — it exists and does not carry the ` +
+          `PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
+          `not one wire/apply wrote before. Nothing was touched.`,
+      );
+    } else {
+      log(`${label}: wrote ${outcome.path}` + (outcome.reason !== "new" ? ` (${outcome.reason})` : ""));
+    }
+  }
+  return blocked;
+}
+
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
   // .mcp.json (Claude Code) — petbox-only file owned by wire.ts, regenerated whole.
   const mcp = {
@@ -1137,9 +1212,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // placeholders), and `petbox-methodology` (thin, project-agnostic pointer at the LIVE
   // methodology this project runs — never this repo's own rules; see skill-files.ts). Rendered
   // once per skill, then dropped into every native skill surface (writeSkillFiles / skill-files.ts).
-  for (const skillPath of writeSkillFiles(dir, join(HERE, "templates"), project, workspace)) {
-    log(`[7/10] wrote ${skillPath}`);
-  }
+  reportSkillOutcomes("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace));
 }
 
 // ---- step 7b: telemetry (opt-in, --telemetry) ------------------------------
