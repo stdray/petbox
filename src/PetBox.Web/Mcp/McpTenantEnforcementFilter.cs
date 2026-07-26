@@ -30,8 +30,12 @@ namespace PetBox.Web.Mcp;
 //     moment the order inverts, the project registry becomes an existence oracle for anyone holding
 //     any key. Moving this registration one line down is a security regression, not a reordering.
 //
-// TODAY IT REFUSES NOTHING: all 97 MCP tools are in TenantEnforcementAllowlist, and an allowlisted
-// surface is passed through before its declaration is read. Rollout = deleting lines from that list.
+// IT REFUSES ON EVERY CALL NOW. It once refused nothing — all 97 MCP tools sat in
+// TenantEnforcementAllowlist, and an allowlisted surface is passed through before its declaration is
+// read, so the rollout was "delete lines from that list". Those lines are all deleted:
+// TenantEnforcementAllowlist is EMPTY, so the pass-through branch is never taken and every call
+// reaches the declaration path. A tool that is not in the declaration map is UNDECLARED, and
+// TenantGate refuses it rather than waving it through.
 static class McpTenantEnforcementFilter
 {
 	// tool name → the declarations found on it. Built ONCE by reflection, mirroring the lookup order

@@ -27,9 +27,17 @@ namespace PetBox.Web.Mcp;
 // asked twice, by construction rather than by two implementations that happen to agree.
 //
 // ResolveProject STAYS: its RETURN VALUE is the project the reindex runs against, so it is the
-// resolver, not a duplicate check. Its authorization side is now redundant on this tool — but the
-// same method is still the resolver for the memory family, which is not enforced yet (see the note in
-// TenantEnforcementAllowlist), so it keeps its guard until that family lands.
+// resolver, not a duplicate check. Its authorization side is now redundant on this tool AND on the
+// memory family — that family declares [TenantFrom(ArgumentOrContainer, "projectKey")] and the
+// allowlist is empty, so both are under the PEP. The guard stays anyway, because for the memory verbs
+// it is no longer the same question: the PEP authorizes the ONE tenant the call NAMED, while those
+// verbs go on to act on a container they DERIVE (see the header of MemoryTools.cs). A single-target
+// gate cannot express that, so this is a justified remainder rather than a second answer.
+//
+// NOTE the declaration here is plain Argument, NOT ArgumentOrContainer: a workspace memory container
+// (`$workspace` / `$ws-<key>`) is not a valid projectKey for this tool, and aiming one at it is a
+// claim mismatch, refused by the PEP. That is deliberate scoping, not an oversight — the container
+// decode is granted only to the surface that declared it.
 [McpServerToolType]
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class SearchTools
@@ -62,6 +70,12 @@ public static class SearchTools
 
 		REFUSES (and resets NEITHER half) when the project has no working Embed route — fix the LLM
 		route first. `tier`: memory | tasks | all (default all). Requires memory:write / tasks:write.
+
+		`projectKey` takes a REAL PROJECT KEY ONLY. A workspace shared-memory container
+		(`$workspace` / `$ws-<key>`) is not accepted here — only the memory_* verbs decode a container
+		key — so passing one is refused as a claim mismatch ("ApiKey is not scoped to project …"),
+		which reads like a permissions problem but is an addressing one. There is currently no
+		reindex path for a workspace container's memory through this tool.
 		""")]
 	public static async Task<SearchReindexResult> ReindexAsync(
 		IHttpContextAccessor http, FeatureFlags features, SearchReindexService reindex,

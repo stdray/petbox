@@ -1,7 +1,12 @@
 # PetBox: storage, APIs & navigation
 
-A map of *what goes where and through which door*. Verified against prod
-(`petbox.3po.su`) 2026-06-03.
+A map of *what goes where and through which door*. Unlike most of `doc/`, this file is
+**maintained reference, not a historical record** — it is meant to be true now, so a claim
+here that has gone stale is a defect rather than a dated note.
+
+Last reconciled against the code at `2ea9c11c` (2026-07-26). The body of the map was
+originally verified against prod (`petbox.3po.su`) on 2026-06-03; sections that changed
+later say so and carry their own dates.
 
 ## 1. Hierarchy & reserved keys
 
@@ -14,7 +19,7 @@ Workspace (Key)               e.g. $system, infra, stdray
 - An **API key** carries a `project` claim — either ONE project key, or `*` (cross-project). Most tools assert the call's `projectKey` against that claim.
 - **Reserved projects:**
   - `$system` — the built-in internal project: self-logs, the dogfooding ideas/spec/roadmap boards, and the `ops` memory store.
-  - `$workspace` — the **shared cross-project memory container**: the destination of `scope=workspace` memory, kept SEPARATE from `$system` so a project's memory cascade doesn't inherit all of `$system`'s memory as "workspace". (Briefly consolidated into `$system` 2026-06-03; revived as its own container 2026-07-03 — M031 re-ensures the row.)
+  - `$workspace` / `$ws-{workspaceKey}` — the **shared cross-project memory container**, ONE PER WORKSPACE: the destination of `scope=workspace` memory, kept SEPARATE from `$system` so a project's memory cascade doesn't inherit all of `$system`'s memory as "workspace". `$workspace` is the legacy key for the `$system` workspace specifically; every other workspace gets `$ws-{workspaceKey}`. The caller never picks it — it is derived from the project's workspace (§7). These rows are Projects rows but NOT user projects (`WorkspaceMemory.IsWorkspaceContainer`). (Briefly consolidated into `$system` 2026-06-03; revived as its own container 2026-07-03 — M031 re-ensures the row.)
 
 ## 2. Storage map (`/opt/petbox/data/`)
 
@@ -67,7 +72,9 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 
 **Scope dimension** (over the per-project store files):
 - `project` (default) → the key's own project.
-- `workspace` → the shared cross-project container (`$system`). When the key's project IS `$system`, project and workspace collapse and a cascade recall searches it once.
+- `workspace` → the calling project's **own workspace** container — one per workspace, never a single global one. The key is DERIVED, not named by the caller: `$workspace` for the `$system` workspace (the legacy key, seeded by M028/M031), `$ws-{workspaceKey}` for every other. So a project in workspace `smoke` resolves `$ws-smoke`, and reaches nothing of `$system`'s.
+
+**An empty workspace leg is not proof of absence.** A cascade skips a leg the caller is not authorized for *silently* (the read succeeds and simply contributes nothing, rather than failing), so "no rows from workspace" can mean either "nothing there" or "not yours". This is deliberate — a foreign container must not become an existence oracle — but it means you cannot read absence out of a cascade result.
 
 **MCP tools** (server `petbox`):
 - Read: `memory_search{q?,scope?,store?,type?,sort?,limit?,bodyLen?}` — THE read verb (uniform-entity-verbs v2; replaced `memory.list`+`memory.recall`). Without `q` a deterministic listing (updated desc); with `q` hybrid FTS ⊕ vectors. No scope ⇒ **cascade** project ⊕ workspace, sweeps every store **except `ops`**, rows labelled by scope, project first. One entry: `memory_get`.
@@ -93,6 +100,20 @@ Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag
 - **MCP tools:** `tasks_board_create|list|delete|close|reopen|set_wire`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_enable|get`, `relations_create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks_search|node_get|methodology_get|upsert|delta` accept `include_url=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
 - **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
 
-## 7. One shared container (`$system`)
+## 7. Shared containers: one per workspace
 
-There is **one** reserved cross-cutting project: `$system`. It is both the internal/system project (self-logs, ops, dogfooding boards) and the shared container that `scope=workspace` memory targets. A separate `$workspace` project briefly existed (for cross-project sharing) but was consolidated into `$system` on 2026-06-03 — for a single-user install two cross-cutting projects were redundant. The methodology quartet is **per-project** (e.g. enable it on `$system` or a real project); there is no separate workspace-level quartet.
+`scope=workspace` memory targets a **shared container per workspace**, not one global one. The container is a real `Projects` row, but it is not a user project — it has no logs/tasks/dbs, and `ProjectDirectory`/`NavigationContext` filter it out of project listings (`WorkspaceMemory.IsWorkspaceContainer` is the single definition). Its key is derived from the workspace: `$workspace` for `$system`, `$ws-{workspaceKey}` otherwise.
+
+`$system` remains the reserved internal project (self-logs, `ops`, dogfooding boards) — but it is *not* the workspace container; those are two roles that were briefly the same object and no longer are.
+
+**Containment note.** Because the container is DERIVED from a project's workspace rather than named by the caller, every surface that makes that hop must re-ask the authorization question — the named target being authorized does not authorize the derived container. `SandboxContainment` is where that question lives, and the call sites are enumerated mechanically by `SandboxContainmentCallSiteGuardTests`, never by a hand-maintained list.
+
+The methodology quartet is **per-project** (enable it on `$system` or a real project); there is no workspace-level quartet.
+
+### History of this section
+
+The design above is the *second* answer, and the first one is worth knowing because it caused a leak:
+
+- **2026-06-03** — the separate `$workspace` project was **consolidated into `$system`**, on the reasoning that for a single-user install two cross-cutting projects were redundant. This is what the previous edition of this section described as current.
+- **2026-07-03** — that consolidation was **undone**: `$workspace` was revived as its own container (M031 re-ensures the row), because collapsing them made every project's memory cascade inherit all of `$system`'s memory as "workspace". The consolidation was also implicated in one of the three historical cross-tenant leaks.
+- **2026-07-26** — containers became genuinely per-workspace in practice when M048 moved the sandbox project `smoke` out of the `$system` workspace into its own, so the container derivable from the sandbox (`$ws-smoke`) is empty. See AGENTS.md rule 7.

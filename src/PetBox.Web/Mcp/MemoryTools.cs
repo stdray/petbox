@@ -385,6 +385,11 @@ public static class MemoryTools
 		The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
 		the key's project) | workspace (shared across projects of the caller's workspace).
+		The workspace container is DERIVED from the caller's project, not named by you:
+		`$workspace` for the `$system` workspace, `$ws-{workspaceKey}` for every other. Know
+		which one you are in before writing — `scope: workspace` from a project of `$system`
+		writes into the owner's live cross-project notes, and the response's `scope`/`id`
+		report the container the write actually landed in.
 		`store` groups entries within a scope (default "notes"). `type` is the taxonomy
 		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
 		`tags` is an array of free-form tag strings; `description` an optional one-line
@@ -423,6 +428,9 @@ public static class MemoryTools
 	[Description("""
 		THE memory read verb — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
 		Omit `scope` to CASCADE project ⊕ workspace (or pass project | workspace for one).
+		The workspace leg is the CALLER'S OWN workspace container, derived — never a global one.
+		An unauthorized leg is SKIPPED SILENTLY, so an empty result means "nothing here OR not
+		yours", never "nothing exists".
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		memory_get); each row's `version` is the CAS baseline for memory_upsert. Hard ~30k-char
 		output budget. Requires memory:read.
@@ -451,6 +459,21 @@ public static class MemoryTools
 		single store within each scope; by default EVERY store is swept except the
 		sensitive ones (e.g. "ops" — an explicit store:"ops" still reaches it). Optional
 		`type` filter (User|Feedback|Project|Reference) — a predicate in both modes.
+
+		WHICH CONTAINER "workspace" IS. One per workspace, and DERIVED from the caller's
+		project — you do not name it and cannot point it elsewhere: `$workspace` for the
+		`$system` workspace (a legacy key), `$ws-{workspaceKey}` for every other. A project
+		in workspace `w` therefore shares memory with the other projects of `w`, and reaches
+		no other workspace's. `projectKey` on the memory verbs (and ONLY these) also accepts
+		such a container key directly, addressing that container's own entries; a key of any
+		project in that workspace may do so. Non-memory tools refuse a container key.
+
+		READING ABSENCE — DON'T. Each cascade leg is authorized separately, and a leg the
+		caller may not read is skipped SILENTLY: the call still succeeds and that leg simply
+		contributes no rows (a foreign container must not become an existence oracle). So
+		zero rows from the workspace leg does not distinguish "the container is empty" from
+		"you are not entitled to it", and neither does a short result. If you need to know
+		that a fact is absent, address the container explicitly and handle the refusal.
 
 		SORT: `sort` = {by: relevance|created|updated, desc?}. Without `q` the default is
 		updated desc (asking for relevance is an error); with `q` the default is relevance,

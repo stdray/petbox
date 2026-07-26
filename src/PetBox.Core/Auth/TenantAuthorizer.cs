@@ -126,8 +126,11 @@ public sealed class TenantAuthorizer(IProjectCatalog catalog) : ITenantAuthorize
 		// the caller NAMED. Other surfaces then DERIVE a container from that target and act on it,
 		// which nothing here judges — the memory verbs' `scope: "workspace"` redirect and the canon
 		// endpoint's workspace leg both do, and both were measured leaking with this branch already
-		// fixed. SandboxContainment is the shared home of the rule and lists all three call sites;
-		// read it before adding a fourth.
+		// fixed. SandboxContainment is the shared home of the rule — read it before adding a site that
+		// derives a container. It deliberately does NOT list its call sites: the enumeration is
+		// mechanical (SandboxContainmentCallSiteGuardTests fails the build on a deriving site that does
+		// not route through the predicate, and regenerates the live list into
+		// .tmp/sandbox-containment-callsites.txt).
 		return await SandboxContainment.PermitsWorkspaceAsync(sandboxOnly, workspaceKey, catalog, ct)
 			? TenantAccess.Allowed
 			: TenantAccess.SandboxContainment;

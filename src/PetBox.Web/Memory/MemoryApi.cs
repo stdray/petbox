@@ -72,8 +72,9 @@ public static class MemoryApi
 		{
 			var container = WorkspaceMemory.ContainerKeyFor(wsKey);
 
-			// THE DERIVED-STORAGE HOP, asked of the shared predicate (SandboxContainment, which lists
-			// this among its three call sites). A sandboxOnly key gets the project leg it is entitled
+			// THE DERIVED-STORAGE HOP, asked of the shared predicate (SandboxContainment; the guard test
+			// enumerates this site mechanically, no list is maintained by hand). A sandboxOnly key gets
+			// the project leg it is entitled
 			// to and NO workspace leg — suppression, not a 403, because the whole response is not
 			// forbidden: the project canon is legitimately its own. A null workspace part is already a
 			// valid 200 shape (see the note above — a project with no workspace canon returns exactly

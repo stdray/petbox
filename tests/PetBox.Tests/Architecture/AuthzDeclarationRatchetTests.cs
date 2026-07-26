@@ -84,11 +84,15 @@ public sealed class AuthzSurfaceHost : IAsyncLifetime
 // sentence: a new surface without a declaration breaks the build without anyone remembering that
 // this class of defect exists.
 //
-// WHAT IT DOES NOT ASSERT, deliberately: that anything is REFUSED today. The two PEPs (step 3) are
-// live, but they pass every surface on the allowlist — and the allowlist still holds all 217 — so a
-// declaration currently changes no behaviour on any surface. That ordering is the point: the
-// enumeration and the ratchet came FIRST, so the surface could be counted before it was argued
-// about, and the rollout is then "cross a line out of the allowlist" rather than a flag.
+// WHAT IT DOES NOT ASSERT, deliberately: that anything is REFUSED. That is the PEPs' job and is
+// covered by TenantEnforcementTests — this guard only ever asks whether a surface DECLARES. The
+// separation mattered most while the two were out of step: when this was written the PEPs were live
+// but passed every surface on the allowlist, and the allowlist held all 217, so a declaration changed
+// no behaviour anywhere. That ordering was the point — the enumeration and the ratchet came FIRST, so
+// the surface could be counted before it was argued about, and the rollout was then "cross a line out
+// of the allowlist" rather than a flag. The rollout is COMPLETE: the allowlist is empty, all 217
+// surfaces declare or name an exemption class, and both PEPs now reach the declaration path on every
+// call. This guard is unchanged by that — it is what keeps a NEW surface from arriving undeclared.
 //
 // THE ALLOWLIST STARTS FULL — every surface in the tree at the moment this guard was written — and
 // only ever SHRINKS: a stale entry fails StaleAllowlistEntries_AreDeleted, so the list cannot
@@ -234,8 +238,10 @@ public sealed class AuthzDeclarationRatchetTests : IClassFixture<AuthzSurfaceHos
 	// ConfigApi.AuthorizeWorkspaceAsync already checks by hand, and a project-claimed key still reaches
 	// it because ITenantAuthorizer resolves "a project claim authorizes its workspace" centrally.
 	//
-	// Vacuous TODAY on purpose (no page declares yet — all 65 are allowlisted). It is a tripwire for
-	// step 5, placed now because the information that makes it necessary is visible now.
+	// Written as a tripwire for step 5 BEFORE it could bite — at the time it was vacuous, because no
+	// page declared yet and all 65 were allowlisted. It is no longer vacuous: the Razor wave landed, 42
+	// pages declare a route tenant (the /Config/* four among them, naming `workspaceKey` for exactly
+	// the reason above), and this now guards live declarations. It was verified to actually fire.
 	[Fact]
 	public void APageDeclaringARouteTenant_NamesARouteValueAllOfItsRoutesCarry()
 	{
