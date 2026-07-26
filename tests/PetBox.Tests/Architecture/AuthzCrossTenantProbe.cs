@@ -5,6 +5,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
@@ -129,6 +130,19 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 	public IReadOnlyList<AuthzSurface> Surfaces { get; private set; } = [];
 	public IReadOnlyList<CrossTenantProbe> Probes { get; private set; } = [];
 
+	// THE RAZOR BLIND SPOT, CLOSED — one probe per (page, POST handler) pair, kept in its OWN list.
+	//
+	// `Probes` above is one call per SURFACE, and a Razor page is one surface however many handlers it
+	// has: that is what makes the 217 accounting add up, so a page's eight `?handler=` mutations cannot
+	// go in there without redefining what a surface is. They are a real question all the same, and until
+	// this list existed nobody had asked it — the page sweep only ever sent GET, so every OnPost*Async in
+	// the tree (82 of them across 31 pages) was unmeasured. A mutation through another tenant's project
+	// is strictly worse than a read of one, so the untested half was the dangerous half.
+	//
+	// This is NOT folded into the accounting pins in AuthzCrossTenantTests. It is asserted on its own, in
+	// AuthzCrossTenantPostHandlerTests, so the 217/144 numbers keep meaning exactly what they meant.
+	public IReadOnlyList<CrossTenantProbe> PagePostProbes { get; private set; } = [];
+
 	public string AttackerCookie { get; private set; } = "";
 	public IReadOnlyList<string> ToolsVisibleToAttacker { get; private set; } = [];
 
@@ -229,7 +243,133 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 		probes.AddRange(await ProbeMcpAsync(mcpSurfaces));
 
 		Probes = [.. probes.OrderBy(p => p.Key, StringComparer.Ordinal)];
+		PagePostProbes = await ProbePagePostHandlersAsync(client, endpoints);
 		SelfControls = await SelfControlsAsync(client);
+	}
+
+	// ── THE RAZOR POST SWEEP ─────────────────────────────────────────────────────────────────────
+
+	// Every `?handler=` MUTATION on every page that has somewhere to write the victim's tenant, aimed at
+	// the victim, from the attacker's browser session.
+	//
+	// WHY IT NEEDS AN ANTIFORGERY TOKEN AT ALL, given that the tenant PEP is middleware and runs long
+	// before MVC's antiforgery filter: because without one every answer would be a 400 and the sweep
+	// would be measuring ITSELF, which is the exact mistake the old 415 note in AuthzCrossTenantTests
+	// records ("the probe now retries with the content type the ENDPOINT declares … it was measuring the
+	// probe's own content-type guess"). A token makes the 400 case meaningful instead of universal, and
+	// the assertion side treats any 400 as INCONCLUSIVE and fails on it rather than scoring it a denial.
+	//
+	// The token is harvested from a page the attacker CAN reach (/ui/me/preferences — `identity`-exempt,
+	// so it renders for anybody signed in). Antiforgery tokens bind to the IDENTITY, not to the URL, so a
+	// pair minted there is valid on any POST this session makes — which is precisely why CSRF protection
+	// is not, and must not be mistaken for, a tenant boundary.
+	async Task<IReadOnlyList<CrossTenantProbe>> ProbePagePostHandlersAsync(
+		HttpClient client, IReadOnlyList<Endpoint> endpoints)
+	{
+		var (token, antiforgeryCookie) = await AntiforgeryPairAsync(client);
+		var probes = new List<CrossTenantProbe>();
+
+		foreach (var endpoint in endpoints.OfType<RouteEndpoint>())
+		{
+			if (endpoint.Metadata.GetMetadata<PageActionDescriptor>() is not CompiledPageActionDescriptor page)
+				continue;
+
+			// Only pages with a tenant slot in the ROUTE — the same `Addressed` question the GET sweep
+			// asks. A page with nowhere to write the victim's key cannot be aimed at them by POST either.
+			var (url, hasTenant) = FillRoute(endpoint.RoutePattern);
+			if (!hasTenant) continue;
+
+			foreach (var handler in page.HandlerMethods)
+			{
+				if (!string.Equals(handler.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)) continue;
+
+				var target = string.IsNullOrEmpty(handler.Name)
+					? url
+					: url + (url.Contains('?', StringComparison.Ordinal) ? "&" : "?") + "handler=" + handler.Name;
+
+				// The ROUTE TEMPLATE is part of the id, not just the page and the handler — because a page
+				// mapped twice must be probed twice. That is the whole Config family (one workspace-scoped
+				// template, one project-scoped) plus TaskBoardNode, i.e. exactly the pages whose single
+				// class-level declaration has to be answerable on BOTH of their routes. Keying by page alone
+				// would have collapsed each pair into one probe and dropped the template that carries fewer
+				// tenant slots — which is the one a mis-declaration breaks.
+				probes.Add(await ProbePagePostAsync(
+					client,
+					new AuthzSurface(
+						AuthzTransport.Razor,
+						$"{page.ViewEnginePath}?handler={(handler.Name is { Length: > 0 } n ? n : "(default)")}"
+							+ $" [{endpoint.RoutePattern.RawText}]",
+						page.ModelTypeInfo?.FullName ?? page.RelativePath,
+						[.. endpoint.Metadata.OfType<TenantDeclarationAttribute>()]),
+					target, hasTenant, token, antiforgeryCookie));
+			}
+		}
+
+		return [.. probes.OrderBy(p => p.Key, StringComparer.Ordinal)];
+	}
+
+	async Task<CrossTenantProbe> ProbePagePostAsync(
+		HttpClient client, AuthzSurface surface, string url, bool hasTenant, string token, string antiforgeryCookie)
+	{
+		// The victim's keys in every field name a form on this plane might bind them under, plus the
+		// token. Garbage for everything else, exactly as the GET sweep does it: a page that decides before
+		// it binds cannot notice, and one that binds first says 400 and tells us so.
+		using var req = new HttpRequestMessage(HttpMethod.Post, url)
+		{
+			Content = new FormUrlEncodedContent(new Dictionary<string, string>
+			{
+				["__RequestVerificationToken"] = token,
+				["projectKey"] = VictimProject,
+				["workspaceKey"] = VictimWorkspace,
+				["ws"] = VictimWorkspace,
+				["key"] = VictimProject,
+				["petbox_cross_tenant_probe"] = "true",
+			}),
+		};
+		req.Headers.Add("Cookie", $"{AttackerCookie}; {antiforgeryCookie}");
+
+		var call = $"POST {url}";
+		using var cts = new CancellationTokenSource(CallBudget);
+		try
+		{
+			using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+			var location = resp.Headers.Location?.ToString();
+			return new CrossTenantProbe(surface, call, hasTenant, VerdictOf(resp),
+				$"{(int)resp.StatusCode} {resp.StatusCode}" + (location is null ? "" : $" -> {location}"));
+		}
+		catch (OperationCanceledException)
+		{
+			return new CrossTenantProbe(surface, call, hasTenant, CrossTenantVerdict.Timeout,
+				$"no response within {CallBudget.TotalSeconds:0}s");
+		}
+	}
+
+	// A token + cookie pair valid for the attacker's own authenticated session.
+	async Task<(string Token, string Cookie)> AntiforgeryPairAsync(HttpClient client)
+	{
+		const string formPage = "/ui/me/preferences";
+
+		using var req = new HttpRequestMessage(HttpMethod.Get, formPage);
+		req.Headers.Add("Cookie", AttackerCookie);
+		using var resp = await client.SendAsync(req);
+		if (resp.StatusCode != HttpStatusCode.OK)
+			throw new InvalidOperationException(
+				$"the POST sweep could not reach {formPage} as the attacker ({(int)resp.StatusCode}) to mint an "
+				+ "antiforgery pair. Without one every POST below answers 400 and the sweep measures itself.");
+
+		var html = await resp.Content.ReadAsStringAsync();
+		var tokenStart = html.IndexOf("__RequestVerificationToken", StringComparison.Ordinal);
+		if (tokenStart < 0)
+			throw new InvalidOperationException(
+				$"{formPage} rendered no __RequestVerificationToken; the POST sweep has no token to send.");
+		var valueStart = html.IndexOf("value=\"", tokenStart, StringComparison.Ordinal) + 7;
+		var token = html[valueStart..html.IndexOf('"', valueStart)];
+
+		var cookie = resp.Headers.TryGetValues("Set-Cookie", out var setCookies)
+			? setCookies.FirstOrDefault(c => c.Contains("Antiforgery", StringComparison.OrdinalIgnoreCase))?.Split(';')[0]
+			: null;
+
+		return (token, cookie ?? "");
 	}
 
 	// The attacker, aimed at itself. Anything other than "served" here voids the whole run.

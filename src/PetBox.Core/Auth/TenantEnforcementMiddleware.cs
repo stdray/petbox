@@ -31,9 +31,12 @@ namespace PetBox.Core.Auth;
 // if a page's endpoints ever disagreed, the per-endpoint decision would stop matching the per-page
 // inventory and that test goes red.
 //
-// TODAY IT REFUSES NOTHING. Every one of the 217 surfaces is in TenantEnforcementAllowlist, and an
-// allowlisted surface is passed through before its declaration is even looked at. Rollout is deleting
-// lines from that list (step 5), not flipping a flag here.
+// IT REFUSES ON EVERY SURFACE ON THIS PLANE BUT TWO. That sentence used to read "it refuses nothing":
+// all 217 surfaces were allowlisted when this was written, and rollout was deleting lines from
+// TenantEnforcementAllowlist (step 5) rather than flipping a flag here. The REST wave took 53 of the 55
+// REST surfaces out and the Razor wave all 65 pages, so what is still passed through untouched is the
+// two Seq-header ingest routes, which have no ClaimsPrincipal for ITenantAuthorizer to judge (the reason
+// is written beside them in the allowlist).
 public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 {
 	// A body big enough to be a payload rather than a reference. `TenantSource.BodyField` names a

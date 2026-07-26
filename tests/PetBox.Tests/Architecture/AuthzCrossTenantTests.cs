@@ -150,7 +150,6 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"rest:GET /openapi/{documentName}.json",
 			"rest:GET|HEAD /health",
 			"rest:GET|HEAD /version",
-			"page:/AccessDenied",
 			"page:/Error",
 			"page:/Login",
 			"page:/Doc/Agent",
@@ -166,12 +165,21 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"rest:GET /api/auth/validate",
 			"rest:POST /api/auth/logout",
 			"mcp:whoami",
+			"page:/AccessDenied",
 			"page:/Index",
-			"page:/Nav/Tree",
 			"page:/Me/Account",
-			"page:/Me/NewWorkspace",
 			"page:/Me/Preferences",
 			"page:/Me/Security",
+			// The cross-tenant fan-out page. It USED to sit in its own "QUERY STRING" group, on the reading
+			// that its scope was a query parameter — which was wrong twice over: `q` is a search string and
+			// not a tenant, and the extent of the fan-out is the caller's own membership-filtered project
+			// enumeration. The Razor wave declared it [TenantExempt(Identity)] and it is grouped with the
+			// rest of that class here rather than left describing a tenant slot it never had.
+			"page:/Search",
+		]),
+
+		("PROVISIONING — creates the TENANT itself, which cannot exist when the request is judged", [
+			"page:/Me/NewWorkspace",
 		]),
 
 		("CAPABILITY TOKEN — addressed by a share token, which IS the authorization", [
@@ -208,7 +216,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		("SERVER-WIDE ADMIN — the whole deployment rather than one tenant (SysAdmin policy). Every one "
 			+ "of these DID deny the attacker (302 /AccessDenied), but on the ROLE axis, not the tenant "
-			+ "axis — so the denial is recorded and not counted as a cross-tenant pass", [
+			+ "axis — so the denial is recorded and not counted as a cross-tenant pass. The Razor wave "
+			+ "split them across the two classes that actually apply — fleet-wide for the three that "
+			+ "READ the installation (/Admin/Index, /Admin/SysDefaults, /Admin/Deploy), provisioning for "
+			+ "the three that hand out access across tenants (/Admin/AgentKeys re-scopes any key, "
+			+ "/Admin/Users sets workspace allowances, /Admin/Workspaces creates tenants) — but they stay "
+			+ "grouped here because what this list answers is 'why is there no tenant SLOT', and that is "
+			+ "the same sentence for all six", [
 			"page:/Admin/AgentKeys",
 			"page:/Admin/Deploy",
 			"page:/Admin/Index",
@@ -246,8 +260,15 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"rest:POST /v1/chat/completions",
 		]),
 
-		("QUERY STRING — the search scope is a query parameter, not a route value", [
-			"page:/Search",
+		("QUERY STRING — the tenant is a query ARGUMENT, so there is nothing to write into the route and "
+			+ "`Addressed` is false by construction. /Nav/Tree is the one page in the tree shaped this way, "
+			+ "and the Razor wave declared it [TenantFrom(Argument, \"project\")]: it USED to be listed "
+			+ "under IDENTITY on the reading that its tenant came from the caller, which was simply wrong — "
+			+ "the sidebar passes an explicit `?project=`, and CanAccessProjectAsync used to check it by "
+			+ "hand. THIS LIST IS NOT THE PROOF FOR IT: the GET/POST route sweeps cannot reach a query "
+			+ "argument, so the surface is covered by NavTreeAndDataViewTests' own refused/served pair "
+			+ "instead, and is named here only to say why the route sweep skipped it", [
+			"page:/Nav/Tree",
 		]),
 
 		("TOOL METADATA — describes a tool, touches no tenant's data", [
@@ -387,7 +408,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "two session POST routes were reached for the first time (see the KnownDeviations note on why "
 			+ "the old 415 measured the probe rather than the surface); 143 -> 144 with DELETE "
 			+ "/api/config/{{workspaceKey}}/bindings, whose 400 came from binding its query parameters inside "
-			+ "the endpoint and is now a 403 decided above it");
+			+ "the endpoint and is now a 403 decided above it. "
+			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
+			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
+			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
+			+ "reproduces their allow/deny exactly and only relocates the refusal — the same property the MCP "
+			+ "and REST waves had, and the reason a wave that changed 65 surfaces is allowed to leave this "
+			+ "line alone");
 	}
 
 	// ── GUARD THE GUARD ──────────────────────────────────────────────────────────────────────────

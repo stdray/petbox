@@ -29,10 +29,11 @@ public static class TenantEnforcementAllowlist
 {
 	// It STARTED at 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the
 	// moment the enforcement points were written, which is why enabling them changed behaviour on NONE
-	// of them. It shrinks one FAMILY at a time (work `authz-default-deny-delivery`, step 5); the MCP
-	// wave took ALL 97 tools out and the REST wave all but two of the 55, so what is left below is the
-	// Razor plane plus the two Seq-header-authenticated ingest routes. The live count is never a
-	// comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
+	// of them. It shrank one FAMILY at a time (work `authz-default-deny-delivery`, step 5): the MCP wave
+	// took ALL 97 tools out, the REST wave all but two of the 55, and the Razor wave all 65 pages. TWO
+	// ENTRIES ARE LEFT, both REST, and they are not "the ones nobody got to" — see the reason beside
+	// them. The live count is never a comment: run AuthzDeclarationRatchetTests and read
+	// .tmp/authz-surface-inventory.txt.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
 		// REST — TWO of the original 55 (METHOD + route pattern, as the caller addresses them). The other
@@ -59,9 +60,30 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /api/events/raw",
 		"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
 	
-		// RAZOR — what is LEFT of the 65 (one entry per page, not per endpoint: the PageModel CLASS is
-		// the carrier). The Razor wave takes them out one family at a time; the accounting of what has
-		// already gone is in the note at the bottom of this list.
+		// RAZOR — NOTHING. All 65 pages left this list in the Razor wave (work
+		// `authz-default-deny-delivery`, step 5), one family per commit. The carrier is the PageModel
+		// CLASS, so a page is one declaration however many routes and handlers it has.
+		//
+		// The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:
+		//   * 42 declare a tenant — 28 [TenantFrom(Route, "projectKey")], 12
+		//     [TenantFrom(Route, "workspaceKey", tenant: TenantKind.Workspace)], 1
+		//     [TenantFrom(Route, "key", tenant: TenantKind.Workspace)] (/Admin/WorkspaceDetail, whose route
+		//     spells a workspace `{key}`) and 1 [TenantFrom(Argument, "project")] (/Nav/Tree, the one page
+		//     whose tenant is a query argument rather than a route value);
+		//   * 23 are [TenantExempt] — 9 public, 6 identity, 4 provisioning, 3 fleet-wide, 1
+		//     capability-token.
+		//
+		// THE FOUR /Config/* PAGES ARE THE ONE THING TO READ BEFORE EDITING ANY OF THIS. Each is mapped by
+		// TWO route templates, one workspace-scoped and one project-scoped, and a PageModel declares once
+		// for both — so they name `workspaceKey`, the value BOTH carry. A `projectKey` declaration would
+		// resolve to nothing on the workspace-only template and 403 it under a green ratchet.
+		// AuthzDeclarationRatchetTests.APageDeclaringARouteTenant_NamesARouteValueAllOfItsRoutesCarry is
+		// the tripwire and was verified to actually fire.
+		//
+		// Four hand-written tenant resolutions came out with the wave: the five Config pages' "$system"
+		// fallback, LogApi.AuthorizeProjectViewerAsync + AuthorizeProjectAsync (deleted outright with
+		// /Logs/EventDetails, their last caller) and /Nav/Tree's AvailableWorkspaces membership test. The
+		// checks that STAYED are named on the pages that keep them, each with why it is not this axis.
 
 		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family
 		// per commit. The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:

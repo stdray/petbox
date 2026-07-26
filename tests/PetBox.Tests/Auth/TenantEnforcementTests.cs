@@ -299,8 +299,10 @@ public sealed class TenantEnforcementTests
 	// above it, because an allowlisted surface is exactly where the order matters.
 	//
 	// The order property itself is not lost: Endpoint_Allowlisted_PassesThrough_EvenUndeclared proves
-	// it on the endpoint plane, where 120 real entries remain, and both PEPs ask the same list the
-	// same way.
+	// it on the endpoint plane, and both PEPs ask the same list the same way. That plane is now down to
+	// TWO entries (the Seq ingest routes) after the REST and Razor waves — so when those finally go, the
+	// endpoint test above should become the ratchet-shaped statement this one already is, not be
+	// re-pointed at an invented key.
 	[Fact]
 	public void Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist() =>
 		TenantEnforcementAllowlist.Keys.Where(k => k.StartsWith(AuthzSurfaceKey.McpPrefix, StringComparison.Ordinal))
