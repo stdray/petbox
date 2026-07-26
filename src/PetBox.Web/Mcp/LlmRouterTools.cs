@@ -154,6 +154,8 @@ public static class LlmRouterTools
 	[Description("""
 		Embed inputs through the router's embed chain (primary -> fallback). `inputs` is a JSON
 		array of strings. Optional `tier`. Returns { vectors, model, servedBy }. Requires llm:invoke.
+		The server imposes no count/size cap on `inputs` — the binding constraint is provider/router
+		latency, not this endpoint; a large batch just takes longer, it isn't rejected or truncated.
 		""")]
 	public static async Task<EmbedResult> EmbedAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
@@ -173,6 +175,12 @@ public static class LlmRouterTools
 	[Description("""
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
 		Optional `topN`, `tier`. Returns { hits:[{index,score}], model, servedBy }. Requires llm:invoke.
+		No server-side document-count cap — the binding constraint is latency, set by the
+		provider/router, not this endpoint. Measured on qwen3-rerank-0.6b, one warm production
+		route (2026-07-18): n=100 ~0.95s, n=500 3.4-4.0s, n=750 4.9-5.5s, n=1000 6.4-7.1s, n=5000
+		~43s, n=8000 ~68s (~6.1ms/doc + ~0.33s base). A 5s budget breaks around n~700-720; a safe
+		p95 target is ~500 candidates. This is one route only, not a guarantee — the openrouter
+		fallback is unmeasured and may differ.
 		""")]
 	public static async Task<RerankResult> RerankAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
@@ -192,7 +200,9 @@ public static class LlmRouterTools
 	[Description("""
 		Run a chat/summary completion through the chat chain. `messages` is a JSON array of
 		{ role, content }. Optional `tier`, `temperature`, `maxTokens`. Returns { text, model,
-		servedBy }. Requires llm:invoke.
+		servedBy }. Requires llm:invoke. No server-side size cap on `messages` — the binding
+		constraint is provider/router latency, not this endpoint; a large payload just takes
+		longer, it isn't rejected or truncated.
 		""")]
 	public static async Task<ChatResult> ChatAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
