@@ -732,6 +732,18 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
 	{
+		var (view, _) = await GetAsyncCore(projectKey, board, includeClosed, includeBody, under, urlPrefix, status, ct);
+		return view;
+	}
+
+	// node-page-full-board-fetch: the actual body of GetAsync, ALSO returning the project-wide
+	// node index it builds internally — GetNodeAsync needs that SAME index (nodeId -> board/slug/
+	// title/status, across every board) to resolve its own exhaustive relation panel. Before this
+	// split, GetNodeAsync called the public GetAsync and then rebuilt the identical index a SECOND
+	// time via its own BuildNodeIndexAsync call — a full per-board project-wide scan repeated for
+	// no reason. Now there is exactly one build per node-page render, shared via this tuple.
+	async Task<(PlanBoardView View, Dictionary<string, NodeRef> Index)> GetAsyncCore(string projectKey, string board, bool includeClosed, bool includeBody, string? under, string? urlPrefix, string[]? status, CancellationToken ct)
+	{
 		await EnsureBoard(projectKey, board, ct);
 
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
@@ -851,7 +863,7 @@ public sealed partial class TasksService : ITasksService
 				UpdatedAt: n.Updated,
 				Blocks: blocks.Count > 0 ? blocks : null));
 		}
-		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
+		return (new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes), index);
 	}
 
 	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
@@ -900,11 +912,22 @@ public sealed partial class TasksService : ITasksService
 		var board = await _boards.FindBoardByNodeIdAsync(projectKey, nodeId, ct);
 		if (board is null) return null;
 
-		// Reuse GetAsync (includeClosed: the node or its ancestors may be terminal) — it builds
-		// the fully-enriched view (links, delivery, parent/depth) we'd otherwise duplicate.
-		var view = await GetAsync(projectKey, board, includeClosed: true, ct: ct);
+		// Reuse GetAsyncCore (includeClosed: the node or its ancestors may be terminal) — it builds
+		// the fully-enriched view (links, delivery, parent/depth) we'd otherwise duplicate, AND
+		// hands back the project-wide node index built along the way (see GetAsyncCore) so the
+		// relation panel below doesn't rebuild it a second time.
+		//
+		// tasks-ui-pages-getting-slower: includeBody:false here — a single-node page render used to
+		// go through this SAME call with includeBody defaulted to true, which makes GetAsyncCore
+		// SELECT the full markdown body of EVERY node on the board (every OTHER node's sibling body,
+		// not just this one) purely to throw all but one away a few lines below. On the $system
+		// `work` board (477 nodes) that is ~477 full bodies read and allocated to render ONE node.
+		// The target node's own body is fetched separately below (one single-row query) and patched
+		// back in — everyone else's body is never selected, per board-read-loads-all-bodies.
+		var (view, index) = await GetAsyncCore(projectKey, board, includeClosed: true, includeBody: false, under: null, urlPrefix: null, status: null, ct);
 		var node = view.Nodes.FirstOrDefault(n => n.NodeId == nodeId);
 		if (node is null) return null;
+		node = node with { Body = await GetNodeBodyAsync(projectKey, nodeId, ct) };
 
 		// Walk part_of up via ParentNodeId (same-board, single-parent, cycle-guarded) to build
 		// the breadcrumb chain, then reverse to root→parent order.
@@ -922,7 +945,7 @@ public sealed partial class TasksService : ITasksService
 		// directions, resolved against the project-wide node index. The board `view` above only
 		// carries PlanNodeView's typed subset (spec/blockedBy/…) and no children — this fills the
 		// gap so the detail page renders the full graph around a node in one place.
-		var relIndex = await BuildNodeIndexAsync(projectKey, ct);
+		// `index` is the SAME index GetAsyncCore already built above — not rebuilt.
 		var fromEdges = await _relations.ListAsync(projectKey, nodeId, "from", ct: ct);
 		var toEdges = await _relations.ListAsync(projectKey, nodeId, "to", ct: ct);
 		var panelRuntime = await RuntimeForBoardAsync(projectKey, (await _boards.FindAsync(projectKey, board, ct))!, ct);
@@ -933,7 +956,7 @@ public sealed partial class TasksService : ITasksService
 				? fromEdges.Where(e => e.Kind == kind).Select(e => e.ToNodeId)
 				: toEdges.Where(e => e.Kind == kind).Select(e => e.FromNodeId);
 			var links = targets
-				.Select(id => LinkRef(id, relIndex))
+				.Select(id => LinkRef(id, index))
 				.OrderBy(l => l.Board ?? "", StringComparer.Ordinal)
 				.ThenBy(l => l.Slug ?? "", StringComparer.Ordinal)
 				.ToList();
@@ -1293,6 +1316,17 @@ public sealed partial class TasksService : ITasksService
 		index.TryGetValue(nodeId, out var r)
 			? new LinkDto(nodeId, r.Board, r.Slug, r.Title, r.Status)
 			: new LinkDto(nodeId, null, null, null, "missing");
+
+	// tasks-ui-pages-getting-slower: the ONE body GetNodeAsync actually needs — a single-row,
+	// single-column read (this node's own active revision), used to patch Body back onto the
+	// PlanNodeView after GetAsyncCore ran with includeBody:false for the whole board. Empty string
+	// on a miss (matches GetAsyncCore's own includeBody:false projection, never null).
+	async Task<string> GetNodeBodyAsync(string projectKey, string nodeId, CancellationToken ct)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		return await ctx.PlanNodes.Where(n => n.NodeId == nodeId && n.ActiveTo == null)
+			.Select(n => n.Body).FirstOrDefaultAsync(ct) ?? "";
+	}
 
 	// The IO half of the delivery roll-up: SELECT, then hand the raw candidates to the pure
 	// DeliveryEngine.Rollup, which owns the judgement (methodology-engine-extraction, slice 5).
