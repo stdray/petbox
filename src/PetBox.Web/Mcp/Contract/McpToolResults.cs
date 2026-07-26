@@ -162,11 +162,12 @@ public sealed record DataExecResult(int Affected);
 //
 // `Level` is the level these rows were read FROM and that an upsert with this projectKey would write
 // TO ("System:$" / "Workspace:<workspaceKey>"). It is here because it is NOT derivable from the
-// projectKey by anyone but the server: the level comes from the project's WORKSPACE, so `smoke` —
-// the sandbox project — resolves to the LIVE `System:$` exactly like `$system` does, and the surface
-// used to describe that as "this project's own level" (work llm-config-get-level-derivation-trap;
-// this is llm-l5 item 5, now decided). Reporting where the caller actually landed is the same
-// contract memory_search keeps when it labels every row with the scope it came from.
+// projectKey by anyone but the server: the level comes from the project's WORKSPACE, so ANY project
+// of `$system` — the sandbox project `smoke` included, until M048 moved it into its own workspace —
+// resolves to the LIVE `System:$` exactly like `$system` does, and the surface used to describe that
+// as "this project's own level" (work llm-config-get-level-derivation-trap; this is llm-l5 item 5,
+// now decided). Reporting where the caller actually landed is the same contract memory_search keeps
+// when it labels every row with the scope it came from.
 //
 // `ServedBy` is populated ONLY when this level declares nothing and something above it does — the
 // level actually serving the project. It answers the question `Version: 0` used to answer wrongly:

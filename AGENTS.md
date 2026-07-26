@@ -146,10 +146,17 @@ records**, not the working plan — do not treat them as current state.
    wait for `main`'s own CI first: it runs the same tests, and the tag run re-runs them
    anyway (it will not deploy on a red build) — waiting just burns ~6 minutes twice.
    **A smoke NEVER writes into a real project.** Its target is the project `smoke`
-   (workspace `$system`), which carries the **`sandbox=true`** flag — that flag, not a
-   workspace, is what makes it a legal smoke target; **no workspace named `sandbox`
-   exists** (`project_create(workspaceKey: "sandbox", …)` throws `InvalidOperationException:
-   Workspace 'sandbox' not found` — verify with `project_list` before trusting this doc).
+   (workspace `smoke`, its own — M048 moved it out of `$system`), which carries the
+   **`sandbox=true`** flag — that flag, not a workspace, is what makes it a legal smoke
+   target; **no workspace named `sandbox` exists** (`project_create(workspaceKey: "sandbox", …)`
+   throws `InvalidOperationException: Workspace 'sandbox' not found` — verify with
+   `project_list` before trusting this doc). The workspace is its own for a SECOND reason,
+   and it is defence in depth rather than the rule above: a shared-memory container is
+   DERIVED from a project's workspace, so while `smoke` sat in `$system` the container
+   derivable from the sandbox was `$workspace` — the owner's cross-project notes and canon.
+   That is why one containment bug shipped as a real disclosure (1309 chars of canon to a
+   sandboxOnly key, fixed in `d322fd8d`). Now the same derivation lands on `$ws-smoke`,
+   which is empty. Keep it that way: do not park shared memory in the smoke workspace.
    A smoke authenticates with a `sandboxOnly` key — never your session's `$system` key,
    never a customer project's. Read-only probes (`/health`, `/version`, a search) may hit
    anything; anything that CREATES a board, project, session, memory entry or task goes

@@ -60,3 +60,4 @@
 45 LIVE M045_LogRetentionDays
 46 LIVE M046_LlmRouteEmbedSpaceId
 47 LIVE M047_LlmRegistryLevelVersion
+48 LIVE M048_SmokeOwnWorkspace

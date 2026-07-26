@@ -396,24 +396,30 @@ public sealed class LlmRegistryEditorTests : IDisposable
 
 	// THE CARD, as a test. A smoke was planned against the sandbox project `smoke` on the reasoning
 	// that a sandbox project has a level of its own. It does not — the level comes from the project's
-	// WORKSPACE, and `smoke` lives in `$system`, so its "own" level IS the live `System:$`. The
+	// WORKSPACE, and `smoke` then lived in `$system`, so its "own" level WAS the live `System:$`. The
 	// surface described that as "this project's own level", which is what nearly turned a smoke into
 	// a production edit. What makes it non-repeatable is that the answer now says where it came from.
+	//
+	// The project key here is deliberately NOT `smoke` any more: M048 moved the real `smoke` into its
+	// own workspace (work `smoke-own-workspace-containment`), so naming it here would assert a
+	// production fact that is no longer true. The HAZARD is not about that one project — it is that
+	// ANY sandbox project parked in `$system` reads and writes the live level — so the test states the
+	// shape and keeps proving it.
 	[Fact]
 	public async Task A_sandbox_project_in_the_system_workspace_reports_the_LIVE_System_level()
 	{
 		// A project whose KEY says "sandbox" and whose WORKSPACE says "$system" — the exact shape.
-		_db.Insert(new Project { Key = "smoke", WorkspaceKey = WorkspaceMemory.SystemWorkspace, Name = "smoke", Description = "" });
+		_db.Insert(new Project { Key = "sbox-in-system", WorkspaceKey = WorkspaceMemory.SystemWorkspace, Name = "sbox", Description = "" });
 
 		// $system declares the live registry.
 		await _editor.SetAsync(SysProj,
 			new LlmRegistry([new LlmEndpoint("home", "https://home:1234")], [new LlmRoute(LlmCapability.Chat, "home", "prod-model")]),
 			NoKeys);
 
-		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", "smoke"), Flags(), _editor, "smoke");
+		var got = await LlmRouterTools.ConfigGetAsync(Http("llm:admin", "sbox-in-system"), Flags(), _editor, "sbox-in-system");
 
 		got.Level.Should().Be("System:$",
-			"the level is derived from the project's workspace — `smoke` is in `$system`, so it reads and writes the live level");
+			"the level is derived from the project's workspace — a sandbox project in `$system` reads and writes the live level");
 		got.ServedBy.Should().BeNull("this level declares rows of its own; nothing is being inherited past it");
 		got.Routes.Should().ContainSingle().Which.Model.Should().Be("prod-model",
 			"byte for byte what `$system` returns — there is no per-project isolation here");

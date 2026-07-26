@@ -65,10 +65,12 @@ public static class LlmRouterTools
 		+ routes), WITHOUT secrets, plus `version` (the CAS baseline for llm_config_upsert) and
 		`level` — the level you are actually looking at. Requires llm:admin.
 		THE LEVEL COMES FROM THE PROJECT'S WORKSPACE, NOT FROM THE PROJECT. There is no per-project
-		level: every project of workspace `$system` — INCLUDING the sandbox project `smoke` — reads
-		and writes `System:$`, the live registry every other workspace inherits. Any other workspace
-		resolves to `Workspace:<workspaceKey>`, shared by every project in it. Read `level` before
-		you write: a projectKey that looks isolated is not evidence that the level is.
+		level: every project of workspace `$system` reads and writes `System:$`, the live registry
+		every other workspace inherits. Any other workspace resolves to `Workspace:<workspaceKey>`,
+		shared by every project in it — a workspace that declares nothing INHERITS `System:$` for
+		reads and is read-only here. Read `level` before you write: a projectKey that looks isolated
+		is not evidence that the level is. The sandbox project `smoke` was itself the cautionary
+		case, and it is why it now has a workspace of its own (M048).
 		`version` 0 means THIS LEVEL declares nothing yet — NOT that the project has no registry.
 		In that case `servedBy` names the level actually serving it, and declaring even one row here
 		SHADOWS that inherited level WHOLE (levels resolve atomically, they never merge) for every
