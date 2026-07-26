@@ -99,10 +99,10 @@ public static class LogApi
 	public sealed record CreateLogRequest(string Name, string? Description, int? RetentionDays = null);
 	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt, int? RetentionDays = null);
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CreateLogAsync(
-		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new ErrorResponse("name is required"));
@@ -122,10 +122,10 @@ public static class LogApi
 		catch (InvalidOperationException ex) { return Results.NotFound(new ErrorResponse(ex.Message)); }
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListLogsAsync(
-		HttpContext ctx, string projectKey, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, ILogStore store, CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		var rows = (await store.ListAsync(projectKey, ct))
@@ -134,10 +134,10 @@ public static class LogApi
 		return Results.Ok(rows);
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> DeleteLogAsync(
-		HttpContext ctx, string projectKey, string name, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string name, ILogStore store, CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (projectKey == LogNames.SystemProject && name == LogNames.SelfLog)
 			return Results.BadRequest(new ErrorResponse("the petbox self-log cannot be deleted"));
@@ -146,6 +146,10 @@ public static class LogApi
 		return deleted ? Results.NoContent() : Results.NotFound(new ErrorResponse("log not found"));
 	}
 
+	// Still here for ONE caller: AuthorizeProjectViewerAsync's api-key branch, which PetBox.Web's
+	// EventDetailsApi (a Razor-plane surface, still allowlisted) reuses. Every route mapped in THIS file
+	// declares [TenantFrom(Route, "projectKey")] instead and is refused by TenantEnforcementMiddleware
+	// before its handler runs — this is not a second gate on any of them.
 	static async Task<IResult?> AuthorizeProjectAsync(
 		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct) =>
 		await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct) ? null : Results.Forbid();
@@ -261,6 +265,7 @@ public static class LogApi
 			.AllowAnonymous();
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> IngestClefPathAsync(
 		HttpContext ctx,
 		string projectKey,
@@ -268,7 +273,6 @@ public static class LogApi
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		// The "ApiKey" policy only proves SOME api key authenticated — every OTHER handler in
@@ -276,8 +280,8 @@ public static class LogApi
 		// LiveTailAsync, plus SeqIngestPathAsync's manual checks below) additionally verifies the
 		// key's project claim authorizes THIS route's projectKey and carries the right scope; this
 		// handler was missing both, so any logs:* key from any project could ingest into any
-		// project's named log via the path-based CLEF route.
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
+		// project's named log via the path-based CLEF route. The project half is now the DECLARATION
+		// above plus TenantEnforcementMiddleware; the scope half is still this handler's own.
 		if (!HasScope(ctx, ApiKeyScopes.LogsIngest)) return Results.Forbid();
 
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
@@ -306,15 +310,14 @@ public static class LogApi
 		return Results.Ok(new IngestResponse(candidates.Count, errors.Count));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> QueryLogsAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ILogQueryService query,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
@@ -405,15 +408,14 @@ public static class LogApi
 		return Results.Json(new KqlTableResponse(columns, rows, truncation.Truncated));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> GetServicesAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ILogStore store,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
@@ -585,16 +587,23 @@ public static class LogApi
 	// materializing the whole gap at once.
 	const int LiveTailBatch = 200;
 
+	// The ONE route in this file whose policy admits a cookie as well as an api key, and the
+	// declaration covers both without a fork: ITenantAuthorizer answers an api-key principal on the
+	// project claim (+ sandbox containment) and a cookie principal on membership of the project's
+	// OWNING workspace at Viewer or better — the exact two gates AuthorizeProjectViewerAsync spells
+	// out by hand, kept apart there for the same reason and now kept apart centrally. What CANNOT move
+	// to the declaration is the logs:query scope, because a cookie carries no scopes at all: it stays
+	// below, asked only of the credential that has scopes.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ITailBroadcaster broadcaster,
 		ILogStore store,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectViewerAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
+		if (IsApiKeyPrincipal(ctx) && !HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
 

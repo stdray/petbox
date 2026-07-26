@@ -38,7 +38,6 @@ public static class TenantEnforcementAllowlist
 		// REST — what is LEFT of the 55 minimal-API endpoints (METHOD + route pattern, as the caller
 		// addresses them). The wave's own accounting is in the note at the bottom of this list.
 		"rest:DELETE /api/config/{workspaceKey}/bindings",
-		"rest:DELETE /api/logs/{projectKey}/logs/{name}",
 		"rest:DELETE /api/sessions/{projectKey}/{sessionId}",
 		"rest:DELETE /api/{projectKey}/agent-defs/{key}",
 		"rest:GET /.well-known/oauth-authorization-server",
@@ -49,10 +48,6 @@ public static class TenantEnforcementAllowlist
 		"rest:GET /.well-known/openid-configuration/{*rest}",
 		"rest:GET /agent/poll",
 		"rest:GET /api/auth/validate",
-		"rest:GET /api/logs/{projectKey}/logs",
-		"rest:GET /api/logs/{projectKey}/{logName}/live-tail",
-		"rest:GET /api/logs/{projectKey}/{logName}/query",
-		"rest:GET /api/logs/{projectKey}/{logName}/services",
 		"rest:GET /api/memory/{projectKey}/canon",
 		"rest:GET /api/sessions/{projectKey}",
 		"rest:GET /api/share/{token}/tsv",
@@ -66,11 +61,28 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /api/auth/logout",
 		"rest:POST /api/config/{workspaceKey}/bindings",
 		"rest:POST /api/deploy/nodes",
-		"rest:POST /api/events/raw",
 		"rest:POST /api/health",
-		"rest:POST /api/ingest/{projectKey}/{logName}/clef",
+
+		// THE TWO THAT STAY, and the reason, written HERE rather than remembered — the same discipline
+		// memory_get was left under during the MCP wave.
+		//
+		// Both are `.AllowAnonymous()` and authenticate a Seq-protocol key out of the X-Seq-ApiKey
+		// HEADER by hand (IApiKeyLookup), because a stock Seq client sends no X-Api-Key and so cannot go
+		// through the ApiKey SCHEME. That means there is NO ClaimsPrincipal on these requests:
+		// HttpContext.User is unauthenticated by the time TenantEnforcementMiddleware runs, and
+		// ITenantAuthorizer answers NotAuthorized for an unauthenticated principal — so declaring
+		// [TenantFrom(Route, "projectKey")] here would 403 EVERY Seq ingest, including the legitimate
+		// ones. Declaring an exemption instead would be a lie: these routes have a real tenant and a
+		// real per-call check.
+		//
+		// So the manual check STAYS, and it is a complete one: both handlers run
+		// ProjectScope.EvaluateAsync with the key ROW's own ProjectKey/SandboxOnly, i.e. the same claim
+		// identity + sandbox containment the middleware would apply. The cross-tenant probe measures
+		// both as Denied. What is missing is not the check but the PRINCIPAL — closing that means
+		// authenticating the Seq header into a ClaimsPrincipal (a real auth change, its own work item),
+		// not a line in this wave.
+		"rest:POST /api/events/raw",
 		"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
-		"rest:POST /api/logs/{projectKey}/logs",
 		"rest:POST /api/sessions/{projectKey}/{sessionId}",
 		"rest:POST /api/sessions/{projectKey}/{sessionId}/append",
 		"rest:POST /api/share",
