@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Doc;
 
@@ -9,6 +10,9 @@ namespace PetBox.Web.Pages.Doc;
 // No substitutions: the page names no host — the CLI carries its own base URL and the registry
 // records it per project.
 [AllowAnonymous]
+[TenantExempt(TenantExemption.Public,
+	"the public documentation tree: no tenant in the route, no credential required, and nothing a "
+	+ "tenant owns is read — the prose is Pages/Doc/content/*.md, shipped with the build")]
 public sealed class WireModel : PageModel
 {
 	readonly DocContent _docs;

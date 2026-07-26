@@ -2,10 +2,18 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages;
 
 [AllowAnonymous]
+// The generic status-code/exception page every failing request in the browser plane is re-executed
+// into (Program.cs UseStatusCodePagesWithReExecute). It shows a request id and nothing else — there
+// is no tenant to name, and it MUST stay reachable for a request that was just refused for a tenant
+// it may not touch, or a refusal turns into a second refusal and the user sees nothing at all.
+[TenantExempt(TenantExemption.Public,
+	"the error page: anonymous, carries only a request id, and is the destination a refused request "
+	+ "is re-executed into — a tenant check on it would refuse the explanation as well")]
 [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
 [IgnoreAntiforgeryToken]
 public sealed class ErrorModel : PageModel

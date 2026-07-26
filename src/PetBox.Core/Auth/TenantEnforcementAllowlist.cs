@@ -59,7 +59,9 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /api/events/raw",
 		"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
 	
-		// RAZOR — 65 pages (one entry per page, not per endpoint: the PageModel CLASS is the carrier).
+		// RAZOR — what is LEFT of the 65 (one entry per page, not per endpoint: the PageModel CLASS is
+		// the carrier). The Razor wave takes them out one family at a time; the accounting of what has
+		// already gone is in the note at the bottom of this list.
 		"page:/AccessDenied",
 		"page:/Admin/AgentKeys",
 		"page:/Admin/Deploy",
@@ -92,17 +94,8 @@ public static class TenantEnforcementAllowlist
 		"page:/Config/Preview",
 		"page:/Config/Tags",
 		"page:/Dashboard/Index",
-		"page:/Doc/Agent",
-		"page:/Doc/Index",
-		"page:/Doc/Methodology",
-		"page:/Doc/Onboarding",
-		"page:/Doc/Overview",
-		"page:/Doc/Philosophy",
-		"page:/Doc/Wire",
-		"page:/Error",
 		"page:/Index",
 		"page:/Llm/Index",
-		"page:/Login",
 		"page:/Logs/EventDetails",
 		"page:/Logs/Index",
 		"page:/Logs/Trace",

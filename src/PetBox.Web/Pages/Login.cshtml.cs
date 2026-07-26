@@ -10,6 +10,13 @@ using PetBox.Core.Auth;
 namespace PetBox.Web.Pages;
 
 [AllowAnonymous]
+// THE DOOR. Anonymous by definition — a caller here has no principal at all, so there is no claim
+// for ITenantAuthorizer to judge and no tenant in the route to judge it against. Declaring anything
+// but an exemption would refuse every sign-in, which is the one failure in this wave that locks the
+// whole product rather than one page.
+[TenantExempt(TenantExemption.Public,
+	"the sign-in form: reached with no credential and no tenant, and it names none — the workspace a "
+	+ "session lands in is decided after authentication, from the account's own memberships")]
 public sealed class LoginModel : PageModel
 {
 	// ICredentialAuthenticator, NOT IUserAdminService: this page is reachable by anyone at all, and

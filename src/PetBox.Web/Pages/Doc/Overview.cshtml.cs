@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Doc;
 
@@ -9,6 +10,9 @@ namespace PetBox.Web.Pages.Doc;
 // markdown canon Pages/Doc/content/overview.md, rendered through the shared renderer;
 // `{{origin}}` in the client-library snippets is substituted with this instance's base URL.
 [AllowAnonymous]
+[TenantExempt(TenantExemption.Public,
+	"the public documentation tree: no tenant in the route, no credential required, and nothing a "
+	+ "tenant owns is read — the prose is Pages/Doc/content/*.md, shipped with the build")]
 public sealed class OverviewModel : PageModel
 {
 	readonly DocContent _docs;
