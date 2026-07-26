@@ -71,10 +71,11 @@ public sealed class NodePageCostTests : IDisposable
 	}
 
 	// The regression this card exists to prevent: GetNodeAsync's connection/statement count must
-	// scale with the number of BOARDS in the project (BuildNodeIndexAsync's per-board scan is
-	// project-wide by necessity — it resolves link targets that may live on any board) but NOT
-	// TWICE OVER. Measure at two board counts — if the index were still built twice, the delta
-	// between them would be 2x the per-board statement cost; deduped, it's 1x.
+	// NOT scale with the number of BOARDS in the project. BuildNodeIndexAsync's scan IS
+	// project-wide by necessity (it resolves link targets that may live on any board), but since
+	// node-index-scan-one-select-per-board that is ONE query over the whole plan_nodes table
+	// (Board is a plain column, not a per-board connection/loop) — the per-board slope should be
+	// ~0, not merely "not doubled".
 	[Fact]
 	public async Task GetNodeAsync_StatementCount_ScalesLinearlyOnce_NotTwice_WithBoardCount()
 	{
@@ -88,17 +89,16 @@ public sealed class NodePageCostTests : IDisposable
 		await _tasks.GetNodeAsync(Proj, manyNodeId);
 		var manyBoardsStatements = _factory.Statements;
 
-		// Going from 2 boards to 10 boards (+8 boards) adds AT MOST ~1 statement per extra board
-		// (the single deduped BuildNodeIndexAsync scan) plus a small constant — not ~2 per board
-		// (which a re-introduced duplicate build would cost). Pin the per-board slope, not just an
-		// absolute ceiling, so a regression that re-doubles the scan is caught regardless of the
-		// fixed overhead around it.
-		// Measured: pre-fix (duplicate BuildNodeIndexAsync) few=16/many=36/delta=20 (2.5
-		// statements/extra board); post-fix few=15/many=25/delta=10 (1.25/extra board) — the
-		// duplicate project-wide scan's contribution is gone. Pin well above the post-fix number
-		// but below the pre-fix one, so a reintroduced duplicate build fails this test.
+		// Measured on this exact fixture: pre-fix (per-board foreach loop in both
+		// BuildNodeIndexAsync and ComputeSpecDeliveryAsync's shared shape) few=15/many=25/
+		// delta=10 (1.25 statements/extra board — this board kind has no delivery def, so only
+		// BuildNodeIndexAsync's loop contributes); post-fix (one project-wide query plus dropping
+		// GetNodeAsync's redundant second RuntimeForBoardAsync resolve, board count irrelevant to
+		// statement count either way) few=12/many=12/delta=0. Pin near 0 (not the old <16, which
+		// would still pass if the per-board loop came back at half its old cost) so a reintroduced
+		// per-board scan of EITHER kind fails this test.
 		var delta = manyBoardsStatements - fewBoardsStatements;
-		delta.Should().BeLessThan(16);
+		delta.Should().BeLessThan(3);
 	}
 
 	// GetNodeAsync must not re-fetch the project-wide node index a second time: with a single
@@ -114,12 +114,14 @@ public sealed class NodePageCostTests : IDisposable
 		await _tasks.GetNodeAsync(Proj, nodeId);
 
 		// A handful of opens (board scan, relations x3, tags, node index, one-row body fetch).
-		// Measured 13 both pre- and post-fix on this single-board fixture — Opens alone does NOT
-		// catch the duplicate-index regression (removing one dup Open while adding one for the new
-		// single-row body fetch is a wash); the slope test above is what actually pins that axis.
-		// This test exists to catch a DIFFERENT regression: any change that starts opening a new
-		// connection per board or per node again.
-		_factory.Opens.Should().BeLessThan(16);
+		// Measured 13 pre- node-index-scan-one-select-per-board on this single-board fixture (Opens
+		// alone does NOT catch the duplicate-index regression the ORIGINAL board-count slope test
+		// pins — that is what the test above is for); 11 post-fix (node-index-scan-one-select-per-
+		// board also dropped GetNodeAsync's redundant second RuntimeForBoardAsync + FindAsync
+		// resolve for the relation panel, one core-db open less). This test exists to catch a
+		// DIFFERENT regression: any change that starts opening a new connection per board or per
+		// node again.
+		_factory.Opens.Should().BeLessThan(13);
 	}
 
 	// The node page must still render the CORRECT, full body of the requested node — the

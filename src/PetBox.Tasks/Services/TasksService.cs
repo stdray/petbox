@@ -732,7 +732,7 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
 	{
-		var (view, _) = await GetAsyncCore(projectKey, board, includeClosed, includeBody, under, urlPrefix, status, ct);
+		var (view, _, _) = await GetAsyncCore(projectKey, board, includeClosed, includeBody, under, urlPrefix, status, ct);
 		return view;
 	}
 
@@ -742,7 +742,7 @@ public sealed partial class TasksService : ITasksService
 	// split, GetNodeAsync called the public GetAsync and then rebuilt the identical index a SECOND
 	// time via its own BuildNodeIndexAsync call — a full per-board project-wide scan repeated for
 	// no reason. Now there is exactly one build per node-page render, shared via this tuple.
-	async Task<(PlanBoardView View, Dictionary<string, NodeRef> Index)> GetAsyncCore(string projectKey, string board, bool includeClosed, bool includeBody, string? under, string? urlPrefix, string[]? status, CancellationToken ct)
+	async Task<(PlanBoardView View, Dictionary<string, NodeRef> Index, MethodologyRuntime Runtime)> GetAsyncCore(string projectKey, string board, bool includeClosed, bool includeBody, string? under, string? urlPrefix, string[]? status, CancellationToken ct)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
@@ -782,13 +782,18 @@ public sealed partial class TasksService : ITasksService
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var parentOf = await ParentMapAsync(projectKey, ct);
+		// node-index-scan-one-select-per-board: ONE project-wide active-node scan feeds both the
+		// delivery roll-up below and the link index right after — not two separate per-board loops
+		// (delivery-scan-duplicates-node-index-scan).
+		var allActiveNodes = await AllActiveProjectNodesAsync(projectKey, ct);
+
 		// Delivery is gated by kind DATA (MethodologyDeliveryDef), not BoardKind.Spec.
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
 		var delivery = deliveryDef is not null
-			? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, runtime, deliveryDef, ct)
+			? await ComputeSpecDeliveryAsync(projectKey, active, allActiveNodes, parentOf, runtime, deliveryDef, ct)
 			: null;
 
-		var index = await BuildNodeIndexAsync(projectKey, ct);
+		var index = BuildNodeIndex(allActiveNodes, await _boards.ListAsync(projectKey, ct));
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
@@ -863,7 +868,7 @@ public sealed partial class TasksService : ITasksService
 				UpdatedAt: n.Updated,
 				Blocks: blocks.Count > 0 ? blocks : null));
 		}
-		return (new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes), index);
+		return (new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes), index, runtime);
 	}
 
 	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
@@ -924,7 +929,7 @@ public sealed partial class TasksService : ITasksService
 		// `work` board (477 nodes) that is ~477 full bodies read and allocated to render ONE node.
 		// The target node's own body is fetched separately below (one single-row query) and patched
 		// back in — everyone else's body is never selected, per board-read-loads-all-bodies.
-		var (view, index) = await GetAsyncCore(projectKey, board, includeClosed: true, includeBody: false, under: null, urlPrefix: null, status: null, ct);
+		var (view, index, runtime) = await GetAsyncCore(projectKey, board, includeClosed: true, includeBody: false, under: null, urlPrefix: null, status: null, ct);
 		var node = view.Nodes.FirstOrDefault(n => n.NodeId == nodeId);
 		if (node is null) return null;
 		node = node with { Body = await GetNodeBodyAsync(projectKey, nodeId, ct) };
@@ -948,9 +953,12 @@ public sealed partial class TasksService : ITasksService
 		// `index` is the SAME index GetAsyncCore already built above — not rebuilt.
 		var fromEdges = await _relations.ListAsync(projectKey, nodeId, "from", ct: ct);
 		var toEdges = await _relations.ListAsync(projectKey, nodeId, "to", ct: ct);
-		var panelRuntime = await RuntimeForBoardAsync(projectKey, (await _boards.FindAsync(projectKey, board, ct))!, ct);
+		// node-index-scan-one-select-per-board: `runtime` is the SAME board's runtime GetAsyncCore
+		// already resolved above — this used to throw that away and re-resolve it (a fresh
+		// _boards.FindAsync + RuntimeForBoardAsync, itself a methodology-instance/definition read)
+		// just for the relation panel's labels. Not rebuilt.
 		var relations = new List<NodeRelationGroup>();
-		foreach (var (kind, fromSide, label) in RelationPanelSpecs(panelRuntime))
+		foreach (var (kind, fromSide, label) in RelationPanelSpecs(runtime))
 		{
 			var targets = fromSide
 				? fromEdges.Where(e => e.Kind == kind).Select(e => e.ToNodeId)
@@ -1232,7 +1240,7 @@ public sealed partial class TasksService : ITasksService
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
 		var delivery = deliveryDef is not null
-			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), runtime, deliveryDef, ct)
+			? await ComputeSpecDeliveryAsync(projectKey, active, await AllActiveProjectNodesAsync(projectKey, ct), await ParentMapAsync(projectKey, ct), runtime, deliveryDef, ct)
 			: null;
 
 		var groups = ProjectByTags(active, dims, 0, tagsByNode, delivery);
@@ -1299,16 +1307,44 @@ public sealed partial class TasksService : ITasksService
 	// A resolvable reference to a node anywhere in the project (links cross boards).
 	sealed record NodeRef(string Board, string BoardKind, string Slug, string Title, string Status, string Type);
 
-	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
-	// globally unique, so a link target may live on another board).
-	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct)
+	// node-index-scan-one-select-per-board: Board is a plain column on plan_nodes (every board of
+	// a project shares one file/table, partitioned by Board — same fact board-page-cost already
+	// leaned on for RelationStore.ListForNodesAsync), so "every active node of the project" is ONE
+	// query with the per-board split done in memory, not a foreach-board loop issuing one SELECT
+	// per board (was 1 + N queries — N board-page-cost-shaped round trips this scan never needed).
+	// Only the columns NodeRef actually reads are projected (NOT Body — this scan used to pull
+	// every active node's full markdown project-wide on EVERY board/node page render, silently
+	// undoing includeBody:false's savings for every OTHER caller of this method; see
+	// tasks-ui-pages-getting-slower / 83fe36df).
+	async Task<IReadOnlyList<PlanNode>> AllActiveProjectNodesAsync(string projectKey, CancellationToken ct)
 	{
-		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
-				if (n.NodeId.Length > 0)
-					index[n.NodeId] = new NodeRef(b.Name, b.Kind, n.Key, n.Name, n.Status, n.Type);
+		return await ctx.PlanNodes.Where(n => n.ActiveTo == null)
+			.Select(n => new PlanNode
+			{
+				Board = n.Board,
+				NodeId = n.NodeId,
+				Key = n.Key,
+				PrevKey = n.PrevKey,
+				Status = n.Status,
+				Type = n.Type,
+				Name = n.Name,
+			}).ToListAsync(ct);
+	}
+
+	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
+	// globally unique, so a link target may live on another board). Board kind comes from the
+	// (already fetched elsewhere by most callers) board list — a lookup, never a per-board query.
+	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct) =>
+		BuildNodeIndex(await AllActiveProjectNodesAsync(projectKey, ct), await _boards.ListAsync(projectKey, ct));
+
+	static Dictionary<string, NodeRef> BuildNodeIndex(IReadOnlyList<PlanNode> activeNodes, IReadOnlyList<TaskBoardMeta> boards)
+	{
+		var kindOf = boards.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
+		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
+		foreach (var n in activeNodes)
+			if (n.NodeId.Length > 0)
+				index[n.NodeId] = new NodeRef(n.Board, kindOf.GetValueOrDefault(n.Board, ""), n.Key, n.Name, n.Status, n.Type);
 		return index;
 	}
 
@@ -1330,18 +1366,20 @@ public sealed partial class TasksService : ITasksService
 
 	// The IO half of the delivery roll-up: SELECT, then hand the raw candidates to the pure
 	// DeliveryEngine.Rollup, which owns the judgement (methodology-engine-extraction, slice 5).
-	// Two queries — every active node of the project (a linked task normally lives on another
-	// board, and part_of decomposition may cross boards) and the one task_spec edge sweep —
-	// plus `parentOf`, which the caller already paid for.
+	// `allActiveNodes` is every active node of the project (a linked task normally lives on
+	// another board, and part_of decomposition may cross boards) — the CALLER fetches it (one
+	// query, AllActiveProjectNodesAsync) and passes it in, because GetAsyncCore needs that exact
+	// same project-wide scan for BuildNodeIndexAsync too; this used to run its OWN identical
+	// foreach-board scan a second time right next to BuildNodeIndexAsync's
+	// (delivery-scan-duplicates-node-index-scan) — sharing the one fetch absorbs that finding.
+	// One query here now: the task_spec edge sweep, plus `parentOf`, which the caller already paid
+	// for.
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(
-		string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf,
-		MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
+		string projectKey, IReadOnlyList<PlanNode> specNodes, IReadOnlyList<PlanNode> allActiveNodes,
+		Dictionary<string, string> parentOf, MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
 	{
-		var nodes = new List<NodeState>();
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
-				if (n.NodeId.Length > 0) nodes.Add(new NodeState(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type));
+		var nodes = allActiveNodes.Where(n => n.NodeId.Length > 0)
+			.Select(n => new NodeState(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type)).ToList();
 
 		// tasksOf: inbound delivery-link edges (def.Link — DATA, the quartet spec's task_spec),
 		// grouped at the boundary — Relation is a linq2db entity and does not cross into the engine.
