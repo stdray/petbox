@@ -27,15 +27,16 @@ public sealed class SelfLogRoutingHostTests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		// SystemLoggerProvider/SystemLogFlusher are gated at BUILD time (Program.cs, before
-		// builder.Build()) on Seq:SelfLog:Enabled — WebApplicationFactory's in-memory
-		// ConfigureAppConfiguration override is not yet visible at that read point (see
-		// McpToolCallMetricsFixture for the same workaround), so it must arrive as an env var.
-		Environment.SetEnvironmentVariable("Seq__SelfLog__Enabled", "true");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
+				// SystemLoggerProvider/SystemLogFlusher are gated at BUILD time (Program.cs:470,
+				// before builder.Build()) on Seq:SelfLog:Enabled. UseSetting IS visible at that
+				// pre-Build read (measured: Architecture/ConfigVisibilityContractTests) — a
+				// process-global env var is unnecessary and was leaking into every other test in
+				// the process (chore/tests-env-leak).
+				b.UseSetting("Seq:SelfLog:Enabled", "true");
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>

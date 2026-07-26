@@ -34,19 +34,20 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-mcp-log-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
-		// WebApplication.CreateBuilder reads ASPNETCORE_ENVIRONMENT + Features__*
-		// env vars at construction — before WithWebHostBuilder callbacks apply —
-		// so the feature flag checks in ConfigureServices see them. Without these,
-		// on Linux CI the env defaults to Production, Features:Logging/Data are
-		// false, and IIngestionPipeline / DataDbFactory aren't registered.
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		Environment.SetEnvironmentVariable("Features__Logging", "true");
-		Environment.SetEnvironmentVariable("Features__Data", "true");
 
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
+				// Features:Logging/Data gate registrations (IIngestionPipeline / DataDbFactory
+				// among them) at BUILD time (Program.cs, before builder.Build()). UseSetting IS
+				// visible at that pre-Build read (measured:
+				// Architecture/ConfigVisibilityContractTests) — a process-global env var is
+				// unnecessary and was leaking into every other test in the process
+				// (chore/tests-env-leak).
+				b.UseSetting("Features:Logging", "true");
+				b.UseSetting("Features:Data", "true");
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>

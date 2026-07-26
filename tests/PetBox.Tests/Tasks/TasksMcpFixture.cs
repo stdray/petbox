@@ -39,12 +39,17 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 		_baseDir = Path.Combine(Path.GetTempPath(), $"petbox-{projectKey}-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		Environment.SetEnvironmentVariable("Features__Tasks", "true");
 
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
+				// Features:Tasks gates a registration at BUILD time (Program.cs, before
+				// builder.Build()). UseSetting IS visible at that pre-Build read (measured:
+				// Architecture/ConfigVisibilityContractTests) — a process-global env var is
+				// unnecessary and was leaking into every other test in the process
+				// (chore/tests-env-leak).
+				b.UseSetting("Features:Tasks", "true");
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>

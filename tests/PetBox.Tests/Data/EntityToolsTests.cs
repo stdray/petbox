@@ -34,13 +34,18 @@ public sealed class EntityToolsFixture : IAsyncLifetime
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-entity-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		Environment.SetEnvironmentVariable("Features__Logging", "true");
-		Environment.SetEnvironmentVariable("Features__Data", "true");
 
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
+				// Features:Logging/Data gate registrations at BUILD time (Program.cs, before
+				// builder.Build()). UseSetting IS visible at that pre-Build read (measured:
+				// Architecture/ConfigVisibilityContractTests) — a process-global env var is
+				// unnecessary and was leaking into every other test in the process
+				// (chore/tests-env-leak).
+				b.UseSetting("Features:Logging", "true");
+				b.UseSetting("Features:Data", "true");
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>

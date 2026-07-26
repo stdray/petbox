@@ -153,20 +153,20 @@ public sealed class McpErrorEnvelopeTraceFixture : IAsyncLifetime
 	public McpErrorEnvelopeTraceFixture()
 	{
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
-		// Read at CreateBuilder time (before WithWebHostBuilder), so the feature-gated
-		// registrations (self-log, MCP surface) are in place at ConfigureServices.
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		Environment.SetEnvironmentVariable("Features__Logging", "true");
-		// The SystemLogger (ILogger → self-log) is gated at build time (Program.cs) on
-		// Seq:SelfLog:Enabled + Feature.Logging, read before the in-memory config source is
-		// visible — so it must arrive as an env var. Set to the SAME value every fixture in
-		// this assembly uses (true); never flip it, the variable is process-global.
-		Environment.SetEnvironmentVariable("Seq__SelfLog__Enabled", "true");
 
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
+				// Features:Logging (feature-gated registrations) and Seq:SelfLog:Enabled (the
+				// SystemLogger gate) are both read at BUILD time (Program.cs, before
+				// builder.Build()). UseSetting IS visible at those pre-Build reads (measured:
+				// Architecture/ConfigVisibilityContractTests) — a process-global env var is
+				// unnecessary and was leaking into every other test in the process
+				// (chore/tests-env-leak).
+				b.UseSetting("Features:Logging", "true");
+				b.UseSetting("Seq:SelfLog:Enabled", "true");
 				b.ConfigureServices(s => s.AddSingleton<IStartupFilter, TraceControlStartupFilter>());
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
