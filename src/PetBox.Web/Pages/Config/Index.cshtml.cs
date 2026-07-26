@@ -10,6 +10,29 @@ using PetBox.Core.Models;
 namespace PetBox.Web.Pages.Config;
 
 [Authorize(Policy = "WorkspaceAdmin")]
+// THE TRAP, and why the declaration names `workspaceKey` on a page that also binds a `projectKey`.
+//
+// This page is mapped by TWO route templates (Program.cs AddPageRoute):
+//
+//     /ui/{workspaceKey}/config                  — workspace-scoped
+//     /ui/{workspaceKey}/{projectKey}/config     — project-scoped, same page
+//
+// A PageModel declares ONCE for every route of its page. `[TenantFrom(Route, "projectKey")]` would
+// therefore resolve to NOTHING on the first template — and an unresolved TenantRef is a refusal, for
+// every principal including a wildcard key. The workspace-level config pages would have started
+// answering 403 with a green ratchet above them, which is silent in production and loud nowhere.
+//
+// So the declaration names the value BOTH templates carry. Nothing is lost by it: a caller holding only
+// a project claim still reaches this page, because ITenantAuthorizer applies "a project claim authorizes
+// the workspace that project belongs to" centrally (TenantAuthorizer.KeyOnWorkspaceAsync) — the same rule
+// ConfigApi.AuthorizeWorkspaceAsync used to spell out by hand before the REST wave deleted it. And
+// nothing is loosened: config bindings ARE workspace-scoped rows (every binding must carry a
+// `ws:{workspaceKey}` tag — Editor enforces it), so the workspace IS the tenant of this data; the
+// {projectKey} on the second template is a display FILTER over tags, not a second boundary.
+//
+// AuthzDeclarationRatchetTests.APageDeclaringARouteTenant_NamesARouteValueAllOfItsRoutesCarry is the
+// tripwire for this whole class of mistake and stops being vacuous with this commit.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class IndexModel : PageModel
 {
 	readonly IConfigDirectory _config;
@@ -214,13 +237,18 @@ public sealed class IndexModel : PageModel
 		return new JsonResult(new { plaintext });
 	}
 
-	string ResolveWorkspace()
-	{
-		if (!string.IsNullOrEmpty(WorkspaceKey))
-			return WorkspaceKey;
-		var claimWs = User.FindFirst(PetBoxClaims.ActiveWorkspace)?.Value;
-		return string.IsNullOrEmpty(claimWs) ? "$system" : claimWs;
-	}
+	// THE TENANT THE PEP JUDGED, and nothing else. Both route templates of this page carry
+	// {workspaceKey}, so it is always bound — and [TenantFrom(Route, "workspaceKey", …)] on the class
+	// refuses the request when it is not, which is what finally makes that guarantee enforced rather
+	// than assumed.
+	//
+	// The old body fell back to the ActiveWorkspace CLAIM and then to a hard-coded "$system". That
+	// fallback was unreachable through routing, but it was also the one way this page could read and
+	// WRITE config for a workspace TenantEnforcementMiddleware never saw — the target the decision point
+	// judged and the target the handler acts on have to be the same string, so the fallback is deleted
+	// rather than left as a comfort. If WorkspaceKey were ever empty here, the request would already
+	// have been refused above.
+	string ResolveWorkspace() => WorkspaceKey!;
 
 	static Dictionary<string, string> ParseTags(string tags)
 	{

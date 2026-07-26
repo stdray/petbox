@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
@@ -22,6 +23,15 @@ namespace PetBox.Web.Pages.Admin;
 // workspace key would let the POST body choose its own scope and hand back the whole hole
 // (authz-bypass-project-create; same reason ProjectConnect binds this way).
 [Authorize(Policy = "WorkspaceAdmin")]
+// {workspaceKey} in the route IS the target tenant, and the declaration replaces nothing this page was
+// doing by hand: the header above is explicit that the confinement lives in AgentKeyAdminService's own
+// DELETE/UPDATE, not here.
+//
+// AND IT MUST STAY THERE. The tenant axis proves the caller may act on THIS workspace; it says nothing
+// about whether the `key` VALUE a POST names belongs to it. Those are two different questions and only
+// the second one closes the IDOR this page was written for — the 404s below are the answer to it and are
+// not redundant with anything the PEP now does.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class WorkspaceAgentKeysModel(AgentKeyAdminService keys) : PageModel
 {
 	[FromRoute(Name = "workspaceKey")]

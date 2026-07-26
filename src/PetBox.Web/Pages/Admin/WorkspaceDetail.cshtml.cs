@@ -1,11 +1,19 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Models;
 using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
 [Authorize(Policy = "WorkspaceViewer")]
+// `key`, NOT `workspaceKey` — this page's route is /ui/admin/sys/workspaces/{key}, the third spelling
+// of a workspace reference in this tree. The name in the declaration is the name in the ROUTE, because
+// that is the string the PEP reads: writing "workspaceKey" here would resolve to nothing on every
+// request and refuse the page outright. WorkspaceRoleAuthorizationHandler already has to know about
+// this spelling for the role axis, and the cross-tenant probe names it too rather than scoring this
+// page unprobed.
+[TenantFrom(TenantSource.Route, "key", tenant: TenantKind.Workspace)]
 public sealed class WorkspaceDetailModel : PageModel
 {
 	readonly IWorkspaceAdminService _workspaces;

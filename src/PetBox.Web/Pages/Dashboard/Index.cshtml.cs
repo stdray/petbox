@@ -14,6 +14,16 @@ namespace PetBox.Web.Pages.Dashboard;
 // A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
 // (workspace-access-isolation).
 [Authorize(Policy = "WorkspaceViewer")]
+// {workspaceKey} in the route IS the target tenant, answered centrally for both credential kinds.
+//
+// THE 404 IN OnGetAsync IS NOT REDUNDANT AND IS NOT REMOVED. It compares the ROUTE key against the one
+// NavigationContext resolved, and it is doing TWO jobs: "you are not a member" (which this declaration
+// now answers, above the handler) and "there is no such workspace" (which it does not). A SYSADMIN has
+// a free pass on the tenant axis — HasWorkspaceRoleAtLeast grants it, deliberately — so for a sysadmin
+// typing /ui/nonexistent the PEP says Allowed and this check is the only thing between them and a page
+// rendered out of a workspace that does not exist. Deleting it because "the middleware covers it" would
+// have been the quiet regression in this family.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class IndexModel : PageModel
 {
 	readonly ICoreDbRollupService _rollup;

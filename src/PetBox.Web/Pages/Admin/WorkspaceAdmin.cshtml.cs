@@ -9,6 +9,11 @@ using PetBox.Web.Auth;
 namespace PetBox.Web.Pages.Admin;
 
 [Authorize(Policy = "WorkspaceMember")]
+// {workspaceKey} in the route IS the target tenant. ITenantAuthorizer answers both credential
+// kinds from that one value — a session on membership of that workspace, an api key on "a project
+// claim authorizes its workspace" — so this page needs no check of its own. The MinRole the policy
+// above demands is a DIFFERENT axis and stays there.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class WorkspaceAdminModel : PageModel
 {
 	readonly IWorkspaceAdminService _workspaces;

@@ -8,6 +8,12 @@ using PetBox.Core.Models;
 namespace PetBox.Web.Pages.Config;
 
 [Authorize(Policy = "WorkspaceAdmin")]
+// {workspaceKey}, not {projectKey} — read Config/Index.cshtml.cs before changing this. This page is
+// mapped by TWO templates (Program.cs AddPageRoute), one workspace-scoped and one project-scoped, and
+// a PageModel declares once for both: naming `projectKey` would resolve to nothing on the
+// workspace-only template and 403 it. A project-claimed key still reaches this page, because
+// ITenantAuthorizer knows a project claim authorizes its own workspace.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class EditorModel : PageModel
 {
 	readonly IConfigDirectory _config;
@@ -148,13 +154,18 @@ public sealed class EditorModel : PageModel
 		return LocalRedirect(Routes.SharedConfig(EffectiveWorkspaceKey));
 	}
 
-	string ResolveWorkspace()
-	{
-		if (!string.IsNullOrEmpty(WorkspaceKey))
-			return WorkspaceKey;
-		var claimWs = User.FindFirst(PetBoxClaims.ActiveWorkspace)?.Value;
-		return string.IsNullOrEmpty(claimWs) ? "$system" : claimWs;
-	}
+	// THE TENANT THE PEP JUDGED, and nothing else. Both route templates of this page carry
+	// {workspaceKey}, so it is always bound — and [TenantFrom(Route, "workspaceKey", …)] on the class
+	// refuses the request when it is not, which is what finally makes that guarantee enforced rather
+	// than assumed.
+	//
+	// The old body fell back to the ActiveWorkspace CLAIM and then to a hard-coded "$system". That
+	// fallback was unreachable through routing, but it was also the one way this page could read and
+	// WRITE config for a workspace TenantEnforcementMiddleware never saw — the target the decision point
+	// judged and the target the handler acts on have to be the same string, so the fallback is deleted
+	// rather than left as a comfort. If WorkspaceKey were ever empty here, the request would already
+	// have been refused above.
+	string ResolveWorkspace() => WorkspaceKey!;
 
 	static (string Canonical, string? Error) CanonicalizeTags(string raw)
 	{

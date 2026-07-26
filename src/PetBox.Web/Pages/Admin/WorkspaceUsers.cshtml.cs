@@ -9,6 +9,11 @@ namespace PetBox.Web.Pages.Admin;
 // Thin: every membership read and write goes through IWorkspaceMembershipService, which owns the
 // core.db access and the "never orphan a workspace" rule. The page only maps outcomes to UI text.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {workspaceKey} in the route IS the target tenant. ITenantAuthorizer answers both credential
+// kinds from that one value — a session on membership of that workspace, an api key on "a project
+// claim authorizes its workspace" — so this page needs no check of its own. The MinRole the policy
+// above demands is a DIFFERENT axis and stays there.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class WorkspaceUsersModel : PageModel
 {
 	readonly IWorkspaceMembershipService _members;

@@ -142,8 +142,14 @@ public enum TenantExemption
 // Usage (all three carriers):
 //   [TenantFrom(TenantSource.Route, "project")]              on a minimal-API handler method
 //   [TenantFrom(TenantSource.Argument, "projectKey")]        on an [McpServerTool] method or its type
-//   [TenantFrom(TenantSource.Route, "key", Tenant = TenantKind.Workspace)]   on a Razor PageModel
+//   [TenantFrom(TenantSource.Route, "key", tenant: TenantKind.Workspace)]    on a Razor PageModel
 //   app.MapGet(...).DeclaresTenant(TenantSource.Route, "project")            via the convention
+//
+// `tenant:` is a CONSTRUCTOR argument, not a property initializer. `Tenant = TenantKind.Workspace`
+// does not compile (CS0617: Tenant is get-only, deliberately — a declaration is immutable once
+// constructed so the ctor's validation cannot be bypassed by assigning afterwards). This line used to
+// show the property form and cost the Razor wave a build; it is corrected rather than "clarified"
+// because a usage example that does not compile is worse than none.
 [AttributeUsage(
 	AttributeTargets.Method | AttributeTargets.Class,
 	AllowMultiple = false,

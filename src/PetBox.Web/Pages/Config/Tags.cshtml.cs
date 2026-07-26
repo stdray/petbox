@@ -8,6 +8,11 @@ using PetBox.Core.Auth;
 namespace PetBox.Web.Pages.Config;
 
 [Authorize(Policy = "WorkspaceAdmin")]
+// {workspaceKey} in the route IS the target tenant, and config bindings are workspace-scoped rows
+// (every binding carries a mandatory `ws:{workspaceKey}` tag). Unlike its four siblings this page has
+// only ONE route template — but it declares the same value, because a page that later gains a
+// project-scoped alias must not have to rediscover why.
+[TenantFrom(TenantSource.Route, "workspaceKey", tenant: TenantKind.Workspace)]
 public sealed class TagsModel : PageModel
 {
 	readonly IConfigDirectory _config;
@@ -90,11 +95,16 @@ public sealed class TagsModel : PageModel
 			kv => (IReadOnlyList<string>)[.. kv.Value]);
 	}
 
-	string ResolveWorkspace()
-	{
-		if (!string.IsNullOrEmpty(WorkspaceKey))
-			return WorkspaceKey;
-		var claimWs = User.FindFirst(PetBoxClaims.ActiveWorkspace)?.Value;
-		return string.IsNullOrEmpty(claimWs) ? "$system" : claimWs;
-	}
+	// THE TENANT THE PEP JUDGED, and nothing else. Both route templates of this page carry
+	// {workspaceKey}, so it is always bound — and [TenantFrom(Route, "workspaceKey", …)] on the class
+	// refuses the request when it is not, which is what finally makes that guarantee enforced rather
+	// than assumed.
+	//
+	// The old body fell back to the ActiveWorkspace CLAIM and then to a hard-coded "$system". That
+	// fallback was unreachable through routing, but it was also the one way this page could read and
+	// WRITE config for a workspace TenantEnforcementMiddleware never saw — the target the decision point
+	// judged and the target the handler acts on have to be the same string, so the fallback is deleted
+	// rather than left as a comfort. If WorkspaceKey were ever empty here, the request would already
+	// have been refused above.
+	string ResolveWorkspace() => WorkspaceKey!;
 }
