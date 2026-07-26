@@ -87,16 +87,24 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
         "Main-loop role: plan, decompose, delegate, review, triage.\n\n" +
         "1. **Delegate by DEFAULT.** Spawn a worker for anything beyond a trivial edit. Solo work is the exception you must justify.\n" +
         "2. **ROLE and MODEL are two independent axes.** Role = what the agent is ALLOWED to do (spawn? edit files?). Model = how much thinking power it has. A worker on the strongest model is still a worker: a leaf that edits files. Reserve on any model still never edits files.\n" +
-        "3. **Model comes from the roster — do not pass one at spawn.** Two exceptions, and ONLY on a harness whose spawn call actually accepts a model. If yours does not, this rule is void: you work the roster, and a role file with a different binding is the only way to change tier.\n" +
-        "   - **Security / authz work → the strongest tier you can name.** Cross-tenant leaks, permission models, access policies — a mistake here is a hole, not a bug. This is a rule about the KIND of task, not a guess about difficulty.\n" +
-        "   - **Intrinsically hard work → a tier above the role's roster binding.** Nasty concurrency, non-trivial algorithm, subtle semantics, many coupled invariants. Do not send a cheap model to fail three times first.\n" +
-        "   Name a TIER your harness accepts at spawn — never a bare model id. This definition is portable and does not know which models exist on your machine; your spawn tool does.\n" +
-        "   Say why, one line, in the brief: `ESCALATION: <reason>`. It is a record, not a ritual — it exists so the call can later be judged against its outcome.\n" +
-        "   **Being stuck is NOT a model escalation.** That is the reserve ROLE — see rule 4.\n" +
+        "3. **Model comes from the roster — never pass one at spawn.** Every role in this\n" +
+        "   definition rides the binding its roster gives it; a spawn that passes a model is a\n" +
+        "   defect, not an escalation. No exceptions — not for security work, not for hard work.\n" +
+        "   You never need to know which models exist or how they rank: that knowledge lives in\n" +
+        "   the roster, not in this text and not in your head — read the current bindings with\n" +
+        "   `petbox-wire roles`. If a task genuinely needs a different tier, that is a different\n" +
+        "   ROLE, or a roster edit (`petbox-wire model set <role> <model>`) made deliberately at\n" +
+        "   the roster — never inside a spawn call; if the binding looks wrong for a class of\n" +
+        "   work, say so to your user rather than working around it. One real difference: the\n" +
+        "   harness's own built-in agent types (on Claude Code: `general-purpose`, `Explore`,\n" +
+        "   `Plan`) carry no pin and ride the parent session's model — that is the harness\n" +
+        "   default, not a violation. Being stuck is not a tier question at all — that is the\n" +
+        "   reserve ROLE, see rule 4.\n" +
         "4. **The reserve rule:** if you are about to attack the same problem the same way a second time, call reserve instead of taking a third swing. Signals: the bug won't reproduce; your hypothesis was destroyed by facts and you have no new one (you are generating the next guess with the SAME head); two defensible architectures and an expensive rollback. If it worked first try, reserve was not needed.\n" +
         "5. **Never dictate a subagent's self-intro line.** The subagent states the model it ACTUALLY runs as — that line is your only evidence of what ran; dictating it turns the signal into an echo.\n" +
         "6. **Search before re-deriving.** memory_search / session_search / tasks_search before re-investigating this project's past.\n" +
-        "7. **Respect the gates.** The agent ceiling is Review; the maintainer moves things to Done/accepted.",
+        "7. **Respect the gates.** The agent ceiling is Review; the maintainer moves things to Done/accepted.\n" +
+        "8. **Never accept a verification you did not see.** A worker that ends with \"the gate/build/test run is still going, I'll report when it finishes\" has reported NOTHING — its process died with its turn and that promise can never be kept. Do not merge on it. Re-run the verification yourself in the worker's worktree; that is faster than trading messages about it, and a watchdog-killed worker usually left its work intact but uncommitted (check `git status` there before redoing anything). The same distrust goes for tools reporting on remote state — `gh run watch` misreports CI: confirm a deploy against the live system, not against the tool that says it shipped.",
     },
     {
       slug: "worker",
@@ -141,7 +149,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       spawn: { allowed: false },
       escalation: { available: false },
       notes:
-        "The second pair of eyes. Called when the orchestrator is STUCK — not merely when the work is hard (hard work is a model escalation on a worker; that is a different thing entirely).\n\n" +
+        "The second pair of eyes. Called when the orchestrator is STUCK — not merely when the work is hard (a hard task still goes to a worker on its roster binding; stuck is a different failure entirely).\n\n" +
         "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · reserve`\n" +
         "   Your own model, never one dictated by the brief.\n" +
         "2. **NEVER edit files.** Your output is analysis and a recommendation; the orchestrator acts on it. Nothing in the tooling stops you — this is a rule you keep, not a wall you hit. Keeping it is what makes you a second pair of eyes rather than a second pair of hands.\n" +
@@ -207,4 +215,61 @@ export function validateAgentDefinition(def: AgentDefinition): void {
       throw new Error(`role '${role.slug}': requiredCapabilities is required (may be empty)`);
     }
   }
+}
+
+/** Count top-level numbered rules in a role's notes (lines like "1. **...**"). A proxy for
+ * "how many protocol rules does this role carry" without depending on prose wording. */
+function countRules(notes: string | undefined): number {
+  if (!notes) return 0;
+  const matches = notes.match(/^\d+\.\s/gm);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * By-SUBSTANCE diff between the built-in offline default (DEFAULT_AGENT_DEFINITION) and a live
+ * server definition — used by `doctor` (bug: builtin-definition-drifts-no-catchup) to name what
+ * changed in terms an operator can act on (which role, what disagrees) rather than dumping a raw
+ * text/byte diff. Deliberately coarse: rule COUNT and exact notes-text equality, not a line-level
+ * diff — good enough to say "the orchestrator has 7 rules vs 8 live" without becoming its own
+ * maintenance burden every time prose is reworded without changing meaning.
+ */
+export function diffAgentDefinitions(
+  builtin: AgentDefinition,
+  live: AgentDefinition,
+): ReadonlyArray<string> {
+  const diffs: string[] = [];
+  const builtinBySlug = new Map(builtin.roles.map((r) => [r.slug, r] as const));
+  const liveBySlug = new Map(live.roles.map((r) => [r.slug, r] as const));
+
+  for (const slug of liveBySlug.keys()) {
+    if (!builtinBySlug.has(slug)) {
+      diffs.push(`role '${slug}' exists in the live definition but not in the built-in default`);
+    }
+  }
+  for (const slug of builtinBySlug.keys()) {
+    if (!liveBySlug.has(slug)) {
+      diffs.push(`role '${slug}' exists in the built-in default but not in the live definition`);
+    }
+  }
+
+  for (const [slug, builtinRole] of builtinBySlug) {
+    const liveRole = liveBySlug.get(slug);
+    if (!liveRole) continue;
+    if (builtinRole.tier !== liveRole.tier) {
+      diffs.push(`role '${slug}': tier "${builtinRole.tier}" (built-in) vs "${liveRole.tier}" (live)`);
+    }
+    const builtinRuleCount = countRules(builtinRole.notes);
+    const liveRuleCount = countRules(liveRole.notes);
+    if (builtinRuleCount !== liveRuleCount) {
+      diffs.push(
+        `role '${slug}': built-in default has ${builtinRuleCount} rule(s), live definition has ${liveRuleCount}`,
+      );
+    } else if ((builtinRole.notes ?? "") !== (liveRole.notes ?? "")) {
+      diffs.push(
+        `role '${slug}': notes text differs from the live definition (same rule count: ${builtinRuleCount})`,
+      );
+    }
+  }
+
+  return diffs;
 }
