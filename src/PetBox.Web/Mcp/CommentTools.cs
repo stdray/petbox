@@ -111,14 +111,14 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
-	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `nodeId` (slug|NodeId). With `q`: a lexical FTS relevance selection over comment bodies in the same scope (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = FULL in a listing / a ~240-char snippet with `q`, or fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, a snippet ~1.5-2x, bodyLen:-1 (and the listing's FULL default) ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
+	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `nodeId` (slug|NodeId). With `q`: a lexical FTS relevance selection over comment bodies in the same scope (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic chronological listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board. Omit = the whole project.")] string? board = null,
 		[Description("Scope to one owner node: its slug key on `board`, or its 32-hex NodeId. A node that matches nothing → an empty result (not an error).")] string? nodeId = null,
-		[LogArg][Description("Body length knob (uniform contract): omitted = FULL in a listing / a ~240-char snippet with q; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet, in a listing or with q alike; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		CancellationToken ct = default)
 	{
@@ -134,10 +134,11 @@ public static class CommentTools
 		}
 
 		var res = await comments.SearchAsync(projectKey, board, node, q, limit ?? (hasQuery ? DefaultSearchLimit : 0), ct);
-		// Uniform bodyLen (default FULL in a listing — the discussion; a ~240-char snippet with q),
-		// shaped BEFORE the budget so it measures the real wire payload.
-		var dflt = hasQuery ? ModuleMcp.DefaultSnippet : ModuleMcp.FullBody;
-		var rows = res.Items.Select(c => Shape(c, bodyLen, dflt)).ToList();
+		// Uniform bodyLen: a ~240-char snippet by default in BOTH modes (listing and with q) —
+		// same ModuleMcp.DefaultSnippet constant tasks_search/memory_search use, not a second
+		// number. Shaped BEFORE the budget so it measures the real wire payload. A full comment
+		// body is still one comments_get away.
+		var rows = res.Items.Select(c => Shape(c, bodyLen, ModuleMcp.DefaultSnippet)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null;
 		return omitted == 0
