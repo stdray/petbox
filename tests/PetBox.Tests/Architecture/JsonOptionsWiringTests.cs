@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using PetBox.Core.Contract;
 using PetBox.Core.Json;
 using PetBox.Web;
 
@@ -69,5 +70,34 @@ public sealed class JsonOptionsWiringTests
 			+ "`new JsonResult(x)` call site in this repo, e.g. TaskBoard's ?handler=SearchIndex and "
 			+ "Config's reveal endpoint); losing this silently reopens the \\uXXXX bug for every future "
 			+ "Razor Pages JSON surface.");
+	}
+
+	// A THIRD surface this file didn't cover: ResponseBudget.CostOf (spec bounded-result-sets) also
+	// serializes rows through hand-owned JsonSerializerOptions, to measure what tasks_search /
+	// tasks_methodology_get / memory_search / session_search / comments_search actually put on the
+	// wire before prefix-cutting. It used to construct its own JsonSerializerDefaults.Web copy with
+	// no Encoder set — the exact trap PetBoxJsonEncoder.SharedOptions's doc comment names by name —
+	// so it silently measured Cyrillic rows ~1.68x too expensive (each \uXXXX escape = 6 chars for
+	// 1) and truncated those five tools' output earlier than the real budget allowed.
+	//
+	// It does NOT adopt PetBoxJsonEncoder.SharedOptions wholesale (tried that; it regressed two
+	// unrelated tests on pure-ASCII fixtures by dropping null-omission — SharedOptions has no
+	// DefaultIgnoreCondition, only the real MCP wire options do) — it keeps its OWN
+	// JsonSerializerOptions instance (needs null-ignore, SharedOptions doesn't set that) but shares
+	// the one thing that actually drifted: the ENCODER. This does not probe the DI container (there
+	// is none to probe — ResponseBudget is constructed with `new()` at each MCP tool call site, not
+	// resolved) — it pins Encoder BY REFERENCE to PetBoxJsonEncoder.Relaxed, so a future "just
+	// inline my own options here with no Encoder" edit fails the build immediately instead of
+	// quietly re-diverging a sixth time.
+	[Fact]
+	public void ResponseBudget_WireJson_CarriesTheRelaxedEncoder()
+	{
+		ResponseBudget.WireJson.Encoder.Should().BeSameAs(PetBoxJsonEncoder.Relaxed,
+			"ResponseBudget.CostOf must measure rows through PetBoxJsonEncoder.Relaxed — the same "
+			+ "encoder instance Program.cs's mcpJson is built on top of — not fall back to the "
+			+ "default HTML-safe encoder that re-escapes every Cyrillic char to \\uXXXX, inflating "
+			+ "the measured row cost and truncating tasks_search / tasks_methodology_get / "
+			+ "memory_search / session_search / comments_search earlier than the real wire size "
+			+ "warrants.");
 	}
 }
