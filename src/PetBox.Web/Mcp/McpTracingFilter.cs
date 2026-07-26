@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
@@ -51,6 +52,14 @@ static partial class McpTracingFilter
 			var tool = request.Params?.Name;
 			var session = request.Server.SessionId ?? NoSession;
 			var reqChars = SerializedLength(request.Params?.Arguments);
+			// request_bytes: the RAW HTTP request body size, straight off Request.ContentLength —
+			// BEFORE JSON parsing, unlike reqChars above (which re-serializes the ALREADY-PARSED
+			// JsonElement, so it cannot see how the wire spelled a character). The pair is the
+			// point: reqChars is "how much meaning", reqBytes is "how many bytes it cost to say
+			// it" — their ratio is the \uXXXX-escaping inflation reqChars alone is blind to (card
+			// request-chars-blind-to-escape-inflation). Null on a transport that never sets
+			// Content-Length (e.g. chunked) — present-only, never backfilled from reqChars.
+			var reqBytes = RequestBytes(request.Services);
 			// The [LogArg]-marked args, extracted ONCE (one registry lookup by tool name) and fed
 			// to BOTH sinks: the span tags below and the self-log event's dynamic properties.
 			var args = request.Params?.Arguments;
@@ -65,6 +74,8 @@ static partial class McpTracingFilter
 			if (span is not null)
 			{
 				span.SetTag("petbox.request_chars", reqChars);
+				if (reqBytes is { } bytesForSpan)
+					span.SetTag("petbox.request_bytes", bytesForSpan);
 				span.SetTag("petbox.session_id", request.Server.SessionId);
 				foreach (var (key, value) in ExtractArgShapers(marked, args))
 					span.SetTag(key, value);
@@ -80,7 +91,7 @@ static partial class McpTracingFilter
 				var outcome = result.IsError == true ? "error" : "ok";
 				if (result.IsError == true)
 					span?.SetStatus(ActivityStatusCode.Error);
-				LogToolCall(logger, tool, session, reqChars, respChars, outcome, marked, Injected(hadProjectKey, request));
+				LogToolCall(logger, tool, session, reqChars, reqBytes, respChars, outcome, marked, Injected(hadProjectKey, request));
 				return result;
 			}
 			catch (Exception ex)
@@ -88,7 +99,7 @@ static partial class McpTracingFilter
 				span?.SetStatus(ActivityStatusCode.Error, ex.Message);
 				// No result to measure on a genuine throw → RespChars 0, Outcome error, then
 				// rethrow to preserve the error-status behavior for callers up the stack.
-				LogToolCall(logger, tool, session, reqChars, 0, "error", marked, Injected(hadProjectKey, request));
+				LogToolCall(logger, tool, session, reqChars, reqBytes, 0, "error", marked, Injected(hadProjectKey, request));
 				throw;
 			}
 		});
@@ -106,12 +117,12 @@ static partial class McpTracingFilter
 	// as an IReadOnlyList<KVP> makes each marked arg a top-level, KQL-addressable column — while
 	// {OriginalFormat} keeps MessageTemplate byte-identical to the old source-generated one.
 	static void LogToolCall(
-		ILogger logger, string? tool, string session, int reqChars, int respChars, string outcome,
+		ILogger logger, string? tool, string session, int reqChars, long? reqBytes, int respChars, string outcome,
 		List<McpLoggedArgs.MarkedArg> marked, bool projectKeyInjected)
 	{
 		if (!logger.IsEnabled(LogLevel.Information)) return;
 
-		var state = new List<KeyValuePair<string, object?>>(7 + marked.Count)
+		var state = new List<KeyValuePair<string, object?>>(8 + marked.Count)
 		{
 			new("Tool", tool),
 			new("Session", session),
@@ -126,6 +137,11 @@ static partial class McpTracingFilter
 		// candidate, and a normal call carries no extra byte.
 		if (projectKeyInjected)
 			state.Add(new("ProjectKeyInjected", true));
+		// ReqBytes rides next to ReqChars so the two measurers of the SAME call never drift onto
+		// different surfaces (span vs self-log) — present-only: absent when the transport never set
+		// Content-Length (e.g. chunked), never backfilled from ReqChars.
+		if (reqBytes is { } bytesForLog)
+			state.Add(new("ReqBytes", bytesForLog));
 		state.Add(new("{OriginalFormat}", ToolCallTemplate));
 
 		var message =
@@ -164,6 +180,18 @@ static partial class McpTracingFilter
 	// serialize pass, no second copy.
 	static int SerializedLength(object? value) =>
 		value is null ? 0 : JsonSerializer.Serialize(value, SizeJson).Length;
+
+	// request_bytes: Request.ContentLength — the size ASP.NET Core read off the wire (or the
+	// Content-Length header) BEFORE any JSON parsing happened. Deliberately NOT derived from
+	// reqChars/SerializedLength: those measure the ALREADY-DECODED JsonElement, which is exactly
+	// what makes reqChars blind to \uXXXX-escaping — a decoded 'П' and a raw 'П' are the same
+	// JsonElement, so they serialize back to the same length. ContentLength never goes through that
+	// decode step, so it is the one number in this filter that still sees the difference. Null on a
+	// transport that never sets Content-Length (chunked transfer) — the caller must treat that as
+	// "unknown", never fall back to reqChars (that would reproduce the exact blindness this exists
+	// to cure).
+	internal static long? RequestBytes(IServiceProvider? services) =>
+		services?.GetService<IHttpContextAccessor>()?.HttpContext?.Request.ContentLength;
 
 	// Pure, testable extraction of the [LogArg]-marked args of ONE call. The registry (built once
 	// from the parameter markup) says WHICH params of this tool may be shaped and how; here we
