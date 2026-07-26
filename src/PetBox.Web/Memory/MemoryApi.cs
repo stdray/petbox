@@ -38,13 +38,24 @@ public static class MemoryApi
 	// from IProjectDirectory (the catalog of projects — see AGENTS.md, "the database is visible only
 	// in the service layer"; an endpoint lambda asks a service, it does not call .Open() itself).
 	// TENANT: the PROJECT in the route, and only that. The workspace leg of the response is not a second
-	// target a caller can aim — it is derived from the project's own row (IProjectDirectory), so
-	// authorizing the project authorizes it. Declaring `ArgumentOrContainer` here would be wrong for the
-	// same reason: this route takes a real project key, never a `$workspace`/`$ws-<key>` container, and
-	// the container it reads is the one the project belongs to.
+	// target a caller can aim — it is derived from the project's own row (IProjectDirectory). Declaring
+	// `ArgumentOrContainer` here would be wrong for the same reason: this route takes a real project
+	// key, never a `$workspace`/`$ws-<key>` container, and the container it reads is the one the
+	// project belongs to.
+	//
+	// "NOT AIMABLE" IS NOT "AUTHORIZED", AND THIS COMMENT USED TO SAY IT WAS. It read "authorizing the
+	// project authorizes it" — true for an ordinary key, FALSE for a sandboxOnly one, and that
+	// sentence was the whole hole. Being underivable by an attacker says nothing about whether the
+	// CALLER may have it: a sandboxOnly key aimed at its own perfectly legitimate sandbox project is
+	// allowed by the PEP, and then this handler derived a container the PEP never judged. Measured on
+	// production 2026-07-26 with the real smoke key: `GET /api/memory/smoke/canon` -> 200 carrying the
+	// `$system` workspace canon (1309 bytes of owner facts) as the ENTIRE body, `project` being null,
+	// while `GET /api/memory/$system/canon` and `/api/memory/kpvotes/canon` both -> 403. The gate
+	// refused the key everywhere it was aimed and handed over the container anyway.
 	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CanonAsync(
-		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects, CancellationToken ct)
+		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects,
+		IProjectCatalog catalog, CancellationToken ct)
 	{
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains(ApiKeyScopes.MemoryRead))
@@ -60,7 +71,15 @@ public static class MemoryApi
 		if (wsKey is not null)
 		{
 			var container = WorkspaceMemory.ContainerKeyFor(wsKey);
-			workspace = await ReadCanonAsync(memory, container, CanonKey, ct);
+
+			// THE DERIVED-STORAGE HOP, asked of the shared predicate (SandboxContainment, which lists
+			// this among its three call sites). A sandboxOnly key gets the project leg it is entitled
+			// to and NO workspace leg — suppression, not a 403, because the whole response is not
+			// forbidden: the project canon is legitimately its own. A null workspace part is already a
+			// valid 200 shape (see the note above — a project with no workspace canon returns exactly
+			// this), so the wiring hook needs no new contract and simply injects no shared canon.
+			if (await SandboxContainment.PermitsAsync(ctx.User, container, catalog, ct))
+				workspace = await ReadCanonAsync(memory, container, CanonKey, ct);
 		}
 
 		return TypedResults.Ok(new CanonResponse(project, workspace));

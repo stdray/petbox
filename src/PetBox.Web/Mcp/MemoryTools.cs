@@ -319,6 +319,15 @@ public static class MemoryTools
 	// project claim is the wildcard "*" or names a project whose WorkspaceKey equals the
 	// container's WorkspaceKey. For every other target this is exactly AssertProject, so no
 	// non-memory module gains container access.
+	//
+	// WHY THIS IS NOT REDUNDANT WITH THE CENTRAL PEP, and why work
+	// `memory-container-sandbox-containment-bypass` had to change BOTH. The PEP authorizes the ONE
+	// tenant the call NAMED. These verbs then act on a container the call did not name: `scope:
+	// "workspace"` derives the caller's container AFTER the PEP has run, and the cascade reads
+	// project ⊕ workspace. So on that path the container is never what the PEP decided about, and a
+	// fix confined to TenantAuthorizer does not reach it — measured, not assumed: with only the
+	// central fix in place, `memory_search {scope:"workspace"}` still returned another workspace's
+	// entries, and `memory_remember {scope:"workspace"}` still WROTE into `$workspace`.
 	static async Task AssertMemoryProjectAsync(IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, string projectKey, CancellationToken ct)
 	{
 		if (!WorkspaceMemory.IsWorkspaceContainer(projectKey))
@@ -328,13 +337,38 @@ public static class MemoryTools
 		}
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (claim == ProjectScope.AllProjects) return;
 
+		// IDENTITY FIRST, exactly as ProjectScope.EvaluateAsync orders it, so a key from another
+		// workspace still reads "not scoped" rather than being told about the sandbox.
 		// The container is reachable only by keys of projects IN ITS OWN WORKSPACE — the predicate is
 		// IWorkspaceMemoryDirectory's, welded into one read, not re-derived here.
-		if (!await wsmem.ReachableByAsync(projectKey, claim, ct))
+		if (claim != ProjectScope.AllProjects && !await wsmem.ReachableByAsync(projectKey, claim, ct))
 			throw new UnauthorizedAccessException(
 				$"ApiKey is not scoped to project '{projectKey}' (the shared container is reachable only by keys of projects in its workspace)");
+
+		// THEN CONTAINMENT — the shared predicate, not a local copy of it. This is the DERIVED-storage
+		// hop: `scope: "workspace"` and the project ⊕ workspace cascade both arrive here holding a
+		// container the PEP never judged, because the PEP judged whatever the caller named instead.
+		// SandboxContainment states that rule once and lists every site that has to ask it.
+		//
+		// THIS REPLACES AN UNCONDITIONAL `if (claim == AllProjects) return;` early-exit that had never
+		// applied containment. That early-exit is the defect the work card was filed about: it is why
+		// a wildcard+sandboxOnly key read `$workspace` on production on 2026-07-25.
+		//
+		// READS DEGRADE, WRITES REFUSE — measured, because the two halves answer differently and the
+		// difference is easy to get wrong from the code alone:
+		//   * the READ verbs (store_list, search, get, delta) wrap this call per cascade leg in
+		//     `catch (UnauthorizedAccessException) { continue; }`, so a bare `memory_search("q")`
+		//     still returns its PROJECT leg and simply stops contributing the workspace one. An
+		//     explicit `scope: "workspace"` goes through the same per-leg catch and so comes back
+		//     EMPTY rather than as an error — no disclosure, but not an error message either.
+		//   * the WRITE verbs (remember, upsert, store_create, store_delete) have no such catch, so
+		//     they surface this exception to the caller with the containment reason attached.
+		// The asymmetry is pre-existing cascade behaviour, not something introduced here; it is
+		// written down because "explicit scope always throws" is the intuitive guess and is wrong.
+		var catalog = ctx.RequestServices.GetRequiredService<IProjectCatalog>();
+		if (!await SandboxContainment.PermitsAsync(ctx.User, projectKey, catalog, ct))
+			throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
 	}
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]

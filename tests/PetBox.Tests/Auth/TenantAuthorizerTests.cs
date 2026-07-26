@@ -87,26 +87,55 @@ public sealed class TenantAuthorizerTests
 		(await Authorizer.AuthorizeAsync(ApiKey(SandboxProj, sandboxOnly: true), TenantRef.Project(ProjB)))
 			.Should().Be(TenantAccess.NotAuthorized);
 
-	// CONTAINMENT DOES NOT REACH A WORKSPACE TARGET — the owner's decision, reversing what this test
-	// used to pin (SandboxContainment for every workspace target).
+	// CONTAINMENT REACHES A WORKSPACE TARGET TOO: a sandboxOnly key cannot satisfy it, so it is
+	// refused — wildcard claim and own-workspace claim alike.
 	//
-	// The old reading was defensible on its own terms: a workspace carries no Sandbox flag and is
-	// broader than any project inside it, so containment "cannot be satisfied". But it was STRICTER
-	// than anything the system actually does — no workspace-target check in the tree looks at the flag
-	// (ConfigApi.AuthorizeWorkspaceAsync does not; MemoryTools' AssertMemoryProjectAsync does not) — so
-	// letting the PEP enforce it would have REFUSED keys that work today, most visibly a sandboxOnly
-	// key curating its own workspace's shared memory. Acceptance criterion 1 of work
-	// `authz-default-deny-delivery` ("ключ, работавший до перехода, работает после") outranks being
-	// stricter, so the pre-existing outcome is preserved on purpose.
+	// WHY THIS PIN WAS FLIPPED, which is the part that matters. Until work
+	// `memory-container-sandbox-containment-bypass` this same test asserted `Allowed`, with a note
+	// explaining that enforcing containment on this axis would be stricter than anything else in the
+	// tree and would break "a key that worked before works after" (acceptance criterion 1 of work
+	// `authz-default-deny-delivery`). A flipped pin normally means a test was bent to fit a
+	// regression, so the distinction has to be written down rather than assumed:
 	//
-	// The PROJECT axis is untouched and still contains — see the two cases above. Tightening the
-	// workspace axis is a separate decision with its own blast radius (shared memory, config, every
-	// workspace page), not a side effect of wiring up enforcement.
+	//   * WHAT THE OLD PIN PROTECTED WAS A DEFECT, not a capability. Measured against production on
+	//     2026-07-25, a wildcard+sandboxOnly key used the workspace door to read `$workspace` shared
+	//     memory — another tenant's facts — while the SAME key was correctly refused `$system`
+	//     through the project door. The criterion the old note invoked protects working capability;
+	//     it was never a licence to preserve a cross-tenant read.
+	//   * THE DIRECTION IS "was allowed -> now denied". A flip the other way (a denial turning into a
+	//     pass) is the one that would mean this file had been bent to fit; this one tightens.
+	//
+	// The reasoning for the semantics itself — a workspace has no Sandbox flag and strictly contains
+	// non-sandbox projects, so containment cannot be demonstrated for any workspace — is written at
+	// the decision it governs, in TenantAuthorizer.KeyOnWorkspaceAsync. Do not re-derive it here; do
+	// not restore `Allowed` without reading it.
+	//
+	// AND THIS PIN IS NOT THE WHOLE FIX. It covers the target a caller NAMES. The memory verbs'
+	// `scope: "workspace"` derives a container after this decision has run and is enforced separately
+	// in MemoryTools.AssertMemoryProjectAsync; the leak was measured still open with only this half
+	// in place. AuthzSandboxContainmentTests and SandboxContainmentMeasurement cover the other half —
+	// a green result here alone does not mean the hole is closed.
 	[Theory]
 	[InlineData("*")]
 	[InlineData(SandboxProj)]
-	public async Task SandboxOnlyKey_WorkspaceTarget_IsNotContained(string claim) =>
+	public async Task SandboxOnlyKey_WorkspaceTarget_IsContained_AndRefused(string claim) =>
 		(await Authorizer.AuthorizeAsync(ApiKey(claim, sandboxOnly: true), TenantRef.Workspace(WsA)))
+			.Should().Be(TenantAccess.SandboxContainment);
+
+	// Identity is still decided FIRST on the workspace axis, exactly as it is on the project axis
+	// (SandboxOnlyKey_WrongProject_DeniesOnIdentityNotContainment above). A sandboxOnly key aimed at a
+	// workspace it has no claim on reads NotAuthorized, not containment — otherwise the tightening
+	// would blur every wrong-tenant denial into "sandbox" and send the next reader chasing the flag.
+	[Fact]
+	public async Task SandboxOnlyKey_WrongWorkspace_DeniesOnIdentityNotContainment() =>
+		(await Authorizer.AuthorizeAsync(ApiKey(ProjA, sandboxOnly: true), TenantRef.Workspace(WsB)))
+			.Should().Be(TenantAccess.NotAuthorized);
+
+	// The tightening is confined to sandboxOnly keys. An ordinary key still reaches its workspace, so
+	// this pin is the guard against "fixing" the leak by refusing the workspace axis wholesale.
+	[Fact]
+	public async Task OrdinaryKey_WorkspaceTarget_StillAllowed() =>
+		(await Authorizer.AuthorizeAsync(ApiKey("*"), TenantRef.Workspace(WsA)))
 			.Should().Be(TenantAccess.Allowed);
 
 	// --- the unresolved target: a denial for everyone, wildcard included --------------------------
