@@ -104,7 +104,14 @@ import {
   writeSkillFiles,
   type SkillWriteOutcome,
 } from "./skill-files.ts";
-import { runStatus } from "./status.ts";
+import {
+  BANNER_BUDGET_WARN_FRACTION,
+  bannerBudgetLegsOrUnreachable,
+  bannerBudgetWarnThresholdBytes,
+  formatBannerBudgetLeg,
+  runStatus,
+} from "./status.ts";
+import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
@@ -444,6 +451,42 @@ async function runDoctor(argv: string[]): Promise<void> {
           console.error(`doctor: skill files — ${drifted.length} file(s) drifted from the current template (run \`petbox-wire apply\` to refresh):`);
           for (const r of drifted) console.error(`  - ${formatSkillFile(r)}`);
         }
+      }
+    }
+  }
+
+  // Session-banner budget check (card canon-write-gate-banner-budget) — informational only, same
+  // skip taxonomy as the drift checks above (--offline / unregistered project / unreachable
+  // server all degrade to a named skip, never a failure, never touching the exit code). Runs the
+  // SAME assembly SessionStart actually ships (status.ts's computeBannerBudgetLegs: buildProtocol
+  // + fetchCanonBlock + assembleSessionBanner against SESSION_BANNER_BUDGET_BYTES), for both
+  // `source` values a real session can start with — never a hardcoded canon-size threshold (see
+  // that module's doc comment on why one measurably rejects healthy canon on a bad protocol day).
+  if (offline) {
+    log("doctor: banner-budget check skipped (--offline).");
+  } else if (!resolvedForSkillCheck) {
+    log(
+      `doctor: banner-budget check skipped (${skillCheckRoot} is not a registered project; run \`wire\` here first).`,
+    );
+  } else {
+    const bannerResult = await bannerBudgetLegsOrUnreachable(resolvedForSkillCheck, definition);
+    if (!bannerResult.ok) {
+      log("doctor: banner-budget check skipped (server did not answer GET /api/memory/{project}/canon).");
+    } else {
+      const warnThresholdBytes = bannerBudgetWarnThresholdBytes();
+      const thin = bannerResult.legs.filter((leg) => leg.marginBytes < warnThresholdBytes);
+      const warnPercent = Math.round(BANNER_BUDGET_WARN_FRACTION * 100);
+      if (thin.length === 0) {
+        log(
+          `doctor: banner budget — every source keeps at least ${warnPercent}% margin ` +
+            `(${warnThresholdBytes}B) against the ${SESSION_BANNER_BUDGET_BYTES}B session banner budget.`,
+        );
+      } else {
+        console.error(
+          `doctor: banner budget — ${thin.length} of ${bannerResult.legs.length} source(s) below the ` +
+            `${warnPercent}% margin threshold (${warnThresholdBytes}B):`,
+        );
+        for (const leg of thin) console.error(`  - ${formatBannerBudgetLeg(leg)}`);
       }
     }
   }

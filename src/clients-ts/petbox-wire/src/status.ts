@@ -42,11 +42,12 @@ import {
 import { emittedRoleName, type AgentDefinition, type AgentRole } from "./agent-definition.ts";
 import { agentFilesDir, sanitizeDroidName } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
-import { CANON_BODY_BUDGET_CHARS, fetchCanonLegs, type CanonLegState } from "./canon.ts";
+import { CANON_BODY_BUDGET_CHARS, fetchCanonBlock, fetchCanonLegs, type CanonLegState } from "./canon.ts";
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
+import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject, type ResolvedProject } from "./registry.ts";
 import {
   DEFAULT_ROLE_MODEL_SEED,
@@ -55,6 +56,12 @@ import {
   rolesPath,
   type RolesFile,
 } from "./roles.ts";
+import {
+  assembleSessionBanner,
+  HARNESS_INLINE_HARD_LIMIT_BYTES,
+  SESSION_BANNER_BUDGET_BYTES,
+  type SessionBannerResult,
+} from "./session-budget.ts";
 import {
   buildSkillReports,
   checkSkillFile,
@@ -248,6 +255,118 @@ export function formatCanonLeg(label: string, state: CanonLegState): string {
   return `${label}: ${state.chars} of ${CANON_BODY_BUDGET_CHARS} chars`;
 }
 
+// ---- session banner budget (card canon-write-gate-banner-budget) ----------
+//
+// Downgraded from the card's original ask (a WRITE gate on canon curation) to a READ-time
+// instrument: canon curation is server-side, but the 9 400B session-banner budget is a
+// Claude-Code-specific client fact (session-budget.ts) the server cannot see — and a
+// canon-only threshold sized to survive the worst-observed PROTOCOL size proved actively wrong
+// (measured: a "conservative" 2 971B ceiling derived from the worst-seen 6 427B protocol would
+// have rejected a perfectly healthy 3 053B canon the very next day, once the protocol happened
+// to shrink back down). So this measures the REAL thing SessionStart actually assembles instead
+// of inventing a second, static proxy for it.
+//
+// Runs the SAME assembly pull-memory.ts's SessionStart hook runs — buildProtocol, then
+// fetchCanonBlock, then assembleSessionBanner compared against SESSION_BANNER_BUDGET_BYTES —
+// never a reimplemented formula and never a re-slice of the rendered banner TEXT: buildProtocol's
+// own prose quotes the literal heading "## PetBox memory canon" (its canon-entry-point
+// paragraph), so a first-occurrence text split misattributes part of the protocol's own tail to
+// canon (measured, not hypothetical — this is the exact mistake a prior pass on this card made).
+// Byte counts here come only from assembleSessionBanner's own return fields.
+//
+// Measured for BOTH `source` values a real session can start with, not just the default: a
+// card-caught regression was specific to `source=resume` (its protocol carries a few dozen extra
+// bytes for the recall-nudge suffix — protocol.ts — enough to tip it over budget on a day
+// `source=startup` still fit comfortably). Canon does not vary by source, so it is fetched once
+// and reused for both legs below.
+const BANNER_BUDGET_SOURCES = ["startup", "resume"] as const;
+
+export type BannerBudgetLeg = {
+  readonly source: (typeof BANNER_BUDGET_SOURCES)[number];
+  readonly banner: SessionBannerResult;
+  /** protocol + the "\n\n" join + canon (canon term dropped when canon is entirely absent) —
+   * what assembleSessionBanner itself compares against the budget, independent of whether canon
+   * ultimately survived into the shipped text. */
+  readonly combinedBytes: number;
+  /** budget - combinedBytes; negative means canon (or, worse, the bare protocol) is over. */
+  readonly marginBytes: number;
+};
+
+export async function computeBannerBudgetLegs(
+  resolvedProject: ResolvedProject,
+  definition: AgentDefinition,
+  opts?: { readonly canonFetch?: (p: ResolvedProject) => Promise<string | null> },
+): Promise<BannerBudgetLeg[]> {
+  const canonFetch = opts?.canonFetch ?? fetchCanonBlock;
+  const canon = await canonFetch(resolvedProject);
+  return BANNER_BUDGET_SOURCES.map((source) => {
+    const protocol = buildProtocol(resolvedProject.project, mcpPetboxTool, {
+      source,
+      harness: "claude-code",
+      definition,
+    });
+    const banner = assembleSessionBanner(protocol, canon);
+    const combinedBytes =
+      banner.canonBytes > 0 ? banner.protocolBytes + 2 + banner.canonBytes : banner.protocolBytes;
+    return {
+      source,
+      banner,
+      combinedBytes,
+      marginBytes: SESSION_BANNER_BUDGET_BYTES - combinedBytes,
+    };
+  });
+}
+
+export function formatBannerBudgetLeg(leg: BannerBudgetLeg): string {
+  const { banner, combinedBytes, marginBytes, source } = leg;
+  const sizeText =
+    banner.canonBytes > 0
+      ? `protocol=${banner.protocolBytes}B + canon=${banner.canonBytes}B = ${combinedBytes}B`
+      : `protocol=${banner.protocolBytes}B (no canon) = ${combinedBytes}B`;
+  let verdict: string;
+  if (banner.overBudget) {
+    verdict =
+      banner.canonBytes > 0
+        ? `canon DROPPED — over budget by ${-marginBytes}B`
+        : `PROTOCOL ALONE over budget by ${-marginBytes}B (nothing left to drop)`;
+  } else if (banner.canonBytes === 0) {
+    verdict = `no canon available, margin ${marginBytes}B`;
+  } else {
+    verdict = `canon INCLUDED, margin ${marginBytes}B`;
+  }
+  return `source=${source}: ${sizeText} — ${verdict}`;
+}
+
+/**
+ * Warn fraction for doctor's banner-budget check: 5% of the 9 400B budget = 470B. Chosen because
+ * the card's own measured "healthy" case (92B margin, ~1%) was in fact one bad day of protocol
+ * drift away from silently dropping canon (and did drop it, days later) — a threshold that only
+ * fires once margin is already negative would have said nothing until the exact incident this
+ * card exists to catch had already happened again. 5% gives a visible amber zone before the
+ * red one.
+ */
+export const BANNER_BUDGET_WARN_FRACTION = 0.05;
+
+export function bannerBudgetWarnThresholdBytes(): number {
+  return Math.round(SESSION_BANNER_BUDGET_BYTES * BANNER_BUDGET_WARN_FRACTION);
+}
+
+/**
+ * Reachability-checked wrapper: `status`'s canon pillar (3/4, above) already distinguishes a
+ * genuinely UNREACHABLE server from "queried, nothing curated" via fetchCanonLegs's `ok` flag —
+ * this reuses that SAME signal so the banner-budget section (and doctor's check, which calls
+ * this too) report "server unreachable" honestly instead of silently computing a no-canon banner
+ * that looks deceptively healthy.
+ */
+export async function bannerBudgetLegsOrUnreachable(
+  resolvedProject: ResolvedProject,
+  definition: AgentDefinition,
+): Promise<{ readonly ok: true; readonly legs: BannerBudgetLeg[] } | { readonly ok: false }> {
+  const reach = await fetchCanonLegs(resolvedProject);
+  if (!reach.ok) return { ok: false };
+  return { ok: true, legs: await computeBannerBudgetLegs(resolvedProject, definition) };
+}
+
 // ---- pillar 4: skills -------------------------------------------------------
 //
 // checkSkillFile/formatSkillFile/buildSkillReports/probeWorkspace all moved to skill-files.ts
@@ -347,6 +466,25 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
     log(`status: pillar 4/4 — skills (project=${resolvedProject.project}, workspace=${workspace ?? "unknown"}):`);
     for (const report of buildSkillReports(root, TEMPLATES_ROOT, resolvedProject.project, workspace)) {
       log(`status:   ${formatSkillFile(report)}`);
+    }
+  }
+
+  // ---- session banner budget (card canon-write-gate-banner-budget) ----
+  log("");
+  if (opts.offline) {
+    log("status: session banner budget: skipped (--offline).");
+  } else if (!resolvedProject) {
+    log(`status: session banner budget: n/a — ${root} is not a registered project (run \`wire\` here first)`);
+  } else {
+    const result = await bannerBudgetLegsOrUnreachable(resolvedProject, definition);
+    if (!result.ok) {
+      log("status: session banner budget: UNREACHABLE (server did not answer GET /api/memory/{project}/canon)");
+    } else {
+      log(
+        `status: session banner budget (harness inline hard limit ${HARNESS_INLINE_HARD_LIMIT_BYTES}B, ` +
+          `budget ${SESSION_BANNER_BUDGET_BYTES}B):`,
+      );
+      for (const leg of result.legs) log(`status:   ${formatBannerBudgetLeg(leg)}`);
     }
   }
 
