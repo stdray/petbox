@@ -169,6 +169,23 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Search_List_WithoutQuery_WithoutBodyLen_DefaultsToSnippet_NotFull()
+	{
+		// card comments-search-full-body-in-listing: the listing default used to be the FULL
+		// body; it is now the same ~240-char snippet as tasks_search/memory_search (same
+		// ModuleMcp.DefaultSnippet constant) — bodyLen:-1 remains the way to get it all back.
+		var http = Http();
+		var node = NewNode();
+		var longBody = new string('x', ModuleMcp.DefaultSnippet + 100);
+		await Upsert(http, Create(node, "a", longBody));
+
+		var res = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+
+		res.Items.Should().ContainSingle();
+		res.Items.Single().Body.Should().HaveLength(ModuleMcp.DefaultSnippet + 1).And.EndWith("…"); // cut + ellipsis
+	}
+
+	[Fact]
 	public async Task Search_WithQuery_IsLexical_AndDegradesWithoutSemantic()
 	{
 		var http = Http();

@@ -209,6 +209,10 @@ public sealed class ListBudgetTests : IDisposable
 	[Fact]
 	public async Task CommentsList_Large_PrefixCut_ChronologicalHeadKept()
 	{
+		// bodyLen:-1 forced explicitly — the listing default is now the same ~240-char snippet
+		// as with q (card comments-search-full-body-in-listing), so a 20x2500-char thread no
+		// longer overflows the 30k budget on its own; this test is about the prefix-cut/budget
+		// mechanics, so it opts into full bodies to keep exercising that path.
 		var node = Guid.NewGuid().ToString("N");
 		const int total = 20;
 		var body = new string('c', 2500); // ~50k chars of bodies > the 30k budget
@@ -216,7 +220,7 @@ public sealed class ListBudgetTests : IDisposable
 		for (var i = 1; i < total; i++)
 			await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)]);
 
-		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node);
+		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node, bodyLen: -1);
 
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Items[0].Id.Should().Be(firstId); // chronological head kept (prefix cut)
