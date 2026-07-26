@@ -39,7 +39,7 @@ public static class LogTools
 		IHttpContextAccessor http,
 		ILogQueryService logs,
 		[Description("Project key — must match the calling ApiKey's project claim.")] string projectKey,
-		[Description("Log name within the project (e.g. 'default', 'audit').")] string logName,
+		[Description("Log name within the project (e.g. 'petbox'); list available names via log_list.")] string logName,
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{

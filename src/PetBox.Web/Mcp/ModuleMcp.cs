@@ -168,7 +168,7 @@ static class ModuleMcp
 	// size-warning-not-wired-to-write-verbs), one sentence, so the guidance cannot drift to a
 	// different number per tool.
 	public const string SizeGuidanceText =
-		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (triples the byte size) — a call " +
+		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (~2.8x the byte size, measured 2.74-2.88x) — a call " +
 		"whose JSON body exceeds roughly 8,000 bytes risks being silently truncated by the " +
 		"calling client before this server ever sees it (a client-side limit; PetBox does not " +
 		"enforce or detect it). Split large batches into multiple calls.";
@@ -188,7 +188,7 @@ static class ModuleMcp
 		if (len is not { } bytes || bytes <= WriteCallSizeGuidanceBytes) return null;
 		return $"This call's request body was {bytes:N0} bytes, over the ~{WriteCallSizeGuidanceBytes:N0}-byte " +
 			"guidance threshold. The write applied — this is informational, not a refusal — but a client that " +
-			"\\uXXXX-escapes Cyrillic (tripling byte size) risks the NEXT call this size being silently " +
+			"\\uXXXX-escapes Cyrillic (~2.8x the byte size, measured 2.74-2.88x) risks the NEXT call this size being silently " +
 			"truncated before the server sees it. Split large batches.";
 	}
 }
