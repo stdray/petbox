@@ -38,7 +38,6 @@ public static class TenantEnforcementAllowlist
 		// REST — what is LEFT of the 55 minimal-API endpoints (METHOD + route pattern, as the caller
 		// addresses them). The wave's own accounting is in the note at the bottom of this list.
 		"rest:DELETE /api/config/{workspaceKey}/bindings",
-		"rest:DELETE /api/{projectKey}/agent-defs/{key}",
 		"rest:GET /.well-known/oauth-authorization-server",
 		"rest:GET /.well-known/oauth-authorization-server/{*rest}",
 		"rest:GET /.well-known/oauth-protected-resource",
@@ -47,10 +46,7 @@ public static class TenantEnforcementAllowlist
 		"rest:GET /.well-known/openid-configuration/{*rest}",
 		"rest:GET /agent/poll",
 		"rest:GET /api/auth/validate",
-		"rest:GET /api/memory/{projectKey}/canon",
 		"rest:GET /api/share/{token}/tsv",
-		"rest:GET /api/{projectKey}/agent-defs",
-		"rest:GET /api/{projectKey}/agent-defs/{key}",
 		"rest:GET /openapi/{documentName}.json",
 		"rest:GET /v1/conf",
 		"rest:GET|HEAD /health",
@@ -86,7 +82,6 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /api/ui/project",
 		"rest:POST /api/ui/workspace",
 		"rest:POST /v1/chat/completions",
-		"rest:PUT /api/{projectKey}/agent-defs/{key}",
 	
 		// RAZOR — 65 pages (one entry per page, not per endpoint: the PageModel CLASS is the carrier).
 		"page:/AccessDenied",

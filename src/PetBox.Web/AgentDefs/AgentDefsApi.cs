@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Core.Services;
 
 namespace PetBox.Web.AgentDefs;
@@ -51,20 +50,20 @@ public static class AgentDefsApi
 
 	public sealed record AgentDefinitionListResponse(IReadOnlyList<AgentDefinitionListItem> Items);
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListAsync(
-		HttpContext ctx, string projectKey, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, IAgentDefinitionService svc, CancellationToken ct)
 	{
-		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsRead, catalog, ct) is { } forbid)
-			return forbid;
+		if (RequireScope(ctx, ApiKeyScopes.AgentsRead) is { } forbid) return forbid;
 		var items = await svc.ListAsync(projectKey, ct);
 		return TypedResults.Ok(new AgentDefinitionListResponse(items));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> GetAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
 	{
-		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsRead, catalog, ct) is { } forbid)
-			return forbid;
+		if (RequireScope(ctx, ApiKeyScopes.AgentsRead) is { } forbid) return forbid;
 		try
 		{
 			var view = await svc.GetAsync(projectKey, key, ct);
@@ -78,11 +77,11 @@ public static class AgentDefsApi
 		}
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> PutAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
 	{
-		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsWrite, catalog, ct) is { } forbid)
-			return forbid;
+		if (RequireScope(ctx, ApiKeyScopes.AgentsWrite) is { } forbid) return forbid;
 
 		AgentDefinitionPutBody? body;
 		try
@@ -113,11 +112,11 @@ public static class AgentDefsApi
 		}
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> DeleteAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
 	{
-		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsWrite, catalog, ct) is { } forbid)
-			return forbid;
+		if (RequireScope(ctx, ApiKeyScopes.AgentsWrite) is { } forbid) return forbid;
 
 		long version = 0;
 		var raw = ctx.Request.Query["version"].FirstOrDefault();
@@ -139,16 +138,15 @@ public static class AgentDefsApi
 		}
 	}
 
-	static async Task<IResult?> AuthorizeAsync(
-		HttpContext ctx, string projectKey, string scope, IProjectCatalog catalog, CancellationToken ct)
+	// What is LEFT of AuthorizeAsync: the SCOPE axis. Its project half — ProjectScope.AuthorizesAsync
+	// against the {projectKey} route value — is now the [TenantFrom(Route, "projectKey")] declaration on
+	// each handler, decided by TenantEnforcementMiddleware before the handler (and before the PUT body is
+	// deserialized).
+	static IResult? RequireScope(HttpContext ctx, string scope)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return Results.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		var parts = scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		if (!parts.Contains(scope, StringComparer.Ordinal))
-			return Results.Forbid();
-		return null;
+		return parts.Contains(scope, StringComparer.Ordinal) ? null : Results.Forbid();
 	}
 
 	static bool IsConflict(string message) =>

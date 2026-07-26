@@ -37,11 +37,15 @@ public static class MemoryApi
 	// The handler opens no database: the canon comes from IMemoryService and the project's workspace
 	// from IProjectDirectory (the catalog of projects — see AGENTS.md, "the database is visible only
 	// in the service layer"; an endpoint lambda asks a service, it does not call .Open() itself).
+	// TENANT: the PROJECT in the route, and only that. The workspace leg of the response is not a second
+	// target a caller can aim — it is derived from the project's own row (IProjectDirectory), so
+	// authorizing the project authorizes it. Declaring `ArgumentOrContainer` here would be wrong for the
+	// same reason: this route takes a real project key, never a `$workspace`/`$ws-<key>` container, and
+	// the container it reads is the one the project belongs to.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CanonAsync(
-		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects, CancellationToken ct)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains(ApiKeyScopes.MemoryRead))
 			return TypedResults.Forbid();
