@@ -313,6 +313,10 @@ public sealed record MemoryConflictView(
 
 // AutoResolved: keys whose stale baseline was accepted because the entry's payload had not
 // semantically moved since the author's read (bookkeeping bumps only) — applied + reported.
+// `Warning` (card mcp-write-degrades-silently-fix, point 4): set only when the call APPLIED
+// and its request payload was large enough to risk the client-side \uXXXX-escaping truncation
+// the tool description warns about (ModuleMcp.SizeWarningOrNull) — never on a refused/conflicted
+// call, where conflicts[] is already the signal to act on. Null/omitted the rest of the time.
 public sealed record MemoryUpsertResultView(
 	bool Applied,
 	long CurrentVersion,
@@ -322,9 +326,16 @@ public sealed record MemoryUpsertResultView(
 	IReadOnlyList<MemoryEntryRow> Added,
 	IReadOnlyList<MemoryEntryRow> Updated,
 	IReadOnlyList<string> Removed,
-	IReadOnlyList<string> AutoResolved);
+	IReadOnlyList<string> AutoResolved,
+	string? Warning = null);
 
-public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
+// `Warning` (card mcp-write-degrades-silently-fix) is non-null when the write landed
+// DEGRADED in a way the caller could not see otherwise: an empty `description` (the primary
+// recall surface — memory_search ranks/shows it, so a factless one is quietly hard to find
+// again) or a request payload big enough to risk the client-side \uXXXX-escaping truncation
+// this tool's description warns about (ModuleMcp.SizeWarningOrNull). Never a refusal — the
+// entry is always written when this result is returned; null/omitted when neither applies.
+public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key, string? Warning = null);
 
 // One memory_search row, labelled by scope (project|workspace) and store. Carries Version so
 // a search → upsert edit has its per-key CAS baseline without an extra get (or a

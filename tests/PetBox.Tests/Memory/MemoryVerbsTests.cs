@@ -296,6 +296,71 @@ public sealed class MemoryVerbsTests : IDisposable
 		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "x", scope: "galaxy"));
 	}
 
+	// card mcp-write-degrades-silently-fix, point 2: the refusal must NAME the closed set of
+	// valid values, not just say "invalid" — an agent that mistypes the scope should learn the
+	// fix from the error alone.
+	[Fact]
+	public async Task Remember_InvalidScope_MessageNamesValidValues()
+	{
+		var http = Http("memory:read,memory:write");
+		var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+			MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "x", scope: "galaxy"));
+		ex.Message.Should().Contain("project").And.Contain("workspace");
+	}
+
+	// Same class of guard on `type`: the taxonomy is closed (User|Feedback|Project|Reference) —
+	// a typo must be refused, naming the four valid values, not silently accepted or defaulted.
+	[Fact]
+	public async Task Remember_InvalidType_RejectedNamingValidValues()
+	{
+		var http = Http("memory:read,memory:write");
+		var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+			MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "x", type: "refrence"));
+		ex.Message.Should().Contain("User").And.Contain("Feedback").And.Contain("Project").And.Contain("Reference");
+	}
+
+	// card mcp-write-degrades-silently-fix, point 1: memory_remember accepts an empty
+	// description (never a refusal — this verb is often the last call of a session, when
+	// losing the fact outright would cost more) but WARNS, because description is the primary
+	// surface memory_search ranks/shows facts by.
+	[Fact]
+	public async Task Remember_EmptyDescription_ReturnsWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact with no description");
+		rem.Warning.Should().Contain("description is empty");
+	}
+
+	[Fact]
+	public async Task Remember_WithDescription_NoWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "a one-liner");
+		rem.Warning.Should().BeNull();
+	}
+
+	// card mcp-write-degrades-silently-fix, point 4: a write the server ACCEPTED and applied can
+	// still have paid a silent \uXXXX-escaping size tax — the server cannot see the escaping, but
+	// it DOES see the raw request body size (Content-Length), so an oversized-but-successful call
+	// gets a warning instead of no signal at all.
+	[Fact]
+	public async Task Remember_LargeRequestBody_ReturnsSizeWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		http.HttpContext!.Request.ContentLength = 20_000;
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
+		rem.Warning.Should().Contain("20,000").And.Contain("8,000");
+	}
+
+	[Fact]
+	public async Task Remember_SmallRequestBody_NoSizeWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		http.HttpContext!.Request.ContentLength = 100;
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
+		rem.Warning.Should().BeNull();
+	}
+
 	[Fact]
 	public async Task Remember_RequiresWriteScope()
 	{

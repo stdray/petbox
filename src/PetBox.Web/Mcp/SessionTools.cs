@@ -75,8 +75,8 @@ public static class SessionTools
 		the new tail appends); a GAP (fromOrdinal > lastOrdinal+1) writes nothing and returns the
 		structured reject { applied:false, reason:"gap", lastOrdinal } — resend from
 		lastOrdinal+1. Requires tasks:write.
-		Cyrillic content: send raw UTF-8, not \uXXXX escapes (triples the byte size) — an
-		oversized call is silently truncated before the server sees it. Split large batches.
+		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
+
 		Result: { sessionId, applied, lastOrdinal, appended, reason }.
 		""")]
 	public static async Task<SessionAppendResult> AppendAsync(

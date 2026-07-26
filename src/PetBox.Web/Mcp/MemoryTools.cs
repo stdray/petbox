@@ -231,9 +231,10 @@ public static class MemoryTools
 		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
 		On a NEW entry (version 0) omitted fields start empty.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
-		`type` (required) is the taxonomy: User (about the user) | Feedback (a correction/
-		preference on how to work) | Project (durable project fact/constraint) | Reference
-		(pointer to an external resource). Pick one. `tags` is an ARRAY of free-form tag
+		`type` (required on a NEW entry) is the CLOSED taxonomy: User (about the user) | Feedback
+		(a correction/preference on how to work) | Project (durable project fact/constraint) |
+		Reference (pointer to an external resource). Pick one — an unrecognized value is REJECTED,
+		naming these four, never a silently-dropped typo. `tags` is an ARRAY of free-form tag
 		strings, normalised on write ([] clears, omit leaves as-is).
 		`version` is the WATERMARK baseline: pass the store `currentVersion` from your last read OR
 		the entry's own version — both valid; 0 = new; a version above the store cursor is rejected
@@ -245,8 +246,8 @@ public static class MemoryTools
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
-		Cyrillic bodies: send raw UTF-8, not \uXXXX escapes (triples the byte size) — an oversized
-		call is silently truncated before the server sees it. Split large batches.
+		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
+
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
 		added[], updated[], removed[], autoResolved[] }. `applied` is the SINGLE source of truth:
 		FALSE = nothing
@@ -259,6 +260,9 @@ public static class MemoryTools
 		body, a compact ack; 0 = no body; N>0 = the first N chars, "…" when cut; -1 = full body).
 			`scope`: project (default) | workspace. `currentVersion` is the store-wide cursor:
 		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
+		`warning` (optional) is set when an APPLIED call's request payload was large enough to
+		risk the client-side truncation described above — informational, never a refusal (the
+		write already landed); omitted the rest of the time.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -275,7 +279,12 @@ public static class MemoryTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		await AssertStoreCreatableOrKnownAsync(memory, projectKey, store, ct);
 		var (upserts, deletes) = ParseEntries(entries);
-		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct), bodyLen);
+		var outcome = await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct);
+		// Point 4: only warn about size on a write that actually landed — a refused/conflicted
+		// call already has its own signal (conflicts[]), and piling a size warning on TOP of a
+		// refusal would blur which one the caller needs to act on.
+		var warning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
+		return Serialize(outcome, bodyLen, warning);
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
@@ -422,11 +431,14 @@ public static class MemoryTools
 		CREATE one durable fact verbatim (always a NEW entry; edits go via memory_upsert).
 		`scope`: project (default) | workspace (cross-project shared within the caller's
 		workspace). `type` taxonomy (User|Feedback|Project|Reference) — pick explicitly.
+		An empty/omitted `description` is ACCEPTED but WARNED on (returned as `warning`):
+		description is the primary surface memory_search ranks and shows, so a factless
+		description is a quietly-degraded write — findable by luck, not by design.
 		A target you may not write is refused with an explicit authorization error — a write
 		never fails silently. Store durable facts not derivable from code/git/config;
 		actionable work goes to a task board. Requires memory:write.
-		Cyrillic text: send raw UTF-8, not \uXXXX escapes (triples the byte size) — a long
-		call is silently truncated before the server sees it.
+		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
+
 		[[full]]
 		CREATE one durable fact, verbatim (always a new entry; edits go via memory_upsert).
 		The low-ceremony way to store a learning.
@@ -438,11 +450,16 @@ public static class MemoryTools
 		writes into the owner's live cross-project notes, and the response's `scope`/`id`
 		report the container the write actually landed in.
 		`store` groups entries within a scope (default "notes"). `type` is the taxonomy
-		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
+		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference —
+		an unrecognized value is REJECTED, naming the four valid ones, never a silent typo.
 		`tags` is an array of free-form tag strings; `description` an optional one-line
-		summary. A unique key is generated. Store durable facts not derivable from
-		code/git/config; actionable work goes to a task board. Requires memory:write.
-		Returns { id, scope, store, key }.
+		summary — leaving it empty is allowed (the fact is still stored) but degrades recall,
+		so the ack carries a `warning` when it is empty. A unique key is generated. Store
+		durable facts not derivable from code/git/config; actionable work goes to a task
+		board. Requires memory:write.
+		Returns { id, scope, store, key, warning? } — `warning` is set when `description` was
+		empty (recall will find this fact poorly) or when this call's payload was large enough
+		to risk the client-side truncation described above; omitted when neither applies.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -468,7 +485,21 @@ public static class MemoryTools
 			Tags = tags,
 		};
 		await memory.UpsertAsync(container.Key, st, [input], [], ct: ct);
-		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
+
+		// Point 1 (card mcp-write-degrades-silently-fix): an empty description is a WARNING, not a
+		// refusal — memory_remember is often the last thing called at the end of a session, exactly
+		// when losing the fact outright (a hard refusal) would cost more than a degraded-but-present
+		// entry the caller is told to go fix (e.g. via memory_upsert on the same key).
+		var descWarning = string.IsNullOrWhiteSpace(description)
+			? "description is empty — memory_search ranks and displays entries by description, so " +
+				"this fact will surface poorly. Consider a one-line memory_upsert on this key to add one."
+			: null;
+		// Point 4: the write already applied; a size warning is a SEPARATE concern from the
+		// description one above, so both surface together (space-joined) when both fire — neither
+		// masks the other.
+		var sizeWarning = ModuleMcp.SizeWarningOrNull(http);
+		var warning = descWarning is null ? sizeWarning : sizeWarning is null ? descWarning : $"{descWarning} {sizeWarning}";
+		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key, warning);
 	}
 
 	[McpServerTool(Name = "memory_search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
@@ -970,7 +1001,7 @@ public static class MemoryTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int? bodyLen = null)
+	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int? bodyLen = null, string? warning = null)
 	{
 		var r = o.Result;
 		return new MemoryUpsertResultView(
@@ -982,7 +1013,8 @@ public static class MemoryTools
 			Added: r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Updated: r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Removed: r.Removed.ToList(),
-			AutoResolved: r.AutoResolved.ToList());
+			AutoResolved: r.AutoResolved.ToList(),
+			Warning: warning);
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo

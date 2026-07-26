@@ -149,4 +149,45 @@ static class ModuleMcp
 		if (len == 0) return null;              // NoBody
 		return body.Length <= len ? body : string.Concat(body.AsSpan(0, len), "…");
 	}
+
+	// ── write-call size guidance (card mcp-write-degrades-silently-fix) ───────────────────
+	// The truncation this warns about happens on the CALLING CLIENT (a tool-call JSON that
+	// \uXXXX-escapes Cyrillic, or is simply large, gets cut before this server ever parses it —
+	// PetBox does not enforce or even see that failure). This server therefore cannot name an
+	// exact enforced limit; it names a CONSERVATIVE, evidence-derived guidance number instead —
+	// live incidents (card evidence, 2026-07-17/26) succeeded around 10,000 bytes and failed with
+	// a client-side InputValidationError ("truncated output") from ~12,000 bytes up through
+	// 28,766 bytes, so 8,000 keeps a safety margin under the lowest observed failure. Keep this
+	// number and SizeGuidanceText's literal in sync — SizeGuidanceTests pins the two together so
+	// a future change to one cannot silently drift from the other.
+	public const int WriteCallSizeGuidanceBytes = 8_000;
+
+	// Shared wording for every write verb that carries a body (memory_remember, memory_upsert,
+	// tasks_upsert, comments_upsert, session_append) — one class of problem (work
+	// write-verbs-size-limit-still-has-no-number / comments-upsert-size-guidance), one sentence,
+	// so the guidance cannot drift to a different number per tool.
+	public const string SizeGuidanceText =
+		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (triples the byte size) — a call " +
+		"whose JSON body exceeds roughly 8,000 bytes risks being silently truncated by the " +
+		"calling client before this server ever sees it (a client-side limit; PetBox does not " +
+		"enforce or detect it). Split large batches into multiple calls.";
+
+	// Point 4 of the card: a write the server DID accept and apply can still have paid the same
+	// 2-3x \uXXXX-escaping tax silently — it only fails once a slightly bigger call crosses the
+	// client's truncation edge, and by then the caller has no warning to have acted on. The
+	// server cannot tell an escaped payload from a raw one (the JSON parser already decoded it
+	// by the time a tool method runs — the same boundary SizeGuidanceText documents), but it DOES
+	// see the raw HTTP request body size, which is exactly what the client-side truncation
+	// measures. Surfaced as a WARNING on an already-successful write, never a refusal — the
+	// write already landed, and the point is to inform the NEXT call, not punish this one.
+	// Null when the size is unknown (e.g. chunked transfer, no Content-Length) or in budget.
+	public static string? SizeWarningOrNull(IHttpContextAccessor http)
+	{
+		var len = http.HttpContext?.Request.ContentLength;
+		if (len is not { } bytes || bytes <= WriteCallSizeGuidanceBytes) return null;
+		return $"This call's request body was {bytes:N0} bytes, over the ~{WriteCallSizeGuidanceBytes:N0}-byte " +
+			"guidance threshold. The write applied — this is informational, not a refusal — but a client that " +
+			"\\uXXXX-escapes Cyrillic (tripling byte size) risks the NEXT call this size being silently " +
+			"truncated before the server sees it. Split large batches.";
+	}
 }
