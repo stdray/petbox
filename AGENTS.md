@@ -77,7 +77,12 @@ records**, not the working plan — do not treat them as current state.
    the last added by board-search-stem-lookup — `bun test` over `src/PetBox.Web/ts/*.test.ts`,
    closing the same "written but wired into no pipeline" gap `WebTsLint` closed for lint), so a
    green Cake `Test` run already proves formatting, the frontend lint, and its unit tests, not just the
-   .NET suite passing. A filtered `dotnet test` is fine for the FAST INNER LOOP while
+   .NET suite passing. `Test` does NOT reach the client SDKs (`TsSdk*`/`PyClient*`/`TsWire*`,
+   `build.cs`'s `SdkChecks`) — those need `Verify` (`Test` + `SdkChecks`), so for a change under
+   `src/clients-ts/**` (including the `petbox-wire` kit) or `src/clients-py/**`, `Verify` is the
+   gate, not `Test` (wire-kit-checks-in-no-pipeline: `TsWireTest`/`TsWireTypecheck` were reachable
+   only from the `NpmWirePublish` publish target until they joined `SdkChecks`). A filtered
+   `dotnet test` is fine for the FAST INNER LOOP while
    iterating on one failing test — it runs NONE of those dependencies, so being green on
    it proves nothing about mergeability; always finish on the Cake gate before pushing.
    This has bitten main twice from running less than the gate: it went red on formatting
