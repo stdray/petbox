@@ -5,6 +5,7 @@ using Kusto.Language;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Contract;
@@ -14,6 +15,19 @@ using PetBox.Log.Core.Sharing;
 namespace PetBox.Web.Pages;
 
 [AllowAnonymous]
+// The browser half of the same grant PetBox.Log.Core.ShareApi's /api/share/{token}/tsv serves, and it
+// carries the same declaration for the same reason: /ui/share/{token} has NO tenant in its route. The
+// `{token}` is not a tenant reference — it is looked up (IShareLinkDirectory) and the STORED LINK, not
+// the caller, names the project, the log, the KQL, the visible columns and the per-column masking. The
+// caller supplies a token and nothing else; there is no field on this surface through which a tenant
+// could be aimed.
+//
+// This is the class's strict reading, not its loose one (TenantDeclaration.cs): the token carries the
+// EXTENT of access, it does not merely identify who is asking. Expiry is enforced below, on the link's
+// own ExpiresAt.
+[TenantExempt(TenantExemption.CapabilityToken,
+	"the share token IS the grant: issued by an explicit act, and the stored link — not the caller — "
+	+ "names the project, log, query, columns and masking of exactly what may be read")]
 public sealed class ShareModel : PageModel
 {
 	readonly IShareLinkDirectory _shareLinks;

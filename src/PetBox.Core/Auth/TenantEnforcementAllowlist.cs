@@ -111,8 +111,7 @@ public static class TenantEnforcementAllowlist
 		"page:/ProjectHome/TaskBoard",
 		"page:/ProjectHome/TaskBoardNode",
 		"page:/ProjectHome/Tasks",
-		"page:/Share",
-	
+
 		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family
 		// per commit. The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:
 		//   * 34 declare a tenant — 26 [TenantFrom(Route, "projectKey")], 2
