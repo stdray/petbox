@@ -146,55 +146,34 @@ public static class LogApi
 		return deleted ? Results.NoContent() : Results.NotFound(new ErrorResponse("log not found"));
 	}
 
-	// Still here for ONE caller: AuthorizeProjectViewerAsync's api-key branch, which PetBox.Web's
-	// EventDetailsApi (a Razor-plane surface, still allowlisted) reuses. Every route mapped in THIS file
-	// declares [TenantFrom(Route, "projectKey")] instead and is refused by TenantEnforcementMiddleware
-	// before its handler runs — this is not a second gate on any of them.
-	static async Task<IResult?> AuthorizeProjectAsync(
-		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct) =>
-		await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct) ? null : Results.Forbid();
+	// AuthorizeProjectAsync (ProjectScope for an api-key principal) was here, kept alive for
+	// AuthorizeProjectViewerAsync's api-key branch, which Pages/Logs/EventDetails reused while it was
+	// still allowlisted. The Razor wave declared that page — [TenantFrom(Route, "projectKey")] — so both
+	// methods lost their last caller and are DELETED rather than left as a second implementation of a
+	// decision ITenantAuthorizer now makes for every surface in this file.
+	//
+	// What replaced them is not smaller, it is central: the authorizer answers an api key on the project
+	// claim + sandbox containment and a cookie on membership of the project's owning workspace, i.e. the
+	// two branches those methods kept strictly apart by hand.
 
 	static bool HasScope(HttpContext ctx, string required) =>
 		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
 
-	// Authorization for the browser-facing, workspaceKey-less log routes — live-tail and (PetBox.Web's)
-	// EventDetailsApi both call this, since both are the SAME cross-tenant surface: neither route binds
-	// a {workspaceKey}, so this is the ONLY thing standing between a signed-in user and another tenant's
-	// log data. Public so PetBox.Web can reuse it verbatim rather than re-deriving the same two gates.
+	// THE ONE GATE THAT DID NOT MOVE TO A DECLARATION, on the two browser-facing, workspaceKey-less log
+	// surfaces — live-tail (mapped here) and PetBox.Web's Pages/Logs/EventDetails. It is the SCOPE axis,
+	// which is orthogonal to the tenant axis and stays where the credential that has scopes can be asked.
 	//
-	// The route accepts both schemes (a browser EventSource/fetch can only bring a cookie), but they
-	// prove entirely different things and each keeps its own gate:
+	// A COOKIE CARRIES NO SCOPES AT ALL, so it is exempted from this rather than failed by it. Crossing
+	// the two was always the hole and still is: run a cookie session through the scope gate and every
+	// browser is denied; run an api key through the membership gate and a key with no logs:query walks in
+	// through a door meant for humans. The membership half is now ITenantAuthorizer's, from
+	// [TenantFrom(Route, "projectKey")] on both surfaces, which is why the rest of the old
+	// AuthorizeProjectViewerAsync is gone and only this line is left.
 	//
-	//   api key — carries `project` + `scopes`. Unchanged from before this endpoint accepted cookies:
-	//             ProjectScope (project claim + sandbox containment) AND the logs:query scope, exactly
-	//             what QueryLogsAsync demands. Nothing here weakens the key path.
-	//   cookie  — carries NEITHER a project claim nor scopes; it carries workspace-role claims. So it
-	//             is authorized the way the logs PAGE authorizes it: the project's OWNING workspace
-	//             (asked of the catalog — the route has no {workspaceKey} to bind against, unlike the
-	//             pages ProjectWorkspaceBindingFilter covers) must be one this session holds at least
-	//             Viewer in; sysadmin keeps its free pass. A session with no role in that workspace is
-	//             refused — this is the cross-tenant surface of the whole change.
-	//
-	// Crossing the two would be the hole: run a cookie session through the scope gate and every browser
-	// is denied (a cookie has no scopes at all); run an api key through the workspace gate and a key
-	// lacking logs:query walks in through a door meant for humans.
-	public static async Task<IResult?> AuthorizeProjectViewerAsync(
-		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct)
-	{
-		if (IsApiKeyPrincipal(ctx))
-		{
-			if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
-			return HasScope(ctx, ApiKeyScopes.LogsQuery) ? null : Results.Forbid();
-		}
-
-		var workspaceKey = await catalog.WorkspaceKeyOfAsync(projectKey, ct);
-		// IsNullOrEmpty, not `is null`: a project row's WorkspaceKey defaults to "" in the model, not
-		// null. Fail-closed either way today (no membership carries an empty workspace key, so
-		// HasWorkspaceRoleAtLeast("") would find no role and Forbid regardless) — this just removes the
-		// dependency on that being true forever, so a future default change can't quietly open the gate.
-		if (string.IsNullOrEmpty(workspaceKey)) return Results.Forbid();
-		return ctx.User.HasWorkspaceRoleAtLeast(workspaceKey, WorkspaceRole.Viewer) ? null : Results.Forbid();
-	}
+	// Public for its one out-of-assembly caller, EventDetails — the same reason its predecessor was: two
+	// surfaces, one spelling, so neither can drift into demanding a different scope from the other.
+	public static IResult? RequireLogsQueryScope(HttpContext ctx) =>
+		!IsApiKeyPrincipal(ctx) || HasScope(ctx, ApiKeyScopes.LogsQuery) ? null : Results.Forbid();
 
 	// An api-key request is one the ApiKey SCHEME authenticated — asked of the identity, not of the
 	// presence of a claim: `ClaimsPrincipal.Identity` is merely the FIRST identity, and a policy that
@@ -590,10 +569,11 @@ public static class LogApi
 	// The ONE route in this file whose policy admits a cookie as well as an api key, and the
 	// declaration covers both without a fork: ITenantAuthorizer answers an api-key principal on the
 	// project claim (+ sandbox containment) and a cookie principal on membership of the project's
-	// OWNING workspace at Viewer or better — the exact two gates AuthorizeProjectViewerAsync spells
-	// out by hand, kept apart there for the same reason and now kept apart centrally. What CANNOT move
+	// OWNING workspace at Viewer or better — the two gates AuthorizeProjectViewerAsync used to spell out
+	// by hand, kept apart there for the same reason and now kept apart centrally. What CANNOT move
 	// to the declaration is the logs:query scope, because a cookie carries no scopes at all: it stays
-	// below, asked only of the credential that has scopes.
+	// below, asked only of the credential that has scopes, through the same RequireLogsQueryScope its
+	// Razor twin (Pages/Logs/EventDetails) calls.
 	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
@@ -603,7 +583,7 @@ public static class LogApi
 		ILogStore store,
 		CancellationToken ct)
 	{
-		if (IsApiKeyPrincipal(ctx) && !HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+		if (RequireLogsQueryScope(ctx) is { } forbid) return forbid;
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
 

@@ -62,8 +62,6 @@ public static class TenantEnforcementAllowlist
 		// RAZOR — what is LEFT of the 65 (one entry per page, not per endpoint: the PageModel CLASS is
 		// the carrier). The Razor wave takes them out one family at a time; the accounting of what has
 		// already gone is in the note at the bottom of this list.
-		"page:/Logs/EventDetails",
-		"page:/Nav/Tree",
 
 		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family
 		// per commit. The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:

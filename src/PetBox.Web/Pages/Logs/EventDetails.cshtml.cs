@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Log.Core;
 using PetBox.Log.Core.Contract;
@@ -17,28 +18,41 @@ namespace PetBox.Web.Pages.Logs;
 // (and its eq/ne filter chips) can never drift from what a reload of the page would show.
 //
 // Auth mirrors live-tail exactly, because it is the SAME cross-tenant surface: this route has no
-// {workspaceKey} either (only {projectKey}/{logName}/{id}), so [Authorize(Policy =
-// "ApiKeyOrCookie")] only proves ONE of the two schemes authenticated — LogApi.
-// AuthorizeProjectViewerAsync (the same method LiveTailAsync calls) is what proves the caller may
-// read THIS project: an api key by project claim + logs:query scope, a cookie session by
-// workspace-Viewer-or-better role. Bridging its minimal-API IResult into this MVC action via
-// IResult.ExecuteAsync keeps the two endpoints on ONE authorization implementation rather than a
-// second copy that could quietly drift from the first.
+// {workspaceKey} either (only {projectKey}/{logName}/{id}), so [Authorize(Policy = "ApiKeyOrCookie")]
+// only proves ONE of the two schemes authenticated.
 [Authorize(Policy = "ApiKeyOrCookie")]
+// …and the DECLARATION is what proves the caller may read THIS project, for whichever scheme it turned
+// out to be. ITenantAuthorizer answers an api-key principal on its project claim (+ sandbox
+// containment) and a cookie principal on membership of the project's OWNING workspace at Viewer or
+// better — asked of the catalog, because this route has no {workspaceKey} to bind against and
+// ProjectWorkspaceBindingFilter therefore cannot help. Those are the exact two gates
+// LogApi.AuthorizeProjectViewerAsync used to spell out by hand for this page and for live-tail; that
+// method's last caller was this one, so it is deleted rather than left as a second implementation of a
+// centralized decision.
+//
+// The route lives under /api and is fetched by script, so the refusal a programmatic caller gets is
+// still a 403: TenantEnforcementMiddleware forbids through IAuthenticationService, and the "Smart"
+// scheme answers per credential — a cookie session gets the /AccessDenied redirect, an api key gets the
+// 403 (both pinned in LogEventDetailsApiTests).
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class EventDetailsModel : PageModel
 {
 	readonly ILogService _logs;
-	readonly IProjectCatalog _catalog;
 
-	public EventDetailsModel(ILogService logs, IProjectCatalog catalog)
-	{
-		_logs = logs;
-		_catalog = catalog;
-	}
+	// IProjectCatalog is GONE from this page's dependencies. It was here for exactly one reason — to
+	// resolve the project's owning workspace inside AuthorizeProjectViewerAsync — and that lookup now
+	// happens inside ITenantAuthorizer. A page still holding the catalog it no longer asks anything is an
+	// invitation to write the check again.
+	public EventDetailsModel(ILogService logs) => _logs = logs;
 
 	public async Task<IActionResult> OnGetAsync(string projectKey, string logName, long id, CancellationToken ct)
 	{
-		if (await LogApi.AuthorizeProjectViewerAsync(HttpContext, projectKey, _catalog, ct) is { } forbid)
+		// The ONE gate a declaration cannot carry, and it is the SCOPE axis rather than the tenant one: a
+		// cookie carries no scopes at all, so this is asked only of the credential that has them. Same
+		// call, same helper, as LiveTailAsync — crossing the two would be the hole (a cookie run through
+		// the scope gate denies every browser; an api key run through the membership gate walks a
+		// logs:query-less key in through a door meant for humans).
+		if (LogApi.RequireLogsQueryScope(HttpContext) is { } forbid)
 		{
 			await forbid.ExecuteAsync(HttpContext);
 			return new EmptyResult();

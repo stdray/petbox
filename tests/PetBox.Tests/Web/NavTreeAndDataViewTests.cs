@@ -117,11 +117,36 @@ public sealed class NavTreeAndDataViewTests : IClassFixture<NavTreeAndDataViewFi
 		resp.Headers.Location!.OriginalString.Should().Contain("/Login");
 	}
 
+	// An unknown project is REFUSED, and the shape moved from 404 to the Razor plane's /AccessDenied in
+	// the declaration wave. The page now carries [TenantFrom(Argument, "project")], so
+	// TenantEnforcementMiddleware decides before the handler: TenantAuthorizer cannot resolve an owning
+	// workspace for a project that does not exist, and an unresolvable tenant is NotAuthorized for EVERY
+	// principal — the bootstrap admin's sysadmin free pass included, because the free pass is over
+	// workspaces and there is no workspace here to pass over.
+	//
+	// That is deliberately the same answer a project belonging to ANOTHER tenant gets (see
+	// WorkspaceAccessIsolationTests.A_foreign_project_and_a_nonexistent_one_are_indistinguishable_to_a_member):
+	// a 404 here and a 403 there would make this endpoint a cross-tenant project-key enumerator, since it
+	// takes its target from a query string that anyone signed in can retype.
 	[Fact]
-	public async Task Tree_Logs_UnknownProject_Returns404()
+	public async Task Tree_Logs_UnknownProject_IsRefused()
 	{
 		using var resp = await GetAuthedAsync("/ui/_nav/tree?handler=Logs&project=does-not-exist");
-		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+		resp.StatusCode.Should().Be(HttpStatusCode.Found);
+		resp.Headers.Location!.OriginalString.Should().Contain("/AccessDenied",
+			"the tenant refusal must be the plane's access-denied page, never the sign-in form — an "
+			+ "already-signed-in user sent to /Login just loops (auth-denied-and-empty-state)");
+	}
+
+	// The other half of that pair, and the one that proves the declaration did not simply refuse
+	// everything: the SAME handler, with a project the caller may reach, still answers.
+	[Fact]
+	public async Task Tree_Logs_ReachableProject_IsServed()
+	{
+		using var resp = await GetAuthedAsync("/ui/_nav/tree?handler=Logs&project=$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK,
+			"if this ever 403s, [TenantFrom(Argument, \"project\")] is reading a different parameter than "
+			+ "the handler binds and the whole sidebar is dead");
 	}
 
 	[Fact]
