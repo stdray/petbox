@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { classifyModel } from "./harness-models.ts";
+import { wireLog } from "./wire-log.ts";
 
 export type RoleBinding = {
   readonly model: string;
@@ -127,17 +128,44 @@ export function normalizeRoles(raw: unknown): RolesFile {
   return { activeProfile, profiles };
 }
 
+export type LoadRolesOptions = {
+  /**
+   * `apply`'s polarity ONLY (bug: wire-silent-failures-invisible). A missing roles.json file is
+   * always Class A (fresh machine, nothing bound yet) and never throws even in strict mode. But
+   * a PRESENT file that fails to parse is exactly the 2026-07-12-incident shape: a corrupt
+   * roles.json silently reading as "no bindings" made `apply` render every role with no
+   * `model:` line, so every subagent inherited the session's model (the "worker rides on Opus"
+   * incident). `apply` must hard-fail on that instead of compiling a falsely-empty roster;
+   * everyone else (doctor, the `roles`/`model` CLI, session-push's best-effort read) stays on
+   * the default non-strict behavior — silent, but with a Class-Б trace via wireLog.
+   */
+  readonly strict?: boolean;
+};
+
 /**
- * Load ~/.petbox/roles.json. Never throws: missing/unreadable/invalid → empty shell
- * ({ activeProfile: "default", profiles: {} }).
+ * Load ~/.petbox/roles.json.
+ * - Missing file → empty shell, always silent (Class A: nothing bound yet is the common case).
+ * - Present but unparsable → non-strict: empty shell + a Class-Б line in ~/.petbox/wire.log
+ *   (doctor surfaces it); strict (`apply` only): throws, so the caller hard-fails instead of
+ *   silently compiling roles as if unbound.
  */
-export function loadRoles(homeDir: string = homedir()): RolesFile {
+export function loadRoles(homeDir: string = homedir(), opts?: LoadRolesOptions): RolesFile {
   const path = rolesPath(homeDir);
+  if (!existsSync(path)) return { ...EMPTY, profiles: {} };
   try {
-    if (!existsSync(path)) return { ...EMPTY, profiles: {} };
     const raw = JSON.parse(readFileSync(path, "utf8"));
     return normalizeRoles(raw);
-  } catch {
+  } catch (e) {
+    const detail = `roles.json at ${path} exists but failed to parse — ${e instanceof Error ? e.message : String(e)}`;
+    if (opts?.strict) {
+      throw new Error(
+        `corrupt roles.json (${path}): ${e instanceof Error ? e.message : String(e)} — refusing to ` +
+          `treat this as "no bindings" (the 2026-07-12 incident shape: a bad file silently reads as ` +
+          `empty, apply then renders every role with no model: line, and every subagent inherits the ` +
+          `session's model). Fix or remove the file and re-run apply.`,
+      );
+    }
+    wireLog("roles", detail, homeDir);
     return { ...EMPTY, profiles: {} };
   }
 }

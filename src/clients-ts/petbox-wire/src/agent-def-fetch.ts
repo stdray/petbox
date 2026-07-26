@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentDefinition, AgentRole, RoleEscalation, RoleSpawn } from "./agent-definition.ts";
 import { DEFAULT_AGENT_DEFINITION, validateAgentDefinition } from "./agent-definition.ts";
+import { wireLog } from "./wire-log.ts";
 
 export const DEFAULT_DEFINITION_KEY = "default";
 export const AGENT_DEF_FETCH_TIMEOUT_MS = 8000;
@@ -75,6 +76,16 @@ export type ResolvedAgentDefinition = {
    * "no server" when the server was in fact reachable (agent-def-404-not-offline).
    */
   readonly notFoundOnServer?: boolean;
+  /**
+   * The live fetch reached the server and it replied 401/403 — this key is missing the
+   * agents:read scope — as opposed to a genuine network/timeout/5xx failure that never reached
+   * the server at all. Set alongside source "default" (no cache to fall back to) or "lkg" (a
+   * cache existed, but the caller should know the server was reachable-and-refusing, not
+   * offline). wire-silent-failures-invisible, evidence 2026-07-26: without this a 403 rendered
+   * as "offline default definition (no server, no LKG cache)" — a permissions problem read as a
+   * network one, which sent the owner chasing the wrong fix.
+   */
+  readonly forbidden?: boolean;
 };
 
 export function agentDefCacheDir(homeDir: string = homedir()): string {
@@ -198,34 +209,47 @@ export function writeAgentDefCache(
   }
 }
 
-/** Read LKG cache. Returns null if missing/corrupt. Never throws. */
+/**
+ * Read LKG cache. Returns null if missing/corrupt. Never throws.
+ *
+ * Missing (existsSync false) is Class A — the overwhelmingly common case (fresh machine, never
+ * fetched successfully yet) — and stays silent. Present-but-broken (bad JSON, wrong shape,
+ * fails policy validation) is Class Б (bug: wire-silent-failures-invisible, card item 2: "битый
+ * LKG-кеш неотличим от «кеша нет»") — the caller (resolveAgentDefinitionWithLkg) still falls
+ * through to DEFAULT exactly as before, but a wireLog line now distinguishes "there never was a
+ * cache" from "there was one and it's broken", which doctor can surface.
+ */
 export function readAgentDefCache(
   projectKey: string,
   homeDir: string = homedir(),
 ): AgentDefCacheRecord | null {
+  const path = agentDefCachePath(projectKey, homeDir);
+  if (!existsSync(path)) return null;
+  const corrupt = (reason: string): null => {
+    wireLog("agent-def", `LKG cache at ${path} ${reason} — treating as absent`, homeDir);
+    return null;
+  };
   try {
-    const path = agentDefCachePath(projectKey, homeDir);
-    if (!existsSync(path)) return null;
     const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!raw || typeof raw !== "object") return null;
+    if (!raw || typeof raw !== "object") return corrupt("is not a JSON object");
     const r = raw as Record<string, unknown>;
     const key = typeof r["key"] === "string" && r["key"].trim() ? r["key"].trim() : null;
     const version = parseVersion(r["version"]);
     const fetchedAt = typeof r["fetchedAt"] === "string" ? r["fetchedAt"] : "";
-    if (key === null || version === null) return null;
+    if (key === null || version === null) return corrupt("is missing key/version");
     const def = r["definition"];
-    if (!def || typeof def !== "object") return null;
+    if (!def || typeof def !== "object") return corrupt("is missing its definition field");
     // Re-parse via envelope so shape validation matches server responses.
     const mapped = parseAgentDefinitionResponse({
       key,
       version,
       definition: def,
     });
-    if (!mapped) return null;
+    if (!mapped) return corrupt("failed definition shape validation");
     try {
       validateAgentDefinition(mapped.definition);
-    } catch {
-      return null;
+    } catch (e) {
+      return corrupt(`failed policy validation — ${e instanceof Error ? e.message : String(e)}`);
     }
     return {
       key: mapped.key,
@@ -233,8 +257,8 @@ export function readAgentDefCache(
       fetchedAt,
       definition: mapped.definition,
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return corrupt(`is not valid JSON — ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -264,6 +288,10 @@ export async function resolveAgentDefinitionWithLkg(
   // Tracks whether a live fetch actually reached the server and got a 404 (this project
   // simply has no own definition — normal), vs never reaching it at all (offline/error).
   let notFoundOnServer = false;
+  // Tracks the server-reachable-but-refused case (401/403 — missing agents:read scope), as
+  // opposed to a genuine network/timeout/5xx failure (wire-silent-failures-invisible, item 2 /
+  // evidence 2026-07-26): both used to fall into the same "offline" bucket below.
+  let forbidden = false;
 
   if (!opts.offline && projectKey && opts.baseUrl && opts.apiKey) {
     const { definition: fetched, status } = await fetchAgentDefinitionRaw({
@@ -285,6 +313,15 @@ export async function resolveAgentDefinitionWithLkg(
       };
     }
     notFoundOnServer = status === 404;
+    forbidden = status === 401 || status === 403;
+    if (forbidden) {
+      wireLog(
+        "agent-def",
+        `server refused agent-def fetch for project '${projectKey}' (status ${status}) — key ` +
+          `likely missing the agents:read scope; falling back`,
+        homeDir,
+      );
+    }
   }
 
   // LKG before DEFAULT (definition-offline-lkg).
@@ -300,6 +337,7 @@ export async function resolveAgentDefinitionWithLkg(
           key: cached.key,
           version: cached.version,
           staleMarker: AGENT_DEF_STALE_MARKER,
+          ...(forbidden ? { forbidden: true } : {}),
         };
       }
     }
@@ -310,7 +348,38 @@ export async function resolveAgentDefinitionWithLkg(
     source: "default",
     stale: false,
     ...(notFoundOnServer ? { notFoundOnServer: true } : {}),
+    ...(forbidden ? { forbidden: true } : {}),
   };
+}
+
+/**
+ * One-line SessionStart banner marker for a definition that did NOT come straight from the
+ * live server (bug: wire-silent-failures-invisible — "Пометить деградацию в баннере"). Reuses
+ * the SAME ResolvedAgentDefinition resolveApplyDefinition/resolveAgentDefinitionForSession
+ * already produce; this is a formatter, not a second resolver.
+ *
+ * Before this, `source: "lkg"` carried an explicit staleMarker but no injector (pull-memory.ts,
+ * droid-pull-memory.ts, opencode-plugin.ts) ever put it in the banner text — only apply/doctor's
+ * OWN logs mentioned staleness. And `source: "default"` always reported `stale: false`, so a
+ * built-in-fallback definition (server AND LKG both unavailable/refused) looked byte-for-byte
+ * like a healthy live fetch to whoever read the banner. Returns "" when the banner needs no
+ * note (source === "server" — the healthy case).
+ */
+export function agentDefinitionBannerNote(resolved: ResolvedAgentDefinition): string {
+  if (resolved.source === "server") return "";
+  if (resolved.source === "lkg") {
+    return resolved.forbidden
+      ? "⚠ definition: using stale LKG cache — server refused the request (401/403, check API key scopes), not merely offline."
+      : (resolved.staleMarker ?? AGENT_DEF_STALE_MARKER);
+  }
+  // source === "default"
+  if (resolved.notFoundOnServer) {
+    return "ℹ definition: no server-side definition for this project yet — using kit default baseline.";
+  }
+  if (resolved.forbidden) {
+    return "⚠ definition: built-in fallback — server refused the request (401/403, check API key scopes), not merely offline.";
+  }
+  return "⚠ definition: built-in fallback (server/LKG unavailable).";
 }
 
 /** Minimal shape SessionStart injectors already have from registry.ts's resolveProject. */

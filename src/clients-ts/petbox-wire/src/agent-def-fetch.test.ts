@@ -11,15 +11,18 @@ import {
   AGENT_DEF_STALE_MARKER,
   agentDefCacheDir,
   agentDefCachePath,
+  agentDefinitionBannerNote,
   DEFAULT_DEFINITION_KEY,
   fetchAgentDefinition,
   parseAgentDefinitionResponse,
   readAgentDefCache,
   resolveAgentDefinitionWithLkg,
   writeAgentDefCache,
+  type ResolvedAgentDefinition,
 } from "./agent-def-fetch.ts";
 import { DEFAULT_AGENT_DEFINITION, validateAgentDefinition } from "./agent-definition.ts";
 import { planOpencodeApply } from "./apply-artifacts.ts";
+import { readWireLogTail } from "./wire-log.ts";
 
 const VALID_BODY = {
   key: "default",
@@ -371,4 +374,184 @@ test("resolve: tampered cache (role.model injected) is rejected → DEFAULT, no 
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// ---- wire-silent-failures-invisible: 403 (scope) must be distinguishable from offline --------
+//
+// Evidence 2026-07-26 (card comment): 403 fell into the exact same bucket as a genuine
+// network/timeout failure — both produced source:"default", stale:false, notFoundOnServer
+// undefined — so the caller's message said "offline default definition (no server, no LKG
+// cache)" for a key that was flatly refused by a server that WAS reachable. `forbidden` closes
+// that gap.
+
+test("resolve: fetch 403 + no LKG → DEFAULT, flagged forbidden (server reachable, refused — a scope problem, not offline)", async () => {
+  const home = freshHome();
+  try {
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => new Response("forbidden", { status: 403 }),
+    });
+    assert.equal(got.source, "default");
+    assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+    assert.equal(got.forbidden, true);
+    // Distinct from the 404 case: this is NOT "no definition yet", it's "refused".
+    assert.equal(got.notFoundOnServer, undefined);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve: fetch 401 behaves the same as 403 (both are 'refused', not offline)", async () => {
+  const home = freshHome();
+  try {
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => new Response("unauthorized", { status: 401 }),
+    });
+    assert.equal(got.forbidden, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve: genuine network failure (ECONNREFUSED) is NOT flagged forbidden — stays the offline case", async () => {
+  const home = freshHome();
+  try {
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    assert.equal(got.forbidden, undefined);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve: fetch 403 WITH an LKG cache present still uses the cache, but flags forbidden alongside stale", async () => {
+  const home = freshHome();
+  try {
+    const fetched = parseAgentDefinitionResponse(VALID_BODY)!;
+    writeAgentDefCache("proj", fetched, home);
+
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => new Response("forbidden", { status: 403 }),
+    });
+    assert.equal(got.source, "lkg");
+    assert.equal(got.stale, true);
+    assert.equal(got.forbidden, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ---- corrupt LKG cache vs no cache: distinguishable via wire.log (card item 2) ----------------
+
+test("readAgentDefCache: MISSING cache file → null, silent, no wire.log trace (Class A — fresh machine)", () => {
+  const home = freshHome();
+  try {
+    assert.equal(readAgentDefCache("proj", home), null);
+    assert.deepEqual(readWireLogTail(20, home), []);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readAgentDefCache: PRESENT but corrupt cache → null, same functional result, but leaves a Class-Б wire.log trace", () => {
+  const home = freshHome();
+  try {
+    mkdirSync(agentDefCacheDir(home), { recursive: true });
+    writeFileSync(agentDefCachePath("proj", home), "{ not valid json", "utf8");
+    assert.equal(readAgentDefCache("proj", home), null);
+    const tail = readWireLogTail(20, home);
+    assert.ok(tail.length > 0, "a present-but-corrupt LKG cache must be distinguishable from 'no cache at all'");
+    assert.match(tail.join("\n"), /LKG cache.*not valid JSON/i);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// ---- agentDefinitionBannerNote: the SessionStart banner degradation marker --------------------
+
+const RESOLVED_BASE = {
+  definition: DEFAULT_AGENT_DEFINITION,
+} as const;
+
+test("agentDefinitionBannerNote: source server → no note (healthy case)", () => {
+  const resolved: ResolvedAgentDefinition = { ...RESOLVED_BASE, source: "server", stale: false };
+  assert.equal(agentDefinitionBannerNote(resolved), "");
+});
+
+test("agentDefinitionBannerNote: source lkg → the existing stale marker", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "lkg",
+    stale: true,
+    staleMarker: AGENT_DEF_STALE_MARKER,
+  };
+  assert.equal(agentDefinitionBannerNote(resolved), AGENT_DEF_STALE_MARKER);
+});
+
+test("agentDefinitionBannerNote: source lkg + forbidden → names the scope problem, not just 'stale'", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "lkg",
+    stale: true,
+    staleMarker: AGENT_DEF_STALE_MARKER,
+    forbidden: true,
+  };
+  assert.match(agentDefinitionBannerNote(resolved), /401\/403/);
+});
+
+test("agentDefinitionBannerNote: source default (built-in fallback) → the required marker line", () => {
+  const resolved: ResolvedAgentDefinition = { ...RESOLVED_BASE, source: "default", stale: false };
+  assert.equal(
+    agentDefinitionBannerNote(resolved),
+    "⚠ definition: built-in fallback (server/LKG unavailable).",
+  );
+});
+
+test("agentDefinitionBannerNote: source default + notFoundOnServer → the gentler 'no definition yet' note, not a scary one", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "default",
+    stale: false,
+    notFoundOnServer: true,
+  };
+  const note = agentDefinitionBannerNote(resolved);
+  assert.match(note, /no server-side definition/);
+  assert.doesNotMatch(note, /unavailable/);
+});
+
+test("agentDefinitionBannerNote: source default + forbidden → names the scope problem, not 'offline'", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "default",
+    stale: false,
+    forbidden: true,
+  };
+  const note = agentDefinitionBannerNote(resolved);
+  assert.match(note, /401\/403/);
 });

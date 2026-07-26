@@ -34,6 +34,7 @@
 
 import { resolveObservedBinding } from "./roles.ts";
 import type { Msg } from "./transcript.ts";
+import { wireLog } from "./wire-log.ts";
 
 // How many trailing messages to optimistically resend when the server cursor is unknown.
 // A turn typically adds 2-4 messages; overlap is idempotent, so oversizing only costs bytes.
@@ -72,7 +73,11 @@ export function buildSessionMetaHeader(
     if (extraMeta) Object.assign(meta, extraMeta);
     if (Object.keys(meta).length === 0) return null;
     return JSON.stringify(meta);
-  } catch {
+  } catch (e) {
+    // Not the ordinary "no roles.json yet" path (loadRoles itself never throws) — reaching here
+    // means something unexpected broke building the session-meta header (e.g. non-serializable
+    // extraMeta). Best-effort: the push still proceeds without the header, but leave a trace.
+    wireLog("append", `buildSessionMetaHeader(agent=${agent}) unexpected failure — ${e instanceof Error ? e.message : String(e)}`, homeDir);
     return null;
   }
 }
@@ -146,8 +151,16 @@ export async function pushTranscript(
         t.timeoutMs,
         metaHeader,
       );
-    } catch {
-      return null; // network failure — a full-snapshot retry would fail the same way
+    } catch (e) {
+      // Network failure — a full-snapshot retry would fail the same way, so we give up here
+      // rather than trying it. Best-effort (callers swallow this null), but per card item 5
+      // ("провалы пуша сессий не всплывают нигде") that meant this session's turn was silently
+      // never persisted — one trace per failed push, not per network blip inside a healthy run.
+      wireLog(
+        "append",
+        `pushTranscript network failure for ${t.project}/${t.sessionId} (agent=${t.agent}) — ${e instanceof Error ? e.message : String(e)} — session NOT persisted this turn`,
+      );
+      return null;
     }
 
     if (resp.ok) {
@@ -178,10 +191,22 @@ export async function pushTranscript(
       t.timeoutMs,
       metaHeader,
     );
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      wireLog(
+        "append",
+        `pushTranscript legacy fallback for ${t.project}/${t.sessionId} (agent=${t.agent}) got ` +
+          `HTTP ${resp.status} — session NOT persisted this turn`,
+      );
+      return null;
+    }
     const j = (await resp.json().catch(() => null)) as { version?: number } | null;
     return j && typeof j.version === "number" ? j.version : msgs.length;
-  } catch {
+  } catch (e) {
+    wireLog(
+      "append",
+      `pushTranscript legacy fallback network failure for ${t.project}/${t.sessionId} ` +
+        `(agent=${t.agent}) — ${e instanceof Error ? e.message : String(e)} — session NOT persisted this turn`,
+    );
     return null;
   }
 }

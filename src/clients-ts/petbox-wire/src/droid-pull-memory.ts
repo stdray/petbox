@@ -27,7 +27,7 @@
 // fetch that starts with little/no budget left degrades to its own fallback (LKG cache /
 // built-in default / no canon) rather than blocking — see canon.ts's fetchCanon.
 
-import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
+import { agentDefinitionBannerNote, resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, droidPetboxTool } from "./protocol.ts";
@@ -104,6 +104,11 @@ async function main(): Promise<void> {
     });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     if (canon) context += `\n\n${canon}`;
+    // Definition-degradation note (bug: wire-silent-failures-invisible) — same rationale as
+    // pull-memory.ts's identical addition: a built-in-fallback definition previously reported
+    // stale:false and stayed completely silent in the banner.
+    const defNote = agentDefinitionBannerNote(defResult);
+    if (defNote) context += `\n\n${defNote}`;
     // Prepend the stale-base warning, highest priority so it heads the context.
     const staleWarn = await stalePromise;
     context = staleWarn + context;

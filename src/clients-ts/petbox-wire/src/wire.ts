@@ -80,6 +80,7 @@ import {
   resolveAgentDefinitionWithLkg,
   type ResolvedAgentDefinition,
 } from "./agent-def-fetch.ts";
+import { readWireLogTail, wireLog, wireLogPath } from "./wire-log.ts";
 import {
   DEFAULT_AGENT_DEFINITION,
   diffAgentDefinitions,
@@ -375,6 +376,20 @@ async function runDoctor(argv: string[]): Promise<void> {
     }
   }
 
+  // Class-Б trace tail (bug: wire-silent-failures-invisible) — informational only, never gates
+  // the exit code, same spirit as the drift check above: doctor is offline by design, and most
+  // machines will NEVER trip a Class-Б event, so an absent/empty wire.log is not a failure, just
+  // "nothing has silently broken yet". This is the one place an operator can see the corrupt
+  // roles.json / corrupt registry / corrupt LKG cache / scope-refused fetch events that hooks and
+  // best-effort code paths were told to log but not necessarily print loudly.
+  const wireLogTail = readWireLogTail(10);
+  if (wireLogTail.length === 0) {
+    log(`doctor: wire.log — no recorded silent-failure traces (${wireLogPath()}).`);
+  } else {
+    log(`doctor: wire.log — ${wireLogTail.length} most recent trace line(s) (${wireLogPath()}):`);
+    for (const line of wireLogTail) log(`  ${line}`);
+  }
+
   let hadTruthfulnessBlock = false;
   for (const harness of HARNESS_IDS) {
     // Same gate apply uses: capabilities + the LOCAL model binding for this harness, so a
@@ -433,23 +448,41 @@ type ApplyRunResult = {
 // Best-effort workspace lookup for apply's skill refresh below (bug:
 // skill-files-clobber-and-apply-skips). UNLIKE validateKey (the full-wire path, step 3b), a
 // failure here must NEVER abort apply — skills are secondary to the agent artifacts apply exists
-// to write. Returns undefined on ANY failure (offline, unreachable, non-200, non-JSON, no
-// `workspace` field), and the caller then skips the skill refresh rather than inventing a
-// workspace apply was never given (same "never a hardcoded default" rule as wire-identity.ts).
-async function probeWorkspaceForApply(baseUrl: string, apiKey: string): Promise<string | undefined> {
+// to write. Returns a discriminated `ok:false` on ANY failure — the caller then skips the skill
+// refresh rather than inventing a workspace apply was never given (same "never a hardcoded
+// default" rule as wire-identity.ts) — but distinguishes WHY (wire-silent-failures-invisible):
+// a 401/403 (key lacks the scope /api/auth/validate needs) is not the same problem as a genuine
+// network/timeout failure, and neither is the same as a 200 that simply omits `workspace`
+// (older server). Before this the caller printed one generic "could not resolve workspace" line
+// for all three — not silent, but the three causes were indistinguishable from the text alone.
+type WorkspaceProbeResult =
+  | { readonly ok: true; readonly workspace: string }
+  | { readonly ok: false; readonly reason: "network" | "forbidden" | "no-workspace-field" };
+
+async function probeWorkspaceForApply(baseUrl: string, apiKey: string): Promise<WorkspaceProbeResult> {
+  let resp: Response;
   try {
-    const resp = await fetch(`${baseUrl}/api/auth/validate`, {
+    resp = await fetch(`${baseUrl}/api/auth/validate`, {
       method: "GET",
       headers: { "X-Api-Key": apiKey },
       signal: AbortSignal.timeout(8000),
     });
-    if (!resp.ok) return undefined;
-    const body: any = await resp.json();
-    const ws = body?.workspace ?? body?.Workspace;
-    return typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined;
   } catch {
-    return undefined;
+    return { ok: false, reason: "network" };
   }
+  if (resp.status === 401 || resp.status === 403) {
+    return { ok: false, reason: "forbidden" };
+  }
+  if (!resp.ok) return { ok: false, reason: "network" };
+  let body: any;
+  try {
+    body = await resp.json();
+  } catch {
+    return { ok: false, reason: "network" };
+  }
+  const ws = body?.workspace ?? body?.Workspace;
+  if (typeof ws === "string" && ws.trim().length > 0) return { ok: true, workspace: ws.trim() };
+  return { ok: false, reason: "no-workspace-field" };
 }
 
 async function performApply(opts: {
@@ -459,6 +492,7 @@ async function performApply(opts: {
 }): Promise<ApplyRunResult> {
   const { root, via } = resolveApplyRoot(process.cwd());
   let definition: AgentDefinition;
+  let rolesData: RolesFile;
   try {
     definition = (
       await resolveApplyDefinition({
@@ -469,6 +503,9 @@ async function performApply(opts: {
       })
     ).definition;
     validateAgentDefinition(definition);
+    // strict: a corrupt roles.json must hard-fail apply, not silently compile as "no bindings"
+    // (wire-silent-failures-invisible — the 2026-07-12 "worker rides on Opus" incident shape).
+    rolesData = loadRoles(homedir(), { strict: true });
   } catch (e) {
     console.error(`${opts.label}: hard failure — ${e instanceof Error ? e.message : String(e)}`);
     return {
@@ -482,7 +519,6 @@ async function performApply(opts: {
     };
   }
 
-  const rolesData = loadRoles();
   log(`${opts.label}: root=${root} (via ${via})`);
   log(`${opts.label}: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
 
@@ -569,15 +605,31 @@ async function performApply(opts: {
   } else if (!resolvedForSkills) {
     log(`${opts.label}: skills — skipped (${root} is not a registered project; run \`wire\` here first).`);
   } else {
-    const workspace = await probeWorkspaceForApply(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
-    if (!workspace) {
-      log(`${opts.label}: skills — skipped (could not resolve workspace via /api/auth/validate).`);
+    const probe = await probeWorkspaceForApply(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
+    if (!probe.ok) {
+      // Distinguish WHY (wire-silent-failures-invisible): forbidden is a scope problem worth a
+      // Class-Б trace (it will otherwise look identical to "server down" run after run), the
+      // other two are ordinary/expected best-effort misses and stay stdout-only.
+      const reasonText =
+        probe.reason === "forbidden"
+          ? "the API key was rejected (401/403 — check its scopes), not merely offline"
+          : probe.reason === "no-workspace-field"
+            ? "the server responded but did not report a workspace (older server?)"
+            : "could not reach /api/auth/validate (network/timeout)";
+      log(`${opts.label}: skills — skipped (${reasonText}).`);
+      if (probe.reason === "forbidden") {
+        wireLog(
+          "apply",
+          `workspace probe for skills refresh got 401/403 from ${resolvedForSkills.baseUrl} — ` +
+            `key likely missing a required scope`,
+        );
+      }
     } else {
       const skillOutcomes = writeSkillFiles(
         root,
         join(HERE, "templates"),
         resolvedForSkills.project,
-        workspace,
+        probe.workspace,
       );
       const blockedSkillPaths = reportSkillOutcomes(opts.label, skillOutcomes);
       if (blockedSkillPaths.length > 0) {
@@ -691,12 +743,31 @@ async function resolveApplyDefinition(opts: {
   if (got.source === "server") {
     log(`${label}: using server definition ${got.key} v${got.version}`);
   } else if (got.source === "lkg") {
-    log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    if (got.forbidden) {
+      // Server was reachable and refused the request — a scope problem, not offline
+      // (wire-silent-failures-invisible, evidence 2026-07-26). Say so before the generic stale
+      // marker so the operator does not go debug the network for a permissions issue.
+      log(
+        `${label}: server reachable but refused the request (401/403 — API key likely missing ` +
+          `the agents:read scope); ${got.staleMarker ?? "using LKG agent definition cache"}`,
+      );
+    } else {
+      log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    }
     log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
   } else if (got.notFoundOnServer) {
     // Server was reachable; it just has no definition of its own for this project yet
     // (normal for a fresh project) — not an offline/unreachable condition.
     log(`${label}: no server-side definition for this project yet — using kit default baseline`);
+  } else if (got.forbidden) {
+    // Server was reachable and refused (401/403) AND there is no LKG cache to fall back to —
+    // distinct from a genuine network/timeout/5xx failure, which the final else below still
+    // covers. Do not say "offline": the fix here is scopes, not connectivity.
+    log(
+      `${label}: server reachable but refused the request (401/403 — API key likely missing the ` +
+        `agents:read scope) and no LKG cache exists — using kit default baseline. This is a ` +
+        `permissions problem, not an offline one; check the key's scopes.`,
+    );
   } else {
     log(`${label}: offline default definition (no server, no LKG cache)`);
   }
@@ -1010,8 +1081,11 @@ async function validateKey(
     process.exit(1);
   }
   if (!resp.ok) {
-    // Non-standard / endpoint missing → warn and continue.
+    // Non-standard / endpoint missing → warn and continue. Class-Б: the key still gets
+    // persisted below on this ambiguous read, so leave a trace doctor can surface even after
+    // this run's stdout has scrolled away (wire-silent-failures-invisible).
     log(`[3/10] validate: unexpected status ${resp.status} (endpoint missing?); continuing with a warning.`);
+    wireLog("validate", `unexpected status ${resp.status} from ${uri}; key persisted anyway`);
     return null;
   }
   let body: any = null;
@@ -1019,6 +1093,7 @@ async function validateKey(
     body = await resp.json();
   } catch {
     log(`[3/10] validate: 200 but non-JSON body; continuing with a warning.`);
+    wireLog("validate", `200 but non-JSON body from ${uri}; key persisted anyway`);
     return null;
   }
   // Contract (AuthApi.cs): 200 => { project, scopes, workspace } (camelCase, ASP.NET web
@@ -1034,6 +1109,7 @@ async function validateKey(
     log(`[3/10] validate: OK — key scoped to '${proj}'.`);
   } else {
     log(`[3/10] validate: 200 without a project field; continuing with a warning.`);
+    wireLog("validate", `200 from ${uri} without a project field; key persisted anyway`);
   }
   const ws = body?.workspace ?? body?.Workspace;
   const projectValue = typeof proj === "string" ? proj : undefined;

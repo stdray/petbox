@@ -24,6 +24,8 @@
 // wording might suggest (that "2KB" is the preview length once truncation has already
 // triggered, not the inline threshold). Confirmed identical on both "SessionStart:startup" and
 // "SessionStart:resume" hook names — the gate is on stdout size, not the hook event.
+import { appendWireLogRaw } from "./wire-log.ts";
+
 export const HARNESS_INLINE_HARD_LIMIT_BYTES = 10_000;
 
 // The budget sits below the hard edge, but not by so much that it throws away context that
@@ -111,19 +113,14 @@ export function assembleSessionBanner(
 // but a BREAKAGE (content existed and had to be cut to fit) must leave a trace: stderr, so it's
 // visible in whatever the caller's environment surfaces, AND an append to ~/.petbox/wire.log,
 // so it survives even when stderr is swallowed (Claude Code hook stderr is not always shown to
-// the human) and is checkable after the fact (`cat ~/.petbox/wire.log`). Best-effort: a failure
-// to write the log file must never affect the hook's own best-effort contract — never throws.
+// the human) and is checkable after the fact (`cat ~/.petbox/wire.log`, or `petbox-wire doctor`,
+// which now tails this same file). The append itself is delegated to wire-log.ts — the single
+// shared writer for every Class-Б trace in the kit — so path/mkdir/size-trim logic lives in one
+// place; this function keeps its own pre-existing (non-namespaced) line format for backward
+// compatibility. Best-effort: a failure to write the log file must never affect the hook's own
+// best-effort contract — never throws.
 export async function logBudgetOverage(message: string): Promise<void> {
   const line = `${new Date().toISOString()} ${message}`;
   console.error(line);
-  try {
-    const { appendFile, mkdir } = await import("node:fs/promises");
-    const { homedir } = await import("node:os");
-    const { join } = await import("node:path");
-    const dir = join(homedir(), ".petbox");
-    await mkdir(dir, { recursive: true });
-    await appendFile(join(dir, "wire.log"), `${line}\n`, "utf8");
-  } catch {
-    // best-effort: a failed log write must not affect the hook's own best-effort contract
-  }
+  appendWireLogRaw(line);
 }

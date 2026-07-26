@@ -24,7 +24,7 @@
  * `petbox_memory_upsert` (the Claude `mcp__petbox__*` names do not apply here).
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
+import { agentDefinitionBannerNote, resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { DEFAULT_AGENT_DEFINITION, type AgentDefinition } from "./agent-definition.ts";
 import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
@@ -42,9 +42,15 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // fetch timeout; the plugin instance is long-lived for the opencode session, so this is a
   // one-time load-time cost, not a per-prompt one, and never throws/blocks indefinitely.
   let agentDefinition: AgentDefinition = DEFAULT_AGENT_DEFINITION;
+  // Degradation note text (bug: wire-silent-failures-invisible) — "" when the load-time fetch
+  // reached the live server; a built-in-fallback/LKG source otherwise gets a one-line marker in
+  // the system prompt, same rationale as pull-memory.ts / droid-pull-memory.ts's identical
+  // addition (source "default" used to report stale:false and stay completely silent).
+  let defNote = "";
   if (resolved) {
     const got = await resolveAgentDefinitionForSession(resolved);
     agentDefinition = got.definition;
+    defNote = agentDefinitionBannerNote(got);
   }
 
   // Avoid re-POSTing the same state when session.idle fires repeatedly.
@@ -113,6 +119,7 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
       // runs unthrottled here.
       const staleWarn = await buildStaleBaseWarning({ cwd: directory ?? "" });
       if (staleWarn) output.system.push(staleWarn);
+      if (defNote) output.system.push(defNote);
       output.system.push(
         buildProtocol(resolved.project, opencodePetboxTool, {
           harness: "opencode",
