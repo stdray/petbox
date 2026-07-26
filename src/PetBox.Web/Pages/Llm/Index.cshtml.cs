@@ -2,6 +2,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.LlmRouter.Contract;
 using PetBox.Web.Auth;
@@ -29,6 +30,9 @@ namespace PetBox.Web.Pages.Llm;
 // Keys stay WRITE-ONLY: the view never returns them, so the form only offers set/replace (blank =
 // keep). Depends only on PetBox.LlmRouter.Contract (LlmRouterBoundaryTests).
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class IndexModel : PageModel
 {
 	readonly ILlmRegistryEditor _registry;

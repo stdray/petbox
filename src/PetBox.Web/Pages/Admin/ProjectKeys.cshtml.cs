@@ -29,6 +29,9 @@ namespace PetBox.Web.Pages.Admin;
 // merely into what this page renders — so a forged POST naming a sibling project's key matches zero
 // rows even if this page's own route binding were somehow bypassed.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectKeysModel : PageModel
 {
 	readonly IProjectDirectory _projects;

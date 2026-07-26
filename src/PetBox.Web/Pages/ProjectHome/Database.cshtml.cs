@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Data;
 using PetBox.Data.Contract;
@@ -18,6 +19,9 @@ namespace PetBox.Web.Pages.ProjectHome;
 // A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
 // (workspace-access-isolation).
 [Authorize(Policy = "WorkspaceViewer")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class DatabaseModel : PageModel
 {
 	readonly IProjectDirectory _projects;

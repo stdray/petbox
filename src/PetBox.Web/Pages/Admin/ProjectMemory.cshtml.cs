@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Memory.Contract;
@@ -12,6 +13,9 @@ namespace PetBox.Web.Pages.Admin;
 // Mirrors ProjectLogs / ProjectData. Stores are also created by agents via the
 // MCP memory tools (memory:write); this is the human-facing equivalent.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectMemoryModel : PageModel
 {
 	readonly IProjectDirectory _projects;

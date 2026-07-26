@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Data;
 using PetBox.Data.Contract;
@@ -15,6 +16,9 @@ namespace PetBox.Web.Pages.Admin;
 // /schema endpoint and the MCP tool (that endpoint is ApiKey-auth, this page is
 // cookie-auth via WorkspaceAdmin policy, so the page can't just call it).
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectDataDbModel : PageModel
 {
 	readonly IDataDbCatalog _catalog;

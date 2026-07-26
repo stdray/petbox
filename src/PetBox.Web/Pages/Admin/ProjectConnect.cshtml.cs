@@ -17,6 +17,9 @@ namespace PetBox.Web.Pages.Admin;
 // instructions below are agent-flavored because that's the common case, not because the key itself
 // is agent-only.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectConnectModel : PageModel
 {
 	readonly IProjectDirectory _projects;

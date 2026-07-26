@@ -31,6 +31,9 @@ namespace PetBox.Web.Pages.Admin;
 // optimistic concurrency on `version`); rejections render verbatim in the errors block
 // with the user's JSON preserved (never a silent overwrite).
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectMethodologyModel : PageModel
 {
 	public enum EditorMode { View, Cta, Base, Edit, Confirm }

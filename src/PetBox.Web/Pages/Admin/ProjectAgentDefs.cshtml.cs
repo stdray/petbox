@@ -1,3 +1,4 @@
+using PetBox.Core.Auth;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -19,6 +20,9 @@ namespace PetBox.Web.Pages.Admin;
 // rejection (bad JSON / bad document / stale version) rerenders the editor with the service's
 // message verbatim and the user's JSON preserved — never a silent overwrite.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectAgentDefsModel : PageModel
 {
 	readonly IProjectDirectory _projects;

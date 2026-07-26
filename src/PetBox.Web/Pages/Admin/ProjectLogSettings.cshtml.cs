@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -12,6 +13,9 @@ namespace PetBox.Web.Pages.Admin;
 // so existing links/bookmarks to /log land on the real retention control instead of a 404 or an
 // empty form.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectLogSettingsModel : PageModel
 {
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.

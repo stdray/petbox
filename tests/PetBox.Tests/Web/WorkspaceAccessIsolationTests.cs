@@ -259,9 +259,20 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 	}
 
 	// The project is bound to the ROUTE workspace: membership in wsa is not a licence to read
-	// wsb's project by pointing wsa's URL at it. Enforced by the global
-	// ProjectWorkspaceBindingFilter (Program.cs) BEFORE any page handler runs, so the mismatch is
-	// a hard 404 — not the in-page "not found" banner a page's own null-check would render.
+	// wsb's project by pointing wsa's URL at it.
+	//
+	// THE SHAPE MOVED, from a 404 to the ordinary /AccessDenied denial, in the Razor declaration wave —
+	// and it moved because the ANSWER now comes from a different (earlier, and more correct) place. It
+	// used to come from ProjectWorkspaceBindingFilter, an MVC page filter, i.e. from a routing question
+	// asked INSIDE the endpoint. These pages now declare [TenantFrom(Route, "projectKey")], so
+	// TenantEnforcementMiddleware asks the AUTHORIZATION question first: eve holds no role in projb's
+	// owning workspace (resolved from the catalog, never from the URL), so she is refused above the
+	// handler and the filter is never reached.
+	//
+	// The outcome is unchanged — refused, before anything is read — and the filter is NOT redundant: it
+	// still answers for a caller who IS authorized for both halves and merely typed an inconsistent URL,
+	// which is exactly what Sysadmin_cannot_reach_a_wsb_project_through_a_wsa_url_on_admin_gated_pages
+	// below still pins at 404.
 	[Theory]
 	[InlineData("/ui/wsa/projb")]
 	[InlineData("/ui/wsa/projb/databases")]
@@ -272,9 +283,32 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 	{
 		var auth = await LoginAsync("eve-iso");
 		using var resp = await GetAsync(url, auth);
-		resp.StatusCode.Should().Be(HttpStatusCode.NotFound,
+		ShouldBeDenied(resp,
 			"a project that lives in ANOTHER workspace than the route's must not resolve, even though " +
 			"the route workspace (wsa) is one eve may otherwise view");
+	}
+
+	// …AND THE NEW ANSWER MUST NOT BE AN EXISTENCE ORACLE. Moving from 404 ("nothing here") to
+	// /AccessDenied ("not for you") would be a regression on its own axis if the two cases could be told
+	// apart: eve could then probe for the project keys of every other tenant by reading the status code.
+	//
+	// They cannot, and that is a property of the decision point rather than of these pages:
+	// TenantAuthorizer answers NotAuthorized for a named-but-UNKNOWN tenant exactly as it does for a
+	// wrong-tenant one (WorkspaceKeyOfAsync returns nothing -> NotAuthorized), which is why this is
+	// asserted here as a pair rather than described in a comment.
+	[Fact]
+	public async Task A_foreign_project_and_a_nonexistent_one_are_indistinguishable_to_a_member()
+	{
+		var auth = await LoginAsync("eve-iso");
+
+		using var foreignProject = await GetAsync("/ui/wsa/projb", auth);
+		using var noSuchProject = await GetAsync("/ui/wsa/no-such-project-anywhere", auth);
+
+		ShouldBeDenied(foreignProject, "projb exists, but not in a workspace eve may view");
+		ShouldBeDenied(noSuchProject, "this key names no project at all");
+		noSuchProject.StatusCode.Should().Be(foreignProject.StatusCode,
+			"a caller must not be able to tell 'another tenant owns this key' from 'no such key' — the "
+			+ "difference would turn every project page into a cross-tenant key enumerator");
 	}
 
 	// Same field-IDOR guard on the two WorkspaceAdmin-gated pages (Llm/Index, Config/Index) — a

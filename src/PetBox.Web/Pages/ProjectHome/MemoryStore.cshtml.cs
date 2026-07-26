@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
@@ -14,6 +15,9 @@ namespace PetBox.Web.Pages.ProjectHome;
 // checked against metadata first so we don't auto-vivify a phantom file.
 // WorkspaceViewer + project↔route workspace bind — same tenant gate as Memory page.
 [Authorize(Policy = "WorkspaceViewer")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class MemoryStoreModel : PageModel
 {
 	readonly IProjectDirectory _projects;

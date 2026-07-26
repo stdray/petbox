@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Core.Health;
 using PetBox.Core.Models;
@@ -23,6 +24,9 @@ namespace PetBox.Web.Pages.Admin;
 //                         RepoSettings.CommitUrlTemplate, which SettingsScopePolicy deliberately excludes
 //                         from the generic pages to avoid two disagreeing edit surfaces.
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectDetailModel : PageModel
 {
 	readonly IProjectDirectory _projects;

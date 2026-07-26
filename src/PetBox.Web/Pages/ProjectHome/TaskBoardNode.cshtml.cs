@@ -24,6 +24,9 @@ namespace PetBox.Web.Pages.ProjectHome;
 // the node) — every OnPost* handler (status change, title/body edit, comments) is a MUTATION and
 // guards itself to Member+.
 [Authorize(Policy = "WorkspaceViewer")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class TaskBoardNodeModel : PageModel
 {
 	readonly FeatureFlags _features;

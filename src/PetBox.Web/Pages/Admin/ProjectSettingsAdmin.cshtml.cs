@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PetBox.Core.Auth;
 using PetBox.Core.Settings;
 using PetBox.Web.Settings;
 
@@ -11,6 +12,9 @@ namespace PetBox.Web.Pages.Admin;
 // retention (LogSettings.RetentionDays) used to be a bespoke Info control too but now renders here,
 // through the same generic engine as every other cascading setting (admin-routes-and-pages item 3).
 [Authorize(Policy = "WorkspaceAdmin")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class ProjectSettingsAdminModel : SettingsScopePageModel
 {
 	public ProjectSettingsAdminModel(ISettingsResolver resolver) : base(resolver) { }

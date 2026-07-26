@@ -18,6 +18,9 @@ namespace PetBox.Web.Pages.Logs;
 // query is a MUTATION and stays Member+ (guarded per-handler below, not by the class policy, since
 // the class also carries the read handler).
 [Authorize(Policy = "WorkspaceViewer")]
+// {projectKey} in the route IS the target tenant; ProjectWorkspaceBindingFilter still binds it to
+// {workspaceKey} as a ROUTING question (404 on a mismatched URL), which is a different question.
+[TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class IndexModel : PageModel
 {
 	readonly ILogService _logs;
