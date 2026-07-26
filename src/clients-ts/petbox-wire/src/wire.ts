@@ -78,8 +78,14 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DEFINITION_KEY,
   resolveAgentDefinitionWithLkg,
+  type ResolvedAgentDefinition,
 } from "./agent-def-fetch.ts";
-import { validateAgentDefinition, type AgentDefinition } from "./agent-definition.ts";
+import {
+  DEFAULT_AGENT_DEFINITION,
+  diffAgentDefinitions,
+  validateAgentDefinition,
+  type AgentDefinition,
+} from "./agent-definition.ts";
 import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
@@ -287,6 +293,8 @@ function isModelCommand(argv: string[]): boolean {
 // (doctor-gates-wrong-definition): server → LKG cache → built-in DEFAULT, exactly like apply
 // (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
 // Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
+// Also prints a built-in-vs-live definition drift check (bug: builtin-definition-drifts-no-catchup)
+// when this run actually reached the server — informational only, never changes the exit code.
 async function runDoctor(argv: string[]): Promise<void> {
   let offline = false;
   for (let i = 1; i < argv.length; i++) {
@@ -301,13 +309,15 @@ async function runDoctor(argv: string[]): Promise<void> {
   }
 
   let definition: AgentDefinition;
+  let resolved: ResolvedAgentDefinition;
   try {
-    definition = await resolveApplyDefinition({
+    resolved = await resolveApplyDefinition({
       offline,
       definitionKey: DEFAULT_DEFINITION_KEY,
       cwd: process.cwd(),
       label: "doctor",
     });
+    definition = resolved.definition;
     validateAgentDefinition(definition);
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
@@ -321,6 +331,31 @@ async function runDoctor(argv: string[]): Promise<void> {
 
   log(`doctor: definition="${definition.name}" (${definition.roles.length} roles)`);
   log(`doctor: ${bindingNote}`);
+
+  // Drift check (bug: builtin-definition-drifts-no-catchup) — informational only, never gates
+  // the exit code: nothing here blocks a harness from running correctly (apply already prefers
+  // the live server copy over the built-in), it only tells an operator the kit-shipped offline
+  // fallback (DEFAULT_AGENT_DEFINITION) has fallen behind what the project's server holds, so the
+  // next machine to go offline compiles a stale roster. Only meaningful when this run actually
+  // reached the server for the "default" key — an LKG or built-in-default source has nothing
+  // live to compare against, so the check is a clean skip, not a failure (doctor is offline by
+  // design; this is the one call that leaves that design, and its absence is not an error).
+  if (resolved.source !== "server") {
+    log("doctor: drift check skipped (server unreachable).");
+  } else if (definition.name !== DEFAULT_AGENT_DEFINITION.name) {
+    log(
+      `doctor: drift check skipped (live definition is named "${definition.name}", not ` +
+        `"${DEFAULT_AGENT_DEFINITION.name}" — nothing to compare the built-in default against).`,
+    );
+  } else {
+    const drift = diffAgentDefinitions(DEFAULT_AGENT_DEFINITION, definition);
+    if (drift.length === 0) {
+      log("doctor: built-in default definition matches the live server definition — no drift.");
+    } else {
+      console.error(`doctor: built-in default definition has drifted from the live server definition (${drift.length}):`);
+      for (const line of drift) console.error(`  - ${line}`);
+    }
+  }
 
   let hadTruthfulnessBlock = false;
   for (const harness of HARNESS_IDS) {
@@ -385,12 +420,14 @@ async function performApply(opts: {
   const { root, via } = resolveApplyRoot(process.cwd());
   let definition: AgentDefinition;
   try {
-    definition = await resolveApplyDefinition({
-      offline: opts.offline,
-      definitionKey: opts.definitionKey,
-      cwd: process.cwd(),
-      label: opts.label,
-    });
+    definition = (
+      await resolveApplyDefinition({
+        offline: opts.offline,
+        definitionKey: opts.definitionKey,
+        cwd: process.cwd(),
+        label: opts.label,
+      })
+    ).definition;
     validateAgentDefinition(definition);
   } catch (e) {
     console.error(`${opts.label}: hard failure — ${e instanceof Error ? e.message : String(e)}`);
@@ -568,7 +605,7 @@ async function resolveApplyDefinition(opts: {
   definitionKey: string;
   cwd: string;
   label?: string;
-}): Promise<AgentDefinition> {
+}): Promise<ResolvedAgentDefinition> {
   const label = opts.label ?? "apply";
   const resolved = resolveProject(opts.cwd);
   const got = await resolveAgentDefinitionWithLkg({
@@ -591,7 +628,7 @@ async function resolveApplyDefinition(opts: {
   } else {
     log(`${label}: offline default definition (no server, no LKG cache)`);
   }
-  return got.definition;
+  return got;
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
