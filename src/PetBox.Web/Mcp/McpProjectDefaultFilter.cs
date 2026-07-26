@@ -98,9 +98,14 @@ static class McpProjectDefaultFilter
 			args[ProjectKeyArg] = JsonSerializer.SerializeToElement(project);
 			p.Arguments = args;
 
-			// McpTracingFilter is the OUTERMOST call-tool filter (registered last), so the ambient
-			// activity here IS its `mcp.tool <name>` span — the misroute marker lands on the tool
-			// span, not on the enclosing HTTP request span.
+			// Registration order (Program.cs) is ErrorEnvelope, ToolScope, Tracing, [this filter],
+			// TenantEnforcement, ProjectExists — and per the SDK's nesting, LAST registered = INNERMOST.
+			// So McpTracingFilter is neither outermost nor last: it is registered right BEFORE this
+			// filter, which makes it the next layer OUT from here (still wrapped, in turn, by ToolScope
+			// and ErrorEnvelope further out). That's all this call site needs: because Tracing sits
+			// outside this filter, its span is already open by the time Inject() runs, so the ambient
+			// activity here IS its `mcp.tool <name>` span — the misroute marker lands on the tool span,
+			// not on the enclosing HTTP request span.
 			Activity.Current?.SetTag(InjectedTag, true);
 		}
 		catch
