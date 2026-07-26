@@ -229,7 +229,10 @@ public static class MemoryTools
 		exist). Unsure a store exists? Check `memory_store_list`.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
 		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
-		On a NEW entry (version 0) omitted fields start empty.
+		On a NEW entry (version 0) omitted fields start empty. An empty/omitted `description`
+		on a NEW entry is ACCEPTED but WARNED on (returned as `warning`, naming the affected
+		key(s)): description is the primary surface memory_search ranks and shows, so a
+		factless description is a quietly-degraded write — findable by luck, not by design.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
 		`type` (required on a NEW entry) is the CLOSED taxonomy: User (about the user) | Feedback
 		(a correction/preference on how to work) | Project (durable project fact/constraint) |
@@ -260,9 +263,10 @@ public static class MemoryTools
 		body, a compact ack; 0 = no body; N>0 = the first N chars, "…" when cut; -1 = full body).
 			`scope`: project (default) | workspace. `currentVersion` is the store-wide cursor:
 		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
-		`warning` (optional) is set when an APPLIED call's request payload was large enough to
-		risk the client-side truncation described above — informational, never a refusal (the
-		write already landed); omitted the rest of the time.
+		`warning` (optional) is set when an APPLIED call created an entry (version 0) with an
+		empty description, and/or when the request payload was large enough to risk the
+		client-side truncation described above (both join into one string when both fire) —
+		informational, never a refusal (the write already landed); omitted the rest of the time.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -283,7 +287,23 @@ public static class MemoryTools
 		// Point 4: only warn about size on a write that actually landed — a refused/conflicted
 		// call already has its own signal (conflicts[]), and piling a size warning on TOP of a
 		// refusal would blur which one the caller needs to act on.
-		var warning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
+		// card memory-upsert-create-still-silent-on-empty-description, batch 2: mirror the
+		// memory_remember empty-description warning (same gate — only an APPLIED call) for every
+		// NEW entry (version 0) this call actually created with an empty description. A batch can
+		// create several such entries in one call, so this names the affected key(s) rather than
+		// memory_remember's single-key phrasing.
+		string? descWarning = null;
+		if (outcome.Result.Applied)
+		{
+			var emptyDescKeys = outcome.Result.Added
+				.Where(e => string.IsNullOrWhiteSpace(e.Description))
+				.Select(e => e.Key)
+				.ToList();
+			if (emptyDescKeys.Count > 0)
+				descWarning = $"{EmptyDescriptionWarningCore} Affected key(s): {string.Join(", ", emptyDescKeys)}.";
+		}
+		var sizeWarning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
+		var warning = descWarning is null ? sizeWarning : sizeWarning is null ? descWarning : $"{descWarning} {sizeWarning}";
 		return Serialize(outcome, bodyLen, warning);
 	}
 
@@ -342,6 +362,16 @@ public static class MemoryTools
 	// WorkspaceMemory.ContainerKeyFor for new code.
 	internal const string WorkspaceContainer = WorkspaceMemory.SystemContainer;
 	const string DefaultStore = "notes";
+
+	// Shared between memory_remember and memory_upsert (card
+	// memory-upsert-create-still-silent-on-empty-description, batch 2 — mirrors the
+	// memory_remember warning from mcp-write-degrades-silently-fix rather than re-deriving a
+	// second text). description is the primary surface memory_search ranks/shows entries by, so
+	// a factless description is a quietly-degraded write on EITHER verb — findable by luck, not
+	// by design. Each call site appends its own actionable suffix (remember points at upsert to
+	// fix it up; upsert names the affected key(s) directly, since it IS the fix-up verb).
+	internal const string EmptyDescriptionWarningCore =
+		"description is empty — memory_search ranks and displays entries by description, so this fact will surface poorly.";
 
 	// Authorize a KEY-ADDRESSED memory projectKey. Workspace containers ($workspace / $ws-*)
 	// feed every project's memory cascade within their OWN workspace, so key-addressed
@@ -491,8 +521,7 @@ public static class MemoryTools
 		// when losing the fact outright (a hard refusal) would cost more than a degraded-but-present
 		// entry the caller is told to go fix (e.g. via memory_upsert on the same key).
 		var descWarning = string.IsNullOrWhiteSpace(description)
-			? "description is empty — memory_search ranks and displays entries by description, so " +
-				"this fact will surface poorly. Consider a one-line memory_upsert on this key to add one."
+			? $"{EmptyDescriptionWarningCore} Consider a one-line memory_upsert on this key to add one."
 			: null;
 		// Point 4: the write already applied; a size warning is a SEPARATE concern from the
 		// description one above, so both surface together (space-joined) when both fire — neither

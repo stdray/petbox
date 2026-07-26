@@ -116,6 +116,53 @@ public sealed class MemoryToolsContractTests : IDisposable
 		res.Warning.Should().BeNull();
 	}
 
+	// card memory-upsert-create-still-silent-on-empty-description, batch 2: mirror
+	// Remember_EmptyDescription_ReturnsWarning — a NEW entry (version 0) with an empty
+	// description must WARN, not silently create a poorly-findable record, same as
+	// memory_remember already does.
+	[Fact]
+	public async Task Upsert_NewEntry_EmptyDescription_ReturnsWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", body = "b" },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
+		res.Applied.Should().BeTrue();
+		res.Warning.Should().Contain("description is empty").And.Contain("k");
+	}
+
+	[Fact]
+	public async Task Upsert_NewEntry_WithDescription_NoWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = "b" },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
+		res.Warning.Should().BeNull();
+	}
+
+	// NOT a defect (card section 2, already verified there): on an EDIT (version > 0) an omitted
+	// description keeps the OLD value — it must not trip the empty-description warning.
+	[Fact]
+	public async Task Upsert_EditEntry_OmittedDescription_NoWarning()
+	{
+		var created = (await MemoryTools.UpsertAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes",
+			McpInputs.Entries(new object[] { new { key = "k", type = "project", description = "d", body = "b" } }))).Added.Single();
+
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", body = "b2", version = created.Version },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
+		res.Applied.Should().BeTrue();
+		res.Warning.Should().BeNull();
+	}
+
 	// A refused/conflicted call must not ALSO carry a size warning — conflicts[] is already the
 	// signal to act on, and piling on a second one would blur which is load-bearing.
 	[Fact]
