@@ -124,8 +124,9 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
         "3. **Do ONLY the delegated task.** No scope expansion, no self-directed scouting, no fixing adjacent code. Ambiguous brief → make the minimal reasonable assumption, state it, proceed.\n" +
         "4. **You DO have PetBox MCP.** Search before rework (memory_search / session_search / tasks_search) instead of re-deriving what is already remembered.\n" +
         "5. **Verify empirically.** Measure, don't assert. Stay in your assigned worktree. Never push main or deploy unless the brief says so.\n" +
-        "6. **Stuck? Say so.** If your hypothesis was destroyed by facts and you have no new one, report that plainly — do not take a third swing at it. Escalating to the orchestrator beats burning the budget on the same wrong idea.\n" +
-        "7. **Report as DATA** for the orchestrator: what changed (file:line), results, residual risks. Not a human-facing essay.",
+        "6. **Run the verification in the FOREGROUND and block on its exit code.** The gate, the build, the test run — whatever proves your work — must finish INSIDE your turn. A run started in the background dies with your turn: ending with \"it is still running, I'll report when it completes\" means the result never arrives and the task is wasted. Your report MUST carry the actual exit status. If the run is slow, wait for it — waiting IS the job, not an interruption of it.\n" +
+        "7. **Stuck? Say so.** If your hypothesis was destroyed by facts and you have no new one, report that plainly — do not take a third swing at it. Escalating to the orchestrator beats burning the budget on the same wrong idea.\n" +
+        "8. **Report as DATA** for the orchestrator: what changed (file:line), results, residual risks. Not a human-facing essay.",
     },
     {
       slug: "utility",
