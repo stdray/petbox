@@ -15,8 +15,15 @@ namespace PetBox.Web.Memory;
 // canon so a single call arms an agent's context.
 //   GET /api/memory/{projectKey}/canon
 // Auth mirrors SessionApi: RequireAuthorization("ApiKey"), then assert memory:read and that the
-// key's project claim authorizes {projectKey}. Missing canon → the corresponding part is null
-// (still 200); an unknown project simply yields null parts, as the sessions API leaves it.
+// key's project claim authorizes {projectKey}.
+//
+// Card canon-invisible-and-unfed: an EMPTY canon used to mean a null part — 200, silently
+// carrying nothing, so an agent on day 0 never learned canon exists at all (the store/key/
+// budget convention lived ONLY in MemoryService.cs's comments). A queried-but-empty scope now
+// answers with EmptyCanonMarker instead of null — the one place both consumers of this route
+// (the wiring hook's injected block AND a human hitting the endpoint directly) see the nudge.
+// null is reserved for a leg this CALLER cannot see at all (SandboxContainment suppression, or
+// a project with no workspace) — never for "asked, and it's empty"; see CanonAsync below.
 public static class MemoryApi
 {
 	// The canon convention: store `canon`, entry `index` — the same in every container. The
@@ -26,6 +33,12 @@ public static class MemoryApi
 	// container, not a key suffix.
 	const string CanonStore = "canon";
 	const string CanonKey = "index";
+
+	// The knowledge that used to live ONLY in MemoryService.cs's CanonStore/CanonBodyBudget
+	// comments, now said to the agent that actually needs it. Exact wording pinned by the
+	// canon-invisible-and-unfed fix.
+	const string EmptyCanonMarker =
+		"canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
 
 	public static void MapMemoryEndpoints(this IEndpointRouteBuilder app)
 	{
@@ -64,8 +77,8 @@ public static class MemoryApi
 		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
 
 		// Workspace leg = the project's own workspace container — never a hardcoded global. An
-		// unknown project has no row, so the workspace part simply stays null (still 200), exactly
-		// as before.
+		// unknown project has no row, so there is no container to even ask about — the workspace
+		// part stays null (still 200): a genuinely absent LEG, distinct from an empty one.
 		CanonPart? workspace = null;
 		var wsKey = (await projects.GetAsync(projectKey, ct))?.WorkspaceKey;
 		if (wsKey is not null)
@@ -76,9 +89,11 @@ public static class MemoryApi
 			// enumerates this site mechanically, no list is maintained by hand). A sandboxOnly key gets
 			// the project leg it is entitled
 			// to and NO workspace leg — suppression, not a 403, because the whole response is not
-			// forbidden: the project canon is legitimately its own. A null workspace part is already a
-			// valid 200 shape (see the note above — a project with no workspace canon returns exactly
-			// this), so the wiring hook needs no new contract and simply injects no shared canon.
+			// forbidden: the project canon is legitimately its own. ReadCanonAsync is simply never
+			// CALLED for a suppressed leg, so `workspace` stays the plain null it was declared with —
+			// distinct from an EMPTY canon (which ReadCanonAsync WOULD have answered with the nudge
+			// had it been asked). A null workspace part is already a valid 200 shape, so the wiring
+			// hook needs no new contract and simply injects no shared canon.
 			if (await SandboxContainment.PermitsAsync(ctx.User, container, catalog, ct))
 				workspace = await ReadCanonAsync(memory, container, CanonKey, ct);
 		}
@@ -86,23 +101,33 @@ public static class MemoryApi
 		return TypedResults.Ok(new CanonResponse(project, workspace));
 	}
 
-	// The active canon entry of a scope, or null when the store or entry is absent. The
-	// store-existence guard keeps a missing canon a null part (not a 500) — an unknown
-	// project has no store meta row either, so it lands here too.
-	static async Task<CanonPart?> ReadCanonAsync(IMemoryService memory, string projectKey, string key, CancellationToken ct)
+	// The active canon entry of a scope, or the EmptyCanonMarker nudge when the store or entry
+	// is absent — this is what turns silence into a curation prompt (canon-invisible-and-unfed).
+	// An unknown project has no store meta row either, so it gets the SAME nudge as a real,
+	// still-empty project: this endpoint deliberately does not disclose which (mirrors the
+	// "refusal indistinguishable from absence" posture elsewhere in this file's auth checks).
+	// Never returns null — a genuinely absent LEG (workspace suppressed/not applicable) is
+	// CanonAsync's decision, made BEFORE this is even called, not this method's.
+	static async Task<CanonPart> ReadCanonAsync(IMemoryService memory, string projectKey, string key, CancellationToken ct)
 	{
 		if (!await memory.StoreExistsAsync(projectKey, CanonStore, ct))
-			return null;
+			return new CanonPart(EmptyCanonMarker, DateTime.UtcNow, 0);
 		var entry = (await memory.ListActiveEntriesAsync(projectKey, CanonStore, ct))
 			.FirstOrDefault(e => e.Key == key);
-		return entry is null ? null : new CanonPart(entry.Body, entry.Updated, entry.Version);
+		return entry is null
+			? new CanonPart(EmptyCanonMarker, DateTime.UtcNow, 0)
+			: new CanonPart(entry.Body, entry.Updated, entry.Version);
 	}
 }
 
 // One scope's canon: the raw index body plus its temporal cursor (updatedAt/version), so the
-// hook can cache and detect staleness. Null at the response level when the scope has no canon.
+// hook can cache and detect staleness. A QUERIED scope is never null — an empty one carries
+// MemoryApi.EmptyCanonMarker as its Body (Version 0) instead of vanishing silently. null at the
+// CanonResponse level means the leg was never asked (no workspace) or was withheld (sandbox
+// containment) — see CanonAsync.
 public sealed record CanonPart(string Body, DateTime UpdatedAt, long Version);
 
-// GET /api/memory/{projectKey}/canon — the project's canon and its workspace's shared canon;
-// either part is null when that scope carries no canon index.
+// GET /api/memory/{projectKey}/canon — the project's canon and its workspace's shared canon.
+// Project is always populated (real content or the empty-canon nudge); Workspace is null only
+// when there is no container to ask (no workspace) or the caller's key is sandbox-contained.
 public sealed record CanonResponse(CanonPart? Project, CanonPart? Workspace);

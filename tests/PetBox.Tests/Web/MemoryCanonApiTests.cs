@@ -129,7 +129,9 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 
 // GET /api/memory/{projectKey}/canon (spec agent-wiring, memory-canon-storage): the wiring-hook
 // read surface for the curated memory canon. Returns the project's canon index and the shared
-// workspace canon index; missing parts are null (still 200); no key is 401.
+// workspace canon index; an EMPTY queried scope carries the empty-canon nudge (still 200), not a
+// bare null — null is reserved for a leg never asked (no workspace) or withheld (sandbox
+// containment); no key is 401.
 public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, IAsyncLifetime
 {
 	const string TestProjectKey = MemoryCanonApiFixture.TestProjectKey;
@@ -268,17 +270,27 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 		body.Workspace.Body.Should().NotContain("GLOBAL");
 	}
 
+	// canon-invisible-and-unfed: an empty scope used to answer with a bare null part — 200,
+	// carrying nothing, no hint that a `canon` store even exists. Both legs are QUERIED here
+	// (an ordinary key, workspace container reachable) and both come back with the curation
+	// nudge instead of vanishing silently; the store/key/budget knowledge it carries used to
+	// live ONLY in MemoryService.cs's comments.
 	[Fact]
-	public async Task Canon_NoEntries_ReturnsNullParts_Still200()
+	public async Task Canon_NoEntries_ReturnsEmptyMarkerOnBothLegs_Still200()
 	{
+		const string EmptyMarker = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
+
 		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		var body = await resp.Content.ReadFromJsonAsync<CanonResponse>();
 		body.Should().NotBeNull();
-		body!.Project.Should().BeNull();
-		body.Workspace.Should().BeNull();
+		body!.Project.Should().NotBeNull("a queried scope is never a bare null — empty gets the curation nudge");
+		body.Project!.Body.Should().Be(EmptyMarker);
+		body.Project.Version.Should().Be(0);
+		body.Workspace.Should().NotBeNull("the workspace container IS reachable for this ordinary key — it is just empty");
+		body.Workspace!.Body.Should().Be(EmptyMarker);
 	}
 
 	[Fact]

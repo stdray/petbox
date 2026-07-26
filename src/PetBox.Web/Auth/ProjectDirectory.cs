@@ -1,7 +1,10 @@
 using LinqToDB;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.Memory;
 
 namespace PetBox.Web.Auth;
 
@@ -124,13 +127,45 @@ public interface IProjectDirectory
 // provisioning / delete-cascade surfaces that want the fresh truth (and DO see containers, whose
 // out-of-band insert would make a cached answer wrong), and none of them is on the per-request
 // hot path.
-public sealed class ProjectDirectory(ICoreDbFactory dbf, IMemoryCache cache, TimeSpan? ttl = null)
+// `scopes` (IServiceScopeFactory, optional — DI supplies the real one; a hand-built instance
+// gets null and simply skips the seed) is how a SINGLETON reaches the SCOPED IProjectCanonSeeder
+// safely: capturing a Scoped service in the primary constructor would be the captive dependency
+// CaptiveDependencyTests exists to catch (one memory DataConnection resolved once from the root
+// provider and shared by every request, forever). A scope is rented per call instead — see
+// CreateAsync's canon seed. The seed's OWN memory-store logic lives in ProjectCanonSeeder
+// (PetBox.Web/Memory/ProjectCanonSeeder.cs), deliberately NOT here: this file already branches on
+// IsWorkspaceContainer( for its key-reservation guard below, and a file that both derives a
+// workspace-memory container key AND holds an IMemoryService/MemoryDb door is exactly the shape
+// SandboxContainmentCallSiteGuardTests flags as a site — see that file's header comment.
+public sealed class ProjectDirectory(
+	ICoreDbFactory dbf, IMemoryCache cache, TimeSpan? ttl = null,
+	IServiceScopeFactory? scopes = null, ILogger<ProjectDirectory>? log = null)
 	: IProjectDirectory
 {
 	// Tests construct the directory over a bare factory; each instance then owns a private cache,
 	// which preserves the pre-cache behavior for everything built this way (the DI registration
 	// uses the primary constructor and the app-wide cache).
 	public ProjectDirectory(ICoreDbFactory dbf) : this(dbf, new MemoryCache(new MemoryCacheOptions())) { }
+
+	// `internal` (+ PetBox.Web's InternalsVisibleTo PetBox.Tests) so a test can call this a SECOND
+	// time directly — CreateAsync's own duplicate-key guard makes a second CreateAsync call for the
+	// same key impossible, but the risk canon-invisible-and-unfed calls out is a repeat SEED (a
+	// retry, a future backfill), not a repeat CreateAsync. See
+	// ProjectDirectorySeedsCanonTests.SecondSeedNeverClobbersACuratedCanon.
+	internal async Task SeedCanonAsync(string projectKey, CancellationToken ct)
+	{
+		if (scopes is null) return;
+		try
+		{
+			using var scope = scopes.CreateScope();
+			var seeder = scope.ServiceProvider.GetRequiredService<IProjectCanonSeeder>();
+			await seeder.SeedAsync(projectKey, ct);
+		}
+		catch (Exception ex)
+		{
+			log?.LogWarning(ex, "canon skeleton seed failed for project {ProjectKey} (project creation still succeeds)", projectKey);
+		}
+	}
 
 	// Project keys that would collide with a URL segment of the /ui tree.
 	static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -337,6 +372,12 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf, IMemoryCache cache, Tim
 			Sandbox = sandbox,
 		};
 		await db.InsertAsync(project, token: ct);
+
+		// Best-effort canon seed AFTER the row is committed — see SeedCanonAsync. A skipped or
+		// failed seed can never leave a project half-created; sandbox projects get one too (their
+		// OWN canon is a normal, readable leg — see MemoryCanonApiTests.Canon_SandboxOnlyKey_*,
+		// only the DERIVED workspace leg is contained).
+		await SeedCanonAsync(key, ct);
 
 		// Invalidate the workspace's cached list so the created project is visible IMMEDIATELY (the
 		// row cache needs nothing: negatives are never cached, so the next lookup asks the db). This
