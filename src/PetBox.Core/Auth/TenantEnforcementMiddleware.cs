@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 
 namespace PetBox.Core.Auth;
@@ -70,9 +71,40 @@ public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 			return;
 		}
 
-		// ONE refusal shape for every surface on this plane — acceptance criterion 1 of the work card
-		// keeps the allow/deny OUTCOME and deliberately drops the four different shapes the hand-written
-		// checks used. 403 rather than 401: authentication already ran and had its say above.
+		// ONE refusal per SURFACE, and the surface's own plane decides how it is WORDED. Acceptance
+		// criterion 1 keeps the allow/deny OUTCOME and drops the four different shapes the hand-written
+		// checks used — it does not say every caller must be answered in the same dialect, and on the
+		// Razor plane that difference is the whole delivery.
+		//
+		// A BROWSER'S REFUSAL IS A REDIRECT, NOT A 403 IN THE FACE. Every Razor page in this tree is
+		// reached with a session cookie, and the cookie handler's own denial form is a 302 to
+		// AccessDeniedPath (/AccessDenied, which renders a real 403 page and explains itself) —
+		// deliberately NOT /Login, because re-rendering the sign-in form to somebody who is already
+		// signed in is the loop `auth-denied-and-empty-state` was filed for. Answering a plain-text 403
+		// here instead would have replaced that page with a bare body on every cross-tenant page hit,
+		// and WorkspaceAccessIsolationTests / LogEventDetailsApiTests pin the redirect precisely because
+		// it is the user-visible half of the boundary.
+		//
+		// ForbidAsync() rather than a hand-written 302: it goes through the SAME
+		// IAuthenticationService the authorization pipeline above uses, so the shape is whatever that
+		// request's credential says it is and this middleware never has to know. Under the "Smart"
+		// policy scheme that means a cookie session gets the /AccessDenied redirect (with its
+		// ReturnUrl) and an api-key caller on a page-plane surface — /Logs/EventDetails is one, its
+		// route lives under /api and a fetch() reaches it — still gets a 403, which is what a
+		// programmatic caller can act on. One call, both dialects, no branch on the credential here.
+		//
+		// THE REST PLANE KEEPS THE PLAIN 403, including for a cookie: the REST wave moved
+		// GET /api/logs/{projectKey}/{logName}/live-tail from a 302 to exactly that on purpose
+		// (LogLiveTailTests.Cookie_session_cannot_tail_a_project_of_another_workspace pins it), because
+		// an EventSource cannot follow a redirect into an HTML page usefully. That decision is not
+		// re-opened here.
+		if (surfaceKey.StartsWith(AuthzSurfaceKey.PagePrefix, StringComparison.Ordinal))
+		{
+			await context.ForbidAsync();
+			return;
+		}
+
+		// 403 rather than 401: authentication already ran and had its say above.
 		context.Response.StatusCode = StatusCodes.Status403Forbidden;
 		context.Response.ContentType = "text/plain; charset=utf-8";
 		await context.Response.WriteAsync(verdict.Message, context.RequestAborted);
