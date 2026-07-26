@@ -163,9 +163,10 @@ static class ModuleMcp
 	public const int WriteCallSizeGuidanceBytes = 8_000;
 
 	// Shared wording for every write verb that carries a body (memory_remember, memory_upsert,
-	// tasks_upsert, comments_upsert, session_append) — one class of problem (work
-	// write-verbs-size-limit-still-has-no-number / comments-upsert-size-guidance), one sentence,
-	// so the guidance cannot drift to a different number per tool.
+	// tasks_upsert, comments_upsert, session_append, session_upsert) — one class of problem (work
+	// write-verbs-size-limit-still-has-no-number / comments-upsert-size-guidance /
+	// size-warning-not-wired-to-write-verbs), one sentence, so the guidance cannot drift to a
+	// different number per tool.
 	public const string SizeGuidanceText =
 		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (triples the byte size) — a call " +
 		"whose JSON body exceeds roughly 8,000 bytes risks being silently truncated by the " +

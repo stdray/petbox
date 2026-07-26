@@ -93,11 +93,17 @@ public sealed record UpsertConflictView(
 // AutoResolved: keys whose stale baseline was accepted because the node's payload had not
 // semantically moved since the author's read (bookkeeping bumps only) — applied, and
 // reported so the resolution stays visible.
+// `Warning` (card size-warning-not-wired-to-write-verbs, mirroring memory_upsert's
+// MemoryUpsertResultView.Warning): set only on an upsert whose call APPLIED and whose request
+// payload was large enough to risk the client-side \uXXXX-escaping truncation ModuleMcp.
+// SizeGuidanceText warns about (ModuleMcp.SizeWarningOrNull) — never on a refused/conflicted
+// call, where Conflicts is already the signal to act on. tasks_delta never sets it (no write).
+// Null/omitted the rest of the time.
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
 	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed,
-	IReadOnlyList<string> AutoResolved);
+	IReadOnlyList<string> AutoResolved, string? Warning = null);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an

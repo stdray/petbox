@@ -19,6 +19,7 @@ public sealed class WriteVerbSizeGuidanceTests
 	[InlineData("tasks_upsert")]
 	[InlineData("comments_upsert")]
 	[InlineData("session_append")]
+	[InlineData("session_upsert")]
 	public void WriteVerb_DescriptionCarriesTheSharedSizeGuidanceSentenceVerbatim(string tool)
 	{
 		var desc = RegisteredDescription(tool);

@@ -35,13 +35,19 @@ public sealed record CommentsListResult(IReadOnlyList<CommentView> Comments,
 // written, `Conflicts` explains each rejected id). `Removed` is used by comments_delta (empty on
 // an upsert — deletes go through comments_delete). CommentView/CommentConflict come from the Tasks
 // contract (reused, like memory reuses its own views).
+// `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryUpsertResultView.Warning):
+// set only when a comments_upsert call APPLIED and its request payload was large enough to risk
+// the client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
+// (ModuleMcp.SizeWarningOrNull) — never on a refused/conflicted call, where Conflicts is already
+// the signal to act on. comments_delta never sets it (no write). Null/omitted the rest of the time.
 public sealed record CommentsUpsertResult(
 	bool Applied,
 	long CurrentVersion,
 	IReadOnlyList<CommentView> Added,
 	IReadOnlyList<CommentView> Updated,
 	IReadOnlyList<string> Removed,
-	IReadOnlyList<CommentConflict> Conflicts);
+	IReadOnlyList<CommentConflict> Conflicts,
+	string? Warning = null);
 
 // comments_search answer (list = search without a query). `Retrievers` is present only in query
 // mode (the lexical floor — semantic isn't wired for comments yet). Truncated/Omitted/Hint are the
@@ -405,11 +411,21 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 // ---- session.* -----------------------------------------------------------------------
 
-public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount);
+// `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryRememberResult.Warning):
+// session_upsert always writes (no conflict/reject path — it is a last-write-wins snapshot
+// replace), so this is set whenever the request payload was large enough to risk the
+// client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
+// (ModuleMcp.SizeWarningOrNull). Never a refusal. Null/omitted the rest of the time.
+public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount, string? Warning = null);
 
 // session_append: Applied=false + Reason="gap" is the STRUCTURED contiguity reject —
 // LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
-public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason);
+// `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryUpsertResultView.Warning):
+// set only when the call APPLIED and its request payload was large enough to risk the
+// client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
+// (ModuleMcp.SizeWarningOrNull) — never on a gap reject, where Reason is already the signal to
+// act on. Null/omitted the rest of the time.
+public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason, string? Warning = null);
 
 // Meta is the optional observed client stamp (raw JSON object string) when present.
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version, string? Meta = null);

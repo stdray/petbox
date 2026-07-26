@@ -44,9 +44,13 @@ public static class SessionTools
 		last-write-wins, no history, no field merge; always send the complete blob (it REPLACES
 		whatever is stored, including a session built up by session_append). Kept for repair/import;
 		incremental pushes should use session_append instead. Requires tasks:write.
+		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
+
 		The content is stored as a single message; the per-turn multi-message transcript is pushed
-		by the Stop-hook over REST. Result: { sessionId, version, messageCount } where version is
-		the last message's ordinal.
+		by the Stop-hook over REST. Result: { sessionId, version, messageCount, warning? } where
+		version is the last message's ordinal and `warning` is set when this call's payload was
+		large enough to risk the client-side truncation described above (informational, never a
+		refusal — the write always applies); omitted the rest of the time.
 		""")]
 	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
@@ -61,7 +65,9 @@ public static class SessionTools
 		// replaces any prior content for this sessionId.
 		var messages = new[] { new SessionMessageInput("session", content) };
 		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, meta, ct);
-		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
+		// card size-warning-not-wired-to-write-verbs: session_upsert always writes (no
+		// conflict/reject path), so — mirroring memory_remember — the warning is unconditional.
+		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount, ModuleMcp.SizeWarningOrNull(http));
 	}
 
 	[McpServerTool(Name = "session_append", Title = "Append messages to a session", UseStructuredContent = true, OutputSchemaType = typeof(SessionAppendResult))]
@@ -77,7 +83,10 @@ public static class SessionTools
 		lastOrdinal+1. Requires tasks:write.
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
 
-		Result: { sessionId, applied, lastOrdinal, appended, reason }.
+		Result: { sessionId, applied, lastOrdinal, appended, reason, warning? } — `warning` is set
+		when an APPLIED call's request payload was large enough to risk the client-side truncation
+		described above (informational, never a refusal — the write already landed); omitted the
+		rest of the time (including on a gap reject, where `reason` is already the signal to act on).
 		""")]
 	public static async Task<SessionAppendResult> AppendAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
@@ -96,7 +105,11 @@ public static class SessionTools
 			.ToList();
 
 		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, inputs, meta, ct);
-		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap");
+		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
+		// only warn about size on a write that actually landed — a gap reject already has its own
+		// signal (reason:"gap").
+		var warning = o.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
+		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap", warning);
 	}
 
 	[McpServerTool(Name = "session_get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
