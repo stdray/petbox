@@ -24,10 +24,23 @@ import {
   checkTruthfulness,
   formatViolations,
   isModelViolation,
+  isUnboundViolation,
   modelShapeWarning,
   type ModelViolation,
 } from "./truthfulness.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
+
+// Matches wire.ts's DEFAULT_ROLE_MODEL_SEED — a full binding for every DEFAULT_AGENT_DEFINITION
+// role, so tests that exercise planApply with DEFAULT_AGENT_DEFINITION don't trip the
+// unbound-role hard refusal (reserve-unbound-inherits-session-model) on roles the test isn't
+// actually about. Individual tests override the one role slug they care about.
+const ALL_DEFAULT_BOUND: Readonly<Record<string, string>> = {
+  orchestrator: "opus",
+  worker: "sonnet",
+  utility: "haiku",
+  explore: "haiku",
+  reserve: "fable",
+};
 
 test("claude-code declares role_files + spawn_subagents + mcp_subagent (verified live 2026-07-12)", () => {
   const caps = harnessCapabilities("claude-code");
@@ -144,7 +157,7 @@ test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () =
       },
     ],
   };
-  const cc = planApply(portable, "claude-code", {});
+  const cc = planApply(portable, "claude-code", { worker: "sonnet" });
   assert.equal(cc.violations.length, 0);
   assert.ok(cc.files.some((f) => f.relativePath === ".claude/agents/petbox-worker.md"));
   // Namespacing rename: the pre-prefix name is carried alongside so the writer can clean up
@@ -154,12 +167,12 @@ test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () =
     "legacyRelativePath must point at the bare pre-namespacing name",
   );
 
-  const oc = planApply(portable, "opencode", {});
+  const oc = planApply(portable, "opencode", { worker: "sonnet" });
   assert.equal(oc.violations.length, 0);
   assert.ok(oc.files.every((f) => f.relativePath.startsWith(".opencode/agent/")));
   assert.ok(oc.files.some((f) => f.relativePath === ".opencode/agent/petbox-worker.md"));
 
-  const dr = planApply(portable, "droid", {});
+  const dr = planApply(portable, "droid", { worker: "sonnet" });
   assert.equal(dr.violations.length, 0);
   assert.ok(dr.files.every((f) => f.relativePath.startsWith(".factory/droids/")));
   assert.ok(dr.files.some((f) => f.relativePath === ".factory/droids/petbox-worker.md"));
@@ -168,11 +181,12 @@ test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () =
 
 test("planApply DEFAULT writes all three harnesses including droid droids", () => {
   for (const h of HARNESS_IDS) {
-    const plan = planApply(DEFAULT_AGENT_DEFINITION, h, {});
+    const plan = planApply(DEFAULT_AGENT_DEFINITION, h, ALL_DEFAULT_BOUND);
     assert.equal(plan.violations.length, 0, formatViolations(plan.violations));
     assert.ok(plan.files.length >= 5, `${h} should emit all default roles`);
   }
   const droid = planApply(DEFAULT_AGENT_DEFINITION, "droid", {
+    ...ALL_DEFAULT_BOUND,
     orchestrator: "custom:deepseek-v4-pro",
   });
   const orch = droid.files.find((f) => f.relativePath.includes("orchestrator"));
@@ -211,8 +225,9 @@ test("planApply: emits clean roles, skips only dirty ones", () => {
       },
     ],
   };
-  // opencode lacks dynamic_model_at_spawn
-  const plan = planApply(def, "opencode", {});
+  // opencode lacks dynamic_model_at_spawn. "worker" is bound so this test isolates the
+  // capability violation on "needs-dyn" from the (separate) unbound-role refusal.
+  const plan = planApply(def, "opencode", { worker: "sonnet" });
   assert.equal(plan.files.length, 1);
   assert.ok(plan.files[0]!.relativePath.endsWith("worker.md"));
   assert.deepEqual(plan.skippedRoles, ["needs-dyn"]);
@@ -220,7 +235,7 @@ test("planApply: emits clean roles, skips only dirty ones", () => {
   assert.match(formatApplyBlocked(plan.violations, "opencode", plan.skippedRoles), /needs-dyn/);
 });
 
-test("planApply: bound model in claude-code frontmatter; unbound omits model (+warns)", () => {
+test("planApply: bound model in claude-code frontmatter; unbound is a hard block, not a warning", () => {
   const portable: AgentDefinition = {
     name: "p",
     roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
@@ -234,14 +249,30 @@ test("planApply: bound model in claude-code frontmatter; unbound omits model (+w
   assert.match(worker!.content, /^---\nname: petbox-worker\nmodel: sonnet\n/m);
   assert.deepEqual(withModel.warnings, []);
 
+  // reserve-unbound-inherits-session-model (owner decision 2026-07-26): a declared role with NO
+  // local model binding used to be written silently-inheriting, with only a warning. apply now
+  // refuses it outright — same shape as a capability/model violation, never written, never a
+  // warning.
   const unbound = planApply(portable, "claude-code", {});
-  const body = unbound.files[0]!.content;
-  assert.match(body, /^---\nname: petbox-worker\n/m, "name: is always emitted");
-  assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
-  // Unbound is legal (inherit) but must not be silent.
-  assert.equal(unbound.violations.length, 0);
-  assert.equal(unbound.warnings.length, 1);
-  assert.match(unbound.warnings[0]!, /inherit the session\/parent model/);
+  assert.equal(unbound.files.length, 0, "an unbound declared role must not be written at all");
+  assert.deepEqual(unbound.warnings, []);
+  assert.equal(unbound.violations.length, 1);
+  const v = unbound.violations[0]!;
+  assert.ok(isUnboundViolation(v), "expected an unbound violation, not a capability/model one");
+  assert.equal(v.role, "worker");
+  assert.equal(v.harness, "claude-code");
+  assert.deepEqual(unbound.skippedRoles, ["worker"]);
+
+  const msg = formatApplyBlocked(unbound.violations, unbound.harness, unbound.skippedRoles);
+  assert.match(msg, /worker/);
+  assert.match(msg, /NO local model binding/);
+  assert.match(msg, /claude-code/);
+
+  // apply's exit contract: an unbound-role refusal ⇒ non-zero (3), same as any other
+  // truthfulness violation — a political block, not a hard crash (see wire-exit.ts).
+  const hadTruthfulnessBlock = unbound.violations.length > 0;
+  assert.equal(classifyApplyExit({ hadTruthfulnessBlock }), WIRE_EXIT.truthfulness);
+  assert.notEqual(WIRE_EXIT.truthfulness, WIRE_EXIT.hard);
 });
 
 test("model gate: claude-code role bound to a droid id is BLOCKED (not written)", () => {
@@ -364,13 +395,15 @@ test("model gate: droid/opencode id spaces stay open (no invented allow-list)", 
   assert.equal(isResolvableModel("opencode", "deepseek/deepseek-v4-pro"), true);
 
   const droid = planApply(DEFAULT_AGENT_DEFINITION, "droid", {
+    ...ALL_DEFAULT_BOUND,
     worker: "custom:DeepSeek-V4-Pro-0",
   });
-  assert.equal(droid.violations.length, 0);
+  assert.equal(droid.violations.length, 0, formatViolations(droid.violations));
   const oc = planApply(DEFAULT_AGENT_DEFINITION, "opencode", {
+    ...ALL_DEFAULT_BOUND,
     worker: "deepseek/deepseek-v4-pro",
   });
-  assert.equal(oc.violations.length, 0);
+  assert.equal(oc.violations.length, 0, formatViolations(oc.violations));
 });
 
 test("checkTruthfulness (doctor path) also gates the local model binding", () => {
@@ -391,11 +424,12 @@ test("checkTruthfulness (doctor path) also gates the local model binding", () =>
   assert.equal((dirty[0] as ModelViolation).role, "worker");
 });
 
-test("planOpencodeApply: bound model in frontmatter; unbound omits model", () => {
+test("planOpencodeApply: bound model in frontmatter", () => {
   const withModel = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {
+    ...ALL_DEFAULT_BOUND,
     worker: "deepseek/deepseek-v4-pro",
   });
-  assert.equal(withModel.violations.length, 0);
+  assert.equal(withModel.violations.length, 0, formatViolations(withModel.violations));
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
   assert.match(worker!.content, /^---\nname: petbox-worker\nmodel: deepseek\/deepseek-v4-pro\n/m);
@@ -470,7 +504,7 @@ test("emitted agent names are namespaced petbox-<slug> across the whole default 
   // chore: petbox-namespaced-agent-names — role.slug (internal) stays bare; only the render
   // is prefixed. Assert it holds for every role x harness, not just worker.
   for (const harness of HARNESS_IDS) {
-    const plan = planApply(DEFAULT_AGENT_DEFINITION, harness, {});
+    const plan = planApply(DEFAULT_AGENT_DEFINITION, harness, ALL_DEFAULT_BOUND);
     assert.equal(plan.violations.length, 0, formatViolations(plan.violations));
     for (const role of DEFAULT_AGENT_DEFINITION.roles) {
       const file = plan.files.find((f) => f.relativePath.includes(`petbox-${role.slug}`));

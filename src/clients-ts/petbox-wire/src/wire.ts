@@ -550,6 +550,11 @@ async function runApply(argv: string[]): Promise<void> {
     }
   }
 
+  // Seed a fresh machine's roster BEFORE compiling — apply now refuses any declared role with
+  // no local binding (reserve-unbound-inherits-session-model), so a bare `apply` on a machine
+  // that never ran full `wire` needs this too, not just wire's own step 11 (see
+  // seedDefaultRoleBindingsIfMissing's doc comment). No-op when roles.json already exists.
+  seedDefaultRoleBindingsIfMissing("apply");
   const result = await performApply({ definitionKey, offline, label: "apply" });
   process.exit(result.code);
 }
@@ -1429,22 +1434,36 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 // Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
 // aliases only (never a concrete id — see harness-models.ts / the claude-api skill's live
 // finding that the Task tool's `model` param is a closed enum of exactly these four tiers).
-// `reserve` is deliberately ABSENT: the tester's machine may not have access to the `fable`
-// tier, and binding it there would repeat the 2026-07-12 incident shape (a binding the harness
-// cannot actually resolve) — an unbound role inherits the session model instead, and apply
-// already warns about that honestly (see planApply's warnings).
+//
+// `reserve` is now bound too — reversing the earlier "leave it deliberately absent" call
+// (reserve-unbound-inherits-session-model, owner decision 2026-07-26). It is bound to an ALIAS
+// (`fable`), never a concrete model id: an id is exactly the foreign-shape mistake the
+// 2026-07-12 incident was (a droid id landing in a claude-code binding) — an alias is
+// harness-portable, and if the tier is genuinely unavailable on this machine it fails LOUD at
+// spawn time (a closed Task-tool enum rejects it up front), never silently resolving to
+// something else. It is bound to the STRONGEST tier on purpose, not a cautious default: the
+// umbrella this card sits under (newcomer-equivalent-experience) means a newcomer's experience
+// should match the owner's, and on the owner's own machine reserve already rides the strongest
+// tier. reserve is also the one role where a weaker tier would defeat its own purpose — it is
+// the second pair of eyes called in only once everything else has already been tried and failed,
+// so it is never the role to economize on.
 const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   orchestrator: "opus",
   worker: "sonnet",
   utility: "haiku",
   explore: "haiku",
+  reserve: "fable",
 };
 
 // Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
 // never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
-// empty, every generated .claude/agents/*.md ships with no `model:` key at all, and every role
-// silently rides the session model — the exact silent tier-drift class the 2026-07-12 incident
-// ("worker on Opus for a whole session, nobody noticed") grew from.
+// empty, and apply now REFUSES to write any declared role with no local model binding at all
+// (reserve-unbound-inherits-session-model) — so an unseeded roster on a fresh machine would leave
+// EVERY harness fully blocked (exit WIRE_EXIT.truthfulness), not merely silently tier-drifting the
+// way the 2026-07-26 incident (and, structurally, the 2026-07-12 one before it) grew from.
+// Called from BOTH the full `wire` run (step 11, below) and the standalone `apply` subcommand
+// (runApply) — previously only the former, so running a bare `apply` on a fresh machine (no
+// roles.json yet) hit the unbound-role refusal for every role with nothing to fix it.
 function seedDefaultRoleBindingsIfMissing(label: string): void {
   if (existsSync(rolesPath())) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
@@ -1459,8 +1478,7 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
   saveRoles(data);
   log(
     `${label} roles: seeded ${rolesPath()} — profile "default", claude-code aliases ` +
-      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku; reserve left unbound — ` +
-      `bind it yourself with \`petbox-wire model set reserve <tier>\` if this machine has access).`,
+      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku, reserve=fable).`,
   );
 }
 

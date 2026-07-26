@@ -304,7 +304,16 @@ test("resolve: live fetch writes LKG then returns server source", async () => {
 
 test("offline DEFAULT_AGENT_DEFINITION still compiles (truthfulness + plan green)", () => {
   validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
-  const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {});
+  // Every default role needs a binding now — apply refuses an unbound declared role outright
+  // (reserve-unbound-inherits-session-model) — so this offline-compile smoke test binds all of
+  // them, mirroring wire.ts's DEFAULT_ROLE_MODEL_SEED, rather than exercising that refusal here.
+  const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {
+    orchestrator: "opus",
+    worker: "sonnet",
+    utility: "haiku",
+    explore: "haiku",
+    reserve: "fable",
+  });
   assert.equal(plan.violations.length, 0);
   assert.ok(plan.files.length >= 1);
 });
