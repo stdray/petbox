@@ -21,6 +21,7 @@ import {
   useProfile,
   type RolesFile,
 } from "./roles.ts";
+import { readWireLogTail } from "./wire-log.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-roles-"));
@@ -72,6 +73,53 @@ test("load corrupt / non-object JSON → empty shell", () => {
 
     writeFileSync(rolesPath(home), "null", "utf8");
     assert.deepEqual(loadRoles(home).profiles, {});
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// wire-silent-failures-invisible taxonomy: a missing file is Class A (fresh machine) and never
+// throws even in strict mode; a PRESENT-but-corrupt file is where apply's polarity (strict)
+// differs from every other caller (doctor, roles/model CLI, session push).
+test("loadRoles strict: missing file stays silent (Class A), never throws even in strict mode", () => {
+  const home = freshHome();
+  try {
+    assert.doesNotThrow(() => loadRoles(home, { strict: true }));
+    const data = loadRoles(home, { strict: true });
+    assert.deepEqual(data.profiles, {});
+    assert.deepEqual(readWireLogTail(20, home), [], "no roles.json at all must never trace to wire.log");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadRoles strict: corrupt roles.json THROWS (apply's hard-failure polarity — the 2026-07-12 incident shape)", () => {
+  const home = freshHome();
+  try {
+    mkdirSync(join(home, ".petbox"), { recursive: true });
+    writeFileSync(rolesPath(home), "not-json{{{", "utf8");
+    assert.throws(
+      () => loadRoles(home, { strict: true }),
+      /corrupt roles\.json/,
+      "apply must hard-fail on a corrupt roles.json, never silently compile as if unbound",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadRoles non-strict: corrupt roles.json stays silent on stdout but leaves a Class-Б trace in wire.log", () => {
+  const home = freshHome();
+  try {
+    mkdirSync(join(home, ".petbox"), { recursive: true });
+    writeFileSync(rolesPath(home), "not-json{{{", "utf8");
+    // Non-strict (doctor / roles CLI / session push's polarity): behaves exactly as before —
+    // empty shell, never throws — but now also traces the event so doctor can surface it.
+    const data = loadRoles(home);
+    assert.deepEqual(data.profiles, {});
+    const tail = readWireLogTail(20, home);
+    assert.ok(tail.length > 0, "a present-but-corrupt roles.json must leave a wire.log trace");
+    assert.match(tail.join("\n"), /roles.*failed to parse/i);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

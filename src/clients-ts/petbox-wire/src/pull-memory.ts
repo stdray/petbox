@@ -19,7 +19,7 @@
 // not 2x it. A fetch that starts with little/no budget left degrades to its own fallback
 // (LKG cache / built-in default / no canon) rather than blocking — see canon.ts's fetchCanon.
 
-import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
+import { agentDefinitionBannerNote, resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
@@ -127,7 +127,13 @@ async function main(): Promise<void> {
     // and prepend it: highest priority, tiny, so it must survive any tail truncation of the
     // rest of the banner rather than risk being the part that gets cut.
     const staleWarn = await stalePromise;
-    await writeStdout(staleWarn + banner.text);
+    // Definition-degradation note (bug: wire-silent-failures-invisible — "Пометка деградации в
+    // баннере"): before this, a built-in-fallback definition (source "default", server AND LKG
+    // both unavailable/refused) reported stale:false and the banner said nothing at all — it
+    // read exactly like a healthy live fetch. Same treatment as staleWarn: tiny and prepended
+    // outside the byte-budget accounting so it survives any tail truncation.
+    const defNote = agentDefinitionBannerNote(defResult);
+    await writeStdout(staleWarn + (defNote ? defNote + "\n" : "") + banner.text);
   } catch {
     // best-effort
   }
