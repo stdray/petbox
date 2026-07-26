@@ -17,13 +17,24 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
 import type { ResolvedAgentDefinition } from "./agent-def-fetch.ts";
+import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
+import type { ResolvedProject } from "./registry.ts";
+import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
 import {
+  BANNER_BUDGET_WARN_FRACTION,
+  bannerBudgetLegsOrUnreachable,
+  bannerBudgetWarnThresholdBytes,
+  type BannerBudgetLeg,
+  computeBannerBudgetLegs,
   computeRosterState,
+  formatBannerBudgetLeg,
   formatCanonLeg,
   formatDefinitionSource,
   formatRoleModelSource,
@@ -34,6 +45,13 @@ import {
 import { readArtifactState } from "./origin-marker.ts";
 import type { RolesFile } from "./roles.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
+
+const FAKE_PROJECT: ResolvedProject = {
+  project: "banner-budget-test-project",
+  apiKey: "fake-key",
+  baseUrl: "http://unused.invalid",
+  envVar: "PETBOX_BANNER_BUDGET_TEST_API_KEY",
+};
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -251,6 +269,150 @@ test("readArtifactState: absent / ours (origin marker) / foreign (no marker)", (
 // checkSkillFile/formatSkillFile/buildSkillReports moved to skill-files.ts (task
 // builtin-definition-drifts-no-catchup item 3) — their unit tests now live in
 // skill-files.test.ts, next to the functions.
+
+// ---- session banner budget (card canon-write-gate-banner-budget) -----------
+
+test("computeBannerBudgetLegs: canon is fetched ONCE and reused for both source legs; resume's protocol is strictly longer (recall-nudge suffix)", async () => {
+  let fetchCount = 0;
+  const canonFetch = async () => {
+    fetchCount++;
+    return "## PetBox memory canon\n\nsome curated pointer text";
+  };
+  const legs = await computeBannerBudgetLegs(FAKE_PROJECT, DEFAULT_AGENT_DEFINITION, { canonFetch });
+  assert.equal(fetchCount, 1, "canon does not vary by source — must not be fetched twice");
+  assert.deepEqual(legs.map((l) => l.source), ["startup", "resume"]);
+  assert.equal(legs[0]!.banner.canonBytes, legs[1]!.banner.canonBytes, "same canon on both legs");
+  assert.ok(
+    legs[1]!.banner.protocolBytes > legs[0]!.banner.protocolBytes,
+    "resume's protocol must carry the recall-nudge suffix and be strictly longer than startup's",
+  );
+  for (const leg of legs) {
+    assert.equal(leg.marginBytes, SESSION_BANNER_BUDGET_BYTES - leg.combinedBytes);
+    assert.equal(leg.combinedBytes, leg.banner.protocolBytes + 2 + leg.banner.canonBytes);
+  }
+});
+
+test("computeBannerBudgetLegs: no canon at all -> canonBytes 0, combinedBytes collapses to protocolBytes alone", async () => {
+  const legs = await computeBannerBudgetLegs(FAKE_PROJECT, DEFAULT_AGENT_DEFINITION, {
+    canonFetch: async () => null,
+  });
+  for (const leg of legs) {
+    assert.equal(leg.banner.canonBytes, 0);
+    assert.equal(leg.combinedBytes, leg.banner.protocolBytes);
+    assert.equal(leg.banner.canonIncluded, false);
+  }
+});
+
+test("computeBannerBudgetLegs: a canon that fits startup's shorter protocol can still be DROPPED on resume's longer one — the exact regression this card caught", async () => {
+  const startupProtocol = buildProtocol(FAKE_PROJECT.project, mcpPetboxTool, {
+    source: "startup",
+    harness: "claude-code",
+    definition: DEFAULT_AGENT_DEFINITION,
+  });
+  const resumeProtocol = buildProtocol(FAKE_PROJECT.project, mcpPetboxTool, {
+    source: "resume",
+    harness: "claude-code",
+    definition: DEFAULT_AGENT_DEFINITION,
+  });
+  const startupBytes = Buffer.byteLength(startupProtocol, "utf8");
+  const resumeBytes = Buffer.byteLength(resumeProtocol, "utf8");
+  assert.ok(resumeBytes > startupBytes, "precondition: resume protocol strictly longer than startup's");
+
+  // Sized to land EXACTLY at startup's budget edge (fits with zero bytes to spare) but past
+  // resume's edge (resume's protocol alone already ate what startup left free for canon).
+  const canonBytes = SESSION_BANNER_BUDGET_BYTES - startupBytes - 2;
+  const canon = "C".repeat(canonBytes);
+
+  const legs = await computeBannerBudgetLegs(FAKE_PROJECT, DEFAULT_AGENT_DEFINITION, {
+    canonFetch: async () => canon,
+  });
+  const startupLeg = legs.find((l) => l.source === "startup")!;
+  const resumeLeg = legs.find((l) => l.source === "resume")!;
+  assert.equal(startupLeg.banner.canonIncluded, true, "startup: canon fits exactly");
+  assert.equal(resumeLeg.banner.canonIncluded, false, "resume: same canon no longer fits — this is the bug");
+  assert.equal(resumeLeg.banner.overBudget, true);
+});
+
+test("formatBannerBudgetLeg: canon INCLUDED reads the margin", () => {
+  const leg: BannerBudgetLeg = {
+    source: "startup",
+    banner: { text: "", totalBytes: 150, protocolBytes: 100, canonBytes: 50, canonIncluded: true, overBudget: false },
+    combinedBytes: 152,
+    marginBytes: 48,
+  };
+  assert.match(formatBannerBudgetLeg(leg), /source=startup:.*canon INCLUDED, margin 48B/);
+});
+
+test("formatBannerBudgetLeg: canon DROPPED reads the overage, not just a bare 'over budget'", () => {
+  const leg: BannerBudgetLeg = {
+    source: "resume",
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 50, canonIncluded: false, overBudget: true },
+    combinedBytes: 152,
+    marginBytes: -2,
+  };
+  assert.match(formatBannerBudgetLeg(leg), /source=resume:.*canon DROPPED — over budget by 2B/);
+});
+
+test("formatBannerBudgetLeg: protocol ALONE over budget reads distinctly from canon-dropped (nothing left to drop)", () => {
+  const leg: BannerBudgetLeg = {
+    source: "startup",
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, overBudget: true },
+    combinedBytes: 100,
+    marginBytes: -5,
+  };
+  assert.match(formatBannerBudgetLeg(leg), /PROTOCOL ALONE over budget by 5B \(nothing left to drop\)/);
+});
+
+test("formatBannerBudgetLeg: no canon at all (healthy) reads distinctly from canon-included", () => {
+  const leg: BannerBudgetLeg = {
+    source: "startup",
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, overBudget: false },
+    combinedBytes: 100,
+    marginBytes: 9300,
+  };
+  assert.match(formatBannerBudgetLeg(leg), /no canon available, margin 9300B/);
+});
+
+test("bannerBudgetWarnThresholdBytes: 5% of SESSION_BANNER_BUDGET_BYTES, rounded", () => {
+  assert.equal(
+    bannerBudgetWarnThresholdBytes(),
+    Math.round(SESSION_BANNER_BUDGET_BYTES * BANNER_BUDGET_WARN_FRACTION),
+  );
+  assert.equal(BANNER_BUDGET_WARN_FRACTION, 0.05);
+});
+
+test("bannerBudgetLegsOrUnreachable: server answers the canon endpoint -> ok:true with both legs computed", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ project: { body: "curated text", version: 5 }, workspace: null }));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const resolved: ResolvedProject = { ...FAKE_PROJECT, baseUrl: `http://127.0.0.1:${port}` };
+    const result = await bannerBudgetLegsOrUnreachable(resolved, DEFAULT_AGENT_DEFINITION);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.legs.length, 2);
+      assert.ok(result.legs[0]!.banner.canonBytes > 0);
+    }
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+test("bannerBudgetLegsOrUnreachable: canon endpoint unreachable -> ok:false (never throws, never fabricates a healthy reading)", async () => {
+  // Bind, read the port, then close immediately — the port is guaranteed to refuse connections
+  // (nothing else on the machine can grab it in this window in practice for a test's lifetime).
+  const probe = createServer();
+  await new Promise<void>((r) => probe.listen(0, "127.0.0.1", () => r()));
+  const port = (probe.address() as AddressInfo).port;
+  await new Promise<void>((r) => probe.close(() => r()));
+
+  const resolved: ResolvedProject = { ...FAKE_PROJECT, baseUrl: `http://127.0.0.1:${port}` };
+  const result = await bannerBudgetLegsOrUnreachable(resolved, DEFAULT_AGENT_DEFINITION);
+  assert.equal(result.ok, false);
+});
 
 // ---- CLI integration tests (isolated HOME, same pattern as roles.test.ts /
 // apply-unbound-refusal.test.ts) -----------------------------------------------
