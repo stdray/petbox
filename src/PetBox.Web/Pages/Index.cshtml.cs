@@ -1,11 +1,22 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Pages;
 
 [Authorize]
+// The app root. It names no tenant: it READS the caller's own current workspace off their own
+// claims/cookie and redirects there, or renders the empty state when they hold none. The tenant it
+// lands on is therefore always one the caller already has, and NavigationContext.ResolveWorkspace —
+// not this page — is what refuses a workspace the session is not a member of.
+//
+// Mapped by TWO endpoints ("" and "Index"), which is why the declaration cannot be a route source:
+// there is no route value on either of them to read.
+[TenantExempt(TenantExemption.Identity,
+	"resolves the caller's OWN current workspace from their own claims and redirects to it; the route "
+	+ "names no tenant and the page reads none it was handed")]
 public sealed class IndexModel : PageModel
 {
 	readonly INavigationContext _nav;

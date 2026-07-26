@@ -62,7 +62,6 @@ public static class TenantEnforcementAllowlist
 		// RAZOR — what is LEFT of the 65 (one entry per page, not per endpoint: the PageModel CLASS is
 		// the carrier). The Razor wave takes them out one family at a time; the accounting of what has
 		// already gone is in the note at the bottom of this list.
-		"page:/AccessDenied",
 		"page:/Admin/AgentKeys",
 		"page:/Admin/Deploy",
 		"page:/Admin/Index",
@@ -94,16 +93,12 @@ public static class TenantEnforcementAllowlist
 		"page:/Config/Preview",
 		"page:/Config/Tags",
 		"page:/Dashboard/Index",
-		"page:/Index",
 		"page:/Llm/Index",
 		"page:/Logs/EventDetails",
 		"page:/Logs/Index",
 		"page:/Logs/Trace",
 		"page:/Logs/Traces",
-		"page:/Me/Account",
 		"page:/Me/NewWorkspace",
-		"page:/Me/Preferences",
-		"page:/Me/Security",
 		"page:/Nav/Tree",
 		"page:/ProjectHome/Database",
 		"page:/ProjectHome/Databases",
@@ -116,7 +111,6 @@ public static class TenantEnforcementAllowlist
 		"page:/ProjectHome/TaskBoard",
 		"page:/ProjectHome/TaskBoardNode",
 		"page:/ProjectHome/Tasks",
-		"page:/Search",
 		"page:/Share",
 	
 		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family

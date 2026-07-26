@@ -6,6 +6,12 @@ using PetBox.Core.Auth;
 namespace PetBox.Web.Pages.Me;
 
 [Authorize]
+// The caller's own password, and the narrow door above is the reason no tenant enters into it:
+// IAccountSelfService takes no user id, so the account acted on is the authenticated one and no form
+// field on this page can name somebody else's row — let alone another tenant's.
+[TenantExempt(TenantExemption.Identity,
+	"changes the password of the account the request is authenticated as; IAccountSelfService takes no "
+	+ "user id and the route names no tenant")]
 public sealed class SecurityModel : PageModel
 {
 	// IAccountSelfService, NOT IUserAdminService: EVERY logged-in user reaches this page, and the

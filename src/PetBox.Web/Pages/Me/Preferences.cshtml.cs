@@ -9,6 +9,13 @@ using PetBox.Web.Settings;
 namespace PetBox.Web.Pages.Me;
 
 [Authorize]
+// Reads and writes at Scope.User keyed by the caller's OWN user-id claim (TryGetUserId below): no
+// project or workspace is named by the request or stored with the row. The same reading, and the same
+// class, as the /api/ui/board-filter-prefs endpoint the REST wave declared — the two are the
+// per-user-preference surface of the same setting store and must not answer this question differently.
+[TenantExempt(TenantExemption.Identity,
+	"a per-user preference read and written at Scope.User under the caller's own user id; no project "
+	+ "or workspace is named by the request or stored with the row")]
 public sealed class PreferencesModel : PageModel
 {
 	readonly ISettingsResolver _resolver;

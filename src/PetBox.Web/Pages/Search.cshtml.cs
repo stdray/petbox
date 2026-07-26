@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
 using PetBox.Web.Search;
@@ -15,6 +16,21 @@ namespace PetBox.Web.Pages;
 // board-view-mode-framework's direct reuse ask) — with workspace/project/board columns turned
 // on, since a hit's location isn't implicit here the way it is on a single board's page.
 [Authorize]
+// WHY `identity` AND NOT A TENANT SOURCE, on the one page in this tree that deliberately crosses
+// every tenant the caller can reach. There is nothing to declare a source FROM: the route is a bare
+// /ui/search, `q` is a search string and not a tenant, and the page never accepts a
+// workspace/project from the request at all. The extent of the fan-out is the CALLER —
+// NavigationContext.ProjectsByWorkspace, already filtered to their own memberships (sysadmin sees
+// all), which CrossScopeTaskSearchService's own header calls out as the reason the fan-out is legal.
+//
+// So the subject is the caller and the answer is a fact about their own reach, exactly like
+// /api/ui/board-filter-prefs and whoami. What this exemption does NOT do is loosen anything: were
+// ProjectsByWorkspace ever to stop being membership-filtered, this page would leak every board in
+// the installation and no declaration on it would have caught that — the guard for that lives with
+// the enumeration, not here.
+[TenantExempt(TenantExemption.Identity,
+	"fans out over the caller's OWN reachable projects (NavigationContext.ProjectsByWorkspace, "
+	+ "membership-filtered); the request names no workspace or project to scope it to")]
 public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 {
 	// GET-bound query param; an omitted/empty `q` binds to null (empty-form-field gotcha),
