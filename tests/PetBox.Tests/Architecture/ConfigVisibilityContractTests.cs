@@ -71,28 +71,31 @@ public sealed class ConfigVisibilityContractTests
 	}
 
 	// The POST-Build precedence AuthzSurfaceHost pins on: a config source added LAST
-	// (ConfigureAppConfiguration, applied after Build() merges every provider) beats an env var that
-	// leaked earlier from a sibling test class. Program.cs reads `Seq:SelfLog:Enabled` again after
-	// Build() to decide whether POST /api/events/raw is mapped.
+	// (ConfigureAppConfiguration, applied after Build() merges every provider) beats a value supplied
+	// through the pre-Build channel. Program.cs reads `Seq:SelfLog:Enabled` again after Build() to
+	// decide whether POST /api/events/raw is mapped.
+	//
+	// The leak this whole chore removes is an env var, and an env var is what AuthzSurfaceHost's pin
+	// ultimately defends against — but asserting THAT literally would mean setting a process-global
+	// variable here, i.e. recreating the order-dependence hazard inside a parallel suite for the
+	// duration of this test. UseSetting stands in for it: it is the same early, pre-Build-visible
+	// channel (proven by the two tests above), and it is scoped to this one host.
 	[Fact]
-	public void InMemoryAddedLast_BeatsAnEarlierEnvVar_AtThePostBuildRead()
+	public void InMemoryAddedLast_BeatsThePreBuildChannel_AtThePostBuildRead()
 	{
-		try
+		using var factory = MakeFactory(b =>
 		{
-			Environment.SetEnvironmentVariable("Seq__SelfLog__Enabled", "true");
-			using var factory = MakeFactory(b => b.ConfigureAppConfiguration((_, cfg) =>
-				cfg.AddInMemoryCollection(new Dictionary<string, string?> { ["Seq:SelfLog:Enabled"] = "false" })));
+			b.UseSetting("Seq:SelfLog:Enabled", "true");
+			b.ConfigureAppConfiguration((_, cfg) =>
+				cfg.AddInMemoryCollection(new Dictionary<string, string?> { ["Seq:SelfLog:Enabled"] = "false" }));
+		});
 
-			factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
-				.OfType<RouteEndpoint>()
-				.Any(e => string.Equals(e.RoutePattern.RawText, "/api/events/raw", StringComparison.OrdinalIgnoreCase))
-				.Should().BeFalse(
-					"an in-memory config source added after an earlier env var must win at the post-Build read " +
-					"— this is the pin AuthzSurfaceHost relies on to stay deterministic regardless of test order");
-		}
-		finally
-		{
-			Environment.SetEnvironmentVariable("Seq__SelfLog__Enabled", null);
-		}
+		factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
+			.OfType<RouteEndpoint>()
+			.Any(e => string.Equals(e.RoutePattern.RawText, "/api/events/raw", StringComparison.OrdinalIgnoreCase))
+			.Should().BeFalse(
+				"an in-memory config source added last must win at the post-Build read over a value supplied " +
+				"through the pre-Build channel — this is the pin AuthzSurfaceHost relies on to stay " +
+				"deterministic regardless of test order");
 	}
 }
