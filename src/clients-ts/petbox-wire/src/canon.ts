@@ -140,6 +140,56 @@ async function fetchCanon(
   }
 }
 
+// Server-side canon budget (MemoryService.cs's CanonBodyBudget) — cited here only for display
+// (e.g. status's "N of 10k chars"), never enforced client-side.
+export const CANON_BODY_BUDGET_CHARS = 10000;
+
+/**
+ * One canon leg's state, told from `version` — NEVER from comparing body text against the
+ * server's EmptyCanonMarker string (MemoryApi.cs): that string is server prose, not a contract,
+ * and could be reworded without notice. `version === 0` is the server's actual signal for "the
+ * store/entry does not exist yet, this is the curation-nudge placeholder" (MemoryApi.cs's
+ * ReadCanonAsync); any version > 0 is a real curated entry, and `chars` is its length as a
+ * concrete "how close to the 10k budget" fact for a human to act on. A null part (leg never asked
+ * — no workspace — or withheld by sandbox containment) is "absent", distinct from "empty".
+ */
+export type CanonLegState =
+  | { readonly kind: "absent" }
+  | { readonly kind: "empty" }
+  | { readonly kind: "content"; readonly chars: number };
+
+function classifyCanonPart(part: CanonPart | null | undefined): CanonLegState {
+  if (!part || typeof part.body !== "string") return { kind: "absent" };
+  const version = typeof part.version === "number" ? part.version : null;
+  if (version === 0) return { kind: "empty" };
+  return { kind: "content", chars: part.body.length };
+}
+
+export type CanonLegsResult =
+  | { readonly ok: true; readonly project: CanonLegState; readonly workspace: CanonLegState }
+  | { readonly ok: false };
+
+/**
+ * Per-leg canon state for `status` (absent | empty | content, see CanonLegState) — the SAME fetch
+ * fetchCanonBlock uses (fetchCanon below), just returned unshaped instead of pre-joined into a
+ * markdown block, and with no LKG fallback: `status` reports what the SERVER says right now (a
+ * degraded/unreachable server is its own fact to show, not something to paper over with a stale
+ * cache — unlike the injected SessionStart block, which prefers showing something over nothing).
+ * `{ ok: false }` on any fetch failure (network/timeout/non-2xx/bad JSON) — never throws.
+ */
+export async function fetchCanonLegs(
+  resolved: ResolvedProject,
+  opts?: { timeoutMs?: number },
+): Promise<CanonLegsResult> {
+  const result = await fetchCanon(resolved, opts?.timeoutMs);
+  if (!result.ok) return { ok: false };
+  return {
+    ok: true,
+    project: classifyCanonPart(result.resp?.project),
+    workspace: classifyCanonPart(result.resp?.workspace),
+  };
+}
+
 async function writeCache(project: string, block: string): Promise<void> {
   try {
     await mkdir(cacheDir(), { recursive: true });
