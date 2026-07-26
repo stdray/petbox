@@ -149,9 +149,11 @@ public sealed class QuartetTests : IDisposable
 		stored.Name.Should().Be("quartet");
 		stored.Version.Should().BeGreaterThan(0);
 
-		// Unknown key → found:false (not an error).
-		var miss = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "banana");
-		miss.Found.Should().BeFalse();
+		// Unknown key → a clear error, not Found=false (batch2
+		// not-found-two-contracts-under-tasks — tasks_methodology_template_get now matches
+		// tasks_node_get's contract instead of the old nullable-get one).
+		var miss = () => TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "banana");
+		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*banana*");
 	}
 
 	[Fact]

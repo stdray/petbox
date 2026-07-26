@@ -487,8 +487,11 @@ public sealed class MethodologyInstanceTests : IDisposable
 		get.Found.Should().BeTrue();
 		get.Instance!.Name.Should().Be("mcp-main");
 
-		var miss = await TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "nope");
-		miss.Found.Should().BeFalse();
+		// Addressed read: a missing instance name is a clear error, not Found=false
+		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_get now matches
+		// tasks_node_get's contract instead of the old nullable-get one).
+		var miss = () => TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "nope");
+		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*nope*");
 
 		var closed = await TasksTools.MethodologyCloseAsync(http, flags, _tasks, Proj, "mcp-main");
 		closed.Closed.Should().BeTrue();

@@ -131,8 +131,11 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 		mcp.Version.Should().Be(rules.Version);
 		mcp.Kinds.Should().NotBeNull().And.ContainSingle(k => k.Kind == "support");
 
-		var miss = await TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "nope");
-		miss.Found.Should().BeFalse();
+		// Addressed read: a missing instance name is a clear error, not Found=false
+		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_rules_get now
+		// matches tasks_node_get's contract instead of the old nullable-get one).
+		var miss = () => TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "nope");
+		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*nope*");
 	}
 
 	// ── unmapped reject ──────────────────────────────────────────────────────

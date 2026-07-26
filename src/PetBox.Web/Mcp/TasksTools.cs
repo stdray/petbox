@@ -192,8 +192,10 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
 	[Description("""
 		Return ONE methodology INSTANCE by `name` as a compact INDEX (identity, boards,
-		status histogram counts, computed summary — no node bodies). Found=false on miss
-		(not an error). For every instance use tasks_methodology_list. Requires tasks:read.
+		status histogram counts, computed summary — no node bodies). An addressed read: an
+		instance name matching nothing is a clear error (nothing returned), not an empty
+		result — same contract as tasks_node_get. For every instance use tasks_methodology_list
+		(a listing, which stays a soft/empty result). Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceGetResult> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -205,7 +207,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceAsync(projectKey, name, ct);
 		if (view is null)
-			return new MethodologyInstanceGetResult(Found: false, Name: name);
+			throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
 		return new MethodologyInstanceGetResult(Found: true, Instance: ProjectInstance(view));
 	}
 
@@ -310,9 +312,10 @@ public static class TasksTools
 		Return the RULES DOCUMENT of one methodology INSTANCE by name — the live process
 		document (kinds/types/statuses/transitions) that member boards resolve against,
 		plus the version baseline for tasks_methodology_rules_upsert. Same document shape as
-		tasks_methodology_template_get (kinds/workflows/linkKinds/tagAxes). Found=false on
-		miss (not an error). Closed instances still return their last rules (read-only —
-		rules_upsert rejects closed). Requires tasks:read.
+		tasks_methodology_template_get (kinds/workflows/linkKinds/tagAxes). An addressed
+		read: an instance name matching nothing is a clear error (nothing returned), not an
+		empty result — same contract as tasks_node_get. Closed instances still return their
+		last rules (read-only — rules_upsert rejects closed). Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceRulesGetResult> MethodologyRulesGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -324,7 +327,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
 		if (view is null)
-			return new MethodologyInstanceRulesGetResult(Found: false, Name: name);
+			throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
 		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 		return new MethodologyInstanceRulesGetResult(
 			Found: true,
@@ -387,8 +390,9 @@ public static class TasksTools
 		board with no instance membership (methodologyInstance omitted, or the reserved
 		"$utility" sentinel on tasks_board_create/tasks_board_adopt) resolves its kind against
 		this document; an undeclared kind falls back to the built-in presets (simple|classic).
-		Found=false when the project has never defined a utility layer (everything then
-		resolves from presets alone) — not an error. Requires tasks:read.
+		An addressed read: the project having never defined a utility layer (everything then
+		resolves from presets alone) is a clear error (nothing returned), not an empty result
+		— same contract as tasks_node_get. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyUtilityGetResult> MethodologyUtilityGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -398,7 +402,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
-			return new MethodologyUtilityGetResult(Found: false);
+			throw new ArgumentException($"project '{projectKey}' has no utility-kind layer defined");
 		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 		return new MethodologyUtilityGetResult(
 			Found: true,
@@ -591,8 +595,10 @@ public static class TasksTools
 		Return ONE methodology template by `key`. Resolution order: stored template →
 		builtin (quartet|classic|simple, source="builtin", version 0) → dual-read of the
 		legacy project singleton under key "methodology" (source="definition", compat) →
-		found:false. Document body (name/kinds/…) is copyable into template_upsert or
-		into tasks_methodology_rules_upsert for a live instance. Requires tasks:read.
+		error. An addressed read: a key matching none of the above is a clear error (nothing
+		returned), not an empty result — same contract as tasks_node_get. Document body
+		(name/kinds/…) is copyable into template_upsert or into
+		tasks_methodology_rules_upsert for a live instance. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyTemplateGetResult> MethodologyTemplateGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -604,7 +610,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyTemplateAsync(projectKey, key, ct);
 		if (view is null)
-			return new MethodologyTemplateGetResult(Found: false, Key: key);
+			throw new ArgumentException($"methodology template '{key}' not found in project '{projectKey}'");
 		return MethodologyWire.ProjectTemplate(view.Key, view.Source, view.Definition, view.Version, view.Created, view.Updated);
 	}
 
