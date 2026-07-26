@@ -68,7 +68,7 @@ export function buildSessionMetaHeader(
         ? resolveObservedBinding(agent)
         : resolveObservedBinding(agent, homeDir);
     const meta: Record<string, unknown> = {};
-    if (obs) meta.roleBinding = obs;
+    if (obs) meta["roleBinding"] = obs;
     if (extraMeta) Object.assign(meta, extraMeta);
     if (Object.keys(meta).length === 0) return null;
     return JSON.stringify(meta);

@@ -74,9 +74,16 @@ async function collectMainTranscriptSpawns(transcriptPath: string): Promise<Spaw
     for (const c of e.message.content) {
       if (!isSpawnToolUse(c)) continue;
       const input = (c.input ?? {}) as Record<string, unknown>;
-      const role = nonEmptyString(input.subagent_type);
+      const role = nonEmptyString(input["subagent_type"]);
       if (!role) continue; // malformed/unknown spawn shape — nothing trustworthy to record
-      spawns.push({ toolUseId: c.id, role, spawnModel: nonEmptyString(input.model) });
+      // Presence of `spawnModel` must mean "an override was passed" — never a key that's present
+      // but holds `undefined` (exactOptionalPropertyTypes rejects that on SpawnDecl, and rightly
+      // so: no-model-at-spawn is the normal case, not a degenerate one, so it has to come out as
+      // an ABSENT key, same as the modelSource:"roster" branch below in collectSubagentRuns).
+      const spawn: SpawnDecl = { toolUseId: c.id, role };
+      const spawnModel = nonEmptyString(input["model"]);
+      if (spawnModel !== undefined) spawn.spawnModel = spawnModel;
+      spawns.push(spawn);
     }
   }
   return spawns;

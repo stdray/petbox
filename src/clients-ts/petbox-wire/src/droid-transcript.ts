@@ -58,9 +58,9 @@ export async function collectDroidSubagentRuns(transcriptPath: string): Promise<
     for (const c of e.message.content) {
       if (!c || c.type !== "tool_use" || !DROID_SPAWN_TOOL_NAMES.has(c.name)) continue;
       const input = (c.input ?? {}) as Record<string, unknown>;
-      const role = nonEmptyString(input.subagent_type);
+      const role = nonEmptyString(input["subagent_type"]);
       if (!role) continue;
-      const spawnModel = nonEmptyString(input.model);
+      const spawnModel = nonEmptyString(input["model"]);
       const run: { role: string; modelSource: "override" | "roster"; spawnModel?: string } = {
         role,
         modelSource: spawnModel ? "override" : "roster",

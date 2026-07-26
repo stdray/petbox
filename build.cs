@@ -475,7 +475,10 @@ Task("TsWirePack")
 // the kit had ~86 written tests and a typecheck that ran in NO pipeline anywhere, so a red test
 // or a failing typecheck never stopped `npm publish`. Cake dependencies always run before `Does`,
 // so a failure in either throws before TsWirePack/publish executes — publishing on red is no
-// longer reachable.
+// longer reachable. True, but for a while that was the ONLY place either check ran: gating just
+// this target meant a red kit sat invisible until a `npm-wire` tag push, so publishing itself
+// became unreachable instead — wire-kit-checks-in-no-pipeline. Both are now also under
+// `SdkChecks`, so `Verify`/CI catch a red kit long before anyone tags a publish.
 Task("NpmWirePublish")
 	.IsDependentOn("TsWireTest")
 	.IsDependentOn("TsWireTypecheck")
@@ -672,13 +675,19 @@ Task("WebTsTest")
 // run it as a SEPARATE job (bun + uv toolchains, in parallel with the .NET `test` job) without
 // dragging in Clean→Restore→Build→Test. Before this, the SDK targets lived only inside `Verify`,
 // which CI never called: the SDKs shipped to public registries unchecked by anything.
+//
+// TsWireTest/TsWireTypecheck (the agent-wiring kit, petbox-wire) joined this list for the same
+// reason: before wire-kit-checks-in-no-pipeline, both were reachable only as a dependency of
+// NpmWirePublish, so a red kit was invisible on every push and only surfaced at publish time.
 Task("SdkChecks")
 	.IsDependentOn("TsSdkLint")
 	.IsDependentOn("TsSdkTypecheck")
 	.IsDependentOn("TsSdkTest")
 	.IsDependentOn("PyClientLint")
 	.IsDependentOn("PyClientTypecheck")
-	.IsDependentOn("PyClientTest");
+	.IsDependentOn("PyClientTest")
+	.IsDependentOn("TsWireTest")
+	.IsDependentOn("TsWireTypecheck");
 
 // Everything Test covers, plus the client SDKs (bun + uv toolchains). This is the full
 // pre-push sweep — the local equivalent of CI's two jobs (`test` + `sdk`) taken together.
