@@ -40,22 +40,24 @@ public static class ShareApi
 		app.MapGet("/api/share/{token}/tsv", GetTsvAsync).AllowAnonymous();
 	}
 
+	// req.ProjectKey comes from the JSON BODY, and bare .RequireAuthorization() only proves SOME
+	// authenticated identity — not that it is authorized for THIS project. Without a tenant check any
+	// authenticated caller could mint a share link (served ANONYMOUSLY at GetTsvAsync) exporting another
+	// project's log data, which makes this the sharpest body tenant in the tree. It is declared as one:
+	// [TenantFrom(BodyField, "projectKey")], read out of the body by TenantEnforcementMiddleware
+	// case-insensitively (the model binder is too) before the handler runs. That replaced the
+	// ProjectScope.AuthorizesAsync call that used to sit here, and it takes the surface out of the
+	// cross-tenant probe's blind spot: the probe already aimed the victim's projectKey at it and could
+	// not know whether anything read the field.
+	[TenantFrom(TenantSource.BodyField, "projectKey")]
 	static async Task<IResult> CreateShareAsync(
 		HttpContext ctx,
 		IShareLinkDirectory shareLinks,
 		ShareCreateRequest req,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
 			return Results.BadRequest(new ErrorResponse("ProjectKey and Kql required"));
-
-		// req.ProjectKey comes from the JSON body (attacker-controlled) — bare .RequireAuthorization()
-		// only proves SOME authenticated identity, not that it's authorized for THIS project. Without
-		// this, any authenticated caller could mint a share link (served anonymously at GetTsvAsync)
-		// exporting another project's log data. Same ProjectScope.Authorizes pattern as SessionApi.
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, req.ProjectKey, catalog, ct))
-			return Results.Forbid();
 
 		var salt = RandomNumberGenerator.GetBytes(32);
 		var id = Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
@@ -84,6 +86,15 @@ public static class ShareApi
 		return Results.Ok(new ShareCreatedResponse(id, entity.ExpiresAt));
 	}
 
+	// `capability-token` in its textbook form, and the one surface in the tree the class was written for:
+	// the share TOKEN is the authorization. It was issued by an explicit act (somebody with access to the
+	// project called CreateShareAsync above), it carries the entire extent of access with it — the stored
+	// row names the project, the log, the KQL, the columns and the masking policy — and the caller
+	// presents nothing else, which is why the route is AllowAnonymous. Per the spec this class does NOT
+	// cover a token that merely identifies a caller; nobody is identified here.
+	[TenantExempt(TenantExemption.CapabilityToken,
+		"the share token IS the grant: issued by an explicit act, and the stored link — not the caller — "
+		+ "names the project, log, query, columns and masking of exactly what may be read")]
 	static async Task<IResult> GetTsvAsync(
 		HttpContext ctx,
 		IShareLinkDirectory shareLinks,

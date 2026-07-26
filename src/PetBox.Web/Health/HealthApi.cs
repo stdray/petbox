@@ -32,9 +32,18 @@ public static class HealthApi
 
 	// Authorize, validate, delegate. The handler opens no database — it hands a validated report to
 	// IHealthReportService, which owns the table (AGENTS.md: the database is visible only in the
-	// service layer). Note the ordering that the old inline version got backwards: the connection
-	// used to be opened at the top, BEFORE the scope check, so every forbidden push paid for one.
-	static async Task<IResult> PushAsync(HttpContext ctx, IHealthReportService health, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
+	// service layer).
+	//
+	// THE TENANT IS IN THE BODY, ONE LEVEL DOWN: `tags.project` names the project a report is filed
+	// against, and a project-scoped key may only report for its own. That is now declared —
+	// [TenantFrom(BodyField, "tags.project")] — and TenantEnforcementMiddleware reads the dotted path out
+	// of the JSON body before the handler runs, which is what replaced the ProjectScope call that used to
+	// sit below the shape validation. Two consequences worth naming: a report with no `tags.project` is
+	// now refused 403 rather than answered 400 (the tenant axis decides first, and a missing tenant is a
+	// refusal by construction), and this surface leaves the probe's one real blind spot — a body tenant it
+	// could aim at but never verify.
+	[TenantFrom(TenantSource.BodyField, "tags.project")]
+	static async Task<IResult> PushAsync(HttpContext ctx, IHealthReportService health, HealthPushRequest req, CancellationToken ct)
 	{
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -45,12 +54,6 @@ public static class HealthApi
 			return TypedResults.BadRequest(new ErrorResponse("svc and status are required"));
 
 		var tags = req.Tags ?? [];
-		if (!tags.TryGetValue("project", out var project) || string.IsNullOrWhiteSpace(project))
-			return TypedResults.BadRequest(new ErrorResponse("tags.project is required"));
-
-		// A project-scoped key may only report for its own project.
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, project, catalog, ct))
-			return Results.Forbid();
 
 		await health.RecordPushAsync(
 			new HealthReportInput(req.Svc, req.Name, tags, req.Version, req.Sha, req.BuildDate, req.Status), ct);

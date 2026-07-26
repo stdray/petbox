@@ -27,10 +27,21 @@ public static class ProjectSwitchEndpoint
 
 	// An endpoint lambda is pipeline code: it asks services, it does not open core.db (AGENTS.md —
 	// the database is visible only in the service layer).
+	//
+	// [TenantFrom] sits on the method below.
+	//
+	// TENANT: the form field `ws`, as a WORKSPACE — see WorkspaceSwitchEndpoint for the same declaration
+	// and for the api-key-shaped hole in the membership check it replaced (this endpoint had the identical
+	// `!isSysAdmin && long.TryParse(userIdRaw, …)` guard and the probe measured it serving the attacker a
+	// 302 into the victim's workspace too).
+	//
+	// The PROJECT half needs no declaration of its own: `key` is only ever resolved through
+	// GetInWorkspaceAsync(ws, key), so the workspace is welded into the lookup and another tenant's
+	// project simply is not there. One tenant per surface is the rule ("ровно одно"), and this is the one.
+	[TenantFrom(TenantSource.BodyField, "ws", TenantKind.Workspace)]
 	static async Task<IResult> Switch(
 		HttpContext ctx,
 		IProjectDirectory projects,
-		IWorkspaceMembershipService memberships,
 		[FromForm] string? ws,
 		[FromForm] string? key,
 		[FromForm] string? zone)
@@ -41,16 +52,6 @@ public static class ProjectSwitchEndpoint
 			return Results.BadRequest(new ErrorResponse("ws is required"));
 		if (string.IsNullOrWhiteSpace(key))
 			return Results.BadRequest(new ErrorResponse("key is required"));
-
-		// Validate workspace membership (sysadmin bypasses, mirroring WorkspaceSwitchEndpoint).
-		var isSysAdmin = ctx.User.HasClaim(PetBoxClaims.IsSysAdmin, "true");
-		var userIdRaw = ctx.User.FindFirst(PetBoxClaims.UserId)?.Value;
-		if (!isSysAdmin && long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
-		{
-			var roles = await memberships.GetRolesAsync(userId);
-			if (!roles.Any(m => string.Equals(m.WorkspaceKey, ws, StringComparison.Ordinal)))
-				return Results.Forbid();
-		}
 
 		// The project must actually live in that workspace — otherwise the cookie would point at a
 		// phantom pair and the sidebar's resolver would silently drop it. The workspace is welded into

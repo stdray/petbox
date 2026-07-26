@@ -20,13 +20,23 @@ public static class WorkspaceSwitchEndpoint
 			.DisableAntiforgery();
 	}
 
-	// An endpoint lambda is pipeline code, not a service: it asks IWorkspaceMembershipService whether
-	// the caller is a member and never opens core.db itself (AGENTS.md — the database is visible only
-	// in the service layer). The membership read is also the seam a cache would live behind, and this
-	// endpoint fires on every workspace switch.
-	static async Task<IResult> Switch(
+	// THE TENANT IS THE FORM FIELD `ws`, AND IT IS A WORKSPACE — declared, and therefore enforced for
+	// EVERY kind of principal. The membership check this replaced was
+	//
+	//     if (!isSysAdmin && long.TryParse(userIdRaw, …, out var userId)) { …roles… }
+	//
+	// which reads as "members are checked, sysadmin is waved through" and is actually "…and so is anyone
+	// with no user-id claim at all". An api-key principal has none, so for api keys the check did not run
+	// — the cross-tenant probe measured this endpoint SERVING the attacker's key a 302 into the victim's
+	// workspace once it started sending form bodies. ITenantAuthorizer has no such gap: a cookie is
+	// answered on membership (sysadmin free pass included, inside HasWorkspaceRoleAtLeast), an api key on
+	// whether its project belongs to that workspace, and a principal that is neither is refused.
+	//
+	// Any role is enough to SWITCH (Viewer included) — the question is membership, not admin — which is
+	// exactly the threshold ITenantAuthorizer.UserAsync uses.
+	[TenantFrom(TenantSource.BodyField, "ws", TenantKind.Workspace)]
+	static IResult Switch(
 		HttpContext ctx,
-		IWorkspaceMembershipService members,
 		[FromForm] string? ws,
 		[FromForm] string? zone)
 	{
@@ -34,19 +44,10 @@ public static class WorkspaceSwitchEndpoint
 		// a clean 400, not an unhandled BadHttpRequestException with stack
 		// trace into the error log. The sidebar's onchange-submit form is
 		// the main offender — Alpine fires it before a value is selected.
+		// (Unreachable for a BLANK value now: an unresolved tenant is refused above the handler. It stays
+		// for the empty-form case the comment names, and because a declaration is not a shape validator.)
 		if (string.IsNullOrWhiteSpace(ws))
 			return Results.BadRequest(new ErrorResponse("ws is required"));
-
-		var isSysAdmin = ctx.User.HasClaim(PetBoxClaims.IsSysAdmin, "true");
-		var userIdRaw = ctx.User.FindFirst(PetBoxClaims.UserId)?.Value;
-		if (!isSysAdmin && long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
-		{
-			// Any role is enough to SWITCH to a workspace (Viewer included) — the check is membership,
-			// not admin. RequestAborted, so a switch abandoned mid-flight does not keep reading.
-			var roles = await members.GetRolesAsync(userId, ctx.RequestAborted);
-			if (!roles.Any(r => string.Equals(r.WorkspaceKey, ws, StringComparison.Ordinal)))
-				return Results.Forbid();
-		}
 
 		ctx.Response.Cookies.Append(CookieName, ws, new CookieOptions
 		{

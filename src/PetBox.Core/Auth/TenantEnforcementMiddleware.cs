@@ -102,14 +102,45 @@ public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 	}
 
 	// "Цель, пришедшая в теле запроса, проверяется так же строго, как пришедшая из маршрута" — so the
-	// body is actually read, not waved through. The request is buffered first and rewound after, so the
-	// handler still sees an unconsumed stream.
+	// body is actually read, not waved through.
 	//
-	// FAIL-CLOSED at every step: not JSON, too large, unparseable, not an object, field missing or not a
-	// string → null → an unresolved tenant → refused. This costs nothing today (no non-allowlisted
-	// surface exists) and costs one buffered read per declared body-tenant call afterwards.
+	// IT MUST READ THE ENCODING THE HANDLER READS, or the declaration is a 403 for everybody. Two
+	// encodings carry a named field into a body in this tree, and a surface does not get to be exempt
+	// from the tenant axis because of which one it chose:
+	//
+	//   * FORM (application/x-www-form-urlencoded / multipart) — the [FromForm] endpoints. ReadFormAsync
+	//     caches the parsed form on the request feature, so the handler's own [FromForm] binding reuses
+	//     this read rather than paying for a second one, and there is nothing to rewind. The size limits
+	//     are the framework's own FormOptions, i.e. the same ones the handler was already subject to.
+	//   * JSON — buffered and rewound, so the handler still sees an unconsumed stream.
+	//
+	// This is the transport half of the PEP (see ResolveAsync), not a new TenantSource: the KIND of
+	// tenant and the field NAME are the same question in both encodings, and only the wire differs.
+	// TenantSource is closed by a deliberate edit for exactly the cases where the DECISION changes.
+	//
+	// TWO READING RULES, both there so the PEP and the model binder cannot disagree about which field
+	// carries the tenant:
+	//   * a dotted name walks nested objects ("tags.project" — HealthApi's tenant lives one level down);
+	//   * matching is case-INSENSITIVE, because minimal-API JSON binding is
+	//     (JsonSerializerDefaults.Web) and form binding is. A PEP that matched case-sensitively would
+	//     refuse the caller that sends `ProjectKey` while the handler happily bound it.
+	//
+	// FAIL-CLOSED at every step: unsupported content type, too large, unparseable, not an object, field
+	// missing, not a string, or SEVERAL case-variants of the name carrying DIFFERENT values → null → an
+	// unresolved tenant → refused.
 	static async ValueTask<string?> BodyFieldAsync(HttpContext context, string field)
 	{
+		if (context.Request.HasFormContentType)
+		{
+			try
+			{
+				var form = await context.Request.ReadFormAsync(context.RequestAborted);
+				return Blank(form.TryGetValue(field, out var values) ? values.ToString() : null);
+			}
+			catch (InvalidDataException) { return null; }
+			catch (IOException) { return null; }
+		}
+
 		if (!context.Request.HasJsonContentType()) return null;
 		if (context.Request.ContentLength is > MaxBufferedBody) return null;
 
@@ -118,11 +149,7 @@ public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 		{
 			using var document = await JsonDocument.ParseAsync(
 				context.Request.Body, cancellationToken: context.RequestAborted);
-			return document.RootElement.ValueKind == JsonValueKind.Object
-				&& document.RootElement.TryGetProperty(field, out var element)
-				&& element.ValueKind == JsonValueKind.String
-					? element.GetString()
-					: null;
+			return Blank(JsonPath(document.RootElement, field));
 		}
 		catch (JsonException)
 		{
@@ -138,4 +165,38 @@ public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 			if (context.Request.Body.CanSeek) context.Request.Body.Position = 0;
 		}
 	}
+
+	// Walks a dot-separated path of case-insensitive object property names down to a STRING leaf.
+	static string? JsonPath(JsonElement root, string path)
+	{
+		var element = root;
+		foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		{
+			if (element.ValueKind != JsonValueKind.Object) return null;
+			if (Property(element, segment) is not { } next) return null;
+			element = next;
+		}
+
+		return element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+	}
+
+	// One property by case-insensitive name. Two variants that AGREE are the same answer; two that
+	// DISAGREE are an ambiguity a caller could steer, so they resolve to nothing and the call is refused.
+	static JsonElement? Property(JsonElement owner, string name)
+	{
+		JsonElement? found = null;
+		foreach (var property in owner.EnumerateObject())
+		{
+			if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+			if (found is null) { found = property.Value; continue; }
+
+			var first = found.Value.ValueKind == JsonValueKind.String ? found.Value.GetString() : null;
+			var second = property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null;
+			if (!string.Equals(first, second, StringComparison.Ordinal)) return null;
+		}
+
+		return found;
+	}
+
+	static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

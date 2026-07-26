@@ -225,10 +225,19 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"rest:POST /v1/traces",
 		]),
 
-		("BODY FIELD — a tenant here would be read out of the request BODY. The probe writes the victim's "
-			+ "projectKey and workspaceKey into every body it sends, so these WERE aimed at the victim; "
-			+ "what it cannot know is whether the handler reads those fields, so no verdict is asserted. "
-			+ "This is the probe's one real blind spot and it is 6 surfaces wide, not unbounded", [
+		("NO TENANT IN THE ROUTE — the tenant, where there is one, comes out of the request BODY or off the "
+			+ "caller's own claim, so FillRoute has nowhere to write the victim's key and `Addressed` is "
+			+ "decided false by construction. These six USED to be the probe's one real blind spot: it aimed "
+			+ "the victim's projectKey/workspaceKey at every body it sent but could not know whether any "
+			+ "handler read the field, so no verdict was asserted. The REST wave closed that by DECLARING "
+			+ "each one — [TenantFrom(BodyField, …)] for /api/health (`tags.project`), /api/share "
+			+ "(`projectKey`) and the two /api/ui switches (`ws`, a form field), [TenantFrom(CallerDefault)] "
+			+ "for /v1/chat/completions, [TenantExempt(Identity)] for the per-user board preference — so the "
+			+ "mechanism now reads exactly the field the handler binds and the verdicts recorded in "
+			+ ".tmp/authz-cross-tenant-report.txt are real. They are still listed here rather than asserted "
+			+ "because `Addressed` answers a question about the ROUTE, and that has not changed; the probe "
+			+ "measured two of them (/api/ui/project, /api/ui/workspace) SERVING the attacker before the "
+			+ "declarations went in, which is the reason the blind spot was worth closing", [
 			"rest:POST /api/health",
 			"rest:POST /api/share",
 			"rest:POST /api/ui/board-filter-prefs",

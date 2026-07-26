@@ -45,15 +45,12 @@ public static class TenantEnforcementAllowlist
 		"rest:GET /.well-known/openid-configuration/{*rest}",
 		"rest:GET /agent/poll",
 		"rest:GET /api/auth/validate",
-		"rest:GET /api/share/{token}/tsv",
 		"rest:GET /openapi/{documentName}.json",
 		"rest:GET|HEAD /health",
 		"rest:GET|HEAD /version",
 		"rest:POST /agent/heartbeat",
 		"rest:POST /api/auth/logout",
 		"rest:POST /api/deploy/nodes",
-		"rest:POST /api/health",
-
 		// THE TWO THAT STAY, and the reason, written HERE rather than remembered — the same discipline
 		// memory_get was left under during the MCP wave.
 		//
@@ -74,11 +71,6 @@ public static class TenantEnforcementAllowlist
 		// not a line in this wave.
 		"rest:POST /api/events/raw",
 		"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
-		"rest:POST /api/share",
-		"rest:POST /api/ui/board-filter-prefs",
-		"rest:POST /api/ui/project",
-		"rest:POST /api/ui/workspace",
-		"rest:POST /v1/chat/completions",
 	
 		// RAZOR — 65 pages (one entry per page, not per endpoint: the PageModel CLASS is the carrier).
 		"page:/AccessDenied",

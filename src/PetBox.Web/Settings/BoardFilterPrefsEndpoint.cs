@@ -26,6 +26,19 @@ public static class BoardFilterPrefsEndpoint
 			.DisableAntiforgery();
 	}
 
+	// `identity`, and the reason is the Scope on every line below: this writes BrowserState at
+	// Scope.User, keyed by the CALLER'S OWN user id, which it takes from the caller's own claim and
+	// nowhere else. There is no project and no workspace in the request, in the stored row, or in the
+	// preference's meaning — the board filters apply to every board the user opens. The exemption
+	// suspends the tenant axis only: the surface still requires an authenticated user (the guard below is
+	// what makes a principal with no user id — an api key — a 401 rather than a write).
+	//
+	// The cross-tenant probe filed this under BODY FIELD, which was a guess about where a tenant MIGHT be
+	// read from; it is not read from anywhere, and saying so is what takes the surface out of the blind
+	// spot rather than leaving it "not verified".
+	[TenantExempt(TenantExemption.Identity,
+		"a per-user board preference written at Scope.User under the caller's own user id; no project or "
+		+ "workspace is named by the request or stored with the row")]
 	static async Task<IResult> Save(
 		HttpContext ctx, ISettingsResolver settings,
 		[FromForm] bool? activeOnly, [FromForm] string? sortBy, [FromForm] bool? sortDesc,

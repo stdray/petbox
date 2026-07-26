@@ -72,15 +72,25 @@ public static class LlmRouterApi
 
 	// ---- handler ----
 
+	// TENANT: the caller's own project — [TenantFrom(CallerDefault)] — because the OpenAI-compatible
+	// shape has no project in the URL and none in the body. TenantEnforcementMiddleware refuses a caller
+	// whose own project does not resolve, which is what replaced the Forbid() below.
+	//
+	// The claim is read through CallerTenant, not off `ctx.User` directly, so the PEP and the handler
+	// cannot act on different projects. The old comment here claimed "a cross-project '*' key carries no
+	// project claim" — it does: the claim is the literal "*", which is not empty, so the check passed and
+	// the router was then asked to resolve a route chain for a project named "*". CallerTenant is the
+	// documented single reading of this question (the MCP twin llm_chat gets the same answer through
+	// ModuleMcp.DefaultProjectOf): a "*" key resolves to the `project_default` it was minted with, and a
+	// "*" key with no default is refused rather than sent into the router under a non-existent project.
+	[TenantFrom(TenantSource.CallerDefault)]
 	static async Task<IResult> ChatCompletionsAsync(
 		HttpContext ctx, ILlmClient client, CancellationToken ct)
 	{
-		// Auth: projectKey from the API key's project claim.
-		// The LlmInvoke policy already verified ApiKey auth + llm:invoke scope — we only
-		// extract the project claim here; if absent → Forbid (a cross-project '*' key
-		// carries no project claim, and the OpenAI path has no project in the URL).
-		var projectKey = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(projectKey))
+		// Cannot be null once the PEP has allowed the call; the narrowing keeps it fail-closed if this
+		// surface's declaration ever changes.
+		var projectKey = CallerTenant.DefaultProjectOf(ctx.User);
+		if (projectKey is null)
 			return TypedResults.Forbid();
 
 		// Parse the request body.
