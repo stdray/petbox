@@ -5,12 +5,18 @@
 // The server exposes the curated memory index (canon) at
 //   GET {baseUrl}/api/memory/{project}/canon   (header X-Api-Key)
 //   → 200 { "project": {body,updatedAt,version}|null, "workspace": {...}|null }
+// A LEG that was queried and has nothing curated yet is NOT null — MemoryApi.CanonAsync (card
+// canon-invisible-and-unfed) answers it with a fixed nudge body and Version 0 instead, so the
+// empty state is visible rather than silent. null stays reserved for a leg this caller cannot
+// see at all (no workspace, or hidden by sandbox containment). See legStatus()/EMPTY_CANON_VERSION
+// below for how this kit tells that nudge apart from real curated text.
 // We turn that into a markdown block appended to the session context. On any failure we fall
 // back to a local cache (~/.petbox/cache/{project}.canon.md) written on the last good fetch,
 // marked stale. This is best-effort and TOTAL: every path returns string | null, never throws.
 //
-// NOTE: production may not have this endpoint yet — a 404/error degrades gracefully (no canon
-// block, the memory protocol is still injected by the caller).
+// NOTE: production may not have this endpoint yet, or may still be on the pre-fix build (empty
+// leg → null) — either way a 404/error/null degrades gracefully (no canon block, the memory
+// protocol is still injected by the caller).
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, type-only
 // imports, zero deps.
@@ -27,6 +33,13 @@ const STALE_MARKER = "⚠ Canon below is from the local cache (PetBox unreachabl
 type CanonPart = { body?: unknown; updatedAt?: unknown; version?: unknown };
 type CanonResponse = { project?: CanonPart | null; workspace?: CanonPart | null };
 
+// The server's discriminator for "this leg was queried but nothing is curated yet" (card
+// canon-invisible-and-unfed): MemoryApi.CanonAsync answers an empty/absent store with a
+// CanonPart carrying a fixed nudge string AND Version 0. Version 0 is never assigned to a real
+// entry (TemporalStore's version cursor starts at 1 on first insert), so it is a safe, wording-
+// independent signal — this kit does not need to string-match the marker text to recognize it.
+const EMPTY_CANON_VERSION = 0;
+
 function cacheDir(): string {
   return join(homedir(), ".petbox", "cache");
 }
@@ -35,30 +48,62 @@ function cachePath(project: string): string {
   return join(cacheDir(), `${project}.canon.md`);
 }
 
-// Pull a usable markdown body out of a canon part, or null when the part is missing/empty.
-function partBody(part: CanonPart | null | undefined): string | null {
-  if (!part || typeof part.body !== "string") return null;
+type LegStatus =
+  | { kind: "absent" } // leg was null, or body missing/blank — pre-fix server, or a leg never asked
+  | { kind: "empty"; marker: string } // leg was queried and is curated-empty (Version 0 nudge)
+  | { kind: "content"; body: string }; // leg carries real curated text
+
+// Classify one canon leg. A part with a non-blank body and Version 0 is the server's
+// empty-canon nudge, not real project/workspace knowledge — it must never be presented (or
+// cached) as though it were curated content.
+function legStatus(part: CanonPart | null | undefined): LegStatus {
+  if (!part || typeof part.body !== "string") return { kind: "absent" };
   const body = part.body.trim();
-  return body.length > 0 ? body : null;
+  if (body.length === 0) return { kind: "absent" };
+  if (part.version === EMPTY_CANON_VERSION) return { kind: "empty", marker: body };
+  return { kind: "content", body };
 }
 
-// Assemble the canon block from the two parts. Returns null when both are empty.
-function buildBlock(project: string, resp: CanonResponse | null): string | null {
+// Assemble the canon block from the two parts. Returns null when both legs are absent
+// (pre-fix server, or neither leg has ever been queried/curated).
+//
+// `hasContent` tells the caller whether the block carries REAL curated text — the empty-canon
+// nudge alone does NOT count, so fetchCanonBlock below knows not to let it displace a
+// previously cached real canon (see that function's comment on cache stickiness).
+function buildBlock(project: string, resp: CanonResponse | null): { text: string; hasContent: boolean } | null {
   if (!resp) return null;
-  const projectBody = partBody(resp.project);
-  const workspaceBody = partBody(resp.workspace);
-  if (projectBody === null && workspaceBody === null) return null;
+  const projectLeg = legStatus(resp.project);
+  const workspaceLeg = legStatus(resp.workspace);
+  if (projectLeg.kind === "absent" && workspaceLeg.kind === "absent") return null;
 
-  let out = `## PetBox memory canon
+  const hasContent = projectLeg.kind === "content" || workspaceLeg.kind === "content";
 
-The curated memory index (canon) for this project — pointers to durable facts; pull full bodies via memory_get/memory_search.`;
-  if (projectBody !== null) {
-    out += `\n\n### Project (${project})\n\n${projectBody}`;
+  // Both legs share the SAME fixed marker text when both are empty — collecting into a Set
+  // dedups that case down to the one line the card's acceptance criterion asks for, instead of
+  // printing the identical nudge twice (which would read as two facts, not one instruction).
+  const markers = new Set<string>();
+  if (projectLeg.kind === "empty") markers.add(projectLeg.marker);
+  if (workspaceLeg.kind === "empty") markers.add(workspaceLeg.marker);
+
+  let out = `## PetBox memory canon`;
+  if (hasContent) {
+    out += `\n\nThe curated memory index (canon) for this project — pointers to durable facts; pull full bodies via memory_get/memory_search.`;
   }
-  if (workspaceBody !== null) {
-    out += `\n\n### Workspace\n\n${workspaceBody}`;
+  // Real content is attributed to its leg with a heading — it IS a fact about the
+  // project/workspace. The empty-canon nudge is deliberately NOT put under a "### Project
+  // (name)" heading: that framing would make an instruction ("curate with memory_upsert") read
+  // as though it were a fact ABOUT the named project, which is exactly what the card's
+  // acceptance criterion rules out.
+  if (projectLeg.kind === "content") {
+    out += `\n\n### Project (${project})\n\n${projectLeg.body}`;
   }
-  return out;
+  if (workspaceLeg.kind === "content") {
+    out += `\n\n### Workspace\n\n${workspaceLeg.body}`;
+  }
+  for (const marker of markers) {
+    out += `\n\n${marker}`;
+  }
+  return { text: out, hasContent };
 }
 
 // Returns { ok: true, resp } on a successful HTTP fetch (resp may still carry empty canon),
@@ -114,9 +159,9 @@ async function readCache(project: string): Promise<string | null> {
 }
 
 // Build the canon block for a resolved project. On a successful fetch the fresh block is
-// cached and returned; on failure a cached block (if any) is returned PREFIXED with a stale
-// marker. Returns null when there is nothing to show (fetch failed AND no cache, or both
-// canon parts are empty). Never throws.
+// returned, and cached IFF it carries real curated content; on failure a cached block (if any)
+// is returned PREFIXED with a stale marker. Returns null when there is nothing to show (fetch
+// failed AND no cache, or both canon legs are absent). Never throws.
 export async function fetchCanonBlock(
   resolved: ResolvedProject,
   opts?: { timeoutMs?: number },
@@ -124,13 +169,20 @@ export async function fetchCanonBlock(
   try {
     const result = await fetchCanon(resolved, opts?.timeoutMs);
     if (result.ok) {
-      // Successful fetch — the server is authoritative. A real block is cached and returned;
-      // an empty canon returns null (do NOT show a stale cache when the server says "nothing").
+      // Successful fetch — the server is authoritative, so the CURRENT state (marker or real
+      // content) is always what gets shown this session. Caching, though, is gated on
+      // `hasContent`: the empty-canon nudge is a live instruction about the server's state
+      // right now, not durable project knowledge, so it must never overwrite (or stand in for)
+      // a previously cached REAL canon. Without this gate, curating the canon and then hitting
+      // one network blip would resurrect the stale "canon is empty — curate" nudge over the
+      // real content that now exists (canon-invisible-and-unfed: a stickier, actively
+      // misleading staleness than ordinary stale-but-still-true cached content).
       const block = buildBlock(resolved.project, result.resp);
-      if (block !== null) await writeCache(resolved.project, block);
-      return block;
+      if (block !== null && block.hasContent) await writeCache(resolved.project, block.text);
+      return block !== null ? block.text : null;
     }
     // Fetch failed (endpoint absent / unreachable) → fall back to the offline cache if present.
+    // The cache, by construction above, only ever holds real content — never a stale marker.
     const cached = await readCache(resolved.project);
     if (cached !== null) return `${STALE_MARKER}\n\n${cached}`;
     return null;
