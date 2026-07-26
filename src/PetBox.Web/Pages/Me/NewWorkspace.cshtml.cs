@@ -14,6 +14,19 @@ namespace PetBox.Web.Pages.Me;
 // gate is inside WorkspaceProvisioning.CreateAsync, which claims the account's slot with the quota
 // check welded into the INSERT: two of these posts racing each other cannot both win.
 [Authorize(Policy = "CanCreateWorkspace")]
+// The self-service door into the same room as Admin/Workspaces, so it carries the same class: this page
+// creates a TENANT, and a tenant-creating verb has none to be scoped to. The workspace key arrives in
+// the POST body and does not exist yet — declaring it a BodyField tenant would ask ITenantAuthorizer
+// whether the caller may touch a workspace that is about to be created, which is unanswerable and
+// therefore a refusal of every create.
+//
+// What bounds this surface is not the tenant axis and is not weakened here: the quota check is welded
+// into the INSERT inside WorkspaceProvisioning.CreateAsync (two racing posts cannot both win), and the
+// CanCreateWorkspace policy above is the per-account gate. `bypassQuota` is still the sysadmin claim,
+// read from the principal.
+[TenantExempt(TenantExemption.Provisioning,
+	"creates a workspace — the tenant itself, which does not exist when the request is judged; the quota "
+	+ "gate lives in WorkspaceProvisioning.CreateAsync's INSERT")]
 public sealed class NewWorkspaceModel : PageModel
 {
 	readonly WorkspaceProvisioning _provisioning;

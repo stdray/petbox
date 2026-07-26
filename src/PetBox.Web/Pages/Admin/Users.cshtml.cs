@@ -12,6 +12,17 @@ namespace PetBox.Web.Pages.Admin;
 // the writes it guards (db-out-of-pages-into-services). What is left is this page's actual job:
 // turn a UserChangeResult into something a human reads.
 [Authorize(Policy = "SysAdmin")]
+// The accounts table of the whole installation: it creates and deletes principals and sets each one's
+// workspace ALLOWANCE. That allowance is a grant that spans tenants — the account it is written on can
+// then go and own workspaces — so the class is `provisioning`, not `fleet-wide`: what is handed out here
+// is access, not a node.
+//
+// A user account belongs to no workspace (WorkspaceMembers is a separate table, edited per workspace on
+// Admin/WorkspaceUsers, which DOES declare its tenant), so there is no tenant in the route and none the
+// page could be narrowed to.
+[TenantExempt(TenantExemption.Provisioning,
+	"creates, deletes and re-authorizes the installation's user accounts and their workspace allowance; "
+	+ "an account belongs to no single tenant and the grant it carries spans them")]
 public sealed class UsersModel : PageModel
 {
 	readonly IUserAdminService _users;

@@ -9,6 +9,15 @@ using PetBox.Web.Auth;
 namespace PetBox.Web.Pages.Admin;
 
 [Authorize(Policy = "SysAdmin")]
+// It CREATES AND ENUMERATES TENANTS — the same sentence the MCP project_* tool type is exempted on, and
+// the same class. A workspace-creating verb has no workspace to be scoped to, and the list it renders is
+// every workspace there is, which is the point of the page.
+//
+// Note what stays scoped: /ui/admin/sys/workspaces/{key} (Admin/WorkspaceDetail) is ONE workspace named
+// in the route and declares it as a tenant. The exemption ends where a single tenant is named.
+[TenantExempt(TenantExemption.Provisioning,
+	"creates and enumerates workspaces — i.e. the tenants themselves; a tenant-creating verb has no "
+	+ "tenant to be scoped to")]
 public sealed class WorkspacesModel : PageModel
 {
 	readonly IWorkspaceAdminService _workspaces;

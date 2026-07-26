@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Deploy.Contract;
 using PetBox.Deploy.Data;
@@ -11,6 +12,17 @@ namespace PetBox.Web.Pages.Admin;
 // Register/remove nodes, create deployments, start/stop/move/remove them. The node-agents
 // reconcile to whatever this page sets. Reaches Deploy only through IDeployService.
 [Authorize(Policy = "SysAdmin")]
+// The browser half of the deploy control plane, and it inherits that plane's declaration verbatim: the
+// MCP deploy_* tool type and DeployApi's three agent routes are all
+// [TenantExempt(TenantExemption.FleetWide, …)] because nodes and deployments are addressed by FLEET ID
+// and carry no tenant slot at all. This page is the same data through a cookie; declaring it any other
+// way would make one plane disagree with the other about the same rows.
+//
+// Not a claim that this is FINE: work `deploy-tools-fleet-wide-undocumented` is the open item about the
+// class itself. This declaration makes the extent countable, it does not narrow it.
+[TenantExempt(TenantExemption.FleetWide,
+	"nodes and deployments are addressed by fleet id, not by tenant — the same class the deploy_* tools "
+	+ "and the /agent routes carry over the same rows")]
 public sealed class DeployModel : PageModel
 {
 	readonly IDeployService _svc;

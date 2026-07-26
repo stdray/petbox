@@ -62,9 +62,6 @@ public static class TenantEnforcementAllowlist
 		// RAZOR — what is LEFT of the 65 (one entry per page, not per endpoint: the PageModel CLASS is
 		// the carrier). The Razor wave takes them out one family at a time; the accounting of what has
 		// already gone is in the note at the bottom of this list.
-		"page:/Admin/AgentKeys",
-		"page:/Admin/Deploy",
-		"page:/Admin/Index",
 		"page:/Admin/ProjectAgentDefs",
 		"page:/Admin/ProjectConnect",
 		"page:/Admin/ProjectData",
@@ -78,15 +75,12 @@ public static class TenantEnforcementAllowlist
 		"page:/Admin/ProjectSettingsAdmin",
 		"page:/Admin/ProjectTasks",
 		"page:/Admin/Projects",
-		"page:/Admin/SysDefaults",
-		"page:/Admin/Users",
 		"page:/Admin/WorkspaceAdmin",
 		"page:/Admin/WorkspaceAgentKeys",
 		"page:/Admin/WorkspaceDefaults",
 		"page:/Admin/WorkspaceDetail",
 		"page:/Admin/WorkspaceSettings",
 		"page:/Admin/WorkspaceUsers",
-		"page:/Admin/Workspaces",
 		"page:/Config/Editor",
 		"page:/Config/History",
 		"page:/Config/Index",
@@ -98,7 +92,6 @@ public static class TenantEnforcementAllowlist
 		"page:/Logs/Index",
 		"page:/Logs/Trace",
 		"page:/Logs/Traces",
-		"page:/Me/NewWorkspace",
 		"page:/Nav/Tree",
 		"page:/ProjectHome/Database",
 		"page:/ProjectHome/Databases",

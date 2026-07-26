@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
@@ -13,6 +14,20 @@ namespace PetBox.Web.Pages.Admin;
 // keys). Both share AgentKeyAdminService — the null workspace here IS "every key", the sysadmin's
 // deliberate free pass.
 [Authorize(Policy = "SysAdmin")]
+// `provisioning`, the same class the apikey_* MCP tools carry, and for the identical reason: this page
+// lists, revokes and RE-SCOPES keys across every project — `workspaceKey: null` in every call below IS
+// "every key, anywhere". A key-editing verb cannot be confined to the tenant it edits for.
+//
+// The class is deliberately not `fleet-wide`: what crosses the boundary here is not a node, it is
+// another tenant's credential, and the spec's note that `admin:provision` is de facto root over every
+// tenant is the fact this declaration makes visible rather than hides. Narrowing it is the separate
+// idea that note points at, not a line in this wave.
+//
+// The workspace-scoped twin (Admin/WorkspaceAgentKeys, `workspaceKey` from the route) is NOT exempt and
+// declares its tenant — same service, one tenant, so the two pages differ exactly where they should.
+[TenantExempt(TenantExemption.Provisioning,
+	"lists, revokes and re-scopes DB-minted api keys ACROSS all projects (workspaceKey: null is 'every "
+	+ "key'); a key-editing verb has no single tenant to be confined to")]
 public sealed class AgentKeysModel(AgentKeyAdminService keys) : PageModel
 {
 	public IReadOnlyList<AgentKeyRow> Keys { get; private set; } = [];
