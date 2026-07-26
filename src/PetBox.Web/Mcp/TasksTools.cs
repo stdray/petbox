@@ -1024,6 +1024,9 @@ public static class TasksTools
 		N chars, "…" when cut; -1 = full body). `currentVersion` is the board-wide cursor: for a full delta
 		since a cursor (everything changed by anyone — rebase/merge/catch-up), call
 		tasks_delta with it as `sinceVersion`.
+		`warning` (optional) is set when an APPLIED call's request payload was large enough to
+		risk the client-side truncation described above — informational, never a refusal (the
+		write already landed); omitted the rest of the time.
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -1042,7 +1045,12 @@ public static class TasksTools
 		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, ct), urlPrefix, bodyLen);
+		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, ct);
+		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
+		// only warn about size on a write that actually landed — a refused/conflicted call already
+		// has its own signal (conflicts[]).
+		var warning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
+		return Serialize(outcome, urlPrefix, bodyLen, warning);
 	}
 
 	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
@@ -1121,7 +1129,7 @@ public static class TasksTools
 		return $"{req.Scheme}://{req.Host}{Routes.ProjectTasks(ws, projectKey)}/";
 	}
 
-	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int? bodyLen = null)
+	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int? bodyLen = null, string? warning = null)
 	{
 		var r = o.Result;
 		return new UpsertResultView(
@@ -1134,7 +1142,8 @@ public static class TasksTools
 			Added: r.Added.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Removed: r.Removed.ToList(),
-			AutoResolved: r.AutoResolved.ToList());
+			AutoResolved: r.AutoResolved.ToList(),
+			Warning: warning);
 	}
 
 	// Delta projection of a node (no links/delivery/tags — that's tasks_search). camelCased by the

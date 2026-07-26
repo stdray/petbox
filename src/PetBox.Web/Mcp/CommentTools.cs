@@ -65,7 +65,10 @@ public static class CommentTools
 		created/edited comments (id, nodeId, parentId, author, tags, version); `body` follows the
 		uniform bodyLen knob (omitted here = NO body, a compact ack). `currentVersion` is the board's
 		comment cursor — pass it to comments_delta as `sinceVersion` for the full delta. To delete a
-		comment use comments_delete (delete is not folded into upsert). Requires tasks:write.
+		comment use comments_delete (delete is not folded into upsert).
+		`warning` (optional) is set when an APPLIED call's request payload was large enough to
+		risk the client-side truncation described above — informational, never a refusal (the
+		write already landed); omitted the rest of the time. Requires tasks:write.
 		""")]
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
@@ -94,12 +97,17 @@ public static class CommentTools
 		}
 
 		var r = await comments.UpsertAsync(projectKey, board, parsed, atomic, ct);
+		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
+		// only warn about size on a write that actually landed — a refused/conflicted call already
+		// has its own signal (conflicts[]).
+		var warning = r.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
 		return new CommentsUpsertResult(
 			r.Applied, r.CurrentVersion,
 			r.Added.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList(),
 			r.Updated.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList(),
 			[],
-			r.Conflicts);
+			r.Conflicts,
+			warning);
 	}
 
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
