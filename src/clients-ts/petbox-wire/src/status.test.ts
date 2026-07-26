@@ -23,16 +23,15 @@ import { test } from "node:test";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
 import type { ResolvedAgentDefinition } from "./agent-def-fetch.ts";
 import {
-  checkSkillFile,
   computeRosterState,
   formatCanonLeg,
   formatDefinitionSource,
   formatRoleModelSource,
   formatRosterState,
-  readArtifactState,
   resolveRoleModelSource,
   roleRelativePath,
 } from "./status.ts";
+import { readArtifactState } from "./origin-marker.ts";
 import type { RolesFile } from "./roles.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 
@@ -249,44 +248,9 @@ test("readArtifactState: absent / ours (origin marker) / foreign (no marker)", (
   }
 });
 
-test("checkSkillFile: absent -> false; foreign -> false; ours+rendered unknown -> 'unknown'; ours+match/mismatch", () => {
-  const dir = freshDir("petbox-status-skill-");
-  try {
-    const absent = join(dir, "a.md");
-    assert.deepEqual(checkSkillFile(absent, "anything"), {
-      path: absent,
-      state: "absent",
-      matchesTemplate: false,
-    });
-
-    const foreign = join(dir, "f.md");
-    writeFileSync(foreign, "not a petbox file\n", "utf8");
-    const foreignReport = checkSkillFile(foreign, "anything");
-    assert.equal(foreignReport.state, "foreign");
-    assert.equal(foreignReport.matchesTemplate, false);
-
-    const ours = join(dir, "o.md");
-    const rendered = "---\nname: petbox\npetbox: managed\n---\nbody\n";
-    writeFileSync(ours, rendered, "utf8");
-    assert.deepEqual(checkSkillFile(ours, undefined), {
-      path: ours,
-      state: "ours",
-      matchesTemplate: "unknown",
-    });
-    assert.deepEqual(checkSkillFile(ours, rendered), {
-      path: ours,
-      state: "ours",
-      matchesTemplate: true,
-    });
-    assert.deepEqual(checkSkillFile(ours, rendered + "drift"), {
-      path: ours,
-      state: "ours",
-      matchesTemplate: false,
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+// checkSkillFile/formatSkillFile/buildSkillReports moved to skill-files.ts (task
+// builtin-definition-drifts-no-catchup item 3) — their unit tests now live in
+// skill-files.test.ts, next to the functions.
 
 // ---- CLI integration tests (isolated HOME, same pattern as roles.test.ts /
 // apply-unbound-refusal.test.ts) -----------------------------------------------

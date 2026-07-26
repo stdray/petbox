@@ -11,6 +11,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
+  buildSkillReports,
+  checkSkillFile,
+  formatSkillFile,
   PROJECT_SKILLS,
   SKILL_SURFACES,
   renderSkillTemplate,
@@ -210,6 +213,106 @@ test("writeSkillFiles: an unmarked file that differs from the pre-marker render 
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked", "an owner edit on top of the legacy render must never be silently migrated");
     assert.equal(readFileSync(target, "utf8"), edited, "edited file must be left byte-for-byte untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- template-drift comparison (bugs: skill-files-clobber-and-apply-skips [item 3],
+// builtin-definition-drifts-no-catchup [item 3]) -----------------------------------------------
+// Moved here from status.test.ts along with checkSkillFile/formatSkillFile/buildSkillReports
+// themselves: `status` and `doctor` share this ONE comparison, so its tests live next to it.
+
+test("checkSkillFile: absent -> false; foreign -> false; ours+rendered unknown -> 'unknown'; ours+match/mismatch", () => {
+  const dir = freshDir();
+  try {
+    const absent = join(dir, "a.md");
+    assert.deepEqual(checkSkillFile(absent, "anything"), {
+      path: absent,
+      state: "absent",
+      matchesTemplate: false,
+    });
+
+    const foreign = join(dir, "f.md");
+    writeFileSync(foreign, "not a petbox file\n", "utf8");
+    const foreignReport = checkSkillFile(foreign, "anything");
+    assert.equal(foreignReport.state, "foreign");
+    assert.equal(foreignReport.matchesTemplate, false);
+
+    const ours = join(dir, "o.md");
+    const rendered = "---\nname: petbox\npetbox: managed\n---\nbody\n";
+    writeFileSync(ours, rendered, "utf8");
+    assert.deepEqual(checkSkillFile(ours, undefined), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: "unknown",
+    });
+    assert.deepEqual(checkSkillFile(ours, rendered), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: true,
+    });
+    assert.deepEqual(checkSkillFile(ours, rendered + "drift"), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: false,
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("formatSkillFile: a foreign (BLOCKED) file reads distinctly from an owned file that DRIFTED from the template", () => {
+  const dir = freshDir();
+  try {
+    const foreignPath = join(dir, "foreign.md");
+    writeFileSync(foreignPath, "not a petbox file\n", "utf8");
+    const foreignLine = formatSkillFile(checkSkillFile(foreignPath, "whatever the template renders"));
+    assert.match(foreignLine, /BLOCKED/, "a real user file must read as BLOCKED, never as drift");
+    assert.doesNotMatch(foreignLine, /DRIFTED/);
+
+    const driftedPath = join(dir, "drifted.md");
+    const rendered = "---\nname: petbox\npetbox: managed\n---\nbody\n";
+    writeFileSync(driftedPath, rendered, "utf8");
+    const driftedLine = formatSkillFile(checkSkillFile(driftedPath, rendered + "\nnew template line\n"));
+    assert.match(driftedLine, /DRIFTED/, "an owned file whose content no longer matches the template must read as drifted");
+    assert.match(driftedLine, /re-run apply\/wire/i, "the drifted remedy must be 're-run apply/wire', not 'sort it out yourself'");
+    assert.doesNotMatch(driftedLine, /BLOCKED/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: one report per (PROJECT_SKILLS x SKILL_SURFACES); matches a freshly written tree", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    assert.equal(reports.length, PROJECT_SKILLS.length * SKILL_SURFACES.length);
+    for (const report of reports) {
+      assert.equal(report.state, "ours");
+      assert.equal(report.matchesTemplate, true, `expected ${report.path} to match its freshly written template`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: workspace undefined -> 'unknown' match only for the spec that needs {{WORKSPACE}}", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", undefined);
+    for (const spec of PROJECT_SKILLS) {
+      for (const surface of SKILL_SURFACES) {
+        const report = reports.find((r) => r.path === pathFor(dir, surface, spec.dir))!;
+        if (spec.needsWorkspace) {
+          assert.equal(report.matchesTemplate, "unknown", `${spec.dir} needs {{WORKSPACE}}; an unresolved workspace must never claim a match/mismatch`);
+        } else {
+          assert.equal(report.matchesTemplate, true, `${spec.dir} does not need {{WORKSPACE}} and should still compare cleanly`);
+        }
+      }
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

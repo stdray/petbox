@@ -91,10 +91,17 @@ import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
+import { unrefLingeringHandles } from "./hook-drain.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
-import { writeSkillFiles, type SkillWriteOutcome } from "./skill-files.ts";
+import {
+  buildSkillReports,
+  formatSkillFile,
+  probeWorkspace,
+  writeSkillFiles,
+  type SkillWriteOutcome,
+} from "./skill-files.ts";
 import { runStatus } from "./status.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
@@ -313,7 +320,10 @@ function isModelCommand(argv: string[]): boolean {
 // (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
 // Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
 // Also prints a built-in-vs-live definition drift check (bug: builtin-definition-drifts-no-catchup)
-// when this run actually reached the server — informational only, never changes the exit code.
+// when this run actually reached the server, and a materialized-skill-vs-template drift check
+// (same bug, item 3, plus skill-files-clobber-and-apply-skips item 3) when this project is
+// registered and its live workspace resolves — both informational only, never changing the exit
+// code.
 async function runDoctor(argv: string[]): Promise<void> {
   let offline = false;
   for (let i = 1; i < argv.length; i++) {
@@ -340,7 +350,13 @@ async function runDoctor(argv: string[]): Promise<void> {
     validateAgentDefinition(definition);
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(WIRE_EXIT.hard);
+    // Set exitCode + return, do NOT hard process.exit() — see the matching comment at this
+    // function's two other exit points below for why (doctor now does a SECOND live fetch, the
+    // workspace probe, and two sequential fetches in one process is exactly what turned this
+    // from a latent risk into a reproducible crash).
+    process.exitCode = WIRE_EXIT.hard;
+    unrefLingeringHandles();
+    return;
   }
 
   const roles = loadRoles();
@@ -373,6 +389,60 @@ async function runDoctor(argv: string[]): Promise<void> {
     } else {
       console.error(`doctor: built-in default definition has drifted from the live server definition (${drift.length}):`);
       for (const line of drift) console.error(`  - ${line}`);
+    }
+  }
+
+  // Skill-template drift check (bugs: skill-files-clobber-and-apply-skips item 3,
+  // builtin-definition-drifts-no-catchup item 3 — the one item both cards' verdicts named as the
+  // last thing left undone) — informational only, same reasoning as the definition drift check
+  // just above: doctor is offline by design, and comparing a materialized skill file against its
+  // template needs this project's LIVE workspace for the {{WORKSPACE}} placeholder (the registry
+  // never stores it — see skill-files.ts's probeWorkspace), so `--offline`, an unregistered
+  // directory, or an unreachable server are all a clean skip, never a failure. Reuses the SAME
+  // comparison `status` pillar 4 already had (skill-files.ts's buildSkillReports/formatSkillFile)
+  // — never a second diff (see that module's header on this consolidation).
+  const { root: skillCheckRoot } = resolveApplyRoot(process.cwd());
+  const resolvedForSkillCheck = resolveProject(skillCheckRoot);
+  if (offline) {
+    log("doctor: skill check skipped (--offline).");
+  } else if (!resolvedForSkillCheck) {
+    log(`doctor: skill check skipped (${skillCheckRoot} is not a registered project; run \`wire\` here first).`);
+  } else {
+    const probe = await probeWorkspace(resolvedForSkillCheck.baseUrl, resolvedForSkillCheck.apiKey);
+    if (!probe.ok) {
+      // Same taxonomy performApply's skill refresh already uses (wire-silent-failures-invisible):
+      // "forbidden" is a scope problem worth calling out by name, not indistinguishable from an
+      // ordinary offline/timeout miss.
+      const reasonText =
+        probe.reason === "forbidden"
+          ? "the API key was rejected (401/403 — check its scopes), not merely offline"
+          : probe.reason === "no-workspace-field"
+            ? "the server responded but did not report a workspace (older server?)"
+            : "could not reach /api/auth/validate (network/timeout)";
+      log(`doctor: skill check skipped (${reasonText}).`);
+    } else {
+      const reports = buildSkillReports(
+        skillCheckRoot,
+        join(HERE, "templates"),
+        resolvedForSkillCheck.project,
+        probe.workspace,
+      );
+      // Foreign (BLOCKED) and drifted are different defects with different remedies — name them
+      // separately, never fold them into one "mismatch" count (task requirement).
+      const blocked = reports.filter((r) => r.state === "foreign");
+      const drifted = reports.filter((r) => r.state === "ours" && r.matchesTemplate === false);
+      if (blocked.length === 0 && drifted.length === 0) {
+        log("doctor: skill files — every materialized copy matches its current template, no foreign files.");
+      } else {
+        if (blocked.length > 0) {
+          console.error(`doctor: skill files — ${blocked.length} foreign (BLOCKED) file(s), not ours to fix:`);
+          for (const r of blocked) console.error(`  - ${formatSkillFile(r)}`);
+        }
+        if (drifted.length > 0) {
+          console.error(`doctor: skill files — ${drifted.length} file(s) drifted from the current template (run \`petbox-wire apply\` to refresh):`);
+          for (const r of drifted) console.error(`  - ${formatSkillFile(r)}`);
+        }
+      }
     }
   }
 
@@ -411,13 +481,27 @@ async function runDoctor(argv: string[]): Promise<void> {
   const code = classifyApplyExit({ hadTruthfulnessBlock });
   if (code === WIRE_EXIT.ok) {
     log("doctor: all known harnesses OK.");
-    process.exit(WIRE_EXIT.ok);
+    // Exit cleanly instead of tearing the process down mid-close (bug surfaced by this task's
+    // skill-drift check): doctor can now make TWO sequential live fetches in one run (the
+    // definition fetch above, then the workspace probe) — a hard process.exit() right after races
+    // Windows' async-handle teardown for whichever socket is still closing
+    // (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c` — reproduced on
+    // this machine against the real server, not merely a local test fixture: `Connection: close`
+    // guarantees no keep-alive socket lingers, but does not make its OS-level teardown
+    // instantaneous). Same fix the SessionStart/Stop hooks already use for the identical crash
+    // (see pull-memory.ts's exit comment / hook-drain.ts): set exitCode and return, letting Node
+    // drain the event loop naturally, after unref'ing whatever handle is still mid-close so it
+    // can't hold the process open either.
+    process.exitCode = WIRE_EXIT.ok;
+    unrefLingeringHandles();
+    return;
   }
   console.error(
     `doctor: FAILED — a role requires a capability a harness does not declare, or is bound to a ` +
       `model a harness cannot resolve (exit ${WIRE_EXIT.truthfulness}).`,
   );
-  process.exit(WIRE_EXIT.truthfulness);
+  process.exitCode = WIRE_EXIT.truthfulness;
+  unrefLingeringHandles();
 }
 
 // Result of one apply compile pass — a plain data record so a caller can decide what to do
@@ -448,42 +532,14 @@ type ApplyRunResult = {
 // Best-effort workspace lookup for apply's skill refresh below (bug:
 // skill-files-clobber-and-apply-skips). UNLIKE validateKey (the full-wire path, step 3b), a
 // failure here must NEVER abort apply — skills are secondary to the agent artifacts apply exists
-// to write. Returns a discriminated `ok:false` on ANY failure — the caller then skips the skill
-// refresh rather than inventing a workspace apply was never given (same "never a hardcoded
-// default" rule as wire-identity.ts) — but distinguishes WHY (wire-silent-failures-invisible):
-// a 401/403 (key lacks the scope /api/auth/validate needs) is not the same problem as a genuine
-// network/timeout failure, and neither is the same as a 200 that simply omits `workspace`
-// (older server). Before this the caller printed one generic "could not resolve workspace" line
-// for all three — not silent, but the three causes were indistinguishable from the text alone.
-type WorkspaceProbeResult =
-  | { readonly ok: true; readonly workspace: string }
-  | { readonly ok: false; readonly reason: "network" | "forbidden" | "no-workspace-field" };
-
-async function probeWorkspaceForApply(baseUrl: string, apiKey: string): Promise<WorkspaceProbeResult> {
-  let resp: Response;
-  try {
-    resp = await fetch(`${baseUrl}/api/auth/validate`, {
-      method: "GET",
-      headers: { "X-Api-Key": apiKey },
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch {
-    return { ok: false, reason: "network" };
-  }
-  if (resp.status === 401 || resp.status === 403) {
-    return { ok: false, reason: "forbidden" };
-  }
-  if (!resp.ok) return { ok: false, reason: "network" };
-  let body: any;
-  try {
-    body = await resp.json();
-  } catch {
-    return { ok: false, reason: "network" };
-  }
-  const ws = body?.workspace ?? body?.Workspace;
-  if (typeof ws === "string" && ws.trim().length > 0) return { ok: true, workspace: ws.trim() };
-  return { ok: false, reason: "no-workspace-field" };
-}
+// to write. probeWorkspace (skill-files.ts) returns a discriminated `ok:false` on ANY failure —
+// the caller then skips the skill refresh rather than inventing a workspace apply was never given
+// (same "never a hardcoded default" rule as wire-identity.ts) — but distinguishes WHY
+// (wire-silent-failures-invisible): a 401/403 (key lacks the scope /api/auth/validate needs) is
+// not the same problem as a genuine network/timeout failure, and neither is the same as a 200
+// that simply omits `workspace` (older server). doctor's skill-drift check (below) shares this
+// SAME probe — moved out of this file so it stopped being a second ~12-line copy alongside
+// status.ts's own (see skill-files.ts's header on that dedup).
 
 async function performApply(opts: {
   definitionKey: string;
@@ -605,7 +661,7 @@ async function performApply(opts: {
   } else if (!resolvedForSkills) {
     log(`${opts.label}: skills — skipped (${root} is not a registered project; run \`wire\` here first).`);
   } else {
-    const probe = await probeWorkspaceForApply(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
+    const probe = await probeWorkspace(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
     if (!probe.ok) {
       // Distinguish WHY (wire-silent-failures-invisible): forbidden is a scope problem worth a
       // Class-Б trace (it will otherwise look identical to "server down" run after run), the

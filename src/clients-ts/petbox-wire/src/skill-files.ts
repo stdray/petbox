@@ -23,7 +23,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeArtifact } from "./apply-write.ts";
-import { hasPetboxMarker, PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { hasPetboxMarker, PETBOX_MARKER_LINE, readArtifactState, type ArtifactState } from "./origin-marker.ts";
 
 // Skill surfaces wire.ts writes rendered skill bodies into. opencode is intentionally absent: it
 // discovers skills through its Claude-compatible path (`.claude/skills/…`), and a second
@@ -117,4 +117,145 @@ export function writeSkillFiles(
     }
   }
   return outcomes;
+}
+
+// ---- template-drift comparison (bugs: skill-files-clobber-and-apply-skips [item 3],
+// builtin-definition-drifts-no-catchup [item 3]) -----------------------------------------------
+//
+// Both bugs' bodies named the SAME remaining gap: `status` grew the "is this skill file
+// materialized, and does it still match the current template" comparison, but `doctor` never
+// looked at skills at all. This is the ONE place that comparison lives — `status.ts` and
+// `wire.ts`'s `runDoctor` both call `checkSkillFile`/`formatSkillFile`/`buildSkillReports`
+// instead of each re-deriving it. `ArtifactState`/`readArtifactState` live in origin-marker.ts
+// (not skill-specific — status.ts's per-role lines use the same classifier).
+
+export type SkillFileReport = {
+  readonly path: string;
+  readonly state: ArtifactState;
+  /** "unknown" when the expected render could not be computed (workspace unresolved, offline). */
+  readonly matchesTemplate: boolean | "unknown";
+};
+
+/** Compare one materialized path against `rendered` (undefined when the expected render is
+ * unavailable — offline, or a workspace-needing template with no probed workspace). */
+export function checkSkillFile(absPath: string, rendered: string | undefined): SkillFileReport {
+  const state = readArtifactState(absPath);
+  if (state === "absent") return { path: absPath, state, matchesTemplate: false };
+  if (rendered === undefined) return { path: absPath, state, matchesTemplate: "unknown" };
+  if (state === "foreign") return { path: absPath, state, matchesTemplate: false };
+  let content: string;
+  try {
+    content = readFileSync(absPath, "utf8");
+  } catch {
+    return { path: absPath, state, matchesTemplate: "unknown" };
+  }
+  return { path: absPath, state, matchesTemplate: content === rendered };
+}
+
+/** Human-readable line for one report — distinguishes a foreign (BLOCKED) file, whose remedy is
+ * "sort it out yourself" (never touched, never diffed), from an owned file that has DRIFTED from
+ * the current template, whose remedy is "re-run apply/wire". These are different defects and
+ * every caller (status, doctor) must say so distinctly, not fold them into one "mismatch". */
+export function formatSkillFile(report: SkillFileReport): string {
+  const base =
+    report.state === "absent"
+      ? "not materialized"
+      : report.state === "foreign"
+        ? "BLOCKED — a foreign (non-PetBox) file sits here"
+        : "materialized (ours)";
+  const match =
+    report.matchesTemplate === "unknown"
+      ? " — template match unknown (workspace not resolved; run online to verify)"
+      : report.matchesTemplate
+        ? " — matches the current template"
+        : report.state === "ours"
+          ? " — DRIFTED from the current template (re-run apply/wire to refresh)"
+          : "";
+  return `${report.path}: ${base}${match}`;
+}
+
+// One report per (PROJECT_SKILLS spec x SKILL_SURFACES surface) under `root`, comparing each
+// materialized file against what the CURRENT template renders for `project`/`workspace`.
+// `workspace` undefined means unresolved (offline, unregistered project, or a failed probe) — a
+// spec needing {{WORKSPACE}} (only `petbox`) then gets `matchesTemplate: "unknown"` rather than a
+// false mismatch; a spec that doesn't need it still renders and compares normally, same as
+// status.ts always did. Shared by `status` (pillar 4) and `doctor` (skill-drift check).
+export function buildSkillReports(
+  root: string,
+  templatesRoot: string,
+  project: string,
+  workspace: string | undefined,
+): SkillFileReport[] {
+  const reports: SkillFileReport[] = [];
+  for (const spec of PROJECT_SKILLS) {
+    let rendered: string | undefined;
+    if (workspace !== undefined || !spec.needsWorkspace) {
+      try {
+        const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
+        rendered = renderSkillTemplate(tpl, project, workspace ?? "");
+      } catch {
+        rendered = undefined;
+      }
+    }
+    for (const surface of SKILL_SURFACES) {
+      const absPath = join(root, ...surface, spec.dir, "SKILL.md");
+      reports.push(checkSkillFile(absPath, rendered));
+    }
+  }
+  return reports;
+}
+
+// ---- workspace probe (dedup: status.ts and wire.ts each carried their own ~12-line copy of the
+// SAME GET /api/auth/validate probe for the `petbox` skill template's {{WORKSPACE}} placeholder —
+// the registry never stores workspace, so every caller that renders or compares that template
+// needs to ask the server) --------------------------------------------------------------------
+
+export type WorkspaceProbeResult =
+  | { readonly ok: true; readonly workspace: string }
+  | { readonly ok: false; readonly reason: "network" | "forbidden" | "no-workspace-field" };
+
+/**
+ * Resolve the live workspace for a project. Distinguishes WHY it failed
+ * (wire-silent-failures-invisible): "forbidden" (401/403 — the key lacks a scope, worth its own
+ * trace) is not the same as "network" (offline/timeout, ordinary) or "no-workspace-field" (an
+ * older server that never reports one). A caller that only needs a yes/no can check `.ok`.
+ */
+export async function probeWorkspace(baseUrl: string, apiKey: string, timeoutMs = 8000): Promise<WorkspaceProbeResult> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let resp: Response;
+    try {
+      resp = await fetch(`${baseUrl}/api/auth/validate`, {
+        method: "GET",
+        // Connection: close so this socket doesn't linger keep-alive after the response — apply
+        // /doctor/status are all short-lived CLI processes, and a kept-alive socket is a libuv
+        // handle that either stalls natural process exit or races a forced process.exit() against
+        // the handle's own close teardown (same crash class canon.ts's fetchCanon documents; the
+        // original two copies of this probe used the bare AbortSignal.timeout() shorthand
+        // instead, which leaves the exact same handle behind — reproduced empirically as a
+        // `UV_HANDLE_CLOSING` assertion crash on Windows the first time a test exercised doctor's
+        // new skill-drift check against a real server).
+        headers: { "X-Api-Key": apiKey, Connection: "close" },
+        signal: ctrl.signal,
+      });
+    } catch {
+      return { ok: false, reason: "network" };
+    }
+    if (resp.status === 401 || resp.status === 403) {
+      return { ok: false, reason: "forbidden" };
+    }
+    if (!resp.ok) return { ok: false, reason: "network" };
+    let body: any;
+    try {
+      body = await resp.json();
+    } catch {
+      return { ok: false, reason: "network" };
+    }
+    const ws = body?.workspace ?? body?.Workspace;
+    if (typeof ws === "string" && ws.trim().length > 0) return { ok: true, workspace: ws.trim() };
+    return { ok: false, reason: "no-workspace-field" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
