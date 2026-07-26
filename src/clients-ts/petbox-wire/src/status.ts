@@ -45,6 +45,7 @@ import { resolveApplyRoot } from "./apply-root.ts";
 import { CANON_BODY_BUDGET_CHARS, fetchCanonLegs, type CanonLegState } from "./canon.ts";
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
+import { unrefLingeringHandles } from "./hook-drain.ts";
 import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
 import { resolveProject, type ResolvedProject } from "./registry.ts";
 import {
@@ -355,5 +356,12 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
       ? "status: done — see PROBLEM line(s) above for roles with no model source."
       : "status: done — every declared role has a model source on every known harness.",
   );
-  process.exit(WIRE_EXIT.ok);
+  // Same libuv race doctor hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)):
+  // runStatus does TWO live network requests (definition resolve, then the workspace probe), and
+  // two sequential fetches in one process is exactly what turns this from a latent risk into a
+  // reproducible crash on a hard process.exit(). Set exitCode + return, letting Node drain the
+  // event loop naturally, after unref'ing whatever handle is still mid-close (see wire.ts's
+  // doctor exit points / hook-drain.ts for the identical fix).
+  process.exitCode = WIRE_EXIT.ok;
+  unrefLingeringHandles();
 }
