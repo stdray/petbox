@@ -730,19 +730,14 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- read: tree view ----
 
-	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
-	{
-		var (view, _) = await GetAsyncCore(projectKey, board, includeClosed, includeBody, under, urlPrefix, status, ct);
-		return view;
-	}
+	// node-page-not-a-board-scan: GetNodeAsync (below) used to render a single card by calling
+	// this SAME whole-board builder and throwing away every node but one — this is the board LIST
+	// page's own path, board-page-cost's territory, untouched by that finding. GetAsyncCore is now
+	// a plain single-purpose builder again (no shared tuple with the node page).
+	public Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default) =>
+		GetAsyncCore(projectKey, board, includeClosed, includeBody, under, urlPrefix, status, ct);
 
-	// node-page-full-board-fetch: the actual body of GetAsync, ALSO returning the project-wide
-	// node index it builds internally — GetNodeAsync needs that SAME index (nodeId -> board/slug/
-	// title/status, across every board) to resolve its own exhaustive relation panel. Before this
-	// split, GetNodeAsync called the public GetAsync and then rebuilt the identical index a SECOND
-	// time via its own BuildNodeIndexAsync call — a full per-board project-wide scan repeated for
-	// no reason. Now there is exactly one build per node-page render, shared via this tuple.
-	async Task<(PlanBoardView View, Dictionary<string, NodeRef> Index)> GetAsyncCore(string projectKey, string board, bool includeClosed, bool includeBody, string? under, string? urlPrefix, string[]? status, CancellationToken ct)
+	async Task<PlanBoardView> GetAsyncCore(string projectKey, string board, bool includeClosed, bool includeBody, string? under, string? urlPrefix, string[]? status, CancellationToken ct)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
@@ -782,13 +777,18 @@ public sealed partial class TasksService : ITasksService
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var parentOf = await ParentMapAsync(projectKey, ct);
+		// node-index-scan-one-select-per-board: ONE project-wide active-node scan feeds both the
+		// delivery roll-up below and the link index right after — not two separate per-board loops
+		// (delivery-scan-duplicates-node-index-scan).
+		var allActiveNodes = await AllActiveProjectNodesAsync(projectKey, ct);
+
 		// Delivery is gated by kind DATA (MethodologyDeliveryDef), not BoardKind.Spec.
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
 		var delivery = deliveryDef is not null
-			? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, runtime, deliveryDef, ct)
+			? await ComputeSpecDeliveryAsync(projectKey, active, allActiveNodes, parentOf, runtime, deliveryDef, ct)
 			: null;
 
-		var index = await BuildNodeIndexAsync(projectKey, ct);
+		var index = BuildNodeIndex(allActiveNodes, await _boards.ListAsync(projectKey, ct));
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
@@ -863,7 +863,7 @@ public sealed partial class TasksService : ITasksService
 				UpdatedAt: n.Updated,
 				Blocks: blocks.Count > 0 ? blocks : null));
 		}
-		return (new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes), index);
+		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
 	}
 
 	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
@@ -906,51 +906,135 @@ public sealed partial class TasksService : ITasksService
 		return new BoardChangeStamp(nodeVersion, tagStamp);
 	}
 
+	// node-page-cost-bounded-by-degree: this used to render ONE card by calling GetAsyncCore — the
+	// WHOLE-BOARD builder — and discarding every node but one (node-page-full-board-fetch's
+	// "includeBody:false + patch back" dance was already a symptom of that mismatch, and
+	// node-index-scan-one-select-per-board's first pass just made the SAME whole-board-then-
+	// project-scan shape cheaper per round trip, not smaller in what it read). Owner review
+	// (2026-07-26): "такое ощущение, что там опять работает логика в стиле 'собрать доску и
+	// отсечь лишь одну ноду'" — correct; this rewrite drops GetAsyncCore entirely for the node
+	// page. Cost is now bounded by THIS node's own relation degree and its part_of ancestor
+	// depth, not by board or project size — see ResolveNodeRefsAsync/NodeLineageAsync below for
+	// the two point-query walks that replace the project-wide index and the whole-board temporal
+	// scan. The one residual project-wide read is delivery (see the `deliveryDef` branch) — kept
+	// and justified there, not silently reintroduced.
 	public async Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(nodeId)) return null;
 		var board = await _boards.FindBoardByNodeIdAsync(projectKey, nodeId, ct);
 		if (board is null) return null;
+		var row = await GetActiveNodeRowAsync(projectKey, nodeId, ct);
+		if (row is null) return null; // closed between the two reads above — same race the old path had
 
-		// Reuse GetAsyncCore (includeClosed: the node or its ancestors may be terminal) — it builds
-		// the fully-enriched view (links, delivery, parent/depth) we'd otherwise duplicate, AND
-		// hands back the project-wide node index built along the way (see GetAsyncCore) so the
-		// relation panel below doesn't rebuild it a second time.
-		//
-		// tasks-ui-pages-getting-slower: includeBody:false here — a single-node page render used to
-		// go through this SAME call with includeBody defaulted to true, which makes GetAsyncCore
-		// SELECT the full markdown body of EVERY node on the board (every OTHER node's sibling body,
-		// not just this one) purely to throw all but one away a few lines below. On the $system
-		// `work` board (477 nodes) that is ~477 full bodies read and allocated to render ONE node.
-		// The target node's own body is fetched separately below (one single-row query) and patched
-		// back in — everyone else's body is never selected, per board-read-loads-all-bodies.
-		var (view, index) = await GetAsyncCore(projectKey, board, includeClosed: true, includeBody: false, under: null, urlPrefix: null, status: null, ct);
-		var node = view.Nodes.FirstOrDefault(n => n.NodeId == nodeId);
-		if (node is null) return null;
-		node = node with { Body = await GetNodeBodyAsync(projectKey, nodeId, ct) };
+		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 
-		// Walk part_of up via ParentNodeId (same-board, single-parent, cycle-guarded) to build
-		// the breadcrumb chain, then reverse to root→parent order.
-		var byId = view.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
-		var ancestors = new List<NodeCrumb>();
-		var cur = node.ParentNodeId; var guard = 0;
-		while (cur is not null && byId.TryGetValue(cur, out var p) && guard++ < 1000)
-		{
-			ancestors.Add(new NodeCrumb(p.NodeId, p.Key, p.Title));
-			cur = p.ParentNodeId;
-		}
-		ancestors.Reverse();
-
-		// The EXHAUSTIVE relation panel (node-relations-panel): every relation kind in both
-		// directions, resolved against the project-wide node index. The board `view` above only
-		// carries PlanNodeView's typed subset (spec/blockedBy/…) and no children — this fills the
-		// gap so the detail page renders the full graph around a node in one place.
-		// `index` is the SAME index GetAsyncCore already built above — not rebuilt.
+		// This node's OWN edges, both directions — bounded by ITS degree, never the board or the
+		// project. Feeds the typed link fields below AND the exhaustive relation panel.
 		var fromEdges = await _relations.ListAsync(projectKey, nodeId, "from", ct: ct);
 		var toEdges = await _relations.ListAsync(projectKey, nodeId, "to", ct: ct);
-		var panelRuntime = await RuntimeForBoardAsync(projectKey, (await _boards.FindAsync(projectKey, board, ct))!, ct);
+
+		// Ancestor walk: part_of is child --part_of--> parent (FromNodeId=child, matching
+		// ParentMapAsync's own grouping), so THIS node's parent is already sitting in `fromEdges` —
+		// no query for the first hop. Each further hop is ONE point query for that ancestor's OWN
+		// "from" edges (bounded by chain depth, guarded against cycles) — never a project- or
+		// board-wide part_of sweep just to find 0-3 ancestors. (Side effect, not a regression: this
+		// walk no longer stops early at a board boundary — the OLD code's ancestor loop matched
+		// against the current board's node list only, so a cross-board part_of parent silently
+		// truncated the breadcrumb; a point query has no such board scoping.)
+		var parentId = fromEdges.FirstOrDefault(e => e.Kind == "part_of")?.ToNodeId;
+		var ancestorIds = new List<string>();
+		var cur = parentId; var guard = 0;
+		while (cur is not null && guard++ < 1000)
+		{
+			ancestorIds.Add(cur);
+			var parentEdges = await _relations.ListAsync(projectKey, cur, "from", ct: ct);
+			cur = parentEdges.FirstOrDefault(e => e.Kind == "part_of")?.ToNodeId;
+		}
+
+		// ONE targeted batch resolve (board-page-cost's own `IN (...)` form, chunked) for every
+		// node this render can possibly reference: the relation panel's targets (both directions,
+		// every kind) plus the ancestor chain — NOT every active node of the project. A degree-8
+		// node with a 3-deep ancestor chain resolves ~11 ids here, not the whole project.
+		var refIds = fromEdges.Select(e => e.ToNodeId)
+			.Concat(toEdges.Select(e => e.FromNodeId))
+			.Concat(ancestorIds)
+			.Where(id => id.Length > 0)
+			.Distinct(StringComparer.Ordinal)
+			.ToList();
+		var index = await ResolveNodeRefsAsync(projectKey, refIds, ct);
+
+		// Typed link fields — same classification GetAsyncCore uses for the board view, applied to
+		// this one node's already-fetched edges (methodology-link-kinds-declared / delivery quartet).
+		var specLinkKinds = runtime.EffectiveLinkKinds()
+			.Where(lk => lk.Direction is { ToKind: { } tk } && runtime.DeliveryOf(tk) is not null)
+			.Select(lk => lk.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var deliveryDef = runtime.DeliveryOf(meta.Kind);
+		var deliveryLink = deliveryDef?.Link;
+		var spec = fromEdges.Where(e => specLinkKinds.Contains(e.Kind)).Select(e => LinkRef(e.ToNodeId, index)).ToList();
+		var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
+		var blocks = fromEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.ToNodeId, index)).ToList();
+		var linkedTasks = deliveryLink is not null ? toEdges.Where(e => e.Kind == deliveryLink).Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+		var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
+
+		// Delivery: the ONE residual project-wide read, and only paid on a delivery-bearing (spec)
+		// board kind — most boards have no MethodologyDeliveryDef and skip this entirely.
+		// DeliveryEngine.Rollup walks this node's FULL part_of subtree (which may cross boards) and
+		// every linked task reachable in it, bottom-up — that walk needs the project's part_of
+		// edges (ParentMapAsync, already ONE query) and, for each candidate task id the walk turns
+		// up, its Status/Type (AllActiveProjectNodesAsync, already collapsed to ONE query earlier
+		// in this same card). Narrowing that second read to just the reachable subtree is possible
+		// in principle (childrenOf inverts the already-fetched parentOf in memory; the reachable
+		// task ids could be collected before fetching Status/Type) but was NOT done here — for a
+		// value the UI renders as a status badge, getting the reachability walk wrong would silently
+		// misreport delivery, and that narrowing has no dedicated test coverage yet. Left as a
+		// follow-up, not a silent scope cut: specNodeIds is at least trimmed to JUST this one node
+		// (was the board's entire active list, computing N-1 outputs never used by this page).
+		string? delivery = null;
+		if (deliveryDef is not null)
+		{
+			var parentOfForDelivery = await ParentMapAsync(projectKey, ct);
+			var allActiveNodes = await AllActiveProjectNodesAsync(projectKey, ct);
+			var rollup = await ComputeSpecDeliveryAsync(projectKey, [row], allActiveNodes, parentOfForDelivery, runtime, deliveryDef, ct);
+			delivery = rollup.GetValueOrDefault(nodeId);
+		}
+
+		var node = new PlanNodeView(
+			Key: row.Key,
+			NodeId: row.NodeId,
+			ParentNodeId: parentId,
+			ParentSlug: parentId is not null && index.TryGetValue(parentId, out var pr) ? pr.Slug : null,
+			Depth: ancestorIds.Count,
+			Status: row.Status,
+			Type: row.Type,
+			Title: row.Name,
+			Body: row.Body,
+			Commits: await NodeCommitsAsync(projectKey, nodeId, ct),
+			Priority: row.Priority,
+			Version: row.Version,
+			Delivery: delivery,
+			Spec: spec.Count > 0 ? spec : null,
+			BlockedBy: blockedBy.Count > 0 ? blockedBy : null,
+			LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
+			Supersedes: supersedes.Count > 0 ? supersedes : null,
+			RenamedFrom: await NodeLineageAsync(projectKey, board, row.PrevKey, ct),
+			Tags: (await _tags.ActiveTagsAsync(projectKey, nodeId, ct)).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+			CreatedAt: row.Created,
+			UpdatedAt: row.Updated,
+			Blocks: blocks.Count > 0 ? blocks : null);
+
+		// Root→parent order for the breadcrumb (ancestorIds was collected bottom-up). A miss in
+		// `index` (a dangling/deleted ancestor) still gets a crumb — falls back to the raw id,
+		// mirroring LinkRef's own "still show it" philosophy for a relation target that resolves to
+		// "missing", rather than silently truncating the trail.
+		var ancestors = ancestorIds.AsEnumerable().Reverse()
+			.Select(id => index.TryGetValue(id, out var ar) ? new NodeCrumb(id, ar.Slug, ar.Title) : new NodeCrumb(id, id, id))
+			.ToList();
+
+		// The EXHAUSTIVE relation panel (node-relations-panel): every relation kind in both
+		// directions, resolved against the SAME scoped `index` built above — not a project-wide one.
 		var relations = new List<NodeRelationGroup>();
-		foreach (var (kind, fromSide, label) in RelationPanelSpecs(panelRuntime))
+		foreach (var (kind, fromSide, label) in RelationPanelSpecs(runtime))
 		{
 			var targets = fromSide
 				? fromEdges.Where(e => e.Kind == kind).Select(e => e.ToNodeId)
@@ -963,7 +1047,7 @@ public sealed partial class TasksService : ITasksService
 			if (links.Count > 0) relations.Add(new NodeRelationGroup(label, links));
 		}
 
-		return new NodeDetailView(board, view.Kind, node, ancestors, relations);
+		return new NodeDetailView(board, runtime.KindName(meta.Kind), node, ancestors, relations);
 	}
 
 	// The node detail page's relation panel: every relation kind × direction, in reading order.
@@ -1232,7 +1316,7 @@ public sealed partial class TasksService : ITasksService
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
 		var delivery = deliveryDef is not null
-			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), runtime, deliveryDef, ct)
+			? await ComputeSpecDeliveryAsync(projectKey, active, await AllActiveProjectNodesAsync(projectKey, ct), await ParentMapAsync(projectKey, ct), runtime, deliveryDef, ct)
 			: null;
 
 		var groups = ProjectByTags(active, dims, 0, tagsByNode, delivery);
@@ -1299,16 +1383,44 @@ public sealed partial class TasksService : ITasksService
 	// A resolvable reference to a node anywhere in the project (links cross boards).
 	sealed record NodeRef(string Board, string BoardKind, string Slug, string Title, string Status, string Type);
 
-	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
-	// globally unique, so a link target may live on another board).
-	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct)
+	// node-index-scan-one-select-per-board: Board is a plain column on plan_nodes (every board of
+	// a project shares one file/table, partitioned by Board — same fact board-page-cost already
+	// leaned on for RelationStore.ListForNodesAsync), so "every active node of the project" is ONE
+	// query with the per-board split done in memory, not a foreach-board loop issuing one SELECT
+	// per board (was 1 + N queries — N board-page-cost-shaped round trips this scan never needed).
+	// Only the columns NodeRef actually reads are projected (NOT Body — this scan used to pull
+	// every active node's full markdown project-wide on EVERY board/node page render, silently
+	// undoing includeBody:false's savings for every OTHER caller of this method; see
+	// tasks-ui-pages-getting-slower / 83fe36df).
+	async Task<IReadOnlyList<PlanNode>> AllActiveProjectNodesAsync(string projectKey, CancellationToken ct)
 	{
-		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
-				if (n.NodeId.Length > 0)
-					index[n.NodeId] = new NodeRef(b.Name, b.Kind, n.Key, n.Name, n.Status, n.Type);
+		return await ctx.PlanNodes.Where(n => n.ActiveTo == null)
+			.Select(n => new PlanNode
+			{
+				Board = n.Board,
+				NodeId = n.NodeId,
+				Key = n.Key,
+				PrevKey = n.PrevKey,
+				Status = n.Status,
+				Type = n.Type,
+				Name = n.Name,
+			}).ToListAsync(ct);
+	}
+
+	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
+	// globally unique, so a link target may live on another board). Board kind comes from the
+	// (already fetched elsewhere by most callers) board list — a lookup, never a per-board query.
+	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct) =>
+		BuildNodeIndex(await AllActiveProjectNodesAsync(projectKey, ct), await _boards.ListAsync(projectKey, ct));
+
+	static Dictionary<string, NodeRef> BuildNodeIndex(IReadOnlyList<PlanNode> activeNodes, IReadOnlyList<TaskBoardMeta> boards)
+	{
+		var kindOf = boards.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
+		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
+		foreach (var n in activeNodes)
+			if (n.NodeId.Length > 0)
+				index[n.NodeId] = new NodeRef(n.Board, kindOf.GetValueOrDefault(n.Board, ""), n.Key, n.Name, n.Status, n.Type);
 		return index;
 	}
 
@@ -1317,31 +1429,87 @@ public sealed partial class TasksService : ITasksService
 			? new LinkDto(nodeId, r.Board, r.Slug, r.Title, r.Status)
 			: new LinkDto(nodeId, null, null, null, "missing");
 
-	// tasks-ui-pages-getting-slower: the ONE body GetNodeAsync actually needs — a single-row,
-	// single-column read (this node's own active revision), used to patch Body back onto the
-	// PlanNodeView after GetAsyncCore ran with includeBody:false for the whole board. Empty string
-	// on a miss (matches GetAsyncCore's own includeBody:false projection, never null).
-	async Task<string> GetNodeBodyAsync(string projectKey, string nodeId, CancellationToken ct)
+	// node-page-cost-bounded-by-degree: the ONE row GetNodeAsync needs — this node's own active
+	// revision, every column, in one query. Replaces the old "whole board without Body, then a
+	// separate single-column Body fetch, patched back" dance — that shape only existed because the
+	// node page used to route through the whole-board builder at all.
+	async Task<PlanNode?> GetActiveNodeRowAsync(string projectKey, string nodeId, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodes.Where(n => n.NodeId == nodeId && n.ActiveTo == null)
-			.Select(n => n.Body).FirstOrDefaultAsync(ct) ?? "";
+		return await ctx.PlanNodes.Where(n => n.NodeId == nodeId && n.ActiveTo == null).FirstOrDefaultAsync(ct);
+	}
+
+	// node-page-cost-bounded-by-degree: resolve EXACTLY the node ids a single node's render can
+	// reference (its own relation targets + its ancestor chain) — board-page-cost's own `IN (...)`
+	// form (chunked at the same 400 RelationStore.ListForNodesAsync uses for SQLite's 999-param
+	// cap), not BuildNodeIndex's whole-project scan. BoardKind is left "" — LinkRef (below) never
+	// reads it; only the write-path's NodeIndexEntry (BuildEngineContextAsync) needs it, and that
+	// caller goes through BuildNodeIndexAsync, not this method.
+	async Task<Dictionary<string, NodeRef>> ResolveNodeRefsAsync(string projectKey, IReadOnlyCollection<string> nodeIds, CancellationToken ct)
+	{
+		var ids = nodeIds.Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
+		if (ids.Count == 0) return index;
+
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		const int ChunkSize = 400;
+		for (var i = 0; i < ids.Count; i += ChunkSize)
+		{
+			var chunk = ids.Skip(i).Take(ChunkSize).ToList();
+			var rows = await ctx.PlanNodes.Where(n => n.ActiveTo == null && chunk.Contains(n.NodeId))
+				.Select(n => new PlanNode { Board = n.Board, NodeId = n.NodeId, Key = n.Key, Status = n.Status, Type = n.Type, Name = n.Name })
+				.ToListAsync(ct);
+			foreach (var n in rows) index[n.NodeId] = new NodeRef(n.Board, "", n.Key, n.Name, n.Status, n.Type);
+		}
+		return index;
+	}
+
+	// node-page-cost-bounded-by-degree: one node's rename chain, walked one point query per hop
+	// (bounded by how many times this Key was renamed — typically 0, rarely more than 1-2) instead
+	// of BuildLineage's whole-board temporal scan (every version of every node on the board) just
+	// to read one node's short PrevKey chain. `prevKey` is the node's OWN active-row PrevKey (set
+	// once at birth, never touched by AsRevision — the same value BuildLineage reads off each key's
+	// birth row), so the first hop needs no extra query either.
+	async Task<IReadOnlyList<string>> NodeLineageAsync(string projectKey, string board, string? prevKey, CancellationToken ct)
+	{
+		var chain = new List<string>();
+		if (string.IsNullOrEmpty(prevKey)) return chain;
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var cur = (string?)prevKey; var guard = 0;
+		while (cur is not null && guard++ < 1000)
+		{
+			chain.Add(cur);
+			cur = await ctx.PlanNodes.Where(n => n.Board == board && n.Key == cur)
+				.OrderBy(n => n.Version).Select(n => n.PrevKey).FirstOrDefaultAsync(ct);
+		}
+		return chain;
+	}
+
+	// node-page-cost-bounded-by-degree: this node's own active commit set — BoardCommitsAsync
+	// reads every commit on the whole board just to pick one node's rows back out.
+	async Task<IReadOnlyList<string>> NodeCommitsAsync(string projectKey, string nodeId, CancellationToken ct)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		return await ctx.PlanNodeCommits.Where(c => c.NodeId == nodeId && c.ValidTo == null)
+			.Select(c => c.Sha).OrderBy(s => s, StringComparer.Ordinal).ToListAsync(ct);
 	}
 
 	// The IO half of the delivery roll-up: SELECT, then hand the raw candidates to the pure
 	// DeliveryEngine.Rollup, which owns the judgement (methodology-engine-extraction, slice 5).
-	// Two queries — every active node of the project (a linked task normally lives on another
-	// board, and part_of decomposition may cross boards) and the one task_spec edge sweep —
-	// plus `parentOf`, which the caller already paid for.
+	// `allActiveNodes` is every active node of the project (a linked task normally lives on
+	// another board, and part_of decomposition may cross boards) — the CALLER fetches it (one
+	// query, AllActiveProjectNodesAsync) and passes it in, because GetAsyncCore needs that exact
+	// same project-wide scan for BuildNodeIndexAsync too; this used to run its OWN identical
+	// foreach-board scan a second time right next to BuildNodeIndexAsync's
+	// (delivery-scan-duplicates-node-index-scan) — sharing the one fetch absorbs that finding.
+	// One query here now: the task_spec edge sweep, plus `parentOf`, which the caller already paid
+	// for.
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(
-		string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf,
-		MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
+		string projectKey, IReadOnlyList<PlanNode> specNodes, IReadOnlyList<PlanNode> allActiveNodes,
+		Dictionary<string, string> parentOf, MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
 	{
-		var nodes = new List<NodeState>();
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
-				if (n.NodeId.Length > 0) nodes.Add(new NodeState(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type));
+		var nodes = allActiveNodes.Where(n => n.NodeId.Length > 0)
+			.Select(n => new NodeState(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type)).ToList();
 
 		// tasksOf: inbound delivery-link edges (def.Link — DATA, the quartet spec's task_spec),
 		// grouped at the boundary — Relation is a linq2db entity and does not cross into the engine.
