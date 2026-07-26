@@ -1067,18 +1067,38 @@ public partial class Program
 		// auth policy (ApiKey/Cookie/etc.) unchanged by this. This is a deliberate decision, not an
 		// oversight — languages with no client SDK need a URL to fetch the schema from with zero
 		// setup (see doc/agent-content overview.md "No SDK for your language").
-		app.MapOpenApi().AllowAnonymous();
+		//
+		// TENANT: `public`, and by the same fact that makes the paragraph above true — the document is
+		// AllowAnonymous and describes only the API surface, so there is no tenant to check and no
+		// principal to check it against. `identity` was the near miss (the exemption enum's own comment
+		// names "the OpenAPI document" as an example of it), and it would have been the wrong word: the
+		// spec's Следствия make `public` the class that also suspends tenant-principal AUTHENTICATION,
+		// while the other four leave it in force. These endpoints authenticate nobody. Declared by
+		// CONVENTION rather than by attribute because MapOpenApi() builds its endpoint inside the
+		// framework — there is no handler method here to put an attribute on.
+		app.MapOpenApi()
+			.AllowAnonymous()
+			.DeclaresTenantExempt(TenantExemption.Public,
+				"the OpenAPI document describes the API SURFACE, not any tenant's data, and is served "
+				+ "anonymously — see the MapOpenApi comment above for why that is deliberate");
 
+		// /health and /version: anonymous, tenant-less, and about the SERVER rather than about anyone's
+		// data — `public` for the same reason as the document above. Lambdas, so the convention form again.
 		app.MapMethods("/health", ["GET", "HEAD"], () => TypedResults.Ok(new HealthStatusResponse("healthy")))
 			.Produces<HealthStatusResponse>()
-			.AllowAnonymous();
+			.AllowAnonymous()
+			.DeclaresTenantExempt(TenantExemption.Public,
+				"a liveness probe: anonymous, and it reports on the process rather than on a tenant");
 
 		app.MapMethods("/version", ["GET", "HEAD"], () => TypedResults.Ok(new VersionResponse(
 			Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
 			Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
 			Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty)))
 			.Produces<VersionResponse>()
-			.AllowAnonymous();
+			.AllowAnonymous()
+			.DeclaresTenantExempt(TenantExemption.Public,
+				"the build the server is running: anonymous, and a fact about the deployment rather than "
+				+ "about a tenant");
 
 		// MCP OAuth discovery probes — RELIABILITY FIX (bug mcp-oauth-discovery-html-404).
 		// Claude Code (and other MCP SDK clients) register an OAuth auth provider for EVERY http MCP
@@ -1099,17 +1119,31 @@ public partial class Program
 			error_description = "PetBox authenticates /mcp with an API key (X-Api-Key header); no OAuth authorization is published.",
 		};
 		IResult OAuthDiscoveryProbe() => Results.Json(oauthDiscoveryBody, statusCode: StatusCodes.Status404NotFound);
+		//
+		// TENANT: `public` on all six. Discovery precedes authentication by definition — the client probes
+		// these BEFORE it has a credential, which is the whole scenario above — and the body is a fixed
+		// JSON 404 that mentions no tenant and reads nothing.
+		const string discoveryReason =
+			"an OAuth/OIDC discovery probe answered with a fixed JSON 404: it precedes authentication by "
+			+ "construction and touches no tenant's data";
 		foreach (var wk in new[] { "oauth-protected-resource", "oauth-authorization-server", "openid-configuration" })
 		{
-			app.MapGet($"/.well-known/{wk}", OAuthDiscoveryProbe).AllowAnonymous();
-			app.MapGet($"/.well-known/{wk}/{{*rest}}", OAuthDiscoveryProbe).AllowAnonymous();
+			app.MapGet($"/.well-known/{wk}", OAuthDiscoveryProbe).AllowAnonymous()
+				.DeclaresTenantExempt(TenantExemption.Public, discoveryReason);
+			app.MapGet($"/.well-known/{wk}/{{*rest}}", OAuthDiscoveryProbe).AllowAnonymous()
+				.DeclaresTenantExempt(TenantExemption.Public, discoveryReason);
 		}
 
+		// `identity`, not `public`: this acts on the CALLER — it drops the caller's own cookie and nothing
+		// else. There is no tenant in the request, no tenant in the effect, and no other principal it can
+		// reach, which is the same reading /api/auth/validate and the /Me/* pages get.
 		app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
 		{
 			await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 			return Results.Redirect("/Login");
-		});
+		}).DeclaresTenantExempt(TenantExemption.Identity,
+			"signs the CALLER out of its own cookie session; it names no tenant and can affect no other "
+			+ "principal");
 
 		app.MapAuthEndpoints();
 		app.MapWorkspaceSwitch();

@@ -28,6 +28,20 @@ public static class AuthApi
 	// IProjectCatalog, not ICoreDbFactory: the one thing this endpoint reads from core.db is "which
 	// workspace owns this project", and the catalog already owns that question
 	// (WorkspaceKeyOfAsync). The endpoint asks; it does not open the database.
+	//
+	// `identity`: the whole response is facts about the CALLER'S OWN key — its project, its scopes, the
+	// workspace that project lives in — read off the caller's own claims. There is no second tenant to
+	// name, so there is nothing for the tenant axis to decide. Not `public`: the ApiKey policy still has
+	// to authenticate the key, and an exemption in this class suspends only the tenant check.
+	//
+	// Deliberately NOT [TenantFrom(CallerDefault)], which would look tempting because the answer is
+	// derived from the key's project: that source means the caller is ACTING on that tenant, and the
+	// difference shows on a cross-project key. Its claim is "*" — a valid identity to report — while
+	// CallerDefault would demand a resolvable single project and refuse the key that has no
+	// `project_default`, turning "here is who you are" into a 403 for the keys most likely to be asking.
+	[TenantExempt(TenantExemption.Identity,
+		"reports the caller's own project, scopes and workspace off its own claims; the caller IS the "
+		+ "subject and there is no other tenant to name")]
 	static async Task<IResult> Validate(HttpContext context, IProjectCatalog projects, CancellationToken ct)
 	{
 		var user = context.User;

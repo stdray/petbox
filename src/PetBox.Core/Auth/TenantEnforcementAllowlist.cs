@@ -35,22 +35,9 @@ public static class TenantEnforcementAllowlist
 	// comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
-		// REST — what is LEFT of the 55 minimal-API endpoints (METHOD + route pattern, as the caller
-		// addresses them). The wave's own accounting is in the note at the bottom of this list.
-		"rest:GET /.well-known/oauth-authorization-server",
-		"rest:GET /.well-known/oauth-authorization-server/{*rest}",
-		"rest:GET /.well-known/oauth-protected-resource",
-		"rest:GET /.well-known/oauth-protected-resource/{*rest}",
-		"rest:GET /.well-known/openid-configuration",
-		"rest:GET /.well-known/openid-configuration/{*rest}",
-		"rest:GET /agent/poll",
-		"rest:GET /api/auth/validate",
-		"rest:GET /openapi/{documentName}.json",
-		"rest:GET|HEAD /health",
-		"rest:GET|HEAD /version",
-		"rest:POST /agent/heartbeat",
-		"rest:POST /api/auth/logout",
-		"rest:POST /api/deploy/nodes",
+		// REST — TWO of the original 55 (METHOD + route pattern, as the caller addresses them). The other
+		// 53 declare, and the accounting is in the note at the bottom of this list.
+		//
 		// THE TWO THAT STAY, and the reason, written HERE rather than remembered — the same discipline
 		// memory_get was left under during the MCP wave.
 		//

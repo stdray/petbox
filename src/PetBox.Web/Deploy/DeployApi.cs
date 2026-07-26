@@ -17,8 +17,33 @@ namespace PetBox.Web.Deploy;
 // minimal-API lambda is pipeline code and the database is visible only in the service layer
 // (AGENTS.md). What is left here is exactly what an endpoint is for: scope check, shape check, and
 // the mapping between the wire and the domain.
+//
+// ALL THREE ARE `fleet-wide`, DECLARED DELIBERATELY — this is the class the deploy control plane was
+// named for, and the reason is visible in the code rather than assumed:
+//
+//   * These endpoints are addressed by NODE, never by tenant. There is no {projectKey} and no
+//     {workspaceKey} in any of the three routes, and no tenant in any body. What Poll and Heartbeat
+//     read out of the `project` claim is a NODE ID — the deploy plane reuses that claim slot for a
+//     node-scoped key — so a project-shaped check here would compare a node id against a project row
+//     and mean nothing. A `[TenantFrom(CallerDefault)]` would be actively wrong: it would send the
+//     node id to ITenantAuthorizer as a project key and refuse every node agent in the fleet.
+//   * The enrol route mints a node-scoped key and needs `deploy:write`, which ApiKeyScopes itself
+//     documents as NEAR-ROOT, FLEET-WIDE. The MCP deploy_* verbs declared the same class in the MCP
+//     wave for the same reason (nine of them), and the cross-tenant probe measured the effect rather
+//     than taking anyone's word for it: deploy_upsert attaches a deployment to ANY tenant's project
+//     with `deploy:write` alone, which is recorded as a KnownDeviations entry, not hidden by the
+//     exemption.
+//
+// So the exemption is a statement that the tenant axis does not apply to this plane, not a way past
+// it. What still applies, unchanged, is the SCOPE axis: agent:poll, agent:heartbeat, deploy:write are
+// checked below and an exemption says nothing about them. The narrowing of `deploy:write` is a
+// separate, already-documented concern (work `deploy-tools-fleet-wide-undocumented`).
 public static class DeployApi
 {
+	const string FleetWideReason =
+		"the deploy control plane is addressed by node id, not by tenant: no route or body here names a "
+		+ "project or a workspace, and the `project` claim on a node-scoped key carries the NODE id";
+
 	public static void MapDeployEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapGet("/agent/poll", PollAsync)
@@ -35,6 +60,7 @@ public static class DeployApi
 			.RequireAuthorization("ApiKey");
 	}
 
+	[TenantExempt(TenantExemption.FleetWide, FleetWideReason)]
 	static async Task<IResult> PollAsync(HttpContext ctx, IDeployAgentService agents, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
@@ -44,6 +70,7 @@ public static class DeployApi
 		return TypedResults.Ok(await agents.PollAsync(nodeId, ct));
 	}
 
+	[TenantExempt(TenantExemption.FleetWide, FleetWideReason)]
 	static async Task<IResult> HeartbeatAsync(HttpContext ctx, IDeployService svc, HeartbeatReport req, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentHeartbeat)) return Results.Forbid();
@@ -56,6 +83,7 @@ public static class DeployApi
 	public sealed record NodeEnrollRequest(string Id, string? DisplayName, string? Tags, bool Ephemeral, bool MintKey);
 	public sealed record NodeEnrollResponse(NodeView Node, string? Key);
 
+	[TenantExempt(TenantExemption.FleetWide, FleetWideReason)]
 	static async Task<IResult> EnrollNodeAsync(HttpContext ctx, IDeployAgentService agents, NodeEnrollRequest req, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.DeployWrite)) return Results.Forbid();
