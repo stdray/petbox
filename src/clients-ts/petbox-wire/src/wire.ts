@@ -45,7 +45,9 @@
 //        - .factory/skills/petbox-methodology/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
 //       all links point at the stable copy (~/.petbox/wire/), and any dead prompt-RAG hook left by
-//       an older kit is pruned
+//       an older kit is pruned. Claude Code additionally gets a PreToolUse hook (subagent-model-
+//       gate.ts) blocking a petbox-* subagent spawn that also passes an explicit `model` — droid/
+//       opencode are not wired for it (the `model` spawn parameter is Claude-Code-only)
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
 //   11. seed a DEFAULT role→model binding on a fresh machine (~/.petbox/roles.json absent —
@@ -1490,6 +1492,7 @@ const KIT_HOOK_SUFFIXES = [
   'pull-memory.ts"',
   'droid-push-session.ts"',
   'droid-pull-memory.ts"',
+  'subagent-model-gate.ts"',
 ];
 
 // Remove kit hook entries whose command is NOT one of the current stable commands (validCmds),
@@ -1513,7 +1516,8 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
-// Install the live kit hooks (Stop / SessionStart on both agents) and, on the way through, run the
+// Install the live kit hooks (Stop / SessionStart on both agents, plus a Claude-Code-only
+// PreToolUse model-pin gate — see modelGateCmd below) and, on the way through, run the
 // retired-prompt-RAG migration on each settings object before it is written back — one read, one
 // write per file, so the prune costs nothing extra and cannot be skipped.
 function installGlobalHooks(): void {
@@ -1521,8 +1525,30 @@ function installGlobalHooks(): void {
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
+  // Claude Code ONLY — subagent-model-enforcement-hook. The Task tool's `model` spawn parameter
+  // is the surface being gated, and Claude Code is the only harness where that parameter does
+  // anything (Factory Droid ignores it; opencode has no equivalent parameter at all), so this
+  // command is never added to the droid settings block below. See subagent-model-gate.ts's own
+  // header comment for the rule and why it stops at petbox-* + explicit model.
+  const modelGateCmd = `node "${join(STABLE, "subagent-model-gate.ts")}"`;
+  // Perf, not correctness: without a matcher this hook's node process would spawn on EVERY
+  // PreToolUse event — every Read, Edit, Bash, in every session, on every project on this
+  // machine (the settings this writes into are global). Measured cost: ~60ms per invocation: a
+  // session with hundreds of tool calls would pay tens of seconds for a branch that only ever
+  // fires a handful of times per session. The matcher is scoped to the spawn tool by NAME so the
+  // process only starts there; the actual gate (subagent-model-gate.ts's shape check on
+  // tool_input) is unchanged and remains the real decision — the matcher is an optimization on
+  // top of it, never a substitute for it. Covers both names this kit has seen Claude Code use
+  // for the subagent-spawn tool ("Task" and "Agent") in one regex, since neither is a documented
+  // stable contract.
+  // FAILURE MODE, stated plainly: if a future Claude Code build renames the spawn tool to
+  // something outside this set, the matcher stops selecting it and the gate goes SILENT —
+  // no crash, no log, just a `model` parameter on a petbox-* spawn that is no longer caught.
+  // Nothing here detects that drift; a maintainer who suspects it should check with an actual
+  // spawn call, not assume this comment is still accurate.
+  const MODEL_GATE_MATCHER = "^(Task|Agent)$";
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
-  const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd]);
+  const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd, modelGateCmd]);
 
   const settingsPath = join(homedir(), ".claude", "settings.json");
   const settings = readJson(settingsPath) ?? {};
@@ -1531,7 +1557,7 @@ function installGlobalHooks(): void {
   if (prunedClaude > 0) log(`[8/10] pruned ${prunedClaude} stale claude kit hook(s) not pointing at ${STABLE}.`);
 
   // Claude Code hooks shape: settings.hooks[event] = [{ matcher?, hooks: [{type, command}] }]
-  const ensureHook = (event: string, command: string) => {
+  const ensureHook = (event: string, command: string, matcher?: string) => {
     const groups: any[] = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
     const already = groups.some(
       (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
@@ -1540,13 +1566,19 @@ function installGlobalHooks(): void {
       log(`[8/10] claude hook ${event} already present — skipped.`);
       return;
     }
-    groups.push({ hooks: [{ type: "command", command }] });
+    const group: any = { hooks: [{ type: "command", command }] };
+    if (matcher !== undefined) group.matcher = matcher;
+    groups.push(group);
     settings.hooks[event] = groups;
     log(`[8/10] claude hook ${event} added.`);
   };
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
+  // Matcher-scoped (see MODEL_GATE_MATCHER above) — the shape check inside subagent-model-gate.ts
+  // stays tool_name-agnostic and remains the real gate; the matcher only stops the process from
+  // spawning on tool calls it would immediately no-op on anyway. Claude Code only (see above).
+  ensureHook("PreToolUse", modelGateCmd, MODEL_GATE_MATCHER);
   // Migration (unconditional): drop any leftover prompt-rag UserPromptSubmit hook — the feature is
   // gone and the kit no longer ships the file its command points at.
   const ragPrunedClaude = pruneDeadPromptRagHooks(settings.hooks);
