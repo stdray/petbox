@@ -57,6 +57,90 @@ public sealed class MemoryToolsContractTests : IDisposable
 		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries));
 	}
 
+	// card mcp-write-degrades-silently-fix, point 2: a bad `type` is refused NAMING the closed
+	// taxonomy (User|Feedback|Project|Reference), never a silently-dropped typo.
+	[Fact]
+	public async Task Upsert_InvalidType_RejectedNamingValidValues()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "refrence", description = "d", body = "b" },
+		});
+		var ex = await Assert.ThrowsAsync<ArgumentException>(
+			() => MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries));
+		ex.Message.Should().Contain("User").And.Contain("Feedback").And.Contain("Project").And.Contain("Reference");
+	}
+
+	// Same class of guard on `scope` — the closed set is project|workspace.
+	[Fact]
+	public async Task Upsert_InvalidScope_RejectedNamingValidValues()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = "b" },
+		});
+		var ex = await Assert.ThrowsAsync<ArgumentException>(
+			() => MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries, scope: "galaxy"));
+		ex.Message.Should().Contain("project").And.Contain("workspace");
+	}
+
+	// card mcp-write-degrades-silently-fix, point 4: an APPLIED write over the size-guidance
+	// threshold carries a `warning` naming the accepted size and the threshold — informational,
+	// never a refusal (the write already landed).
+	[Fact]
+	public async Task Upsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		http.HttpContext!.Request.ContentLength = 15_000;
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = "b" },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
+		res.Applied.Should().BeTrue();
+		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+	}
+
+	[Fact]
+	public async Task Upsert_SmallRequestBody_NoSizeWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		http.HttpContext!.Request.ContentLength = 200;
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = "b" },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
+		res.Warning.Should().BeNull();
+	}
+
+	// A refused/conflicted call must not ALSO carry a size warning — conflicts[] is already the
+	// signal to act on, and piling on a second one would blur which is load-bearing.
+	[Fact]
+	public async Task Upsert_LargeRequestBody_RefusedWrite_NoSizeWarning()
+	{
+		// A genuine Stale conflict so a MemoryUpsertResultView with Applied:false actually comes
+		// back (a hard validation error like a bad type throws before any result exists).
+		var created = (await MemoryTools.UpsertAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes",
+			McpInputs.Entries(new object[] { new { key = "stale", type = "project", description = "d", body = "b" } }))).Added.Single();
+		// Move the entry on, past `created`'s baseline.
+		await MemoryTools.UpsertAsync(Http("memory:read,memory:write"), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes",
+			McpInputs.Entries(new object[] { new { key = "stale", type = "project", body = "moved on", version = created.Version } }));
+
+		var http = Http("memory:read,memory:write");
+		http.HttpContext!.Request.ContentLength = 15_000;
+		var stale = McpInputs.Entries(new object[]
+		{
+			new { key = "stale", type = "project", body = "conflicting edit", version = created.Version },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", stale);
+		res.Applied.Should().BeFalse();
+		res.Conflicts.Should().ContainSingle();
+		res.Warning.Should().BeNull();
+	}
+
 	// A missing key is a not-found ERROR, never a null result: memory_get declares an
 	// outputSchema, so a null (no structured content) is rejected by strict MCP clients as
 	// -32600. The throw rides the isError channel via McpErrorEnvelopeFilter — which strict
