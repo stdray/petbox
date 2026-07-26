@@ -4,6 +4,7 @@ using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
@@ -398,11 +399,16 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 		{
 			using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
 
-			// 415 is the probe's own fault, not the surface's: a handler that takes a raw text body
-			// rejects application/json before it reads anything. Retry once as text/plain so the
-			// surface gets to answer the question that was actually asked of it.
+			// 415 is the probe's own fault, not the surface's, and it is decided ABOVE every middleware:
+			// MVC's ConsumesMatcherPolicy is an IEndpointSelectorPolicy, so it runs inside UseRouting and
+			// short-circuits to a non-route 415 endpoint before authentication, authorization or the
+			// tenant PEP get a request at all. No placement of a middleware can answer in front of it —
+			// which means a 415 here measures the probe's content-type guess and NOTHING about the
+			// surface's authorization. So retry with the content type the ENDPOINT ITSELF declares
+			// (AcceptsMetadata — `.Accepts<T>(...)` or an inferred [FromForm] binding), falling back to
+			// text/plain when it declares none.
 			if (resp.StatusCode == HttpStatusCode.UnsupportedMediaType)
-				return await RetryAsTextAsync(client, surface, method, url, call, hasTenant);
+				return await RetryWithDeclaredContentTypeAsync(client, surface, endpoint, method, url, call, hasTenant);
 
 			var location = resp.Headers.Location?.ToString();
 			var observed = $"{(int)resp.StatusCode} {resp.StatusCode}"
@@ -421,32 +427,61 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 		}
 	}
 
-	async Task<CrossTenantProbe> RetryAsTextAsync(
-		HttpClient client, AuthzSurface surface, HttpMethod method, string url, string call, bool hasTenant)
+	// The retry that gets PAST routing's content-type gate — see the call site for why a 415 is never a
+	// statement about the surface. The victim's tenant still rides in the body wherever the encoding can
+	// carry it (a form post gets form fields, so a [FromForm] tenant is aimed at the victim exactly as
+	// the JSON attempt aims a BodyField one).
+	async Task<CrossTenantProbe> RetryWithDeclaredContentTypeAsync(
+		HttpClient client, AuthzSurface surface, RouteEndpoint endpoint,
+		HttpMethod method, string url, string call, bool hasTenant)
 	{
+		var declared = endpoint.Metadata.GetMetadata<IAcceptsMetadata>()?.ContentTypes;
+		var contentType = declared is { Count: > 0 } ? declared[0] : "text/plain";
+
 		using var req = new HttpRequestMessage(method, url)
 		{
-			Content = new StringContent("petbox cross tenant probe", Encoding.UTF8, "text/plain"),
+			Content = BodyFor(contentType),
 		};
 		if (surface.Transport == AuthzTransport.Razor)
 			req.Headers.Add("Cookie", AttackerCookie);
 		else
 			req.Headers.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, AttackerApiKey);
 
+		var retried = $"{call} [{contentType}]";
 		using var cts = new CancellationTokenSource(CallBudget);
 		try
 		{
 			using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
 			var location = resp.Headers.Location?.ToString();
-			return new CrossTenantProbe(surface, call + " [text/plain]", hasTenant, VerdictOf(resp),
+			return new CrossTenantProbe(surface, retried, hasTenant, VerdictOf(resp),
 				$"{(int)resp.StatusCode} {resp.StatusCode}" + (location is null ? "" : $" -> {location}"));
 		}
 		catch (OperationCanceledException)
 		{
-			return new CrossTenantProbe(surface, call + " [text/plain]", hasTenant, CrossTenantVerdict.Timeout,
+			return new CrossTenantProbe(surface, retried, hasTenant, CrossTenantVerdict.Timeout,
 				$"no response within {CallBudget.TotalSeconds:0}s");
 		}
 	}
+
+	// Garbage in the encoding the endpoint asked for, with the victim's tenant written into it wherever
+	// the encoding has a place for a named field.
+	static HttpContent BodyFor(string contentType) => contentType switch
+	{
+		// A form-binding endpoint declares BOTH form encodings; urlencoded is the one that is trivial to
+		// build correctly, and an endpoint that accepts multipart accepts it too.
+		"application/x-www-form-urlencoded" or "multipart/form-data" => new FormUrlEncodedContent(new Dictionary<string, string>
+		{
+			["projectKey"] = VictimProject,
+			["workspaceKey"] = VictimWorkspace,
+			["ws"] = VictimWorkspace,
+			["key"] = VictimProject,
+			["petbox_cross_tenant_probe"] = "true",
+		}),
+		var json when json.Contains("json", StringComparison.OrdinalIgnoreCase) => new StringContent(
+			$$"""{"projectKey":"{{VictimProject}}","workspaceKey":"{{VictimWorkspace}}","petbox_cross_tenant_probe":true}""",
+			Encoding.UTF8, json),
+		_ => new StringContent("petbox cross tenant probe", Encoding.UTF8, contentType),
+	};
 
 	static CrossTenantVerdict VerdictOf(HttpResponseMessage resp)
 	{

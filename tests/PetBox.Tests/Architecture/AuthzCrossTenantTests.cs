@@ -109,13 +109,18 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			["rest:DELETE /api/config/{workspaceKey}/bindings"] = (CrossTenantVerdict.ArgumentError,
 				"400 BadRequest before AuthorizeWorkspaceAsync; POST on the SAME route returns 403"),
 
-			// 415 comes off the endpoint's own Accepts metadata, i.e. from the framework, before the
-			// handler that would have called ProjectScope ever runs. Probed with application/json and
-			// again with text/plain; both 415.
-			["rest:POST /api/sessions/{projectKey}/{sessionId}"] = (CrossTenantVerdict.ArgumentError,
-				"415 UnsupportedMediaType from endpoint metadata, before the handler's ProjectScope check"),
-			["rest:POST /api/sessions/{projectKey}/{sessionId}/append"] = (CrossTenantVerdict.ArgumentError,
-				"415 UnsupportedMediaType from endpoint metadata, before the handler's ProjectScope check"),
+			// The two session POST routes were here — "415 UnsupportedMediaType from endpoint metadata,
+			// before the handler's ProjectScope check". BOTH GONE, and the diagnosis in that note turned
+			// out to be half wrong, which is worth keeping because it is the reason the probe changed.
+			//
+			// The 415 was never a late check: it comes from MVC's ConsumesMatcherPolicy, an
+			// IEndpointSelectorPolicy that runs INSIDE UseRouting and short-circuits to a non-route 415
+			// endpoint before authentication, authorization or the tenant PEP see the request. No
+			// middleware can be placed in front of it, so declaring a tenant on those routes did not (and
+			// could not) change what the old probe measured — it was measuring the probe's own
+			// content-type guess. The probe now retries with the content type the ENDPOINT declares
+			// (AuthzCrossTenantProbe.RetryWithDeclaredContentTypeAsync), the call reaches the surface, and
+			// both routes answer 403 from TenantEnforcementMiddleware.
 		};
 
 	// ── THE SURFACES A FOREIGN TENANT CANNOT BE AIMED AT ─────────────────────────────────────────
@@ -359,12 +364,14 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(141,
+		refused.Should().Be(143,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
-			+ "It rose from 140 to 141 in the MCP declaration wave: memory_get stopped answering an argument "
-			+ "error to a foreign tenant and now denies, because the PEP decides ahead of the tool body");
+			+ "140 -> 141 in the MCP declaration wave (memory_get stopped answering an argument error and now "
+			+ "denies, because the PEP decides ahead of the tool body); 141 -> 143 in the REST wave, when the "
+			+ "two session POST routes were reached for the first time — see the KnownDeviations note on why "
+			+ "the old 415 measured the probe rather than the surface");
 	}
 
 	// ── GUARD THE GUARD ──────────────────────────────────────────────────────────────────────────

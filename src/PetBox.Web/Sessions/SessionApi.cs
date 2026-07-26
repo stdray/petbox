@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Sessions.Contract;
 
 namespace PetBox.Web.Sessions;
@@ -18,6 +17,14 @@ namespace PetBox.Web.Sessions;
 // (e.g. role binding stamp) — last-write-wins when present; omitted keeps existing MetaJson.
 // The server numbers the messages (ordinal) and stores the latest snapshot either way.
 // Mirrors session_upsert / session_append.
+//
+// TENANT: declared per route ([TenantFrom(Route, "projectKey")]) and enforced by
+// TenantEnforcementMiddleware, which is what took the four hand-written ProjectScope calls out. It
+// also closed the sharpest hole the cross-tenant probe found on this file: the two POST routes carry
+// `.Accepts<string>("application/x-ndjson")`, and a foreign tenant used to be answered 415 straight
+// off that metadata — before the handler that would have checked the project ever ran. The tenant
+// decision now happens above the endpoint, so the answer is 403 whatever the content type is. The
+// tasks:read / tasks:write scope checks are the orthogonal axis and stay.
 public static class SessionApi
 {
 	const string MetaHeader = "X-PetBox-Session-Meta";
@@ -56,11 +63,10 @@ public static class SessionApi
 			.RequireAuthorization("ApiKey");
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListAsync(
-		HttpContext ctx, string projectKey, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, ISessionService sessions, CancellationToken ct)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:read"))
 			return TypedResults.Forbid();
@@ -70,11 +76,10 @@ public static class SessionApi
 			list.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson)).ToList()));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> UpsertAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
 			return TypedResults.Forbid();
@@ -101,11 +106,10 @@ public static class SessionApi
 
 	// Incremental push: the body is the same ndjson message stream, `fromOrdinal` (query) is the
 	// ordinal the batch starts at. Overlap applies idempotently; a gap 409s with the server cursor.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> AppendAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
 			return TypedResults.Forbid();
@@ -155,11 +159,10 @@ public static class SessionApi
 	}
 
 	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session_delete.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> DeleteAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
 			return TypedResults.Forbid();
