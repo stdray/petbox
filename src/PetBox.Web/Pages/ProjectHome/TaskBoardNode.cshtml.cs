@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -36,15 +37,22 @@ public sealed class TaskBoardNodeModel : PageModel
 	// Optional ctor param (see TaskBoardModel): DI always supplies it; a page-model unit test that
 	// doesn't exercise memory autolinking may omit it. Null = keys render literal.
 	readonly PetBox.Memory.Contract.IMemoryService? _memory;
+	// Optional ctor param, same posture as _memory above: needed only to gate MemoryRefMap's derived
+	// workspace-container leg (SandboxContainment.PermitsAsync) — DI always supplies it (IProjectCatalog
+	// is registered unconditionally), a bare unit-test construction that never exercises memory
+	// autolinking may omit it.
+	readonly IProjectCatalog? _catalog;
 
 	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
-		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null)
+		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null,
+		IProjectCatalog? catalog = null)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
 		_settings = settings;
 		_memory = memory;
+		_catalog = catalog;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -276,7 +284,7 @@ public sealed class TaskBoardNodeModel : PageModel
 		// container for every candidate key on the page. Off with the Memory feature — nothing to
 		// link to then, so the keys stay literal.
 		MemoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
-			? await MemoryRefMap.BuildAsync(_memory, WorkspaceKey, ProjectKey, bodies, ct)
+			? await MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, bodies, ct)
 			: MemoryRefs;
 		return Page();
 	}

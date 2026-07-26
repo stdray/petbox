@@ -123,16 +123,11 @@ public sealed class SandboxContainmentCallSiteGuardTests
 		["PetBox.Web/Pages/ProjectHome/Memory.cshtml.cs"] =
 			"ensures/reads the PEP-JUDGED NAMED TARGET (route container welded to route workspace)",
 
-		// RESIDUAL DEBT — the one entry that is debt rather than a judgment. Page render resolves
-		// memory-key mentions against the DERIVED workspace container of a project-scoped page: for
-		// a caller authorized only on a project, that is an existence/store-name oracle over the
-		// workspace's shared memory (the link TARGET is refused by the PEP when followed; what
-		// leaks is that the key resolves, and where). Confined to keys already spelled in bodies
-		// the caller can read, which is why it shipped; it still answers a question the PEP never
-		// judged. Pay it off by threading the principal + IProjectCatalog through BuildAsync and
-		// gating the workspace leg — then DELETE this entry.
-		["PetBox.Web/Pages/Shared/MemoryRefMap.cs"] =
-			"DEBT: derived-container read on page render (existence/store-name oracle) — gate the workspace leg, then delete this line",
+		// MemoryRefMap.cs PAID OFF (work memoryrefmap-workspace-leg-ungated): it now threads the
+		// caller's ClaimsPrincipal + IProjectCatalog through BuildAsync and asks
+		// SandboxContainment.PermitsAsync before reading the derived workspace leg — same
+		// suppress-the-leg shape MemoryApi.CanonAsync uses. This list is shrink-only; the entry is
+		// gone, not corrected in place.
 	};
 
 	// ── THE SWEEP ────────────────────────────────────────────────────────────────────────────────

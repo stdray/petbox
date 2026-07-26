@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Caching.Memory;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -44,9 +45,15 @@ public sealed class TaskBoardModel : PageModel
 	// throwaway per-instance cache instead of null-ref'ing).
 	readonly IMemoryCache _searchIndexCache;
 
+	// Optional ctor param, same posture as _memory above: needed only to gate MemoryRefMap's derived
+	// workspace-container leg (SandboxContainment.PermitsAsync) — DI always supplies it (IProjectCatalog
+	// is registered unconditionally), a bare unit-test construction that never exercises memory
+	// autolinking may omit it.
+	readonly IProjectCatalog? _catalog;
+
 	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
 		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null,
-		IMemoryCache? searchIndexCache = null)
+		IMemoryCache? searchIndexCache = null, IProjectCatalog? catalog = null)
 	{
 		_features = features;
 		_tasks = tasks;
@@ -54,6 +61,7 @@ public sealed class TaskBoardModel : PageModel
 		_settings = settings;
 		_memory = memory;
 		_searchIndexCache = searchIndexCache ?? new MemoryCache(new MemoryCacheOptions());
+		_catalog = catalog;
 	}
 
 	// Memory-key autolinking is a Memory-module affordance: with the feature off there is no store
@@ -61,7 +69,7 @@ public sealed class TaskBoardModel : PageModel
 	// pages, not DI — IMemoryService itself is registered unconditionally.)
 	Task<IReadOnlyDictionary<string, NodeRefTarget>> BuildMemoryRefsAsync(IEnumerable<string?> bodies, CancellationToken ct) =>
 		_memory is not null && _features.IsEnabled(Feature.Memory)
-			? MemoryRefMap.BuildAsync(_memory, WorkspaceKey, ProjectKey, bodies, ct)
+			? MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, bodies, ct)
 			: Task.FromResult<IReadOnlyDictionary<string, NodeRefTarget>>(
 				new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal));
 

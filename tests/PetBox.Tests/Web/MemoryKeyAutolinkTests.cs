@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using LinqToDB;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -162,8 +164,12 @@ public sealed class MemoryRefMapTests : IDisposable
 		await _memory.UpsertAsync(container, store,
 			[new MemoryEntryInput { Key = key, Version = 0, Type = "Project", Body = "b" }], []);
 
+	// The default caller for every test below: no principal at all (AppliesTo(null) is false, the same
+	// "ordinary caller" the workspace leg has always served) and no catalog — safe because
+	// SandboxContainment.PermitsAsync never dereferences a null catalog unless the principal actually
+	// carries the sandbox_only claim, which none of these do.
 	async Task<IReadOnlyDictionary<string, NodeRefTarget>> Build(params string[] keys) =>
-		await MemoryRefMap.BuildAsync(_memory, Ws, Proj, [string.Join(" and ", keys)], default);
+		await MemoryRefMap.BuildAsync(_memory, null, null, Ws, Proj, [string.Join(" and ", keys)], default);
 
 	[Fact]
 	public async Task ProjectScopeKey_ResolvesToItsStoreUrl()
@@ -244,5 +250,57 @@ public sealed class MemoryRefMapTests : IDisposable
 		var map = await Build(ProjKey, DupKey, WsKey, GhostKey);
 		map.Should().HaveCount(3);
 		map.Should().ContainKeys(ProjKey, DupKey, WsKey);
+	}
+
+	// ── SANDBOX CONTAINMENT ON THE DERIVED WORKSPACE LEG (work memoryrefmap-workspace-leg-ungated) ──
+	//
+	// PINNED HERE, NOT AT THE ROUTE, BECAUSE THE ROUTE CANNOT EXERCISE IT. Both pages that call
+	// MemoryRefMap.BuildAsync (TaskBoard.cshtml.cs, TaskBoardNode.cshtml.cs) carry
+	// [Authorize(Policy = "WorkspaceViewer")], and that policy names only the Cookie scheme — an
+	// api-key identity (the only kind that ever carries the `sandbox_only` claim SandboxContainment
+	// reads) is challenged to /Login before either page's handler runs at all (measured: 302,
+	// byte-for-byte the unauthenticated redirect, not /AccessDenied — see the work card). A
+	// WebApplicationFactory test that drove the real route with a sandboxOnly key would therefore only
+	// ever prove the login redirect, never reach the predicate. BuildAsync is the lowest level that
+	// actually calls SandboxContainment.PermitsAsync, so the gate is pinned by calling it directly with
+	// a hand-built sandboxOnly ClaimsPrincipal — the same claim shape ApiKeyAuthenticationHandler
+	// stamps, just without a live api-key request to carry it.
+	const string SandboxLegKey = "m-0123456789abcdef0123456789abcd07";
+
+	static ClaimsPrincipal SandboxOnlyPrincipal() =>
+		new(new ClaimsIdentity([new Claim(ApiKeyAuthenticationHandler.SandboxOnlyClaim, "true")], "ApiKey"));
+
+	[Fact]
+	public async Task SandboxOnlyPrincipal_GetsNoWorkspaceLeg_EvenThoughTheKeyResolvesThere()
+	{
+		await Put(WsContainer, "canon", SandboxLegKey);
+
+		// TestProjectCatalog.IsSandboxAsync is always false — exactly the real shape: a workspace's
+		// shared-memory container is a real Projects row that is never itself a sandbox row
+		// (SandboxContainment.cs), so the predicate denies the leg to a sandboxOnly caller.
+		var map = await MemoryRefMap.BuildAsync(
+			_memory, SandboxOnlyPrincipal(), TestProjectCatalog.Instance, Ws, Proj, [SandboxLegKey], default);
+
+		map.Should().NotContainKey(SandboxLegKey,
+			"a sandboxOnly principal must not receive the derived workspace-container leg — "
+			+ "SandboxContainment.PermitsAsync denies it, the same predicate/suppress-the-leg shape "
+			+ "MemoryApi.CanonAsync uses for the sibling call site");
+	}
+
+	// The differential control: same key, same seeded container, only the principal differs — proves
+	// the gate is SandboxContainment-shaped (sandboxOnly-only) rather than a blanket suppression that
+	// would silently break the workspace leg for every ordinary viewer too.
+	[Fact]
+	public async Task OrdinaryPrincipal_StillGetsTheWorkspaceLeg_SameKeySameSetup()
+	{
+		await Put(WsContainer, "canon", SandboxLegKey);
+
+		var ordinary = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "u1")], "Cookies"));
+		var map = await MemoryRefMap.BuildAsync(
+			_memory, ordinary, null, Ws, Proj, [SandboxLegKey], default);
+
+		map.Should().ContainKey(SandboxLegKey,
+			"containment applies to a sandboxOnly principal only — an ordinary caller's workspace leg, "
+			+ "and the null-catalog bare-construction posture BuildAsync keeps for it, must be untouched");
 	}
 }
