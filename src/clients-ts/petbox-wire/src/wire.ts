@@ -96,11 +96,13 @@ import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import { writeSkillFiles, type SkillWriteOutcome } from "./skill-files.ts";
+import { runStatus } from "./status.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
 import {
   canonicalAgentId,
+  DEFAULT_ROLE_MODEL_SEED,
   exportRolesBootstrap,
   formatResolvedBinding,
   isEmptyRoles,
@@ -147,6 +149,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "                       [--telemetry] [--telemetry-log <name>]\n" +
     "       npx petbox-wire update\n" +
     "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
+    "       npx petbox-wire status [--offline]\n" +
     "       npx petbox-wire doctor\n" +
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
@@ -192,6 +195,17 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw, OR a write was\n" +
     "             refused to avoid clobbering a non-PetBox file); 2 usage/args;\n" +
     "             3 truthfulness partial/block (policy — distinct from usage).\n" +
+    "status       Print FACT, not a verdict: per declared role x harness, the materialized artifact\n" +
+    "             path, its bound model, WHERE that model came from (roster = ~/.petbox/roles.json;\n" +
+    "             seed = DEFAULT_ROLE_MODEL_SEED preview, roles.json absent, nothing written; none =\n" +
+    "             a PROBLEM — no source at all, apply will hard-refuse on a closed-model-space harness\n" +
+    "             or warn-and-inherit on an open one), and the command to change it. Plus a four-pillar\n" +
+    "             summary: definition source (server/LKG cache/built-in copy, degradation labelled),\n" +
+    "             roster completeness, memory canon (absent/empty/N of 10k chars), and skill files\n" +
+    "             (materialized? byte-identical to the current template?). Reads the SAME resolvers\n" +
+    "             apply/doctor use; never gates, never writes. --offline skips the definition/canon/\n" +
+    "             skill-template network calls (materialization-only facts still print). Always exits\n" +
+    "             0 unless status itself crashes — it asserts nothing about correctness.\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
     "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
@@ -276,6 +290,10 @@ function isDoctorCommand(argv: string[]): boolean {
 
 function isApplyCommand(argv: string[]): boolean {
   return argv[0] === "apply";
+}
+
+function isStatusCommand(argv: string[]): boolean {
+  return argv[0] === "status";
 }
 
 // Local role/profile subcommands (offline; no project/key).
@@ -1573,29 +1591,8 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 
 // ---- step 11: seed a default role binding + apply --------------------------
 
-// Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
-// aliases only (never a concrete id — see harness-models.ts / the claude-api skill's live
-// finding that the Task tool's `model` param is a closed enum of exactly these four tiers).
-//
-// `reserve` is now bound too — reversing the earlier "leave it deliberately absent" call
-// (reserve-unbound-inherits-session-model, owner decision 2026-07-26). It is bound to an ALIAS
-// (`fable`), never a concrete model id: an id is exactly the foreign-shape mistake the
-// 2026-07-12 incident was (a droid id landing in a claude-code binding) — an alias is
-// harness-portable, and if the tier is genuinely unavailable on this machine it fails LOUD at
-// spawn time (a closed Task-tool enum rejects it up front), never silently resolving to
-// something else. It is bound to the STRONGEST tier on purpose, not a cautious default: the
-// umbrella this card sits under (newcomer-equivalent-experience) means a newcomer's experience
-// should match the owner's, and on the owner's own machine reserve already rides the strongest
-// tier. reserve is also the one role where a weaker tier would defeat its own purpose — it is
-// the second pair of eyes called in only once everything else has already been tried and failed,
-// so it is never the role to economize on.
-const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
-  orchestrator: "opus",
-  worker: "sonnet",
-  utility: "haiku",
-  explore: "haiku",
-  reserve: "fable",
-};
+// DEFAULT_ROLE_MODEL_SEED now lives in roles.ts (single source of truth shared with status.ts's
+// per-role model-source enumeration — see that file's comment on the constant).
 
 // Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
 // never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
@@ -1658,6 +1655,21 @@ async function main(): Promise<void> {
   }
   if (isApplyCommand(argv)) {
     await runApply(argv);
+    return;
+  }
+  if (isStatusCommand(argv)) {
+    let offline = false;
+    for (let i = 1; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+      if (a === "--help" || a === "-h") usage(0);
+      else if (a === "--offline") offline = true;
+      else {
+        console.error(`status: unexpected argument: ${a}`);
+        usage(WIRE_EXIT.usage);
+      }
+    }
+    await runStatus({ offline, cwd: process.cwd() });
     return;
   }
   if (isRolesCommand(argv)) {

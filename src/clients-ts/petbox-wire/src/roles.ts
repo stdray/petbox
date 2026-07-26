@@ -340,6 +340,37 @@ export function unsetRoleModel(
   return { data: { activeProfile: data.activeProfile, profiles }, removed: true };
 }
 
+// Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
+// aliases only (never a concrete id — see harness-models.ts / the claude-api skill's live
+// finding that the Task tool's `model` param is a closed enum of exactly these four tiers).
+//
+// `reserve` is bound too (reversing an earlier "leave it deliberately absent" call —
+// reserve-unbound-inherits-session-model, owner decision 2026-07-26). It is bound to an ALIAS
+// (`fable`), never a concrete model id: an id is exactly the foreign-shape mistake the
+// 2026-07-12 incident was (a droid id landing in a claude-code binding) — an alias is
+// harness-portable, and if the tier is genuinely unavailable on this machine it fails LOUD at
+// spawn time (a closed Task-tool enum rejects it up front), never silently resolving to
+// something else. It is bound to the STRONGEST tier on purpose, not a cautious default: the
+// umbrella this card sits under (newcomer-equivalent-experience) means a newcomer's experience
+// should match the owner's, and on the owner's own machine reserve already rides the strongest
+// tier. reserve is also the one role where a weaker tier would defeat its own purpose — it is
+// the second pair of eyes called in only once everything else has already been tried and failed,
+// so it is never the role to economize on.
+//
+// Lives here (not wire.ts) so it has exactly ONE reader-safe source of truth: wire.ts's
+// seedDefaultRoleBindingsIfMissing (the writer, on a fresh machine) AND status.ts's per-role
+// model-source enumeration (a reader, on any machine) both need the identical map — wire.ts runs
+// main() at module top level and must never be imported by a side module (see wire.ts's own file
+// header), so a constant only wire.ts could see would force status.ts into either importing
+// wire.ts (breaking that rule) or re-declaring a second copy that silently drifts from this one.
+export const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
+  orchestrator: "opus",
+  worker: "sonnet",
+  utility: "haiku",
+  explore: "haiku",
+  reserve: "fable",
+};
+
 /** Human-readable dump of the active profile's agent/role/model tree. */
 export function formatResolvedBinding(data: RolesFile): string {
   const lines: string[] = [];
