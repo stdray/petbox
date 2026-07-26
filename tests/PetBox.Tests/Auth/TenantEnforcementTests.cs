@@ -62,17 +62,33 @@ public sealed class TenantEnforcementTests
 			ApiKey(ProjA)))
 			.Should().Be((HttpStatusCode.OK, "handler ran"));
 
-	// An allowlisted surface is passed through BEFORE its declaration is read — which is the property
-	// that makes today's rollout a no-op. Proven on a route that IS undeclared and WOULD be refused.
+	// An allowlisted surface is passed through BEFORE its declaration is read. Proven on a route that IS
+	// undeclared and WOULD be refused, and against a REAL entry rather than an invented key — a made-up
+	// string would prove only that the test can make one up.
+	//
+	// It used to borrow `rest:GET|HEAD /version`, which the REST wave declared `public`. The entry it
+	// borrows now is one of the two the REST wave could NOT declare: POST /api/events/raw authenticates a
+	// Seq key out of a header by hand and so has no ClaimsPrincipal for ITenantAuthorizer to judge (see
+	// TenantEnforcementAllowlist). That makes it a stable host for this test for as long as the property
+	// is observable at all — and when the last endpoint entry finally goes, this test should be replaced
+	// by the ratchet-shaped one its MCP counterpart already became
+	// (Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist), not re-pointed at a fiction.
 	[Fact]
 	public async Task Endpoint_Allowlisted_PassesThrough_EvenUndeclared()
 	{
-		TenantEnforcementAllowlist.Contains("rest:GET|HEAD /version").Should().BeTrue("fixture assumption");
+		const string allowlisted = "rest:POST /api/events/raw";
+		TenantEnforcementAllowlist.Contains(allowlisted).Should().BeTrue("fixture assumption");
 
-		// GET *and* HEAD, because the key carries the sorted method list — mapping only GET would
-		// produce "rest:GET /version", which is a DIFFERENT surface and is not allowlisted.
-		(await GetAsync(app => app.MapMethods("/version", ["GET", "HEAD"], () => "handler ran"), ApiKey(ProjA), "/version"))
-			.Should().Be((HttpStatusCode.OK, "handler ran"));
+		using var host = Host(app => app.MapPost("/api/events/raw", () => "handler ran"));
+		using var client = host.GetTestClient();
+		client.DefaultRequestHeaders.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, ProjA);
+
+		using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+		using var response = await client.PostAsync("/api/events/raw", content);
+
+		response.StatusCode.Should().Be(HttpStatusCode.OK);
+		(await response.Content.ReadAsStringAsync()).Should().Be("handler ran",
+			"an allowlisted surface reaches its handler even though nothing on it declares a tenant");
 	}
 
 	// The route value is read from the REQUEST, and the answer comes from ITenantAuthorizer — the same
@@ -145,24 +161,71 @@ public sealed class TenantEnforcementTests
 				"the PEP buffers and REWINDS the body — the handler must still see it whole");
 	}
 
-	// A body that is not JSON, or that does not carry the declared field, yields no tenant — refused,
-	// never passed. Fail-closed is the whole point of putting the check here.
+	// BodyField READS THE ENCODINGS THE MODEL BINDER READS. The PEP and the handler must agree about
+	// which field carries the tenant, or a declaration is a 403 for every caller — which is exactly what
+	// would have happened to the two [FromForm] /api/ui switches under a JSON-only reading, and to
+	// HealthApi, whose tenant is `tags.project`, one level down.
+	//
+	// So each row below is a pair: the SAME body aimed at the caller's own project (allowed) and at
+	// somebody else's (refused). A row that only refused would be satisfied by a PEP that refuses
+	// everything.
 	[Theory]
-	[InlineData("{\"other\":\"proja\"}", "application/json")]
-	[InlineData("not json at all", "application/json")]
-	[InlineData("projectKey=proja", "application/x-www-form-urlencoded")]
-	public async Task Endpoint_BodyFieldUnreadable_IsRefused(string body, string contentType)
+	// `#` stands in for the project key — a token rather than a format placeholder, because every JSON
+	// body below is full of braces.
+	//
+	// JSON, top level — the original shape.
+	[InlineData("projectKey", "{\"projectKey\":\"#\"}", "application/json")]
+	// JSON, CASE-INSENSITIVELY: minimal-API binding is (JsonSerializerDefaults.Web), so a PEP that
+	// matched case-sensitively would refuse a caller whose body the handler binds happily.
+	[InlineData("projectKey", "{\"ProjectKey\":\"#\"}", "application/json")]
+	// JSON, a DOTTED path into a nested object — HealthApi's `tags.project`.
+	[InlineData("tags.project", "{\"tags\":{\"project\":\"#\"}}", "application/json")]
+	// FORM, urlencoded — the /api/ui switches' shape.
+	[InlineData("projectKey", "projectKey=#", "application/x-www-form-urlencoded")]
+	// FORM, case-insensitively too.
+	[InlineData("projectKey", "ProjectKey=#", "application/x-www-form-urlencoded")]
+	public async Task Endpoint_TenantFromBodyField_ReadsEveryEncodingTheBinderDoes(
+		string declared, string bodyTemplate, string contentType)
+	{
+		(await PostBodyAsync(declared, bodyTemplate.Replace("#", ProjA, StringComparison.Ordinal), contentType))
+			.Should().Be(HttpStatusCode.OK, "the caller's own project, however the body spells it");
+		(await PostBodyAsync(declared, bodyTemplate.Replace("#", ProjB, StringComparison.Ordinal), contentType))
+			.Should().Be(HttpStatusCode.Forbidden, "another tenant's project, however the body spells it");
+	}
+
+	// A body that carries no readable tenant yields no tenant — refused, never passed. Fail-closed is the
+	// whole point of putting the check here.
+	[Theory]
+	[InlineData("projectKey", "{\"other\":\"proja\"}", "application/json")]
+	[InlineData("projectKey", "not json at all", "application/json")]
+	[InlineData("projectKey", "{\"projectKey\":42}", "application/json")]
+	[InlineData("projectKey", "projectKey=", "application/x-www-form-urlencoded")]
+	[InlineData("tags.project", "{\"tags\":\"proja\"}", "application/json")]
+	// An unsupported content type carries no named field at all, so there is nothing to read.
+	[InlineData("projectKey", "proja", "text/plain")]
+	// TWO case-variants carrying DIFFERENT values: an ambiguity a caller could steer, so it resolves to
+	// nothing rather than to whichever the enumeration reached first.
+	[InlineData("projectKey", "{\"projectKey\":\"proja\",\"ProjectKey\":\"projb\"}", "application/json")]
+	public async Task Endpoint_BodyFieldUnreadable_IsRefused(string declared, string body, string contentType) =>
+		(await PostBodyAsync(declared, body, contentType)).Should().Be(HttpStatusCode.Forbidden);
+
+	// …and two variants that AGREE are simply the same answer, not an ambiguity.
+	[Fact]
+	public async Task Endpoint_BodyFieldRepeatedButAgreeing_IsOneAnswer() =>
+		(await PostBodyAsync("projectKey", $$"""{"projectKey":"{{ProjA}}","ProjectKey":"{{ProjA}}"}""", "application/json"))
+			.Should().Be(HttpStatusCode.OK);
+
+	static async Task<HttpStatusCode> PostBodyAsync(string declaredField, string body, string contentType)
 	{
 		using var host = Host(app => app.MapPost("/probe/body", () => "handler ran")
-			.DeclaresTenant(TenantSource.BodyField, "projectKey"));
+			.DeclaresTenant(TenantSource.BodyField, declaredField));
 
 		using var client = host.GetTestClient();
 		client.DefaultRequestHeaders.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, ProjA);
 
 		using var content = new StringContent(body, System.Text.Encoding.UTF8, contentType);
 		using var response = await client.PostAsync("/probe/body", content);
-
-		response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+		return response.StatusCode;
 	}
 
 	// Two declarations on one surface: refused, not "whichever the reader saw first".

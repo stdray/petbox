@@ -126,6 +126,20 @@ public static class TenantEnforcementAllowlist
 		"page:/Search",
 		"page:/Share",
 	
+		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family
+		// per commit. The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:
+		//   * 34 declare a tenant — 26 [TenantFrom(Route, "projectKey")], 2
+		//     [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)] (the config bindings verbs), 2
+		//     [TenantFrom(BodyField, …)] on a project (/api/share's `projectKey`, /api/health's nested
+		//     `tags.project`), 2 [TenantFrom(BodyField, "ws", TenantKind.Workspace)] on a FORM field (the
+		//     two /api/ui switches) and 2 [TenantFrom(CallerDefault)] (/v1/conf, /v1/chat/completions);
+		//   * 19 are [TenantExempt] — 9 public, 4 capability-token, 3 fleet-wide, 3 identity.
+		// About 34 hand-written project/workspace checks came out with them, and two files that existed
+		// only to hold one (PetBox.Data's DataAuth, ConfigApi's AuthorizeWorkspaceAsync) are gone.
+		//
+		// The two above are the only REST entries left, and they are NOT "the ones nobody got to": they
+		// are the ones a declaration cannot yet express, for the reason written beside them.
+
 		// MCP — NOTHING. All 97 tools left this list in the declaration wave (work
 		// `authz-default-deny-delivery`, step 5) and the whole plane is enforced by
 		// McpTenantEnforcementFilter.

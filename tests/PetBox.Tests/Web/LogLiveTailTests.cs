@@ -301,12 +301,21 @@ public sealed class LogLiveTailTests : IClassFixture<LiveTailFixture>
 
 		using var resp = await OpenRawAsync(Url(LiveTailFixture.ProjB), auth, apiKey: null, cts.Token);
 
-		// The app's own denial shape for a signed-in user (WorkspaceAccessIsolationTests): 302 to
-		// /AccessDenied — a real 403 page, never /Login. Asserted precisely rather than as "not 200",
-		// which any accidental redirect would also satisfy.
-		resp.StatusCode.Should().Be(HttpStatusCode.Redirect,
+		// THE OUTCOME is what this test is about, and it has not moved: wsb's stream does not open for a
+		// wsa member. The SHAPE moved, from 302 /AccessDenied to a plain 403, when the route's tenant
+		// became a declaration ([TenantFrom(Route, "projectKey")]) answered by TenantEnforcementMiddleware
+		// instead of a Results.Forbid() inside the handler — Forbid() runs the COOKIE scheme's forbid
+		// handler, which is what produced the redirect, whereas one refusal shape for the whole endpoint
+		// plane is an explicit acceptance criterion of work `authz-default-deny-delivery` ("the allow/deny
+		// outcome is preserved; the four denial shapes are deliberately dropped").
+		//
+		// Asserted precisely rather than as "not 200", which any accidental redirect would also satisfy —
+		// and the negative on /Login stays, because a 302 to the sign-in form is the specific wrong answer
+		// this endpoint used to give (a signed-in user told to sign in again, bug
+		// auth-denied-and-empty-state).
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden,
 			"tail-member holds a role in wsa only — wsb's project must not stream to it");
-		resp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
+		resp.Headers.Location.Should().BeNull("a refusal is an answer here, not a redirect to /Login");
 		resp.Content.Headers.ContentType?.MediaType.Should().NotBe("text/event-stream");
 	}
 
