@@ -212,8 +212,11 @@ public sealed class MethodologyTemplateTests : IDisposable
 		get.Name.Should().Be("simple");
 		get.Kinds.Should().NotBeNull().And.NotBeEmpty();
 
-		var miss = await TasksTools.MethodologyTemplateGetAsync(http, flags, _tasks, Proj, "no-such-tmpl");
-		miss.Found.Should().BeFalse();
+		// Addressed read: an unknown key is a clear error, not Found=false (batch2
+		// not-found-two-contracts-under-tasks — tasks_methodology_template_get now matches
+		// tasks_node_get's contract instead of the old nullable-get one).
+		var miss = () => TasksTools.MethodologyTemplateGetAsync(http, flags, _tasks, Proj, "no-such-tmpl");
+		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*no-such-tmpl*");
 
 		var del = await TasksTools.MethodologyTemplateDeleteAsync(http, flags, _tasks, Proj, "no-such-tmpl");
 		del.Deleted.Should().BeFalse();

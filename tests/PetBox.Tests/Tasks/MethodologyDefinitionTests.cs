@@ -453,14 +453,15 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		Text(r).Should().Contain("is not a valid slug");
 	}
 
-	// 5. no template stored under this key → found:false (honest miss), not an error.
+	// 5. no template stored under this key → a clear error (not found:false). Addressed
+	// reads throw on miss, matching tasks_node_get — batch2
+	// not-found-two-contracts-under-tasks retired the old nullable-get contract for every
+	// addressed tasks_methodology_*_get verb.
 	[Fact]
-	public async Task Get_NoTemplate_FoundFalse()
+	public async Task Get_NoTemplate_IsError()
 	{
 		var r = await Get();
-		IsErr(r).Should().BeFalse(Text(r));
-		var got = Parse(r);
-		got.GetProperty("found").GetBoolean().Should().BeFalse();
-		got.GetProperty("key").GetString().Should().Be(TemplateKey);
+		IsErr(r).Should().BeTrue(Text(r));
+		Text(r).Should().Contain(TemplateKey);
 	}
 }

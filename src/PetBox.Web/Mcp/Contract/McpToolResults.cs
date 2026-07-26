@@ -634,8 +634,9 @@ public sealed record MethodologyTemplateUpsertResult(string Key, long Version, b
 public sealed record MethodologyTemplateDeleteResult(string Key, bool Deleted, long Version);
 
 // tasks_methodology_template_get answer. Found=true → key/source + the template document
-// (kinds/workflows). Found=false → honest miss (not an error) for a non-builtin key that has
-// no stored template and is not the dual-read legacy key. Source ∈ stored|builtin|definition.
+// (kinds/workflows). An addressed read: a miss (non-builtin key with no stored template and
+// not the dual-read legacy key) THROWS instead of returning Found=false — same contract as
+// tasks_node_get. Source ∈ stored|builtin|definition.
 public sealed record MethodologyTemplateGetResult(
 	bool Found,
 	string? Key = null,
@@ -693,7 +694,8 @@ public sealed record MethodologyActiveGetResult(string? Name, long Version);
 public sealed record MethodologyActiveSetResult(string? Name, bool Changed, long Version);
 
 // tasks_methodology_rules_get: Found=true → name + full rules document (same kinds/workflows
-// shape as template_get) + version baseline for rules_upsert. Found=false on miss.
+// shape as template_get) + version baseline for rules_upsert. An addressed read: a miss THROWS
+// instead of returning Found=false — same contract as tasks_node_get.
 public sealed record MethodologyInstanceRulesGetResult(
 	bool Found,
 	string? Name = null,
@@ -714,9 +716,9 @@ public sealed record MethodologyInstanceRulesUpsertResult(
 
 // tasks_methodology_utility_get: Found=true → the project's utility-layer document (same
 // kinds/workflows shape as rules_get/template_get) + version baseline for utility_upsert.
-// Found=false when the project has never defined one (everything resolves from presets).
-// No Name/Closed fields — the utility layer is a project-level singleton, not a named,
-// closeable instance.
+// An addressed read: THROWS when the project has never defined one, instead of returning
+// Found=false — same contract as tasks_node_get. No Name/Closed fields — the utility layer
+// is a project-level singleton, not a named, closeable instance.
 public sealed record MethodologyUtilityGetResult(
 	bool Found,
 	string? DefinitionName = null,

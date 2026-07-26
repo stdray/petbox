@@ -180,8 +180,11 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 		var http = Http("tasks:read tasks:write methodology:write");
 		var flags = Flags();
 
-		var miss = await TasksTools.MethodologyUtilityGetAsync(http, flags, _tasks, Proj);
-		miss.Found.Should().BeFalse();
+		// Addressed read: no utility layer defined yet is a clear error, not Found=false
+		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_utility_get now
+		// matches tasks_node_get's contract instead of the old nullable-get one).
+		var miss = () => TasksTools.MethodologyUtilityGetAsync(http, flags, _tasks, Proj);
+		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage($"*{Proj}*");
 
 		var input = new MethodologyDefInput
 		{
