@@ -50,6 +50,8 @@
 // permissionDecisionReason is surfaced back to the calling agent as the reason its tool call was
 // blocked, so the message must stand on its own — it is the ONLY thing the agent sees.
 
+import { pathToFileURL } from "node:url";
+
 const PETBOX_ROLE_PREFIX = "petbox-";
 
 export type ModelGateDecision =
@@ -130,6 +132,18 @@ async function main(): Promise<void> {
   // normal permission flow continue untouched.
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch(() => process.exit(0)); // the invariant applies to main() itself, not just its try/catch
+// Run main() ONLY when this file is the process entrypoint (`node .../subagent-model-gate.ts`),
+// never on import. Without this guard the module is both a library and an entrypoint: importing
+// evaluateModelGate for a unit test starts main(), which waits on a stdin that a test runner never
+// closes, and the importing file hangs FOREVER — not a slow test, a wedged process. That cost two
+// wedged gate runs (~2h) and would have hung `TsWireTest` in CI on every push, since the kit's
+// tests are a required dependency of SdkChecks. wire.ts has the same shape and is the reason
+// status.ts may not import it; this file is importable on purpose, so it must not self-execute.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(0)); // the invariant applies to main() itself, not just its try/catch
+}
