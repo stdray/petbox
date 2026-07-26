@@ -12,6 +12,27 @@ namespace PetBox.Config;
 
 public sealed record ConfigBindingDto(string Path, string Value, string Tags, BindingKind Kind = BindingKind.Plain);
 
+// THE TENANT OF THE BINDING ROUTES IS A WORKSPACE, AND IT IS DECLARED AS ONE — read this before
+// touching either declaration.
+//
+// A config:write key is project-scoped like every other ApiKey, and the "ConfigWrite" policy only
+// proves the SCOPE is present, so the {workspaceKey} segment is attacker-controlled: without a tenant
+// check any config:write key could write or soft-delete bindings in ANY workspace. What used to close
+// that was AuthorizeWorkspaceAsync in this file (project claim -> Project.WorkspaceKey -> compare,
+// wildcard "*" passes). It is deleted, and its rule is now
+// [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)] answered by
+// ITenantAuthorizer.KeyOnWorkspaceAsync — which is the SAME rule, verbatim: same claim, same
+// Project.WorkspaceKey read (ProjectCatalog.WorkspaceKeyOfAsync vs
+// ConfigDirectory.GetProjectWorkspaceAsync are the same query on the same column), same wildcard
+// pass, and the same non-treatment of sandboxOnly for a workspace target.
+//
+// WHAT THIS IS DELIBERATELY *NOT*: `provisioning`. The three MCP config verbs
+// (config_binding_upsert/search/delta) declared that class and consequently SERVE a foreign
+// workspace — AuthzCrossTenantTests records all three, and records that "the REST twin denies". That
+// asymmetry is a known defect with its own card, owned by the maintainer; it is NOT a licence to
+// bring REST into line by opening it. Declaring these two `provisioning` would turn a measured 403
+// into cross-tenant config WRITE, i.e. it would use this wave to widen the hole the wave exists to
+// close. The REST refusal is the correct half of the divergence and it is kept.
 public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
@@ -39,11 +60,25 @@ public static class ConfigApi
 	// Resolves every config path visible to the calling API key's project, shaped by template.
 	// Workspace is derived from the key's project (ApiKey is project-scoped); tags come from the
 	// query string plus auto ws:/project: tags.
+	//
+	// The route names no tenant, so the tenant is the CALLER's own — [TenantFrom(CallerDefault)] — and
+	// TenantEnforcementMiddleware refuses a caller whose own project does not resolve. That is what
+	// replaced the `Results.Unauthorized()` below it.
+	//
+	// It also collapses a second reading of "which project is this key's own?". CallerTenant is
+	// documented as the ONLY one (the MCP plane asks it through ModuleMcp.DefaultProjectOf), and this
+	// handler had its own copy that read the raw `project` claim — the two disagree on exactly the keys
+	// CallerTenant's comment names: a cross-project key, whose claim says "*" and whose
+	// `project_default` says otherwise. The old copy then resolved config for a project literally named
+	// "*" and 404'd; asking CallerTenant gives such a key the default project it was minted with, which
+	// is both what the PEP authorized and what the same key already gets over MCP.
+	[TenantFrom(TenantSource.CallerDefault)]
 	static async Task<IResult> Conf(HttpContext context, IConfigDirectory config, ISecretEncryptor encryptor)
 	{
-		var projectKey = context.User.FindFirst("project")?.Value;
-		if (string.IsNullOrEmpty(projectKey))
-			return Results.Unauthorized();
+		// Cannot be null once the PEP has allowed the call (an unresolved CallerDefault tenant is a
+		// refusal); the narrowing keeps it fail-closed if this surface's declaration ever changes.
+		var projectKey = CallerTenant.DefaultProjectOf(context.User);
+		if (projectKey is null) return Results.Unauthorized();
 
 		var workspaceKey = await config.GetProjectWorkspaceAsync(projectKey, context.RequestAborted);
 		if (workspaceKey is null)
@@ -116,9 +151,9 @@ public static class ConfigApi
 		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
+	[TenantFrom(TenantSource.Route, "workspaceKey", TenantKind.Workspace)]
 	static async Task<IResult> Create(HttpContext context, IConfigDirectory config, string workspaceKey, ConfigBindingDto dto)
 	{
-		if (await AuthorizeWorkspaceAsync(context, config, workspaceKey) is { } forbid) return forbid;
 		if (string.IsNullOrWhiteSpace(dto.Path))
 			return Results.BadRequest(new ErrorResponse("path is required"));
 		if (!dto.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
@@ -131,9 +166,9 @@ public static class ConfigApi
 
 	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
 	// UI's history page can offer "Undelete" for the last deleted version.
+	[TenantFrom(TenantSource.Route, "workspaceKey", TenantKind.Workspace)]
 	static async Task<IResult> Delete(HttpContext context, IConfigDirectory config, string workspaceKey, string path, string tags)
 	{
-		if (await AuthorizeWorkspaceAsync(context, config, workspaceKey) is { } forbid) return forbid;
 		var deleted = await config.DeleteBindingByPathTagsAsync(workspaceKey, path, tags, context.RequestAborted);
 
 		return deleted
@@ -141,29 +176,4 @@ public static class ConfigApi
 			: Results.NotFound(new ErrorResponse("binding not found"));
 	}
 
-	// A config:write key is project-scoped (like every other ApiKey), not workspace-scoped —
-	// the "ConfigWrite" ScopeRequirement policy only checks the scope is present, so without this
-	// the {workspaceKey} route segment was attacker-controlled: any config:write key from any
-	// project could write/soft-delete bindings in ANY workspace. Derive the caller's real
-	// workspace the same way Conf() does (project claim -> Project.WorkspaceKey) and require it
-	// to match the target route segment. A wildcard "*" project claim (cross-project key) is
-	// authorized for every workspace too, mirroring ProjectScope.Authorizes' treatment of "*" for
-	// every other project-scoped REST handler (LogApi/DataAuth's AuthorizeProject helpers).
-	// Returns null when the caller is authorized for `workspaceKey`, else the IResult to return
-	// (Forbid). `out` can't be combined with `async`, so this replaces the old (bool, out forbid)
-	// shape with a nullable return the caller checks instead.
-	static async Task<IResult?> AuthorizeWorkspaceAsync(HttpContext context, IConfigDirectory config, string workspaceKey)
-	{
-		var claim = context.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(claim))
-			return Results.Forbid();
-
-		if (claim != ProjectScope.AllProjects)
-		{
-			var claimWorkspace = await config.GetProjectWorkspaceAsync(claim, context.RequestAborted);
-			if (claimWorkspace is null || !string.Equals(claimWorkspace, workspaceKey, StringComparison.Ordinal))
-				return Results.Forbid();
-		}
-		return null;
-	}
 }

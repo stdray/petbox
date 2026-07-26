@@ -37,7 +37,6 @@ public static class TenantEnforcementAllowlist
 	{
 		// REST — what is LEFT of the 55 minimal-API endpoints (METHOD + route pattern, as the caller
 		// addresses them). The wave's own accounting is in the note at the bottom of this list.
-		"rest:DELETE /api/config/{workspaceKey}/bindings",
 		"rest:GET /.well-known/oauth-authorization-server",
 		"rest:GET /.well-known/oauth-authorization-server/{*rest}",
 		"rest:GET /.well-known/oauth-protected-resource",
@@ -48,12 +47,10 @@ public static class TenantEnforcementAllowlist
 		"rest:GET /api/auth/validate",
 		"rest:GET /api/share/{token}/tsv",
 		"rest:GET /openapi/{documentName}.json",
-		"rest:GET /v1/conf",
 		"rest:GET|HEAD /health",
 		"rest:GET|HEAD /version",
 		"rest:POST /agent/heartbeat",
 		"rest:POST /api/auth/logout",
-		"rest:POST /api/config/{workspaceKey}/bindings",
 		"rest:POST /api/deploy/nodes",
 		"rest:POST /api/health",
 

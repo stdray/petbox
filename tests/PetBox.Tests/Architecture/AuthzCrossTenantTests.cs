@@ -60,9 +60,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			// ── SERVED A FOREIGN TENANT ──────────────────────────────────────────────────────────
 			//
 			// The three MCP config verbs are the sharpest of these: their REST twin on the same data,
-			// POST /api/config/{workspaceKey}/bindings, DENIES the identical call (403 — it runs
-			// ConfigApi.AuthorizeWorkspaceAsync). Same operation, two transports, opposite answers.
-			// That asymmetry is a defect rather than an exemption anyone chose.
+			// POST|DELETE /api/config/{workspaceKey}/bindings, DENIES the identical call — since the REST
+			// wave with a 403 from TenantEnforcementMiddleware, on a
+			// [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)] declaration rather than the
+			// hand-written ConfigApi.AuthorizeWorkspaceAsync it replaced. Same operation, two transports,
+			// opposite answers. That asymmetry is a defect rather than an exemption anyone chose, and the
+			// REST side is the correct half: it was NOT "brought into line" with `provisioning`, which
+			// would have meant opening cross-tenant config writes to close a diff.
 			["mcp:config_binding_upsert"] = (CrossTenantVerdict.Allowed,
 				"WROTE the victim workspace's config (\"applied\":true) with admin:provision; the REST twin denies"),
 			["mcp:config_binding_search"] = (CrossTenantVerdict.Allowed,
@@ -104,10 +108,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			// refuses ahead of the tool body, so the argument is never reached. The list shrank by one,
 			// which is the only direction it is allowed to move.
 
-			// One route, two verbs, two answers: POST /api/config/{workspaceKey}/bindings returns 403,
-			// DELETE on the same route returns 400 — the authorize call sits after the binding.
-			["rest:DELETE /api/config/{workspaceKey}/bindings"] = (CrossTenantVerdict.ArgumentError,
-				"400 BadRequest before AuthorizeWorkspaceAsync; POST on the SAME route returns 403"),
+			// DELETE /api/config/{workspaceKey}/bindings was here — "400 BadRequest before
+			// AuthorizeWorkspaceAsync; POST on the SAME route returns 403". FIXED by the REST wave: the
+			// 400 came from binding the `path`/`tags` QUERY parameters, which happens inside the endpoint,
+			// so moving the decision into the middleware put it genuinely first and both verbs of the
+			// route now answer 403. One route, one answer.
 
 			// The two session POST routes were here — "415 UnsupportedMediaType from endpoint metadata,
 			// before the handler's ProjectScope check". BOTH GONE, and the diagnosis in that note turned
@@ -364,14 +369,16 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(143,
+		refused.Should().Be(144,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
 			+ "140 -> 141 in the MCP declaration wave (memory_get stopped answering an argument error and now "
 			+ "denies, because the PEP decides ahead of the tool body); 141 -> 143 in the REST wave, when the "
-			+ "two session POST routes were reached for the first time — see the KnownDeviations note on why "
-			+ "the old 415 measured the probe rather than the surface");
+			+ "two session POST routes were reached for the first time (see the KnownDeviations note on why "
+			+ "the old 415 measured the probe rather than the surface); 143 -> 144 with DELETE "
+			+ "/api/config/{{workspaceKey}}/bindings, whose 400 came from binding its query parameters inside "
+			+ "the endpoint and is now a 403 decided above it");
 	}
 
 	// ── GUARD THE GUARD ──────────────────────────────────────────────────────────────────────────
