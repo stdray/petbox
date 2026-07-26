@@ -60,11 +60,14 @@ public static class GuardEngine
 	//   • `blocks` (direction-less builtin, via blockedBy sugar OR links.blocks): the blocker's
 	//     slug resolves on THIS board over prior overlaid with the batch (a blocker created in the
 	//     same call resolves too); the writer is the edge's TO (blocker -> task).
-	//   • a directed kind (idea_spec/task_spec/issue_task or a project-declared kind with a
-	//     Direction): the writer occupies the END whose kind equals its own; the TARGET is the
-	//     opposite end, resolved by SLUG against the boards of that end's kind IN THE ACTIVE
-	//     METHODOLOGY-INSTANCE BUCKET (never across instances), NodeId-shaped values passing
-	//     through. The orientation follows which end the writer sits on.
+	//   • every other kind (ResolveDeclared): a DIRECTED kind (idea_spec/task_spec/issue_task or a
+	//     project-declared kind with a Direction) puts the writer on the END whose kind equals its
+	//     own and takes the opposite end as the TARGET, resolved by SLUG against the boards of that
+	//     end's kind IN THE ACTIVE METHODOLOGY-INSTANCE BUCKET (never across instances); a
+	//     DIRECTION-LESS kind (the neutral trio relates_to/depends_on/mirrors, or a declared kind
+	//     that names no end) pins no target kind, so its slug resolves bucket-wide instead. Either
+	//     way NodeId-shaped values pass straight through — they need no target kind at all, which
+	//     is the whole reason that check belongs inside the ref loop.
 	// A node that sets `blocks` both ways (blockedBy and links.blocks) is refused — one link, one way.
 	static MethodologyVerdict? ResolveLinks(
 		MethodologyEngineContext ctx, IReadOnlyList<NodeState> desired, IReadOnlyDictionary<string, NodeState> prior,
@@ -107,7 +110,7 @@ public static class GuardEngine
 					}
 					continue;
 				}
-				if (ResolveDirected(ctx, key, kind, refs, resolved) is { } vd) return vd;
+				if (ResolveDeclared(ctx, key, kind, refs, resolved) is { } vd) return vd;
 			}
 		}
 		return null;
@@ -127,38 +130,79 @@ public static class GuardEngine
 		return null;
 	}
 
-	// Resolve a DIRECTED link kind's refs. The writer node (kind = ctx.KindSlug) must occupy one
-	// end of the kind's Direction; the target is the opposite end. A slug resolves against the
-	// active boards of the target-end kind in THIS instance bucket (mirrors the old ideaRef
-	// resolution, now generic); NodeId-shaped values pass through untouched (ValidateLinkTargets
-	// checks they resolve). Orientation: writer on the FROM end => writer is relations.from.
-	static MethodologyVerdict? ResolveDirected(
+	// The structural builtins with FSM/tree semantics and their OWN upsert field. `blocks` is
+	// handled above (blockedBy sugar or links.blocks); these two are reachable only through the
+	// `partOf` / `supersedes` fields, which own the tree/chain bookkeeping a raw edge would skip.
+	// Named here so the links door refuses them BY NAME with a remedy that works, instead of
+	// letting the direction-less path mint a bare edge behind the field's back.
+	static readonly Dictionary<string, string> StructuralOwnField = new(StringComparer.OrdinalIgnoreCase)
+	{
+		["part_of"] = "partOf",
+		["supersedes"] = "supersedes",
+	};
+
+	// Resolve one link kind's refs — every kind but the `blocks` sugar. Three gates, applied in the
+	// order relations_create applies its own, so the two doors to a single edge cannot disagree
+	// (spec upsert-link-parity):
+	//   1. VOCABULARY — the kind must be one this instance knows (IsValidRelationKind), plus the
+	//      structural pair above which has a better door. This gate is load-bearing, not decorative:
+	//      LinkRefsAsync writes whatever the engine resolves WITHOUT re-checking the kind, so this is
+	//      the only thing between `links:{anything: <NodeId>}` and a stored edge. It used to be
+	//      enforced by ACCIDENT — an unknown kind has no direction, so gate 2 refused it on the way
+	//      past — and that accident evaporates the moment gate 2 stops being unconditional.
+	//   2. DIRECTION — a kind whose Direction names an end still demands the writer occupy one of
+	//      them. relations_create refuses that same edge from the wrong kind of node; so does this.
+	//      A kind that names NEITHER end constrains nothing and resolves like a neutral kind.
+	//   3. TARGET — only a SLUG needs boards to resolve against. This gate therefore lives INSIDE
+	//      the ref loop. It used to sit outside it (links-neutral-kinds-unreachable), which made the
+	//      whole neutral trio relates_to/depends_on/mirrors unreachable through `links:` from every
+	//      board kind, by slug AND by NodeId — while the message doing the refusing advised "pass a
+	//      NodeId", the one remedy its own early return had already made impossible.
+	// Orientation: writer on the FROM end => writer is relations.from.
+	static MethodologyVerdict? ResolveDeclared(
 		MethodologyEngineContext ctx, string writerKey, string kind, IReadOnlyList<string> refs,
 		List<ResolvedLink> resolved)
 	{
 		var writerKind = ctx.Runtime.KindName(ctx.KindSlug);
+
+		if (StructuralOwnField.TryGetValue(kind, out var ownField))
+			return Bad(writerKey, $"link '{kind}' is not settable through links (node '{writerKey}') — it carries tree/chain semantics the `{ownField}` field owns; set `{ownField}` on the node instead");
+		if (!ctx.Runtime.IsValidRelationKind(kind))
+			return Bad(writerKey, $"unknown link kind '{kind}' (node '{writerKey}') — valid kinds: {string.Join("|", ctx.Runtime.KnownRelationKinds())} (declare additional kinds on the methodology instance's linkKinds)");
+
 		var dir = ctx.Runtime.LinkKind(kind)?.Direction;
+		// A Direction naming NEITHER end constrains nothing — direction-less in every sense that
+		// matters here, which is exactly how relations_create reads it before skipping its own check.
+		var directed = dir is not null && (dir.FromKind is not null || dir.ToKind is not null);
 
 		bool writerIsFrom = true;
 		string? targetKind = null;
-		if (dir is not null)
+		var writerOnAnEnd = false;
+		if (directed)
 		{
-			var onFrom = dir.FromKind is not null && string.Equals(dir.FromKind, writerKind, StringComparison.OrdinalIgnoreCase);
+			var onFrom = dir!.FromKind is not null && string.Equals(dir.FromKind, writerKind, StringComparison.OrdinalIgnoreCase);
 			var onTo = dir.ToKind is not null && string.Equals(dir.ToKind, writerKind, StringComparison.OrdinalIgnoreCase);
-			if (onFrom && !onTo) { writerIsFrom = true; targetKind = dir.ToKind; }
-			else if (onTo && !onFrom) { writerIsFrom = false; targetKind = dir.FromKind; }
-			// The writer matches NEITHER end (a project reusing a builtin slug with its own kinds) or
-			// an end whose opposite is null (unconstrained): fall through to the constraint's target
-			// below, keeping the historical writer-is-FROM orientation.
+			// The writer on an end whose OPPOSITE is null is placed but unconstrained in its target:
+			// targetKind stays null and a slug resolves bucket-wide, as for a neutral kind.
+			if (onFrom && !onTo) { writerIsFrom = true; targetKind = dir.ToKind; writerOnAnEnd = true; }
+			else if (onTo && !onFrom) { writerIsFrom = false; targetKind = dir.FromKind; writerOnAnEnd = true; }
+			else if (onFrom && onTo) { writerIsFrom = true; targetKind = writerKind; writerOnAnEnd = true; }
 		}
-		// A null opposite end or a direction-less/mismatched kind falls back to the writer kind's
-		// link constraint for its target kind; without either there is nothing to resolve a slug against.
+		// The writer matches NEITHER end (a project reusing a builtin slug with its own kinds):
+		// fall through to the writer kind's own link constraint, keeping the historical
+		// writer-is-FROM orientation.
 		targetKind ??= ctx.Runtime.LinkConstraints(ctx.KindSlug)
 			.FirstOrDefault(c => string.Equals(c.Link, kind, StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)?.TargetKind;
-		if (targetKind is null)
-			return Bad(writerKey, $"link '{kind}' has no direction to resolve against from a '{writerKind}' node — declare its direction (fromKind/toKind), or pass a NodeId (node '{writerKey}')");
 
-		// The target-kind boards of this instance bucket (built only for a slug ref).
+		// Gate 2. Built from the kind's OWN declared ends, and its remedy is the edge that exists.
+		if (directed && !writerOnAnEnd && targetKind is null)
+			return Bad(writerKey, $"link '{kind}' runs {dir!.FromKind ?? "*"}->{dir.ToKind ?? "*"}, but node '{writerKey}' is a '{writerKind}' node sitting on neither end — declare it from a {dir.FromKind ?? dir.ToKind} node instead (node '{writerKey}')");
+
+		// The boards a SLUG resolves against, built once and only when a slug actually appears: the
+		// target-kind boards of this instance bucket, or — when the kind pins no target kind — every
+		// active board in the bucket, the widest set the engine's never-across-instances discipline
+		// allows.
+		var targetBoard = targetKind is null ? "board" : $"{targetKind} board";
 		var instance = ctx.MethodologyInstance;
 		List<string>? boards = null;
 		HashSet<string>? boardSet = null;
@@ -166,18 +210,20 @@ public static class GuardEngine
 		{
 			var v = (raw ?? "").Trim();
 			if (v.Length == 0) continue;
+			// A NodeId names its target outright: no target kind, no board set, nothing to resolve
+			// against. ValidateLinkTargets confirms it points at a real node.
 			if (LooksLikeNodeId(v)) { resolved.Add(new ResolvedLink(kind, writerKey, v, writerIsFrom)); continue; }
 			if (boards is null)
 			{
 				boards = ctx.Boards
 					.Where(b => !b.Closed
 						&& string.Equals(b.MethodologyInstance, instance, StringComparison.OrdinalIgnoreCase)
-						&& string.Equals(ctx.Runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase))
+						&& (targetKind is null || string.Equals(ctx.Runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase)))
 					.Select(b => b.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
 				boardSet = boards.ToHashSet(StringComparer.Ordinal);
 			}
 			if (boards.Count == 0)
-				return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') is a slug, but no active {targetKind} board exists alongside board '{ctx.BoardName}'{InstanceSuffix(instance)} — create one or provide the target node's NodeId");
+				return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') is a slug, but no active {targetBoard} exists alongside board '{ctx.BoardName}'{InstanceSuffix(instance)} — create one or provide the target node's NodeId");
 			var slug = v.ToLowerInvariant();
 			var hits = ctx.NodeIndex.Values
 				.Where(n => boardSet!.Contains(n.Board) && string.Equals(n.Slug, slug, StringComparison.Ordinal))
@@ -185,7 +231,7 @@ public static class GuardEngine
 			switch (hits.Count)
 			{
 				case 1: resolved.Add(new ResolvedLink(kind, writerKey, hits[0].NodeId, writerIsFrom)); break;
-				case 0: return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') does not match any node on {targetKind} board{(boards.Count > 1 ? "s" : "")} '{string.Join(", ", boards)}'");
+				case 0: return Bad(writerKey, $"links.{kind} '{raw}' (node '{writerKey}') does not match any node on {targetBoard}{(boards.Count > 1 ? "s" : "")} '{string.Join(", ", boards)}'");
 				default: return Bad(writerKey, $"ambiguous links.{kind} '{raw}' (node '{writerKey}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the target node's NodeId instead");
 			}
 		}

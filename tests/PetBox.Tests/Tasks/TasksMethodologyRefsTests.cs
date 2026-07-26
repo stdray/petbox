@@ -210,7 +210,220 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 			nodes = Nodes(new { key = "chore-x", type = "chore", status = "Pending", title = "Chore", body = "x", links = new { idea_spec = "want-x" } })
 		});
 		IsErr(work).Should().BeTrue();
-		Text(work).Should().Contain("has no direction to resolve against from a");
+		// The refusal survived links-neutral-kinds-unreachable; only its WORDING changed. It now
+		// names the kind's declared ends and points at a node that could actually carry the link,
+		// instead of advising "declare its direction, or pass a NodeId" — advice that was false on
+		// both counts here (the direction IS declared; a NodeId was refused just the same).
+		Text(work).Should().Contain("sitting on neither end");
+		Text(work).Should().Contain("declare it from a ideas node instead");
+		Text(work).Should().NotContain("has no direction to resolve against");
+	}
+
+	// 36. a DIRECTED kind still requires its direction when addressed by NODEID too. Moving the
+	// target-kind check inside the ref loop (so neutral kinds could resolve) must not turn a NodeId
+	// into a bypass for direction enforcement — gate 2 fires before any ref is looked at.
+	[Fact]
+	public async Task IdeaSpec_ByNodeId_FromWorkBoard_StillRefused_NotAnEndOfIdeaSpec()
+	{
+		var ideaId = await AcceptedIdeaId("want-x");
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var work = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "chore-x", type = "chore", status = "Pending", title = "Chore", body = "x", links = new { idea_spec = ideaId } })
+		});
+		IsErr(work).Should().BeTrue();
+		Text(work).Should().Contain("sitting on neither end");
+	}
+
+	// 37. links-neutral-kinds-unreachable: a NEUTRAL kind resolves BY SLUG through `links:`. The
+	// neutral trio pins no target kind, so the slug resolves across the instance's active boards —
+	// here work→work, the very edge the bug report was filed about.
+	[Fact]
+	public async Task NeutralKind_BySlug_ResolvesThroughLinks()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "peer", type = "chore", status = "Pending", title = "Peer", body = "x" })
+		});
+		IsErr(a).Should().BeFalse(Text(a));
+		var peerId = NodeId(a, "peer");
+
+		var b = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "cites", type = "chore", status = "Pending", title = "Cites", body = "x", links = new { relates_to = "peer" } })
+		});
+		IsErr(b).Should().BeFalse(Text(b));
+
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(b, "cites"), direction = "from" });
+		Text(rels).Should().Contain("relates_to");
+		Text(rels).Should().Contain(peerId); // the RESOLVED NodeId, never the raw slug
+	}
+
+	// 38. the same neutral edge BY NODEID. This is the form the old error message explicitly
+	// advised ("or pass a NodeId") while its own early return — hoisted outside the ref loop —
+	// made it impossible. The message's remedy is now true.
+	[Fact]
+	public async Task NeutralKind_ByNodeId_ResolvesThroughLinks()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "peer", type = "chore", status = "Pending", title = "Peer", body = "x" })
+		});
+		var peerId = NodeId(a, "peer");
+
+		var b = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "cites", type = "chore", status = "Pending", title = "Cites", body = "x", links = new { depends_on = peerId } })
+		});
+		IsErr(b).Should().BeFalse(Text(b));
+
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(b, "cites"), direction = "from" });
+		Text(rels).Should().Contain("depends_on");
+		Text(rels).Should().Contain(peerId);
+	}
+
+	// 39. a neutral kind crosses board KINDS too — the scope of the bug was categorical, not a
+	// work→work special case (it was measured refusing from an ideas node as well).
+	[Fact]
+	public async Task NeutralKind_FromIdeasBoard_CrossesToWork()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var w = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "job", type = "chore", status = "Pending", title = "Job", body = "x" })
+		});
+		var jobId = NodeId(w, "job");
+
+		var i = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "ideas",
+			nodes = Nodes(new { key = "notion", type = "idea", status = "raw", title = "Notion", body = "x", links = new { relates_to = "job" } })
+		});
+		IsErr(i).Should().BeFalse(Text(i));
+
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(i, "notion"), direction = "from" });
+		Text(rels).Should().Contain("relates_to");
+		Text(rels).Should().Contain(jobId);
+	}
+
+	// 40. PARITY (spec upsert-link-parity): the `links:` door and relations_create produce THE SAME
+	// edge for the same neutral kind. relations_create is idempotent, so asking it for the edge the
+	// upsert already declared must return that one rather than mint a second — the two paths agree
+	// on the edge itself, not merely on both being permitted.
+	[Fact]
+	public async Task NeutralKind_LinksPath_AgreesWith_RelationsCreate()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "peer", type = "chore", status = "Pending", title = "Peer", body = "x" })
+		});
+		var peerId = NodeId(a, "peer");
+		var b = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "cites", type = "chore", status = "Pending", title = "Cites", body = "x", links = new { relates_to = "peer" } })
+		});
+		IsErr(b).Should().BeFalse(Text(b));
+		var citesId = NodeId(b, "cites");
+
+		var viaRelations = await Agent("relations_create", new
+		{
+			projectKey = ProjectKey,
+			kind = "relates_to",
+			fromNodeId = citesId,
+			toNodeId = peerId,
+		});
+		IsErr(viaRelations).Should().BeFalse(Text(viaRelations));
+
+		// One edge, not two: the idempotent create returned the row the links door had written.
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = citesId, direction = "from" });
+		var edges = JsonDocument.Parse(Text(rels)).RootElement.GetProperty("relations").EnumerateArray()
+			.Count(e => e.GetProperty("kind").GetString() == "relates_to");
+		edges.Should().Be(1, "the links: path and relations_create must resolve to the SAME edge");
+	}
+
+	// 41. the vocabulary gate. An unknown kind was refused BY ACCIDENT before this fix — it has no
+	// direction, so the old unconditional direction check caught it on the way past. That accident
+	// died with the check's hoisting, and LinkRefsAsync writes what the engine resolves WITHOUT
+	// re-validating the kind: without an explicit gate, `links:{whatever: <NodeId>}` would mint a
+	// junk edge. An illegal kind must stay refused — by slug AND by NodeId.
+	[Fact]
+	public async Task UnknownKind_IsRefused_BySlugAndByNodeId()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "peer", type = "chore", status = "Pending", title = "Peer", body = "x" })
+		});
+		var peerId = NodeId(a, "peer");
+
+		var bySlug = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "c1", type = "chore", status = "Pending", title = "C", body = "x", links = new { florble = "peer" } })
+		});
+		IsErr(bySlug).Should().BeTrue();
+		Text(bySlug).Should().Contain("unknown link kind");
+		Text(bySlug).Should().Contain("relates_to"); // the message lists the kinds that ARE valid
+
+		var byNodeId = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "c2", type = "chore", status = "Pending", title = "C", body = "x", links = new { florble = peerId } })
+		});
+		IsErr(byNodeId).Should().BeTrue();
+		Text(byNodeId).Should().Contain("unknown link kind");
+	}
+
+	// 42. the structural pair keeps its own door. part_of/supersedes are direction-less like the
+	// neutral trio, so the widened path would have happily minted bare edges for them behind the
+	// back of the `partOf`/`supersedes` fields that own the tree/chain bookkeeping. Refused, and
+	// the refusal names the field that works.
+	[Fact]
+	public async Task StructuralKinds_AreRefusedThroughLinks_NamingTheirOwnField()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "parent", type = "chore", status = "Pending", title = "P", body = "x" })
+		});
+		var parentId = NodeId(a, "parent");
+
+		var r = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "child", type = "chore", status = "Pending", title = "C", body = "x", links = new { part_of = parentId } })
+		});
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("is not settable through links");
+		Text(r).Should().Contain("partOf");
 	}
 
 	// 33. slug resolution does NOT weaken the constraint: a slug pointing at a non-accepted
