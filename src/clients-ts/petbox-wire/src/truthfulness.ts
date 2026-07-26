@@ -43,10 +43,35 @@ export type ModelViolation = {
   readonly allowedModels: readonly string[];
 };
 
-export type TruthfulnessViolation = CapabilityViolation | ModelViolation;
+/**
+ * A role the definition actually declares has NO local model binding for a CLOSED-model-space
+ * harness (harness-models.ts's allowedModels non-null — claude-code today). Produced ONLY by
+ * apply's planApply (apply-artifacts.ts), and only for that closed subset of harnesses — NOT by
+ * checkRoleTruthfulness / checkTruthfulness below, which stay exactly as documented: an absent
+ * binding is the harness's legitimate inherit behaviour, not a violation (doctor still reports
+ * it that way). apply is stricter here on purpose (reserve-unbound-inherits-session-model, owner
+ * decision 2026-07-26): a role with no `model:` line silently rides the session/parent model,
+ * which is exactly the 2026-07-26 fable→opus incident's shape made structural and permanent —
+ * it would hit every fresh machine, on whichever role happens to be unbound, forever. apply now
+ * refuses to write such a role at all instead of writing it with a warning — but ONLY where a
+ * correct binding is actually knowable and verifiable (a closed alias/id space); an OPEN-space
+ * harness (opencode, and droid absent its `inherit` seed) still gets the old warn-and-write
+ * behavior, because the kit cannot name what "correct" would even look like there, and refusing
+ * would punish the user for the kit's own ignorance (see apply-artifacts.ts's file header).
+ */
+export type UnboundViolation = {
+  readonly role: string;
+  readonly harness: string;
+};
+
+export type TruthfulnessViolation = CapabilityViolation | ModelViolation | UnboundViolation;
 
 export function isModelViolation(v: TruthfulnessViolation): v is ModelViolation {
   return "model" in v;
+}
+
+export function isUnboundViolation(v: TruthfulnessViolation): v is UnboundViolation {
+  return !("model" in v) && !("capability" in v);
 }
 
 /**
@@ -115,14 +140,18 @@ export function modelShapeWarning(
 /**
  * Pure gate for one role + harness (+ optional bound model) → violations (or empty).
  * Unknown harness ids declare zero capabilities → every required cap is a violation.
+ * Return type deliberately excludes UnboundViolation: this is the SHARED gate doctor also uses,
+ * and an absent binding stays legitimate inherit here (see UnboundViolation's doc comment) — it
+ * never produces one. Widening this to TruthfulnessViolation would falsely suggest otherwise to
+ * callers narrowing the result (e.g. `!isModelViolation(v) ⇒ CapabilityViolation`).
  */
 export function checkRoleTruthfulness(
   role: AgentRole,
   harness: string,
   model?: string,
-): readonly TruthfulnessViolation[] {
+): readonly (CapabilityViolation | ModelViolation)[] {
   const caps = harnessCapabilities(harness);
-  const out: TruthfulnessViolation[] = [];
+  const out: (CapabilityViolation | ModelViolation)[] = [];
   for (const capability of effectiveRequiredCapabilities(role)) {
     if (!caps.has(capability)) {
       out.push({ role: role.slug, capability, harness });
@@ -134,13 +163,14 @@ export function checkRoleTruthfulness(
 
 /**
  * Pure gate: definition + harness (+ role→model binding map) → all role violations (or empty).
+ * Same UnboundViolation exclusion as checkRoleTruthfulness above — see its doc comment.
  */
 export function checkTruthfulness(
   definition: AgentDefinition,
   harness: string,
   roleModels: Readonly<Record<string, string>> = {},
-): readonly TruthfulnessViolation[] {
-  const out: TruthfulnessViolation[] = [];
+): readonly (CapabilityViolation | ModelViolation)[] {
+  const out: (CapabilityViolation | ModelViolation)[] = [];
   for (const role of definition.roles) {
     out.push(...checkRoleTruthfulness(role, harness, roleModels[role.slug]));
   }
@@ -151,14 +181,31 @@ export function checkTruthfulness(
 export function formatViolations(violations: readonly TruthfulnessViolation[]): string {
   if (violations.length === 0) return "";
   return violations
-    .map((v) =>
-      isModelViolation(v)
-        ? `  role '${v.role}' is bound to model '${v.model}', which looks like ANOTHER harness's ` +
+    .map((v) => {
+      if (isModelViolation(v)) {
+        return (
+          `  role '${v.role}' is bound to model '${v.model}', which looks like ANOTHER harness's ` +
           `model id, not one harness '${v.harness}' would own — writing it would be either ` +
           `rejected loudly at runtime or silently satisfy a different harness's config, not ` +
           `this one. Known ${v.harness} aliases: ${v.allowedModels.join(", ")}. Fix the binding ` +
           `in ~/.petbox/roles.json (profile → agents.${v.harness}.roles.${v.role}.model).`
-        : `  role '${v.role}' requires capability '${v.capability}' which harness '${v.harness}' does not declare`,
-    )
+        );
+      }
+      // Checked by an inline `"capability" in v` rather than a second `isXViolation` guard: a
+      // CapabilityViolation is structurally assignable to UnboundViolation's narrower shape
+      // (both are just { role, harness } once you ignore extra fields), so two independent
+      // user-defined type guards checked in sequence would let TS's negative narrowing collapse
+      // the remaining branch to `never`. The `in` check on a specific literal key narrows
+      // correctly instead.
+      if ("capability" in v) {
+        return `  role '${v.role}' requires capability '${v.capability}' which harness '${v.harness}' does not declare`;
+      }
+      return (
+        `  role '${v.role}' has NO local model binding for harness '${v.harness}' — apply ` +
+        `refuses to write it without one, so it can never silently ride the session/parent ` +
+        `model. Bind it: \`petbox-wire model set ${v.role} <tier> --agent ${v.harness}\` ` +
+        `(or edit ~/.petbox/roles.json directly: profile → agents.${v.harness}.roles.${v.role}.model).`
+      );
+    })
     .join("\n");
 }

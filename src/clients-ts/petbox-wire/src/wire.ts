@@ -550,6 +550,11 @@ async function runApply(argv: string[]): Promise<void> {
     }
   }
 
+  // Seed a fresh machine's roster BEFORE compiling — apply now refuses any declared role with
+  // no local binding (reserve-unbound-inherits-session-model), so a bare `apply` on a machine
+  // that never ran full `wire` needs this too, not just wire's own step 11 (see
+  // seedDefaultRoleBindingsIfMissing's doc comment). No-op when roles.json already exists.
+  seedDefaultRoleBindingsIfMissing("apply");
   const result = await performApply({ definitionKey, offline, label: "apply" });
   process.exit(result.code);
 }
@@ -1429,38 +1434,69 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 // Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
 // aliases only (never a concrete id — see harness-models.ts / the claude-api skill's live
 // finding that the Task tool's `model` param is a closed enum of exactly these four tiers).
-// `reserve` is deliberately ABSENT: the tester's machine may not have access to the `fable`
-// tier, and binding it there would repeat the 2026-07-12 incident shape (a binding the harness
-// cannot actually resolve) — an unbound role inherits the session model instead, and apply
-// already warns about that honestly (see planApply's warnings).
+//
+// `reserve` is now bound too — reversing the earlier "leave it deliberately absent" call
+// (reserve-unbound-inherits-session-model, owner decision 2026-07-26). It is bound to an ALIAS
+// (`fable`), never a concrete model id: an id is exactly the foreign-shape mistake the
+// 2026-07-12 incident was (a droid id landing in a claude-code binding) — an alias is
+// harness-portable, and if the tier is genuinely unavailable on this machine it fails LOUD at
+// spawn time (a closed Task-tool enum rejects it up front), never silently resolving to
+// something else. It is bound to the STRONGEST tier on purpose, not a cautious default: the
+// umbrella this card sits under (newcomer-equivalent-experience) means a newcomer's experience
+// should match the owner's, and on the owner's own machine reserve already rides the strongest
+// tier. reserve is also the one role where a weaker tier would defeat its own purpose — it is
+// the second pair of eyes called in only once everything else has already been tried and failed,
+// so it is never the role to economize on.
 const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   orchestrator: "opus",
   worker: "sonnet",
   utility: "haiku",
   explore: "haiku",
+  reserve: "fable",
 };
 
 // Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
 // never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
-// empty, every generated .claude/agents/*.md ships with no `model:` key at all, and every role
-// silently rides the session model — the exact silent tier-drift class the 2026-07-12 incident
-// ("worker on Opus for a whole session, nobody noticed") grew from.
+// empty, and apply now REFUSES to write a declared role with no local model binding on any
+// CLOSED-model-space harness (reserve-unbound-inherits-session-model; apply-artifacts.ts's
+// planApply) — so an unseeded roster on a fresh machine would leave claude-code fully blocked
+// (exit WIRE_EXIT.truthfulness), not merely silently tier-drifting the way the 2026-07-26
+// incident (and, structurally, the 2026-07-12 one before it) grew from.
+// Called from BOTH the full `wire` run (step 11, below) and the standalone `apply` subcommand
+// (runApply) — previously only the former, so running a bare `apply` on a fresh machine (no
+// roles.json yet) hit the unbound-role refusal with nothing to fix it.
+//
+// Also seeds `droid` — every role bound to the literal `inherit` — even though droid's model
+// space is OPEN (apply would only warn, never block, an unbound droid role). `inherit` is not
+// an invented id: it is Factory's own documented frontmatter default
+// (https://docs.factory.ai/cli/configuration/custom-droids § Controlling the model), the exact
+// value renderDroidMarkdown already wrote for an unbound role before this whole card. Seeding it
+// explicitly turns that implicit fallback into a real, visible binding — same output, no warning
+// needed, nothing invented. `opencode` has no equivalent safe placeholder (no universal "just
+// inherit" keyword in its `provider/model` id space) — it stays genuinely unbound and apply
+// warns about it instead of failing (newcomer-equivalent-experience's happy path: exit 0).
 function seedDefaultRoleBindingsIfMissing(label: string): void {
   if (existsSync(rolesPath())) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
     return;
   }
-  const roles: Record<string, RoleBinding> = {};
-  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) roles[role] = { model };
+  const ccRoles: Record<string, RoleBinding> = {};
+  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) ccRoles[role] = { model };
+  const droidRoles: Record<string, RoleBinding> = {};
+  for (const role of Object.keys(DEFAULT_ROLE_MODEL_SEED)) droidRoles[role] = { model: "inherit" };
   const data: RolesFile = {
     activeProfile: "default",
-    profiles: { default: { agents: { "claude-code": { roles } } } },
+    profiles: {
+      default: { agents: { "claude-code": { roles: ccRoles }, droid: { roles: droidRoles } } },
+    },
   };
   saveRoles(data);
   log(
-    `${label} roles: seeded ${rolesPath()} — profile "default", claude-code aliases ` +
-      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku; reserve left unbound — ` +
-      `bind it yourself with \`petbox-wire model set reserve <tier>\` if this machine has access).`,
+    `${label} roles: seeded ${rolesPath()} — profile "default": claude-code aliases ` +
+      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku, reserve=fable), droid=inherit ` +
+      `for every role. opencode is intentionally left unbound (its model space is open/unknowable ` +
+      `from the kit) — apply will warn about it, not fail; bind it yourself with ` +
+      `\`petbox-wire model set <role> <model> --agent opencode\` when you know what to bind it to.`,
   );
 }
 
