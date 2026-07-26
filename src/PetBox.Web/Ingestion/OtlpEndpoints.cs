@@ -63,6 +63,26 @@ public static class OtlpEndpoints
 			.AllowAnonymous();
 	}
 
+	// WHY THE BARE THREE ARE `capability-token` AND NOT `caller-default`.
+	//
+	// The spec's test for this class is whether the presented token ITSELF carries the extent of
+	// access, or merely identifies a caller whose access comes from elsewhere. These three are the
+	// first: ValidateSelfKey compares X-Seq-ApiKey against the single configured
+	// `Seq:SelfLog:ApiKey` secret, and matching it IS the authorization — there is no principal, no
+	// project claim, no lookup of who the holder is, and no way to aim the call anywhere. The
+	// destination is a CONSTANT in the handler ($system's self-log), so the secret grants exactly one
+	// thing and the caller chooses nothing. That is a capability, and the token was issued by an
+	// explicit act: an operator putting the secret in configuration.
+	//
+	// `CallerDefault` would have been the wrong word for the same surface (the cross-tenant probe's
+	// report grouped them there, which is what prompted checking): that source means "the tenant is
+	// the caller's OWN project, read off its claim", and these requests carry no claim at all —
+	// ITenantAuthorizer would refuse every one of them.
+	const string SelfExportExemption =
+		"the bare OTLP self-export paths authenticate a single configured shared secret "
+		+ "(Seq:SelfLog:ApiKey) whose whole extent of access is the $system self-log, hardcoded in the "
+		+ "handler; there is no principal and no tenant the caller can name";
+
 	static IResult? ValidateSelfKey(HttpContext ctx, IConfiguration config)
 	{
 		var configured = config["Seq:SelfLog:ApiKey"];
@@ -72,6 +92,7 @@ public static class OtlpEndpoints
 			: null;
 	}
 
+	[TenantExempt(TenantExemption.CapabilityToken, SelfExportExemption)]
 	static async Task<IResult> SelfIngestTraces(HttpContext ctx, ILogStore store, IConfiguration config, CancellationToken ct)
 	{
 		if (ValidateSelfKey(ctx, config) is { } unauth) return unauth;
@@ -92,6 +113,7 @@ public static class OtlpEndpoints
 		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
 	}
 
+	[TenantExempt(TenantExemption.CapabilityToken, SelfExportExemption)]
 	static async Task<IResult> SelfIngestMetrics(HttpContext ctx, ILogStore store, IConfiguration config, CancellationToken ct)
 	{
 		if (ValidateSelfKey(ctx, config) is { } unauth) return unauth;
@@ -112,6 +134,7 @@ public static class OtlpEndpoints
 		return Results.Ok(new IngestResponse(result.Points.Count, result.Errors));
 	}
 
+	[TenantExempt(TenantExemption.CapabilityToken, SelfExportExemption)]
 	static async Task<IResult> SelfIngestLogs(HttpContext ctx, IIngestionPipeline pipeline, IConfiguration config, CancellationToken ct)
 	{
 		if (ValidateSelfKey(ctx, config) is { } unauth) return unauth;
@@ -128,26 +151,20 @@ public static class OtlpEndpoints
 	}
 
 	// The "ApiKey" policy on these three routes only proves SOME api key authenticated — it does
-	// NOT compare the caller's project claim to the route's {projectKey}, unlike the equivalent
-	// CLEF/Seq ingest handlers in LogApi.cs (AuthorizeProject). Without this, any api key could
-	// inject OTLP logs/traces/metrics into any project. The bare self-export routes below
-	// (SelfIngest*, AllowAnonymous + shared-secret X-Seq-ApiKey) are a deliberately different,
-	// unauthenticated-by-design contract and are left untouched.
-	static async Task<IResult?> AuthorizeProjectAsync(
-		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct) =>
-		await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct) ? null : Results.Forbid();
-
+	// NOT compare the caller's project claim to the route's {projectKey}. Without a project check any
+	// api key could inject OTLP logs/traces/metrics into any project; the hand-written
+	// AuthorizeProjectAsync that used to do it here is now the DECLARATION below plus
+	// TenantEnforcementMiddleware, which reaches the same ProjectScope decision through
+	// ITenantAuthorizer and reaches it before the protobuf body is read.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> IngestLogs(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ILogStore store,
 		IIngestionPipeline pipeline,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
-
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
 			return Results.BadRequest(new ErrorResponse("X-Service-Key header required"));
@@ -166,16 +183,14 @@ public static class OtlpEndpoints
 		return Results.Ok(new IngestResponse(result.Candidates.Count, result.Errors));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> IngestTraces(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ILogStore store,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
-
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
@@ -193,16 +208,14 @@ public static class OtlpEndpoints
 		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
 	}
 
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> IngestMetrics(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ILogStore store,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
-
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 

@@ -90,12 +90,6 @@ public static class TenantEnforcementAllowlist
 		"rest:POST /api/ui/project",
 		"rest:POST /api/ui/workspace",
 		"rest:POST /v1/chat/completions",
-		"rest:POST /v1/logs",
-		"rest:POST /v1/logs/{projectKey}/{logName}",
-		"rest:POST /v1/metrics",
-		"rest:POST /v1/metrics/{projectKey}/{logName}",
-		"rest:POST /v1/traces",
-		"rest:POST /v1/traces/{projectKey}/{logName}",
 		"rest:PUT /api/{projectKey}/agent-defs/{key}",
 	
 		// RAZOR — 65 pages (one entry per page, not per endpoint: the PageModel CLASS is the carrier).
