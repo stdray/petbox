@@ -44,7 +44,7 @@ namespace PetBox.Web.Mcp;
 public static class MemoryTools
 {
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
-	[Description("CREATE a named memory store. `scope`: project (default) | workspace. Requires memory:write.")]
+	[Description("CREATE a named memory store. `scope`: project (default) | workspace. A target you may not write is refused with an explicit authorization error — a write never fails silently (only the read verbs answer absence). Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, [LogArg] string store, string? description = null,
@@ -63,6 +63,9 @@ public static class MemoryTools
 	[Description("""
 		List memory stores. `scope`: project (default) | workspace. Omit to CASCADE project
 		⊕ workspace (rows labelled by scope, project first) — same as memory_search.
+		A scope you may not read is skipped SILENTLY and answers like an absent one (the
+		memory-family read contract): empty rows mean "no stores OR not yours", never
+		"nothing exists".
 		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
 		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
 		(the median last-hit of the surfaced entries — "recency"), the dead tail
@@ -113,7 +116,7 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
-	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. Requires memory:write.")]
+	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. A target you may not write is refused with an explicit authorization error — a write never fails silently. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, [LogArg] string store,
@@ -138,7 +141,10 @@ public static class MemoryTools
 		ERROR (never a bare null — strict MCP clients reject a null structured result; the error
 		rides the isError channel).
 		`scope`: project (default) | workspace. Omit to CASCADE project first, then workspace —
-		the same cascade contract as memory_search. Requires memory:read.
+		the same cascade contract as memory_search. A container you may not read answers
+		exactly like one that holds nothing (the memory-family read contract): batch keys are
+		dropped, a single `key` gets the SAME not-found error a missing entry gets — a refusal
+		is never distinguishable from absence. Requires memory:read.
 		""")]
 	public static async Task<MemoryGetResultView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -215,6 +221,8 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
+		A target you may not write is refused with an explicit authorization error — a write
+		never fails silently (only the read verbs answer absence).
 		An unrecognized `store` value is REJECTED (with a "did you mean 'X'?" suggestion), NOT
 		auto-created — create a store explicitly with `memory_store_create` first (the reserved
 		system stores canon/notes/autocaptured/session-digests/ops are the exception; they always
@@ -271,7 +279,7 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
@@ -287,9 +295,23 @@ public static class MemoryTools
 			ct.ThrowIfCancellationRequested();
 			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
+			// A leg that doesn't HAVE the store contributes nothing — the same skip memory_get
+			// applies, for the same reason: the store may live in the farther container, and the
+			// documented project-then-workspace walk must reach it. Without this the near leg fed
+			// the store name to IMemoryService.DeltaAsync, which throws its own not-found for a
+			// missing store — so a store living only in the workspace container was unreachable by
+			// a bare delta, and the error MESSAGE differed from the all-legs-skipped one below,
+			// which let a caller tell a refused cascade apart from an absent store.
+			if (!await memory.StoreExistsAsync(container, store, ct)) continue;
 			return Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
 		}
 
+		// THE ONE ABSENCE ANSWER (work `memory-container-authz-throw-vs-skip`). This message is the
+		// verb's entire vocabulary for "no container you may read has this store": a leg skipped as
+		// unauthorized and a leg that genuinely lacks the store both end here, byte-identical, so
+		// the refusal can never be told apart from absence and never becomes an existence signal.
+		// Do not add a second, cause-specific message on this path — the equality IS the contract
+		// (pinned by MemoryReadRefusalContractTests).
 		throw new InvalidOperationException($"store '{store}' not found (scope: {(scope ?? "cascade project+workspace")})");
 	}
 
@@ -355,17 +377,41 @@ public static class MemoryTools
 		// applied containment. That early-exit is the defect the work card was filed about: it is why
 		// a wildcard+sandboxOnly key read `$workspace` on production on 2026-07-25.
 		//
-		// READS DEGRADE, WRITES REFUSE — measured, because the two halves answer differently and the
-		// difference is easy to get wrong from the code alone:
+		// READS ANSWER ABSENCE, WRITES REFUSE EXPLICITLY — the DECIDED refusal contract of this
+		// family (work `memory-container-authz-throw-vs-skip`; it began as unexamined cascade
+		// behaviour, measured by `memory-container-sandbox-containment-bypass`, and is now pinned
+		// by MemoryReadRefusalContractTests):
 		//   * the READ verbs (store_list, search, get, delta) wrap this call per cascade leg in
-		//     `catch (UnauthorizedAccessException) { continue; }`, so a bare `memory_search("q")`
-		//     still returns its PROJECT leg and simply stops contributing the workspace one. An
-		//     explicit `scope: "workspace"` goes through the same per-leg catch and so comes back
-		//     EMPTY rather than as an error — no disclosure, but not an error message either.
+		//     `catch (UnauthorizedAccessException) { continue; }`, and each verb's final answer for
+		//     a refused leg is EXACTLY its answer for an absent one: empty rows/items/entries for
+		//     the sweep verbs, and for the addressed verbs (memory_get single `key`, memory_delta)
+		//     the SAME not-found error a genuinely missing entry/store gets, byte-identical.
 		//   * the WRITE verbs (remember, upsert, store_create, store_delete) have no such catch, so
 		//     they surface this exception to the caller with the containment reason attached.
-		// The asymmetry is pre-existing cascade behaviour, not something introduced here; it is
-		// written down because "explicit scope always throws" is the intuitive guess and is wrong.
+		//
+		// WHY READS DO NOT THROW, decided rather than inherited:
+		//   1. Non-disclosure outranks per-call legibility. An explicit read refusal is
+		//      distinguishable from absence, which turns the refusal into a signal about what
+		//      exists on the other side of it. For the NAMED plane a foreign and a nonexistent
+		//      container already collapse into one PEP refusal (TenantGate: "a named-but-unknown
+		//      tenant must stay indistinguishable from a wrong-tenant denial"); inside the cascade
+		//      the same collapse is achieved the other way round — the refusal takes the exact
+		//      shape of absence. Either way the caller learns nothing it wasn't entitled to.
+		//   2. The cascade must degrade, not fail: a bare memory_search / store_list from a
+		//      contained key still has to serve its PROJECT leg (the most routine memory call
+		//      there is — the wiring hooks live on it). A throw on any refused leg breaks it; a
+		//      throw only-when-every-leg-refused would make error-vs-empty itself the oracle.
+		//   3. The legibility defect this leaves ("empty because nothing, or empty because not
+		//      yours?") is real but PER-CALL UNRESOLVABLE by construction — so it is fixed by
+		//      DECLARATION instead: every read verb's tool description states that an
+		//      unauthorized container answers like an absent one. An agent cannot distinguish
+		//      the two cases, but it can now KNOW that it cannot.
+		// WHY WRITES DO THROW: a silently dropped write is data loss (the caller believes the
+		// fact was stored), and the explicit refusal is oracle-free — on the named plane the PEP
+		// already collapsed foreign/nonexistent before the body, and on the derived plane the
+		// container is the caller's OWN workspace's, whose existence is not a secret from it.
+		// The refusal reason (sandbox containment vs identity) is a fact about the caller's own
+		// key, not about the other side — TenantGate's Message() spells out the same rule.
 		var catalog = ctx.RequestServices.GetRequiredService<IProjectCatalog>();
 		if (!await SandboxContainment.PermitsAsync(ctx.User, projectKey, catalog, ct))
 			throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
@@ -376,8 +422,9 @@ public static class MemoryTools
 		CREATE one durable fact verbatim (always a NEW entry; edits go via memory_upsert).
 		`scope`: project (default) | workspace (cross-project shared within the caller's
 		workspace). `type` taxonomy (User|Feedback|Project|Reference) — pick explicitly.
-		Store durable facts not derivable from code/git/config; actionable work goes to a
-		task board. Requires memory:write.
+		A target you may not write is refused with an explicit authorization error — a write
+		never fails silently. Store durable facts not derivable from code/git/config;
+		actionable work goes to a task board. Requires memory:write.
 		Cyrillic text: send raw UTF-8, not \uXXXX escapes (triples the byte size) — a long
 		call is silently truncated before the server sees it.
 		[[full]]
