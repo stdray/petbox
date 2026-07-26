@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
@@ -588,7 +589,9 @@ public sealed class LogPipelineTests
 
 	// --- Seq header-routed ingest by project key (no log in URL) ---
 
-	async Task SeedProjectKeyAsync(string apiKey, string projectKey, string scopes, bool createDefaultLog)
+	async Task SeedProjectKeyAsync(
+		string apiKey, string projectKey, string scopes, bool createDefaultLog,
+		bool sandboxOnlyKey = false, bool sandboxProject = false)
 	{
 		using var scope = _factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -597,6 +600,7 @@ public sealed class LogPipelineTests
 			Key = projectKey,
 			WorkspaceKey = LogNames.SystemProject,
 			Name = projectKey,
+			Sandbox = sandboxProject,
 		});
 		await db.InsertAsync(new ApiKey
 		{
@@ -604,6 +608,7 @@ public sealed class LogPipelineTests
 			ProjectKey = projectKey,
 			Scopes = scopes,
 			Name = apiKey,
+			SandboxOnly = sandboxOnlyKey,
 			CreatedAt = DateTime.UtcNow,
 		});
 		if (createDefaultLog)
@@ -879,7 +884,130 @@ public sealed class LogPipelineTests
 		using var resp = await _client.SendAsync(CompatSeqRequest("$system", "default", key,
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("compat-403")}}"}""" + "\n"));
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-		(await resp.Content.ReadAsStringAsync()).Should().Contain("not authorized for project");
+		// The OUTCOME is unchanged by work `seq-compat-ingest-has-no-principal`; the WORDING is now the
+		// central one TenantGate produces for every surface on the plane, instead of this file's old
+		// private "key is not authorized for project '…'". Collapsing the denial dialects was the point.
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("Not authorized for project:$system");
+	}
+
+	// ── WORK `seq-compat-ingest-has-no-principal`: THE STOCK SEQ CLIENT IS UNCHANGED ─────────────────
+	//
+	// The two Seq ingest routes used to be .AllowAnonymous() and read X-Seq-ApiKey by hand, on the
+	// argument that a stock Seq client cannot send X-Api-Key. They now go through the ordinary "ApiKey"
+	// policy, because the ApiKey SCHEME reads X-Seq-ApiKey too (ApiKeyAuthenticationHandler.KeyHeaders).
+	// What changed is WHERE the header is read — not what the client sends.
+	//
+	// These two tests are the proof, and they are deliberately blunt about it: the request carries
+	// X-Seq-ApiKey and NOTHING else — no X-Api-Key, no Authorization, no cookie — exactly the way
+	// Serilog.Sinks.Seq / @datalust/winston-seq emit it, and the ingest must both authenticate AND come
+	// out tenant-authorized on the far side (asserted by the events actually landing in the right log,
+	// not merely by a 200).
+
+	static void AssertOnlySeqHeaderIsPresent(HttpRequestMessage req)
+	{
+		req.Headers.Contains("X-Seq-ApiKey").Should().BeTrue("this is what a stock Seq client sends");
+		req.Headers.Contains(ApiKeyAuthenticationHandler.ApiKeyHeader).Should().BeFalse();
+		req.Headers.Contains(ApiKeyAuthenticationHandler.LegacyApiKeyHeader).Should().BeFalse();
+		req.Headers.Authorization.Should().BeNull();
+		req.Headers.Contains("Cookie").Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task SeqIngest_StockClient_SeqHeaderOnly_AuthenticatesAndLandsInItsOwnProject()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest,logs:query", createDefaultLog: true);
+
+		var msg = UniqueMsg("seq-stock");
+		var req = SeqRequest(key, $$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n");
+		AssertOnlySeqHeaderIsPresent(req);
+
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK,
+			"a principal is created from X-Seq-ApiKey, and [TenantFrom(CallerDefault)] resolves this "
+			+ "route's tenant to the key's own project");
+
+		await WaitForProjectIngestAsync(proj, LogNames.Default, msg);
+		ProjectLogCount(proj, LogNames.Default, msg).Should().Be(1);
+	}
+
+	[Fact]
+	public async Task CompatSeq_StockClient_SeqHeaderOnly_AuthenticatesAndLandsInTheRouteProject()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		var msg = UniqueMsg("compat-stock");
+		var req = CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n");
+		AssertOnlySeqHeaderIsPresent(req);
+
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK,
+			"a principal is created from X-Seq-ApiKey, and [TenantFrom(Route, \"projectKey\")] authorizes "
+			+ "it against the project named in the URL");
+
+		await WaitForProjectIngestAsync(proj, "backend", msg);
+		ProjectLogCount(proj, "backend", msg).Should().Be(1);
+	}
+
+	// SANDBOX CONTAINMENT IS NOT WEAKENED BY THE MOVE. The deleted hand-written check ran
+	// ProjectScope.EvaluateAsync with the key ROW's own ProjectKey/SandboxOnly; TenantAuthorizer runs the
+	// same call with the `project`/`sandbox_only` CLAIMS, which ApiKeyAuthenticationHandler emits from
+	// that same row. These two pin the outcome on both routes: a sandboxOnly key aimed at a project that
+	// is NOT Sandbox=true is refused even though its claim covers that project by identity — which is the
+	// case that would silently pass if containment had been dropped in the move.
+	[Fact]
+	public async Task SeqIngest_SandboxOnlyKey_IntoNonSandboxProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: true,
+			sandboxOnlyKey: true, sandboxProject: false);
+
+		using var resp = await _client.SendAsync(SeqRequest(key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("seq-sandbox")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("sandboxOnly");
+	}
+
+	[Fact]
+	public async Task CompatSeq_SandboxOnlyKey_IntoNonSandboxProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false,
+			sandboxOnlyKey: true, sandboxProject: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("compat-sandbox")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("sandboxOnly");
+	}
+
+	// …and the containment is a CONTAINMENT, not a blanket refusal: the same sandboxOnly key writing
+	// into a project that IS Sandbox=true still gets through. Without this, the two above would pass
+	// just as happily if sandboxOnly keys had been broken outright.
+	[Fact]
+	public async Task CompatSeq_SandboxOnlyKey_IntoSandboxProject_Lands()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false,
+			sandboxOnlyKey: true, sandboxProject: true);
+		await CreateNamedLogAsync(proj, "backend");
+
+		var msg = UniqueMsg("compat-sandbox-ok");
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		await WaitForProjectIngestAsync(proj, "backend", msg);
+		ProjectLogCount(proj, "backend", msg).Should().Be(1);
 	}
 
 	[Fact]

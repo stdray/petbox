@@ -15,17 +15,20 @@ namespace PetBox.Tests.Auth;
 
 // THE TWO ENFORCEMENT POINTS ACTUALLY REFUSE (work `authz-default-deny-delivery`, step 3).
 //
-// This is the guard the rest of the suite cannot give. Every one of the 217 live surfaces is on
-// TenantEnforcementAllowlist, so on the real host both PEPs pass everything — a middleware that had
-// been wired up wrong, or a filter whose body was `return`, would look exactly as green. So the
-// behaviour is proven on surfaces that are NOT allowlisted: a throwaway app with its own routes for
-// the endpoint plane, and a fabricated declaration map for the MCP plane.
+// This is the guard the rest of the suite cannot give. It was written when all 217 live surfaces were
+// on TenantEnforcementAllowlist and both PEPs therefore passed everything on the real host — a
+// middleware that had been wired up wrong, or a filter whose body was `return`, would have looked
+// exactly as green. So the behaviour is proven on surfaces the real host does not own: a throwaway app
+// with its own routes for the endpoint plane, and a fabricated declaration map for the MCP plane. That
+// isolation is still the right shape now that the allowlist is EMPTY — these assertions are about the
+// PEP's rule, and pinning them to whichever real route happens to declare what today would make them
+// break for reasons that have nothing to do with the rule.
 //
-// What is asserted, on both planes, is the same four-way shape:
-//   allowlisted        -> through, without even looking at a declaration;
+// What is asserted, on both planes, is the same shape:
 //   undeclared         -> REFUSED (default-deny is the zero case, not a pass);
 //   exempt             -> through;
-//   declared source    -> through iff ITenantAuthorizer says Allowed.
+//   declared source    -> through iff ITenantAuthorizer says Allowed;
+//   and the allowlist   -> EMPTY, so nothing skips the declaration path at all.
 public sealed class TenantEnforcementTests
 {
 	const string WsA = "wsa";
@@ -62,34 +65,38 @@ public sealed class TenantEnforcementTests
 			ApiKey(ProjA)))
 			.Should().Be((HttpStatusCode.OK, "handler ran"));
 
-	// An allowlisted surface is passed through BEFORE its declaration is read. Proven on a route that IS
-	// undeclared and WOULD be refused, and against a REAL entry rather than an invented key — a made-up
-	// string would prove only that the test can make one up.
+	// This used to be Endpoint_Allowlisted_PassesThrough_EvenUndeclared — the allowlist-before-
+	// declaration ORDER, proven against a real entry (first `rest:GET|HEAD /version`, then
+	// `rest:POST /api/events/raw`, the last endpoint surface that could not be declared).
 	//
-	// It used to borrow `rest:GET|HEAD /version`, which the REST wave declared `public`. The entry it
-	// borrows now is one of the two the REST wave could NOT declare: POST /api/events/raw authenticates a
-	// Seq key out of a header by hand and so has no ClaimsPrincipal for ITenantAuthorizer to judge (see
-	// TenantEnforcementAllowlist). That makes it a stable host for this test for as long as the property
-	// is observable at all — and when the last endpoint entry finally goes, this test should be replaced
-	// by the ratchet-shaped one its MCP counterpart already became
-	// (Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist), not re-pointed at a fiction.
+	// Work `seq-compat-ingest-has-no-principal` took those last two out: the ApiKey scheme learned to
+	// read X-Seq-ApiKey, so both Seq ingest routes get an ordinary principal and declare an ordinary
+	// tenant. There is no longer a real allowlisted surface on EITHER plane to observe the order on,
+	// and the standing instruction in this file was to become the ratchet-shaped statement rather than
+	// be re-pointed at an invented key — a made-up string would prove only that the test can make one up.
+	//
+	// SO THE ORDER PROPERTY IS NO LONGER OBSERVABLE ANYWHERE, and that is the intended end state, not a
+	// gap: the early-out in both PEPs is dead by construction while the list is empty. Whoever adds an
+	// entry back should restore the order test alongside it — an allowlisted surface is exactly where
+	// the order matters — and this test is what will tell them they added one.
 	[Fact]
-	public async Task Endpoint_Allowlisted_PassesThrough_EvenUndeclared()
-	{
-		const string allowlisted = "rest:POST /api/events/raw";
-		TenantEnforcementAllowlist.Contains(allowlisted).Should().BeTrue("fixture assumption");
+	public void Endpoint_IsFullyEnforced_NothingLeftOnTheAllowlist() =>
+		TenantEnforcementAllowlist.Keys.Where(k =>
+				k.StartsWith(AuthzSurfaceKey.RestPrefix, StringComparison.Ordinal)
+				|| k.StartsWith(AuthzSurfaceKey.PagePrefix, StringComparison.Ordinal))
+			.Should().BeEmpty(
+				"all 55 REST endpoints and all 65 Razor pages declare a tenant source or an exemption class "
+				+ "and are enforced by TenantEnforcementMiddleware. An entry here would be a surface exempted "
+				+ "from the rule by a list instead of by a declaration — which is the opt-in hole this work "
+				+ "item removed");
 
-		using var host = Host(app => app.MapPost("/api/events/raw", () => "handler ran"));
-		using var client = host.GetTestClient();
-		client.DefaultRequestHeaders.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, ProjA);
-
-		using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
-		using var response = await client.PostAsync("/api/events/raw", content);
-
-		response.StatusCode.Should().Be(HttpStatusCode.OK);
-		(await response.Content.ReadAsStringAsync()).Should().Be("handler ran",
-			"an allowlisted surface reaches its handler even though nothing on it declares a tenant");
-	}
+	// …and the whole list, both planes at once, so the "217 surfaces, no exceptions" claim in
+	// TenantEnforcementAllowlist is a measured fact rather than a comment.
+	[Fact]
+	public void TheAllowlist_IsEmpty() =>
+		TenantEnforcementAllowlist.Keys.Should().BeEmpty(
+			"every one of the 217 surfaces declares where its tenant comes from or which of the six closed "
+			+ "exemption classes it belongs to; nothing is exempt by technical reason");
 
 	// The route value is read from the REQUEST, and the answer comes from ITenantAuthorizer — the same
 	// decision point everything else uses.
@@ -298,11 +305,11 @@ public sealed class TenantEnforcementTests
 	// `mcp:` entry ever comes back, this fails — and whoever adds it should restore the order test
 	// above it, because an allowlisted surface is exactly where the order matters.
 	//
-	// The order property itself is not lost: Endpoint_Allowlisted_PassesThrough_EvenUndeclared proves
-	// it on the endpoint plane, and both PEPs ask the same list the same way. That plane is now down to
-	// TWO entries (the Seq ingest routes) after the REST and Razor waves — so when those finally go, the
-	// endpoint test above should become the ratchet-shaped statement this one already is, not be
-	// re-pointed at an invented key.
+	// The order property outlived this test on the endpoint plane for a while
+	// (Endpoint_Allowlisted_PassesThrough_EvenUndeclared, hosted on the two Seq ingest routes), but work
+	// `seq-compat-ingest-has-no-principal` declared those too and that test has since become the
+	// ratchet-shaped Endpoint_IsFullyEnforced_NothingLeftOnTheAllowlist. Both planes are now empty, so
+	// no surface anywhere skips the declaration path — see TheAllowlist_IsEmpty.
 	[Fact]
 	public void Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist() =>
 		TenantEnforcementAllowlist.Keys.Where(k => k.StartsWith(AuthzSurfaceKey.McpPrefix, StringComparison.Ordinal))

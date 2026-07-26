@@ -18,10 +18,29 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		UrlEncoder encoder)
 		: base(options, logger, encoder) { }
 
-	// Legacy yobaconf clients send the key as X-YobaConf-ApiKey; native petbox uses X-Api-Key.
-	// Both are accepted so the published config clients work against /v1/conf unchanged.
+	// Native petbox uses X-Api-Key; legacy yobaconf clients send X-YobaConf-ApiKey; a stock Seq
+	// client (Serilog.Sinks.Seq, Seq.Extensions.Logging, @datalust/winston-seq) sends X-Seq-ApiKey
+	// and nothing else.
 	public const string ApiKeyHeader = "X-Api-Key";
 	public const string LegacyApiKeyHeader = "X-YobaConf-ApiKey";
+	public const string SeqApiKeyHeader = "X-Seq-ApiKey";
+
+	// WHICH HEADER CARRIES THE KEY IS A PARAMETER OF AUTHENTICATION, NOT A PROPERTY OF A ROUTE.
+	//
+	// This list is the whole reason the Seq ingest routes could stop being special. They used to be
+	// `.AllowAnonymous()` and read X-Seq-ApiKey by hand, on the argument that "a stock Seq client
+	// cannot send X-Api-Key" — but that is a limitation of the CLIENT, and it was being passed off as
+	// a limitation of ours. The tenant decision point already answers on an api key AND on a session
+	// cookie, so it does not care where the principal came from; the only real problem was that no
+	// principal was ever created for a Seq request. So the fix belongs HERE, in authentication, and
+	// the surfaces go back to declaring [TenantFrom(...)] like everything else.
+	//
+	// DATA, IN ONE PLACE, and deliberately not a branch on route: a per-route header rule is how the
+	// exemption grows back. Every header below yields THE SAME claims off THE SAME key row — there is
+	// no such thing as a "Seq key", only a PetBox api key presented in a Seq-shaped header.
+	//
+	// Order is precedence, and it only decides which header wins when a caller sends several.
+	public static readonly IReadOnlyList<string> KeyHeaders = [ApiKeyHeader, LegacyApiKeyHeader, SeqApiKeyHeader];
 
 	// The claim carrying ApiKey.ProjectKey — the tenant this key is scoped to, or the cross-project
 	// wildcard ProjectScope.AllProjects. Always emitted. Named here because this handler is what
@@ -37,13 +56,26 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// check", i.e. the old behavior, for every existing key. ProjectScope.AuthorizesAsync reads it.
 	public const string SandboxOnlyClaim = "sandbox_only";
 
-	// The ONE place that knows where a key may arrive from — shared with KeyUsageStampMiddleware, so
-	// the stamp is keyed by exactly the key this handler authenticated (a second header-parsing
-	// implementation would drift and quietly stop stamping the legacy/Authorization callers).
-	public static string? ExtractKey(HttpRequest request) =>
-		request.Headers[ApiKeyHeader].FirstOrDefault()
-			?? request.Headers[LegacyApiKeyHeader].FirstOrDefault()
-			?? FromAuthorization(request.Headers.Authorization.FirstOrDefault());
+	// The ONE place that knows where a key may arrive from — shared with KeyUsageStampMiddleware and
+	// with LogApi's Seq ingest (which compares the presented key against the configured self-log key
+	// to pick a DESTINATION, never to authenticate), so the stamp is keyed by exactly the key this
+	// handler authenticated. A second header-parsing implementation would drift and quietly stop
+	// stamping the legacy/Seq/Authorization callers — which is precisely what the hand-rolled
+	// `Headers["X-Seq-ApiKey"]` reads in LogApi were doing before they were deleted.
+	//
+	// `Authorization: Bearer|Token <key>` stays the LAST resort rather than a name in KeyHeaders: it
+	// is not a bare header value but a scheme-prefixed one, so it needs FromAuthorization's parse and
+	// cannot be looked up by name alongside the others. It is accepted (it already was — the mem0
+	// Claude Code plugin and many SDKs send it), and it is listed here so the full set of ways to
+	// present a key is still readable in one place.
+	public static string? ExtractKey(HttpRequest request)
+	{
+		foreach (var header in KeyHeaders)
+			if (request.Headers[header].FirstOrDefault() is { } value)
+				return value;
+
+		return FromAuthorization(request.Headers.Authorization.FirstOrDefault());
+	}
 
 	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{

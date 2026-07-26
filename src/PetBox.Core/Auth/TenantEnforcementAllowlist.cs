@@ -27,39 +27,28 @@ namespace PetBox.Core.Auth;
 // human count the work card forbids.
 public static class TenantEnforcementAllowlist
 {
+	// IT IS EMPTY, AND THAT IS THE FINISHED STATE — not a list nobody has filled in yet.
+	//
 	// It STARTED at 217 surfaces: 55 REST + 65 Razor pages + 97 MCP tools — the whole tree at the
 	// moment the enforcement points were written, which is why enabling them changed behaviour on NONE
 	// of them. It shrank one FAMILY at a time (work `authz-default-deny-delivery`, step 5): the MCP wave
-	// took ALL 97 tools out, the REST wave all but two of the 55, and the Razor wave all 65 pages. TWO
-	// ENTRIES ARE LEFT, both REST, and they are not "the ones nobody got to" — see the reason beside
-	// them. The live count is never a comment: run AuthzDeclarationRatchetTests and read
-	// .tmp/authz-surface-inventory.txt.
+	// took ALL 97 tools out, the REST wave 53 of the 55, and the Razor wave all 65 pages. The last two
+	// REST entries — the Seq-protocol ingest routes — came out in work `seq-compat-ingest-has-no-principal`.
+	//
+	// So all 217 surfaces are under enforcement, with NO exemption-by-technical-reason anywhere: every
+	// one of them either declares where its tenant comes from or names one of the six closed exemption
+	// classes, and both PEPs now reach the declaration path on every single call. The live count is
+	// never a comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
+	//
+	// NOTHING MAY BE ADDED BACK. A new surface declares like everything written after the rule; an
+	// entry here would be a surface exempted by a LIST instead of by a declaration, which is the opt-in
+	// hole this work item removed. TenantEnforcementTests.Endpoint_IsFullyEnforced_NothingLeftOnTheAllowlist
+	// and .Mcp_IsFullyEnforced_NothingLeftOnTheAllowlist fail if either plane grows one.
 	public static IReadOnlySet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal)
 	{
-		// REST — TWO of the original 55 (METHOD + route pattern, as the caller addresses them). The other
-		// 53 declare, and the accounting is in the note at the bottom of this list.
-		//
-		// THE TWO THAT STAY, and the reason, written HERE rather than remembered — the same discipline
-		// memory_get was left under during the MCP wave.
-		//
-		// Both are `.AllowAnonymous()` and authenticate a Seq-protocol key out of the X-Seq-ApiKey
-		// HEADER by hand (IApiKeyLookup), because a stock Seq client sends no X-Api-Key and so cannot go
-		// through the ApiKey SCHEME. That means there is NO ClaimsPrincipal on these requests:
-		// HttpContext.User is unauthenticated by the time TenantEnforcementMiddleware runs, and
-		// ITenantAuthorizer answers NotAuthorized for an unauthenticated principal — so declaring
-		// [TenantFrom(Route, "projectKey")] here would 403 EVERY Seq ingest, including the legitimate
-		// ones. Declaring an exemption instead would be a lie: these routes have a real tenant and a
-		// real per-call check.
-		//
-		// So the manual check STAYS, and it is a complete one: both handlers run
-		// ProjectScope.EvaluateAsync with the key ROW's own ProjectKey/SandboxOnly, i.e. the same claim
-		// identity + sandbox containment the middleware would apply. The cross-tenant probe measures
-		// both as Denied. What is missing is not the check but the PRINCIPAL — closing that means
-		// authenticating the Seq header into a ClaimsPrincipal (a real auth change, its own work item),
-		// not a line in this wave.
-		"rest:POST /api/events/raw",
-		"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
-	
+		// REST — NOTHING. All 55 are gone: 53 in the REST wave, and the last two in work
+		// `seq-compat-ingest-has-no-principal`, whose accounting is in the note at the bottom of this list.
+
 		// RAZOR — NOTHING. All 65 pages left this list in the Razor wave (work
 		// `authz-default-deny-delivery`, step 5), one family per commit. The carrier is the PageModel
 		// CLASS, so a page is one declaration however many routes and handlers it has.
@@ -85,19 +74,30 @@ public static class TenantEnforcementAllowlist
 		// /Logs/EventDetails, their last caller) and /Nav/Tree's AvailableWorkspaces membership test. The
 		// checks that STAYED are named on the pages that keep them, each with why it is not this axis.
 
-		// REST — 53 of 55 GONE, in the REST wave (work `authz-default-deny-delivery`, step 5), one family
-		// per commit. The split, all of it machine-readable in .tmp/authz-surface-inventory.txt:
-		//   * 34 declare a tenant — 26 [TenantFrom(Route, "projectKey")], 2
+		// REST — ALL 55 GONE. 53 in the REST wave (work `authz-default-deny-delivery`, step 5), one
+		// family per commit, and the last two in work `seq-compat-ingest-has-no-principal`. The split,
+		// all of it machine-readable in .tmp/authz-surface-inventory.txt:
+		//   * 36 declare a tenant — 27 [TenantFrom(Route, "projectKey")], 2
 		//     [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)] (the config bindings verbs), 2
 		//     [TenantFrom(BodyField, …)] on a project (/api/share's `projectKey`, /api/health's nested
 		//     `tags.project`), 2 [TenantFrom(BodyField, "ws", TenantKind.Workspace)] on a FORM field (the
-		//     two /api/ui switches) and 2 [TenantFrom(CallerDefault)] (/v1/conf, /v1/chat/completions);
+		//     two /api/ui switches) and 3 [TenantFrom(CallerDefault)] (/v1/conf, /v1/chat/completions,
+		//     POST /api/events/raw);
 		//   * 19 are [TenantExempt] — 9 public, 4 capability-token, 3 fleet-wide, 3 identity.
-		// About 34 hand-written project/workspace checks came out with them, and two files that existed
+		// About 36 hand-written project/workspace checks came out with them, and two files that existed
 		// only to hold one (PetBox.Data's DataAuth, ConfigApi's AuthorizeWorkspaceAsync) are gone.
 		//
-		// The two above are the only REST entries left, and they are NOT "the ones nobody got to": they
-		// are the ones a declaration cannot yet express, for the reason written beside them.
+		// THE LAST TWO were the Seq-protocol ingest routes, and the note that used to stand here said
+		// they could not be declared because a stock Seq client sends no X-Api-Key, so they read
+		// X-Seq-ApiKey by hand under AllowAnonymous and had no ClaimsPrincipal for ITenantAuthorizer to
+		// judge. That reasoning mistook a limitation of the CLIENT for a limitation of ours: WHICH
+		// HEADER carries the key is a parameter of authentication, not a reason to exempt a route. The
+		// ApiKey scheme now reads X-Seq-ApiKey alongside X-Api-Key and the rest
+		// (ApiKeyAuthenticationHandler.KeyHeaders), so both routes get an ordinary principal with
+		// ordinary claims, the hand-written lookups are deleted, and they declare like everything else:
+		// [TenantFrom(Route, "projectKey")] on the compat route, and [TenantFrom(CallerDefault)] on
+		// POST /api/events/raw — whose tenant was always the presented key's own project, since the URL
+		// carries none. The stock Seq client sends exactly what it always sent.
 
 		// MCP — NOTHING. All 97 tools left this list in the declaration wave (work
 		// `authz-default-deny-delivery`, step 5) and the whole plane is enforced by

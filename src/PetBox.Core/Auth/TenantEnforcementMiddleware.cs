@@ -31,12 +31,15 @@ namespace PetBox.Core.Auth;
 // if a page's endpoints ever disagreed, the per-endpoint decision would stop matching the per-page
 // inventory and that test goes red.
 //
-// IT REFUSES ON EVERY SURFACE ON THIS PLANE BUT TWO. That sentence used to read "it refuses nothing":
-// all 217 surfaces were allowlisted when this was written, and rollout was deleting lines from
-// TenantEnforcementAllowlist (step 5) rather than flipping a flag here. The REST wave took 53 of the 55
-// REST surfaces out and the Razor wave all 65 pages, so what is still passed through untouched is the
-// two Seq-header ingest routes, which have no ClaimsPrincipal for ITenantAuthorizer to judge (the reason
-// is written beside them in the allowlist).
+// IT REFUSES ON EVERY SURFACE ON THIS PLANE. That sentence used to read "it refuses nothing", and then
+// "on every surface but two": all 217 surfaces were allowlisted when this was written, and rollout was
+// deleting lines from TenantEnforcementAllowlist (step 5) rather than flipping a flag here. The REST
+// wave took 53 of the 55 REST surfaces out, the Razor wave all 65 pages, and work
+// `seq-compat-ingest-has-no-principal` the last two — the Seq ingest routes, once the ApiKey scheme
+// learned to read their header so they had a ClaimsPrincipal to be judged on. The allowlist is EMPTY,
+// so the early-out below is now dead by construction and every request on this plane reaches the
+// declaration path. Keep the check anyway: it is the shape that makes re-adding an entry a visible,
+// testable act rather than a rewrite of the PEP.
 public sealed class TenantEnforcementMiddleware(RequestDelegate next)
 {
 	// A body big enough to be a payload rather than a reference. `TenantSource.BodyField` names a

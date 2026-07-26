@@ -42,13 +42,15 @@ public static class LogApi
 		// Compat ingest — stock foreign-protocol clients into a NAMED log. Every
 		// mimicked protocol lives under …/compat/{protocol} (one place to see who we
 		// impersonate); the stock client appends its own paths to that base. Seq
-		// clients append `api/events/raw` to serverUrl and send only X-Seq-ApiKey,
-		// so auth is in-handler (the "ApiKey" policy reads other headers) and
-		// X-Service-Key is optional, unlike the path-based CLEF route above.
+		// clients append `api/events/raw` to serverUrl and send only X-Seq-ApiKey;
+		// that header is read by the ApiKey SCHEME like every other one
+		// (ApiKeyAuthenticationHandler.KeyHeaders), so this route is on the ordinary
+		// "ApiKey" policy and the stock client is unchanged. X-Service-Key stays
+		// optional here, unlike the path-based CLEF route above.
 		app.MapPost("/api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw", SeqIngestPathAsync)
 			.Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
-			.AllowAnonymous();
+			.RequireAuthorization("ApiKey");
 
 		// Lifecycle — create / list / delete named logs (mirrors /api/data/{p}/dbs).
 		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync)
@@ -241,7 +243,7 @@ public static class LogApi
 		app.MapPost("/api/events/raw", SeqIngestAsync)
 			.Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
-			.AllowAnonymous();
+			.RequireAuthorization("ApiKey");
 	}
 
 	[TenantFrom(TenantSource.Route, "projectKey")]
@@ -417,62 +419,77 @@ public static class LogApi
 	// LogNames.Default exists precisely for this. Previously this hardcoded the
 	// $system self-log for ALL keys, so a project's winston-seq lines silently went
 	// to petbox's system log instead of the project's.
+	//
+	// ── ITS TENANT IS THE CALLER'S OWN PROJECT, AND THAT IS WHY THE ROUTE NAMES NONE ──────────────
+	//
+	// This route has no `{projectKey}` segment to declare from, and the honest reading is not that it
+	// lacks a tenant — it is that the tenant was never in the URL. The destination has ALWAYS been
+	// "whatever project the presented key belongs to" (`projectKey = key.ProjectKey` below), which is
+	// exactly what TenantSource.CallerDefault means: "derived from the caller itself — the key's
+	// project claim or its configured default project". So the declaration states a fact that was
+	// already true rather than inventing one, and no new source had to be added to the closed enum.
+	// The cross-tenant probe had independently grouped this surface under CALLER-DEFAULT before any
+	// of this was written (AuthzCrossTenantTests), which is a second reading agreeing with it.
+	//
+	// THE SELF-LOG BRANCH IS NOT A SECOND KIND OF AUTHENTICATION, and this is the fact that made the
+	// whole route declarable. `Seq:SelfLog:ApiKey` defaults to `yb_key_system_internal`, which M004
+	// SEEDS AS A REAL API KEY ROW on `$system` with `logs:ingest,logs:query,config:read` — so the
+	// self-log caller authenticates through IApiKeyLookup like every other caller, and CallerDefault
+	// resolves it to `$system`, which is precisely where the branch writes. The config comparison
+	// that survives below therefore chooses a DESTINATION (the `petbox` self-log rather than
+	// `default`, plus the configured ServiceKey) and no longer decides anything about access. It was
+	// never a capability token, unlike the bare OTLP self-export paths in OtlpEndpoints, whose secret
+	// is compared and never looked up — those keep their [TenantExempt(CapabilityToken)] and are not
+	// touched here.
+	//
+	// CONSEQUENCE, stated because it is a real narrowing: an operator who points Seq:SelfLog:ApiKey at
+	// a string that is NOT an api key row used to get an unauthenticated write into `$system`, and now
+	// gets a 401. That direction — "was allowed, now denied" — is the one this work item exists to move
+	// in; the shipped default is a seeded key and is unaffected.
+	[TenantFrom(TenantSource.CallerDefault)]
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
-		IApiKeyLookup lookup,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IConfiguration config,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
-		if (string.IsNullOrWhiteSpace(apiKey))
-			return Results.Unauthorized();
+		// The tenant the PEP has ALREADY authorized for this request — read through the same
+		// CallerTenant.DefaultProjectOf the middleware resolved CallerDefault with, so the handler
+		// cannot write somewhere other than where it was authorized to. (The old code read
+		// `key.ProjectKey` straight off the row, which for a cross-project `*` key meant a literal
+		// destination project named "*" and a guaranteed 404; this resolves such a key to its
+		// configured default project instead, and refuses it when it has none.)
+		if (CallerTenant.DefaultProjectOf(ctx.User) is not { } projectKey)
+			return Results.Json(
+				new ErrorResponse(
+					"this key names no project of its own (a cross-project key needs a default project), "
+					+ "so header-routed Seq ingest has no destination; use the compat route "
+					+ "/api/ingest/{projectKey}/{logName}/compat/seq instead"),
+				statusCode: StatusCodes.Status403Forbidden);
 
-		string projectKey;
+		if (!HasScope(ctx, ApiKeyScopes.LogsIngest))
+			return Results.Json(
+				new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
+				statusCode: StatusCodes.Status403Forbidden);
+
 		string logName;
 		string serviceKey;
 
+		// DESTINATION ONLY — see the header comment. Authentication already happened in the ApiKey
+		// scheme; this asks "is the caller petbox's own self-log exporter?", which decides which log
+		// of the (already authorized) tenant the events land in.
 		var selfKey = config["Seq:SelfLog:ApiKey"];
-		if (!string.IsNullOrWhiteSpace(selfKey) && string.Equals(apiKey, selfKey, StringComparison.Ordinal))
+		var presented = ApiKeyAuthenticationHandler.ExtractKey(ctx.Request);
+		if (!string.IsNullOrWhiteSpace(selfKey) && string.Equals(presented, selfKey, StringComparison.Ordinal))
 		{
 			// petbox's own self-log export.
-			projectKey = LogNames.SystemProject;
 			logName = LogNames.SelfLog;
 			serviceKey = config["Seq:SelfLog:ServiceKey"] ?? "petbox-web";
 		}
 		else
 		{
-			// Same door every OTHER handler in this file authenticates through (via the "ApiKey"
-			// scheme's ApiKeyAuthenticationHandler) — this endpoint is AllowAnonymous and reads a
-			// Seq-specific header instead of X-Api-Key, so it cannot go through the scheme, but the
-			// lookup itself is identical: one indexed core.db read behind IApiKeyLookup (config keys
-			// first, in-memory, then DbApiKeyLookup's fresh caller-owned connection) — same cost as
-			// the pre-conversion `dbf.Open()` + `ApiKeys.FirstOrDefaultAsync`, not a new hop.
-			var key = lookup.FindByKey(apiKey);
-			if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
-				return Results.Unauthorized();
-			// Explicit 403 (not Results.Forbid(), which on this AllowAnonymous endpoint
-			// would invoke the cookie scheme's challenge and 302-redirect to /Login).
-			if (!HasScope(key.Scopes, ApiKeyScopes.LogsIngest))
-				return Results.Json(
-					new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
-					statusCode: StatusCodes.Status403Forbidden);
-
-			projectKey = key.ProjectKey;
-			// The destination is the key's OWN project, so the claim check is trivially
-			// satisfied — but containment is not: re-check it live rather than leaning on the
-			// mint-time invariant, exactly as SeqIngestPathAsync does (a future flip of
-			// Project.Sandbox would silently turn that invariant into a hole).
-			var access = await ProjectScope.EvaluateAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct);
-			if (access != ProjectAccess.Allowed)
-				return Results.Json(
-					new ErrorResponse(access == ProjectAccess.SandboxContainment
-						? ProjectScope.SandboxDenialMessage(projectKey, subject: "key")
-						: $"key is not authorized for project '{projectKey}'"),
-					statusCode: StatusCodes.Status403Forbidden);
 			logName = LogNames.Default;
 			serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
 
@@ -503,43 +520,31 @@ public static class LogApi
 	// regular project API key — zero client-side custom code. Mirrors SeqIngestAsync's
 	// project-key branch, with the destination taken from the route instead of falling
 	// back to the `default` log; no self-log special case here.
+	//
+	// The route NAMES its tenant, so it declares the ordinary thing every other route in this file
+	// declares. What used to sit here instead — a hand-rolled X-Seq-ApiKey read, an IApiKeyLookup
+	// call, an expiry check and a ProjectScope.EvaluateAsync — is gone in favour of the ApiKey scheme
+	// (which now reads that header, see ApiKeyAuthenticationHandler.KeyHeaders) plus
+	// TenantEnforcementMiddleware. CONTAINMENT IS NOT WEAKENED BY THE MOVE: TenantAuthorizer runs
+	// ProjectScope.EvaluateAsync(project claim, target, sandboxOnly claim, catalog) — the same three
+	// inputs off the same key row, since the handler emits `project`/`sandbox_only` straight from it.
+	// The one difference is the WORDING of the refusal, which is now the single central 403 the rest
+	// of the plane answers with instead of this file's private phrasing.
+	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> SeqIngestPathAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
-		IApiKeyLookup lookup,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
-		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
-		if (string.IsNullOrWhiteSpace(apiKey))
-			return Results.Unauthorized();
-
-		// Same IApiKeyLookup door as SeqIngestAsync's else-branch — see its comment for why this
-		// AllowAnonymous, Seq-header-authenticated handler can't go through the "ApiKey" scheme but
-		// costs the identical one-lookup-per-request as the `dbf.Open()` call it replaces.
-		var key = lookup.FindByKey(apiKey);
-		if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
-			return Results.Unauthorized();
-		// Explicit 403s (not Results.Forbid(), which on this AllowAnonymous endpoint
-		// would invoke the cookie scheme's challenge and 302-redirect to /Login).
-		if (!HasScope(key.Scopes, ApiKeyScopes.LogsIngest))
+		// The SCOPE axis, which the tenant declaration does not cover and which stays here — the same
+		// split every other handler in this file makes.
+		if (!HasScope(ctx, ApiKeyScopes.LogsIngest))
 			return Results.Json(
 				new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
-				statusCode: StatusCodes.Status403Forbidden);
-		// This handler authenticates the Seq key manually (AllowAnonymous + X-Seq-ApiKey), so it
-		// has no ClaimsPrincipal to read — go through the string-based EvaluateAsync overload
-		// directly with the DB row's own ProjectKey/SandboxOnly, same containment guarantee as
-		// every claims-based caller (spec work/smoke-writes-into-real-projects).
-		var access = await ProjectScope.EvaluateAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct);
-		if (access != ProjectAccess.Allowed)
-			return Results.Json(
-				new ErrorResponse(access == ProjectAccess.SandboxContainment
-					? ProjectScope.SandboxDenialMessage(projectKey, subject: "key")
-					: $"key is not authorized for project '{projectKey}'"),
 				statusCode: StatusCodes.Status403Forbidden);
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
