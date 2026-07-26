@@ -1,9 +1,16 @@
-// Integration tests for reserve-unbound-inherits-session-model (owner decision 2026-07-26):
+// Integration tests for reserve-unbound-inherits-session-model (owner decision 2026-07-26,
+// narrowed same-card 2026-07-26 once the first cut broke the newcomer-equivalent-experience
+// happy path — see apply-artifacts.ts's file header for the full closed/open rationale):
 //   1. `apply` on a machine with NO ~/.petbox/roles.json seeds the default claude-code roster
-//      first (previously only the full `wire` run's step 11 did this), so a bare `apply` no
-//      longer ships every role with no `model:` line at all.
-//   2. `apply` now HARD REFUSES any declared role that still has no local model binding for a
-//      harness, instead of writing it silently-inheriting with only a warning.
+//      (aliases) AND a droid roster (literal `inherit` for every role) first (previously only
+//      the full `wire` run's step 11 did this), so a bare `apply` no longer ships a claude-code
+//      role with no `model:` line at all.
+//   2. `apply` HARD REFUSES a declared role with no local model binding ONLY on a CLOSED-model-
+//      space harness (claude-code): the kit can both name and verify a correct binding there.
+//   3. On an OPEN-model-space harness (opencode — the kit cannot know a correct binding for this
+//      machine's local provider config), an unbound role is still written inheriting the session
+//      model, with a loud warning instead of a block — exit code stays 0. This is the newcomer's
+//      happy path: a totally fresh machine's first `apply`/`wire` must exit 0.
 //
 // wire.ts runs main() at import time (see its own top-of-file comment on why testable logic
 // lives in side modules), so the only way to exercise `apply`'s actual argv/behavior end-to-end
@@ -55,7 +62,7 @@ function runApply(
   return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", status: res.status };
 }
 
-test("apply on a clean HOME seeds the default roster and writes every claude-code role WITH a model: line (reserve=fable)", () => {
+test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:, droid gets inherit, opencode warns but still writes", () => {
   const homeDir = freshDir("petbox-apply-seed-home-");
   const projectDir = freshDir("petbox-apply-seed-proj-");
   try {
@@ -65,7 +72,8 @@ test("apply on a clean HOME seeds the default roster and writes every claude-cod
     const { stdout, stderr, status } = runApply(projectDir, homeDir);
     const out = stdout + stderr;
 
-    // apply (not just full `wire`) now seeds a fresh machine's roster.
+    // apply (not just full `wire`) now seeds a fresh machine's roster: claude-code aliases +
+    // a droid `inherit` roster. opencode is deliberately NOT seeded (open/unknowable space).
     assert.equal(
       existsSync(rolesPath),
       true,
@@ -78,6 +86,15 @@ test("apply on a clean HOME seeds the default roster and writes every claude-cod
     assert.equal(ccRoles.worker.model, "sonnet");
     assert.equal(ccRoles.utility.model, "haiku");
     assert.equal(ccRoles.explore.model, "haiku");
+    const droidRoles = roles.profiles.default.agents["droid"].roles;
+    for (const role of ["orchestrator", "worker", "utility", "explore", "reserve"]) {
+      assert.equal(droidRoles[role].model, "inherit", `droid ${role} must be seeded to inherit`);
+    }
+    assert.equal(
+      roles.profiles.default.agents["opencode"],
+      undefined,
+      "opencode must NOT be seeded — its model space is open/unknowable from the kit",
+    );
 
     // Every default claude-code role file actually carries a model: line — the bug this card
     // fixes (a bare `apply` used to ship every role with NO model: key at all).
@@ -95,19 +112,36 @@ test("apply on a clean HOME seeds the default roster and writes every claude-cod
       /^model: fable$/m,
     );
 
-    // opencode/droid are NOT part of this seed (their model spaces are open/unknowable per
-    // harness-models.ts — the kit must never invent an id for them), so their roles stay
-    // genuinely unbound and are correctly BLOCKED by the same new refusal rather than silently
-    // written without a model. This is the expected, honest shape of a stock fresh machine
-    // today, not a regression from this change — binding them is a separate, explicit step
-    // (`petbox-wire model set <role> <model> --agent opencode|droid`), out of this card's scope.
+    // droid roles are written too, with the seeded literal `inherit` — a real, explicit binding,
+    // not the old implicit fallback.
+    for (const role of ["orchestrator", "worker", "utility", "explore", "reserve"]) {
+      const p = join(projectDir, ".factory", "droids", `petbox-${role}.md`);
+      assert.equal(existsSync(p), true, `expected ${p} to be written. Output:\n${out}`);
+      assert.match(readFileSync(p, "utf8"), /^model: inherit$/m, `droid ${role} must carry model: inherit`);
+    }
+
+    // opencode is genuinely unbound (no safe placeholder exists for its open id space) — apply
+    // must still WRITE its role files (inheriting the session model, exactly the pre-card
+    // behavior) and warn loudly, rather than block. This is the crux of the happy path: a first
+    // wire/apply on a brand-new machine must not fail just because opencode has no default.
+    for (const role of ["orchestrator", "worker", "utility", "explore", "reserve"]) {
+      const p = join(projectDir, ".opencode", "agent", `petbox-${role}.md`);
+      assert.equal(existsSync(p), true, `expected ${p} to be written (inheriting). Output:\n${out}`);
+      const body = readFileSync(p, "utf8");
+      assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), `opencode ${role} must NOT invent a model`);
+    }
+    assert.match(out, /no local model binding for harness 'opencode'/);
+    assert.match(out, /model set .* --agent opencode/);
+
+    // The happy path: exit 0, every harness fully written, nothing blocked.
     assert.equal(
       status,
-      WIRE_EXIT.truthfulness,
-      `expected the truthfulness exit (opencode/droid still unbound, claude-code clean). Output:\n${out}`,
+      WIRE_EXIT.ok,
+      `expected exit 0 (opencode warns but still writes; claude-code/droid are fully bound). Output:\n${out}`,
     );
-    assert.match(out, /ok=\[claude-code\]/);
-    assert.match(out, /blocked=\[opencode,droid\]/);
+    assert.match(out, /ok=\[claude-code,opencode,droid\]/);
+    assert.match(out, /blocked=\[\]/, "nothing blocked");
+    assert.match(out, /partial=\[\]/, "nothing partial");
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });

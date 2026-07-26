@@ -1457,28 +1457,46 @@ const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
 
 // Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
 // never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
-// empty, and apply now REFUSES to write any declared role with no local model binding at all
-// (reserve-unbound-inherits-session-model) — so an unseeded roster on a fresh machine would leave
-// EVERY harness fully blocked (exit WIRE_EXIT.truthfulness), not merely silently tier-drifting the
-// way the 2026-07-26 incident (and, structurally, the 2026-07-12 one before it) grew from.
+// empty, and apply now REFUSES to write a declared role with no local model binding on any
+// CLOSED-model-space harness (reserve-unbound-inherits-session-model; apply-artifacts.ts's
+// planApply) — so an unseeded roster on a fresh machine would leave claude-code fully blocked
+// (exit WIRE_EXIT.truthfulness), not merely silently tier-drifting the way the 2026-07-26
+// incident (and, structurally, the 2026-07-12 one before it) grew from.
 // Called from BOTH the full `wire` run (step 11, below) and the standalone `apply` subcommand
 // (runApply) — previously only the former, so running a bare `apply` on a fresh machine (no
-// roles.json yet) hit the unbound-role refusal for every role with nothing to fix it.
+// roles.json yet) hit the unbound-role refusal with nothing to fix it.
+//
+// Also seeds `droid` — every role bound to the literal `inherit` — even though droid's model
+// space is OPEN (apply would only warn, never block, an unbound droid role). `inherit` is not
+// an invented id: it is Factory's own documented frontmatter default
+// (https://docs.factory.ai/cli/configuration/custom-droids § Controlling the model), the exact
+// value renderDroidMarkdown already wrote for an unbound role before this whole card. Seeding it
+// explicitly turns that implicit fallback into a real, visible binding — same output, no warning
+// needed, nothing invented. `opencode` has no equivalent safe placeholder (no universal "just
+// inherit" keyword in its `provider/model` id space) — it stays genuinely unbound and apply
+// warns about it instead of failing (newcomer-equivalent-experience's happy path: exit 0).
 function seedDefaultRoleBindingsIfMissing(label: string): void {
   if (existsSync(rolesPath())) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
     return;
   }
-  const roles: Record<string, RoleBinding> = {};
-  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) roles[role] = { model };
+  const ccRoles: Record<string, RoleBinding> = {};
+  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) ccRoles[role] = { model };
+  const droidRoles: Record<string, RoleBinding> = {};
+  for (const role of Object.keys(DEFAULT_ROLE_MODEL_SEED)) droidRoles[role] = { model: "inherit" };
   const data: RolesFile = {
     activeProfile: "default",
-    profiles: { default: { agents: { "claude-code": { roles } } } },
+    profiles: {
+      default: { agents: { "claude-code": { roles: ccRoles }, droid: { roles: droidRoles } } },
+    },
   };
   saveRoles(data);
   log(
-    `${label} roles: seeded ${rolesPath()} — profile "default", claude-code aliases ` +
-      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku, reserve=fable).`,
+    `${label} roles: seeded ${rolesPath()} — profile "default": claude-code aliases ` +
+      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku, reserve=fable), droid=inherit ` +
+      `for every role. opencode is intentionally left unbound (its model space is open/unknowable ` +
+      `from the kit) — apply will warn about it, not fail; bind it yourself with ` +
+      `\`petbox-wire model set <role> <model> --agent opencode\` when you know what to bind it to.`,
   );
 }
 

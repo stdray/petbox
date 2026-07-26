@@ -44,15 +44,20 @@ export type ModelViolation = {
 };
 
 /**
- * A role the definition actually declares has NO local model binding for this harness.
- * Produced ONLY by apply's planApply (apply-artifacts.ts) — NOT by checkRoleTruthfulness /
- * checkTruthfulness below, which stay exactly as documented: an absent binding is the harness's
- * legitimate inherit behaviour, not a violation (doctor still reports it that way). apply is
- * stricter on purpose (reserve-unbound-inherits-session-model, owner decision 2026-07-26): a
- * role with no `model:` line silently rides the session/parent model, which is exactly the
- * 2026-07-26 fable→opus incident's shape made structural and permanent — it would hit every
- * fresh machine, on whichever role happens to be unbound, forever. apply now refuses to write
- * such a role at all instead of writing it with a warning.
+ * A role the definition actually declares has NO local model binding for a CLOSED-model-space
+ * harness (harness-models.ts's allowedModels non-null — claude-code today). Produced ONLY by
+ * apply's planApply (apply-artifacts.ts), and only for that closed subset of harnesses — NOT by
+ * checkRoleTruthfulness / checkTruthfulness below, which stay exactly as documented: an absent
+ * binding is the harness's legitimate inherit behaviour, not a violation (doctor still reports
+ * it that way). apply is stricter here on purpose (reserve-unbound-inherits-session-model, owner
+ * decision 2026-07-26): a role with no `model:` line silently rides the session/parent model,
+ * which is exactly the 2026-07-26 fable→opus incident's shape made structural and permanent —
+ * it would hit every fresh machine, on whichever role happens to be unbound, forever. apply now
+ * refuses to write such a role at all instead of writing it with a warning — but ONLY where a
+ * correct binding is actually knowable and verifiable (a closed alias/id space); an OPEN-space
+ * harness (opencode, and droid absent its `inherit` seed) still gets the old warn-and-write
+ * behavior, because the kit cannot name what "correct" would even look like there, and refusing
+ * would punish the user for the kit's own ignorance (see apply-artifacts.ts's file header).
  */
 export type UnboundViolation = {
   readonly role: string;

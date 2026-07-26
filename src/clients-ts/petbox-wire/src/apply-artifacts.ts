@@ -4,16 +4,26 @@
 // Per-role truthfulness: clean roles are emitted; dirty roles are skipped and
 // reported in violations/skippedRoles (never silently drop a required line from
 // a role that is emitted — the whole dirty role is blocked). "Dirty" covers a missing
-// harness capability, a local model binding that looks like ANOTHER harness's id shape
+// harness capability, and a local model binding that looks like ANOTHER harness's id shape
 // (harness-models.ts's "foreign" tier — writing that in would be either rejected loudly by the
-// target harness at runtime or silently satisfy a different harness's config, not this one),
-// AND — as of reserve-unbound-inherits-session-model (owner decision 2026-07-26) — a declared
-// role with NO local model binding at all: apply now refuses to write it rather than letting it
-// silently inherit the session/parent model (see UnboundViolation in truthfulness.ts; doctor's
-// shared gate is deliberately unchanged, so this refusal is apply-specific). A model that is
-// merely unrecognized-but-shape-valid (harness-models.ts's "unknown" tier — e.g. a real
-// `claude-*` id newer than the kit's small known-alias list) is NOT dirty: it is written, with a
-// warning (see ApplyPlan.warnings / modelShapeWarning in truthfulness.ts).
+// target harness at runtime or silently satisfy a different harness's config, not this one).
+//
+// An UNBOUND declared role (reserve-unbound-inherits-session-model, owner decision 2026-07-26,
+// narrowed same-card 2026-07-26 once the first cut broke the newcomer-equivalent-experience
+// happy path) is gated by whether the HARNESS's model space is closed or open
+// (harness-models.ts's allowedModels — non-null means closed):
+//   - CLOSED (claude-code today): the kit both knows and can verify what a correct binding looks
+//     like, so an absent one is dirty — a hard violation (UnboundViolation in truthfulness.ts),
+//     never written. Refusing here costs the user nothing they couldn't fix: `model set` with a
+//     known alias.
+//   - OPEN (opencode; droid too, though droid gets a real `inherit` seed instead — see wire.ts's
+//     DEFAULT_ROLE_MODEL_SEED so this rarely fires for it in practice): the kit cannot name a
+//     correct binding for THIS machine's local provider config, so refusing would punish the user
+//     for the kit's own ignorance, not theirs. NOT dirty: written anyway, with a loud warning
+//     (see ApplyPlan.warnings) — exactly the pre-card behavior for these harnesses.
+// A model that is merely unrecognized-but-shape-valid (harness-models.ts's "unknown" tier — e.g.
+// a real `claude-*` id newer than the kit's small known-alias list) is NOT dirty either: it is
+// written, with a warning (see modelShapeWarning in truthfulness.ts).
 //
 // Paths (documented harness layouts):
 //   opencode     → .opencode/agent/<role>.md
@@ -29,6 +39,7 @@
 import { join } from "node:path";
 import { emittedRoleName, type AgentDefinition, type AgentRole } from "./agent-definition.ts";
 import { isKnownHarness, type HarnessId } from "./harness-capabilities.ts";
+import { allowedModels } from "./harness-models.ts";
 import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import {
   checkRoleTruthfulness,
@@ -72,10 +83,15 @@ export type ApplyPlan = {
   /** Role slugs skipped because of violations. */
   readonly skippedRoles: readonly string[];
   /**
-   * Non-blocking notice: a role bound to a model that classifies "unknown" (harness-models.ts)
-   * — shape-valid for the harness, just not on its small known-alias list — is written as bound,
-   * unverified. A role bound to a "foreign"-shaped id, or with NO local model binding at all, is
-   * NOT a warning — both are violations now (see UnboundViolation / ModelViolation).
+   * Non-blocking notices, two kinds:
+   *  - A role bound to a model that classifies "unknown" (harness-models.ts) — shape-valid for
+   *    the harness, just not on its small known-alias list — is written as bound, unverified.
+   *  - A role with NO local model binding on an OPEN-model-space harness (allowedModels ===
+   *    null — opencode; droid too, absent its `inherit` seed) is written inheriting the session
+   *    model, same as before this whole card — the kit cannot name a correct binding for it, so
+   *    it warns instead of blocking (see the file header).
+   * A role bound to a "foreign"-shaped id, or unbound on a CLOSED-model-space harness, is NOT a
+   * warning — both are violations (see ModelViolation / UnboundViolation).
    */
   readonly warnings: readonly string[];
 };
@@ -289,21 +305,35 @@ export function planApply(
       continue;
     }
     // apply-unbound-role-hard-refusal (reserve-unbound-inherits-session-model, owner decision
-    // 2026-07-26): a declared role with no local binding used to be written anyway (no `model:`
-    // key at all on claude-code/opencode, `model: inherit` on droid) with only a warning. That
-    // let a role silently ride the session/parent model — a structural, permanent version of the
-    // 2026-07-26 fable→opus incident, hitting every fresh machine on whichever role is unbound.
-    // apply now refuses the role outright, the same way a capability/model violation is refused
-    // (checkRoleTruthfulness above never produces this — it stays the shared gate doctor also
-    // uses, where an absent binding is still legitimate inherit; this refusal is apply-only).
+    // 2026-07-26, narrowed same-card 2026-07-26): a declared role with no local binding used to
+    // be written anyway with only a warning — silently riding the session/parent model, a
+    // structural version of the 2026-07-26 fable→opus incident. Blocking unconditionally,
+    // though, broke newcomer-equivalent-experience's own happy path: opencode/droid have no
+    // knowable default binding, so refusing them punished the user for the KIT's ignorance, not
+    // theirs. The gate is by model-space closedness, not harness identity (see file header):
+    //   - CLOSED (allowedModels(harness) !== null — claude-code): a correct binding is knowable
+    //     and verifiable, so absence is dirty — a hard violation, same as a capability/model one
+    //     (checkRoleTruthfulness above never produces this itself — it stays the shared gate
+    //     doctor also uses, where an absent binding is still legitimate inherit; this refusal is
+    //     apply-only).
+    //   - OPEN (allowedModels(harness) === null — opencode; droid absent its `inherit` seed):
+    //     no correct binding is knowable from the kit — warn loudly and still write, exactly the
+    //     pre-card behavior.
     if (!model || !model.trim()) {
-      const unbound: UnboundViolation = { role: role.slug, harness };
-      violations.push(unbound);
-      skippedRoles.push(role.slug);
-      continue;
+      if (allowedModels(harness) !== null) {
+        const unbound: UnboundViolation = { role: role.slug, harness };
+        violations.push(unbound);
+        skippedRoles.push(role.slug);
+        continue;
+      }
+      warnings.push(
+        `role '${role.slug}' has no local model binding for harness '${harness}' — it inherits ` +
+          `the session model. Bind it: \`petbox-wire model set ${role.slug} <model> --agent ${harness}\`.`,
+      );
+    } else {
+      const shapeWarning = modelShapeWarning(role, harness, model);
+      if (shapeWarning) warnings.push(shapeWarning);
     }
-    const shapeWarning = modelShapeWarning(role, harness, model);
-    if (shapeWarning) warnings.push(shapeWarning);
     const fileName =
       harness === "droid" ? `${sanitizeDroidName(emittedRoleName(role))}.md` : `${emittedRoleName(role)}.md`;
     // Pre-namespacing name — same file this role used to emit before petbox-namespaced-agent-names.
