@@ -27,20 +27,15 @@ namespace PetBox.Core.Auth;
 // handing it over discloses data provably outside the sandbox. A key/row that does not exist is
 // not a sandbox either, so the default is denial.
 //
-// EVERY CALL SITE IS LISTED HERE. If you add a fourth, add it to this list — the point of the list
-// is that a surface deriving a container cannot be introduced silently:
-//
-//   1. TenantAuthorizer.KeyOnWorkspaceAsync — an api key aimed at a WORKSPACE target, however that
-//      target was spelled (a `workspaceKey` route/argument, or a `$ws-<key>` pseudo-project decoded
-//      by TenantRef.FromProjectKeyOrContainer). Asks about the workspace's container row.
-//   2. MemoryTools.AssertMemoryProjectAsync — the memory verbs' own container check, which the
-//      `scope: "workspace"` redirect and the project ⊕ workspace cascade both funnel through AFTER
-//      the PEP has run on a different target.
-//   3. MemoryApi.CanonAsync — the SessionStart canon injection, whose response carries the
-//      project's workspace canon next to the project's own. Measured on production 2026-07-25/26:
-//      `GET /api/memory/smoke/canon` returned 200 with the `$system` workspace canon as the entire
-//      body (the sandbox project's own canon being empty), to a key the same gate refused on every
-//      target it was aimed at.
+// THE CALL SITES ARE NOT LISTED HERE, DELIBERATELY. The first edition of this file carried a
+// numbered list of its three call sites and asked whoever added a fourth to extend it — a human
+// count, the practice this codebase banned after three independent human counts of the MCP tool
+// surface came back 92 / 100 / 122 when the truth was 97 (TenantEnforcementAllowlist.cs). The
+// enumeration is MECHANICAL now: SandboxContainmentCallSiteGuardTests (work
+// `sandbox-containment-callsite-ratchet`) sweeps the source for every file that derives, decodes or
+// branches on a container key and holds a door that can act on one, and FAILS THE BUILD for any
+// such site that does not route through Permits*Async below. The live list is regenerated on every
+// test run into .tmp/sandbox-containment-callsites.txt — read it there; do not maintain one here.
 //
 // IDENTITY IS DECIDED BEFORE THIS, at every call site, exactly as ProjectScope.EvaluateAsync orders
 // it: a caller with no claim on the tenant reads "not authorized", not "sandbox". Containment is
@@ -69,7 +64,7 @@ public static class SandboxContainment
 	// The container that represents a WORKSPACE as storage. A workspace has no Projects row and so no
 	// Sandbox flag of its own; what it has is exactly one shared-memory container row, and that row is
 	// what a workspace-targeted call ultimately reads or writes. Resolving it here rather than at each
-	// call site is what lets all three sites ask one question of one predicate.
+	// call site is what lets every site ask one question of one predicate.
 	public static Task<bool> PermitsWorkspaceAsync(
 		bool sandboxOnly, string workspaceKey, IProjectCatalog catalog, CancellationToken ct = default) =>
 		PermitsAsync(sandboxOnly, WorkspaceMemory.ContainerKeyFor(workspaceKey), catalog, ct);
