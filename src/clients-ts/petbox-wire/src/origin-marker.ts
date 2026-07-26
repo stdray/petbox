@@ -11,7 +11,9 @@
 // file can be classified accurately: ours (marker present → safe to update silently) or a
 // real user file (marker absent → refuse, loudly, never touch it).
 //
-// Plain TS for native node type-stripping: zero deps.
+// Plain TS.
+
+import { existsSync, readFileSync } from "node:fs";
 
 export const PETBOX_MARKER_KEY = "petbox";
 export const PETBOX_MARKER_VALUE = "managed";
@@ -34,4 +36,24 @@ export function hasPetboxMarker(content: string): boolean {
   // always populates it — but a stray content string could still fail to match at all.
   if (frontmatter === undefined) return false;
   return MARKER_LINE_RE.test(frontmatter);
+}
+
+// Materialization fact for one path apply/wire may have written: absent (never written), ours
+// (carries the marker — safe to overwrite silently), or foreign (something else's file sits
+// there — refuse, never touch it). Shared by every caller that needs to know "is this ours"
+// before comparing content — status's per-role/per-skill lines and skill-files.ts's
+// checkSkillFile both classify with this SAME function, never a second content heuristic
+// (moved here from status.ts: not skill- or role-specific, it belongs next to the marker it
+// reads — see this file's header).
+export type ArtifactState = "absent" | "ours" | "foreign";
+
+export function readArtifactState(absPath: string): ArtifactState {
+  if (!existsSync(absPath)) return "absent";
+  let content: string;
+  try {
+    content = readFileSync(absPath, "utf8");
+  } catch {
+    return "foreign"; // unreadable — apply-write.ts treats this the same way (refuse, not ours)
+  }
+  return hasPetboxMarker(content) ? "ours" : "foreign";
 }

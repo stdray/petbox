@@ -31,7 +31,7 @@
 //
 // Plain TS for native node type-stripping: zero deps.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -45,7 +45,7 @@ import { resolveApplyRoot } from "./apply-root.ts";
 import { CANON_BODY_BUDGET_CHARS, fetchCanonLegs, type CanonLegState } from "./canon.ts";
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
-import { hasPetboxMarker } from "./origin-marker.ts";
+import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
 import { resolveProject, type ResolvedProject } from "./registry.ts";
 import {
   DEFAULT_ROLE_MODEL_SEED,
@@ -54,7 +54,14 @@ import {
   rolesPath,
   type RolesFile,
 } from "./roles.ts";
-import { PROJECT_SKILLS, renderSkillTemplate, SKILL_SURFACES } from "./skill-files.ts";
+import {
+  buildSkillReports,
+  checkSkillFile,
+  formatSkillFile,
+  PROJECT_SKILLS,
+  probeWorkspace,
+  SKILL_SURFACES,
+} from "./skill-files.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -141,20 +148,10 @@ export function roleRelativePath(harness: HarnessId, role: AgentRole): string {
   return join(dir, fileName).replace(/\\/g, "/");
 }
 
-export type ArtifactState = "absent" | "ours" | "foreign";
-
-/** Materialization fact for one role's artifact — reuses the SAME marker apply's write guard
- * (apply-write.ts) trusts, never a content heuristic. */
-export function readArtifactState(absPath: string): ArtifactState {
-  if (!existsSync(absPath)) return "absent";
-  let content: string;
-  try {
-    content = readFileSync(absPath, "utf8");
-  } catch {
-    return "foreign"; // unreadable — apply-write.ts treats this the same way (refuse, not ours)
-  }
-  return hasPetboxMarker(content) ? "ours" : "foreign";
-}
+// ArtifactState/readArtifactState moved to origin-marker.ts (task
+// builtin-definition-drifts-no-catchup item 3, alongside skill-files.ts's checkSkillFile): the
+// marker classifier is not role- or skill-specific — both need the SAME function, imported
+// above, never a second copy.
 
 export function formatArtifactState(relPath: string, state: ArtifactState): string {
   if (state === "absent") return `${relPath} (not materialized yet)`;
@@ -251,66 +248,12 @@ export function formatCanonLeg(label: string, state: CanonLegState): string {
 }
 
 // ---- pillar 4: skills -------------------------------------------------------
-
-export type SkillFileReport = {
-  readonly path: string;
-  readonly state: ArtifactState;
-  /** "unknown" when the expected render could not be computed (workspace unresolved, offline). */
-  readonly matchesTemplate: boolean | "unknown";
-};
-
-export function checkSkillFile(absPath: string, rendered: string | undefined): SkillFileReport {
-  const state = readArtifactState(absPath);
-  if (state === "absent") return { path: absPath, state, matchesTemplate: false };
-  if (rendered === undefined) return { path: absPath, state, matchesTemplate: "unknown" };
-  if (state === "foreign") return { path: absPath, state, matchesTemplate: false };
-  let content: string;
-  try {
-    content = readFileSync(absPath, "utf8");
-  } catch {
-    return { path: absPath, state, matchesTemplate: "unknown" };
-  }
-  return { path: absPath, state, matchesTemplate: content === rendered };
-}
-
-export function formatSkillFile(report: SkillFileReport): string {
-  const base =
-    report.state === "absent"
-      ? "not materialized"
-      : report.state === "foreign"
-        ? "BLOCKED — a foreign (non-PetBox) file sits here"
-        : "materialized (ours)";
-  const match =
-    report.matchesTemplate === "unknown"
-      ? " — template match unknown (workspace not resolved; run online to verify)"
-      : report.matchesTemplate
-        ? " — matches the current template"
-        : report.state === "ours"
-          ? " — DRIFTED from the current template (re-run apply/wire to refresh)"
-          : "";
-  return `${report.path}: ${base}${match}`;
-}
-
-// Best-effort workspace probe for the "petbox" skill template's {{WORKSPACE}} — SAME contract
-// wire.ts's own probeWorkspaceForApply uses (GET /api/auth/validate, `workspace` field), kept as
-// its own tiny copy here rather than importing wire.ts, which runs main() at module top level
-// (see this file's header). Returns undefined on ANY failure — status then reports skill
-// materialization without a template-match verdict, never a guessed workspace.
-async function probeWorkspace(baseUrl: string, apiKey: string): Promise<string | undefined> {
-  try {
-    const resp = await fetch(`${baseUrl}/api/auth/validate`, {
-      method: "GET",
-      headers: { "X-Api-Key": apiKey },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!resp.ok) return undefined;
-    const body = (await resp.json()) as { workspace?: unknown; Workspace?: unknown };
-    const ws = body.workspace ?? body.Workspace;
-    return typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined;
-  } catch {
-    return undefined;
-  }
-}
+//
+// checkSkillFile/formatSkillFile/buildSkillReports/probeWorkspace all moved to skill-files.ts
+// (task builtin-definition-drifts-no-catchup item 3 / skill-files-clobber-and-apply-skips item
+// 3): `doctor` needed the SAME materialized-vs-template comparison this pillar already had, so
+// it now lives in one place (next to the templates and the origin marker it renders) and both
+// `status` and `doctor` call it — never a second copy of the diff.
 
 function printSkillsMaterializationOnly(root: string): void {
   for (const spec of PROJECT_SKILLS) {
@@ -398,22 +341,11 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
     log(`status: pillar 4/4 — skills: workspace unknown — ${root} is not a registered project; materialization only:`);
     printSkillsMaterializationOnly(root);
   } else {
-    const workspace = await probeWorkspace(resolvedProject.baseUrl, resolvedProject.apiKey);
+    const probe = await probeWorkspace(resolvedProject.baseUrl, resolvedProject.apiKey);
+    const workspace = probe.ok ? probe.workspace : undefined;
     log(`status: pillar 4/4 — skills (project=${resolvedProject.project}, workspace=${workspace ?? "unknown"}):`);
-    for (const spec of PROJECT_SKILLS) {
-      let rendered: string | undefined;
-      if (workspace !== undefined || !spec.needsWorkspace) {
-        try {
-          const tpl = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-          rendered = renderSkillTemplate(tpl, resolvedProject.project, workspace ?? "");
-        } catch {
-          rendered = undefined;
-        }
-      }
-      for (const surface of SKILL_SURFACES) {
-        const absPath = join(root, ...surface, spec.dir, "SKILL.md");
-        log(`status:   ${formatSkillFile(checkSkillFile(absPath, rendered))}`);
-      }
+    for (const report of buildSkillReports(root, TEMPLATES_ROOT, resolvedProject.project, workspace)) {
+      log(`status:   ${formatSkillFile(report)}`);
     }
   }
 
