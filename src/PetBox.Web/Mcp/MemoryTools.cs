@@ -634,7 +634,7 @@ public static class MemoryTools
 		[LogArg][Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
 		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
-		[LogArg][Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
+		[LogArg][Description("Max rows returned — one PAGE (default 20; 0 = no cap — the output budget still applies). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (60), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 16, where 3×limit used to exceed 60) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
@@ -651,6 +651,10 @@ public static class MemoryTools
 		// project-container one, because the merged pool below is spliced from both and either can
 		// reorder it. Collected as the legs run and folded into the fingerprint afterwards.
 		var containerStamps = new List<string>();
+		// The ORDER each leg came back in. Separate from the stamps because it answers a different
+		// question: a stamp says whether the DATA moved, this says whether the RANKING did — which it can
+		// with nothing written at all, and which memory had no way to notice until now.
+		var containerOrderHashes = new List<string>();
 		// Pool facts merged across the cascade: the depth is the same declared budget in every leg, and
 		// the walk is bounded if ANY leg was bounded — a truncated pool anywhere means the merged order
 		// is a prefix of the merged match set.
@@ -697,8 +701,11 @@ public static class MemoryTools
 				// depth, which is a selection decision that must not shift with the page size.
 				WholePool = hasQuery,
 			}, ct);
-			// Stamp + pool facts of THIS leg, folded into the cascade-wide answer.
+			// Stamp + pool facts of THIS leg, folded into the cascade-wide answer. The ORDER hash is
+			// collected per leg and joined in cascade sequence: the merged list is a splice of both pools,
+			// so either one being re-ranked differently is a different list to page.
 			containerStamps.Add(scopeName + "=" + (res.DataVersion ?? ""));
+			containerOrderHashes.Add(scopeName + "=" + (res.PoolOrderHash ?? ""));
 			if (res.PoolLimit is { } pl) poolLimit = poolLimit is { } cur ? Math.Min(cur, pl) : pl;
 			poolBounded |= res.PoolBounded;
 			if (res.Retrievers is { } r)
@@ -775,13 +782,24 @@ public static class MemoryTools
 		// pageable despite repeated scores (a score tie cannot make an identity ambiguous).
 		var fingerprint = SearchFingerprint(hasQuery ? q!.Trim() : null, scope, projectKey, store, type,
 			sort, containerStamps);
+		var orderHash = string.Join('|', containerOrderHashes);
 		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> seeking = ordered;
 		if (hasCursor)
+		{
+			var token = KeysetCursor.Decode(cursor, fingerprint, "memory_search");
+			// THE ORDER COMMITMENT (spec: result-set-pageable) — and memory needed it most. Its token
+			// carries no scalar (the relevance order has none), so the moved-row guard inside Advance is
+			// vacuous here and identity resume would accept the boundary row wherever it now sat. Combined
+			// with "a degraded pool is never cached", the common shape was: page 1 lands during a rerank
+			// outage → not cached → page 2 is always a rebuild → route has recovered → same rows, reranked
+			// order, same stamp, same fingerprint → seek into a list the caller never saw. Minutes-long
+			// recoveries are the observed pattern, so this was not exotic.
+			if (hasQuery) token.AssertPoolOrder(orderHash, "memory_search");
 			seeking = KeysetCursor.Advance(
-				ordered,
-				KeysetCursor.Decode(cursor, fingerprint, "memory_search"),
+				ordered, token,
 				s => (CursorSortValue(s.Score, hasQuery), s.Row.Store + "\x1f" + s.Row.Key, s.Row.Scope),
 				CursorSortComparison(hasQuery), desc: false, "memory_search");
+		}
 
 		var page = seeking.ToList();
 		if (cap > 0 && page.Count > cap) page = page.Take(cap).ToList();
@@ -821,7 +839,7 @@ public static class MemoryTools
 		var last = kept.Count > 0 ? ordered[kept.Count - 1] : default;
 		var nextCursor = kept.Count > 0 && more
 			? new KeysetCursor(fingerprint, CursorSortValue(last.Score, hasQuery),
-				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope).Encode()
+				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope, hasQuery ? orderHash : "").Encode()
 			: null;
 		// WHY THE WALK STOPPED — stated, not implied, and the SAME three words tasks_search uses. In query
 		// mode this is always present, so a caller never has to read "nextCursor is absent" and guess

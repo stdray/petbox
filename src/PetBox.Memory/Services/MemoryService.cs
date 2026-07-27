@@ -187,7 +187,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
 		return new MemorySearchResult(hits.Select(h => View(h.Entry)).ToList(), retrievers);
 	}
 
@@ -195,7 +195,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
 		// Load the pool's vectors ONCE (when an embedder is wired) so a caller's MMR has proximity;
 		// without an embedder there is nothing to load and MMR degrades to identity downstream.
 		var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
@@ -260,6 +260,9 @@ public sealed class MemoryService : IMemoryService
 		// The change stamp of the stores this result was computed over; the adapter folds it into the
 		// cursor fingerprint so a mid-walk write is an error, not a silent restart.
 		string? dataVersion = null;
+		// The identity of the ORDER this result was ranked in — the guard for the case where nothing was
+		// written but the ranking still moved. Rides into the cursor beside the fingerprint.
+		string? poolOrderHash = null;
 		if (stores.Count > 0 && query is null)
 		{
 			// LISTING: the active entries of every store in scope — ONE query over the project
@@ -318,15 +321,17 @@ public sealed class MemoryService : IMemoryService
 				retrievers = cachedPool.Retrievers;
 				poolLimit = cachedPool.PoolLimit;
 				poolBounded = cachedPool.PoolBounded;
+				poolOrderHash = cachedPool.OrderHash;
 			}
 			else
 			{
-				var (fresh, r, freshLimit, freshBounded) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
+				var (fresh, r, freshLimit, freshBounded, freshOrderHash) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
 					legK, lexical: null, semantic: null, ct, mode: request.RankingMode);
 				hits = fresh;
 				retrievers = r;
 				poolLimit = freshLimit;
 				poolBounded = freshBounded;
+				poolOrderHash = freshOrderHash;
 				// A DEGRADED pool is never stored: cheap to recompute (the reranker did not run anyway) and
 				// expensive to keep, since caching it pins a half-answer plus its stale provenance for the
 				// whole TTL — every repeat of the query then keeps hitting an outage that has already
@@ -367,7 +372,7 @@ public sealed class MemoryService : IMemoryService
 			x.Score,
 			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"),
 			x.ScoreRaw)).ToList();
-		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion);
+		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion, poolOrderHash);
 	}
 
 	// One selection candidate: its owning store, the entry, the fused relevance Score (query
@@ -514,7 +519,7 @@ public sealed class MemoryService : IMemoryService
 	// and stitched the pools together afterwards).
 	//
 	// The MemoryType taxonomy filter still applies post-resolution (it is not the index's Type).
-	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded)> SearchStoresAsync(
+	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded, string OrderHash)> SearchStoresAsync(
 		string projectKey, IReadOnlyList<string> stores, string query, MemoryType? typeFilter, int k,
 		bool? lexical, bool? semantic, CancellationToken ct, SearchRankingMode mode = SearchRankingMode.Precision)
 	{
@@ -532,7 +537,8 @@ public sealed class MemoryService : IMemoryService
 			// A degraded-to-listing query ranked NOTHING, so there is no ranking-depth boundary to
 			// declare: the set is complete by construction (PoolBounded false), and PoolLimit reports
 			// its own size rather than a budget that never applied.
-			return (scoredListing, new SearchRetrievers(true, false, false), scoredListing.Count, false);
+			return (scoredListing, new SearchRetrievers(true, false, false), scoredListing.Count, false,
+				KeysetCursor.OrderHashOf(scoredListing.Select(x => (x.Item1.Store + "" + x.Item1.Key, x.Item2))));
 		}
 
 		await EnsureLexicalBackfillAsync(ctx, projectKey, stores, ct);
@@ -602,7 +608,7 @@ public sealed class MemoryService : IMemoryService
 		if (retrievers.Semantic)
 			retrievers = retrievers with { SemanticLag = SemanticLag(ctx, stores) };
 
-		return (hits, retrievers, pool.PoolLimit, pool.PoolBounded);
+		return (hits, retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
 	}
 
 	// The vector leg's coverage LAG (spec search-semantic-lag): Σ over the scope's stores of

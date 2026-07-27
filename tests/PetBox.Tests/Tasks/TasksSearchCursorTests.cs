@@ -377,6 +377,37 @@ public sealed class TasksSearchCursorTests : IDisposable
 			"the depth ranking was allowed to look is a NUMBER the caller can quote, not folklore");
 	}
 
+	[Fact]
+	public async Task PoolRebuiltWithADifferentRankingMode_IsRefused_NotSpliced()
+	{
+		// tasks survived this by ACCIDENT: its token carries a score, and Advance's moved-row guard
+		// compares sort values byte-for-byte, so a cross-encoder score never matched an RRF one. Nothing
+		// stated that as an invariant, and a refactor dropping the score from the token — as memory
+		// legitimately did — would have reopened it in silence. The order commitment makes it declared,
+		// and this test is what keeps it declared.
+		await SeedQueryable();
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
+
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, null);
+		first.NextCursor.Should().NotBeNull();
+
+		// Evict the pool, then take the route down: page 2 rebuilds as plain RRF — same rows, different
+		// order, nothing written, every data stamp still agreeing.
+		for (var i = 0; i < 200; i++)
+			cache.Put($"evict-{i}", new SearchPool([], 1, false, new SearchRetrievers(true, false, false)));
+		llm.EmbedDown = true;
+
+		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, first.NextCursor);
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*ranked DIFFERENTLY*").WithMessage("*Your arguments are fine*");
+	}
+
 	// ── the deliberate refusals ──────────────────────────────────────────────────────────────
 
 	[Fact]

@@ -43,11 +43,27 @@ namespace PetBox.Core.Contract;
 // edited, say) can be skipped or served twice — it moved across the boundary the token names.
 // Fixing that needs an as-of snapshot read of the whole board, which is out of proportion to
 // the anomaly; the tools that expose a cursor document it instead.
-public readonly record struct KeysetCursor(string Fingerprint, string SortValue, string Key, string Board)
+//
+// ORDER HASH. The fingerprint answers "is this the same QUERY"; `OrderHash` answers the question that
+// turned out to be different — "is this the same ORDER". They come apart whenever a ranked result is
+// REBUILT rather than reused: identical data, identical filters, identical fingerprint, but a rerank
+// route that was down when page 1 was built and up when page 2 was (or the reverse, which is the
+// commoner shape — a degraded pool is not cached, so page 2 is always a rebuild). RRF ordering and
+// cross-encoder ordering are simply different lists, and an identity seek into the wrong one skips and
+// duplicates rows without a single error. Data-version stamps cannot see this: nothing was written.
+// Nor can they see an embed cascade answering with a different model between pages, or the async vector
+// worker draining the index mid-walk (a write to the vector index is not a write to the entity table).
+//
+// So the token carries a hash of the ORDER it was issued against, and every page re-checks it. Against
+// a cached pool it matches for free; against a rebuilt one it matches only if the rebuild genuinely
+// reproduced the list. Everything else is a loud, honest refusal. This generalizes the scheme session
+// search already used — the only surface that was closed on purpose rather than by luck.
+public readonly record struct KeysetCursor(string Fingerprint, string SortValue, string Key, string Board, string OrderHash = "")
 {
 	// Bumped only if the payload's SHAPE changes; an old token then fails decode loudly
 	// (see the strictness note above) instead of being misread as the new shape.
-	const int FormatVersion = 1;
+	// 2: added `o` (OrderHash) — a v1 token carries no order commitment, so it must not be honoured.
+	const int FormatVersion = 2;
 
 	// The token's payload. Short names because the encoded form travels in every page request
 	// and back in every response — a token is overhead, not content.
@@ -58,7 +74,8 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 		[property: JsonPropertyName("f")] string Fingerprint,
 		[property: JsonPropertyName("s")] string SortValue,
 		[property: JsonPropertyName("k")] string Key,
-		[property: JsonPropertyName("b")] string Board);
+		[property: JsonPropertyName("b")] string Board,
+		[property: JsonPropertyName("o")] string? OrderHash = null);
 
 	static readonly JsonSerializerOptions TokenJson = new(JsonSerializerDefaults.Web);
 
@@ -68,7 +85,32 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 	// to reach into.
 	public string Encode() =>
 		Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(
-			new Payload(FormatVersion, Fingerprint, SortValue, Key, Board), TokenJson));
+			new Payload(FormatVersion, Fingerprint, SortValue, Key, Board, OrderHash), TokenJson));
+
+	// The ORDER a pool was in when a token was issued, as one hash: each row's address and score, in
+	// order. Address AND score, because either moving is a different list to page — a reordering shows
+	// up in the sequence, and a re-scoring (RRF ~1/60-scale vs a cross-encoder's) shows up in the values
+	// even when the sequence happens to survive. "R" round-trips the double exactly, so a pool rebuilt
+	// identically hashes identically and this never fires on a walk that was actually fine.
+	public static string OrderHashOf(IEnumerable<(string Address, double Score)> ordered) =>
+		FingerprintOf([.. ordered.Select(r => r.Address + "=" + r.Score.ToString("R", System.Globalization.CultureInfo.InvariantCulture))]);
+
+	// The order check, as its own refusal with its own words. Deliberately NOT folded into the
+	// fingerprint: a fingerprint mismatch means the caller changed the QUESTION and the advice is "keep
+	// your arguments identical", which would be actively misleading here — the caller did everything
+	// right and the SERVER's ranking moved under them. Saying "this row is gone" (the old comparison-path
+	// message) was the same lie from the other end: the row is present, it is the ordering that is not.
+	public void AssertPoolOrder(string expectedOrderHash, string subject)
+	{
+		if (string.Equals(OrderHash, expectedOrderHash, StringComparison.Ordinal)) return;
+
+		throw new ArgumentException(
+			$"{subject}: the ranked order this cursor was issued against no longer exists — the result was "
+			+ "rebuilt and came out ranked DIFFERENTLY (a rerank route recovered or went down between "
+			+ "pages, or the vector index moved), so continuing would splice two orderings and silently "
+			+ "skip or repeat rows. Your arguments are fine and nothing was written; the ranking simply "
+			+ "changed underneath. Drop the cursor and start the query over.");
+	}
 
 	// Decode a token issued for the query identified by `expectedFingerprint`. Throws
 	// ArgumentException — never returns null, never falls back to "start from the top" — for a
@@ -104,7 +146,7 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 				+ "changed since the page it came from, so continuing would splice two orderings. Keep "
 				+ "the query identical while paging, or drop the cursor to start the new query over.");
 
-		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board);
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "");
 	}
 
 	// STRUCTURAL decode WITHOUT the fingerprint check, plus the check as a separate step. For consumers
@@ -137,7 +179,7 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 			throw new ArgumentException(
 				$"{subject}: cursor is malformed or from an older token format — omit it to start over");
 
-		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board);
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "");
 	}
 
 	// The other half of Peek: the SAME refusal Decode makes, as its own step. Word-for-word identical

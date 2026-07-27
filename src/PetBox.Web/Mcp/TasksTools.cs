@@ -929,7 +929,7 @@ public static class TasksTools
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
+		[LogArg][Description("Max rows returned — one PAGE in both modes. Default: unbounded listing / 20 with q (0 = no cap). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (50), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 50) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = NEUTRAL (every kind; a default read still finds accepted/Done). This is the first-class replacement for the deprecated includeClosed and OVERRIDES it when set; an unknown value is an error.")] string[]? statusKind = null,
@@ -999,11 +999,26 @@ public static class TasksTools
 			nodes, includeClosed, commit, statusKind, axis, desc, res.DataVersion);
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
+		{
+			var token = KeysetCursor.Decode(cursor, fingerprint, "tasks_search");
+			// THE ORDER COMMITMENT, checked before the seek (spec: result-set-pageable). The fingerprint
+			// above only proves the QUESTION is unchanged; this proves the ANSWER is still ranked the way
+			// the token was issued against. A pool that was evicted and rebuilt while the rerank route was
+			// down (or had recovered) comes back with the same rows in a different sequence, and nothing
+			// else on this path can see that — nothing was written, so every data stamp agrees.
+			//
+			// Until now tasks survived this only by ACCIDENT: its token happens to carry a score, and the
+			// moved-row guard in Advance compares sort values byte-for-byte, so a cross-encoder score never
+			// matched an RRF one. That was an emergent side effect nobody had written down — a refactor
+			// dropping the score from the token (as memory legitimately did) would have reopened the door
+			// in silence. Now it is a stated invariant, checked in one place, for every surface.
+			if (res.PoolOrderHash is { } expectedOrder)
+				token.AssertPoolOrder(expectedOrder, "tasks_search");
 			hits = KeysetCursor.Advance(
-				hits,
-				KeysetCursor.Decode(cursor, fingerprint, "tasks_search"),
+				hits, token,
 				h => (CursorSortValue(h, axis), h.Node.Key, h.Board),
 				CursorSortComparison(axis), desc, "tasks_search");
+		}
 
 		// `limit` = rows per PAGE in BOTH modes now, applied after the seek (see the Limit note above).
 		// Query mode falls back to the same default cap it always had when the caller names no limit.
@@ -1021,7 +1036,8 @@ public static class TasksTools
 		var last = kept.Count > 0 ? page[kept.Count - 1] : null;
 		var more = kept.Count < hits.Count;
 		var nextCursor = last is not null && more
-			? new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Node.Key, last.Board).Encode()
+			? new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Node.Key, last.Board,
+				res.PoolOrderHash ?? "").Encode()
 			: null;
 		// WHY THE WALK STOPPED — stated, not implied (card requirement 2). In query mode this field is
 		// ALWAYS present, so a caller never has to read "nextCursor is absent" and guess whether it

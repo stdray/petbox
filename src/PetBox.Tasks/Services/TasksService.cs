@@ -1999,6 +1999,10 @@ public sealed partial class TasksService : ITasksService
 		// fingerprint, which is what turns "the board changed under an in-flight walk" into a loud
 		// refusal instead of two orderings spliced together.
 		string? dataVersion = null;
+		// The identity of the ORDER this result was ranked in — the other half of that guard, for the
+		// case where nothing was written but the ranking still moved (a rerank route recovering or
+		// failing between pages). Rides into the cursor beside the fingerprint.
+		string? poolOrderHash = null;
 		// search-echo-effective-statuskind-filter: the facet ResolveStatusKindFacet ACTUALLY
 		// resolved for this read, captured verbatim from whichever branch below computes it — so
 		// the response echoes the true applied value (including when defaulted), never a recompute.
@@ -2127,15 +2131,17 @@ public sealed partial class TasksService : ITasksService
 				retrievers = cachedPool.Retrievers;
 				poolLimit = cachedPool.PoolLimit;
 				poolBounded = cachedPool.PoolBounded;
+				poolOrderHash = cachedPool.OrderHash;
 			}
 			else
 			{
-				var (freshHits, freshRetrievers, freshLimit, freshBounded) = await HybridCandidatesAsync(
+				var (freshHits, freshRetrievers, freshLimit, freshBounded, freshOrderHash) = await HybridCandidatesAsync(
 					projectKey, query, boardFilter, legK, urlPrefix, runtime, queryFacet, req.RankingMode, ct);
 				hits = freshHits;
 				retrievers = freshRetrievers;
 				poolLimit = freshLimit;
 				poolBounded = freshBounded;
+				poolOrderHash = freshOrderHash;
 				// A DEGRADED pool is never stored. It is cheap to recompute (the reranker did not run
 				// anyway) and expensive to keep: caching it pins a half-answer — plus its now-stale
 				// provenance — for the whole TTL, so every repeat of the query keeps hitting the outage
@@ -2211,7 +2217,8 @@ public sealed partial class TasksService : ITasksService
 			EffectiveStatusKind: effectiveStatusKind,
 			PoolLimit: poolLimit,
 			PoolBounded: poolBounded,
-			DataVersion: dataVersion);
+			DataVersion: dataVersion,
+			PoolOrderHash: poolOrderHash);
 	}
 
 	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
@@ -2219,7 +2226,7 @@ public sealed partial class TasksService : ITasksService
 	// board filter is applied at the index level (SearchFilter(Type=board)). No embedder →
 	// the vector index is simply absent (semantic=false, not degraded); a query-time embed
 	// failure is caught by the facade and flagged degraded.
-	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded)> HybridCandidatesAsync(
+	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded, string OrderHash)> HybridCandidatesAsync(
 		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime,
 		IReadOnlyList<string>? statusKindFacet, SearchRankingMode mode, CancellationToken ct)
 	{
@@ -2295,7 +2302,7 @@ public sealed partial class TasksService : ITasksService
 		var pool = await new SearchService(indexes, _log, reranker)
 			.SearchPoolAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
-		if (resp.Hits.Count == 0) return ([], resp.Retrievers, pool.PoolLimit, pool.PoolBounded);
+		if (resp.Hits.Count == 0) return ([], resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
 
 		// No semantic floor (spec: search-leg-classification — the tau membership threshold is gone):
 		// under this RELEVANCE selection a vector-only hit ENTERS as a peer, bounded only by the fused
@@ -2353,7 +2360,7 @@ public sealed partial class TasksService : ITasksService
 				ranked.Add((rank, new TaskSearchHit(g.Key, node, h.Score, h.Retriever, isComment ? "comment" : null)));
 			}
 		}
-		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers, pool.PoolLimit, pool.PoolBounded);
+		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
 	}
 
 	// Keep terminal-CANCEL nodes in a query's resolve pool iff the facet admits them. Lifted out of

@@ -307,6 +307,122 @@ public sealed class PagePoolRegressionTests : IDisposable
 			.Should().Be(SearchRankingOutcome.Reranked);
 	}
 
+	// ── C: the ORDER COMMITMENT — a rebuilt pool that ranks differently is refused ───────────
+	//
+	// The residual path after B1/A2 were fixed. Hydrating addresses protects a walk whose pool is still
+	// CACHED; it says nothing about a pool that was EVICTED (TTL, capacity, process restart) and rebuilt.
+	// A rebuild during a rerank outage — or after one healed — returns the same rows in a different
+	// sequence, with nothing written, so every data stamp agrees and the fingerprint matches. The token
+	// now commits to the ORDER as well, so that becomes a loud refusal.
+
+	[Fact]
+	public async Task C_PoolRebuiltWhileRerankIsDown_IsRefused_NotSpliced()
+	{
+		// Page 1 healthy and reranked. Evict the pool, then take the rerank route down: page 2 rebuilds
+		// as plain RRF — same rows, different order — and an identity seek into it would skip and repeat
+		// rows in silence.
+		await SeedLexicalAndSemantic();
+
+		var first = await Search(q: "deploy", limit: 2);
+		first.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.Reranked);
+		first.NextCursor.Should().NotBeNull();
+
+		EvictPools();
+		_llm.EmbedDown = true; // nothing written; only the route went away
+
+		var act = () => Search(q: "deploy", limit: 2, cursor: first.NextCursor);
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*ranked DIFFERENTLY*")
+			// the message must not blame the caller's arguments, nor claim the row vanished
+			.WithMessage("*Your arguments are fine*");
+	}
+
+	[Fact]
+	public async Task C_PoolRebuiltAfterRerankRecovered_IsRefused_NotSpliced()
+	{
+		// The commoner shape, and the one memory could not see at all. Page 1 lands during an outage, so
+		// its pool is degraded and therefore NOT cached (A2) — meaning page 2 is always a rebuild. By then
+		// the route has recovered and the rebuild is reranked: same rows, same stamp, same fingerprint,
+		// different order. Minutes-long recoveries are the observed pattern, so this is the everyday case.
+		await SeedLexicalAndSemantic();
+
+		_llm.EmbedDown = true;
+		var first = await Search(q: "deploy", limit: 2);
+		first.Retrievers!.Degraded.Should().BeTrue();
+		first.NextCursor.Should().NotBeNull();
+		_poolCache.Count.Should().Be(0, "a degraded pool is never cached — so page 2 must rebuild");
+
+		_llm.EmbedDown = false; // the route heals between pages
+
+		var act = () => Search(q: "deploy", limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ranked DIFFERENTLY*");
+	}
+
+	[Fact]
+	public async Task C_PoolRebuiltIdentically_IsAccepted_SoTheGuardIsNotAWall()
+	{
+		// The other half of the contract: the check must fire on DRIFT, not on rebuilding. An evicted pool
+		// rebuilt over unchanged data through the same route reproduces the same order, so the walk
+		// continues — otherwise "cold page" would mean "broken page" and the guard would be useless.
+		await SeedLexicalAndSemantic();
+
+		var whole = (await Search(q: "deploy", limit: 100)).Items.Select(i => i.Key).ToList();
+		var first = await Search(q: "deploy", limit: 2);
+		var seen = first.Items.Select(i => i.Key).ToList();
+
+		EvictPools(); // every later page is now a cold rebuild
+
+		string? cursor = first.NextCursor;
+		for (var guard = 0; guard < 50 && cursor is not null; guard++)
+		{
+			EvictPools(); // stay cold for the whole walk
+			var page = await Search(q: "deploy", limit: 2, cursor: cursor);
+			seen.AddRange(page.Items.Select(i => i.Key));
+			cursor = page.NextCursor;
+		}
+
+		seen.Should().Equal(whole, "a faithful rebuild must let the walk continue");
+	}
+
+	[Fact]
+	public void C_OrderHash_ChangesWithSequence_AndWithScore()
+	{
+		// Both halves matter. A reordering is the obvious one; a re-SCORING matters because RRF scores
+		// (~1/60 scale) and cross-encoder scores are different numbers even where the sequence survives,
+		// and that is exactly the drift the ranking-mode flip produces.
+		var a = KeysetCursor.OrderHashOf([("x", 1.0), ("y", 0.5)]);
+		var reordered = KeysetCursor.OrderHashOf([("y", 0.5), ("x", 1.0)]);
+		var rescored = KeysetCursor.OrderHashOf([("x", 0.9), ("y", 0.5)]);
+		var same = KeysetCursor.OrderHashOf([("x", 1.0), ("y", 0.5)]);
+
+		reordered.Should().NotBe(a);
+		rescored.Should().NotBe(a);
+		same.Should().Be(a, "an identical order must hash identically or every cold page would fail");
+	}
+
+	[Fact]
+	public void C_AVersionOneToken_IsRefused_BecauseItCarriesNoOrderCommitment()
+	{
+		// Tokens minted before the order commitment existed promise nothing about ranking, so honouring
+		// one would silently reopen the hole for the length of one deploy's in-flight walks.
+		var v1 = Convert.ToBase64String(
+			System.Text.Encoding.UTF8.GetBytes("""{"v":1,"f":"abc","s":"","k":"k","b":"b"}"""));
+
+		var act = () => KeysetCursor.Decode(v1, "abc", "memory_search");
+
+		act.Should().Throw<ArgumentException>().WithMessage("*older token format*");
+	}
+
+	// Drop every cached pool, modelling TTL expiry / capacity eviction / a process restart — the state in
+	// which a page must REBUILD rather than reuse.
+	void EvictPools()
+	{
+		for (var i = 0; i < 200; i++)
+			_poolCache.Put($"evict-{i}", new SearchPool([], 1, false, new SearchRetrievers(true, false, false)));
+	}
+
 	// ── A4: identity resume is only sound while the row has not MOVED ────────────────────────
 
 	[Fact]

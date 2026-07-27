@@ -107,4 +107,9 @@ public sealed record MemoryEntrySearchResult(
 	bool PoolBounded = false,
 	// The change stamp of every store this query could see. Opaque except as a cursor fingerprint
 	// ingredient — it is what makes a mid-walk write an error rather than a silent restart.
-	string? DataVersion = null);
+	string? DataVersion = null,
+	// The identity of the ORDER this result was ranked in (spec: result-set-pageable). DataVersion
+	// answers "did the data move"; this answers "did the RANKING move", which it can do with nothing
+	// written — a rerank route recovering or failing between pages rebuilds the same rows in a
+	// different sequence. Carried into the cursor so that becomes a loud refusal, not a splice.
+	string? PoolOrderHash = null);

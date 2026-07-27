@@ -311,8 +311,13 @@ public static class SessionTools
 		var token = string.IsNullOrWhiteSpace(cursor) ? (KeysetCursor?)null : KeysetCursor.Peek(cursor, "session_search");
 		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen,
 			afterSessionId: token?.Key, ct: ct);
-		var fingerprint = SearchFingerprint(projectKey, q, fullScan, o.DataVersion);
+		// The discovery ORDER moved out of the fingerprint and into the order commitment, where the other
+		// two surfaces now carry it. Same guarantee, better words: a fingerprint mismatch tells the caller
+		// to keep their arguments identical, which is wrong advice when their arguments were identical and
+		// the server's ranking is what changed.
+		var fingerprint = SearchFingerprint(projectKey, q, fullScan);
 		token?.AssertFingerprint(fingerprint, "session_search");
+		token?.AssertPoolOrder(o.DataVersion ?? "", "session_search");
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
 			c.SessionId, c.Agent,
 			Description: c.Description,
@@ -331,7 +336,7 @@ public static class SessionTools
 		// is no delivered row to resume from and stopping there would strand the rest of the pool.
 		var resumeAfter = kept.Count > 0 ? kept[^1].SessionId : o.LastPoolKey;
 		var nextCursor = more && resumeAfter is not null
-			? new KeysetCursor(fingerprint, "", resumeAfter, projectKey).Encode()
+			? new KeysetCursor(fingerprint, "", resumeAfter, projectKey, o.DataVersion ?? "").Encode()
 			: null;
 		// WHY THE WALK STOPPED — the SAME three words tasks_search and memory_search use. Always present
 		// with `q`, so a caller never has to read "nextCursor is absent" and guess whether it reached the
@@ -363,12 +368,13 @@ public static class SessionTools
 		+ "this is a PREFIX of what matched, NOT all of it — and there is no further page to fetch. "
 		+ "Narrow the read (a more specific `q`), or list without `q` to enumerate the archive.";
 
-	// The query identity a cursor is bound to. `dataVersion` is the hash of the DISCOVERY ORDER itself
-	// (SessionSearchService stamps it), so any change that could move a row — a new session, a fresh
-	// digest, a term-index update — invalidates the token. `sessions`/`hitsPerSession`/`bodyLen` are
-	// deliberately EXCLUDED: they shape a page, not the sequence, so a caller may vary them mid-walk.
-	static string SearchFingerprint(string projectKey, string? query, bool fullScan, string? dataVersion) =>
-		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0", dataVersion);
+	// The query identity a cursor is bound to — the QUESTION only. The discovery ORDER lives in the
+	// token's order commitment instead (see AssertPoolOrder at the call site), so the two failures stay
+	// tellable apart: "you changed the query" versus "the ranking moved under you".
+	// `sessions`/`hitsPerSession`/`bodyLen` are deliberately EXCLUDED: they shape a page, not the
+	// sequence, so a caller may vary them mid-walk.
+	static string SearchFingerprint(string projectKey, string? query, bool fullScan) =>
+		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0");
 
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =

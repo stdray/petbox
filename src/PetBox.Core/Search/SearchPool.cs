@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using PetBox.Core.Contract;
 
 namespace PetBox.Core.Search;
 
@@ -37,6 +38,19 @@ public sealed record SearchPool(
 	// The consumer label for row `i`, or null. Tolerates a missing/short Annotations list rather than
 	// throwing: an absent label must degrade to "no label", never to a failed page.
 	public string? AnnotationAt(int i) => Annotations is not null && i < Annotations.Count ? Annotations[i] : null;
+
+	// The identity of THIS ORDER (spec: result-set-pageable) — what a cursor commits to, over and above
+	// the query it came from. A pool that is REBUILT rather than reused can come back ranked differently
+	// with nothing written and no argument changed: the rerank route recovered or failed between pages,
+	// the embed cascade answered on another model, the async vector worker drained the index. None of
+	// that moves a data-version stamp, and all of it makes an identity seek land in the wrong list.
+	//
+	// Computed lazily and cached: a cached pool hands the same string back on every page for free, so the
+	// check costs nothing on the path it protects most.
+	public string OrderHash => _orderHash ??= KeysetCursor.OrderHashOf(
+		Ordered.Select(h => (h.Type + "\x1f" + h.Id, h.Score)));
+
+	string? _orderHash;
 }
 
 // WHY THE WALK STOPPED — an explicit three-way answer, and the reason this feature cannot quietly
