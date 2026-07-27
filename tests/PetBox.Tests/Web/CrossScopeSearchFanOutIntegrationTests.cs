@@ -35,6 +35,13 @@ namespace PetBox.Tests.Web;
 //     the race shows up as MISSING ROWS; (2) no branch was skipped ("project … failed, skipping
 //     it"); (3) no index degraded — a race inside the embed leg lands there as
 //     "degraded, reason index-error", which is the ONLY trace this leg's corruption leaves.
+// CI-ONLY (build.cs `--slowTests=true`). Not because it is flaky or low-value — it guards a race
+// that reached PRODUCTION — but because 40 attempts cost 56-145 s, measured between runs of the
+// SAME build, and it is the last class to finish. It owns the local gate's tail single-handedly,
+// and that variance is larger than any effect a performance A/B could detect, so any timing
+// measurement of this suite must exclude it. CI runs it on every push, which is where a
+// pre-merge guard earns its keep.
+[Trait("Category", "Slow")]
 public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 {
 	const int Projects = 8; // >= CrossScopeTaskSearchService.MaxProjectConcurrency (6 branches run at once)

@@ -92,8 +92,14 @@ jobs:
       # tag run on whitespace.
       # Not --target=Verify: that also runs the TS/Python SDK checks, which have their own
       # `sdk` job below (bun + uv toolchains, in parallel with this one).
-      - name: Cake Test target (format + build + unit + E2E)
-        run: ./build.sh --target=Test --playwrightWithDeps=false
+      # `--slowTests=true` is what makes CI the home of the Category=Slow tests rather than
+      # their graveyard. One test carries the trait (CrossScopeSearchFanOutIntegrationTests, a
+      # probabilistic repro of a race that reached production): it costs 56-145 s and finishes
+      # last, so it is skipped by default and a local `./build.ps1 -Target Test` no longer waits
+      # for it. Dropping this flag would silently stop running it ANYWHERE — the only reason it
+      # is safe to skip locally is that this line does not skip it.
+      - name: Cake Test target (format + build + unit + E2E + slow)
+        run: ./build.sh --target=Test --playwrightWithDeps=false --slowTests=true
 
       # `if: always()` is load-bearing, not decorative: a red run is exactly the run
       # whose telemetry matters most (flake history, which class hung), and the

@@ -17,6 +17,16 @@ var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
 // Run `playwright install --with-deps` (apt-installs chromium's system libs). Default
 // true for bare dev boxes; CI sets false (hosted runners already have the libs).
 var playwrightWithDeps = Argument("playwrightWithDeps", true);
+// `Category=Slow` tests are skipped by default and run only where this is passed (CI does).
+// One test carries the trait today: CrossScopeSearchFanOutIntegrationTests, a probabilistic
+// race repro that takes 40 attempts to be worth anything. Measured 56-145 s BETWEEN RUNS OF
+// THE SAME BUILD, and it finishes last, so locally it both owns the gate's tail and makes the
+// suite's wall-clock unmeasurable (its variance exceeds any effect an A/B would look for).
+// A pre-merge race guard belongs where pre-merge guards run; a dev iterating on unrelated code
+// pays a minute and a half for it every time. The local/CI split lives HERE, in which arguments
+// the caller passes -- not in build.cs sniffing the environment, which is how the
+// maxParallelThreads "0.5x" mistake happened.
+var slowTests = Argument("slowTests", false);
 
 var solution = "./PetBox.slnx";
 var dockerFile = "./Dockerfile";
@@ -161,7 +171,9 @@ Task("Test")
 			// `research`-category tests are excluded from the default/CI run
 			// (they may hit the network, e.g. DuckDB `INSTALL fts`); run them
 			// explicitly with `dotnet test --filter Category=Research`.
-			Filter = "Category!=Research",
+			// `slow` is excluded unless --slowTests=true (CI passes it) — see the
+			// declaration above for why that one test is not worth a local minute.
+			Filter = slowTests ? "Category!=Research" : "Category!=Research&Category!=Slow",
 			// TRX telemetry: before this, a job's actual test timing only existed by
 			// asking `gh api` for the job's wall-clock after the fact — no per-class/
 			// per-test breakdown, no flake history, nothing CI could upload. `--logger
