@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Data;
 
 namespace PetBox.Tasks.Data;
 
@@ -21,8 +22,7 @@ public sealed class TasksDb : DataConnection
 	// so node_tag.Tag -> tag_vocab.Tag is actually enforced. plan_nodes has no FK.
 	public static DataOptions<TasksDb> CreateOptions(string connectionString)
 	{
-		if (!connectionString.Contains("Foreign Keys", StringComparison.OrdinalIgnoreCase))
-			connectionString = connectionString.TrimEnd(';') + ";Foreign Keys=True";
-		return new(new DataOptions().UseSQLite(connectionString));
+		connectionString = SqliteConnectionStrings.WithForeignKeys(connectionString);
+		return new(new DataOptions().UseSQLite(connectionString).WithDurability());
 	}
 }

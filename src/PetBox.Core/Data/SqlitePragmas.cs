@@ -29,5 +29,8 @@ public static class SqlitePragmas
 			pragma.CommandText = $"PRAGMA busy_timeout = {busyTimeoutMs};";
 			pragma.ExecuteNonQuery();
 		}
+		// No-op in production (SqliteDurability.Relaxed is null there). This bootstrap connection
+		// is short-lived, but it is the one the very first schema build runs on.
+		SqliteDurability.ApplyTo(raw);
 	}
 }

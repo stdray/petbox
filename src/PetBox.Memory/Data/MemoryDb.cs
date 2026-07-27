@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Data;
 
 namespace PetBox.Memory.Data;
 
@@ -20,5 +21,5 @@ public sealed class MemoryDb : DataConnection
 	// own their own row mappings — no table props here. See MemoryService search seam.
 
 	public static DataOptions<MemoryDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions().UseSQLite(connectionString).WithDurability());
 }

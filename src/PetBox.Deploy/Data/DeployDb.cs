@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Data;
 
 namespace PetBox.Deploy.Data;
 
@@ -16,5 +17,5 @@ public sealed class DeployDb : DataConnection
 	public ITable<DeploymentStatus> Statuses => this.GetTable<DeploymentStatus>();
 
 	public static DataOptions<DeployDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions().UseSQLite(connectionString).WithDurability());
 }

@@ -57,6 +57,13 @@ public static class MigrationRunner
 
 			using var scope = services.CreateScope();
 			var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+			// FluentMigrator opens its OWN connection and keeps it for the whole session, so the
+			// linq2db hook in SqliteDurability never sees it. Executing the pragma through the
+			// processor first opens that connection and configures it for every migration that
+			// follows. Statement() returns null in production, so production runs nothing extra.
+			var durability = SqliteDurability.Statement(SqliteDurability.Relaxed);
+			if (durability is not null)
+				runner.Processor.Execute(durability);
 			runner.MigrateUp();
 		}
 	}
