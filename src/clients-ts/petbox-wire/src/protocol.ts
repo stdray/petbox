@@ -63,7 +63,7 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · orchestrator\`
+\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
 
 **Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`.
 
@@ -74,7 +74,7 @@ Orchestrator notes (from definition): ${notes}`;
   return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · main\`
+\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
 
 This harness does not declare spawn_subagents — do not assume subagent fan-out is available; work in the main session.`;
 }
@@ -89,6 +89,7 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const sessionGet = tool("session_get");
   const memoryRemember = tool("memory_remember");
   const memoryUpsert = tool("memory_upsert");
+  const tasksSearch = tool("tasks_search");
   const tasksUpsert = tool("tasks_upsert");
   const tasksMethodologyGuide = tool("tasks_methodology_guide");
   const tasksWorkflow = tool("tasks_workflow");
@@ -103,7 +104,7 @@ This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP
 
 ${intro}
 
-**Rule — search before rework:** before re-deriving, re-investigating or re-deciding anything about this project's past, run \`${memorySearch}\` FIRST. Before storing a fact, search for an existing entry and edit it — duplicates poison recall.
+**Rule — search before rework:** before re-deriving, re-investigating or re-deciding anything about this project's past, run \`${memorySearch}\` / \`${tasksSearch}\` FIRST. Before storing a fact, search for an existing entry and edit it — duplicates poison recall.
 
 **Entry points:**
 
