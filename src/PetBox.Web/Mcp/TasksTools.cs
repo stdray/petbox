@@ -449,7 +449,7 @@ public static class TasksTools
 		return new MethodologyUtilityUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
-	[McpServerTool(Name = "tasks_methodology_describe", Title = "Describe one methodology primitive (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDescribeResult))]
+	[McpServerTool(Name = "tasks_methodology_set_description", Title = "Set one methodology primitive's description (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologySetDescriptionResult))]
 	[Description("""
 		Set (or clear) the free-form Description of ONE primitive of a LIVE methodology
 		INSTANCE's rules — a kind, status, transition, effect, constraint, linkKind or
@@ -478,7 +478,7 @@ public static class TasksTools
 		invariant from structure, rendering prose only as an additive note), so documenting
 		the process stays a routine write.
 		""")]
-	public static async Task<MethodologyDescribeResult> MethodologyDescribeAsync(
+	public static async Task<MethodologySetDescriptionResult> MethodologySetDescriptionAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Instance name (slug) whose rules the primitive lives on.")] string name,
@@ -501,7 +501,7 @@ public static class TasksTools
 		// through the same DefineMethodologyInstanceRulesAsync as the gated rules_upsert. The
 		// line is not "which service call" but "can it change the process":
 		//
-		// 1. MethodologyDescribe.Apply only ever does `with { Description = ... }` on a record
+		// 1. MethodologySetDescription.Apply only ever does `with { Description = ... }` on a record
 		//    found by natural key; every branch maps over the lists preserving shape. It cannot
 		//    add, remove or reorder a kind, block, status, transition, effect or constraint.
 		// 2. MethodologyGuide derives EVERY invariant from structural fields — not one
@@ -513,7 +513,7 @@ public static class TasksTools
 		// So the worst this verb can do is write a misleading comment next to a rule that stays
 		// visibly in force — the same exposure any task body already has under tasks:write.
 		// Gating it would put routine process documentation behind the governance scope and rot
-		// the docs. Locked by Methodology_Describe_NeedsNoMethodologyWrite.
+		// the docs. Locked by Methodology_SetDescription_NeedsNoMethodologyWrite.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		const int maxAttempts = 5;
@@ -521,14 +521,14 @@ public static class TasksTools
 		{
 			var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct)
 				?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
-			var (def, matched) = MethodologyDescribe.Apply(
+			var (def, matched) = MethodologySetDescription.Apply(
 				view.Definition, primitive, kind, type, slug, from, to, on, link, direction, onLeave, @namespace, description);
 			if (!matched)
 				throw new ArgumentException($"no {primitive} matched the given natural key on methodology instance '{name}'");
 			try
 			{
 				var ack = await tasks.DefineMethodologyInstanceRulesAsync(projectKey, name, def, view.Version, null, ct);
-				return new MethodologyDescribeResult(ack.Name, primitive, ack.Version);
+				return new MethodologySetDescriptionResult(ack.Name, primitive, ack.Version);
 			}
 			catch (InvalidOperationException ex) when (attempt < maxAttempts && ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase))
 			{
