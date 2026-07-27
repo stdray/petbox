@@ -61,7 +61,7 @@ public sealed class AuthzSurfaceHost : IAsyncLifetime
 				}));
 			});
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		// CreateClient is what actually builds the pipeline; one request makes sure routing has
 		// materialized before the data source is read.
@@ -73,7 +73,7 @@ public sealed class AuthzSurfaceHost : IAsyncLifetime
 		McpTools = AuthzSurfaces.FromMcpTools(typeof(Program).Assembly);
 	}
 
-	public async Task DisposeAsync() => await Factory.DisposeAsync();
+	public async ValueTask DisposeAsync() => await Factory.DisposeAsync();
 }
 
 // THE RATCHET for spec `authz-scope-declaration` (work `authz-default-deny-delivery`, step 1).

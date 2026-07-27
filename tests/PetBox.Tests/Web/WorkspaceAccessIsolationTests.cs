@@ -73,7 +73,7 @@ public sealed class WorkspaceAccessIsolationFixture : IAsyncLifetime
 			Path.Combine(_baseDir, sub), Scope.Project, create, ensure));
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -123,7 +123,7 @@ public sealed class WorkspaceAccessIsolationFixture : IAsyncLifetime
 		await boards.EnsureAsync("proja", "board1");
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

@@ -214,7 +214,7 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 			Path.Combine(_baseDir, sub), Scope.Project, create, ensure));
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -412,7 +412,7 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 		return controls;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);

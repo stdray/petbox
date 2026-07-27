@@ -68,7 +68,7 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
@@ -143,7 +143,7 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 			.UpdateAsync();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Mcp.DisposeAsync();
 		_http.Dispose();
@@ -171,9 +171,9 @@ public sealed class McpLogToolsTests : IClassFixture<McpLogToolsFixture>, IAsync
 		_mcp = fx.Mcp;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task LogQuery_Tool_IsDiscoverable()

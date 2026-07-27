@@ -66,7 +66,7 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 			Path.Combine(_baseDir, sub), Scope.Project, create, ensure));
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -81,7 +81,7 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 			await stores.CreateAsync("$system", "notes", "agent notes");
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();
@@ -1757,10 +1757,16 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			"""<a href="/ui/\$system/\$system/tasks/roadmap" class="active" data-testid="nav-proj-task-board""");
 	}
 
+	// Asserts the empty-state branch of Sessions.cshtml renders. The class comment's invariant
+	// ("tests only add distinctly-named containers, so accumulated state is invisible") does NOT
+	// hold for sessions: SessionDetail_* seeds sessions into $system/$system, so an unfiltered
+	// list is only empty if this test runs first. That held under xunit v2's ordering and stopped
+	// holding under v3's. A query that cannot match any session pins Model.Sessions.Count == 0
+	// regardless of ordering, and does it WITHOUT deleting rows other tests may now depend on.
 	[Fact]
 	public async Task Sessions_EmptyList_RendersOk()
 	{
-		using var resp = await GetAuthedAsync("/ui/$system/$system/sessions");
+		using var resp = await GetAuthedAsync("/ui/$system/$system/sessions?q=zzz-no-such-session-zzz");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("sessions-empty");

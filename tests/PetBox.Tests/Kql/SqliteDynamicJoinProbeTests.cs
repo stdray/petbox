@@ -6,7 +6,6 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
 using Microsoft.Data.Sqlite;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Kql;
 
@@ -116,7 +115,7 @@ public sealed class SqliteDynamicJoinProbeTests : IDisposable
 
 		var rows = Materialize(q, tRes);
 		_output.WriteLine("PROBE C1 (inner join) executed SQL:");
-		_output.WriteLine(_db.LastQuery);
+		_output.WriteLine(_db.LastQuery ?? "<null>");
 		_output.WriteLine("PROBE C1 rows: " + string.Join(", ", rows.Select(r => $"{r["OrderId"]}:{r["Name"]}")));
 
 		var pairs = rows.Select(r => ((long)r["OrderId"]!, (string?)r["Name"])).ToList();
@@ -189,7 +188,7 @@ public sealed class SqliteDynamicJoinProbeTests : IDisposable
 
 		var rows = Materialize(q, tRes);
 		_output.WriteLine("PROBE C2 (left outer join) executed SQL:");
-		_output.WriteLine(_db.LastQuery);
+		_output.WriteLine(_db.LastQuery ?? "<null>");
 		_output.WriteLine("PROBE C2 rows: " + string.Join(", ", rows.Select(r => $"{r["OrderId"]}:{r["Name"] ?? "<null>"}")));
 
 		var pairs = rows.Select(r => ((long)r["OrderId"]!, (string?)r["Name"])).ToList();

@@ -33,9 +33,9 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		_mcp = fx.Mcp;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 

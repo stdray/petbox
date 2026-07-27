@@ -28,7 +28,7 @@ public sealed class BoardViewCrossDeviceTests(WebAppFixture app, ITestOutputHelp
 	IBrowserContext? _ctxA;
 	IBrowserContext? _ctxB;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -48,7 +48,7 @@ public sealed class BoardViewCrossDeviceTests(WebAppFixture app, ITestOutputHelp
 		_ctxB = await app.NewContextAsync(authenticated: true);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctxA is not null) { await TraceArtifact.StopAndSaveAsync(_ctxA, output); await _ctxA.CloseAsync(); }
 		if (_ctxB is not null) { await TraceArtifact.StopAndSaveAsync(_ctxB, output); await _ctxB.CloseAsync(); }

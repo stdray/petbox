@@ -115,7 +115,7 @@ public sealed class LlmRegistryResolverRaceHostFixture : IAsyncLifetime
 		});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -126,7 +126,7 @@ public sealed class LlmRegistryResolverRaceHostFixture : IAsyncLifetime
 			await db.InsertAsync(new Project { Key = $"proj-{i}", WorkspaceKey = "$system", Name = $"P{i}", Description = "" });
 	}
 
-	public async Task DisposeAsync() => await Factory.DisposeAsync();
+	public async ValueTask DisposeAsync() => await Factory.DisposeAsync();
 }
 
 public sealed class LlmRegistryResolverRaceHostTests(LlmRegistryResolverRaceHostFixture fx)

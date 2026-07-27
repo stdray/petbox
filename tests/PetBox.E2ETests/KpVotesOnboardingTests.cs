@@ -17,13 +17,13 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	IPage? _page;
 	string? _apiKey;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		_ctx = await app.NewContextAsync(authenticated: true);
 		_page = await _ctx.NewPageAsync();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null)
 		{

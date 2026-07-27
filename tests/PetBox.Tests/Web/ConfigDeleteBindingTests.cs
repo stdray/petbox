@@ -50,7 +50,7 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -67,7 +67,7 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 		});
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();

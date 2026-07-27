@@ -77,7 +77,7 @@ public sealed class WorkspaceSelfProvisioningFixture : IAsyncLifetime
 			Path.Combine(_baseDir, sub), Scope.Project, create, ensure));
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -148,7 +148,7 @@ public sealed class WorkspaceSelfProvisioningFixture : IAsyncLifetime
 		});
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

@@ -27,7 +27,7 @@ public sealed class LogsTracesDefaultLogTests(WebAppFixture app, ITestOutputHelp
 	IBrowserContext? _ctx;
 	IPage? _page;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -74,7 +74,7 @@ public sealed class LogsTracesDefaultLogTests(WebAppFixture app, ITestOutputHelp
 		_page = await _ctx.NewPageAsync();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null)
 		{

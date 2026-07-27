@@ -52,7 +52,7 @@ public sealed class NavHideEmptySectionsFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -77,7 +77,7 @@ public sealed class NavHideEmptySectionsFixture : IAsyncLifetime
 			await dbs.CreateAsync(FullProject, "main", null, null);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

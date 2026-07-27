@@ -24,7 +24,7 @@ public sealed class SelfLogRoutingHostTests : IAsyncLifetime
 	WebApplicationFactory<Program> _factory = null!;
 	HttpClient _client = null!;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		_factory = new WebApplicationFactory<Program>()
@@ -54,7 +54,7 @@ public sealed class SelfLogRoutingHostTests : IAsyncLifetime
 		await Task.CompletedTask;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();

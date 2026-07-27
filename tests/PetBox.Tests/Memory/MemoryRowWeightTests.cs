@@ -9,7 +9,6 @@ using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
 using PetBox.Web.Mcp;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Memory;
 

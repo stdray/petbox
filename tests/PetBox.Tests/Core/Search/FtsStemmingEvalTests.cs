@@ -7,7 +7,6 @@ using PetBox.Core.Search;
 using PetBox.Core.Search.Eval;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.SearchCore;
 

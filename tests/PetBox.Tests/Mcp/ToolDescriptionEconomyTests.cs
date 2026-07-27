@@ -168,7 +168,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 		});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -193,7 +193,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 		Tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await _mcp.DisposeAsync();
 		_http.Dispose();

@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Playwright;
 
 namespace PetBox.E2ETests.Infrastructure;
@@ -15,21 +14,22 @@ public static class TraceArtifact
 			Sources = true,
 		});
 
+	// `output` is kept for source compatibility with the 24 call sites (and because several of
+	// them inject ITestOutputHelper for this call alone); v3 no longer needs it to name the trace.
 	public static async Task StopAndSaveAsync(IBrowserContext ctx, ITestOutputHelper output)
 	{
+		_ = output;
 		Directory.CreateDirectory(ArtifactsDir);
-		var slug = Sanitize(ExtractTestName(output));
+		var slug = Sanitize(ExtractTestName());
 		var path = Path.Combine(ArtifactsDir, slug + ".zip");
 		await ctx.Tracing.StopAsync(new TracingStopOptions { Path = path });
 	}
 
-	static string ExtractTestName(ITestOutputHelper output)
-	{
-		var field = output.GetType().GetField("test", BindingFlags.Instance | BindingFlags.NonPublic);
-		if (field?.GetValue(output) is ITest test)
-			return test.DisplayName;
-		return "unknown-" + Guid.NewGuid().ToString("N")[..8];
-	}
+	// v2 had no public way to learn the running test's name here, so this reached through
+	// reflection into ITestOutputHelper's private `test` field. v3 exposes the ambient test on
+	// TestContext, so the hack is gone — this is the supported API.
+	static string ExtractTestName() =>
+		TestContext.Current.Test?.TestDisplayName ?? "unknown-" + Guid.NewGuid().ToString("N")[..8];
 
 	static string Sanitize(string s)
 	{

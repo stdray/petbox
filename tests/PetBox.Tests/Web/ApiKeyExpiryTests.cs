@@ -48,7 +48,7 @@ public sealed class ApiKeyExpiryFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -65,7 +65,7 @@ public sealed class ApiKeyExpiryFixture : IAsyncLifetime
 		await db.InsertAsync(new ApiKey { Key = ValidKey, ProjectKey = Project, Scopes = "config:read", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1) });
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

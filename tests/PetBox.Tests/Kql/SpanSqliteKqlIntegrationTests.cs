@@ -22,7 +22,7 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		_dbPath = Path.Combine(_tempDir, "test.db");
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={_dbPath};Cache=Shared";
 		LogSchema.Ensure(connStr); // creates LogEntries + Spans (idempotent)
@@ -30,7 +30,7 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		await _logDb.Spans.BulkCopyAsync(Seed);
 	}
 
-	public Task DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
 		_logDb?.Dispose();
 		// Microsoft.Data.Sqlite pools by connection string, so a bare try/catch delete here
@@ -38,7 +38,7 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		// through TestDirs so the pool is cleared first, and a still-locked delete is deferred
 		// to process exit instead of silently leaking the whole directory.
 		TestDirs.CleanupOrDefer(_tempDir);
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	static readonly DateTime Base = new(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc);

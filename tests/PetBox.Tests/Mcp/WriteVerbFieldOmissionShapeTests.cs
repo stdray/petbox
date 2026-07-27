@@ -100,7 +100,7 @@ public sealed class WriteVerbFieldOmissionShapeTests
 	[Fact]
 	public void TheTargetTable_CoversTheKnownWriteVerbs()
 	{
-		var tools = Targets().Select(row => (string)row[0]!).ToList();
+		var tools = Targets().Select(row => row.Data.Item1).ToList();
 		tools.Should().Contain([
 			"tasks_upsert", "comments_upsert", "memory_upsert", "apikey_update", "llm_config_upsert",
 			"deploy_node_upsert", "deploy_upsert",

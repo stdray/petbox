@@ -182,7 +182,7 @@ public sealed class McpErrorEnvelopeTraceFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -222,7 +222,7 @@ public sealed class McpErrorEnvelopeTraceFixture : IAsyncLifetime
 		return (http, await McpClient.CreateAsync(transport, cancellationToken: default));
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Untraced.DisposeAsync();
 		await Traced.DisposeAsync();

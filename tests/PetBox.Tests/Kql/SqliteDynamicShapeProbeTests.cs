@@ -6,7 +6,6 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
 using Microsoft.Data.Sqlite;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Kql;
 
@@ -167,7 +166,7 @@ public sealed class SqliteDynamicShapeProbeTests : IDisposable
 			rows.Add(((string)kProp.GetValue(o)!, Convert.ToInt64(cntProp.GetValue(o))));
 
 		_output.WriteLine("SPIKE A1 (runtime-emitted-type dynamic chain) executed SQL:");
-		_output.WriteLine(_db.LastQuery);
+		_output.WriteLine(_db.LastQuery ?? "<null>");
 		_output.WriteLine("SPIKE A1 rows: " + string.Join(", ", rows.Select(r => $"{r.Item1}={r.Item2}")));
 		rows.Should().BeEquivalentTo(Expected);
 

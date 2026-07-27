@@ -21,13 +21,13 @@ public sealed class ThemeTests(WebAppFixture app, ITestOutputHelper output) : IA
 	IBrowserContext? _ctx;
 	IPage? _page;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		_ctx = await app.NewContextAsync(authenticated: true);
 		_page = await _ctx.NewPageAsync();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null)
 		{

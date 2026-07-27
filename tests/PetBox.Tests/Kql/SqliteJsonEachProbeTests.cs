@@ -2,7 +2,6 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
 using Microsoft.Data.Sqlite;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Kql;
 
@@ -135,7 +134,7 @@ public sealed class SqliteJsonEachProbeTests : IDisposable
 
 		var all = exploded.ToList();
 		_output.WriteLine("SPIKE B Fact 2 — FromSql json_each executed SQL:");
-		_output.WriteLine(_db.LastQuery);
+		_output.WriteLine(_db.LastQuery ?? "<null>");
 		_output.WriteLine($"SPIKE B Fact 2 — {all.Count} exploded rows:");
 		foreach (var r in all.OrderBy(r => r.Id).ThenBy(r => r.Value))
 			_output.WriteLine($"  {r.Id} -> {r.Value}");
@@ -146,7 +145,7 @@ public sealed class SqliteJsonEachProbeTests : IDisposable
 		// still ONE query — the shape a post-mv-expand pipeline stage needs.
 		var composed = exploded.Where(x => x.Value != "a").OrderBy(x => x.Id).ThenBy(x => x.Value).ToList();
 		_output.WriteLine("SPIKE B Fact 2 — composed (where Value != 'a' | order by) SQL:");
-		_output.WriteLine(_db.LastQuery);
+		_output.WriteLine(_db.LastQuery ?? "<null>");
 		composed.Select(r => (r.Id, r.Value)).Should().BeEquivalentTo(new[]
 		{
 			(1L, "b"), (3L, "b"), (3L, "c"), (4L, "c"), (5L, "c"),

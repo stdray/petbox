@@ -60,7 +60,7 @@ public sealed class LogPipelineFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(Factory.Services).GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
@@ -78,7 +78,7 @@ public sealed class LogPipelineFixture : IAsyncLifetime
 			await store.CreateAsync("$system", "default", null);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

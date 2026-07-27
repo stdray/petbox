@@ -68,7 +68,7 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 		});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -132,7 +132,7 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 		return mcp;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		foreach (var mcp in _mcps) await mcp.DisposeAsync();
 		foreach (var http in _clients) http.Dispose();

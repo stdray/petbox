@@ -47,7 +47,7 @@ public sealed class DeployApiFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -82,7 +82,7 @@ public sealed class DeployApiFixture : IAsyncLifetime
 		await svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", Node, "img1", DesiredState.Running, false, "net.x", "env:prod"));
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

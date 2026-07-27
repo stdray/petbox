@@ -34,16 +34,16 @@ public sealed class OpenApiEndpointTests : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,
 		});
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();

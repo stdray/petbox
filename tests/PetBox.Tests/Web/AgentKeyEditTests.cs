@@ -54,7 +54,7 @@ public sealed class AgentKeyEditFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -122,7 +122,7 @@ public sealed class AgentKeyEditFixture : IAsyncLifetime
 	public void StampInMemory(string key) =>
 		Factory.Services.GetRequiredService<IKeyStatService>().Stamp(key);
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

@@ -30,7 +30,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		Directory.CreateDirectory(_tempDir);
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={Path.Combine(_tempDir, "test.db")};Cache=Shared";
 		LogSchema.Ensure(connStr); // LogEntries + Spans
@@ -40,7 +40,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		_service = new LogQueryService(new FakeStore(_logDb));
 	}
 
-	public Task DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
 		_logDb?.Dispose();
 		// Microsoft.Data.Sqlite pools by connection string, so a bare try/catch delete here
@@ -48,7 +48,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		// through TestDirs so the pool is cleared first, and a still-locked delete is deferred
 		// to process exit instead of silently leaking the whole directory.
 		TestDirs.CleanupOrDefer(_tempDir);
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	static readonly DateTime Ts = new(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc);

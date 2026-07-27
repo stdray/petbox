@@ -46,14 +46,14 @@ public sealed class LoginAuthFixture : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 		// HandleCookies=false → stateless requests; we pass the antiforgery cookie manually and
 		// never leak an auth cookie between logins (each GET /Login re-issues the antiforgery cookie).
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	// Per-test reset under the shared host: drop every user (membership rows first — they
@@ -73,7 +73,7 @@ public sealed class LoginAuthFixture : IAsyncLifetime
 		AdminBootstrapper.EnsureAdminUser(db, scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>());
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();
@@ -98,9 +98,9 @@ public sealed class LoginAuthTests : IClassFixture<LoginAuthFixture>, IAsyncLife
 		_client = fx.Client;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	async Task<HttpResponseMessage> LoginAsync(string username, string password)
 	{

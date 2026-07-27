@@ -18,7 +18,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 
 	string _storageStatePath = "";
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		FrontendBuildPreflight.EnsureBuilt();
 
@@ -78,7 +78,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 		return ctx;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_browser is not null)
 			await _browser.CloseAsync();

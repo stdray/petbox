@@ -39,7 +39,7 @@ public sealed class BoardFiltersServerStateTests(WebAppFixture app, ITestOutputH
 	string _adminUserIdString = "";
 	long _adminUserId;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -81,7 +81,7 @@ public sealed class BoardFiltersServerStateTests(WebAppFixture app, ITestOutputH
 		_ctx = await app.NewContextAsync(authenticated: true);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null) { await TraceArtifact.StopAndSaveAsync(_ctx, output); await _ctx.CloseAsync(); }
 

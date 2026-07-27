@@ -12,7 +12,6 @@ using PetBox.Core.Models;
 using PetBox.Memory.Contract;
 using PetBox.Web;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Architecture;
 
@@ -139,7 +138,7 @@ public sealed class SandboxContainmentHost : IAsyncLifetime
 	public string KeyNoDefault { get; } = $"yb_key_{Guid.NewGuid():N}";
 	public string KeyPlainWildcard { get; } = $"yb_key_{Guid.NewGuid():N}";
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -478,7 +477,7 @@ public sealed class SandboxContainmentHost : IAsyncLifetime
 		return s.Length <= 200 ? s : s[..197] + "...";
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);

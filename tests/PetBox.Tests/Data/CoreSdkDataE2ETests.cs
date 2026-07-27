@@ -53,7 +53,7 @@ public sealed class CoreSdkDataE2EFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -81,7 +81,7 @@ public sealed class CoreSdkDataE2EFixture : IAsyncLifetime
 		});
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Sdk.Dispose();
 		await Factory.DisposeAsync();

@@ -59,7 +59,7 @@ public sealed class QueryExecApiFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
@@ -101,7 +101,7 @@ public sealed class QueryExecApiFixture : IAsyncLifetime
 		resp.EnsureSuccessStatusCode();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();
@@ -123,9 +123,9 @@ public sealed class QueryExecApiTests : IClassFixture<QueryExecApiFixture>, IAsy
 		_client = fx.Client;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task Exec_Insert_Then_Query_Roundtrip()

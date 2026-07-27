@@ -2,7 +2,6 @@ using DuckDB.NET.Data;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
-using Xunit.Abstractions;
 
 namespace PetBox.Tests.Kql;
 

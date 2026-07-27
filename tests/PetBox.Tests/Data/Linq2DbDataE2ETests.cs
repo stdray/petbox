@@ -65,7 +65,7 @@ public sealed class Linq2DbDataE2ETests : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -96,7 +96,7 @@ public sealed class Linq2DbDataE2ETests : IAsyncLifetime
 			[new PetBoxSqlParam("@id", 2), new PetBoxSqlParam("@film", "Gigli"), new PetBoxSqlParam("@score", 2.4)]);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		_sdk.Dispose();
 		await _factory.DisposeAsync();

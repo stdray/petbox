@@ -85,7 +85,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -149,7 +149,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 		return (http, mcp);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Agent.DisposeAsync();
 		await Approver.DisposeAsync();
@@ -196,9 +196,14 @@ public abstract class TasksMethodologySmokeBase : IAsyncLifetime
 		_approver = fx.Approver;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	// v3's IAsyncLifetime extends IAsyncDisposable, so CA1816 now applies to this unsealed type.
+	public ValueTask DisposeAsync()
+	{
+		GC.SuppressFinalize(this);
+		return ValueTask.CompletedTask; // the fixture owns host teardown
+	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 	static async Task<CallToolResult> Call(McpClient mcp, string tool, object args) =>

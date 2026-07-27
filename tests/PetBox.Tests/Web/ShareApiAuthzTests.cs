@@ -49,7 +49,7 @@ public sealed class ShareApiAuthzFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -62,7 +62,7 @@ public sealed class ShareApiAuthzFixture : IAsyncLifetime
 		await db.InsertAsync(new ApiKey { Key = KeyA, ProjectKey = ProjA, Scopes = "logs:query", CreatedAt = DateTime.UtcNow });
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

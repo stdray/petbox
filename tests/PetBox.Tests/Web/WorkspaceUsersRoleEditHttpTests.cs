@@ -41,7 +41,7 @@ public sealed class WorkspaceUsersRoleEditFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -62,7 +62,7 @@ public sealed class WorkspaceUsersRoleEditFixture : IAsyncLifetime
 		await db.SeedMemberAsync(viewerId, "wsr", WorkspaceRole.Viewer);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();

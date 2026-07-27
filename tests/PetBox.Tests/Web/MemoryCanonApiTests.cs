@@ -70,7 +70,7 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs); // runs migrations: seeds $system + $workspace projects
@@ -119,7 +119,7 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 				throw new InvalidOperationException($"per-test reset could not delete {file} (still locked)");
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();
@@ -150,9 +150,9 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 		_client = fx.Client;
 	}
 
-	public Task InitializeAsync() => _fx.ResetAsync();
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
 
-	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	// Seed a canon entry of a scope through the service door (auto-vivifies the store).
 	// The workspace canon lives in the project's workspace container under key `index` —

@@ -43,7 +43,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
@@ -51,10 +51,10 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 		TestSchema.Core(__testCs);
 		// Force singletons to materialize.
 		_ = _factory.Services.GetRequiredService<IDataDbFactory>();
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await _factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);

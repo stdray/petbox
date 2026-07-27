@@ -28,7 +28,7 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 
 	HttpClient _http = null!;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		_http = new HttpClient { BaseAddress = new Uri(app.BaseUrl) };
 
@@ -56,10 +56,10 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		});
 	}
 
-	public Task DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
 		_http.Dispose();
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	// Replays exactly what the hook sends: application/x-ndjson body + X-Api-Key.

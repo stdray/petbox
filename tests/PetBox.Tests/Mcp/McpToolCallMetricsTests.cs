@@ -81,7 +81,7 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -125,7 +125,7 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 		MemoryMcp = await McpClient.CreateAsync(memoryTransport, cancellationToken: default);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await MemoryMcp.DisposeAsync();
 		await Mcp.DisposeAsync();

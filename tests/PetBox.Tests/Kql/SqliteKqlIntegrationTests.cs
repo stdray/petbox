@@ -21,7 +21,7 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		_dbPath = Path.Combine(_tempDir, "test.db");
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		_logDb = new LogDb(LogDb.CreateOptions($"Data Source={_dbPath};Cache=Shared"));
 
@@ -49,7 +49,7 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		await _logDb.LogEntries.BulkCopyAsync(Seed.Select(ToRecord));
 	}
 
-	public Task DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
 		_logDb?.Dispose();
 		// Microsoft.Data.Sqlite pools by connection string, so a bare try/catch delete here
@@ -57,7 +57,7 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		// through TestDirs so the pool is cleared first, and a still-locked delete is deferred
 		// to process exit instead of silently leaking the whole directory.
 		TestDirs.CleanupOrDefer(_tempDir);
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	static readonly IReadOnlyList<LogEntryCandidate> Seed =

@@ -19,13 +19,13 @@ public sealed class LogsLiveTailDetailsTests(WebAppFixture app, ITestOutputHelpe
 
 	const string Project = "livetaildetails";
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		_ctx = await app.NewContextAsync(authenticated: true);
 		_page = await _ctx.NewPageAsync();
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null)
 		{

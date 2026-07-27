@@ -23,20 +23,20 @@ public sealed class MetricPointsSchemaTests : IAsyncLifetime
 		_dbPath = Path.Combine(_tempDir, "test.db");
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={_dbPath};Cache=Shared";
 		LogSchema.Ensure(connStr); // creates LogEntries + Spans + MetricPoints (idempotent)
 		_logDb = new LogDb(LogDb.CreateOptions(connStr));
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
-	public Task DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
 		_logDb?.Dispose();
 		try { Directory.Delete(_tempDir, recursive: true); }
 		catch { /* best effort */ }
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
 	[Fact]

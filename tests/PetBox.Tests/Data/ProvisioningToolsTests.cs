@@ -65,7 +65,7 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -90,7 +90,7 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Mcp.DisposeAsync();
 		_http.Dispose();

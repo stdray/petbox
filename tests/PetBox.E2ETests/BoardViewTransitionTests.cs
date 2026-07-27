@@ -38,7 +38,7 @@ public sealed class BoardViewTransitionTests(WebAppFixture app, ITestOutputHelpe
 
 	IBrowserContext? _ctx;
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -57,7 +57,7 @@ public sealed class BoardViewTransitionTests(WebAppFixture app, ITestOutputHelpe
 		_ctx = await app.NewContextAsync(authenticated: true);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_ctx is not null) { await TraceArtifact.StopAndSaveAsync(_ctx, output); await _ctx.CloseAsync(); }
 	}

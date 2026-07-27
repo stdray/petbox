@@ -36,7 +36,7 @@ public sealed class StaticAssetCompressionCacheTests : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		// HttpClientHandler.AutomaticDecompression defaults to None, so a Content-Encoding the
 		// server sent survives on the response for the assertions below to see — an
@@ -45,10 +45,10 @@ public sealed class StaticAssetCompressionCacheTests : IAsyncLifetime
 		{
 			AllowAutoRedirect = false,
 		});
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();

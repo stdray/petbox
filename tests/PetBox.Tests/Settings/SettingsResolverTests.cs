@@ -42,14 +42,14 @@ public sealed class SettingsResolverFixture : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		return Task.CompletedTask;
+		return ValueTask.CompletedTask;
 	}
 
-	public async Task DisposeAsync() => await Factory.DisposeAsync();
+	public async ValueTask DisposeAsync() => await Factory.DisposeAsync();
 }
 
 public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixture>
@@ -69,6 +69,22 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 		public int RetentionDays { get; init; } = 20;
 
 		[Setting(TopLevel = Scope.System, Key = "test.log.retention.size")]
+		public long RetentionSize { get; init; } = 40_000_000;
+	}
+
+	// Keys owned exclusively by Get_NoRows_ReturnsRecordDefaults. The whole class shares ONE
+	// database (IClassFixture), and a Scope.System row (ScopeKey "$") is GLOBAL — it resolves into
+	// every project — so Get_Cascade_SystemWhenWorkspaceAndProjectMissing writing
+	// test.log.retention.size=999 is visible to any test reading TestLogSettings. Under xunit v2
+	// the no-rows test happened to run before that writer; v3 orders test cases within a class
+	// differently, which turned the latent dependency into a failure. Separate keys make the test
+	// order-independent instead of merely lucky.
+	public sealed record TestDefaultsOnlySettings
+	{
+		[Setting(TopLevel = Scope.Workspace, Key = "test.defaults.retention.days")]
+		public int RetentionDays { get; init; } = 20;
+
+		[Setting(TopLevel = Scope.System, Key = "test.defaults.retention.size")]
 		public long RetentionSize { get; init; } = 40_000_000;
 	}
 
@@ -108,7 +124,7 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 	{
 		var (resolver, _) = await GetResolverAsync(projectKey: "proj-default", workspaceKey: "ws-default");
 
-		var result = await resolver.GetAsync<TestLogSettings>(Scope.Project, "proj-default");
+		var result = await resolver.GetAsync<TestDefaultsOnlySettings>(Scope.Project, "proj-default");
 
 		result.RetentionDays.Should().Be(20);
 		result.RetentionSize.Should().Be(40_000_000);

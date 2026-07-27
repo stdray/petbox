@@ -55,7 +55,7 @@ public sealed class McpDataToolsFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
@@ -93,7 +93,7 @@ public sealed class McpDataToolsFixture : IAsyncLifetime
 		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		await Mcp.DisposeAsync();
 		_http.Dispose();

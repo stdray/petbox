@@ -50,7 +50,7 @@ public sealed class RetentionServiceTests : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -61,7 +61,7 @@ public sealed class RetentionServiceTests : IAsyncLifetime
 		await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "ws-retention", Name = "Retention" });
 	}
 
-	public async Task DisposeAsync() => await _factory.DisposeAsync();
+	public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
 
 	static LogEntryRecord Entry(DateTime ts) => new()
 	{

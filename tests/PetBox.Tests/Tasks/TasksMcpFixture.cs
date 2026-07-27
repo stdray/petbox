@@ -76,7 +76,7 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -127,8 +127,10 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 		TestDirs.ResetDbFile(path);
 	}
 
-	public async Task DisposeAsync()
+	// v3's IAsyncLifetime extends IAsyncDisposable, so CA1816 now applies to this unsealed type.
+	public async ValueTask DisposeAsync()
 	{
+		GC.SuppressFinalize(this);
 		await Mcp.DisposeAsync();
 		_http.Dispose();
 		await Factory.DisposeAsync();

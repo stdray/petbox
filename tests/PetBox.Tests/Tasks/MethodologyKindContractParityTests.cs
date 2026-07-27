@@ -67,7 +67,7 @@ public sealed class MethodologyKindContractParityTests
 	[Fact]
 	public void ThePairTable_CoversTheKnownWireShapes()
 	{
-		var pairs = Pairs().Select(row => ((Type)row[0]!).Name).ToList();
+		var pairs = Pairs().Select(row => row.Data.Item1.Name).ToList();
 		pairs.Should().Contain([
 			nameof(MethodologyKindDef), nameof(MethodologyDeliveryDef),
 			nameof(MethodologyLinkConstraintDef), nameof(MethodologyTransitionEffectDef),
@@ -165,7 +165,7 @@ public sealed class MethodologyKindContractParityTests
 	[Fact]
 	public void TheViewPairTable_CoversTheKnownWireShapes()
 	{
-		var pairs = ViewPairs().Select(row => ((Type)row[0]!).Name).ToList();
+		var pairs = ViewPairs().Select(row => row.Data.Item1.Name).ToList();
 		pairs.Should().Contain([
 			nameof(MethodologyKindDef), nameof(MethodologyDeliveryDef),
 			nameof(MethodologyLinkConstraintDef), nameof(MethodologyTransitionEffectDef),

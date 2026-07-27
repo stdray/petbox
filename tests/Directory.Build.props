@@ -1,0 +1,20 @@
+<Project>
+
+	<Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+	<PropertyGroup>
+		<!-- xUnit1051 ships with the xunit.v3 analyzers and fires on every call that accepts a
+		     CancellationToken but is not handed TestContext.Current.CancellationToken. The repo sets
+		     TreatWarningsAsErrors, so on the v2 -> v3 swap it turned ~250 existing call sites into
+		     build errors at once.
+
+		     Suppressed deliberately, and only here (test projects), because adopting the token is a
+		     BEHAVIOUR change, not a style fix: tests would begin observing cancellation and tearing
+		     down mid-await on timeout, which is exactly the kind of thing that rewrites the flake
+		     profile of a 3700-test suite. Folding that into the framework migration would make any
+		     resulting failure unattributable. Tracked as follow-up work; the rule is worth adopting
+		     on its own, with its own verification. -->
+		<NoWarn>$(NoWarn);xUnit1051</NoWarn>
+	</PropertyGroup>
+
+</Project>

@@ -49,7 +49,7 @@ public sealed class ConfV1Fixture : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public async ValueTask InitializeAsync()
 	{
 		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
@@ -76,7 +76,7 @@ public sealed class ConfV1Fixture : IAsyncLifetime
 		await configDb.InsertAsync(new ConfigBinding { Path = "feature-x", Value = "true", Tags = $"ws:{Ws}", CreatedAt = now, UpdatedAt = now });
 	}
 
-	public async Task DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		Client.Dispose();
 		await Factory.DisposeAsync();
