@@ -197,26 +197,52 @@ public sealed class McpModuleToolsTests : IDisposable
 		list.Items[0].Hits.Should().BeNull(); // no query — no episodic arm
 	}
 
-	// spec bounded-result-sets: session_get reads the blob incrementally — `length` is always
-	// reported; `tail` returns the last N chars; `offset`+`limit` a window.
+	// spec bodylen-uniform-contract (card bodylen-contract-has-two-holes, hole 2): session_get
+	// used to read the blob incrementally via tail/offset/limit — a private vocabulary outside
+	// the family-wide bodyLen knob. Those three are GONE; session_get now follows the same
+	// pointed-read contract as memory_get/tasks_node_get: omitted = FULL, 0 = no body, N>0 =
+	// the first N chars, -1 = full. `length` (total chars) is always reported regardless.
 	[Fact]
-	public async Task Session_Get_ReadsIncrementally()
+	public async Task Session_Get_BodyLen_OmittedIsFull()
 	{
 		var http = Http("tasks:read,tasks:write");
 		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
 
-		// default: full blob + total length.
 		var full = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2"))!;
 		full.Content.Should().Be("0123456789");
 		full.Length.Should().Be(10);
+	}
 
-		// tail: last N chars.
-		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", tail: 4))!
-			.Content.Should().Be("6789");
+	[Fact]
+	public async Task Session_Get_BodyLen_ZeroIsNoBody()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
 
-		// offset + limit: a window, clamped.
-		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", offset: 3, limit: 4))!
-			.Content.Should().Be("3456");
+		var none = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", bodyLen: 0))!;
+		none.Content.Should().BeEmpty();
+		none.Length.Should().Be(10); // length always reports the FULL blob, unaffected by bodyLen
+	}
+
+	[Fact]
+	public async Task Session_Get_BodyLen_NCutsWithEllipsis()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
+
+		var cut = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", bodyLen: 4))!;
+		cut.Content.Should().Be("0123…");
+		cut.Length.Should().Be(10);
+	}
+
+	[Fact]
+	public async Task Session_Get_BodyLen_MinusOneIsFull()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
+
+		var full = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", bodyLen: -1))!;
+		full.Content.Should().Be("0123456789");
 	}
 
 	// A missing id is a not-found ERROR, never a null result: session_get declares an

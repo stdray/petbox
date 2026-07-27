@@ -73,7 +73,7 @@ public sealed class SessionSearchService
 	}
 
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
-		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, CancellationToken ct = default)
+		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, int? bodyLen = null, CancellationToken ct = default)
 	{
 		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
@@ -181,7 +181,7 @@ public sealed class SessionSearchService
 			var (sessionId, agent) = Provenance(digest.Entry);
 			if (agent.Length == 0 && headers is not null && headers.TryGetValue(sessionId, out var hdr))
 				agent = hdr.Agent; // term/fullscan-only candidate — the digest metadata never carried an agent
-			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, ct);
+			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, bodyLen, ct);
 			if (inner is null) continue; // session deleted after distillation — stale digest
 			var sources = sourcesBySession.GetValueOrDefault(sessionId, (IReadOnlyList<string>)["digest"]);
 			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Entry.Description, inner.Hits, inner.Retrievers, sources));
