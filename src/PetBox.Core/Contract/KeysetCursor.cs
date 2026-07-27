@@ -107,6 +107,51 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board);
 	}
 
+	// STRUCTURAL decode WITHOUT the fingerprint check, plus the check as a separate step. For consumers
+	// whose expected fingerprint is not knowable until the read has already run — session_search stamps
+	// its token with the DISCOVERY ORDER itself, which only exists after discovery — so Decode's
+	// all-at-once contract cannot be satisfied before the position is needed.
+	//
+	// This does NOT weaken the guarantee, and it must not be used as if it did: the token's POSITION is
+	// read here, but it is still worthless until AssertFingerprint has run, and the consumer must call it
+	// before returning ANY row. The split moves the check later in the call, never out of it. Every other
+	// refusal (empty, not base64, wrong format version, no fingerprint) still fires here, up front.
+	public static KeysetCursor Peek(string? cursor, string subject)
+	{
+		if (string.IsNullOrWhiteSpace(cursor))
+			throw new ArgumentException($"{subject}: cursor is empty — omit it to start from the first page");
+
+		Payload? p;
+		try
+		{
+			p = JsonSerializer.Deserialize<Payload>(Convert.FromBase64String(cursor), TokenJson);
+		}
+		catch (Exception e) when (e is FormatException or JsonException)
+		{
+			throw new ArgumentException(
+				$"{subject}: cursor is not a pagination token issued by this tool — a cursor is OPAQUE, "
+				+ "pass back the `nextCursor` from the previous page verbatim, or omit it to start over");
+		}
+
+		if (p is null || p.Version != FormatVersion || p.Fingerprint.Length == 0)
+			throw new ArgumentException(
+				$"{subject}: cursor is malformed or from an older token format — omit it to start over");
+
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board);
+	}
+
+	// The other half of Peek: the SAME refusal Decode makes, as its own step. Word-for-word identical
+	// message, because it is word-for-word the same failure — a caller must not be able to tell which
+	// verb validated their token.
+	public void AssertFingerprint(string expectedFingerprint, string subject)
+	{
+		if (!string.Equals(Fingerprint, expectedFingerprint, StringComparison.Ordinal))
+			throw new ArgumentException(
+				$"{subject}: this cursor was issued for a DIFFERENT query — the sort axis or a filter "
+				+ "changed since the page it came from, so continuing would splice two orderings. Keep "
+				+ "the query identical while paging, or drop the cursor to start the new query over.");
+	}
+
 	// The query identity a token is bound to: an order-sensitive hash of the caller-supplied
 	// parts that decide selection + ordering. Null and "" stay distinguishable (an absent filter
 	// is not an empty one — null becomes RS) and the parts join on US: two control characters no

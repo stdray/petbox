@@ -638,12 +638,24 @@ public static class MemoryTools
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var cap = limit ?? DefaultLimit;
+		var hasCursor = !string.IsNullOrWhiteSpace(cursor);
+		// The stamps of EVERY container the cascade actually read, in cascade order. All of them, not
+		// just the near leg: a workspace-container write must refuse an in-flight cursor exactly like a
+		// project-container one, because the merged pool below is spliced from both and either can
+		// reorder it. Collected as the legs run and folded into the fingerprint afterwards.
+		var containerStamps = new List<string>();
+		// Pool facts merged across the cascade: the depth is the same declared budget in every leg, and
+		// the walk is bounded if ANY leg was bounded — a truncated pool anywhere means the merged order
+		// is a prefix of the merged match set.
+		int? poolLimit = null;
+		var poolBounded = false;
 		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
 		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
@@ -680,7 +692,15 @@ public static class MemoryTools
 				// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting
 				// on the answer, where a ranking mistake costs more than latency — Precision.
 				RankingMode = SearchRankingMode.Precision,
+				// Query mode asks each leg for its WHOLE ranked pool and pages the MERGED order here —
+				// the same division of labour tasks_search uses. `Limit` above keeps sizing the candidate
+				// depth, which is a selection decision that must not shift with the page size.
+				WholePool = hasQuery,
 			}, ct);
+			// Stamp + pool facts of THIS leg, folded into the cascade-wide answer.
+			containerStamps.Add(scopeName + "=" + (res.DataVersion ?? ""));
+			if (res.PoolLimit is { } pl) poolLimit = poolLimit is { } cur ? Math.Min(cur, pl) : pl;
+			poolBounded |= res.PoolBounded;
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
 					// The reason survives the OR-merge across scopes: the first scope that degraded
@@ -745,7 +765,28 @@ public static class MemoryTools
 				? scored.OrderByDescending(s => Math.Round(s.Score, 6)).ThenBy(s => s.ScopeRank)
 				: scored;
 		var ordered = orderedScored.ToList();
-		if (cap > 0 && ordered.Count > cap) ordered = ordered.Take(cap).ToList();
+
+		// KEYSET SEEK over the MERGED cascade order (spec: result-set-pageable), before the page cut and
+		// before the budget — a skipped prefix must not spend budget it already spent last call.
+		//
+		// The resume key is the row's full ADDRESS: (scope, store, key). Store alone is not unique across
+		// scopes and key alone is not unique across stores, so anything less would let a token land on the
+		// wrong row; with all three the position is exact, which is what lets the relevance order stay
+		// pageable despite repeated scores (a score tie cannot make an identity ambiguous).
+		var fingerprint = SearchFingerprint(hasQuery ? q!.Trim() : null, scope, projectKey, store, type,
+			sort, containerStamps);
+		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> seeking = ordered;
+		if (hasCursor)
+			seeking = KeysetCursor.Advance(
+				ordered,
+				KeysetCursor.Decode(cursor, fingerprint, "memory_search"),
+				s => (CursorSortValue(s.Score, hasQuery), s.Row.Store + "\x1f" + s.Row.Key, s.Row.Scope),
+				CursorSortComparison(hasQuery), desc: false, "memory_search");
+
+		var page = seeking.ToList();
+		if (cap > 0 && page.Count > cap) page = page.Take(cap).ToList();
+		var moreInPool = page.Count < seeking.Count;
+		ordered = page;
 		var rows = ordered.Select(s => s.Row).ToList();
 
 		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
@@ -774,14 +815,82 @@ public static class MemoryTools
 			sessionId: McpSessionId(http),
 			usageSource: deliberate ? DeliberateSource : MachineSource);
 
+		// A resume token only when rows were actually withheld (by `limit` or by the budget) AND this page
+		// has a last row to resume from.
+		var more = moreInPool || omitted > 0;
+		var last = kept.Count > 0 ? ordered[kept.Count - 1] : default;
+		var nextCursor = kept.Count > 0 && more
+			? new KeysetCursor(fingerprint, CursorSortValue(last.Score, hasQuery),
+				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope).Encode()
+			: null;
+		// WHY THE WALK STOPPED — stated, not implied, and the SAME three words tasks_search uses. In query
+		// mode this is always present, so a caller never has to read "nextCursor is absent" and guess
+		// whether it reached the end of the matches or the end of what ranking ever looked at.
+		var stop = !hasQuery ? (SearchPoolStop?)null
+			: more ? SearchPoolStop.More
+			: poolBounded ? SearchPoolStop.PoolBoundary
+			: SearchPoolStop.Exhausted;
+
 		return new MemorySearchResultView(
 			kept,
 			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason,
 				fin.SemanticLag, fin.Ranking) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
-			Hint: omitted > 0 ? SearchBudgetHint : null);
+			Hint: omitted > 0 ? SearchBudgetHint : null,
+			NextCursor: nextCursor,
+			Stop: stop is null ? null : StopWire(stop.Value),
+			PoolLimit: hasQuery ? poolLimit : null,
+			PoolBoundaryHint: stop == SearchPoolStop.PoolBoundary ? PoolBoundaryHintText : null);
 	}
+
+	// The wire form of the stop reason — the SAME lowercase kebab vocabulary tasks_search and
+	// session_search emit. Three surfaces answering in three shapes is exactly what this work exists to
+	// prevent, so the mapping is duplicated deliberately rather than each adapter inventing its own.
+	internal static string StopWire(SearchPoolStop stop) => stop switch
+	{
+		SearchPoolStop.More => "more",
+		SearchPoolStop.Exhausted => "exhausted",
+		SearchPoolStop.PoolBoundary => "pool-boundary",
+		_ => "exhausted",
+	};
+
+	// Surfaced ONLY on stop:"pool-boundary" — the case a caller must not read as "that was everything".
+	const string PoolBoundaryHintText =
+		"Ranking depth reached (see poolLimit): more entries matched your filters than relevance ranking "
+		+ "looked at, so this is a PREFIX of the match set, NOT the whole of it — and there is no further "
+		+ "page to fetch, because the rest was never ranked. To reach it, NARROW the read (`store`, "
+		+ "`type`, `scope`, a more specific `q`), list without `q`, or use memory_delta to enumerate a "
+		+ "whole store incrementally.";
+
+	// The canonical sort-key value a cursor carries. In query mode it is the fused+decayed score; in a
+	// listing the merged order is the cascade's own (project-first, then the service's updated-desc), for
+	// which no scalar exists — the empty string is an honest placeholder, since resumption is by IDENTITY.
+	static string CursorSortValue(double score, bool hasQuery) =>
+		hasQuery ? score.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : "";
+
+	// How two of those values compare. Resumption is by IDENTITY first (KeysetCursor.Advance), and this
+	// delegate is reached only when the row a token names is GONE from the pool. With the container
+	// stamps pinned into the fingerprint that cannot happen inside a valid walk, and neither order here
+	// is a sound scalar one anyway — the query order is decay-blended and MMR-diversified, the listing
+	// order is a cascade concatenation. So refuse explicitly instead of guessing a boundary.
+	static Comparison<string> CursorSortComparison(bool hasQuery) => (_, _) => throw new ArgumentException(
+		hasQuery
+			? "memory_search: the row this cursor names is no longer in the ranked pool, and a relevance "
+			+ "position cannot be re-derived from its score (the order is freshness-decayed and "
+			+ "MMR-diversified). Drop the cursor and start the query over."
+			: "memory_search: the row this cursor names is no longer in the listing. Drop the cursor and "
+			+ "start over.");
+
+	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected and in
+	// WHAT order, plus the change stamp of EVERY container the cascade read. Deliberately EXCLUDES
+	// bodyLen/includeUsage/limit — those shape a page, not the sequence.
+	static string SearchFingerprint(string? query, string? scope, string? projectKey, string? store,
+		string? type, SortInput? sort, IReadOnlyList<string> containerStamps) =>
+		KeysetCursor.FingerprintOf(
+			"memory_search", query, scope, projectKey, store, type,
+			sort?.By, sort?.Desc == true ? "1" : "0",
+			string.Join('|', containerStamps));
 
 	// Merge the vector-lag counts of two scopes: null only when NEITHER ran a semantic leg (there
 	// is no coverage to be behind on); otherwise the sum, treating a scope that answered lexically-

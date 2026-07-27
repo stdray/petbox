@@ -385,12 +385,22 @@ public sealed record MemorySearchHitView(
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
 // response-budget markers Truncated/Omitted/Hint (null = complete).
+// PAGINATION (spec: result-set-pageable): `NextCursor` is the opaque keyset resume token, present only
+// when rows were withheld. With `q`, `Stop` is ALWAYS present and answers WHY the walk stopped in the
+// SAME vocabulary tasks_search and session_search use — "more" | "exhausted" | "pool-boundary" — because
+// three read surfaces answering in three shapes is the thing this work exists to prevent. Do not infer
+// the end from a missing cursor: "exhausted" and "pool-boundary" both omit it and mean different things
+// ("nothing else matched" vs "ranking looked only PoolLimit deep and more matched behind it").
 public sealed record MemorySearchResultView(
 	IReadOnlyList<MemorySearchHitView> Items,
 	RetrieverInfo? Retrievers = null,
 	bool? Truncated = null,
 	int? Omitted = null,
-	string? Hint = null);
+	string? Hint = null,
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // ---- relations.* ---------------------------------------------------------------------
 
@@ -502,7 +512,17 @@ public sealed record SessionSearchResultView(
 	bool? FullScanRequested = null,
 	bool? FullScanRan = null,
 	string? FullScanReason = null,
-	bool? FullScanCapped = null);
+	bool? FullScanCapped = null,
+	// PAGINATION (spec: result-set-pageable), query mode only — the SAME shape tasks_search and
+	// memory_search return, because three read surfaces answering in three shapes is what this work
+	// exists to prevent. `Stop` is "more" | "exhausted" | "pool-boundary"; do not infer the end from a
+	// missing NextCursor, since the last two both omit it and mean different things. `PoolLimit` is the
+	// discovery depth the walk may reach. Nothing here names a RANKING MODE: session discovery has no
+	// cross-encoder pass, and this contract must not offer a choice it cannot honour.
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 

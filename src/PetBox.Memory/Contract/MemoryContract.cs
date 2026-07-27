@@ -97,4 +97,14 @@ public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double 
 
 // The rich per-family result of the unified read: the selected hits plus retriever
 // provenance (null in listing mode, where no retriever runs).
-public sealed record MemoryEntrySearchResult(IReadOnlyList<MemoryEntryHit> Hits, PetBox.Core.Search.SearchRetrievers? Retrievers);
+public sealed record MemoryEntrySearchResult(
+	IReadOnlyList<MemoryEntryHit> Hits,
+	PetBox.Core.Search.SearchRetrievers? Retrievers,
+	// Pool facts of a RELEVANCE selection (spec: result-set-pageable). PoolLimit is how deep ranking was
+	// allowed to look; PoolBounded says the candidate union actually REACHED that depth, so the rows are
+	// a PREFIX of the match set and not the whole of it. Both null/false in listing mode.
+	int? PoolLimit = null,
+	bool PoolBounded = false,
+	// The change stamp of every store this query could see. Opaque except as a cursor fingerprint
+	// ingredient — it is what makes a mid-walk write an error rather than a silent restart.
+	string? DataVersion = null);
