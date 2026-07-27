@@ -150,58 +150,81 @@ static class ModuleMcp
 		return body.Length <= len ? body : string.Concat(body.AsSpan(0, len), "…");
 	}
 
-	// ── write-call size guidance (card mcp-write-degrades-silently-fix; number dropped from the
-	// public text by work drop-size-number-from-tool-descriptions) ───────────────────────────
+	// ── write-call escape-inflation guidance (card mcp-write-degrades-silently-fix; number dropped
+	// from the public text by work drop-size-number-from-tool-descriptions; the ABSOLUTE
+	// Content-Length trigger itself retired by work escape-inflation-warning) ─────────────────
 	// The truncation this warns about happens on the CALLING CLIENT (a tool-call JSON that
 	// \uXXXX-escapes Cyrillic, or is simply large, gets cut before this server ever parses it —
-	// PetBox does not enforce or even see that failure). This server therefore cannot name an
-	// exact enforced limit; live incidents (card evidence, 2026-07-17/26) succeeded around
-	// 10,000 bytes and failed with a client-side InputValidationError ("truncated output") from
-	// ~12,000 bytes up through 28,766 bytes. Fresh measurements (2026-07-27, self-log
-	// PetBox.Mcp.ToolCalls, ReqBytes = Request.ContentLength) pushed the observed-safe range
-	// higher still — 9,684 B ok, 9,430 B ok, 8,540 B ok (with warning), and a subagent call
-	// succeeded past 16 KB — once Claude Code's Cyrillic inflation was measured directly at
-	// 1.92-1.96x (raw UTF-8, 2 bytes/char), not the ~6x a \uXXXX-escaped payload would cost.
-	// The number was never invented, but publishing it verbatim in SizeGuidanceText — which
-	// rides along with EVERY write tool's description, in the agent's context on every call —
-	// reads as a hard ceiling rather than a conservative margin: on 2026-07-27 an agent, citing
-	// this exact sentence, skipped a routine agent_def_upsert call (10,520 B, comfortably within
-	// what actually works) and fell back to unverified raw REST instead. So the guidance is now
-	// split: SizeGuidanceText (public) states the action and the reason with no digit in it;
-	// WriteCallSizeGuidanceBytes (below, internal) keeps a number — raised to the lowest byte
-	// count actually observed to fail — and is read ONLY by SizeWarningOrNull's postfactum
-	// warning on an already-applied write, where naming a number is diagnostic, not a deterrent.
-	public const int WriteCallSizeGuidanceBytes = 12_000;
+	// PetBox does not enforce or even see that failure). An absolute Content-Length threshold used
+	// to trigger this warning, but it measured the wrong thing: it fired on any big-but-honest
+	// raw-UTF-8 call and stayed silent on a small-but-escaped one. The ReqBytes/ReqChars RATIO
+	// (their per-character average) was rejected for the same reason — script mix makes the
+	// ranges overlap: raw-UTF-8 CJK costs 3.0x/char, WORSE than \uXXXX-escaped Cyrillic at 30%
+	// non-ASCII (2.5x/char) — no threshold on that ratio can separate the two classes (card
+	// escape-inflation-warning).
+	//
+	// What separates them cleanly is not an average but a MEASUREMENT: the server already holds
+	// the parsed request args, so it can compute exactly how many raw-UTF-8 bytes THIS call's JSON
+	// should have cost (McpTracingFilter reserializes them for reqChars anyway — the byte count
+	// rides along for free, stashed under ExpectedRawBytesItemKey) and compare that to what
+	// Request.ContentLength actually shows:
+	//
+	//     inflation = ContentLength / expectedRawBytes
+	//
+	// inflation ≈ 1.0 is a raw-UTF-8 client — nothing to say, on ANY size. At or above
+	// EscapeInflationWarningThreshold, the gap is too large for reserialization noise
+	// (indentation, key order — single-digit percent, not 50%) to explain: the client is spending
+	// real bytes on \uXXXX.
+	internal const string ExpectedRawBytesItemKey = "petbox.mcp.expected_raw_bytes";
+
+	// 1.5x: chosen well under the ~2.7-2.9x Cyrillic-escaping tax actually measured (see
+	// SizeGuidanceText) so the warning fires with margin, while staying well above what
+	// indentation/key-order drift between the wire JSON and the reserialized copy could ever
+	// explain — a 50% inflation is not formatting noise.
+	internal const double EscapeInflationWarningThreshold = 1.5;
 
 	// Shared wording for every write verb that carries a body (memory_remember, memory_upsert,
 	// tasks_upsert, comments_upsert, session_append, session_upsert) — one class of problem (work
 	// write-verbs-size-limit-still-has-no-number / comments-upsert-size-guidance /
 	// size-warning-not-wired-to-write-verbs / drop-size-number-from-tool-descriptions), one
 	// sentence, so the guidance cannot drift to a different number — or a differently-worded
-	// number — per tool. Deliberately carries NO byte figure (see the comment above
-	// WriteCallSizeGuidanceBytes for why); SizeGuidanceTests pins that absence.
+	// number — per tool. Deliberately carries NO byte figure (see the comments above for why);
+	// SizeGuidanceTests pins that absence.
 	public const string SizeGuidanceText =
 		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (~2.8x the byte size, measured 2.74-2.88x) — a " +
 		"large JSON body risks being silently truncated by the calling client before this server ever sees " +
 		"it (a client-side limit; PetBox does not enforce or detect it, and cannot name an exact number for " +
 		"it). Split large batches into multiple calls.";
 
-	// Point 4 of the card: a write the server DID accept and apply can still have paid the same
-	// 2-3x \uXXXX-escaping tax silently — it only fails once a slightly bigger call crosses the
-	// client's truncation edge, and by then the caller has no warning to have acted on. The
-	// server cannot tell an escaped payload from a raw one (the JSON parser already decoded it
-	// by the time a tool method runs — the same boundary SizeGuidanceText documents), but it DOES
-	// see the raw HTTP request body size, which is exactly what the client-side truncation
-	// measures. Surfaced as a WARNING on an already-successful write, never a refusal — the
-	// write already landed, and the point is to inform the NEXT call, not punish this one.
-	// Null when the size is unknown (e.g. chunked transfer, no Content-Length) or in budget.
+	// Point 4 of the card mcp-write-degrades-silently-fix: a write the server DID accept and apply
+	// can still have paid the \uXXXX-escaping tax silently — it only fails once a slightly bigger
+	// call crosses the client's truncation edge, and by then the caller has no warning to have
+	// acted on. The server cannot tell an escaped payload from a raw one by READING it (the JSON
+	// parser already decoded it by the time a tool method runs — the same boundary SizeGuidanceText
+	// documents), but it CAN measure it: Request.ContentLength against the expected raw-UTF-8 byte
+	// count of the same request (ExpectedRawBytesItemKey, stashed by McpTracingFilter). Surfaced
+	// as a WARNING on an already-successful write, never a refusal — the write already landed,
+	// and the point is to inform the NEXT call, not punish this one.
+	//
+	// Null whenever the comparison cannot be trusted:
+	//   * no Content-Length (chunked transfer) — unknown, as before;
+	//   * no expectedRawBytes stashed, or it is 0 — unknown, never divide by it;
+	//   * ContentLength < expectedRawBytes — transport compression, not an escaping saving.
 	public static string? SizeWarningOrNull(IHttpContextAccessor http)
 	{
-		var len = http.HttpContext?.Request.ContentLength;
-		if (len is not { } bytes || bytes <= WriteCallSizeGuidanceBytes) return null;
-		return $"This call's request body was {bytes:N0} bytes, over the ~{WriteCallSizeGuidanceBytes:N0}-byte " +
-			"guidance threshold. The write applied — this is informational, not a refusal — but a client that " +
-			"\\uXXXX-escapes Cyrillic (~2.8x the byte size, measured 2.74-2.88x) risks the NEXT call this size being silently " +
-			"truncated before the server sees it. Split large batches.";
+		var ctx = http.HttpContext;
+		if (ctx?.Request.ContentLength is not { } bytes) return null;
+		if (!ctx.Items.TryGetValue(ExpectedRawBytesItemKey, out var raw) ||
+			raw is not int expectedRaw || expectedRaw <= 0)
+			return null;
+		if (bytes < expectedRaw) return null;
+
+		var inflation = (double)bytes / expectedRaw;
+		if (inflation < EscapeInflationWarningThreshold) return null;
+
+		return $"This call's request body measured {inflation:0.0}x its expected raw-UTF-8 size " +
+			$"({bytes:N0} vs ~{expectedRaw:N0} bytes) — that looks like \\uXXXX-escaped non-ASCII rather " +
+			"than raw UTF-8. The write applied — this is informational, not a refusal — but sending raw " +
+			"UTF-8 avoids paying that multiplier on every call.";
 	}
 }
