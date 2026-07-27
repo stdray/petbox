@@ -1228,7 +1228,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
-	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a tasks_upsert ack echoes only its own call; pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
+	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,
