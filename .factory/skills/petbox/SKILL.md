@@ -22,7 +22,7 @@ TYPED arrays — pass real JSON arrays, not stringified JSON.
 **`tasks_search` is THE read verb** — two modes: without `q` it's a deterministic LISTING
 (pass `board` for one board, omit for the whole project; default order priority-then-key),
 with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both modes:
-`status[]`, `keys[]` (slug|NodeId), `under` (subtree), `includeClosed`; `sort{by,desc}`
+`status[]`, `nodes[]` (slug|NodeId), `underNode` (subtree), `includeClosed`; `sort{by,desc}`
 reorders; `bodyLen` snippets bodies. One node in full: `tasks_node_get`.
 
 **Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
