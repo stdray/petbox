@@ -110,7 +110,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		public void Dispose() => Scope?.Dispose();
 	}
 
-	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, CancellationToken ct = default)
+	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, CancellationToken ct = default)
 	{
 		if (k <= 0) k = 10;
 		await _gate.WaitAsync(ct);
@@ -140,7 +140,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			}
 
 			entry.LastAccess = _time.GetUtcNow().UtcDateTime;
-			return await QueryAsync(entry, projectKey, query, k, ct);
+			return await QueryAsync(entry, projectKey, query, k, bodyLen, ct);
 		}
 		finally
 		{
@@ -242,7 +242,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		}
 	}
 
-	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, CancellationToken ct)
+	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, int? bodyLen, CancellationToken ct)
 	{
 		// The rental spans the whole query: the semantic leg's embed calls run INSIDE the
 		// SearchService.SearchAsync await below (VectorLeg.SearchAsync → EnsureVectors…), so the
@@ -284,7 +284,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		{
 			if (hits.Count >= k) break;
 			if (!long.TryParse(h.Id, out var ordinal) || !byVersion.TryGetValue(ordinal, out var msg)) continue;
-			hits.Add(new SessionEpisodicHit(ordinal, msg.Role, Snippet(msg.Content, query), h.Score, h.Retriever));
+			hits.Add(new SessionEpisodicHit(ordinal, msg.Role, HitBody(msg.Content, query, bodyLen), h.Score, h.Retriever));
 		}
 
 		// A leg that could not even hydrate never reached SearchService — fold it into the
@@ -376,9 +376,24 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	// Matryoshka embedding are a valid lower-dim embedding; cosine renormalizes.
 	static float[] Truncate(float[] v, int dim) => dim > 0 && dim < v.Length ? v[..dim] : v;
 
+	// Uniform bodyLen contract (spec bodylen-uniform-contract), applied to a session_search
+	// hit: omitted -> the default query-centered preview (SnippetLength, 240, same width as
+	// ModuleMcp.DefaultSnippet); 0 -> no body; N>0 -> a query-centered preview N chars wide
+	// (still centered — a hit's "start" is the match, not the message head, so this is a
+	// deliberate width-only reading of N rather than a plain prefix cut); -1 -> the FULL raw
+	// message (the provenance bridge to session_get exists for exactly this, but -1 must
+	// still mean "the whole body" like everywhere else in the contract).
+	internal static string HitBody(string content, string query, int? bodyLen)
+	{
+		var len = bodyLen ?? SnippetLength;
+		if (len < 0) return content;                 // FullBody
+		if (len == 0) return "";                      // NoBody
+		return Snippet(content, query, len);
+	}
+
 	// A display snippet around the first query-token occurrence (or the head of the
-	// message for purely semantic hits).
-	internal static string Snippet(string content, string query)
+	// message for purely semantic hits), `len` chars wide.
+	internal static string Snippet(string content, string query, int len)
 	{
 		var at = -1;
 		foreach (var token in query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -386,11 +401,11 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			at = content.IndexOf(token, StringComparison.OrdinalIgnoreCase);
 			if (at >= 0) break;
 		}
-		var start = at < 0 ? 0 : Math.Max(0, at - SnippetLength / 3);
-		var len = Math.Min(SnippetLength, content.Length - start);
-		var snippet = content.Substring(start, len);
+		var start = at < 0 ? 0 : Math.Max(0, at - len / 3);
+		var count = Math.Min(len, content.Length - start);
+		var snippet = content.Substring(start, count);
 		if (start > 0) snippet = "…" + snippet;
-		if (start + len < content.Length) snippet += "…";
+		if (start + count < content.Length) snippet += "…";
 		return snippet;
 	}
 

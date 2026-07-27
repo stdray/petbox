@@ -120,19 +120,17 @@ public static class SessionTools
 		an ERROR that lists the candidates rather than guessing. A missing/unknown id is a
 		not-found ERROR (never a bare null: a declared outputSchema demands structured content, so
 		a null result is rejected by strict MCP clients — the error rides the isError channel
-		instead). The returned `sessionId` is always the resolved full id. The blob can be read
-		INCREMENTALLY (spec bounded-result-sets): pass `tail` for the last N chars, or
-		`offset`+`limit` for a window; with none, the full blob is returned. `length` (total
-		chars) is ALWAYS returned so a caller can poll for growth and then read only the new tail.
+		instead). The returned `sessionId` is always the resolved full id. The blob is COMPLETE by
+		default (this is the pointed full read — the uniform bodyLen knob still applies: 0 = no
+		body, N>0 = the first N chars, -1 = full). `length` (total chars, always the FULL blob's
+		length regardless of bodyLen) is ALWAYS returned so a caller can poll for growth.
 		Requires tasks:read.
 		""")]
 	public static async Task<SessionGetResult> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey,
 		[Description("Full session id or a unique prefix of one (e.g. the first UUID block).")] string sessionId,
-		[Description("Return only the last N chars of the blob (0 = off). Takes precedence over offset/limit.")] int tail = 0,
-		[Description("Start reading at this char offset (default 0).")] int offset = 0,
-		[Description("Max chars returned from offset (0 = to end).")] int limit = 0,
+		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -141,7 +139,7 @@ public static class SessionTools
 		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
 		if (s is null) throw new InvalidOperationException($"session '{sessionId}' not found in project '{projectKey}'");
 		var full = s.Content;
-		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version, s.MetaJson);
+		return new SessionGetResult(s.SessionId, s.Agent, ModuleMcp.Body(full, bodyLen, ModuleMcp.FullBody) ?? "", full.Length, s.Version, s.MetaJson);
 	}
 
 	// Resolve a full-or-prefix session id to its stored full id. Returns null on a miss (the
@@ -156,17 +154,6 @@ public static class SessionTools
 				$"session id '{sessionId}' is ambiguous — it prefixes {r.Ambiguous.Count} sessions " +
 				$"({string.Join(", ", r.Ambiguous)}). Pass more characters, or the full id.");
 		return r.Match;
-	}
-
-	// Incremental read of a plan blob: `tail` (last N chars) wins; else the [offset, offset+limit)
-	// window (limit 0 = to end). All bounds are clamped so out-of-range args can't throw.
-	static string Window(string s, int tail, int offset, int limit)
-	{
-		if (tail > 0) return tail >= s.Length ? s : s[^tail..];
-		var start = Math.Clamp(offset, 0, s.Length);
-		var rest = s.Length - start;
-		var count = limit <= 0 ? rest : Math.Min(limit, rest);
-		return s.Substring(start, count);
 	}
 
 	[McpServerTool(Name = "session_delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
@@ -199,7 +186,9 @@ public static class SessionTools
 		SEARCH (`q`) over the archive (digest ⊕ verbatim-term discovery, then in-session episodic
 		hits with message ordinals for session_get). `fullScan` is gated by deployment permission
 		(never automatic). Listing needs tasks:read; search also needs memory:read. Hard ~30k-char
-		output budget.
+		output budget. Each hit's snippet follows the uniform `bodyLen` knob (omitted = a
+		query-centered ~240-char preview; 0 = no snippet; N>0 = a wider/narrower preview; -1 =
+		the full raw message).
 
 		Cost — your context pays it. Hits carry verbatim transcript text, so widening how many
 		sessions are hydrated and how many hits each returns multiplies the response fast —
@@ -227,7 +216,12 @@ public static class SessionTools
 		candidates are lazily hydrated (transient in-memory index: russian-stem FTS +
 		vectors) and searched INSIDE, up to `hitsPerSession` messages each. Every hit
 		carries the message ordinal — the provenance bridge: jump to the verbatim source
-		with session_get. Items then carry { sessionId, agent, description, hits[],
+		with session_get. Each hit's `snippet` follows the uniform bodyLen contract: omitted
+		= a query-centered ~240-char preview (the compact default — width-only reading of N,
+		since a hit's natural anchor is the query match, not the message head); 0 = no
+		snippet text; N>0 = a query-centered preview N chars wide; -1 = the FULL raw message
+		(the same full body session_get returns at that ordinal). Items then carry
+		{ sessionId, agent, description, hits[],
 		retrievers, sources } — `sources` names which stage-1 leg(s) raised the session
 		("digest"/"term"/"fullscan") — and the response the stage-1 `retrievers`;
 		`distilled:false` means the project has no digest store yet (distillation runs in
@@ -249,6 +243,7 @@ public static class SessionTools
 		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
+		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get at the hit's `message` ordinal).")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -271,7 +266,7 @@ public static class SessionTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, ct);
+		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen, ct);
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
 			c.SessionId, c.Agent,
 			Description: c.Description,

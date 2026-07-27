@@ -66,8 +66,10 @@ public sealed class McpTracingShaperTests
 		marked.Single(a => a.Name == "includeUsage").SpanTag.Should().Be("petbox.arg.include_usage");
 
 		// session_search brought its own knobs — proof the registry is per-tool, not global.
+		// bodyLen joined the family (card bodylen-contract-has-two-holes, hole 2): it now
+		// shapes each hit's snippet, same knob name as the rest of the surface.
 		McpLoggedArgs.For("session_search").Select(a => a.Name)
-			.Should().BeEquivalentTo(["q", "sessions", "hitsPerSession", "fullScan"]);
+			.Should().BeEquivalentTo(["q", "sessions", "hitsPerSession", "fullScan", "bodyLen"]);
 	}
 
 	[Fact]
@@ -78,15 +80,28 @@ public sealed class McpTracingShaperTests
 		// like marked ones elsewhere. Markup is the ONLY thing that opens the gate.
 		var args = new { projectKey = "p", q = "secret needle", limit = 5, bodyLen = 240 };
 
-		// memory_get marks NO parameters (unlike memory_upsert, which marks `store` for the
+		// session_delete marks NO parameters (unlike memory_upsert, which marks `store` for the
 		// namespace-creation telemetry) — an unmarked tool contributes nothing regardless of args.
-		McpLoggedArgs.For("memory_get").Should().BeEmpty();
+		// (memory_get no longer illustrates this: card bodylen-contract-has-two-holes gave it a
+		// marked `bodyLen`, same as its pointed-read siblings — see BodyLen_Marked_OnPointedReads.)
+		McpLoggedArgs.For("session_delete").Should().BeEmpty();
 		McpLoggedArgs.For("no_such_tool").Should().BeEmpty();
 		McpLoggedArgs.For(null).Should().BeEmpty();
 
 		Shapers("no_such_tool", args).Should().BeEmpty();
 		Shapers(null, args).Should().BeEmpty();
-		LogProps("memory_get", args).Should().BeEmpty();
+		LogProps("session_delete", args).Should().BeEmpty();
+	}
+
+	// card bodylen-contract-has-two-holes, hole 1 + hole 2: memory_get and session_get gained a
+	// `bodyLen` param, marked [LogArg] like every other pointed-read sibling (tasks_node_get,
+	// comments_get) — the registry is per-signature, so a newly-added param only shows up once
+	// the tool's own attribute says so.
+	[Fact]
+	public void BodyLen_Marked_OnPointedReads()
+	{
+		McpLoggedArgs.For("memory_get").Select(a => a.Name).Should().BeEquivalentTo(["bodyLen"]);
+		McpLoggedArgs.For("session_get").Select(a => a.Name).Should().BeEquivalentTo(["bodyLen"]);
 	}
 
 	// --- Presence mode: the value NEVER leaves the process ---

@@ -98,6 +98,39 @@ public sealed class SessionSearchServiceTests : IDisposable
 		top.Retrievers.Lexical.Should().BeTrue();
 	}
 
+	// spec bodylen-uniform-contract, hole 2 (card bodylen-contract-has-two-holes): each hit's
+	// snippet now follows the uniform bodyLen knob instead of a hardcoded fixed width —
+	// omitted = the query-centered ~240-char default (SnippetLength), 0 = no snippet text,
+	// N>0 = a narrower/wider query-centered preview, -1 = the FULL raw message (same text
+	// session_get would return at that ordinal).
+	[Fact]
+	public async Task Search_BodyLen_OmittedIsDefaultSnippet_ZeroIsNone_NarrowsWithN_MinusOneIsFull()
+	{
+		var big = "запустили векторизацию " + new string('x', 400);
+		await _sessions.UpsertAsync(Proj, "s-vec", "claude-code", Msgs(big));
+		(await Distill()).Should().Be(1);
+
+		// omitted -> the default ~240-char query-centered preview, narrower than the full message.
+		var omitted = await _search.SearchAsync(Proj, "векторизацию");
+		var omittedSnippet = omitted.Candidates[0].Hits[0].Snippet;
+		omittedSnippet.Should().Contain("векторизацию");
+		omittedSnippet.Length.Should().BeLessThan(big.Length);
+
+		// 0 -> no snippet text.
+		var none = await _search.SearchAsync(Proj, "векторизацию", bodyLen: 0);
+		none.Candidates[0].Hits[0].Snippet.Should().BeEmpty();
+
+		// N>0 -> a narrower query-centered preview than the default.
+		var narrow = await _search.SearchAsync(Proj, "векторизацию", bodyLen: 30);
+		var narrowSnippet = narrow.Candidates[0].Hits[0].Snippet;
+		narrowSnippet.Should().Contain("векторизацию");
+		narrowSnippet.Length.Should().BeLessThan(omittedSnippet.Length);
+
+		// -1 -> the FULL raw message.
+		var full = await _search.SearchAsync(Proj, "векторизацию", bodyLen: -1);
+		full.Candidates[0].Hits[0].Snippet.Should().Be(big);
+	}
+
 	[Fact]
 	public async Task NoDigestStoreYet_SaysNotDistilled_InsteadOfFailing()
 	{

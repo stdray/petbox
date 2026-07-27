@@ -11,7 +11,10 @@ public interface ISessionEpisodicIndex
 {
 	// Hydrates (or reuses) the session's transient index and searches inside it.
 	// Null when the session does not exist (or is deleted).
-	Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, CancellationToken ct = default);
+	// `bodyLen` (uniform contract) shapes each hit's Snippet: omitted -> the default
+	// query-centered preview (SnippetLength); 0 -> no snippet text; N>0 -> a
+	// query-centered preview N chars wide; -1 -> the FULL raw message content.
+	Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, CancellationToken ct = default);
 
 	// Drops hydrated sessions idle past the TTL (and trims over capacity); returns how
 	// many were evicted. Runs implicitly on every search — exposed for tests/ops.
