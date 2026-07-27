@@ -20,8 +20,12 @@ namespace PetBox.Web.Memory;
 public static class MemorySearchScope
 {
 	// One selected hit, labelled by which container it came from ("project" | "workspace") — the
-	// UI equivalent of MCP's MemorySearchHitView.Scope.
-	public sealed record Row(string Scope, string Store, MemoryEntryView Entry, double Score, string? Retriever);
+	// UI equivalent of MCP's MemorySearchHitView.Scope. Created/Updated ride along from
+	// MemoryEntryHit (not on Entry itself — MemoryEntryView is the wire-facing projection and
+	// deliberately doesn't carry them) so a LISTING caller can build a KeysetCursor's sort-key
+	// value without a second round-trip.
+	public sealed record Row(string Scope, string Store, MemoryEntryView Entry, double Score, string? Retriever,
+		DateTime Created, DateTime Updated);
 
 	public sealed record Result(IReadOnlyList<Row> Rows, SearchRetrievers? Retrievers);
 
@@ -87,7 +91,7 @@ public static class MemorySearchScope
 						agg.DegradedReason ?? r.DegradedReason, (agg.SemanticLag ?? 0) + (r.SemanticLag ?? 0), agg.Reranked | r.Reranked)
 					: r;
 			foreach (var h in res.Hits)
-				collected.Add((h.Score, rank, new Row(scopeName, h.Store, h.Entry, h.Score, h.Retriever)));
+				collected.Add((h.Score, rank, new Row(scopeName, h.Store, h.Entry, h.Score, h.Retriever, h.Created, h.Updated)));
 		}
 
 		var multiScope = containers.Count > 1;

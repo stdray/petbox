@@ -1,4 +1,5 @@
 using LinqToDB;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -8,10 +9,16 @@ using PetBox.Memory.Services;
 
 namespace PetBox.Tests.Memory;
 
-// spec ui-list-pagination: the memory-store detail page pages the active entries
-// server-side (OFFSET/LIMIT, ordered by Key) and filters by a substring over
-// Key/Description/Body/Tags — so a 200-entry store (dead-tail keys included) is reachable
-// by paging rather than dumped whole or hidden in a title attribute.
+// spec listing-tail-reachable: the memory-store detail page's listing mode no longer offset-pages
+// (MemoryService.ListActiveEntriesPageAsync / FindActiveEntryPageAsync are GONE — an offset
+// silently re-serves/swallows rows under concurrent writes, KeysetCursor.cs:17-23). The listing
+// now runs through the SAME uniform read every other mode uses — SearchEntriesAsync(Query: null,
+// Limit: 0) — which returns the FULL deterministic order unbounded; the UI adapter
+// (MemoryStoreModel) is the one that seeks a KeysetCursor through it and slices a page (mirrors
+// TasksTools.SearchAsync's own listing mode). These tests cover what the SERVICE promises that
+// adapter: the unbounded order is complete, deterministic, and carries the Created/Updated values
+// a cursor needs. The adapter-level keyset behavior itself (cursor resume across pages, fingerprint
+// mismatch, deep-link seeking) is covered end-to-end in MemoryStoreKeysetPagingTests.
 public sealed class MemoryStorePagingTests : IDisposable
 {
 	const string Proj = "proj";
@@ -43,7 +50,7 @@ public sealed class MemoryStorePagingTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	async Task Seed(int count)
+	async Task Seed(int count, string type = "Project")
 	{
 		await _memory.CreateStoreAsync(Proj, "notes", null);
 		await _memory.UpsertAsync(Proj, "notes",
@@ -51,91 +58,93 @@ public sealed class MemoryStorePagingTests : IDisposable
 			{
 				Key = $"k{i:000}",
 				Version = 0,
-				Type = "Project",
+				Type = type,
 				Description = $"entry number {i}",
-				Body = $"body {i}" + (i == count ? " needle" : ""),
+				Body = $"body {i}",
 			}).ToList(), []);
 	}
 
+	// Limit: 0 in listing mode (Query: null) is UNBOUNDED — the whole active set, not the "no cap"
+	// of a query's candidate pool. A 200+-entry store must come back whole in one call; the
+	// adapter, not the service, is the one that slices a page out of it.
 	[Fact]
-	public async Task ListPage_AppliesOffset_AndReportsHasNext()
-	{
-		await Seed(95);
-
-		var p0 = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, pageNum: 0, pageSize: 40);
-		p0.Total.Should().Be(95);
-		p0.HasNext.Should().BeTrue();
-		p0.Entries.Count.Should().Be(40);
-		p0.Entries[0].Key.Should().Be("k001");
-
-		var p1 = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, pageNum: 1, pageSize: 40);
-		p1.HasNext.Should().BeTrue();
-		p1.Entries[0].Key.Should().Be("k041"); // OFFSET 40 → a different slice
-		p1.Entries.Select(e => e.Key).Should().NotContain("k001");
-
-		// The dead tail (k081..k095) is reachable by paging, not stuck in a summary.
-		var p2 = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, pageNum: 2, pageSize: 40);
-		p2.HasNext.Should().BeFalse();
-		p2.Entries.Count.Should().Be(15);
-		p2.Entries.Select(e => e.Key).Should().Contain("k095");
-	}
-
-	// memory-entry-url / memory-anchor-ignores-pagination: the SERVER must be able to say which page
-	// holds a key — the deep-link half of the entry URL. Seeded at 227 entries, the size of the live
-	// `notes` store where the bug was found: with 40 per page that is 6 pages, and only the first 40
-	// keys were reachable by a bare `#{key}` fragment.
-	[Fact]
-	public async Task FindEntryPage_ResolvesTheKeysOwnPage_AcrossAWholeMultiPageStore()
+	public async Task ListingMode_LimitZero_ReturnsTheWholeActiveSet_NeverTruncated()
 	{
 		await Seed(227);
 
-		// Every single key resolves to the page that ListActiveEntriesPageAsync actually renders it
-		// on — not just the convenient ones. This is the whole promise, checked exhaustively.
-		for (var i = 1; i <= 227; i++)
+		var res = await _memory.SearchEntriesAsync(Proj, new SearchRequest<MemoryEntryFilter, MemorySortBy>
 		{
-			var key = $"k{i:000}";
-			var page = await _memory.FindActiveEntryPageAsync(Proj, "notes", key, pageSize: 40);
-			page.Should().Be((i - 1) / 40, $"{key} is entry #{i} in key order");
+			Query = null,
+			Filter = new MemoryEntryFilter("notes"),
+			Limit = 0,
+		});
 
-			var rendered = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, page!.Value, pageSize: 40);
-			rendered.Entries.Select(e => e.Key).Should().Contain(key);
+		res.Hits.Count.Should().Be(227);
+		res.Hits.Select(h => h.Entry.Key).Distinct().Count().Should().Be(227, "every key must appear exactly once — no row skipped, none duplicated");
+		res.Retrievers.Should().BeNull("a listing runs no relevance leg");
+	}
+
+	// The default listing order (Updated desc, then Key, then Store — MemoryService.SortSelected)
+	// is a TOTAL order: two entries upserted in the same call still tie-break deterministically on
+	// Key, which is exactly what a keyset cursor needs to never land on an ambiguous boundary.
+	[Fact]
+	public async Task ListingMode_DefaultOrder_IsUpdatedDescThenKey_ATotalOrder()
+	{
+		await Seed(5);
+		// A later, separate upsert bumps k003's Updated past the rest.
+		await _memory.UpsertAsync(Proj, "notes",
+			[new MemoryEntryInput { Key = "k003", Version = 1, Type = "Project", Description = "bumped", Body = "b" }], []);
+
+		var res = await _memory.SearchEntriesAsync(Proj, new SearchRequest<MemoryEntryFilter, MemorySortBy>
+		{
+			Query = null,
+			Filter = new MemoryEntryFilter("notes"),
+			Limit = 0,
+		});
+
+		res.Hits[0].Entry.Key.Should().Be("k003", "the most recently updated entry sorts first by default");
+		// The remaining four, never touched again, tie-break on Key ascending.
+		res.Hits.Skip(1).Select(h => h.Entry.Key).Should().BeInAscendingOrder(StringComparer.Ordinal);
+	}
+
+	// MemoryEntryHit carries Created/Updated (spec listing-tail-reachable) precisely so a caller
+	// building a KeysetCursor's sort-key value doesn't need a second round-trip to the raw
+	// MemoryEntry — MemoryEntryView (the wire-facing projection) deliberately omits them.
+	[Fact]
+	public async Task SearchEntriesAsync_Hits_CarryCreatedAndUpdated()
+	{
+		await Seed(3);
+
+		var res = await _memory.SearchEntriesAsync(Proj, new SearchRequest<MemoryEntryFilter, MemorySortBy>
+		{
+			Query = null,
+			Filter = new MemoryEntryFilter("notes"),
+			Limit = 0,
+		});
+
+		foreach (var hit in res.Hits)
+		{
+			hit.Created.Should().NotBe(default(DateTime));
+			hit.Updated.Should().NotBe(default(DateTime));
 		}
-
-		// The far tail (page 5) — the entries a page-0 anchor could never reach.
-		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k227", pageSize: 40)).Should().Be(5);
-		// …and page 0 genuinely does NOT contain it (the bug, stated as an assertion).
-		var p0 = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, pageNum: 0, pageSize: 40);
-		p0.Entries.Select(e => e.Key).Should().NotContain("k227");
 	}
 
-	// An unknown / deleted key resolves to NO page — the caller must not invent an offset.
+	// Filter.Type now applies to LISTING too (Query: null) — this is the very inconsistency the
+	// card closed: the old bespoke ListActiveEntriesPageAsync never took a type filter at all.
 	[Fact]
-	public async Task FindEntryPage_UnknownOrDeletedKey_IsNull()
+	public async Task ListingMode_TypeFilter_Narrows()
 	{
-		await Seed(95);
+		await Seed(3, type: "Project");
+		await _memory.UpsertAsync(Proj, "notes",
+			[new MemoryEntryInput { Key = "f001", Version = 0, Type = "Feedback", Description = "fb", Body = "b" }], []);
 
-		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k999", pageSize: 40)).Should().BeNull();
-		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "", pageSize: 40)).Should().BeNull();
+		var res = await _memory.SearchEntriesAsync(Proj, new SearchRequest<MemoryEntryFilter, MemorySortBy>
+		{
+			Query = null,
+			Filter = new MemoryEntryFilter("notes", "Feedback"),
+			Limit = 0,
+		});
 
-		await _memory.UpsertAsync(Proj, "notes", [], [new MemoryDelete("k050", 0)]);
-		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k050", pageSize: 40)).Should().BeNull();
-		// …and the delete shifts every later key one slot up: k041 opened page 1, k081 now moves to 1.
-		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k081", pageSize: 40)).Should().Be(1);
-	}
-
-	[Fact]
-	public async Task ListPage_Search_NarrowsOverBodyAndKey()
-	{
-		await Seed(95);
-
-		// Body substring: only the last entry carries "needle".
-		var byBody = await _memory.ListActiveEntriesPageAsync(Proj, "notes", "needle", pageNum: 0, pageSize: 40);
-		byBody.Total.Should().Be(1);
-		byBody.Entries.Single().Key.Should().Be("k095");
-
-		// Key substring narrows too and never loads the whole set.
-		var byKey = await _memory.ListActiveEntriesPageAsync(Proj, "notes", "k012", pageNum: 0, pageSize: 40);
-		byKey.Total.Should().Be(1);
-		byKey.Entries.Single().Key.Should().Be("k012");
+		res.Hits.Should().ContainSingle().Which.Entry.Key.Should().Be("f001");
 	}
 }

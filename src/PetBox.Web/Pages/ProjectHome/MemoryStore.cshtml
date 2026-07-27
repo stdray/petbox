@@ -4,10 +4,17 @@
 @{
 	ViewData["Title"] = $"{Model.Store} — Memory";
 
-	string PageHref(int pageNum)
+	// The "next" link for the LISTING mode's keyset cursor (spec listing-tail-reachable): carries
+	// every control that's part of the fingerprint (type/scope/sort) plus the new cursor — q is
+	// deliberately absent, this href is never built in search mode. There is no "prev" link by
+	// design: a keyset cursor only names how to resume FORWARD; each "next" click lands on its own
+	// bookmarkable URL, so the browser's own Back does what a "prev" button would.
+	string NextHref(string cursor)
 	{
-		var href = $"{Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, Model.Store)}?pageNum={pageNum}";
-		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
+		var href = $"{Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, Model.Store)}?cursor={Uri.EscapeDataString(cursor)}";
+		if (!string.IsNullOrWhiteSpace(Model.Type)) href += $"&type={Uri.EscapeDataString(Model.Type)}";
+		if (!string.IsNullOrWhiteSpace(Model.Scope)) href += $"&scope={Uri.EscapeDataString(Model.Scope)}";
+		if (!string.IsNullOrWhiteSpace(Model.Sort)) href += $"&sort={Uri.EscapeDataString(Model.Sort)}";
 		return href;
 	}
 
@@ -101,6 +108,13 @@
 	}
 </form>
 
+@if (!Model.IsSearch && Model.CursorError is { } cursorError)
+{
+	<div class="alert alert-warning mb-2" data-testid="store-cursor-error">
+		@cursorError
+	</div>
+}
+
 @if (Model.IsSearch && Model.Retrievers is { } retr)
 {
 	<div class="text-xs opacity-60 mb-2" data-testid="store-search-retrievers">
@@ -189,45 +203,50 @@ else
 			   data-highlight marks the same card server-side, so the highlight (and the test that
 			   asserts it) does not hang on `:target` alone. An unresolvable key highlights nothing;
 			   the store page still renders. *@
-			<li id="@e.Key"
-				class="memory-entry card bg-base-200 border @(e.Key == Model.HighlightKey ? "border-primary ring-2 ring-primary/40" : "border-base-300")"
-				data-testid="memory-entry" data-entry-key="@e.Key"
-				@(e.Key == Model.HighlightKey ? Html.Raw("data-highlight=\"true\"") : null)>
+			var eu = Model.HitUsage.TryGetValue(MemorySearchScope.UsageKey(e.Scope, e.Store, e.Entry.Key), out var euv) ? euv : null;
+			<li id="@e.Entry.Key"
+				class="memory-entry card bg-base-200 border @(e.Entry.Key == Model.HighlightKey ? "border-primary ring-2 ring-primary/40" : "border-base-300")"
+				data-testid="memory-entry" data-entry-key="@e.Entry.Key"
+				@(e.Entry.Key == Model.HighlightKey ? Html.Raw("data-highlight=\"true\"") : null)>
 				<div class="card-body p-3">
-					<div class="flex items-baseline justify-between gap-2">
-						<span class="font-mono font-semibold">@e.Key</span>
-						@if (Model.Usage.TryGetValue(e.Key, out var u))
+					<div class="flex items-baseline justify-between gap-2 flex-wrap">
+						<span class="font-mono font-semibold">@e.Entry.Key</span>
+						@if (Model.ScopeSelectable)
+						{
+							<span class="badge badge-outline badge-sm" data-testid="entry-scope">@e.Scope</span>
+						}
+						@if (eu is not null)
 						{
 							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-usage"
-								title="surfaced @u.Surfaced x / opened @u.Opened x / last @(u.LastHitAt?.ToString("yyyy-MM-dd HH:mm") ?? "none") -- an impression count, not a value verdict">
-								👁 @u.Surfaced · 📖 @u.Opened
+								title="surfaced @eu.Surfaced x / opened @eu.Opened x / last @(eu.LastHitAt?.ToString("yyyy-MM-dd HH:mm") ?? "none") -- an impression count, not a value verdict">
+								👁 @eu.Surfaced · 📖 @eu.Opened
 							</span>
 							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-cost"
 								title="body chars delivered across this entry's deliveries -- a fact, not a verdict on its own; read together with Fit">
-								💰 @(u.Deliveries > 0 ? u.DeliveredChars.ToString("N0") : "—")
+								💰 @(eu.Deliveries > 0 ? eu.DeliveredChars.ToString("N0") : "—")
 							</span>
 							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-fit"
 								title="mean within-request fit (kRel) of delivered rows -- pairs with Cost: high cost + low fit = noise, low cost + high fit = precise">
-								🎯 @(u.AvgKRel is { } k ? $"{k:P0}" : "—")
+								🎯 @(eu.AvgKRel is { } ek ? $"{ek:P0}" : "—")
 							</span>
 						}
-						@if (!string.IsNullOrEmpty(e.Tags))
+						@if (e.Entry.Tags.Count > 0)
 						{
 							<span class="flex gap-1 flex-wrap">
-								@foreach (var tag in e.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+								@foreach (var tag in e.Entry.Tags)
 								{
 									<span class="badge badge-ghost badge-sm" data-testid="entry-tag">@tag</span>
 								}
 							</span>
 						}
 					</div>
-					@if (!string.IsNullOrEmpty(e.Description))
+					@if (!string.IsNullOrEmpty(e.Entry.Description))
 					{
-						<p class="text-sm opacity-70">@e.Description</p>
+						<p class="text-sm opacity-70">@e.Entry.Description</p>
 					}
-					@if (!string.IsNullOrEmpty(e.Body))
+					@if (!string.IsNullOrEmpty(e.Entry.Body))
 					{
-						<p class="text-sm opacity-90 whitespace-pre-wrap">@e.Body</p>
+						<p class="text-sm opacity-90 whitespace-pre-wrap">@e.Entry.Body</p>
 					}
 				</div>
 			</li>
@@ -235,19 +254,11 @@ else
 	</ul>
 
 	<div class="flex items-center justify-between mt-4 text-sm">
-		<span class="opacity-60" data-testid="store-page-info">page @(Model.PageNum + 1) · @Model.Entries.Count of @Model.Total</span>
+		<span class="opacity-60" data-testid="store-page-info">@Model.Entries.Count of @Model.Total</span>
 		<div class="join">
-			@if (Model.PageNum > 0)
+			@if (Model.HasNext && Model.NextCursor is { } nextCursor)
 			{
-				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="store-prev">‹ Prev</a>
-			}
-			else
-			{
-				<button class="btn btn-sm join-item btn-disabled" disabled>‹ Prev</button>
-			}
-			@if (Model.HasNext)
-			{
-				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="store-next">Next ›</a>
+				<a href="@NextHref(nextCursor)" class="btn btn-sm join-item" data-testid="store-next">Next ›</a>
 			}
 			else
 			{

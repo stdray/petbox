@@ -8,14 +8,15 @@ namespace PetBox.Web.Memory;
 //   /ui/{ws}/{container}/memory/{store}?key={key}#{key}
 //
 // BOTH halves are load-bearing, and the `?key=` half is the fix for a silent no-op that shipped:
-// the store page PAGES its entries (40 per page), so a bare `#{key}` fragment landed the browser on
-// page 0 and, for any entry past it, the card was simply NOT IN THE DOM — no error, no highlight,
-// nothing (~187 of the 227 entries in the live `notes` store were unreachable by their own URL).
-// The QUERY makes the server resolve the entry's page (IMemoryService.FindActiveEntryPageAsync)
-// and render the page that actually holds the card; the FRAGMENT then scrolls to it and `:target`
-// highlights it (app.css `.memory-entry:target`; the page also marks it `data-highlight="true"`).
-// The URL stays stable as the store grows — the page NUMBER is derived per request, never baked in.
-// A `?pageNum=N` link is a different animal: it addresses a page, not an entry, and drifts.
+// the store page WINDOWS its entries (40 rows at a time, keyset-paged — spec listing-tail-reachable),
+// so a bare `#{key}` fragment landed the browser on the first window and, for any entry past it, the
+// card was simply NOT IN THE DOM — no error, no highlight, nothing (~187 of the 227 entries in the
+// live `notes` store were unreachable by their own URL). The QUERY makes the server resolve the
+// entry's position in the listing and seed a KeysetCursor that puts it at the TOP of the window it
+// renders; the FRAGMENT then scrolls to it and `:target` highlights it (app.css
+// `.memory-entry:target`; the page also marks it `data-highlight="true"`). The URL stays stable as
+// the store grows — the cursor is derived per request, never baked in. A `?cursor=…` link is a
+// different animal: it resumes a walk from a specific row, not addresses one entry, and is opaque.
 //
 // The URL is pure addressing — it survives a reload and a paste into another agent's context; it
 // depends on no client state.
