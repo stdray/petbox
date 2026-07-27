@@ -29,6 +29,12 @@ public static class SessionApi
 {
 	const string MetaHeader = "X-PetBox-Session-Meta";
 
+	// Default page size for GET /api/sessions/{projectKey} (spec listing-tail-reachable) — a
+	// machine caller (the history importer), not a human paging UI, so bigger than the UI
+	// listing's PageSize=30 to keep a full-archive walk to a handful of round trips; still
+	// header-only (no ContentZ), so a wider page stays cheap.
+	const int DefaultListLimit = 200;
+
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
 	public static void MapSessionEndpoints(this IEndpointRouteBuilder app)
@@ -55,11 +61,16 @@ public static class SessionApi
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("ApiKey");
 
-		// Headers only (id, agent, version, updated, optional meta) — the upgrade-only guard of the
-		// history importer compares its local message count against `version` before
-		// pushing, so a stale file read can't roll back a fresher snapshot.
+		// Headers only (id, agent, version, updated, optional meta) — the upgrade-only guard of
+		// the history importer compares its local message count against `version` before
+		// pushing, so a stale file read can't roll back a fresher snapshot. KEYSET-paged (spec
+		// listing-tail-reachable, card listing-keyset-memory-sessions): ?cursor= resumes after
+		// the previous call's nextCursor, ?limit= overrides DefaultListLimit. The importer's
+		// "compare every session's version" need is served by LOOPING this, never by a single
+		// unbounded response — see import-sessions.ts's serverVersions().
 		app.MapGet("/api/sessions/{projectKey}", ListAsync)
 			.Produces<SessionListResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.RequireAuthorization("ApiKey");
 	}
 
@@ -71,9 +82,27 @@ public static class SessionApi
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:read"))
 			return TypedResults.Forbid();
 
-		var list = await sessions.ListAsync(projectKey, ct);
+		var cursor = ctx.Request.Query["cursor"].FirstOrDefault();
+		var limit = int.TryParse(ctx.Request.Query["limit"].FirstOrDefault(), out var l) && l > 0 ? l : DefaultListLimit;
+
+		SessionHeaderPage page;
+		try
+		{
+			// No search/agent filter and Updated ascending: the importer just wants every
+			// session reached exactly once, in a stable order — which axis doesn't matter to
+			// it, only that paging it to the end is possible and honest under concurrent writes.
+			page = await sessions.ListPageAsync(projectKey, null, null, SessionSortField.Updated, false, cursor, limit, ct);
+		}
+		catch (ArgumentException ex)
+		{
+			// A cursor from a different call shape (or hand-crafted) is refused, not silently
+			// restarted under a different ordering — mirrors Upsert/Append's ArgumentException → 400.
+			return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+		}
+
 		return TypedResults.Ok(new SessionListResponse(
-			list.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson)).ToList()));
+			page.Headers.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson)).ToList(),
+			page.NextCursor));
 	}
 
 	[TenantFrom(TenantSource.Route, "projectKey")]

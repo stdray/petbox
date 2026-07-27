@@ -7,11 +7,11 @@ using PetBox.Core.Models;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 using PetBox.Web.Auth;
+using PetBox.Web.Search;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
-// Main-UI sessions list for a project (/ui/{ws}/{project}/sessions). Read-only
-// list of the currently-active agent session plans. There is no catalog: one
+// Main-UI sessions list for a project (/ui/{ws}/{project}/sessions). There is no catalog: one
 // sessions file per project, written by agents via the session MCP tools.
 // Gated on Feature.Tasks (sessions ship with the Tasks module).
 // WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
@@ -26,12 +26,14 @@ public sealed class SessionsModel : PageModel
 	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ISessionStore _store;
+	readonly SessionSearchService _search;
 
-	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store)
+	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store, SessionSearchService search)
 	{
 		_projects = projects;
 		_features = features;
 		_store = store;
+		_search = search;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -40,21 +42,77 @@ public sealed class SessionsModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
-	// The paging arg is 'pageNum', not 'page' — 'page' is a reserved route-key in Razor
-	// Pages, so a ?page=N value never binds (see the Data-module table view lesson).
-	[BindProperty(SupportsGet = true, Name = "pageNum")]
-	public int PageNum { get; set; }
+	// LISTING pagination (card listing-keyset-memory-sessions, spec listing-tail-reachable):
+	// the opaque KeysetCursor token from the previous page's NextCursor, passed back verbatim.
+	// Not accepted with `q` — search mode is a relevance SELECTION recomputed per call, there is
+	// no tail behind the capped candidate pool to page into (same boundary as tasks_search).
+	[BindProperty(SupportsGet = true, Name = "cursor")]
+	public string? Cursor { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "q")]
 	public string? Query { get; set; }
+
+	// Exact-match agent filter (a dropdown of the project's distinct agents) — a DIFFERENT
+	// predicate from `q`'s free-text SessionId-or-Agent substring match, combinable with it.
+	// Applies in BOTH listing and search mode (spec search-one-engine-for-human-and-agent: the
+	// same filter set on both surfaces).
+	[BindProperty(SupportsGet = true, Name = "agent")]
+	public string? Agent { get; set; }
+
+	// "updated" (default) | "created" | "length". Unrecognized/absent falls back to "updated"
+	// (SessionSortKeys.IsKnown) rather than erroring — mirrors BoardSortKeys' tolerance of a
+	// stale/typo'd value.
+	[BindProperty(SupportsGet = true, Name = "sortBy")]
+	public string? SortBy { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "sortDesc")]
+	public bool? SortDesc { get; set; }
 
 	const int PageSize = 30;
 
 	public Project? Project { get; private set; }
 	public bool SessionsEnabled => _features.IsEnabled(Feature.Tasks);
+
+	// Populated in the LISTING path (no `q`) — a deterministic page of headers.
 	public IReadOnlyList<SessionHeader> Sessions { get; private set; } = [];
+
+	// Populated in the SEARCH path (`q` set) — the same two-stage engine session_search (MCP)
+	// uses (digest ⊕ term ⊕ optional fullscan discovery, then episodic hydration with message
+	// ordinals). This is a top-K relevance SELECTION, not an enumeration (mirrors the MCP
+	// contract: "q is a relevance selection over discovered sessions, not an enumeration") — so
+	// unlike the listing path there is no further page beyond the capped pool.
+	public IReadOnlyList<SessionSearchCandidate> SearchResults { get; private set; } = [];
+
+	public bool IsSearchMode => !string.IsNullOrWhiteSpace(Query);
+
+	// False = distillation (the digest store) hasn't reached this project yet — an honest
+	// "index still warming up", not "nothing matched": the verbatim term leg is the declared
+	// recall floor and still ran (SessionSearchOutcome.Distilled).
+	public bool Distilled { get; private set; } = true;
+
+	// Search mode: the candidate count (a bounded selection, not a corpus total). Listing mode:
+	// the row count on THIS page — keyset paging has no cheap "total rows" (that would need an
+	// extra COUNT the spec doesn't ask for); NextCursor is the only "more exists" signal.
 	public int Total { get; private set; }
-	public bool HasNext { get; private set; }
+
+	// Listing mode only: the opaque token for the next page, or null at the tail. Always built
+	// from THIS response's last row, so it can never itself be stale (see CursorWasReset for
+	// the case where the INCOMING cursor was).
+	public string? NextCursor { get; private set; }
+
+	// Set when the incoming `cursor` was rejected (KeysetCursor.Decode throws on a fingerprint
+	// mismatch — a stale link, or a hand-edited URL mixing a cursor from one filter/sort with
+	// another). The listing restarts from the top rather than surfacing a raw 500: the mismatch
+	// is still CAUGHT (never silently spliced), just presented as a notice instead of a crash —
+	// a browser page gets the LogCursor-style courtesy, tasks_search's MCP callers get the throw.
+	public bool CursorWasReset { get; private set; }
+
+	// The agent-filter dropdown's options — every distinct agent that has written a (non-
+	// deleted) session in this project.
+	public IReadOnlyList<string> Agents { get; private set; } = [];
+
+	public string EffectiveSortBy => SessionSortKeys.IsKnown(SortBy) ? SortBy! : SessionSortKeys.Updated;
+	public bool EffectiveSortDesc => SortDesc ?? true;
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
@@ -63,10 +121,102 @@ public sealed class SessionsModel : PageModel
 		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
-		if (PageNum < 0) PageNum = 0;
-		var page = await _store.ListPageAsync(ProjectKey, Query, PageNum, PageSize, ct);
-		Sessions = page.Headers;
-		HasNext = page.HasNext;
-		Total = page.Total;
+		// Header-only (no ContentZ decode — ISessionStore.ListAsync's own contract), used for
+		// BOTH the agent-filter dropdown's options and (in search mode) as the Updated/
+		// Created/Version lookup to reorder the candidate pool by a non-relevance axis (see
+		// SortSearchResults below): SessionSearchCandidate itself carries no timestamps.
+		var allHeaders = await _store.ListAsync(ProjectKey, ct);
+		Agents = allHeaders.Select(h => h.Agent)
+			.Where(a => !string.IsNullOrWhiteSpace(a))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
+			.ToList();
+
+		if (IsSearchMode)
+		{
+			// SEARCH: the SAME engine session_search (MCP) calls — spec
+			// search-one-engine-for-human-and-agent forbids the human surface falling behind
+			// the agent's on recall. Requesting a full PageSize pool (capped at
+			// SessionSearchService.MaxSessions internally) — there is no `pageNum` beyond it.
+			var outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: PageSize, ct: ct);
+			Distilled = outcome.Distilled;
+
+			IEnumerable<SessionSearchCandidate> pool = outcome.Candidates;
+			if (!string.IsNullOrWhiteSpace(Agent))
+				pool = pool.Where(c => string.Equals(c.Agent, Agent, StringComparison.OrdinalIgnoreCase));
+
+			// Relevance (the fused discovery order) is the default; an explicit sortBy REORDERS
+			// the already-selected pool, it never widens it (the SearchRequest<,> convention:
+			// "a filter narrows in both modes, sort reorders within the selected set").
+			if (!string.IsNullOrWhiteSpace(SortBy))
+			{
+				var headerBySession = allHeaders.ToDictionary(h => h.SessionId, StringComparer.Ordinal);
+				pool = SortSearchResults(pool, headerBySession, EffectiveSortBy, EffectiveSortDesc);
+			}
+
+			SearchResults = pool.ToList();
+			Total = SearchResults.Count;
+		}
+		else
+		{
+			// LISTING: agent filter + sort are real SQL (ListPageAsync); paging is KEYSET, not
+			// offset (card listing-keyset-memory-sessions) — a stale/foreign cursor is CAUGHT
+			// (ArgumentException from KeysetCursor.Decode) and the listing restarts from the top
+			// rather than raising a raw error to a browser tab.
+			var sort = EffectiveSortBy switch
+			{
+				SessionSortKeys.Created => SessionSortField.Created,
+				SessionSortKeys.Length => SessionSortField.Length,
+				_ => SessionSortField.Updated,
+			};
+			SessionHeaderPage page;
+			try
+			{
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, Cursor, PageSize, ct);
+			}
+			catch (ArgumentException)
+			{
+				CursorWasReset = true;
+				Cursor = null;
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, null, PageSize, ct);
+			}
+			Sessions = page.Headers;
+			NextCursor = page.NextCursor;
+			Total = Sessions.Count;
+		}
 	}
+
+	// Reorders search candidates by a non-relevance axis, looking up Updated/Created/Version
+	// (the length proxy — see SessionSortField) from the header dict since
+	// SessionSearchCandidate itself carries none of them. Missing lookups (should not happen —
+	// every candidate came FROM this project's session set) sort last rather than throwing.
+	static List<SessionSearchCandidate> SortSearchResults(IEnumerable<SessionSearchCandidate> pool,
+		Dictionary<string, SessionHeader> headerBySession, string sortBy, bool desc)
+	{
+		DateTime UpdatedOf(SessionSearchCandidate c) => headerBySession.TryGetValue(c.SessionId, out var h) ? h.Updated : DateTime.MinValue;
+		DateTime CreatedOf(SessionSearchCandidate c) => headerBySession.TryGetValue(c.SessionId, out var h) ? h.Created : DateTime.MinValue;
+		long LengthOf(SessionSearchCandidate c) => headerBySession.TryGetValue(c.SessionId, out var h) ? h.Version : 0;
+
+		IOrderedEnumerable<SessionSearchCandidate> ordered = sortBy switch
+		{
+			SessionSortKeys.Created => desc ? pool.OrderByDescending(CreatedOf) : pool.OrderBy(CreatedOf),
+			SessionSortKeys.Length => desc ? pool.OrderByDescending(LengthOf) : pool.OrderBy(LengthOf),
+			_ => desc ? pool.OrderByDescending(UpdatedOf) : pool.OrderBy(UpdatedOf),
+		};
+		return ordered.ToList();
+	}
+}
+
+// The sort-key vocabulary this page's form and OnGetAsync both switch over — kept as one named
+// list (mirrors BoardSortKeys) so an unrecognized/typo'd `sortBy` degrades to the default
+// instead of throwing, and the `<select>` options can't silently drift from the C# switch.
+public static class SessionSortKeys
+{
+	public const string Updated = "updated";
+	public const string Created = "created";
+	public const string Length = "length";
+
+	public static readonly IReadOnlyList<string> All = [Updated, Created, Length];
+
+	public static bool IsKnown(string? key) => key is not null && All.Contains(key, StringComparer.OrdinalIgnoreCase);
 }

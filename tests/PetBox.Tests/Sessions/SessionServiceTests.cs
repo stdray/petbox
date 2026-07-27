@@ -246,6 +246,59 @@ public sealed class SessionServiceTests : IDisposable
 		(await _svc.ResolveIdAsync("proj", "dead")).Match.Should().BeNull("a soft-deleted session must not resolve");
 	}
 
+	// ---- Created (M008): a first-seen timestamp preserved across every re-push ----------
+	// InsertOrReplace rewrites the whole row on every write, so Created has to be actively
+	// carried forward (SessionService reads it via ISessionStore.GetCreatedAsync) — unlike
+	// Updated, it must NOT reset to "now" on a second write.
+
+	[Fact]
+	public async Task Upsert_PreservesCreated_AcrossRePush()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "v1")));
+		var createdFirst = (await _svc.GetAsync("proj", "s1"))!.Created;
+
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "v2")));
+
+		(await _svc.GetAsync("proj", "s1"))!.Created.Should().Be(createdFirst,
+			"InsertOrReplace rewrites the whole row — Created must survive a re-push, not reset to now");
+	}
+
+	[Fact]
+	public async Task Append_PreservesCreated_AcrossExtend()
+	{
+		await _svc.AppendAsync("proj", "s1", "claude-code", 1, Msgs(("user", "a")));
+		var createdFirst = (await _svc.GetAsync("proj", "s1"))!.Created;
+
+		await _svc.AppendAsync("proj", "s1", "claude-code", 2, Msgs(("assistant", "b")));
+
+		(await _svc.GetAsync("proj", "s1"))!.Created.Should().Be(createdFirst);
+	}
+
+	[Fact]
+	public async Task Upsert_AfterDelete_Resurrects_KeepsOriginalCreated()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "v1")));
+		var createdFirst = (await _svc.GetAsync("proj", "s1"))!.Created;
+		await _svc.DeleteAsync("proj", "s1");
+
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "v2"))); // re-push resurrects
+
+		(await _svc.GetAsync("proj", "s1"))!.Created.Should().Be(createdFirst,
+			"a resurrect must keep the ORIGINAL first-seen time, not start a new one");
+	}
+
+	[Fact]
+	public async Task Upsert_NewSession_CreatedEqualsUpdated()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "v1")));
+		var snap = await _svc.GetAsync("proj", "s1");
+
+		// Both compared AFTER the same DB round-trip (SQLite's TEXT storage truncates sub-ms
+		// precision) — comparing against the raw pre-write outcome would flag that storage
+		// rounding as a Created/Updated mismatch that isn't actually there.
+		snap!.Created.Should().Be(snap.Updated, "a brand-new session has no prior Created to preserve");
+	}
+
 	[Fact]
 	public async Task Delete_ThroughService_HidesEverywhere_ThenUpsertResurrects()
 	{

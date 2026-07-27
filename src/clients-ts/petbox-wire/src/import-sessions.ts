@@ -21,6 +21,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
+import { pathToFileURL } from "node:url";
 import { readRegistry, resolveProject, type ResolvedProject } from "./registry.ts";
 import { buildMessages, readTranscriptCwd, type Msg } from "./transcript.ts";
 
@@ -179,14 +180,31 @@ function opencodeCandidates(target: ResolvedProject): Candidate[] {
   return out;
 }
 
-async function serverVersions(target: ResolvedProject): Promise<Map<string, number>> {
-  const res = await fetch(`${target.baseUrl}/api/sessions/${target.project}`, {
-    headers: { "X-Api-Key": target.apiKey },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`GET /api/sessions/${target.project} → ${res.status}`);
-  const body = (await res.json()) as { sessions?: { sessionId: string; version: number }[] };
-  return new Map((body.sessions ?? []).map((s) => [s.sessionId, s.version]));
+// GET /api/sessions/{project} is KEYSET-paged (spec listing-tail-reachable): one bounded page
+// per call plus an opaque `nextCursor` (null at the tail), never the whole archive in one
+// response — the server-side half of the same fix that moved the UI listing off pageNum/
+// pageSize. This importer's "compare every session's version" need is real (it diffs EVERY
+// local candidate against the server's inventory), so it walks the cursor to the end itself —
+// looping the paginated call IS the "give me everything" answer, not a second endpoint mode.
+export async function serverVersions(target: ResolvedProject): Promise<Map<string, number>> {
+  const versions = new Map<string, number>();
+  let cursor: string | undefined;
+  do {
+    const url = new URL(`${target.baseUrl}/api/sessions/${target.project}`);
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const res = await fetch(url, {
+      headers: { "X-Api-Key": target.apiKey },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`GET /api/sessions/${target.project} → ${res.status}`);
+    const body = (await res.json()) as {
+      sessions?: { sessionId: string; version: number }[];
+      nextCursor?: string | null;
+    };
+    for (const s of body.sessions ?? []) versions.set(s.sessionId, s.version);
+    cursor = body.nextCursor ?? undefined;
+  } while (cursor);
+  return versions;
 }
 
 async function push(target: ResolvedProject, c: Candidate, msgs: Msg[]): Promise<void> {
@@ -255,7 +273,16 @@ async function main(): Promise<void> {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
-  process.exit(1);
-});
+// Run main() ONLY when this file is the process entrypoint, never on import — mirrors
+// subagent-model-gate.ts's guard. Without it, importing serverVersions for a unit test also
+// starts main(), which reads process.argv/registry state and calls process.exit(), taking the
+// test runner down with it.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+}

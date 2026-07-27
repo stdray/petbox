@@ -127,6 +127,62 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		header.TryGetProperty("updated", out _).Should().BeTrue();
 	}
 
+	// spec listing-tail-reachable / card listing-keyset-memory-sessions: the importer's
+	// upgrade-only guard needs the COMPLETE session set to compare versions against, but the
+	// server never hands that back in one unbounded response — it pages by KEYSET (?cursor=,
+	// ?limit=) and the caller loops nextCursor to reach the tail. Pin the wire shape: nextCursor
+	// present + non-null mid-walk, null at the end, and every pushed session reached exactly once.
+	[Fact]
+	public async Task List_KeysetPages_ToTheTail_WithNoDuplicatesOrGaps()
+	{
+		var ids = Enumerable.Range(0, 3).Select(_ => "s-" + Guid.NewGuid().ToString("N")[..8]).ToList();
+		foreach (var id in ids)
+			await _http.SendAsync(PushRequest(ProjectKey, id, WriteKey, Ndjson(("user", "a"))));
+
+		var seen = new List<string>();
+		string? cursor = null;
+		var pages = 0;
+		do
+		{
+			var url = $"/api/sessions/{ProjectKey}?limit=1" + (cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}");
+			var req = new HttpRequestMessage(HttpMethod.Get, url);
+			req.Headers.Add("X-Api-Key", ReadOnlyKey);
+			var res = await _http.SendAsync(req);
+			res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+			using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+			var root = doc.RootElement;
+			var rows = root.GetProperty("sessions").EnumerateArray().ToList();
+			rows.Should().HaveCount(1, "limit=1 must actually bound the page, not just suggest it");
+			seen.Add(rows[0].GetProperty("sessionId").GetString()!);
+
+			cursor = root.TryGetProperty("nextCursor", out var nc) && nc.ValueKind == JsonValueKind.String ? nc.GetString() : null;
+			pages++;
+			pages.Should().BeLessThan(50, "guard against an infinite loop if NextCursor ever stopped terminating");
+		} while (cursor is not null);
+
+		seen.Should().Contain(ids); // every pushed session reached — no gap
+		seen.Distinct().Should().HaveCount(seen.Count); // — and no duplicate
+	}
+
+	// A cursor whose fingerprint doesn't match the call it's replayed against (a foreign/stale
+	// token) must be REFUSED, not silently honoured under a different ordering — the same
+	// KeysetCursor.Decode contract tasks_search's listing mode relies on.
+	[Fact]
+	public async Task List_RejectsCursor_FromADifferentLimit_Gracefully()
+	{
+		// limit doesn't affect the fingerprint (it shapes the page, not the sequence) — so
+		// forge an actually-foreign cursor instead: base64 JSON that isn't this endpoint's shape.
+		var bogus = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"not\":\"a real cursor\"}"));
+		var req = new HttpRequestMessage(HttpMethod.Get, $"/api/sessions/{ProjectKey}?cursor={bogus}");
+		req.Headers.Add("X-Api-Key", ReadOnlyKey);
+		var res = await _http.SendAsync(req);
+
+		res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+		doc.RootElement.TryGetProperty("error", out _).Should().BeTrue("a malformed cursor is a structured 400, not a 500");
+	}
+
 	[Fact]
 	public async Task Push_EmptyBody_400WithErrorMessage()
 	{

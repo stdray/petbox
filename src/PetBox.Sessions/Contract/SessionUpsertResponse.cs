@@ -17,4 +17,10 @@ public sealed record SessionAppendGapResponse(string Error, long LastOrdinal);
 // Meta is the optional observed client stamp (raw JSON object string) when present.
 public sealed record SessionHeaderResponse(string SessionId, string Agent, long Version, DateTime Updated, string? Meta = null);
 
-public sealed record SessionListResponse(IReadOnlyList<SessionHeaderResponse> Sessions);
+// KEYSET-paged (spec listing-tail-reachable): NextCursor is the opaque token for the next
+// page, or null at the tail — never a page NUMBER, so a session inserted/deleted before the
+// boundary between two calls can't silently duplicate or drop a row. A caller that wants the
+// COMPLETE set (the history importer's version-comparison guard) loops passing NextCursor back
+// as `cursor` until it comes back null; the server never hands back an unbounded list in one
+// response.
+public sealed record SessionListResponse(IReadOnlyList<SessionHeaderResponse> Sessions, string? NextCursor = null);

@@ -15,6 +15,10 @@ public sealed record SessionRow
 	[Column, NotNull] public byte[] ContentZ { get; init; } = Array.Empty<byte>();
 	[Column] public long Version { get; init; }
 	[Column, NotNull] public DateTime Updated { get; init; }
+	// First-seen timestamp (M008), preserved by SessionService across every re-push/append —
+	// InsertOrReplace rewrites the whole row, so every writer must re-supply the ORIGINAL value
+	// (see ISessionStore.GetCreatedAsync). Distinct from Updated (last-write time).
+	[Column, NotNull] public DateTime Created { get; init; }
 	// Soft delete: the row stays (DeletedAt for audit) but every read filters it out. A re-push
 	// of the same SessionId replaces the whole row with these defaults — i.e. resurrects it.
 	[Column] public bool IsDeleted { get; init; }
