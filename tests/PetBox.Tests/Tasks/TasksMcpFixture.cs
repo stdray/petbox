@@ -161,7 +161,7 @@ public sealed class MethodologyRuntimeFixture : TasksMcpFixture
 	public MethodologyRuntimeFixture() : base("mrt", "Runtime") { }
 }
 
-public sealed class MethodologyDescribeFixture : TasksMcpFixture
+public sealed class MethodologySetDescriptionFixture : TasksMcpFixture
 {
-	public MethodologyDescribeFixture() : base("mdsc", "Describe") { }
+	public MethodologySetDescriptionFixture() : base("mdsc", "SetDescription") { }
 }

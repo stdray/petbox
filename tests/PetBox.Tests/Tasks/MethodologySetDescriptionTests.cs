@@ -8,22 +8,22 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
-// spec methodology-describe-verb: tasks_methodology_describe edits ONE primitive's prose
+// spec methodology-describe-verb: tasks_methodology_set_description edits ONE primitive's prose
 // Description by its NATURAL KEY — apart from tasks_methodology_rules_upsert, which stays the
 // whole-document version-CAS replace for STRUCTURE (granular structure patching was rejected;
 // this verb can only ever replace a Description string, never reshape a kind/block/status/
 // transition/effect/constraint). Paired with work/primitive-descriptions-as-data, which put
 // the Description field on kind/status/transition/effect/constraint in the first place.
-public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribeFixture>, IAsyncLifetime
+public sealed class MethodologySetDescriptionTests : IClassFixture<MethodologySetDescriptionFixture>, IAsyncLifetime
 {
 	const string ProjectKey = "mdsc";
 	const string Inst = "support";
 	const string Tmpl = "support-tmpl";
 
-	readonly MethodologyDescribeFixture _fx;
+	readonly MethodologySetDescriptionFixture _fx;
 	readonly McpClient _mcp;
 
-	public MethodologyDescribeTests(MethodologyDescribeFixture fx)
+	public MethodologySetDescriptionTests(MethodologySetDescriptionFixture fx)
 	{
 		_fx = fx;
 		_mcp = fx.Mcp;
@@ -106,7 +106,7 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 	{
 		args["projectKey"] = ProjectKey;
 		args["name"] = Inst;
-		return Call("tasks_methodology_describe", args);
+		return Call("tasks_methodology_set_description", args);
 	}
 
 	async Task<JsonElement> RulesGet()
@@ -121,7 +121,7 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 	// the write survives on the very next rules_get (proving it went through the real
 	// document, not just an in-memory echo).
 	[Fact]
-	public async Task Describe_EveryPrimitiveKind_SetsDescription_VisibleOnNextRulesGet()
+	public async Task SetDescription_EveryPrimitiveKind_SetsDescription_VisibleOnNextRulesGet()
 	{
 		await InstallAsync();
 
@@ -168,7 +168,7 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 	// 2. A description SET first and then CLEARED with "" round-trips to absent (the wire
 	// omits null, same posture as every other optional prose field).
 	[Fact]
-	public async Task Describe_EmptyString_ClearsAPreviouslySetDescription()
+	public async Task SetDescription_EmptyString_ClearsAPreviouslySetDescription()
 	{
 		await InstallAsync();
 		IsErr(await Describe(new() { ["primitive"] = "kind", ["kind"] = "support", ["description"] = "Support requests." })).Should().BeFalse();
@@ -183,7 +183,7 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 	// 3. A natural key that matches nothing is a clear, actionable error — nothing is written
 	// (the structural document is untouched: a second, correct call still finds everything).
 	[Fact]
-	public async Task Describe_UnmatchedNaturalKey_IsAClearError_NothingWritten()
+	public async Task SetDescription_UnmatchedNaturalKey_IsAClearError_NothingWritten()
 	{
 		await InstallAsync();
 
@@ -202,7 +202,7 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 
 	// 4. An unknown `primitive` value is rejected naming the legal vocabulary.
 	[Fact]
-	public async Task Describe_UnknownPrimitive_RejectedNamingTheVocabulary()
+	public async Task SetDescription_UnknownPrimitive_RejectedNamingTheVocabulary()
 	{
 		await InstallAsync();
 		var r = await Describe(new() { ["primitive"] = "workflow", ["kind"] = "support", ["description"] = "x" });
@@ -212,9 +212,9 @@ public sealed class MethodologyDescribeTests : IClassFixture<MethodologyDescribe
 
 	// 5. A missing instance is a clear error (not a silent no-op).
 	[Fact]
-	public async Task Describe_MissingInstance_IsAClearError()
+	public async Task SetDescription_MissingInstance_IsAClearError()
 	{
-		var r = await Call("tasks_methodology_describe", new { projectKey = ProjectKey, name = "no-such-instance", primitive = "kind", kind = "support", description = "x" });
+		var r = await Call("tasks_methodology_set_description", new { projectKey = ProjectKey, name = "no-such-instance", primitive = "kind", kind = "support", description = "x" });
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not found");
 	}
