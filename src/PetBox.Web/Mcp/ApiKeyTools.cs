@@ -113,10 +113,10 @@ public static class ApiKeyTools
 	}
 
 	[McpServerTool(Name = "apikey_update", Title = "Update an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyUpdatedResult))]
-	[Description("PATCHes an ALREADY-ISSUED key in place — no re-mint, no manual DB edit. Requires admin:provision: exactly the right apikey_create needs, so an update can never grant what a mint could not. The secret itself never changes and is never returned; `key` is the address. Editable: `name`, `scopes`, expiry, `defaultProject`. A field you OMIT is left untouched (it is NOT reset to a default). The two clearable fields have an explicit sentinel, distinct from 'omitted': `expiresInSeconds:0` makes the key NON-EXPIRING, `defaultProject:\"\"` (empty string) DROPS the default project. `scopes` replaces the whole set (it is not additive) and is validated like on create — unknown scopes are rejected, an empty set is rejected. `defaultProject` obeys the same invariants as create: cross-project ('*') keys only, and the project must exist. A change takes effect on the NEXT call with that key — nothing about a key is cached per connection or per session. A key declared in appsettings (Auth:ApiKeys) CANNOT be updated: the config file owns its lifecycle and the config lookup wins on every auth, so a stored row would never be read — such a call is REFUSED, not silently ignored.")]
+	[Description("PATCHes an ALREADY-ISSUED key in place — no re-mint, no manual DB edit. Requires admin:provision: exactly the right apikey_create needs, so an update can never grant what a mint could not. The secret itself never changes and is never returned; `keyValue` is the address. Editable: `name`, `scopes`, expiry, `defaultProject`. A field you OMIT is left untouched (it is NOT reset to a default). The two clearable fields have an explicit sentinel, distinct from 'omitted': `expiresInSeconds:0` makes the key NON-EXPIRING, `defaultProject:\"\"` (empty string) DROPS the default project. `scopes` replaces the whole set (it is not additive) and is validated like on create — unknown scopes are rejected, an empty set is rejected. `defaultProject` obeys the same invariants as create: cross-project ('*') keys only, and the project must exist. A change takes effect on the NEXT call with that key — nothing about a key is cached per connection or per session. A key declared in appsettings (Auth:ApiKeys) CANNOT be updated: the config file owns its lifecycle and the config lookup wins on every auth, so a stored row would never be read — such a call is REFUSED, not silently ignored.")]
 	public static async Task<ApiKeyUpdatedResult> UpdateAsync(
 		IHttpContextAccessor http, AgentKeyAdminService keys,
-		[Description("The raw key value to update (the secret is not changed).")] string key,
+		[Description("The raw key value to update (the secret is not changed).")] string keyValue,
 		[Description("New human-readable name. Omit to leave unchanged.")] string? name = null,
 		[Description("New comma-separated scope list — REPLACES the current set. Omit to leave unchanged.")] string? scopes = null,
 		[Description("New TTL in seconds from now. 0 = clear the expiry (never expires). Omit to leave unchanged.")] long? expiresInSeconds = null,
@@ -124,7 +124,7 @@ public static class ApiKeyTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
-		if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("key is required");
+		if (string.IsNullOrWhiteSpace(keyValue)) throw new ArgumentException("keyValue is required");
 
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 
@@ -132,7 +132,7 @@ public static class ApiKeyTools
 		// key is refused rather than silently no-op'd, scopes are validated exactly as on a mint — live
 		// in AgentKeyAdminService, alongside the admin pages' edit. One door onto ApiKeys.
 		var result = await keys.PatchAsync(
-			new AgentKeyPatch(key, name, scopes, expiresInSeconds, defaultProject), ct);
+			new AgentKeyPatch(keyValue, name, scopes, expiresInSeconds, defaultProject), ct);
 
 		var patched = result switch
 		{
@@ -152,7 +152,7 @@ public static class ApiKeyTools
 		var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("PetBox.Web.Mcp.ApiKeyTools");
 		if (logger.IsEnabled(LogLevel.Information))
 			logger.LogInformation("apikey_update target={TargetKey} fields={Fields} actor={ActorKey} actorProject={ActorProject}",
-				Tail(key), string.Join(',', patched.Touched), Tail(ctx.Request.Headers[ApiKeyAuthenticationHandler.ApiKeyHeader].FirstOrDefault()),
+				Tail(keyValue), string.Join(',', patched.Touched), Tail(ctx.Request.Headers[ApiKeyAuthenticationHandler.ApiKeyHeader].FirstOrDefault()),
 				ctx.User.FindFirst("project")?.Value);
 
 		return new ApiKeyUpdatedResult(
@@ -169,12 +169,12 @@ public static class ApiKeyTools
 	[Description("Deletes (revokes) an API key by its raw key value. Requires admin:provision.")]
 	public static async Task<ApiKeyDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, AgentKeyAdminService keys,
-		[Description("The raw key value to revoke.")] string key,
+		[Description("The raw key value to revoke.")] string keyValue,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
-		if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("key is required");
-		if (!await keys.DeleteAsync(key, ct)) throw new InvalidOperationException("ApiKey not found");
-		return new ApiKeyDeletedResult(true, key);
+		if (string.IsNullOrWhiteSpace(keyValue)) throw new ArgumentException("keyValue is required");
+		if (!await keys.DeleteAsync(keyValue, ct)) throw new InvalidOperationException("ApiKey not found");
+		return new ApiKeyDeletedResult(true, keyValue);
 	}
 }

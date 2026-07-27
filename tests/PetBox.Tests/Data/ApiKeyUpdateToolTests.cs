@@ -75,7 +75,7 @@ public sealed class ApiKeyUpdateToolTests
 		var key = await SeedAsync(scopes: "data:read,data:write", wildcard: true, defaultProject: "$system");
 		var before = await RowAsync(key);
 
-		(await UpdateAsync(new() { ["key"] = key, ["name"] = "  after  " })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["name"] = "  after  " })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.Name.Should().Be("after");                                   // trimmed
@@ -93,7 +93,7 @@ public sealed class ApiKeyUpdateToolTests
 		var key = await SeedAsync(scopes: "data:read", wildcard: true, defaultProject: "$system");
 		var before = await RowAsync(key);
 
-		(await UpdateAsync(new() { ["key"] = key, ["scopes"] = "tasks:read,tasks:write" })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["scopes"] = "tasks:read,tasks:write" })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.Scopes.Should().Be("tasks:read,tasks:write");                // REPLACES, not adds
@@ -108,7 +108,7 @@ public sealed class ApiKeyUpdateToolTests
 		var key = await SeedAsync(scopes: "data:read", wildcard: true, defaultProject: "$system");
 		var before = await RowAsync(key);
 
-		(await UpdateAsync(new() { ["key"] = key, ["expiresInSeconds"] = 3600 })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["expiresInSeconds"] = 3600 })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.ExpiresAt.Should().NotBe(before.ExpiresAt);
@@ -124,7 +124,7 @@ public sealed class ApiKeyUpdateToolTests
 		var key = await SeedAsync(scopes: "data:read", wildcard: true, defaultProject: null);
 		var before = await RowAsync(key);
 
-		(await UpdateAsync(new() { ["key"] = key, ["defaultProject"] = "$system" })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["defaultProject"] = "$system" })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.DefaultProjectKey.Should().Be("$system");
@@ -142,7 +142,7 @@ public sealed class ApiKeyUpdateToolTests
 
 		var result = await UpdateAsync(new()
 		{
-			["key"] = key,
+			["keyValue"] = key,
 			["name"] = "combined",
 			["scopes"] = "memory:read,memory:write",
 			["expiresInSeconds"] = 7200,
@@ -164,7 +164,7 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task ClearExpiry_ZeroSeconds_MakesKeyNonExpiring()
 	{
 		var key = await SeedAsync();
-		(await UpdateAsync(new() { ["key"] = key, ["expiresInSeconds"] = 0 })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["expiresInSeconds"] = 0 })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.ExpiresAt.Should().BeNull();                                 // explicit clear…
@@ -176,7 +176,7 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task ClearDefaultProject_EmptyString_DropsIt()
 	{
 		var key = await SeedAsync(wildcard: true, defaultProject: "$system");
-		(await UpdateAsync(new() { ["key"] = key, ["defaultProject"] = "" })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["defaultProject"] = "" })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.DefaultProjectKey.Should().BeNull();
@@ -189,7 +189,7 @@ public sealed class ApiKeyUpdateToolTests
 		// The mirror image of the two tests above: a patch that names only `name` must NOT be read as
 		// "clear the expiry / clear the default project" — omission and clear are different requests.
 		var key = await SeedAsync(wildcard: true, defaultProject: "$system");
-		(await UpdateAsync(new() { ["key"] = key, ["name"] = "renamed" })).Should().NotContain("\"error\"");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["name"] = "renamed" })).Should().NotContain("\"error\"");
 
 		var after = await RowAsync(key);
 		after.ExpiresAt.Should().Be(new DateTime(2030, 1, 1, 0, 0, 0, DateTimeKind.Utc));
@@ -201,7 +201,7 @@ public sealed class ApiKeyUpdateToolTests
 	[Fact]
 	public async Task ConfigDeclaredKey_Refused_WithReason()
 	{
-		var result = await UpdateAsync(new() { ["key"] = ProvisioningToolsFixture.ConfigDeclaredKey, ["name"] = "hijack" });
+		var result = await UpdateAsync(new() { ["keyValue"] = ProvisioningToolsFixture.ConfigDeclaredKey, ["name"] = "hijack" });
 
 		// Not a silent no-op and not a bare 500 — the reason names the config source.
 		result.Should().Contain("configuration");
@@ -216,7 +216,7 @@ public sealed class ApiKeyUpdateToolTests
 	[Fact]
 	public async Task UnknownKey_Refused()
 	{
-		(await UpdateAsync(new() { ["key"] = "yb_key_nonexistent", ["name"] = "x" }))
+		(await UpdateAsync(new() { ["keyValue"] = "yb_key_nonexistent", ["name"] = "x" }))
 			.Should().Contain("ApiKey not found");
 	}
 
@@ -224,7 +224,7 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task UnknownScope_Refused_NothingWritten()
 	{
 		var key = await SeedAsync();
-		(await UpdateAsync(new() { ["key"] = key, ["name"] = "newname", ["scopes"] = "data:read,bogus:scope" }))
+		(await UpdateAsync(new() { ["keyValue"] = key, ["name"] = "newname", ["scopes"] = "data:read,bogus:scope" }))
 			.Should().Contain("Unknown scopes");
 
 		// The whole patch is rejected — the name change that rode along with it did NOT land.
@@ -235,7 +235,7 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task BlankName_Refused()
 	{
 		var key = await SeedAsync();
-		(await UpdateAsync(new() { ["key"] = key, ["name"] = "   " })).Should().Contain("name cannot be blank");
+		(await UpdateAsync(new() { ["keyValue"] = key, ["name"] = "   " })).Should().Contain("name cannot be blank");
 		(await RowAsync(key)).Name.Should().Be("before");
 	}
 
@@ -243,7 +243,17 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task NothingToUpdate_Refused()
 	{
 		var key = await SeedAsync();
-		(await UpdateAsync(new() { ["key"] = key })).Should().Contain("Nothing to update");
+		(await UpdateAsync(new() { ["keyValue"] = key })).Should().Contain("Nothing to update");
+	}
+
+	// param-names-collide-across-families pt.1: `key` renamed to `keyValue` (a raw secret must not
+	// share a name with the public slug convention used elsewhere). The pre-rename argument name is
+	// now unrecognized — the call fails on the missing required `keyValue`, not on the new name.
+	[Fact]
+	public async Task OldParamName_Key_NoLongerAccepted()
+	{
+		var key = await SeedAsync();
+		(await UpdateAsync(new() { ["key"] = key, ["name"] = "x" })).Should().Contain("keyValue");
 	}
 
 	[Fact]
@@ -251,7 +261,7 @@ public sealed class ApiKeyUpdateToolTests
 	{
 		// The create-time invariant, reused: a project-scoped key already defaults to its own claim.
 		var key = await SeedAsync(wildcard: false);
-		(await UpdateAsync(new() { ["key"] = key, ["defaultProject"] = "$system" }))
+		(await UpdateAsync(new() { ["keyValue"] = key, ["defaultProject"] = "$system" }))
 			.Should().Contain("only valid on a cross-project");
 		(await RowAsync(key)).DefaultProjectKey.Should().BeNull();
 	}
@@ -260,7 +270,7 @@ public sealed class ApiKeyUpdateToolTests
 	public async Task DefaultProject_UnknownProject_Refused()
 	{
 		var key = await SeedAsync(wildcard: true);
-		(await UpdateAsync(new() { ["key"] = key, ["defaultProject"] = "nosuchproject" }))
+		(await UpdateAsync(new() { ["keyValue"] = key, ["defaultProject"] = "nosuchproject" }))
 			.Should().Contain("not found");
 		(await RowAsync(key)).DefaultProjectKey.Should().BeNull();
 	}
@@ -286,7 +296,7 @@ public sealed class ApiKeyUpdateToolTests
 		{
 			var result = Text(await mcp.CallToolAsync("apikey_update", new Dictionary<string, object?>
 			{
-				["key"] = victim,
+				["keyValue"] = victim,
 				["scopes"] = "admin:provision",
 			}));
 			result.Should().Contain("admin:provision");   // the message names the scope it lacks
@@ -329,14 +339,14 @@ public sealed class ApiKeyUpdateToolTests
 			Text(await call()).Should().Contain("lacks required scope").And.Contain("tasks:read");
 
 			// (2) grant it — through the tool under test, on the admin connection
-			(await UpdateAsync(new() { ["key"] = key, ["scopes"] = "config:read,tasks:read" }))
+			(await UpdateAsync(new() { ["keyValue"] = key, ["scopes"] = "config:read,tasks:read" }))
 				.Should().NotContain("\"error\"");
 
 			// (3) the VERY NEXT call on the SAME, un-reconnected client goes through
 			Text(await call()).Should().NotContain("lacks required scope");
 
 			// (4) revoke it — the direction that matters for security
-			(await UpdateAsync(new() { ["key"] = key, ["scopes"] = "config:read" }))
+			(await UpdateAsync(new() { ["keyValue"] = key, ["scopes"] = "config:read" }))
 				.Should().NotContain("\"error\"");
 
 			// (5) …and the very next call is refused again, with no reconnect in between
