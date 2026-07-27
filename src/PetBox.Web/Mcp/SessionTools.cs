@@ -207,7 +207,9 @@ public static class SessionTools
 	[Description("""
 		THE session read verb — LISTING (no `q`) of the project's sessions, or a two-stage
 		SEARCH (`q`) over the archive (digest ⊕ verbatim-term discovery, then in-session episodic
-		hits with message ordinals for session_get). `fullScan` is gated by deployment permission
+		hits with message ordinals for session_get). `q` is a relevance SELECTION over discovered
+		sessions, not an enumeration — there is no session delta; for the complete session
+		inventory list without `q`. `fullScan` is gated by deployment permission
 		(never automatic). Listing needs tasks:read; search also needs memory:read. Hard ~30k-char
 		output budget. Each hit's snippet follows the uniform `bodyLen` knob (omitted = a
 		query-centered ~240-char preview; 0 = no snippet; N>0 = a wider/narrower preview; -1 =

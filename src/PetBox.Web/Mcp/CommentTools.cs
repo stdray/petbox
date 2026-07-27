@@ -111,7 +111,7 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
-	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (slug|NodeId). With `q`: a lexical FTS relevance selection over comment bodies in the same scope (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
+	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (slug|NodeId). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
@@ -147,7 +147,7 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_delta", Title = "Comments delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
-	[Description("Return comments added/updated/removed on a board since `sinceVersion` (no writes) — THE cursor/catch-up surface (a comments_upsert ack echoes only its own call; pass its `currentVersion` here for the full board comment delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
+	[Description("Return comments added/updated/removed on a board since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a board's comments incrementally (comments_search's `q` is a relevance slice, never an enumeration; a comments_upsert ack echoes only its own call — pass its `currentVersion` here for the full board comment delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<CommentsUpsertResult> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
 		string projectKey, string board, long sinceVersion,
@@ -203,5 +203,6 @@ public static class CommentTools
 	const string SearchBudgetHint =
 		"Output budget exceeded: comment rows were truncated (see truncated/omitted). Narrow the " +
 		"read: `node` (one node's thread), `board` (one board), `q` (a relevance selection), " +
-		"`bodyLen` (snippet bodies), a smaller `limit`, or comments_get for one full comment.";
+		"`bodyLen` (snippet bodies), a smaller `limit`, comments_get for one full comment — or, " +
+		"for the COMPLETE set, comments_delta (sinceVersion:0 enumerates from scratch).";
 }

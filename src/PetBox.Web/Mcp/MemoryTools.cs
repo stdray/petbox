@@ -319,7 +319,7 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
@@ -550,9 +550,10 @@ public static class MemoryTools
 		An unauthorized leg is SKIPPED SILENTLY, so an empty result means "nothing here OR not
 		yours", never "nothing exists".
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
-		memory_get); each row's `version` is the CAS baseline for memory_upsert. Tracking changes
-		since a known version cursor (added/updated/removed, including tombstones this search
-		cannot show)? Use memory_delta instead. Hard ~30k-char output budget. Requires memory:read.
+		memory_get); each row's `version` is the CAS baseline for memory_upsert. `q` is a relevance
+		SELECTION, not an enumeration — for the complete set use a listing (no `q`) or memory_delta
+		(added/updated/removed since a version cursor, including tombstones this search cannot
+		show). Hard ~30k-char output budget. Requires memory:read.
 
 		Cost — your context pays it. Same query, same rows: bodyLen:0 = 1x, default snippet
 		~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long entry can add thousands
@@ -858,7 +859,8 @@ public static class MemoryTools
 	const string SearchBudgetHint =
 		"Output budget exceeded: entries were truncated (see truncated/omitted). Narrow the " +
 		"read: `scope`/`store` (one container/store), `type` (one taxonomy), a lower `limit`, " +
-		"`bodyLen` (snippet bodies), or memory_get for one entry's full body.";
+		"`bodyLen` (snippet bodies), memory_get for one entry's full body — or, for the COMPLETE " +
+		"set, memory_delta (sinceVersion:0 enumerates from scratch).";
 
 	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.
 	static (MemorySortBy By, bool Desc)? ParseSort(SortInput? sort)
