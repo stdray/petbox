@@ -24,13 +24,19 @@ namespace PetBox.Tests.Mcp;
 //
 // Updated again by work escape-inflation-warning: SizeWarningOrNull no longer compares
 // Request.ContentLength against an ABSOLUTE byte threshold (WriteCallSizeGuidanceBytes, retired).
-// It compares ContentLength against THIS request's own expected raw-UTF-8 byte count
-// (ModuleMcp.ExpectedRawBytesItemKey, stashed on HttpContext.Items by McpTracingFilter's request
-// reserialization) — inflation = ContentLength / expectedRaw. A client sending raw UTF-8
-// (inflation ~1.0) now gets silence at ANY size; a client \uXXXX-escaping non-ASCII (inflation >=
-// ModuleMcp.EscapeInflationWarningThreshold) gets warned even on a SMALL call. See card
-// escape-inflation-warning for why the old ReqBytes/ReqChars average and the absolute threshold
-// were both the wrong instrument.
+// It compares the request body's WIRE size against what that SAME body would cost as raw UTF-8
+// (McpWireBodyMeasurementMiddleware measures both while the body streams past). A client sending
+// raw UTF-8 (inflation ~1.0) gets silence at ANY size; a client \uXXXX-escaping non-ASCII
+// (inflation >= ModuleMcp.EscapeInflationWarningThreshold) gets warned even on a SMALL call. See
+// card escape-inflation-warning for why the old ReqBytes/ReqChars average and the absolute
+// threshold were both the wrong instrument.
+//
+// Corrected by fix/escape-inflation-comparable-units: the first cut divided ContentLength (the
+// WHOLE request) by the reserialized tool ARGUMENTS (a PART of it), so the JSON-RPC envelope sat
+// in the numerator alone and pure-ASCII calls were warned in production. The tests below could
+// not have caught it — they set both sides by hand, consistently. They now feed a REAL body and
+// let the production scanner derive both numbers (McpWireBody), which removes the hand-stated
+// ratio; but what actually pins the units is a real POST /mcp, in McpEscapeInflationRealPathTests.
 public sealed class WriteVerbSizeGuidanceTests
 {
 	[Theory]
@@ -48,7 +54,7 @@ public sealed class WriteVerbSizeGuidanceTests
 	}
 
 	// The public sentence must not carry a byte-count figure (a thousands-grouped number like
-	// "8,000" or "12,000") — see the comment above ModuleMcp.WriteCallSizeGuidanceBytes for why
+	// "8,000" or "12,000") — see the comments above ModuleMcp.SizeGuidanceText for why
 	// publishing one in every write tool's description backfired. This does NOT forbid every
 	// digit — the Cyrillic escape-inflation ratio ("~2.8x", "2.74-2.88x") is a different,
 	// non-threshold number the sentence still legitimately states.
@@ -64,49 +70,47 @@ public sealed class WriteVerbSizeGuidanceTests
 	[Fact]
 	public void SizeWarningOrNull_RawUtf8LargeBody_NoWarning()
 	{
-		const int expectedRaw = 50_000;
-		var http = Http(contentLength: expectedRaw, expectedRawBytes: expectedRaw);
+		var big = string.Concat(Enumerable.Repeat(McpWireBody.CyrillicPayload + " ", 200));
+		var http = Http(McpWireBody.Envelope(big, escaped: false));
+		Encoding.UTF8.GetByteCount(McpWireBody.Envelope(big, escaped: false)).Should().BeGreaterThan(25_000,
+			"the point is that SIZE alone no longer earns a complaint");
 
 		ModuleMcp.SizeWarningOrNull(http).Should().BeNull();
 	}
 
+	// A body with no non-ASCII at all cannot have inflated — at any size, but especially at the
+	// SMALL size where the shipped formula's missing envelope term dominated and warned on prod.
+	[Fact]
+	public void SizeWarningOrNull_SmallPureAsciiBody_NoWarning()
+	{
+		var body = McpWireBody.Envelope("a short ascii fact", escaped: false);
+		Encoding.UTF8.GetByteCount(body).Should().Be(body.Length).And.BeLessThan(400);
+
+		ModuleMcp.SizeWarningOrNull(Http(body)).Should().BeNull();
+	}
+
 	// The other behavioral flip: a SMALL call that is \uXXXX-escaped must WARN — the old absolute
-	// trigger stayed silent below its byte threshold regardless of escaping. Built honestly per
-	// the card: a Cyrillic string's raw UTF-8 byte count vs. the byte length of its \uXXXX-escaped
-	// (pure-ASCII) form, not a hand-picked ratio.
+	// trigger stayed silent below its byte threshold regardless of escaping. The expected
+	// multiplier is the ratio between the SAME request's two spellings, computed from the bytes.
 	[Fact]
 	public void SizeWarningOrNull_EscapedSmallBody_Warns()
 	{
-		var raw = string.Concat(Enumerable.Repeat("привет мир ", 4)); // small: 44 chars
-		var expectedRaw = Encoding.UTF8.GetByteCount(raw);
-		var escaped = EscapeToUXXXX(raw);
-		var contentLength = escaped.Length; // pure ASCII: 1 byte per char
-		var expectedInflation = (double)contentLength / expectedRaw;
+		var expectedInflation = McpWireBody.InflationOf(McpWireBody.CyrillicPayload);
 		expectedInflation.Should().BeGreaterThanOrEqualTo(ModuleMcp.EscapeInflationWarningThreshold,
 			"the fixture must actually exercise the warning path, not assert it into existence");
+		var body = McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: true);
+		Encoding.UTF8.GetByteCount(body).Should().BeLessThan(1_000, "and it must stay SMALL");
 
-		var http = Http(contentLength, expectedRaw);
-
-		var warning = ModuleMcp.SizeWarningOrNull(http);
+		var warning = ModuleMcp.SizeWarningOrNull(Http(body));
 
 		warning.Should().NotBeNull();
 		warning!.Should().Contain(expectedInflation.ToString("0.0"));
 	}
 
-	// No Content-Length (chunked transfer) → unknown, stay silent, as before the card.
+	// No measurement on the context — a call that never came through POST /mcp (a direct tool
+	// invocation, a future in-process transport) is unknown, and unknown stays silent.
 	[Fact]
-	public void SizeWarningOrNull_NoContentLength_ReturnsNull()
-	{
-		var ctx = new DefaultHttpContext();
-		ctx.Items[ModuleMcp.ExpectedRawBytesItemKey] = 100;
-		var http = new HttpContextAccessor { HttpContext = ctx };
-
-		ModuleMcp.SizeWarningOrNull(http).Should().BeNull();
-	}
-
-	// No expectedRaw stashed (e.g. the tracing filter never ran) → unknown, never guess.
-	[Fact]
-	public void SizeWarningOrNull_ExpectedRawUnknown_ReturnsNull()
+	public void SizeWarningOrNull_NoMeasurement_ReturnsNull()
 	{
 		var ctx = new DefaultHttpContext();
 		ctx.Request.ContentLength = 50_000;
@@ -115,29 +119,31 @@ public sealed class WriteVerbSizeGuidanceTests
 		ModuleMcp.SizeWarningOrNull(http).Should().BeNull();
 	}
 
-	// ContentLength BELOW the expectation is transport compression, not an escaping saving — must
-	// not be read as "cheaper than raw" and must never derive a sub-1.0 inflation warning.
+	// An empty body measures nothing — never divide by it.
 	[Fact]
-	public void SizeWarningOrNull_ContentLengthBelowExpected_ReturnsNull()
+	public void SizeWarningOrNull_EmptyBody_ReturnsNull()
 	{
-		var http = Http(contentLength: 500, expectedRawBytes: 1_000);
-
-		ModuleMcp.SizeWarningOrNull(http).Should().BeNull();
+		ModuleMcp.SizeWarningOrNull(Http("")).Should().BeNull();
 	}
 
-	static string EscapeToUXXXX(string s)
+	// The scanner only ever SUBTRACTS bytes a raw-UTF-8 client could have avoided, so raw can
+	// never exceed wire — the detector cannot manufacture a sub-1.0 ratio out of any real body.
+	[Theory]
+	[InlineData("")]
+	[InlineData("plain ascii")]
+	[InlineData("привет мир")]
+	[InlineData("mixed привет and \\u0441 and \\\\u0441 and \\ud83d\\ude00 and \\u0000")]
+	public void Measurement_NeverClaimsMoreRawBytesThanWireBytes(string payload)
 	{
-		var sb = new StringBuilder();
-		foreach (var ch in s)
-			sb.Append(ch <= 0x7F ? ch.ToString() : $"\\u{(int)ch:x4}");
-		return sb.ToString();
+		var scanner = new JsonEscapeInflationScanner();
+		scanner.Feed(Encoding.UTF8.GetBytes(McpWireBody.Envelope(payload, escaped: false)));
+		scanner.RawUtf8Bytes.Should().BeLessThanOrEqualTo(scanner.WireBytes).And.BeGreaterThan(0);
 	}
 
-	static IHttpContextAccessor Http(long contentLength, int expectedRawBytes)
+	static IHttpContextAccessor Http(string wireBody)
 	{
 		var ctx = new DefaultHttpContext();
-		ctx.Request.ContentLength = contentLength;
-		ctx.Items[ModuleMcp.ExpectedRawBytesItemKey] = expectedRawBytes;
+		McpWireBody.Publish(ctx, wireBody);
 		return new HttpContextAccessor { HttpContext = ctx };
 	}
 

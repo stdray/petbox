@@ -1001,6 +1001,13 @@ public partial class Program
 		// available; below UseExceptionHandler so it logs+rethrows unhandled exceptions).
 		app.UseMiddleware<PetBox.Web.Logging.RequestLoggingMiddleware>();
 
+		// \uXXXX-escape inflation, measured on the wire body of POST /mcp (card
+		// escape-inflation-warning). MUST be middleware, not an MCP filter: an MCP filter sees only
+		// the already-parsed tool ARGUMENTS, and comparing those against the whole request's
+		// Content-Length is precisely the part-vs-whole bug this replaces — it warned on pure-ASCII
+		// calls in prod. Path- and method-guarded inside, so every other route just passes through.
+		app.UseMiddleware<PetBox.Web.Mcp.McpWireBodyMeasurementMiddleware>();
+
 		// spec authz-tenant-default-deny — PEP #1 of 2: the endpoint plane (REST *and* Razor; they are
 		// the same endpoints by now). Reads HttpContext.GetEndpoint()?.Metadata, so it covers every
 		// route regardless of how it was mapped.

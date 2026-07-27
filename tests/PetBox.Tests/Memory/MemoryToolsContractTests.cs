@@ -8,6 +8,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
+using PetBox.Tests.Mcp;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
@@ -89,32 +90,31 @@ public sealed class MemoryToolsContractTests : IDisposable
 	// card mcp-write-degrades-silently-fix, point 4 (updated by work escape-inflation-warning): an
 	// APPLIED write whose request body measures a \uXXXX-escaping inflation at or above
 	// ModuleMcp.EscapeInflationWarningThreshold carries a `warning` naming the measured multiplier
-	// — informational, never a refusal (the write already landed). ExpectedRawBytesItemKey is
-	// stashed by hand here because this test calls MemoryTools.UpsertAsync directly, bypassing the
-	// McpTracingFilter that stashes it for real in production.
+	// — informational, never a refusal (the write already landed). The wire measurement is
+	// published by hand here (from a real envelope, through the production scanner) because this
+	// test calls MemoryTools.UpsertAsync directly, bypassing the middleware that publishes it in
+	// production.
 	[Fact]
 	public async Task Upsert_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
-		http.HttpContext!.Request.ContentLength = 15_000;
-		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 5_000; // inflation 3.0x
+		McpWireBody.Publish(http.HttpContext!, McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: true));
 		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", description = "d", body = "b" },
 		});
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("3.0");
+		res.Warning.Should().Contain(McpWireBody.InflationOf(McpWireBody.CyrillicPayload).ToString("0.0"));
 	}
 
-	// The headline behavioral flip: a raw-UTF-8 call (inflation ~1.0) gets NO warning even at a
-	// size the old absolute threshold would have flagged on its own.
+	// The headline behavioral flip: the SAME request spelled raw UTF-8 (inflation 1.0) gets NO
+	// warning — size on its own is no longer a complaint.
 	[Fact]
 	public async Task Upsert_RawUtf8Body_NoSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
-		http.HttpContext!.Request.ContentLength = 15_000;
-		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 15_000; // inflation 1.0x
+		McpWireBody.Publish(http.HttpContext!, McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: false));
 		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", description = "d", body = "b" },
