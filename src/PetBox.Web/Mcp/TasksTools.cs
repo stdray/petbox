@@ -773,7 +773,9 @@ public static class TasksTools
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
 		output budget — overflow rows are prefix-cut + flagged. `statusKind` visibility defaults
 		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
-		applied set as `effectiveStatusKind`, so the default is never silent. Requires tasks:read.
+		applied set as `effectiveStatusKind`, so the default is never silent. Tracking changes
+		since a known version cursor (added/updated/removed, including tombstones this search
+		cannot show)? Use tasks_delta instead. Requires tasks:read.
 
 		Cost — your context pays it. Same query, same rows: bodyLen:0 = 1x, default snippet
 		~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long node body can add
