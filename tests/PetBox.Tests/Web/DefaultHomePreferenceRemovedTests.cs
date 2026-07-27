@@ -44,11 +44,14 @@ public sealed class DefaultHomePreferenceRemovedTests
 	}
 
 	[Fact]
-	public void PreferencesSaveHandler_BindsOnlyTheme()
+	public void PreferencesSaveHandler_NeverBindsDefaultHome()
 	{
+		// Was "BindsOnlyTheme" — work `ui-search-ranking-mode-preference` added a second live
+		// [Setting] field (SearchRankingMode) to the SAME handler, so "only Theme" is no longer the
+		// invariant; the phantom DefaultHome parameter never coming back is.
 		var handler = typeof(PreferencesModel).GetMethod("OnPostSaveAsync");
 		handler.Should().NotBeNull();
-		handler!.GetParameters().Select(p => p.Name).Should().Equal("Theme");
+		handler!.GetParameters().Select(p => p.Name).Should().Equal("Theme", "SearchRankingMode");
 	}
 
 	[Fact]

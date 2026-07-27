@@ -109,6 +109,36 @@ public sealed class MemorySearchPagingUiTests(WebAppFixture app, ITestOutputHelp
 	}
 
 	[Fact]
+	public async Task SearchResults_PageForward_RangeAdvances_NotRepeatingFromOne()
+	{
+		// ui-search-page-position-and-size: the owner's own complaint from the live UI — "на всех те
+		// же 40 элементов, и сколько я пролистал, неясно". A page that shows the same "rows 1-40" on
+		// every page is indistinguishable from one stuck in a loop; the position counter must advance.
+		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/memory/{Store}?q={Uri.EscapeDataString(Marker)}");
+		await Expect(_page.GetByTestId("store-search-info")).ToContainTextAsync($"rows 1-{PageSize}");
+
+		await _page.GetByTestId("store-search-next").ClickAsync();
+
+		await Expect(_page.GetByTestId("store-search-info")).ToContainTextAsync($"rows {PageSize + 1}-{Seeded}");
+	}
+
+	[Fact]
+	public async Task SelectingASmallerPageSize_ReturnsExactlyThatManyRows()
+	{
+		// ui-search-page-position-and-size: the owner's original ask was literally "iterate 10 at a
+		// time" — a size control that is offered but doesn't change the page count would be exactly
+		// the kind of setting-with-no-effect this whole task series has been closing.
+		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/memory/{Store}?q={Uri.EscapeDataString(Marker)}");
+
+		await _page.GetByTestId("store-search-size").SelectOptionAsync("10");
+		await _page.GetByTestId("store-search-submit").ClickAsync();
+
+		var keys = await KeysOnScreenAsync();
+		keys.Should().HaveCount(10, "the page-size control must actually shrink the page, not just persist a value nobody reads");
+		await Expect(_page.GetByTestId("store-search-info")).ToContainTextAsync("rows 1-10");
+	}
+
+	[Fact]
 	public async Task AStaleCursor_IsRefusedVisibly_NotWithAServerError()
 	{
 		// A cursor whose order no longer exists must degrade to an explained restart. Silent

@@ -1,3 +1,5 @@
+using PetBox.Core.Search;
+
 namespace PetBox.Core.Settings;
 
 // Dark/Light/System are the ORIGINAL members — never renamed or reordered (values persist in the
@@ -99,4 +101,26 @@ public sealed record BrowserState
 	// only Server administration's `<details open>` existed at all.
 	[BrowserState(Key = "adminSectionsCollapsed")]
 	public Dictionary<string, bool> AdminSectionsCollapsed { get; init; } = new(StringComparer.Ordinal);
+
+	// ui-search-ranking-mode-preference: the human's override of the UI EDGE default (spec
+	// search-ranking-mode-is-caller-choice — Speed) for every UI search surface that presents a
+	// ranking mode at all (Memory.cshtml.cs, MemoryStore.cshtml.cs, CrossScopeTaskSearchService /
+	// Search.cshtml.cs). This NEVER reaches the MCP path — an agent is always Precision regardless
+	// of this setting (the owner's 2026-07-27 decision: the only caller who gets a UI-exposed
+	// override is a human on this page). Default Speed matches the pre-existing hardcoded constant
+	// those pages used to print, so a first-time user sees unchanged behaviour until they opt in.
+	// Session search is NOT influenced by this setting: it has no cross-encoder rerank of its own
+	// yet (spec note on SessionSearchOutcome, work `search-rerank-for-sessions`, still Pending) — a
+	// mode toggle with no reranker behind it would LIE, so it stays out until that work lands.
+	//
+	// The label is a COMPROMISE, never a correctness claim (RRF is not "wrong", it is a different
+	// price — the owner separately struck the "correct ordering" framing): Precision reranks the
+	// candidate union with a cross-encoder (MEASURED ~350ms base + ~6.1ms/candidate,
+	// RerankCandidateBudget.cs:8-14 — a few seconds at the full ~495-candidate pool); Speed skips the
+	// rerank and answers from the fused RRF order alone, instantly.
+	[Setting(TopLevel = Scope.User, Key = "search.rankingMode",
+		Description = "Precision reranks results with a cross-encoder for better ordering — measured "
+		+ "~350ms plus ~6ms per candidate (a few seconds at a full search). Speed skips the rerank and "
+		+ "answers instantly from the fused relevance order instead — a different trade-off, not a wrong one.")]
+	public SearchRankingMode SearchRankingMode { get; init; } = SearchRankingMode.Speed;
 }

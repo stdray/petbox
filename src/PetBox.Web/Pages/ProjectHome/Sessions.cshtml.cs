@@ -71,7 +71,22 @@ public sealed class SessionsModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "sortDesc")]
 	public bool? SortDesc { get; set; }
 
-	const int PageSize = 30;
+	// ui-search-page-position-and-size: see MemoryStoreModel's identical pair for the full
+	// rationale. SEARCH mode has its own hard ceiling underneath this (SessionSearchService.
+	// MaxSessions=30 — a hydration-cost cap, not a UI choice), so the effective request is capped
+	// at it; RangeTo is always derived from the ACTUAL rows returned, never the requested size, so
+	// picking 100 here honestly renders "rows 1-30" rather than silently pretending to serve 100.
+	[BindProperty(SupportsGet = true, Name = "size")]
+	public int? Size { get; set; }
+	public int EffectiveSize => PageSizeOptions.Resolve(Size);
+	int EffectiveSearchSessions => Math.Min(EffectiveSize, SessionSearchService.MaxSessions);
+
+	[BindProperty(SupportsGet = true, Name = "pos")]
+	public int Pos { get; set; }
+	int EffectivePos => Pos < 0 ? 0 : Pos;
+
+	public int RangeFrom { get; private set; }
+	public int RangeTo { get; private set; }
 
 	public Project? Project { get; private set; }
 	public bool SessionsEnabled => _features.IsEnabled(Feature.Tasks);
@@ -168,14 +183,14 @@ public sealed class SessionsModel : PageModel
 			SessionSearchOutcome outcome;
 			try
 			{
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: PageSize, afterSessionId: peeked?.Key, ct: ct);
+				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, afterSessionId: peeked?.Key, ct: ct);
 			}
 			catch (ArgumentException)
 			{
 				// The session this cursor named fell out of the discovery pool (SessionSearchService's
 				// own refusal) — restart the walk from the top rather than a raw 500.
 				CursorWasReset = true;
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: PageSize, ct: ct);
+				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, ct: ct);
 			}
 			if (peeked is { } token && !CursorWasReset)
 			{
@@ -186,7 +201,7 @@ public sealed class SessionsModel : PageModel
 					// ranked differently (a rerank/discovery input moved between pages) — restart rather
 					// than splice two orderings.
 					CursorWasReset = true;
-					outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: PageSize, ct: ct);
+					outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, ct: ct);
 				}
 			}
 			Distilled = outcome.Distilled;
@@ -219,6 +234,9 @@ public sealed class SessionsModel : PageModel
 
 			SearchResults = pool.ToList();
 			Total = SearchResults.Count;
+			// ui-search-page-position-and-size: derived from the ACTUAL row count, never the
+			// requested size — honest even when EffectiveSearchSessions clamped the request.
+			if (SearchResults.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + SearchResults.Count; }
 		}
 		else
 		{
@@ -235,17 +253,18 @@ public sealed class SessionsModel : PageModel
 			SessionHeaderPage page;
 			try
 			{
-				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, Cursor, PageSize, ct);
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, Cursor, EffectiveSize, ct);
 			}
 			catch (ArgumentException)
 			{
 				CursorWasReset = true;
 				Cursor = null;
-				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, null, PageSize, ct);
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, null, EffectiveSize, ct);
 			}
 			Sessions = page.Headers;
 			NextCursor = page.NextCursor;
 			Total = Sessions.Count;
+			if (Sessions.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + Sessions.Count; }
 		}
 	}
 
