@@ -339,24 +339,30 @@ public sealed class MemoryVerbsTests : IDisposable
 		rem.Warning.Should().BeNull();
 	}
 
-	// card mcp-write-degrades-silently-fix, point 4: a write the server ACCEPTED and applied can
-	// still have paid a silent \uXXXX-escaping size tax — the server cannot see the escaping, but
-	// it DOES see the raw request body size (Content-Length), so an oversized-but-successful call
-	// gets a warning instead of no signal at all.
+	// card mcp-write-degrades-silently-fix, point 4 (updated by work escape-inflation-warning): a
+	// write the server ACCEPTED and applied can still have paid a silent \uXXXX-escaping tax — the
+	// server cannot see the escaping by reading, but it CAN measure it: Request.ContentLength
+	// against the request's own expected raw-UTF-8 byte count (ExpectedRawBytesItemKey). Stashed
+	// by hand here because this test calls MemoryTools.RememberAsync directly, bypassing the
+	// McpTracingFilter that stashes it for real in production.
 	[Fact]
-	public async Task Remember_LargeRequestBody_ReturnsSizeWarning()
+	public async Task Remember_EscapedRequestBody_ReturnsSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
 		http.HttpContext!.Request.ContentLength = 20_000;
+		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 5_000; // inflation 4.0x
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
-		rem.Warning.Should().Contain("20,000").And.Contain("8,000");
+		rem.Warning.Should().Contain("4.0");
 	}
 
+	// The headline behavioral flip: a raw-UTF-8 call (inflation ~1.0) gets NO warning even at a
+	// size the old absolute threshold would have flagged on its own.
 	[Fact]
-	public async Task Remember_SmallRequestBody_NoSizeWarning()
+	public async Task Remember_RawUtf8Body_NoSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
-		http.HttpContext!.Request.ContentLength = 100;
+		http.HttpContext!.Request.ContentLength = 20_000;
+		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 20_000; // inflation 1.0x
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
 		rem.Warning.Should().BeNull();
 	}

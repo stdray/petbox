@@ -15,15 +15,19 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Mcp;
 
-// card size-warning-not-wired-to-write-verbs: ModuleMcp.SizeWarningOrNull (measuring
-// Request.ContentLength against WriteCallSizeGuidanceBytes) was wired to memory_remember /
-// memory_upsert's success payload but NOT to the other four write verbs that carry a body —
-// tasks_upsert, comments_upsert, session_append, session_upsert. Each carries the SAME
-// SizeGuidanceText in its [Description] (WriteVerbSizeGuidanceTests), but the runtime `warning`
-// field on an actually-oversized APPLIED write was simply absent. One test per verb, mirroring
-// MemoryToolsContractTests.Upsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning: an applied
-// write whose request ContentLength exceeds the 8,000-byte guidance threshold must carry a
-// `warning` naming both the accepted size and the threshold.
+// card size-warning-not-wired-to-write-verbs: ModuleMcp.SizeWarningOrNull was wired to
+// memory_remember / memory_upsert's success payload but NOT to the other four write verbs that
+// carry a body — tasks_upsert, comments_upsert, session_append, session_upsert. Each carries the
+// SAME SizeGuidanceText in its [Description] (WriteVerbSizeGuidanceTests), but the runtime
+// `warning` field on an actually-warned APPLIED write was simply absent. One test per verb,
+// mirroring MemoryToolsContractTests.Upsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning.
+//
+// Updated by work escape-inflation-warning: SizeWarningOrNull no longer compares an absolute
+// Content-Length threshold — it compares ContentLength against the request's own expected
+// raw-UTF-8 byte count (ModuleMcp.ExpectedRawBytesItemKey), which in production is stashed by
+// McpTracingFilter and which these tests, calling the tool bodies directly (bypassing the MCP
+// pipeline), stash by hand via the Http() helper below to simulate an escaped or a raw-UTF-8
+// call.
 public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 {
 	const string Proj = "proj";
@@ -63,11 +67,17 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	static IHttpContextAccessor Http(long contentLength)
+	// expectedRawBytes, when given, simulates what McpTracingFilter would have stashed on
+	// HttpContext.Items from reserializing the request args — these tests call the tool bodies
+	// directly, so nothing stashes it for real. Omitted → SizeWarningOrNull sees "unknown" and
+	// stays silent, same as a call that bypassed the tracing filter in production.
+	static IHttpContextAccessor Http(long contentLength, int? expectedRawBytes = null)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test");
 		var ctx = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) };
 		ctx.Request.ContentLength = contentLength;
+		if (expectedRawBytes is { } expected)
+			ctx.Items[ModuleMcp.ExpectedRawBytesItemKey] = expected;
 		return new HttpContextAccessor { HttpContext = ctx };
 	}
 
@@ -79,57 +89,60 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		}).Build());
 
 	[Fact]
-	public async Task TasksUpsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning()
+	public async Task TasksUpsert_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(15_000);
+		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "board");
 		var nodes = McpInputs.Nodes(new object[] { new { key = "n1", body = "hi" } });
 
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "board", nodes);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("3.0");
 	}
 
 	[Fact]
-	public async Task CommentsUpsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning()
+	public async Task CommentsUpsert_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(15_000);
+		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
 		var node = Guid.NewGuid().ToString("N"); // 32-hex passes through node-ref resolution unresolved
 		var items = new[] { new CommentItemInput { Node = node, Author = "alice", Body = "a comment" } };
 
 		var res = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "board", items);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("3.0");
 	}
 
 	[Fact]
-	public async Task SessionAppend_LargeRequestBody_AppliedWrite_ReturnsSizeWarning()
+	public async Task SessionAppend_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(15_000);
+		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
 		var messages = new[] { new SessionMessageDto { Role = "user", Content = "hi" } };
 
 		var res = await SessionTools.AppendAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", fromOrdinal: 1, messages);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("3.0");
 	}
 
 	[Fact]
-	public async Task SessionUpsert_LargeRequestBody_ReturnsSizeWarning()
+	public async Task SessionUpsert_EscapedRequestBody_ReturnsSizeWarning()
 	{
-		var http = Http(15_000);
+		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
 
 		var res = await SessionTools.UpsertAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", "hello");
 
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("3.0");
 	}
 
+	// The headline behavioral flip (card escape-inflation-warning): a raw-UTF-8 call gets NO
+	// warning even at a size ("15,000") that the old absolute threshold ("12,000") would have
+	// flagged on its own.
 	[Fact]
-	public async Task TasksUpsert_SmallRequestBody_NoSizeWarning()
+	public async Task TasksUpsert_RawUtf8Body_NoSizeWarning()
 	{
-		var http = Http(200);
+		var http = Http(contentLength: 15_000, expectedRawBytes: 15_000); // inflation 1.0x
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "board");
 		var nodes = McpInputs.Nodes(new object[] { new { key = "n1", body = "hi" } });
 
