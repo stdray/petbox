@@ -100,7 +100,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", entries);
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("15,000").And.Contain("12,000");
 	}
 
 	[Fact]
