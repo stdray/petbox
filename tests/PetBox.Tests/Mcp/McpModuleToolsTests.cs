@@ -189,6 +189,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"))!;
 		got.Content.Should().Be("# plan");
+		got.LastOrdinal.Should().Be(1); // the ordinal cursor is always reported, not only when polling
 
 		// list = session_search without q (the former session.list); rows carry version.
 		var list = await SessionTools.SearchAsync(http, Flags(), _sessionSvc, null!, Proj);
@@ -243,6 +244,127 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var full = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", bodyLen: -1))!;
 		full.Content.Should().Be("0123456789");
+	}
+
+	// ── card session-get-from-ordinal: the incremental read, on the ORDINAL axis ──────────
+	// Batch 3 removed tail/offset/limit (they duplicated the LENGTH axis bodyLen now owns) and
+	// took incremental reading of a growing session with them. It comes back as navigation by
+	// MESSAGE ordinal — the unit session_append already writes against and session_search hits
+	// already carry, and the one that cannot go stale (messages are immutable and dense 1..N).
+
+	// Appends 3 dialogue messages to a fresh session and returns the tool's http context.
+	static PetBox.Web.Mcp.Contract.SessionMessageDto[] Msgs(params (string Role, string Content)[] m) =>
+		m.Select(x => new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = x.Role, Content = x.Content }).ToArray();
+
+	// The load-bearing invariant: a window is EXACTLY a suffix of the full body. If it were not,
+	// "read from ordinal N" would mean something different from "the tail of what session_get
+	// returns", and the two reads could not be stitched together by a polling client.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_WindowIsSuffixOfFullBody()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sw", "claude-code", 1,
+			Msgs(("user", "one"), ("assistant", "two"), ("user", "three")));
+
+		var full = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sw"))!;
+
+		for (long from = 1; from <= 4; from++)
+		{
+			var win = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sw", fromOrdinal: from))!;
+			full.Content.Should().EndWith(win.Content, $"the window from {from} must be a suffix of the full body");
+		}
+
+		var fromTwo = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sw", fromOrdinal: 2))!;
+		fromTwo.Content.Should().NotContain("one");
+		fromTwo.Content.Should().Contain("two").And.Contain("three");
+	}
+
+	// The suffix invariant's sharp edge: a snapshot of ONE message renders verbatim (no `###`
+	// header), so a naive slice-then-render would drop the header off a one-message TAIL and
+	// stop being a suffix. The header mode follows the FULL message count, not the slice's.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_LastMessageTail_KeepsRoleHeader()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "st", "claude-code", 1,
+			Msgs(("user", "one"), ("assistant", "two")));
+
+		var tail = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "st", fromOrdinal: 2))!;
+		tail.Content.Should().Be("### assistant\n\ntwo");
+	}
+
+	// Past the end is the NORMAL poll for growth, not an error: empty body + the live cursor.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_PastLast_IsEmptyBodyPlusCursor()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sp", "claude-code", 1,
+			Msgs(("user", "a"), ("assistant", "b")));
+
+		var beyond = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sp", fromOrdinal: 99))!;
+		beyond.Content.Should().BeEmpty();
+		beyond.LastOrdinal.Should().Be(2);
+	}
+
+	// The whole point, end to end: append 3 → poll from 4 (nothing new) → append 2 → poll from 4
+	// returns EXACTLY the two new messages, never re-reading the three already held.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_PollingCycle()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sc", "claude-code", 1,
+			Msgs(("user", "m1"), ("assistant", "m2"), ("user", "m3")));
+
+		var idle = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sc", fromOrdinal: 4))!;
+		idle.Content.Should().BeEmpty();
+		idle.LastOrdinal.Should().Be(3);
+
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sc", "claude-code", 4,
+			Msgs(("assistant", "m4"), ("user", "m5")));
+
+		var grown = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sc", fromOrdinal: 4))!;
+		grown.LastOrdinal.Should().Be(5);
+		grown.Content.Should().Be("### assistant\n\nm4\n\n### user\n\nm5");
+		grown.Content.Should().NotContain("m3");
+	}
+
+	// bodyLen × fromOrdinal compose as "from here, this many chars" — NEITHER takes precedence.
+	// That precedence is exactly what made the old `tail` wrong ("takes precedence over
+	// offset/limit"), so it is pinned here rather than left to the description.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_ComposesWithBodyLen_NoPrecedence()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sm", "claude-code", 1,
+			Msgs(("user", "one"), ("assistant", "two")));
+
+		var window = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm", fromOrdinal: 2))!.Content;
+		var fullLen = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm"))!.Length;
+
+		// N>0 cuts the WINDOW, not the transcript: the first N chars of the window + "…".
+		var cut = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm", bodyLen: 5, fromOrdinal: 2))!;
+		cut.Content.Should().Be(string.Concat(window.AsSpan(0, 5), "…"));
+
+		// 0 = no body, -1 = the full window — the same meanings as without fromOrdinal.
+		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm", bodyLen: 0, fromOrdinal: 2))!
+			.Content.Should().BeEmpty();
+		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm", bodyLen: -1, fromOrdinal: 2))!
+			.Content.Should().Be(window);
+
+		// `length` is the CHAR axis and stays the FULL transcript's length under both knobs.
+		foreach (var r in new[] { cut, (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sm", bodyLen: 0, fromOrdinal: 2))! })
+			r.Length.Should().Be(fullLen);
+	}
+
+	// 1-based everywhere on this surface (session_append rejects <1 the same way); 0 is a
+	// 0-based mental model that must fail loudly instead of silently re-reading the transcript.
+	[Fact]
+	public async Task Session_Get_FromOrdinal_BelowOne_Throws()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "sz", "claude-code", "x");
+		await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+			() => SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sz", fromOrdinal: 0));
 	}
 
 	// A missing id is a not-found ERROR, never a null result: session_get declares an
