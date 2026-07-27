@@ -61,18 +61,20 @@ public sealed class WriteVerbFieldOmissionShapeTests
 		// already fully nullable — a green reference instance, not just an exception list.
 		{ "llm_config_upsert", typeof(LlmRouterTools.ConfigSetInput), [] },
 
-		// KNOWN FAILING, LEFT UNFIXED ON THIS BRANCH — the two live instances the parent card
-		// names (work/patch-vs-put-class-needs-a-mechanical-gate). Fixed by the PARALLEL worker
-		// on fix/batch4-deploy-patch-semantics; do not fix here, do not touch DeployTools.cs /
-		// DeployContract.cs from this branch. When that lands, drop DisplayName/Tags/Ephemeral
-		// and Relocatable/RequiredTags/ConfigTags from these exclusion lists so the gate starts
-		// enforcing them — leaving them excluded after that merge would be the THIRD silent pass
-		// this card exists to prevent.
+		// fix/batch4-deploy-patch-semantics (447c148c) landed and made DisplayName/Tags/Ephemeral
+		// nullable — no longer excluded, the theory now enforces them like everything else.
 		// Id = identity, always required, not mergeable.
-		{ "deploy_node_upsert", typeof(NodeInput), ["Id", "DisplayName", "Tags", "Ephemeral"] },
+		{ "deploy_node_upsert", typeof(NodeInput), ["Id"] },
 		// Service/Project/NodeId/ImageDigest = identity/always-required inputs, not mergeable.
 		// DesiredState = the tool's own deliberate always-set toggle (`running`, default true),
 		// same status as tasks_upsert's `status` — not a silent-merge field.
+		// Relocatable/RequiredTags/ConfigTags: RESIDUAL, UNCLOSED instance of this same class —
+		// fix/batch4-deploy-patch-semantics (447c148c) deliberately left them full-PUT ("not in
+		// the diagnosed instance; flagged as a residual risk, not silently 'fixed' by inventing a
+		// third semantics for them" — commit message). Still plain bool/string/string, so a caller
+		// cannot omit-to-keep; every deploy_upsert call must resend them in full. Excluded on
+		// purpose, not by oversight — do not drop this without giving these fields an actual
+		// keep/clear representation first.
 		{ "deploy_upsert", typeof(DeploymentInput), ["Id", "Service", "Project", "NodeId", "ImageDigest", "DesiredState", "Relocatable", "RequiredTags", "ConfigTags"] },
 	};
 
