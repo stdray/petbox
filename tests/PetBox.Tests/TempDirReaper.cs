@@ -1,4 +1,13 @@
-using System.Runtime.CompilerServices;
+using PetBox.Tests;
+
+// An xunit v3 assembly fixture is constructed once per test assembly, before any test in it
+// runs — which is exactly the guarantee this sweep needs. Under xunit v2 there was no such
+// mechanism (IAssemblyFixture / ITestPipelineStartup are v3-only, and the community
+// Xunit.Extensions.AssemblyFixture package was not referenced), so this used to be a
+// [ModuleInitializer]: a CLR-level hook chosen only because it was the one thing certain to fire
+// once per assembly regardless of runner. The v3 migration removes that constraint, so the sweep
+// is now declared as what it actually is — assembly-level test setup.
+[assembly: AssemblyFixture(typeof(TempDirReaper))]
 
 namespace PetBox.Tests;
 
@@ -13,15 +22,7 @@ namespace PetBox.Tests;
 // only ever leaks ~389 dirs / ~118 MB through the same ProcessExit gap). Nothing else ever
 // revisits %TEMP% to clean up after a dead process, so the only fix is to sweep at the START
 // of the NEXT run.
-//
-// This repo pins xunit 2.9.3 (Directory.Packages.props) — a v2 release. IAssemblyFixture /
-// [assembly: AssemblyFixture] and ITestPipelineStartup are both xunit v3-only mechanisms and
-// are not available here (nor is the community Xunit.Extensions.AssemblyFixture package
-// referenced). A C# module initializer is a CLR-level guarantee — it runs exactly once, when
-// the assembly is loaded, before anything in it (including the xunit test runner) executes —
-// so it is the one mechanism that is certain to fire once per test assembly regardless of
-// which xunit version or runner is in play.
-internal static class TempDirReaper
+public sealed class TempDirReaper
 {
 	// Never touch a directory younger than this: another, still-running test process may own
 	// it. LastWriteTimeUtc is the same signal used to verify this sweep (see the fake-old-dir
@@ -36,7 +37,8 @@ internal static class TempDirReaper
 	// would cost. Whatever is left past the cap is simply picked up by the next run's sweep.
 	const int MaxDeletesPerRun = 2000;
 
-	[ModuleInitializer]
+	public TempDirReaper() => Sweep();
+
 	internal static void Sweep()
 	{
 		try
