@@ -105,25 +105,37 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		public override DateTimeOffset GetUtcNow() => new(utcNow, TimeSpan.Zero);
 	}
 
-	[Fact]
-	public async Task WhereLevel_TranslatesToSql()
+	// One Theory instead of 12 copy-pasted Facts (work/test-suite-improvements-2607 #5): each case is
+	// only a KQL string + its expected message set, which InlineData cannot carry as an array literal.
+	// The KQL string doubles as the case's label in the runner output (same convention as
+	// WriteVerbOmissionProseTests' TheoryData<string, string[]>). Kept to the exact shape "one RunAsync
+	// call, one BeEquivalentTo(literal array)" — cases needing HaveCount/Contain/multiple assertions
+	// stay as their own Facts below, unchanged.
+	public static TheoryData<string, string[]> FilterCases() => new()
 	{
-		var messages = await RunAsync("events | where Level == 4");
-		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
-	}
+		{ "events | where Level == 4", ["boom", "crash on Earth"] },
+		{ "events | where Level >= 3", ["boom", "meh", "crash on Earth"] },
+		{ "events | where ServiceKey == 'svc-a'", ["hello world", "meh"] },
+		{ "events | where Level == 4 and ServiceKey == 'svc-b'", ["boom"] },
+		{ "events | where Timestamp >= datetime(2026-04-19T10:03:00Z)", ["meh", "crash on Earth", "starting"] },
+		{ "events | where Timestamp < datetime(2026-04-19T10:03:00Z)", ["hello world", "boom"] },
+		{
+			"events | where Timestamp >= datetime(2026-04-19T10:02:00Z) and Timestamp < datetime(2026-04-19T10:05:00Z)",
+			["boom", "meh", "crash on Earth"]
+		},
+		{ "events | where Level in (3, 4)", ["boom", "meh", "crash on Earth"] },
+		{ "events | where Level !in (4)", ["hello world", "meh", "starting"] },
+		{ "events | where Level between (3 .. 4)", ["boom", "meh", "crash on Earth"] },
+		{ "events | where Level + 1 == 5", ["boom", "crash on Earth"] },
+		{ "events | where iff(Level >= 4, 1, 0) == 1", ["boom", "crash on Earth"] },
+	};
 
-	[Fact]
-	public async Task WhereLevel_OrderingTranslatesToSql()
+	[Theory]
+	[MemberData(nameof(FilterCases))]
+	public async Task FilterQuery_TranslatesToExpectedMessages(string kql, string[] expectedMessages)
 	{
-		var messages = await RunAsync("events | where Level >= 3");
-		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
-	}
-
-	[Fact]
-	public async Task WhereServiceKey_Equality()
-	{
-		var messages = await RunAsync("events | where ServiceKey == 'svc-a'");
-		messages.Should().BeEquivalentTo(["hello world", "meh"]);
+		var messages = await RunAsync(kql);
+		messages.Should().BeEquivalentTo(expectedMessages);
 	}
 
 	[Fact]
@@ -141,13 +153,6 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
-	public async Task AndCombinator_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Level == 4 and ServiceKey == 'svc-b'");
-		messages.Should().BeEquivalentTo(["boom"]);
-	}
-
-	[Fact]
 	public async Task MessageContains_TranslatesToSql()
 	{
 		var messages = await RunAsync("events | where Message contains 'boom'");
@@ -155,67 +160,10 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
-	public async Task TimestampGte_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Timestamp >= datetime(2026-04-19T10:03:00Z)");
-		messages.Should().BeEquivalentTo(["meh", "crash on Earth", "starting"]);
-	}
-
-	[Fact]
-	public async Task TimestampLt_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Timestamp < datetime(2026-04-19T10:03:00Z)");
-		messages.Should().BeEquivalentTo(["hello world", "boom"]);
-	}
-
-	[Fact]
-	public async Task TimestampRange_TranslatesToSql()
-	{
-		var messages = await RunAsync(
-			"events | where Timestamp >= datetime(2026-04-19T10:02:00Z) and Timestamp < datetime(2026-04-19T10:05:00Z)");
-		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
-	}
-
-	[Fact]
-	public async Task WhereIn_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Level in (3, 4)");
-		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
-	}
-
-	[Fact]
-	public async Task WhereNotIn_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Level !in (4)");
-		messages.Should().BeEquivalentTo(["hello world", "meh", "starting"]);
-	}
-
-	[Fact]
-	public async Task WhereBetween_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Level between (3 .. 4)");
-		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
-	}
-
-	[Fact]
-	public async Task WhereArithmetic_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where Level + 1 == 5");
-		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
-	}
-
-	[Fact]
 	public async Task WhereModulo_TranslatesToSql()
 	{
 		var messages = await RunAsync("events | where Id % 2 == 0");
 		messages.Should().HaveCount(2);
-	}
-
-	[Fact]
-	public async Task WhereIff_TranslatesToSql()
-	{
-		var messages = await RunAsync("events | where iff(Level >= 4, 1, 0) == 1");
-		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
 	}
 
 	// An integer column against a REAL literal is a NUMERIC comparison (Kusto promotes both sides to double),
