@@ -371,7 +371,10 @@ public sealed class MemoryService : IMemoryService
 			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry),
 			x.Score,
 			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"),
-			x.ScoreRaw)).ToList();
+			x.ScoreRaw,
+			// Raw sort-key values for the UI adapter's keyset cursor: MemoryEntryView (the wire
+			// projection) deliberately omits them, and the adapter needs the value it is paging on.
+			x.Entry.Created, x.Entry.Updated)).ToList();
 		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion, poolOrderHash);
 	}
 
@@ -785,40 +788,6 @@ public sealed class MemoryService : IMemoryService
 	{
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
 		return ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null).OrderBy(e => e.Key).ToList();
-	}
-
-	public async Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default)
-	{
-		using var ctx = _stores.NewEnsuredConnection(projectKey);
-		var q = ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null);
-		if (!string.IsNullOrWhiteSpace(search))
-		{
-			var term = search.Trim();
-			q = q.Where(e => e.Key.Contains(term) || e.Description.Contains(term) || e.Body.Contains(term) || e.Tags.Contains(term));
-		}
-
-		var total = await q.CountAsync(ct);
-		var offset = Math.Max(0, pageNum) * pageSize;
-		// One extra row is a cheap HasNext probe.
-		var rows = await q.OrderBy(e => e.Key).Skip(offset).Take(pageSize + 1).ToListAsync(ct);
-		var hasNext = rows.Count > pageSize;
-		if (hasNext) rows.RemoveAt(rows.Count - 1);
-		return new MemoryEntryPage(rows, hasNext, total);
-	}
-
-	public async Task<int?> FindActiveEntryPageAsync(string projectKey, string store, string key, int pageSize,
-		CancellationToken ct = default)
-	{
-		if (pageSize <= 0 || string.IsNullOrWhiteSpace(key)) return null;
-		using var ctx = _stores.NewEnsuredConnection(projectKey);
-		var active = ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null);
-		// The key must actually BE there — a stale/garbage key resolves to no page (the caller then
-		// renders page 0 with no highlight rather than inventing an offset).
-		if (!await active.AnyAsync(e => e.Key == key, ct)) return null;
-		// Rank in the listing's ordering (OrderBy Key, BINARY collation both here and there), so the
-		// page is exactly the one ListActiveEntriesPageAsync would put the entry on.
-		var before = await active.CountAsync(e => string.Compare(e.Key, key) < 0, ct);
-		return before / pageSize;
 	}
 
 	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,

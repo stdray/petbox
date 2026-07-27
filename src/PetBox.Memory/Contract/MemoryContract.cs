@@ -31,12 +31,6 @@ public sealed record MemoryDelete(string Key, long Version);
 // storage form into the array the surface speaks).
 public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, IReadOnlyList<string> Tags, long Version, string Metadata);
 
-// One server-paged slice of a store's active raw entries for the store detail page: the page
-// rows (ordered by Key), whether a further page exists, and the total matching the current
-// search. OFFSET/LIMIT at the query so the 200+-entry stores never load whole (spec
-// ui-list-pagination) — reaches the dead-tail keys by paging, not a title attribute.
-public sealed record MemoryEntryPage(IReadOnlyList<MemoryEntry> Entries, bool HasNext, int Total);
-
 // The raw temporal upsert/delta result, ready for an adapter to serialize.
 public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Result);
 
@@ -93,7 +87,13 @@ public enum MemorySortBy
 // listing). Delivery telemetry normalizes fit against it (kRel = ScoreRaw / top-1 ScoreRaw of the
 // request): decay has already reordered the answer, so normalizing the DECAYED score would count
 // freshness twice.
-public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0, string? Retriever = null, double ScoreRaw = 0);
+// `Created`/`Updated` are the entry's temporal columns (spec listing-tail-reachable): a listing
+// caller that pages with a KeysetCursor needs the SAME sort-key value the service ordered by
+// (Updated/Created) to seek past it on a later page — MemoryEntryView (the wire-facing projection)
+// deliberately does not carry them, so they live here, on the richer service-layer hit, instead.
+public sealed record MemoryEntryHit(
+	string Store, MemoryEntryView Entry, double Score = 0, string? Retriever = null, double ScoreRaw = 0,
+	DateTime Created = default, DateTime Updated = default);
 
 // The rich per-family result of the unified read: the selected hits plus retriever
 // provenance (null in listing mode, where no retriever runs).

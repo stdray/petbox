@@ -1453,15 +1453,16 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	}
 
 	// --- memory-anchor-ignores-pagination -------------------------------------------------------
-	// These two run on a store of 150 entries — the store page pages at 40, so it spans FOUR pages
-	// and the target entries sit on page 2 / page 3. That is the whole point: the earlier anchor
-	// tests seeded 3 entries, where every card lands on page 0 and the defect is UNEXPRESSIBLE.
+	// These two run on a store of 150 entries — the store page windows at 40 rows (keyset-paged,
+	// spec listing-tail-reachable), so a deep-link into it must SEEK the target rather than land on
+	// whatever the first window happens to hold. That is the whole point: the earlier anchor tests
+	// seeded 3 entries, where every card lands on the first window and the defect is UNEXPRESSIBLE.
 
 	const int BigStoreEntries = 150;
-	const int StorePageSize = 40; // MemoryStoreModel.PageSize
 
-	// Zero-padded hex keys: lexicographic order (what the listing pages by) == numeric order, so
-	// entry #i has rank i-1 and therefore lives on page (i-1)/40. `salt` keeps each test's store on
+	// Zero-padded hex keys: lexicographic order == numeric order (the listing's default order is
+	// Updated desc, but these entries are all upserted in one call so they tie-break on Key), so
+	// entry #i has rank i-1. `salt` keeps each test's store on
 	// its own key space — the SAME key in two stores is AMBIGUOUS to the autolink and earns no link.
 	static string BigKey(int salt, int i) => "m-" + ((salt << 16) | i).ToString("x").PadLeft(32, '0');
 
@@ -1511,7 +1512,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 
 		html.Should().Contain($"id=\"{target}\"");                                     // the card IS in the DOM
 		html.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");      // …and it is the highlighted one
-		html.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");            // the server resolved page 3
+		// Listing is keyset-paged now (spec listing-tail-reachable) — there is no "page N" to name;
+		// the seek instead makes the target the FIRST row of whichever window it lands in.
+		html.Should().MatchRegex($"<ul[^>]*data-testid=\"store-entries\"[^>]*>\\s*<li id=\"{target}\"");
 		html.Should().NotContain($"id=\"{BigKey(1, 1)}\"");                            // page 0 is NOT what rendered
 	}
 
@@ -1573,7 +1576,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		entryResp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var entryHtml = await entryResp.Content.ReadAsStringAsync();
 		entryHtml.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");
-		entryHtml.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");
+		// Listing is keyset-paged now (spec listing-tail-reachable) — the seek makes the mentioned
+		// entry the FIRST row of whichever window it lands in, rather than naming a page number.
+		entryHtml.Should().MatchRegex($"<ul[^>]*data-testid=\"store-entries\"[^>]*>\\s*<li id=\"{target}\"");
 	}
 
 	// The sensitive store keeps its refusal: no automatic link is built into `ops`, whatever the

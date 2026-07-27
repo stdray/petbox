@@ -1,7 +1,12 @@
 @page "/ui/{workspaceKey}/{projectKey}/memory"
+@using PetBox.Web.Memory
 @model PetBox.Web.Pages.ProjectHome.MemoryModel
 @{
 	ViewData["Title"] = $"Memory — {Model.Project?.Name ?? Model.ProjectKey}";
+
+	string? HitHref(MemorySearchScope.Row hit) => hit.Scope == "workspace"
+		? MemoryLinks.WorkspaceEntry(Model.WorkspaceKey, hit.Store, hit.Entry.Key)
+		: MemoryLinks.ProjectEntry(Model.WorkspaceKey, Model.ProjectKey, hit.Store, hit.Entry.Key);
 }
 
 @{
@@ -28,7 +33,105 @@
 	return;
 }
 
-@if (Model.Stores.Count == 0)
+@* Project-wide search (spec search-one-engine-for-human-and-agent): sweeps EVERY store in scope
+   — the UI twin of memory_search called with no `store` arg. The per-store page can only ever
+   narrow to the store it is already on, so this is the one place a query reaches across the
+   whole project's (and optionally the workspace's) memory at once. *@
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2" data-testid="memory-search-form">
+	<input type="search" name="q" value="@Model.Query" placeholder="Search across every store — hybrid (lexical + semantic)…"
+		class="input input-bordered input-sm flex-1 max-w-md" data-testid="memory-search-input" />
+	<select name="type" class="select select-bordered select-sm" data-testid="memory-search-type">
+		<option value="" selected="@(string.IsNullOrEmpty(Model.Type))">Any type</option>
+		@foreach (var t in new[] { "User", "Feedback", "Project", "Reference" })
+		{
+			<option value="@t" selected="@(string.Equals(Model.Type, t, StringComparison.OrdinalIgnoreCase))">@t</option>
+		}
+	</select>
+	@if (Model.ScopeSelectable)
+	{
+		<select name="scope" class="select select-bordered select-sm" data-testid="memory-search-scope">
+			<option value="project" selected="@(string.IsNullOrEmpty(Model.Scope) || Model.Scope == "project")">This project</option>
+			<option value="workspace" selected="@(Model.Scope == "workspace")">Workspace</option>
+			<option value="cascade" selected="@(Model.Scope == "cascade")">Project + workspace</option>
+		</select>
+	}
+	<select name="sort" class="select select-bordered select-sm" data-testid="memory-search-sort">
+		<option value="relevance" selected="@(string.IsNullOrEmpty(Model.Sort) || Model.Sort == "relevance")">Relevance</option>
+		<option value="updated" selected="@(Model.Sort == "updated")">Updated</option>
+		<option value="created" selected="@(Model.Sort == "created")">Created</option>
+	</select>
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="memory-search-submit">Search</button>
+	@if (!string.IsNullOrWhiteSpace(Model.Query))
+	{
+		<a href="@Routes.ProjectMemory(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-sm btn-ghost" data-testid="memory-search-clear">Clear</a>
+	}
+</form>
+
+@if (Model.IsSearch)
+{
+	@if (Model.Retrievers is { } retr)
+	{
+		<div class="text-xs opacity-60 mb-2" data-testid="memory-search-retrievers">
+			retrievers: @(retr.Lexical ? "lexical" : null) @(retr.Semantic ? "semantic" : null)
+			@(retr.Degraded ? $"(degraded: {retr.DegradedReason})" : null)
+		</div>
+	}
+	@if (Model.Hits.Count == 0)
+	{
+		<div class="alert" data-testid="memory-search-empty">No entries match this search.</div>
+	}
+	else
+	{
+		<ul class="flex flex-col gap-2" data-testid="memory-search-hits">
+			@foreach (var hit in Model.Hits)
+			{
+				var u = Model.HitUsage.TryGetValue(MemorySearchScope.UsageKey(hit.Scope, hit.Store, hit.Entry.Key), out var uv) ? uv : null;
+				<li class="memory-entry card bg-base-200 border border-base-300" data-testid="memory-search-hit" data-entry-key="@hit.Entry.Key">
+					<div class="card-body p-3">
+						<div class="flex items-baseline justify-between gap-2 flex-wrap">
+							<a href="@(HitHref(hit) ?? "#")" class="font-mono font-semibold link link-hover">@hit.Entry.Key</a>
+							<span class="badge badge-outline badge-sm" data-testid="hit-scope">@hit.Scope</span>
+							<span class="badge badge-outline badge-sm" data-testid="hit-store">@hit.Store</span>
+							<span class="badge badge-ghost badge-sm" data-testid="hit-score" title="fused relevance">score @hit.Score.ToString("0.000")</span>
+							@if (hit.Retriever is not null)
+							{
+								<span class="badge badge-ghost badge-sm" data-testid="hit-retriever">@hit.Retriever</span>
+							}
+							@if (u is not null)
+							{
+								<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-usage"
+									title="surfaced @u.Surfaced x / opened @u.Opened x / last @(u.LastHitAt?.ToString("yyyy-MM-dd HH:mm") ?? "none") -- an impression count, not a value verdict">
+									👁 @u.Surfaced · 📖 @u.Opened
+								</span>
+							}
+							@if (hit.Entry.Tags.Count > 0)
+							{
+								<span class="flex gap-1 flex-wrap">
+									@foreach (var tag in hit.Entry.Tags)
+									{
+										<span class="badge badge-ghost badge-sm" data-testid="entry-tag">@tag</span>
+									}
+								</span>
+							}
+						</div>
+						@if (!string.IsNullOrEmpty(hit.Entry.Description))
+						{
+							<p class="text-sm opacity-70">@hit.Entry.Description</p>
+						}
+						@if (!string.IsNullOrEmpty(hit.Entry.Body))
+						{
+							<p class="text-sm opacity-90 whitespace-pre-wrap">@hit.Entry.Body</p>
+						}
+					</div>
+				</li>
+			}
+		</ul>
+		<div class="text-xs opacity-50 mt-2" data-testid="memory-search-info">
+			@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s") — top matches, ranked by relevance (not paginated).
+		</div>
+	}
+}
+else if (Model.Stores.Count == 0)
 {
 	<div class="alert" data-testid="memory-empty">No memory stores yet. Agents create them via the memory MCP tools.</div>
 }

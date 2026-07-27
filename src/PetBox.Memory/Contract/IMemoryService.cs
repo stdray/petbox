@@ -81,18 +81,17 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 
 	// --- UI helper (store page renders the raw active entries) ---
 	Task<IReadOnlyList<MemoryEntry>> ListActiveEntriesAsync(string projectKey, string store, CancellationToken ct = default);
-	// Server-paged raw active entries for the store detail page, optionally narrowed by a
-	// substring over Key/Description/Body/Tags (case-insensitive LIKE). OFFSET/LIMIT at the
-	// query — the 200+-entry stores are reachable by paging, never loaded whole.
-	Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default);
-	// WHICH PAGE holds `key` — the server half of the stable entry URL (spec memory-entry-url).
-	// Counts the active entries that sort BEFORE the key in the listing's own ordering
-	// (OrderBy Key, no search filter) and divides by pageSize; returns null when the store has no
-	// active entry under that key. Two cheap aggregate queries, never a scan of the page set: the
-	// alternative — the client walking pages until it finds the card — is N requests for one entry.
-	// Without this, a `…#{key}` fragment lands on page 0 and the card is simply absent from the DOM
-	// for every entry past the first page (~187 of 227 in the live `notes` store).
-	Task<int?> FindActiveEntryPageAsync(string projectKey, string store, string key, int pageSize, CancellationToken ct = default);
+	// The store detail page's listing mode (no `q`) now reaches the tail through
+	// SearchEntriesAsync(Query: null, Limit: 0) + a KeysetCursor the ADAPTER seeks with — the exact
+	// shape TasksTools.SearchAsync's listing mode already uses (spec listing-tail-reachable: an
+	// offset silently re-serves/swallows rows under concurrent writes; a keyset names the last row
+	// actually emitted). There is no bespoke offset-paged method here anymore — Limit: 0 returns the
+	// full deterministic order (Updated desc, then Key, then Store) unbounded, same as a listing
+	// always has, and the caller (MemoryStoreModel) slices + seeks it. The old
+	// FindActiveEntryPageAsync ("which page holds this key") has no keyset equivalent by design:
+	// the deep-link resolution now locates the key's INDEX in that same ordering and seeds a
+	// synthetic cursor there, so the entry becomes the first row of the page rather than living
+	// somewhere inside a fixed-size block.
 
 	// --- usage telemetry, read side (the writer is IMemoryUsageRecorder) ---
 	// Usage counters for the given keys (null = the whole store), keyed by entry key;
