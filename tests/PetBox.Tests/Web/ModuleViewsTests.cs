@@ -16,7 +16,12 @@ namespace PetBox.Tests.Web;
 // per-test reset is needed: the class only ADDS distinctly-named containers ("roadmap"
 // and "notes" seeded once here; "ordertest"/"specnoise" created by single tests with
 // exists-guards), and every assertion is Contains/NotContain on names no other test
-// touches — accumulated state is invisible across tests.
+// touches — accumulated state is invisible across tests. This class is one of FOUR
+// consumers of this fixture (ModuleViewsTests, MethodologyEditorViewsTests,
+// AgentDefsAdminPageTests, MemoryStoreCostFitViewTests — each gets its own instance/db,
+// so there is nothing to reset BETWEEN them) that all lean on "distinctly-named" holding;
+// Architecture/ModuleViewsFixtureNamingGuardTests.cs enforces it mechanically across all
+// four files rather than leaving it to this comment alone.
 public sealed class ModuleViewsFixture : IAsyncLifetime
 {
 	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
