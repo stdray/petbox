@@ -75,29 +75,33 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		return ids;
 	}
 
-	[Fact]
-	public async Task WhereKind_TranslatesToSql()
+	// One Theory instead of 12 copy-pasted Facts (work/test-suite-improvements-2607 #5): each case is
+	// only a KQL string + its expected span-id set, which InlineData cannot carry as an array literal.
+	// The KQL string doubles as the case's label in the runner output (same convention as
+	// WriteVerbOmissionProseTests' TheoryData<string, string[]>). Kept to the exact shape "one
+	// IdsAsync call, one BeEquivalentTo(literal array)" — cases with two assertions (a positive and a
+	// negated/paired query in the same method) stay as their own Facts below, unchanged.
+	public static TheoryData<string, string[]> FilterCases() => new()
 	{
-		(await IdsAsync("spans | where Kind == 1")).Should().BeEquivalentTo(["s1", "s3"]);
-	}
+		{ "spans | where Kind == 1", ["s1", "s3"] },
+		{ "spans | where Name == 'db.query'", ["s2"] },
+		{ "spans | where Status == 2", ["s2"] },
+		{ "spans | where Start >= datetime(2026-04-19T10:00:02Z)", ["s3", "s4"] },
+		{ "spans | where TraceId == 't1'", ["s1", "s2"] },
+		{ "spans | where toint(Properties.status_code) >= 500", ["s2"] },
+		{ "spans | where StatusName == 'Error'", ["s2"] },
+		{ "spans | where KindName == 'Server'", ["s1", "s3"] },
+		{ "spans | where start >= datetime(2026-04-19T10:00:02Z)", ["s3", "s4"] },
+		{ "spans | where duration > 200ms", ["s2"] },
+		{ "spans | where Duration between (50ms .. 100ms)", ["s1", "s3"] }, // inclusive: 100ms and 50ms
+		{ "spans | where 200ms < Duration", ["s2"] },
+	};
 
-	[Fact]
-	public async Task WhereName_Equality_TranslatesToSql()
+	[Theory]
+	[MemberData(nameof(FilterCases))]
+	public async Task FilterQuery_TranslatesToExpectedSpanIds(string kql, string[] expectedIds)
 	{
-		(await IdsAsync("spans | where Name == 'db.query'")).Should().BeEquivalentTo(["s2"]);
-	}
-
-	[Fact]
-	public async Task WhereStatus_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where Status == 2")).Should().BeEquivalentTo(["s2"]);
-	}
-
-	[Fact]
-	public async Task WhereStartDatetime_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where Start >= datetime(2026-04-19T10:00:02Z)"))
-			.Should().BeEquivalentTo(["s3", "s4"]);
+		(await IdsAsync(kql)).Should().BeEquivalentTo(expectedIds);
 	}
 
 	[Fact]
@@ -109,23 +113,10 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
-	public async Task WhereTraceId_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where TraceId == 't1'")).Should().BeEquivalentTo(["s1", "s2"]);
-	}
-
-	[Fact]
 	public async Task AttributesBareFallbackAndPath_TranslateToJsonExtract()
 	{
 		(await IdsAsync("spans | where peer == 'us'")).Should().BeEquivalentTo(["s3", "s4"]);
 		(await IdsAsync("spans | where Properties.peer == 'eu'")).Should().BeEquivalentTo(["s1", "s2"]);
-	}
-
-	[Fact]
-	public async Task TypedAttributeConversion_ComparesNumerically_InSql()
-	{
-		(await IdsAsync("spans | where toint(Properties.status_code) >= 500"))
-			.Should().BeEquivalentTo(["s2"]);
 	}
 
 	[Fact]
@@ -167,19 +158,8 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	// --- spans-review fix 1: KindName/StatusName are computed CASE columns — a pre-split where/order
-	// over them must TRANSLATE to SQLite (a raw Span*Names.ToName call used to die at enumeration) ---
-
-	[Fact]
-	public async Task StatusName_Where_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where StatusName == 'Error'")).Should().BeEquivalentTo(["s2"]);
-	}
-
-	[Fact]
-	public async Task KindName_Where_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where KindName == 'Server'")).Should().BeEquivalentTo(["s1", "s3"]);
-	}
+	// over them must TRANSLATE to SQLite (a raw Span*Names.ToName call used to die at enumeration).
+	// The `where` cases (StatusName/KindName equality) now live in FilterCases above. ---
 
 	[Fact]
 	public async Task KindName_OrderBy_TranslatesToSql()
@@ -191,42 +171,19 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	// --- spans-review fix 3: case-insensitive column forms must hit the same special-literal coercion
-	// as the canonical spelling (start → Start datetime, duration → Duration timespan) ---
-
-	[Fact]
-	public async Task LowercaseStart_WithDatetimeLiteral_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where start >= datetime(2026-04-19T10:00:02Z)"))
-			.Should().BeEquivalentTo(["s3", "s4"]);
-	}
-
-	[Fact]
-	public async Task LowercaseDuration_WithTimespanLiteral_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where duration > 200ms")).Should().BeEquivalentTo(["s2"]);
-	}
+	// as the canonical spelling (start → Start datetime, duration → Duration timespan). Both cases
+	// (Lowercase Start/Duration) now live in FilterCases above. ---
 
 	// --- spans-review fix 4: timespan/datetime literals normalize inside between / in / reversed
-	// comparisons on the SQL path, so pipeline position doesn't change semantics ---
-
-	[Fact]
-	public async Task DurationBetween_TimespanLiterals_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where Duration between (50ms .. 100ms)"))
-			.Should().BeEquivalentTo(["s1", "s3"]); // inclusive: 100ms and 50ms
-	}
+	// comparisons on the SQL path, so pipeline position doesn't change semantics. The plain `between`
+	// and reversed-operand cases now live in FilterCases above; DurationIn (a positive + a negated
+	// query in one method) and StartBetween stay here. ---
 
 	[Fact]
 	public async Task DurationIn_TimespanLiterals_TranslatesToSql()
 	{
 		(await IdsAsync("spans | where Duration in (100ms, 50ms)")).Should().BeEquivalentTo(["s1", "s3"]);
 		(await IdsAsync("spans | where Duration !in (100ms, 50ms)")).Should().BeEquivalentTo(["s2", "s4"]);
-	}
-
-	[Fact]
-	public async Task ReversedDurationComparison_LiteralOnLeft_TranslatesToSql()
-	{
-		(await IdsAsync("spans | where 200ms < Duration")).Should().BeEquivalentTo(["s2"]);
 	}
 
 	[Fact]

@@ -17,44 +17,57 @@ public sealed class KqlTransformerTests
 	static List<LogEntryRecord> Apply(Kusto.Language.KustoCode ast) =>
 		KqlTestHost.Apply(Rows, ast, KqlBackend.Sqlite);
 
-	[Fact]
-	public void Where_LevelEqualsInt_FiltersByRank()
+	// One method per shape, driven by TheoryData<string, long[]> instead of 15 copy-pasted Facts
+	// (work/test-suite-improvements-2607 #5 — KQL expected results are id ARRAYS, which InlineData
+	// cannot carry; the KQL string itself doubles as the case's readable label in the runner output,
+	// same convention as WriteVerbOmissionProseTests' TheoryData<string, string[]>). Where-clause
+	// results keep BeEquivalentTo (order-insensitive — a `where` doesn't promise a sequence); a
+	// single-row expectation ([2L], []) folds the former Single()/BeEmpty() Facts into the same shape.
+	public static TheoryData<string, long[]> FilterCases() => new()
 	{
-		var ast = Parse("events | where Level == 4");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
+		{ "events | where Level == 4", [2L, 4L] },
+		{ "events | where Level >= 3", [2L, 3L, 4L] },
+		{ "events | where LevelName == 'Error'", [2L, 4L] },
+		{ "events | where ServiceKey == 'svc-a'", [1L, 3L] },
+		{ "events | where Message == 'boom'", [2L] },
+		// A name that is not a known event column resolves as a Properties.<name> lookup (bare-name
+		// fallback). The property is absent here, so the predicate simply matches nothing — rather
+		// than raising "column not supported". Known columns still win (the Level/Message cases above).
+		{ "events | where Nonexistent == 'x'", [] },
+		{ "events | where Level in (3, 4)", [2L, 3L, 4L] },
+		{ "events | where Level !in (4)", [1L, 3L] },
+		{ "events | where Level between (3 .. 4)", [2L, 3L, 4L] },
+		{ "events | where Level + 1 == 5", [2L, 4L] },
+		{ "events | where Id % 2 == 0", [2L, 4L] },
+		{ "events | where iff(Level == 4, 1, 0) == 1", [2L, 4L] },
+	};
+
+	[Theory]
+	[MemberData(nameof(FilterCases))]
+	public void Where_FiltersToExpectedIds(string kql, long[] expectedIds)
+	{
+		var result = Apply(Parse(kql));
+		result.Select(r => r.Id).Should().BeEquivalentTo(expectedIds);
 	}
 
-	[Fact]
-	public void Where_LevelOrdering_Works()
+	// Ordering results, unlike filters, promise a SEQUENCE, so this second theory asserts
+	// ContainInOrder rather than reusing FilterCases' order-insensitive BeEquivalentTo.
+	public static TheoryData<string, long[]> OrderingCases() => new()
 	{
-		var ast = Parse("events | where Level >= 3");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
-	}
+		{ "events | order by Id", [4L, 3L, 2L, 1L] },
+		{ "events | order by Id asc", [1L, 2L, 3L, 4L] },
+		{ "events | order by Level asc, Id desc", [1L, 3L, 4L, 2L] },
+		{ "events | top 2 by Id desc", [4L, 3L] },
+		{ "events | top 2 by Id asc", [1L, 2L] },
+		{ "events | top 1 by Id", [4L] },
+	};
 
-	[Fact]
-	public void Where_LevelNameEquals_FiltersByName()
+	[Theory]
+	[MemberData(nameof(OrderingCases))]
+	public void Where_OrdersToExpectedSequence(string kql, long[] expectedIds)
 	{
-		var ast = Parse("events | where LevelName == 'Error'");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
-	}
-
-	[Fact]
-	public void Where_ServiceKeyEquals_Filters()
-	{
-		var ast = Parse("events | where ServiceKey == 'svc-a'");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([1L, 3L]);
-	}
-
-	[Fact]
-	public void Where_MessageEquals_Filters()
-	{
-		var ast = Parse("events | where Message == 'boom'");
-		var result = Apply(ast);
-		result.Single().Id.Should().Be(2);
+		var result = Apply(Parse(kql));
+		result.Select(r => r.Id).Should().ContainInOrder(expectedIds);
 	}
 
 	[Fact]
@@ -91,69 +104,11 @@ public sealed class KqlTransformerTests
 	}
 
 	[Fact]
-	public void UnknownColumn_FallsBackToProperties()
-	{
-		// A name that is not a known event column resolves as a Properties.<name> lookup (bare-name
-		// fallback). The property is absent here, so the predicate simply matches nothing — rather than
-		// raising "column not supported". Known columns still win (covered by the Level/Message tests).
-		var ast = Parse("events | where Nonexistent == 'x'");
-		Apply(ast).Should().BeEmpty();
-	}
-
-	[Fact]
 	public void LevelWithStringLiteral_Throws()
 	{
 		var ast = Parse("events | where Level == 'Error'");
 		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*integer literal*");
-	}
-
-	[Fact]
-	public void OrderBy_DefaultDescending()
-	{
-		var ast = Parse("events | order by Id");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().ContainInOrder(4L, 3L, 2L, 1L);
-	}
-
-	[Fact]
-	public void OrderBy_AscendingExplicit()
-	{
-		var ast = Parse("events | order by Id asc");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().ContainInOrder(1L, 2L, 3L, 4L);
-	}
-
-	[Fact]
-	public void OrderBy_MultipleColumns_ThenBy()
-	{
-		var ast = Parse("events | order by Level asc, Id desc");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().ContainInOrder(1L, 3L, 4L, 2L);
-	}
-
-	[Fact]
-	public void Top_OrdersDescendingAndLimits()
-	{
-		var ast = Parse("events | top 2 by Id desc");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().ContainInOrder(4L, 3L);
-	}
-
-	[Fact]
-	public void Top_Ascending()
-	{
-		var ast = Parse("events | top 2 by Id asc");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().ContainInOrder(1L, 2L);
-	}
-
-	[Fact]
-	public void Top_DefaultDescending()
-	{
-		var ast = Parse("events | top 1 by Id");
-		var result = Apply(ast);
-		result.Single().Id.Should().Be(4);
 	}
 
 	[Fact]
@@ -170,54 +125,6 @@ public sealed class KqlTransformerTests
 		var ast = Parse("events | where Level ==");
 		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*parse error*");
-	}
-
-	[Fact]
-	public void Where_In_FiltersBySet()
-	{
-		var ast = Parse("events | where Level in (3, 4)");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
-	}
-
-	[Fact]
-	public void Where_NotIn_FiltersBySet()
-	{
-		var ast = Parse("events | where Level !in (4)");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([1L, 3L]);
-	}
-
-	[Fact]
-	public void Where_Between_FiltersRange()
-	{
-		var ast = Parse("events | where Level between (3 .. 4)");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
-	}
-
-	[Fact]
-	public void Where_Arithmetic_Filters()
-	{
-		var ast = Parse("events | where Level + 1 == 5");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
-	}
-
-	[Fact]
-	public void Where_Modulo_Filters()
-	{
-		var ast = Parse("events | where Id % 2 == 0");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
-	}
-
-	[Fact]
-	public void Where_Iff_Filters()
-	{
-		var ast = Parse("events | where iff(Level == 4, 1, 0) == 1");
-		var result = Apply(ast);
-		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
 	[Fact]
