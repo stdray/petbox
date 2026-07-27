@@ -215,17 +215,24 @@ public sealed class MemoryReadRefusalContractTests : IClassFixture<MemoryRefusal
 	[InlineData("memory_remember")]
 	public async Task WriteVerbs_ForbiddenContainer_RefuseExplicitly(string tool)
 	{
+		// Only THIS tool's own declared parameters — memory_store_create/_delete/_upsert don't take
+		// `text`/`type` at all (that used to be a harmless silently-dropped extra; per work:
+		// unknown-param-silently-ignored-breaks-renames-quietly it is now a hard reject, so the probe
+		// payload must be shaped per verb, not shared).
 		var args = new Dictionary<string, object?>
 		{
 			["projectKey"] = MemoryRefusalContractHost.SandboxProject,
 			["store"] = MemoryRefusalContractHost.ProbeStore,
 			["scope"] = "workspace",
-			["text"] = "probe write",
-			["type"] = "Reference",
 		};
 		if (tool == "memory_upsert")
 			args["entries"] = new[] { new Dictionary<string, object?>
 				{ ["key"] = "probe", ["type"] = "Project", ["description"] = "p", ["body"] = "p" } };
+		if (tool == "memory_remember")
+		{
+			args["text"] = "probe write";
+			args["type"] = "Reference";
+		}
 
 		var r = await _host.CallAsync(_host.KeySandbox, tool, args);
 
