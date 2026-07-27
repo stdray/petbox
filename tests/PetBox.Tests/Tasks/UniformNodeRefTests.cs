@@ -263,6 +263,68 @@ public sealed class UniformNodeRefTests : IDisposable
 	}
 
 	[Fact]
+	public async Task RelationsCreate_AtomicDefault_RefusalThrows_AppliedNeverFalse()
+	{
+		// atomic:true (default) has no version/concurrency axis for relations — every refusal is a
+		// domain-guard refusal, so the whole call throws (relations-create-no-atomic-flag): there is
+		// no applied:false + conflicts[] outcome to observe here, unlike tasks_upsert's Stale case.
+		var http = Http();
+		var ids = await Seed(http, "b", """[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"}]""");
+
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
+			new RelationCreateItemInput { Kind = "blocks", From = "ghost", To = "b" },
+		]);
+		await act.Should().ThrowAsync<ArgumentException>();
+
+		var list = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, ids["a"]);
+		list.Relations.Should().BeEmpty(); // nothing landed
+	}
+
+	[Fact]
+	public async Task RelationsCreate_AtomicFalse_PartialApply_ValidLandsBadItemConflicts()
+	{
+		var http = Http();
+		var ids = await Seed(http, "b", """[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"}]""");
+
+		var r = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
+			new RelationCreateItemInput { Kind = "blocks", From = "ghost", To = "b" },
+		], atomic: false);
+
+		r.Applied.Should().BeTrue(); // at least one item landed
+		r.Relations.Should().ContainSingle();
+		r.Relations[0].FromNodeId.Should().Be(ids["a"]);
+		r.Conflicts.Should().ContainSingle();
+		r.Conflicts[0].Key.Should().Be("#1"); // relations carry no id yet — keyed by batch position
+		r.Conflicts[0].Reason.Should().Contain("ghost");
+
+		// The valid item actually landed (not just echoed).
+		var list = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, ids["a"]);
+		list.Relations.Should().ContainSingle(x => x.Kind == "blocks");
+	}
+
+	[Fact]
+	public async Task RelationsCreate_AtomicFalse_AllRejected_AppliedFalse()
+	{
+		var http = Http();
+		await Seed(http, "b", """[{"key":"b","status":"Todo","title":"B"}]""");
+
+		var r = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "ghost1", To = "b" },
+			new RelationCreateItemInput { Kind = "blocks", From = "ghost2", To = "b" },
+		], atomic: false);
+
+		r.Applied.Should().BeFalse(); // nothing landed — applied is the single source of truth
+		r.Relations.Should().BeEmpty();
+		r.Conflicts.Should().HaveCount(2);
+		r.Conflicts.Select(c => c.Key).Should().BeEquivalentTo(["#0", "#1"]);
+	}
+
+	[Fact]
 	public async Task RelationsCreate_ItemsPlusSingleForm_Rejected()
 	{
 		var http = Http();

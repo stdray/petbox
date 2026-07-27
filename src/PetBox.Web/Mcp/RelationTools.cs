@@ -25,7 +25,7 @@ namespace PetBox.Web.Mcp;
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationsCreatedResult))]
-	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases). SINGLE form: omit items and pass kind + fromNodeId + toNodeId. All items are validated before any write — a bad item fails the whole batch, naming its index. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Returns {relations:[{id,kind,fromNodeId,toNodeId},…]}. Requires tasks:write.")]
+	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases). SINGLE form: omit items and pass kind + fromNodeId + toNodeId. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). `applied` is the SINGLE source of truth: TRUE (default, atomic:true) = ATOMIC — a bad item throws and aborts the WHOLE call, naming its index, nothing is written. atomic:false = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a relation item has no id yet, so it is keyed by its batch POSITION (\"#0\", \"#1\", …), same convention as a comments_upsert CREATE. Every item resolves its own from/to independently (no item references another item of the same batch), so nothing cascades. Returns {applied, relations:[{id,kind,fromNodeId,toNodeId},…], conflicts:[{key,reason},…]}. Requires tasks:write.")]
 	public static async Task<RelationsCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
@@ -33,6 +33,7 @@ public static class RelationTools
 		[Description("Single-form source node: slug or NodeId (when items is omitted).")] string? fromNodeId = null,
 		[Description("Single-form target node: slug or NodeId (when items is omitted).")] string? toNodeId = null,
 		[Description("Batch items: [{kind, from, to}] (fromNodeId/toNodeId accepted as aliases). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
+		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item throws and aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason instead of throwing. Every item is independent (from/to are already-resolved external node refs, never another item of this batch), so nothing cascades. A rejected item has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -40,7 +41,13 @@ public static class RelationTools
 
 		var (batch, singleForm) = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
 		// Resolve+validate ALL items first so a bad ref never partially writes earlier edges.
+		// atomic:true (default): a bad item throws immediately (unchanged BC) — relations carry no
+		// version/concurrency axis, so every refusal here is a domain-guard refusal, and a domain-guard
+		// refusal aborts an atomic call as an exception, same as tasks_upsert/comments_upsert do for
+		// theirs. atomic:false: a bad item is instead recorded in conflicts[] (keyed by position, since
+		// a relation item carries no id) and dropped — the rest of the batch still lands.
 		var resolved = new List<(string Kind, string From, string To)>(batch.Length);
+		var conflicts = new List<RelationConflict>();
 		for (var i = 0; i < batch.Length; i++)
 		{
 			var item = batch[i];
@@ -66,9 +73,13 @@ public static class RelationTools
 			}
 			catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 			{
-				// Single-form (BC) keeps its original, unprefixed message; batch items are tagged by index.
-				if (singleForm) throw;
-				throw new ArgumentException($"items[{i}]: {ex.Message}", ex);
+				if (atomic)
+				{
+					// Single-form (BC) keeps its original, unprefixed message; batch items are tagged by index.
+					if (singleForm) throw;
+					throw new ArgumentException($"items[{i}]: {ex.Message}", ex);
+				}
+				conflicts.Add(new RelationConflict($"#{i}", ex.Message));
 			}
 		}
 
@@ -78,7 +89,9 @@ public static class RelationTools
 			var rel = await relations.CreateAsync(projectKey, k, from, to, ct);
 			created.Add(new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId));
 		}
-		return new RelationsCreatedResult(created);
+		// applied: false only when atomic:false rejected every item (nothing landed) — an atomic call
+		// never reaches here with a conflict (it threw above instead).
+		return new RelationsCreatedResult(created.Count > 0, created, conflicts);
 	}
 
 	[McpServerTool(Name = "relations_list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
