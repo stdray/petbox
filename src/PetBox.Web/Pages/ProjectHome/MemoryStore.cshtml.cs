@@ -29,10 +29,14 @@ namespace PetBox.Web.Pages.ProjectHome;
 // A non-empty `q` runs the SAME hybrid engine MCP's memory_search calls
 // (IMemoryService.SearchEntriesAsync) instead of the old substring LIKE — filtered by type, scoped
 // project/workspace/cascade, sorted relevance/created/updated, each hit carrying its fused score
-// and retriever. QUERY mode carries NO cursor (spec listing-tail-reachable's own boundary): the
-// fused relevance order is recomputed per call over a bounded candidate pool, so there is no tail
-// behind it to page into — a selection, not an enumeration. Exactly the same split
-// TasksTools.SearchAsync draws between listing and query mode.
+// and retriever. QUERY mode PAGES TOO (spec: result-set-pageable overturned the old "q carries no
+// cursor" doctrine): the ranked pool is materialized once (WholePool: true) and this adapter seeks a
+// KeysetCursor through it exactly as the listing branch does — the fused relevance order is a FINITE,
+// TOTALLY ORDERED pool, so a query is a filter like any other, not a reason to refuse navigation.
+// `Stop` always accompanies a query page ("more" | "exhausted" | "pool-boundary") so the human surface
+// never has to infer the end from a missing cursor — the same three-way answer memory_search reports.
+// Exactly the same split TasksTools.SearchAsync draws between listing and query mode, now unified on
+// pageability rather than on which one pages.
 //
 // Existence is checked against metadata first so we don't auto-vivify a phantom file.
 // WorkspaceViewer + project↔route workspace bind — same tenant gate as Memory page.
@@ -68,8 +72,11 @@ public sealed class MemoryStoreModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "store")]
 	public string Store { get; set; } = string.Empty;
 
-	// The listing's resume token (spec listing-tail-reachable) — a KeysetCursor.Encode() string,
-	// opaque by contract. Ignored in search mode (there is no cursor to carry there).
+	// The page's resume token (spec listing-tail-reachable / result-set-pageable) — a
+	// KeysetCursor.Encode() string, opaque by contract. Used in BOTH modes now: a listing cursor seeks
+	// the deterministic order, a query cursor seeks the materialized ranked pool (WholePool) — each
+	// mode builds its own fingerprint, so a token from one is refused (not silently honoured) against
+	// the other.
 	[BindProperty(SupportsGet = true, Name = "cursor")]
 	public string? Cursor { get; set; }
 
@@ -125,16 +132,23 @@ public sealed class MemoryStoreModel : PageModel
 	// Retriever provenance for the search (null outside IsSearch — no relevance leg ran).
 	public SearchRetrievers? Retrievers { get; private set; }
 	public int Total { get; private set; }
-	// LISTING mode only: whether more rows exist past this page. Always false in search mode —
-	// SearchEntriesAsync caps a query by Limit, it does not page: a search result is a bounded
-	// top-N selection, not a walkable list (same shape memory_search returns to an agent).
+	// Whether more rows exist past this page, in BOTH modes now.
 	public bool HasNext { get; private set; }
 	// The token for the "next" link when HasNext — null means this IS the last page.
 	public string? NextCursor { get; private set; }
-	// A malformed/stale `?cursor=` (a different query since it was issued, or garbage) is a LOUD
-	// refusal (KeysetCursor's own contract), never a silent restart — this carries that message so
-	// the page can say so and still render page 1 rather than 500ing.
+	// A malformed/stale `?cursor=` (a different query/filter/sort since it was issued, or garbage) is
+	// a LOUD refusal (KeysetCursor's own contract), never a silent restart — this carries that message
+	// so the page can say so and still render page 1 rather than 500ing. Shared by both modes.
 	public string? CursorError { get; private set; }
+	// QUERY mode only (spec: result-set-pageable card requirement 2) — WHY the walk stopped, stated
+	// rather than implied: "more" | "exhausted" | "pool-boundary". Null in listing mode (there is no
+	// ranking depth to run out of). "pool-boundary" means ranking looked only PoolBoundaryHint's
+	// declared depth deep and more entries matched behind it — the rest was never ranked, so there is
+	// no further page to reach; the way forward is to narrow the query, not to keep clicking Next.
+	public string? Stop { get; private set; }
+	// Surfaced only when Stop == "pool-boundary" — the human-readable version of the same fact
+	// pool-boundary-hint gives an agent: don't read this as "that was everything".
+	public string? PoolBoundaryHint { get; private set; }
 
 	// Usage counters (spec: memory-usage-observability), keyed by MemorySearchScope.UsageKey(scope,
 	// store, key) — shared by both modes now that listing can span scope too. Viewing this page is
@@ -182,12 +196,13 @@ public sealed class MemoryStoreModel : PageModel
 		IsSearch = q is not null;
 		if (IsSearch)
 		{
+			var searchSort = ParseSearchSortBy(Sort);
 			var result = await MemorySearchScope.SearchAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope,
 				new SearchRequest<MemoryEntryFilter, MemorySortBy>
 				{
 					Query = q,
 					Filter = new MemoryEntryFilter(Store, Type),
-					Sort = ParseSearchSortBy(Sort),
+					Sort = searchSort,
 					Limit = PageSize,
 					// EDGE default (spec: search-ranking-mode-is-caller-choice) — a human skimming a
 					// page, where latency costs more than a ranking mistake. Precision here would put
@@ -195,11 +210,51 @@ public sealed class MemoryStoreModel : PageModel
 					// of query; the MCP surface takes the opposite default for the opposite reason.
 					RankingMode = PetBox.Core.Search.SearchRankingMode.Speed,
 					BodyLen = 0, // full bodies — the page already rendered full bodies in listing mode
+								 // PAGING (spec: result-set-pageable) — materialize the WHOLE ranked pool instead of a
+								 // bare top-K so this adapter can seek a KeysetCursor through it, mirroring the listing
+								 // branch below and memory_search's own MCP cascade.
+					WholePool = true,
 				}, ct);
-			Hits = result.Rows;
 			Retrievers = result.Retrievers;
+
+			var fingerprint = SearchFingerprint(q, searchSort, result.DataVersion);
+			var afterCursor = result.Rows;
+			if (!string.IsNullOrWhiteSpace(Cursor))
+			{
+				try
+				{
+					var decoded = KeysetCursor.Decode(Cursor, fingerprint, "memory-store-search");
+					// THE ORDER COMMITMENT (spec: result-set-pageable) — the fingerprint only proves the
+					// QUESTION is unchanged; this proves the ranked ANSWER is still in the sequence the
+					// token was issued against (a rerank route recovering/failing between pages reorders
+					// the same rows with nothing written). Checked before the seek, same as memory_search.
+					if (!string.IsNullOrEmpty(result.PoolOrderHash))
+						decoded.AssertPoolOrder(result.PoolOrderHash, "memory-store-search");
+					afterCursor = KeysetCursor.Advance(
+						result.Rows, decoded, r => ("", r.Store + "\x1f" + r.Entry.Key, r.Scope),
+						SearchCursorComparison, desc: false, "memory-store-search");
+				}
+				catch (ArgumentException ex)
+				{
+					// Loud, not silent — same posture as the listing branch: render page 1 rather than 500.
+					CursorError = ex.Message;
+					afterCursor = result.Rows;
+				}
+			}
+
+			Hits = afterCursor.Take(PageSize).ToList();
 			Total = Hits.Count;
-			HasNext = false;
+			HasNext = afterCursor.Count > PageSize;
+			if (HasNext)
+			{
+				var last = Hits[^1];
+				NextCursor = new KeysetCursor(fingerprint, "", last.Store + "\x1f" + last.Entry.Key, last.Scope,
+					result.PoolOrderHash ?? "").Encode();
+			}
+			// WHY THE WALK STOPPED — stated, not implied (card requirement 2). Never infer the end from a
+			// missing cursor: "exhausted" and "pool-boundary" both omit it and mean different things.
+			Stop = HasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
+			PoolBoundaryHint = Stop == "pool-boundary" ? PoolBoundaryHintText : null;
 			HitUsage = await MemorySearchScope.LoadUsageAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope, Hits, ct);
 		}
 		else
@@ -272,6 +327,34 @@ public sealed class MemoryStoreModel : PageModel
 	};
 
 	static string NormalizeType(string? type) => string.IsNullOrWhiteSpace(type) ? "" : type.Trim().ToLowerInvariant();
+
+	// Everything that decides the QUERY's selection + order, hashed into the cursor — mirrors
+	// ListingFingerprint's job for the search branch. `dataVersion` (the joined per-container stamps
+	// MemorySearchScope returns) pins the token to the exact store state the pool was ranked over: edit
+	// the store mid-walk and the next page is REFUSED with an instructive error, never silently
+	// restarted against a new ordering (spec: result-set-pageable card requirement 4).
+	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort, string? dataVersion) =>
+		KeysetCursor.FingerprintOf(
+			"memory-store-search", WorkspaceKey, ProjectKey, Store, NormalizeScope(Scope), NormalizeType(Type), q,
+			sort?.By.ToString(), sort?.Desc.ToString(), dataVersion);
+
+	// The relevance order has no scalar that means anything (fused score is freshness/decay-blended in
+	// cascade scope, exact-identity rows carry none) — resumption is by IDENTITY only (KeysetCursor.Advance
+	// tries that first). This delegate is reached only when the boundary row is gone from the pool, which
+	// the data-version + order-hash pinning in the fingerprint/AssertPoolOrder should already have refused;
+	// if it somehow is reached, refuse explicitly rather than guess a boundary from a value that doesn't
+	// order the list — the same posture memory_search's own CursorSortComparison takes.
+	static Comparison<string> SearchCursorComparison => (_, _) => throw new ArgumentException(
+		"memory-store: the row this cursor names is no longer in the ranked pool, and a relevance position "
+		+ "cannot be re-derived from it (the order is score-fused and, in cascade scope, freshness-blended). "
+		+ "Drop the cursor and start the search over.");
+
+	// Surfaced only on Stop == "pool-boundary" — the human-readable twin of memory_search's
+	// PoolBoundaryHint: don't read this as "that was everything", there is no further page to fetch.
+	const string PoolBoundaryHintText =
+		"Ranking depth reached: more entries matched this search than relevance ranking looked at, so this "
+		+ "is a prefix of the match set, not all of it — and there is no further page to fetch, because the "
+		+ "rest was never ranked. Narrow the search (type, scope, a more specific query) to reach it.";
 
 	// LISTING mode always resolves to a CONCRETE axis (never null/relevance — there is no
 	// relevance leg to default to) so the fingerprint captures what's actually in effect: an

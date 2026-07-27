@@ -40,6 +40,16 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 
 	public IReadOnlyList<CrossScopeSearchHit> Hits { get; private set; } = [];
 
+	// A HONEST heuristic, not a hard fact (spec: result-set-pageable card requirement 2 — a boundary
+	// must be VISIBLE, never a silent truncation): this fan-out has no single ranked pool to page (each
+	// project runs its own capped full-text leg and the merge is a project-ordered concatenation, not a
+	// scalar relevance order) — see CrossScopeTaskSearchService's own header for why true keyset paging
+	// across an arbitrary number of projects is a separate, larger design than the per-container pool
+	// this page's memory/sessions siblings already page. Reaching MaxResults means the merge STOPPED,
+	// not necessarily that it EXHAUSTED every project — the same "don't infer the end from silence"
+	// principle, applied where a hard pool-boundary fact isn't available to state precisely.
+	public bool PossiblyTruncated => Hits.Count >= CrossScopeTaskSearchService.MaxResults;
+
 	// The reusable table's row shape (Pages/Shared/_TaskTable.cshtml), projected from Hits. This
 	// fan-out spans many projects/methodologies, so there is no single MethodologyRuntime to render
 	// the status LABEL through — Status stays a plain outline badge (raw slug), exactly what this
