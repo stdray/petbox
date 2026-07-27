@@ -69,6 +69,19 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	[Fact]
 	public async Task AllValidParameters_PassesThrough()
 	{
+		// Provision the board this call searches. It used to rely on BatchVerbWithNestedObjects_
+		// IsNotBroken having run FIRST and created it through the shared class fixture — an order
+		// dependence that was invisible under xunit v2's ordering and started failing the moment v3
+		// ordered the class differently ("task board 'work' not found in project 'unkp'"). The
+		// assertion here is about the PARAMETER FILTER, not about board existence, so the board is
+		// setup, not subject: create it unconditionally and let the filter be the only thing tested.
+		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["kind"] = "work",
+		});
+
 		var tool = await Tool(_fx.Mcp, "tasks_search");
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
