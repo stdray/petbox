@@ -1,0 +1,350 @@
+using System.Security.Claims;
+using LinqToDB;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using PetBox.Core.Contract;
+using PetBox.Core.Data;
+using PetBox.Core.Features;
+using PetBox.Core.Models;
+using PetBox.Core.Settings;
+using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
+using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
+
+namespace PetBox.Tests.Tasks;
+
+// tasks_search LISTING pagination (work/tasks-search-listing-keyset-cursor): the response
+// budget is a constant and a board is not, so past a certain size the tail of a listing was
+// simply unreachable — there was nothing to ask for it with. `cursor`/`nextCursor` is that
+// missing half: an opaque KEYSET token (PetBox.Core.Contract.KeysetCursor) naming the last row
+// actually emitted, seeked BEFORE the budget cut so a skipped prefix never spends budget twice.
+//
+// The load-bearing test here is the CONCATENATION INVARIANT: walking a listing page by page
+// must yield exactly the rows, in exactly the order, that the same unpaged listing yields on an
+// unchanged board. If that holds, pagination provably changed neither selection nor order — no
+// eval infrastructure needed, because no ranking code is involved (a listing is a deterministic
+// DB sort). The rest pins the deliberate REFUSALS: q-mode and sort:relevance get no cursor at
+// all (their order is re-derived per call over a bounded candidate pool, so a resume token
+// would promise a tail that does not exist), and a token from a different query is an error
+// rather than a silent restart inside another ordering.
+public sealed class TasksSearchCursorTests : IDisposable
+{
+	const string Proj = "proj";
+	readonly string _dir;
+	readonly PetBoxDb _db;
+	readonly ScopedDbFactory<TasksDb> _factory;
+	readonly TasksService _tasks;
+
+	public TasksSearchCursorTests()
+	{
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-searchcursor-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_dir);
+		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
+		TestSchema.Core(cs);
+		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
+	}
+
+	public void Dispose()
+	{
+		_db.Dispose();
+		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TestDirs.CleanupOrDefer(_dir);
+	}
+
+	static IHttpContextAccessor Http()
+	{
+		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test");
+		var ctx = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) };
+		ctx.Request.Scheme = "https";
+		ctx.Request.Host = new HostString("box.test");
+		return new HttpContextAccessor { HttpContext = ctx };
+	}
+
+	static FeatureFlags Flags()
+	{
+		var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+		{
+			["Features:Tasks"] = "true",
+		}).Build();
+		return new FeatureFlags(cfg);
+	}
+
+	async Task Seed(string board, string nodesJson)
+	{
+		if (!await _tasks.BoardExistsAsync(Proj, board))
+			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
+		await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, board, McpInputs.NodesJson(nodesJson));
+	}
+
+	// `count` nodes with `bodyChars`-char bodies — big bodies are how the response budget, not
+	// `limit`, becomes the thing that cuts the page.
+	async Task SeedMany(string board, int count, int bodyChars)
+	{
+		var body = new string('b', bodyChars);
+		var rows = string.Join(",", Enumerable.Range(0, count).Select(i =>
+			$$"""{"key":"node-{{i:d3}}","status":"Todo","title":"Node {{i}}","body":"{{body}}"}"""));
+		await Seed(board, $"[{rows}]");
+	}
+
+	Task<TaskSearchResultView> Search(
+		string? q = null, string? board = null, string[]? status = null, SortInput? sort = null,
+		string? groupBy = null, int? bodyLen = null, int? limit = null, string? cursor = null) =>
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, null, status, null,
+			false, sort, groupBy, bodyLen, limit, false, null, null, cursor);
+
+	// Walk a listing to exhaustion, returning every key in page order. `page` runs one page for a
+	// given cursor; the walk stops when the response stops issuing one.
+	static async Task<List<string>> WalkAsync(Func<string?, Task<TaskSearchResultView>> page)
+	{
+		var keys = new List<string>();
+		string? cursor = null;
+		for (var guard = 0; guard < 200; guard++)
+		{
+			var res = await page(cursor);
+			keys.AddRange(res.Nodes.Select(n => n.Key));
+			if (res.NextCursor is null) return keys;
+			cursor = res.NextCursor;
+		}
+		throw new InvalidOperationException("page walk did not terminate — nextCursor never went away");
+	}
+
+	// ── THE invariant: pages == the whole thing ──────────────────────────────────────────────
+
+	[Fact]
+	public async Task PageWalk_LimitSized_ConcatenatesToTheUnpagedListing()
+	{
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":30},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":10},
+			 {"key":"c","status":"Todo","title":"C","body":"x","priority":20},
+			 {"key":"d","status":"Todo","title":"D","body":"x","priority":10},
+			 {"key":"e","status":"Todo","title":"E","body":"x","priority":40},
+			 {"key":"f","status":"Todo","title":"F","body":"x","priority":25},
+			 {"key":"g","status":"Todo","title":"G","body":"x","priority":5}]
+			""");
+
+		var whole = (await Search(board: "b")).Nodes.Select(n => n.Key).ToList();
+		whole.Count.Should().Be(7); // the reference read fits in one response
+
+		var paged = await WalkAsync(c => Search(board: "b", limit: 2, cursor: c));
+
+		paged.Should().Equal(whole); // same rows, same order — pagination is presentation only
+	}
+
+	[Fact]
+	public async Task PageWalk_UnderDescendingSort_ConcatenatesToTheUnpagedListing()
+	{
+		// desc inverts only the PRIMARY key; the (key, board) tie-breakers stay ascending, and the
+		// keyset predicate has to model that exactly or the two priority:10 rows split wrong.
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":30},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":10},
+			 {"key":"c","status":"Todo","title":"C","body":"x","priority":20},
+			 {"key":"d","status":"Todo","title":"D","body":"x","priority":10},
+			 {"key":"e","status":"Todo","title":"E","body":"x","priority":40}]
+			""");
+		var sort = new SortInput { By = "priority", Desc = true };
+
+		var whole = (await Search(board: "b", sort: sort)).Nodes.Select(n => n.Key).ToList();
+		var paged = await WalkAsync(c => Search(board: "b", sort: sort, limit: 1, cursor: c));
+
+		paged.Should().Equal(whole);
+	}
+
+	[Fact]
+	public async Task PageWalk_UnderTitleSort_ConcatenatesToTheUnpagedListing()
+	{
+		await Seed("b", """
+			[{"key":"k1","status":"Todo","title":"zebra","body":"x"},
+			 {"key":"k2","status":"Todo","title":"Alpha","body":"x"},
+			 {"key":"k3","status":"Todo","title":"middle","body":"x"},
+			 {"key":"k4","status":"Todo","title":"Beta","body":"x"}]
+			""");
+		var sort = new SortInput { By = "title" };
+
+		var whole = (await Search(board: "b", sort: sort)).Nodes.Select(n => n.Key).ToList();
+		var paged = await WalkAsync(c => Search(board: "b", sort: sort, limit: 1, cursor: c));
+
+		paged.Should().Equal(whole);
+	}
+
+	[Fact]
+	public async Task PageWalk_WhenTheBudgetIsWhatCuts_ReachesTheTail()
+	{
+		// The card's actual complaint: no `limit` involved at all — 60 nodes of full bodies simply
+		// do not fit in one ~30k response, and before the cursor the omitted rows were unreachable.
+		const int total = 60;
+		await SeedMany("big", total, 1000);
+
+		var firstPage = await Search(board: "big", bodyLen: -1);
+		firstPage.Truncated.Should().BeTrue();
+		firstPage.Omitted.Should().BeGreaterThan(0);
+		firstPage.NextCursor.Should().NotBeNull("a cut listing must hand back a way to continue");
+		firstPage.Hint.Should().Contain("nextCursor");
+
+		var paged = await WalkAsync(c => Search(board: "big", bodyLen: -1, cursor: c));
+
+		paged.Should().Equal(Enumerable.Range(0, total).Select(i => $"node-{i:d3}"));
+		paged.Should().OnlyHaveUniqueItems(); // a keyset seek re-serves nothing
+	}
+
+	[Fact]
+	public async Task CompletePage_IssuesNoCursor()
+	{
+		await Seed("b", """[{"key":"only","status":"Todo","title":"O","body":"x"}]""");
+
+		var res = await Search(board: "b");
+
+		res.NextCursor.Should().BeNull("absence of nextCursor IS the end-of-list signal");
+		res.Truncated.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task LastPage_OfAWalk_IssuesNoCursor()
+	{
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":1},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":2}]
+			""");
+
+		var first = await Search(board: "b", limit: 1);
+		first.NextCursor.Should().NotBeNull();
+
+		var second = await Search(board: "b", limit: 1, cursor: first.NextCursor);
+		second.Nodes.Select(n => n.Key).Should().Equal("b");
+		second.NextCursor.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task DeletedBoundaryRow_DoesNotRestartTheWalk()
+	{
+		// The identity of the row a token names can vanish between pages; the keyset predicate is
+		// the fallback, so the walk must resume at the same PLACE, not at the top.
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":1},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":2},
+			 {"key":"c","status":"Todo","title":"C","body":"x","priority":3}]
+			""");
+
+		var first = await Search(board: "b", limit: 2);
+		first.Nodes.Select(n => n.Key).Should().Equal("a", "b");
+		await Seed("b", """[{"key":"b","deleted":true,"version":1}]"""); // the boundary row itself
+
+		var second = await Search(board: "b", limit: 2, cursor: first.NextCursor);
+
+		second.Nodes.Select(n => n.Key).Should().Equal("c");
+	}
+
+	// ── the deliberate refusals ──────────────────────────────────────────────────────────────
+
+	[Fact]
+	public async Task Cursor_WithQuery_IsRefused_WithTheAlternatives()
+	{
+		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
+		var token = new KeysetCursor("deadbeef", "0", "a", "b").Encode();
+
+		var act = () => Search(q: "A", board: "b", cursor: token);
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*LISTING mode only*")
+			// the teaching part: what to do instead, all three ways out
+			.WithMessage("*limit*").WithMessage("*tasks_delta*").WithMessage("*SELECTION*");
+	}
+
+	[Fact]
+	public async Task Cursor_WithSortRelevance_IsRefused()
+	{
+		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
+		var token = new KeysetCursor("deadbeef", "0", "a", "b").Encode();
+
+		var act = () => Search(board: "b", sort: new SortInput { By = "relevance" }, cursor: token);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*LISTING mode only*");
+	}
+
+	[Fact]
+	public async Task Cursor_WithGroupBy_IsRefused()
+	{
+		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x","tags":["area:mcp"]}]""");
+		var token = new KeysetCursor("deadbeef", "0", "a", "b").Encode();
+
+		var act = () => Search(board: "b", groupBy: "area", cursor: token);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*groupBy and cursor don't combine*");
+	}
+
+	[Fact]
+	public async Task Cursor_FromADifferentSortAxis_IsRefused_NotSilentlyRestarted()
+	{
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":1},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":2}]
+			""");
+		var first = await Search(board: "b", limit: 1);
+		first.NextCursor.Should().NotBeNull();
+
+		// Same board, same rows — only the ORDER changed, which is exactly the case a lenient
+		// decode would serve as a plausible-looking, wrong page.
+		var act = () => Search(board: "b", sort: new SortInput { By = "title" }, limit: 1, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Cursor_FromADifferentFilter_IsRefused()
+	{
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"x","priority":1},
+			 {"key":"b","status":"Todo","title":"B","body":"x","priority":2}]
+			""");
+		var first = await Search(board: "b", limit: 1);
+
+		var act = () => Search(board: "b", status: ["Todo"], limit: 1, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Cursor_ThatIsNotAToken_IsRefused()
+	{
+		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
+
+		var act = () => Search(board: "b", cursor: "not-a-token!!");
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*OPAQUE*");
+	}
+
+	[Fact]
+	public async Task Cursor_ValidBase64ButNotOurPayload_IsRefused()
+	{
+		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
+		var junk = Convert.ToBase64String("hello there"u8.ToArray());
+
+		var act = () => Search(board: "b", cursor: junk);
+
+		await act.Should().ThrowAsync<ArgumentException>();
+	}
+
+	// ── knobs that are deliberately NOT part of the token identity ───────────────────────────
+
+	[Fact]
+	public async Task BodyLenAndLimit_MayVaryBetweenPages()
+	{
+		// They shape a page, not the sequence — binding them would reject valid walks for no gain.
+		await Seed("b", """
+			[{"key":"a","status":"Todo","title":"A","body":"xxxxxxxxxx","priority":1},
+			 {"key":"b","status":"Todo","title":"B","body":"xxxxxxxxxx","priority":2},
+			 {"key":"c","status":"Todo","title":"C","body":"xxxxxxxxxx","priority":3}]
+			""");
+
+		var first = await Search(board: "b", limit: 1, bodyLen: 0);
+		var second = await Search(board: "b", limit: 2, bodyLen: -1, cursor: first.NextCursor);
+
+		second.Nodes.Select(n => n.Key).Should().Equal("b", "c");
+	}
+}

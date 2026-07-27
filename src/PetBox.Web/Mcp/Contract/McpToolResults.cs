@@ -565,6 +565,12 @@ public sealed record TaskSearchNodeView(
 //                    kind). null on the groupBy tag-projection branch (no rows selected by facet).
 //   groupBy        → `GroupBy`+`Groups` (the tag projection; `Nodes` empty);
 //   any            → the response-budget markers Truncated/Omitted/Hint (null = complete).
+//   listing        → `NextCursor`, the keyset resume token (PetBox.Core.Contract.KeysetCursor),
+//                    present ONLY when rows were withheld — the budget cut them, or `limit`
+//                    capped the page. Absent means this page IS the tail, which is why it is a
+//                    marker and not a always-present field: the caller stops when it stops
+//                    coming. Never issued in query mode (relevance is re-derived per call, so a
+//                    resume token there would splice two rankings).
 public sealed record TaskSearchResultView(
 	IReadOnlyList<TaskSearchNodeView> Nodes,
 	string? Board = null,
@@ -577,7 +583,8 @@ public sealed record TaskSearchResultView(
 	bool? Truncated = null,
 	int? Omitted = null,
 	string? Hint = null,
-	IReadOnlyList<string>? EffectiveStatusKind = null);
+	IReadOnlyList<string>? EffectiveStatusKind = null,
+	string? NextCursor = null);
 
 // tasks_node_get result (batch 3, mirrors memory_get's addressed-read-batched shape): ALWAYS
 // a list, whether the caller addressed one `node` or a batch of `nodes[]` — one shape for
