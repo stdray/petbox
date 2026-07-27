@@ -65,7 +65,7 @@ public sealed class SqliteDurabilityTests : IDisposable
 		try
 		{
 			var cs = SqliteConnectionStrings.ForFile(Path_("prod-tasks"));
-			TasksSchema.Ensure(cs);
+			TestSchema.Tasks(cs);
 			using var db = new TasksDb(TasksDb.CreateOptions(cs));
 
 			Synchronous(db).Should().Be(Full, "the per-module tiers get the same untouched default");
@@ -92,12 +92,12 @@ public sealed class SqliteDurabilityTests : IDisposable
 	public void TheTestHost_RelaxesEveryTierItOpens()
 	{
 		var tasks = SqliteConnectionStrings.ForFile(Path_("test-tasks"));
-		TasksSchema.Ensure(tasks);
+		TestSchema.Tasks(tasks);
 		using (var db = new TasksDb(TasksDb.CreateOptions(tasks)))
 			Synchronous(db).Should().Be(Off, "tasks tier");
 
 		var memory = SqliteConnectionStrings.ForFile(Path_("test-memory"));
-		MemorySchema.Ensure(memory);
+		TestSchema.Memory(memory);
 		using (var db = new MemoryDb(MemoryDb.CreateOptions(memory)))
 			Synchronous(db).Should().Be(Off, "memory tier");
 	}
@@ -109,7 +109,7 @@ public sealed class SqliteDurabilityTests : IDisposable
 	public void TheRelaxation_SurvivesAPooledReopenOfTheSameFile()
 	{
 		var cs = SqliteConnectionStrings.ForFile(Path_("pooled"));
-		TasksSchema.Ensure(cs);
+		TestSchema.Tasks(cs);
 
 		using (var first = new TasksDb(TasksDb.CreateOptions(cs)))
 			Synchronous(first).Should().Be(Off);
