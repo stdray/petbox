@@ -58,7 +58,12 @@ public sealed class WriteVerbOmissionProseTests
 		// the parallel branch this card names as "оба deploy_* молчат". Replaces
 		// DescriptionNamesTheOmittedFieldFate_Deploy_PendingParallelFix below, which is now gone.
 		{ "deploy_node_upsert", ["an OMITTED displayName/tags/ephemeral keeps the node's current value", "it does NOT reset to a default"] },
-		{ "deploy_upsert", ["an OMITTED one keeps the deployment's current value", "are NOT patched — every call must resend the full deployment identity/desired-state for those"] },
+		{ "deploy_upsert", [
+			"an OMITTED one keeps the deployment's current value",
+			"are NOT patched — every call must resend the full deployment identity/desired-state for those",
+			"relocatable/requiredTags/configTags now follow the same PATCH rule as the run-spec fields below",
+			"requiredTags/configTags additionally accept \"\" to CLEAR the CSV",
+		] },
 	};
 
 	[Theory]

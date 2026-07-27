@@ -99,7 +99,7 @@ public static class DeployTools
 	}
 
 	[McpServerTool(Name = "deploy_upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Creates (omit id) or updates (existing id) a deployment of a service on a node. One copy per (service, node). PATCH on the run-spec fields below (ports/volumes/restart/healthcheck*/memory/cpus/network/command/labels/domain+sitePort): on update, an OMITTED one keeps the deployment's current value — it does NOT get wiped. To CLEAR one explicitly: pass an empty array for ports/volumes/command/labels, \"\" for restart/network/healthcheckCmd/domain (healthcheckCmd:\"\" drops the whole healthcheck block; domain:\"\" drops the whole site block), \"\" for memory, or 0 for cpus (0 is otherwise never a valid cpu limit — same clear-by-sentinel convention apikey_update uses for expiresInSeconds:0). Setting healthcheckCmd or domain to a non-empty value replaces its WHOLE sub-block (healthcheckInterval/Timeout/Retries, or sitePort) from what's passed in this call, not merged field-by-field with the old block. service/projectKey/hostId/imageDigest/running/relocatable/requiredTags/configTags are NOT patched — every call must resend the full deployment identity/desired-state for those. On CREATE, all of the above default the same way they always have (omit = no value). `projectKey` here is NOT an access boundary the way it is in config_binding/memory/tasks — it is resolution input ONLY (picks which project's config bindings resolve into the container's env); a deploy:write key can create/update a deployment naming ANY projectKey, on ANY node, regardless of the calling key's own project claim. Requires deploy:write.")]
+	[Description("Creates (omit id) or updates (existing id) a deployment of a service on a node. One copy per (service, node). PATCH on the run-spec fields below (ports/volumes/restart/healthcheck*/memory/cpus/network/command/labels/domain+sitePort): on update, an OMITTED one keeps the deployment's current value — it does NOT get wiped. To CLEAR one explicitly: pass an empty array for ports/volumes/command/labels, \"\" for restart/network/healthcheckCmd/domain (healthcheckCmd:\"\" drops the whole healthcheck block; domain:\"\" drops the whole site block), \"\" for memory, or 0 for cpus (0 is otherwise never a valid cpu limit — same clear-by-sentinel convention apikey_update uses for expiresInSeconds:0). Setting healthcheckCmd or domain to a non-empty value replaces its WHOLE sub-block (healthcheckInterval/Timeout/Retries, or sitePort) from what's passed in this call, not merged field-by-field with the old block. service/projectKey/hostId/imageDigest/running are NOT patched — every call must resend the full deployment identity/desired-state for those. relocatable/requiredTags/configTags now follow the same PATCH rule as the run-spec fields below: an OMITTED one keeps the deployment's current value; requiredTags/configTags additionally accept \"\" to CLEAR the CSV, same as tags elsewhere; relocatable has no separate clear sentinel, send true/false explicitly to change it, same as ephemeral. On CREATE, all of the above default the same way they always have (omit = no value; relocatable omitted = false, requiredTags/configTags omitted = \"\"). `projectKey` here is NOT an access boundary the way it is in config_binding/memory/tasks — it is resolution input ONLY (picks which project's config bindings resolve into the container's env); a deploy:write key can create/update a deployment naming ANY projectKey, on ANY node, regardless of the calling key's own project claim. Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Service name (slug).")] string service,
@@ -111,9 +111,9 @@ public static class DeployTools
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
 		[Description("Desired running (true) or stopped (false).")] bool running = true,
-		[Description("Auto-relocate on node failure.")] bool relocatable = false,
-		[Description("Tags a node must cover to host this (CSV). Always resent in full on update, not patched.")] string? requiredTags = null,
-		[Description("Config tag-vector for env resolution (CSV). Always resent in full on update, not patched.")] string? configTags = null,
+		[Description("Auto-relocate on node failure. Omit on update to keep the current flag; there is no separate clear sentinel, send true/false explicitly to change it. On create, omitted = false.")] bool? relocatable = null,
+		[Description("Tags a node must cover to host this (CSV). Omit on update to keep the current CSV; pass \"\" to clear it. On create, omitted = \"\".")] string? requiredTags = null,
+		[Description("Config tag-vector for env resolution (CSV). Omit on update to keep the current CSV; pass \"\" to clear it. On create, omitted = \"\".")] string? configTags = null,
 		[Description("Port publications, '[ip:]host:container[/tcp|udp]' entries, e.g. '127.0.0.1:8080:8080'. Omit on update to keep the current ports; pass [] to clear them.")] string[]? ports = null,
 		[Description("Bind mounts, '/host/path:/container/path[:ro|rw]' entries. Omit on update to keep the current mounts; pass [] to clear them.")] string[]? volumes = null,
 		[Description("Restart policy: no|on-failure|unless-stopped|always (default unless-stopped at the agent). Omit on update to keep the current policy; pass \"\" to clear it.")] string? restart = null,
@@ -147,7 +147,7 @@ public static class DeployTools
 			Site: domain is null ? null : new SiteSpec(domain.Trim(), sitePort));
 		var d = await svc.UpsertDeploymentAsync(new DeploymentInput(
 			id, service, projectKey, hostId, imageDigest,
-			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",
+			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags, configTags,
 			runSpec), ct);
 		return new DeployDeploymentResult(d);
 	}

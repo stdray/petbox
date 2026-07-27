@@ -325,6 +325,35 @@ public sealed class DeployServiceTests : IDisposable
 		cleared.RunSpec.Command.Should().Equal("python", "-m", "bot");      // untouched (omitted this call)
 	}
 
+	// work/deploy-upsert-three-fields-still-full-put: Relocatable/RequiredTags/ConfigTags were
+	// the residual, unclosed instance of the same PATCH-vs-PUT defect the test above covers for
+	// RunSpec — they now follow the identical omit=keep, explicit-empty=clear convention.
+	[Fact]
+	public async Task Upsert_Update_Omitted_Relocatable_RequiredTags_ConfigTags_Are_Kept_Explicit_Values_Change_Them()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		var created = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "web", "proj", "n1", "img1", DesiredState.Running,
+			Relocatable: true, RequiredTags: "net.x", ConfigTags: "env:prod"));
+
+		// update with all three omitted (null) -> every field survives untouched
+		var kept = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			created.Id, "web", "proj", "n1", "img2", DesiredState.Running,
+			Relocatable: null, RequiredTags: null, ConfigTags: null));
+		kept.Relocatable.Should().BeTrue();
+		kept.RequiredTags.Should().Be("net.x");
+		kept.ConfigTags.Should().Be("env:prod");
+
+		// explicit values change/clear them: relocatable:false resets the flag,
+		// requiredTags:""/configTags:"" clear the CSVs (same NormalizeCsv convention as tags)
+		var cleared = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			created.Id, "web", "proj", "n1", "img2", DesiredState.Running,
+			Relocatable: false, RequiredTags: "", ConfigTags: ""));
+		cleared.Relocatable.Should().BeFalse();
+		cleared.RequiredTags.Should().Be("");
+		cleared.ConfigTags.Should().Be("");
+	}
+
 	[Fact]
 	public async Task One_Copy_Per_Node_Is_Enforced()
 	{
