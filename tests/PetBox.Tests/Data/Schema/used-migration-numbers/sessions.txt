@@ -21,3 +21,4 @@
 5 LIVE M005_SessionTermIndex
 6 LIVE M006_SessionMetaJson
 7 LIVE M007_SearchCursorTables
+8 LIVE M008_SessionCreated

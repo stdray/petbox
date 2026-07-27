@@ -14,9 +14,20 @@ public interface ISessionStore
 	SessionsDb GetContext(string projectKey);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
 	// Server-paged header slice, optionally filtered by a substring over SessionId/Agent
-	// (case-insensitive LIKE). OFFSET/LIMIT at the query — never loads the whole set to page.
-	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default);
+	// (case-insensitive LIKE) AND/OR an exact `agent` match (the UI's agent-filter dropdown —
+	// a distinct predicate from the free-text `search` box, combinable with it). `sort` is a real
+	// SQL ORDER BY (never loads the whole set to sort in memory); null keeps the PRE-EXISTING
+	// deterministic default (SessionId asc) so old callers see no behavior change. OFFSET/LIMIT
+	// at the query — never loads the whole set to page.
+	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize,
+		string? agent = null, SessionSortField? sort = null, bool sortDesc = true, CancellationToken ct = default);
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
+	// Cheap lookup: the row's Created timestamp ONLY (no content decode) — no IsDeleted filter,
+	// so Created survives a soft-delete/resurrect cycle. Used by SessionService to preserve a
+	// session's original first-seen time across every re-push (UpsertAsync/AppendAsync always
+	// rewrite the whole row, so this is the only way to know it already existed). Null = brand
+	// new session (never written before).
+	Task<DateTime?> GetCreatedAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	// Resolve a possibly-shortened id (a unique prefix of a full session id) to the stored full
 	// id — see SessionIdResolution. Exact matches win; a prefix that collides with 2+ active
 	// sessions is reported ambiguous rather than guessed.
@@ -44,12 +55,13 @@ public sealed class SessionStore : ISessionStore
 		var rows = await db.Sessions
 			.Where(s => !s.IsDeleted)
 			.OrderBy(s => s.SessionId)
-			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson })
+			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson, s.Created })
 			.ToListAsync(ct);
-		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson)).ToList();
+		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson, r.Created)).ToList();
 	}
 
-	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default)
+	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize,
+		string? agent = null, SessionSortField? sort = null, bool sortDesc = true, CancellationToken ct = default)
 	{
 		using var db = _factory.NewEnsuredConnection(projectKey);
 		var q = db.Sessions.Where(s => !s.IsDeleted);
@@ -58,21 +70,39 @@ public sealed class SessionStore : ISessionStore
 			var term = search.Trim();
 			q = q.Where(s => s.SessionId.Contains(term) || s.Agent.Contains(term));
 		}
+		if (!string.IsNullOrWhiteSpace(agent))
+		{
+			var a = agent.Trim();
+			q = q.Where(s => s.Agent == a);
+		}
 
 		var total = await q.CountAsync(ct);
 		var offset = Math.Max(0, pageNum) * pageSize;
+
+		// `sort == null` keeps the pre-existing deterministic default (SessionId asc) — the ONLY
+		// order every caller before this card ever saw, still exercised by callers that never
+		// pass `sort`. An explicit axis reorders for real (a SQL ORDER BY, not an in-memory
+		// sort) with SessionId as a stable tiebreak so same-timestamp rows never reshuffle
+		// across pages.
+		var ordered = sort switch
+		{
+			null => q.OrderBy(s => s.SessionId),
+			SessionSortField.Created => sortDesc ? q.OrderByDescending(s => s.Created).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Created).ThenBy(s => s.SessionId),
+			SessionSortField.Length => sortDesc ? q.OrderByDescending(s => s.Version).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Version).ThenBy(s => s.SessionId),
+			_ => sortDesc ? q.OrderByDescending(s => s.Updated).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Updated).ThenBy(s => s.SessionId),
+		};
+
 		// Project only the header columns (never the ContentZ blob); take one extra row as a
 		// cheap HasNext probe.
-		var rows = await q
-			.OrderBy(s => s.SessionId)
+		var rows = await ordered
 			.Skip(offset)
 			.Take(pageSize + 1)
-			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson })
+			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson, s.Created })
 			.ToListAsync(ct);
 
 		var hasNext = rows.Count > pageSize;
 		if (hasNext) rows.RemoveAt(rows.Count - 1);
-		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson)).ToList();
+		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson, r.Created)).ToList();
 		return new SessionHeaderPage(headers, hasNext, total);
 	}
 
@@ -84,7 +114,19 @@ public sealed class SessionStore : ISessionStore
 			.FirstOrDefaultAsync(ct);
 		return row is null
 			? null
-			: new SessionSnapshot(row.SessionId, row.Agent, SessionContent.Decode(row.ContentZ), row.Version, row.Updated, row.MetaJson);
+			: new SessionSnapshot(row.SessionId, row.Agent, SessionContent.Decode(row.ContentZ), row.Version, row.Updated, row.MetaJson, row.Created);
+	}
+
+	public async Task<DateTime?> GetCreatedAsync(string projectKey, string sessionId, CancellationToken ct = default)
+	{
+		using var db = _factory.NewEnsuredConnection(projectKey);
+		// No IsDeleted filter — a resurrected session must keep its ORIGINAL Created, not a new
+		// one from the re-push that resurrects it.
+		var rows = await db.Sessions
+			.Where(s => s.SessionId == sessionId)
+			.Select(s => (DateTime?)s.Created)
+			.ToListAsync(ct);
+		return rows.Count > 0 ? rows[0] : null;
 	}
 
 	// How many colliding ids to surface on an ambiguous prefix — enough to show the collision

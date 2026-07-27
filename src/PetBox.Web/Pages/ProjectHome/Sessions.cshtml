@@ -3,12 +3,19 @@
 @{
 	ViewData["Title"] = $"Sessions — {Model.Project?.Name ?? Model.ProjectKey}";
 
-	string PageHref(int pageNum)
+	string QueryHref(int pageNum)
 	{
 		var href = $"{Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)}?pageNum={pageNum}";
 		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
+		if (!string.IsNullOrWhiteSpace(Model.Agent)) href += $"&agent={Uri.EscapeDataString(Model.Agent)}";
+		href += $"&sortBy={Model.EffectiveSortBy}&sortDesc={Model.EffectiveSortDesc}";
 		return href;
 	}
+
+	string SessionHref(string sessionId, long? fromOrdinal) =>
+		fromOrdinal is > 1
+			? $"{Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, sessionId)}?fromOrdinal={fromOrdinal}"
+			: Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, sessionId);
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
@@ -28,28 +35,109 @@
 	return;
 }
 
-<form method="get" class="mb-4 flex items-center gap-2" data-testid="sessions-search-form">
-	<input type="search" name="q" value="@Model.Query" placeholder="Search by id or agent…"
-		class="input input-bordered input-sm flex-1 max-w-md" data-testid="sessions-search-input" />
-	<button type="submit" class="btn btn-sm btn-primary" data-testid="sessions-search-submit">Search</button>
-	@if (!string.IsNullOrWhiteSpace(Model.Query))
+@* One GET form carries every axis (q/agent/sortBy/sortDesc) so a submit re-runs the whole
+   request server-side — no client-side reordering (card ui-search-sessions-hybrid: "Сортировка
+   — на сервере"). Non-empty `q` routes through SessionSearchService (the same engine
+   session_search/MCP uses); empty `q` stays the deterministic listing. *@
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2" data-testid="sessions-search-form">
+	<input type="search" name="q" value="@Model.Query" placeholder="Search the conversation, id or agent…"
+		class="input input-bordered input-sm flex-1 min-w-[16rem] max-w-md" data-testid="sessions-search-input" />
+
+	<select name="agent" class="select select-bordered select-sm" data-testid="sessions-agent-filter">
+		<option value="">All agents</option>
+		@foreach (var a in Model.Agents)
+		{
+			<option value="@a" selected="@(string.Equals(a, Model.Agent, StringComparison.OrdinalIgnoreCase) ? "selected" : null)">@a</option>
+		}
+	</select>
+
+	<select name="sortBy" class="select select-bordered select-sm" data-testid="sessions-sort-by">
+		<option value="@PetBox.Web.Pages.ProjectHome.SessionSortKeys.Updated" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.SessionSortKeys.Updated ? "selected" : null)">updated</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.SessionSortKeys.Created" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.SessionSortKeys.Created ? "selected" : null)">created</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.SessionSortKeys.Length" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.SessionSortKeys.Length ? "selected" : null)">transcript length</option>
+	</select>
+
+	<select name="sortDesc" class="select select-bordered select-sm" data-testid="sessions-sort-dir">
+		<option value="true" selected="@(Model.EffectiveSortDesc ? "selected" : null)">↓ desc</option>
+		<option value="false" selected="@(!Model.EffectiveSortDesc ? "selected" : null)">↑ asc</option>
+	</select>
+
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="sessions-search-submit">Apply</button>
+	@if (!string.IsNullOrWhiteSpace(Model.Query) || !string.IsNullOrWhiteSpace(Model.Agent))
 	{
 		<a href="@Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-sm btn-ghost" data-testid="sessions-search-clear">Clear</a>
 	}
 </form>
 
-@if (Model.Sessions.Count == 0)
+@if (Model.IsSearchMode && !Model.Distilled)
 {
-	<div class="alert" data-testid="sessions-empty">
-		@(string.IsNullOrWhiteSpace(Model.Query) ? "No sessions yet. Agents record them via the session MCP tools." : "No sessions match this search.")
+	@* Distilled=false: the digest store hasn't reached this project yet (background
+	   distillation runs a few minutes after a session settles) — an honest "still warming up",
+	   never presented as "nothing matched". The verbatim term leg is the declared recall floor
+	   and already ran, so results below are real, just digest-leg-blind for now. *@
+	<div class="alert alert-info mb-3 text-sm" data-testid="sessions-not-distilled">
+		Semantic index for this project is still warming up — showing verbatim matches only.
 	</div>
+}
+
+@if (Model.IsSearchMode)
+{
+	@if (Model.SearchResults.Count == 0)
+	{
+		<div class="alert" data-testid="sessions-empty">No sessions match this search.</div>
+	}
+	else
+	{
+		<section class="flex flex-col gap-3" data-testid="sessions-search-list">
+			@foreach (var c in Model.SearchResults)
+			{
+				<div class="card bg-base-200 border border-base-300" data-testid="session-search-card" data-session-id="@c.SessionId">
+					<div class="card-body p-4">
+						<a href="@SessionHref(c.SessionId, null)" class="flex items-baseline justify-between gap-2 hover:underline" data-testid="session-search-link">
+							<span class="font-mono font-semibold truncate">@c.SessionId</span>
+							<span class="badge badge-ghost badge-sm">@c.Agent</span>
+						</a>
+						@* c.Description (the LLM-composed digest) is a DISCOVERY-stage artifact, not the
+						   result — it is deliberately NOT rendered here (card ui-search-sessions-hybrid,
+						   point 4). The hits below are the verbatim episodic matches, the same ones
+						   session_search returns to an agent. *@
+						@if (c.Hits.Count > 0)
+						{
+							<ul class="mt-2 flex flex-col gap-1" data-testid="session-search-hits">
+								@foreach (var h in c.Hits)
+								{
+									@* Each hit carries the message ORDINAL — the same provenance bridge an
+									   agent gets via session_get {fromOrdinal}. Landing a human on the SAME
+									   window (not just the session header) is the "не хуже" bar. *@
+									<li>
+										<a href="@SessionHref(c.SessionId, h.Message)" class="block text-sm hover:bg-base-300 rounded px-2 py-1 -mx-2" data-testid="session-search-hit" data-ordinal="@h.Message">
+											<span class="opacity-50 font-mono text-xs">#@h.Message @h.Role</span>
+											<span class="opacity-80"> — @h.Snippet</span>
+										</a>
+									</li>
+								}
+							</ul>
+						}
+					</div>
+				</div>
+			}
+		</section>
+
+		<div class="flex items-center justify-between mt-4 text-sm">
+			<span class="opacity-60" data-testid="sessions-page-info">@Model.SearchResults.Count session@(Model.SearchResults.Count == 1 ? "" : "s") found</span>
+		</div>
+	}
+}
+else if (Model.Sessions.Count == 0)
+{
+	<div class="alert" data-testid="sessions-empty">No sessions yet. Agents record them via the session MCP tools.</div>
 }
 else
 {
 	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="sessions-list">
 		@foreach (var s in Model.Sessions)
 		{
-			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, s.SessionId)"
+			<a href="@SessionHref(s.SessionId, null)"
 				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
 				data-testid="session-card" data-session-id="@s.SessionId">
 				<div class="card-body p-4">
@@ -68,7 +156,7 @@ else
 		<div class="join">
 			@if (Model.PageNum > 0)
 			{
-				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="sessions-prev">‹ Prev</a>
+				<a href="@QueryHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="sessions-prev">‹ Prev</a>
 			}
 			else
 			{
@@ -76,7 +164,7 @@ else
 			}
 			@if (Model.HasNext)
 			{
-				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="sessions-next">Next ›</a>
+				<a href="@QueryHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="sessions-next">Next ›</a>
 			}
 			else
 			{

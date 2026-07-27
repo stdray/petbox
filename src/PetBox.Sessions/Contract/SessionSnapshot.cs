@@ -8,7 +8,7 @@ namespace PetBox.Sessions.Contract;
 // multi-message renders with `### role` headers (mirrors the old hook output).
 public sealed record SessionSnapshot(
 	string SessionId, string Agent, IReadOnlyList<SessionMessage> Messages, long Version, DateTime Updated,
-	string? MetaJson = null)
+	string? MetaJson = null, DateTime Created = default)
 {
 	public string Content => Render(Messages);
 
@@ -39,10 +39,26 @@ public sealed record SessionSnapshot(
 }
 
 // A lightweight list entry — no message bodies, so listing never decompresses a blob.
-// MetaJson is the optional observed client stamp (cheap TEXT; not a ContentZ blob).
-public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated, string? MetaJson = null);
+// MetaJson is the optional observed client stamp (cheap TEXT; not a ContentZ blob). Created is
+// the row's first-seen timestamp (M008; default(DateTime) on any pre-migration caller that
+// doesn't supply it — SessionStore's own listings always do).
+public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated, string? MetaJson = null, DateTime Created = default);
 
 // One server-paged slice of a project's session headers: the page rows, whether a further
 // page exists (probe row), and the total matching the current search. Keeps the UI's OFFSET/
 // LIMIT paging off the full set (spec ui-list-pagination).
 public sealed record SessionHeaderPage(IReadOnlyList<SessionHeader> Headers, bool HasNext, int Total);
+
+// Server-side sort axes for the session listing (card ui-search-sessions-hybrid — human parity
+// with the agent surface's filter/sort set, spec search-one-engine-for-human-and-agent). Length
+// has no maintained char-count column; Version (the last message's ordinal == the message
+// count) is the cheap, already-selected proxy — monotonic with transcript growth, no
+// decompression needed. Used by both the plain listing (SessionStore.ListPageAsync, a real
+// SQL ORDER BY) and the search-results reorder (SessionsModel, over the already-selected
+// candidate pool) so the two paths can't drift onto different semantics for the same word.
+public enum SessionSortField
+{
+	Updated,
+	Created,
+	Length,
+}

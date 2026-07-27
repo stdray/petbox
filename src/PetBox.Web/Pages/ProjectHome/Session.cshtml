@@ -16,13 +16,24 @@
 
 @if (Model.Session is not null)
 {
+	@if (Model.IsWindowed)
+	{
+		@* The provenance-bridge landing spot from a session-search hit (card
+		   ui-search-sessions-hybrid): the SAME window session_get {fromOrdinal} would return,
+		   not just the session header — "view full session" is the one-click escape back to
+		   the unwindowed page. *@
+		<div class="alert alert-info mb-3 flex items-center justify-between" data-testid="session-windowed-banner">
+			<span>Showing from message @Model.FromOrdinal onward.</span>
+			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, Model.SessionId)" class="link link-hover" data-testid="session-view-full">view full session</a>
+		</div>
+	}
 	@* Session content is GFM markdown (agents write `### user` / `### assistant` role headers,
 	   code blocks, lists). Render it via the ONE shared markdown renderer (_MdBody / IMarkdownRenderer)
 	   — the same server-side, sanitized pipeline node bodies and comments use — so role headers become
 	   real headings and code blocks/long lines render sanely, instead of a raw `<pre>` blob. *@
 	<article class="card bg-base-200 border border-base-300" data-testid="session-content">
 		<div class="card-body p-4">
-			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.Session.Content, TestId = "session-body" })" />
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.DisplayContent, TestId = "session-body" })" />
 		</div>
 	</article>
 }

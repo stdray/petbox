@@ -34,6 +34,7 @@ public sealed class SessionStoreTests : IDisposable
 		ContentZ = SessionContent.Encode(new[] { new SessionMessage(1, "session", text) }),
 		Version = 1,
 		Updated = DateTime.UtcNow,
+		Created = DateTime.UtcNow,
 	};
 
 	[Fact]
@@ -126,6 +127,52 @@ public sealed class SessionStoreTests : IDisposable
 		// The Agent column is searchable too ("claude-code" on every seeded row).
 		var byAgent = await _store.ListPageAsync("proj", "claude", pageNum: 0, pageSize: 25);
 		byAgent.Total.Should().Be(3);
+	}
+
+	// card ui-search-sessions-hybrid: an exact `agent` filter (the UI's dropdown) is a DIFFERENT
+	// predicate from the free-text `search` substring match above — combinable with it, never
+	// confused with it (a substring match on "code" would also hit "claude-coder"; exact must not).
+	[Fact]
+	public async Task ListPage_AgentFilter_NarrowsToExactAgent()
+	{
+		await _store.UpsertAsync("proj", Row("s1", "body") with { Agent = "claude-code" });
+		await _store.UpsertAsync("proj", Row("s2", "body") with { Agent = "codex" });
+		await _store.UpsertAsync("proj", Row("s3", "body") with { Agent = "claude-code" });
+
+		var byAgent = await _store.ListPageAsync("proj", null, pageNum: 0, pageSize: 25, agent: "claude-code");
+		byAgent.Total.Should().Be(2);
+		byAgent.Headers.Select(h => h.SessionId).Should().Equal("s1", "s3");
+
+		// A prefix/substring must NOT match — this is an exact filter, not the `search` LIKE.
+		var noHit = await _store.ListPageAsync("proj", null, pageNum: 0, pageSize: 25, agent: "claude");
+		noHit.Total.Should().Be(0);
+	}
+
+	// card ui-search-sessions-hybrid: sort is a real SQL ORDER BY over updated/created/length
+	// (Version — the message count — is the cheap length proxy; see SessionSortField). `sort:
+	// null` (the default every pre-existing caller uses) keeps the untouched SessionId-asc order.
+	[Fact]
+	public async Task ListPage_Sort_ByCreatedAndLength_BothDirections()
+	{
+		var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+		// SessionId order (b, a, c) is deliberately NOT the Created/Version order, so a passing
+		// assertion proves the sort actually reordered rather than happening to agree.
+		await _store.UpsertAsync("proj", Row("b", "body") with { Created = t0.AddDays(2), Version = 5 });
+		await _store.UpsertAsync("proj", Row("a", "body") with { Created = t0, Version = 20 });
+		await _store.UpsertAsync("proj", Row("c", "body") with { Created = t0.AddDays(1), Version = 1 });
+
+		var byCreatedAsc = await _store.ListPageAsync("proj", null, 0, 25, sort: SessionSortField.Created, sortDesc: false);
+		byCreatedAsc.Headers.Select(h => h.SessionId).Should().Equal("a", "c", "b");
+
+		var byCreatedDesc = await _store.ListPageAsync("proj", null, 0, 25, sort: SessionSortField.Created, sortDesc: true);
+		byCreatedDesc.Headers.Select(h => h.SessionId).Should().Equal("b", "c", "a");
+
+		var byLengthAsc = await _store.ListPageAsync("proj", null, 0, 25, sort: SessionSortField.Length, sortDesc: false);
+		byLengthAsc.Headers.Select(h => h.SessionId).Should().Equal("c", "b", "a");
+
+		// No `sort` at all → the pre-existing default (SessionId asc), unchanged by this card.
+		var legacyDefault = await _store.ListPageAsync("proj", null, 0, 25);
+		legacyDefault.Headers.Select(h => h.SessionId).Should().Equal("a", "b", "c");
 	}
 
 	[Fact]

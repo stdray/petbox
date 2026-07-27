@@ -23,12 +23,17 @@ public sealed class SessionService : ISessionService
 			numbered.Add(new SessionMessage(i + 1, messages[i].Role, messages[i].Content));
 
 		var updated = DateTime.UtcNow;
+		// InsertOrReplace rewrites the whole row, so Created must be re-supplied on every write —
+		// preserve the ORIGINAL first-seen time if this session already exists; a brand-new
+		// session's Created == its Updated.
+		var created = await _sessions.GetCreatedAsync(projectKey, sessionId, ct) ?? updated;
 		var row = new SessionRow
 		{
 			SessionId = sessionId,
 			Agent = agent,
 			ContentZ = SessionContent.Encode(numbered),
 			Version = numbered.Count,
+			Created = created,
 			Updated = updated,
 			MetaJson = await ResolveMetaJsonAsync(projectKey, sessionId, metaJson, existing: null, ct),
 		};
@@ -73,6 +78,7 @@ public sealed class SessionService : ISessionService
 				Agent = agent,
 				ContentZ = SessionContent.Encode(existing),
 				Version = lastOrdinal,
+				Created = snap?.Created ?? DateTime.UtcNow,
 				Updated = DateTime.UtcNow,
 				MetaJson = incomingMeta,
 			};
@@ -92,6 +98,7 @@ public sealed class SessionService : ISessionService
 			Agent = agent,
 			ContentZ = SessionContent.Encode(combined),
 			Version = ordinal,
+			Created = snap?.Created ?? DateTime.UtcNow,
 			Updated = DateTime.UtcNow,
 			MetaJson = await ResolveMetaJsonAsync(projectKey, sessionId, metaJson, existing: snap?.MetaJson, ct),
 		};
