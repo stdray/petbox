@@ -282,7 +282,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		var declared = await Call("relations_create", new { projectKey = ProjectKey, kind = "escalates", fromNodeId = "printer", toNodeId = "toner" });
 		IsErr(declared).Should().BeFalse(Text(declared));
 
-		var list = await Call("relations_list", new { projectKey = ProjectKey, nodeId = "printer" });
+		var list = await Call("relations_list", new { projectKey = ProjectKey, node = "printer" });
 		IsErr(list).Should().BeFalse(Text(list));
 		Text(list).Should().Contain("relates_to");
 		Text(list).Should().Contain("escalates");
@@ -316,7 +316,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		Text(board).Should().Contain("\"key\":\"b\"");
 		Text(board).Should().Contain("\"status\":\"Todo\"", "the related node is untouched by a's Done");
 
-		var list = await Call("relations_list", new { projectKey = ProjectKey, nodeId = "b" });
+		var list = await Call("relations_list", new { projectKey = ProjectKey, node = "b" });
 		Text(list).Should().Contain("relates_to");
 		Text(list).Should().NotContain("closedAt", "the neutral edge stays active — no Done effect closes it");
 	}

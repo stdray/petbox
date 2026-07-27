@@ -47,7 +47,7 @@ spec change), and a work task reaches **Done** only by the maintainer.
 Driving an idea to review (the agent's job):
 ```
 tasks_upsert($system, ideas, [{key, type:"idea", status:"exploring", title, body}])      # or raw→exploring
-comments_upsert($system, ideas, items:[{nodeId:<idea nodeId>, author, body:<the plan>, tags:["artifact:spec_plan"]}])
+comments_upsert($system, ideas, items:[{node:<idea NodeId>, author, body:<the plan>, tags:["artifact:spec_plan"]}])
 tasks_upsert($system, ideas, [{key, version:<v>, status:"review"}])                       # guard checks the spec_plan
 # STOP — ask the maintainer to accept (or send back). Give them the idea's `url`
 # (include_url:true) so they can open it directly — don't hand over a bare slug.
@@ -138,9 +138,9 @@ tasks_upsert($system, spec, [
   the cheap orientation call; reach for it first. Pass `bodyLen:<N>` for a per-node body
   snippet (first N chars, `…` when cut; large N ≈ full) and `includeBoards:["spec","ideas"]`
   to fetch only some quartet boards. For full untruncated bodies or a subtree, use
-  **`tasks_get`** (the single-board detail endpoint: `under:<slug>` / `groupBy`).
+  **`tasks_get`** (the single-board detail endpoint: `underNode:<slug>` / `groupBy`).
 - **MCP result bodies** can still be large on `tasks_get` (a board can be 60k+ chars) — pass
-  a high `sinceVersion` or use `under:<slug>` / `groupBy` to keep deltas small; null fields
+  a high `sinceVersion` or use `underNode:<slug>` / `groupBy` to keep deltas small; null fields
   are omitted in JSON.
 
 ## Tools (petbox MCP)
@@ -156,7 +156,7 @@ tasks_upsert($system, spec, [
   a bare slug. The maintainer acts from the UI; a direct link is the shortest path to the
   thing they must decide on.
 - `comments_upsert|search|get|delta|delete` — the deliberation thread under any node (upsert is
-  a batch of {id?, nodeId?, parentId?, author?, body, tags?, version?} items; id-null = create,
+  a batch of {id?, node?, parentId?, author?, body, tags?, version?} items; id-null = create,
   id-set = patch under a version watermark); `artifact:<slug>` tags mark key artifacts
   (`artifact:spec_plan` is the gate precondition).
 - `relations_create|list|delete` — kinds `idea_spec | task_spec | issue_task | blocks |

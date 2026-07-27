@@ -321,14 +321,14 @@ public sealed class McpModuleToolsTests : IDisposable
 		// treated as a slug on the board and required to resolve — uniform-node-refs).
 		var node1 = Guid.NewGuid().ToString("N");
 		var add = await CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-			[new CommentItemInput { NodeId = node1, Author = "alice", Body = "root body", Tags = new[] { "artifact:plan" } }]);
+			[new CommentItemInput { Node = node1, Author = "alice", Body = "root body", Tags = new[] { "artifact:plan" } }]);
 		add.Applied.Should().BeTrue();
 		var id = add.Added.Single().Id;
 
 		await CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-			[new CommentItemInput { NodeId = node1, Author = "bob", Body = "a reply", ParentId = id }]);
+			[new CommentItemInput { Node = node1, Author = "bob", Body = "a reply", ParentId = id }]);
 
-		var list = await CommentTools.SearchAsync(http, Flags(), _commentSvc, _tasks, Proj, board: "ideas", nodeId: node1);
+		var list = await CommentTools.SearchAsync(http, Flags(), _commentSvc, _tasks, Proj, board: "ideas", node: node1);
 		var rows = list.Items.ToList();
 		rows.Should().HaveCount(2);
 		rows.Single(c => c.Id == id).Tags.Should().Equal("artifact:plan");
@@ -344,7 +344,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read"); // no tasks:write
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
 			CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-				[new CommentItemInput { NodeId = "n", Author = "a", Body = "b" }]));
+				[new CommentItemInput { Node = "n", Author = "a", Body = "b" }]));
 	}
 
 	[Fact]
@@ -367,7 +367,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		// Add the spec_plan artifact, then the same transition applies.
 		await CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-			[new CommentItemInput { NodeId = nodeId, Author = "claude", Body = "the plan", Tags = new[] { "artifact:spec_plan" } }]);
+			[new CommentItemInput { Node = nodeId, Author = "claude", Body = "the plan", Tags = new[] { "artifact:spec_plan" } }]);
 		var rev = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }));
 		rev.Applied.Should().BeTrue();

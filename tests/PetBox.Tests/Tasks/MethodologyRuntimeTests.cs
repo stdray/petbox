@@ -222,7 +222,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		IsErr(cold).Should().BeTrue(Text(cold));
 		Text(cold).Should().Contain("directly");
 
-		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
+		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { node = nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(note).Should().BeFalse(Text(note));
 
 		var resolved = await Upsert("helpdesk", new { key = "t", version = 2, status = "Resolved" });
@@ -246,7 +246,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		// fixed: New → Open → (artifact) → Resolved; dup: New → Rejected (reason).
 		var fixedId = NodeIdOf(up, "fixed");
 		await Upsert("helpdesk", new { key = "fixed", version = 1, status = "Open" });
-		await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
+		await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { node = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(await Upsert("helpdesk", new { key = "fixed", version = 2, status = "Resolved" })).Should().BeFalse();
 		IsErr(await Upsert("helpdesk", new { key = "dup", version = 1, status = "Rejected", reason = "dup of fixed" })).Should().BeFalse();
 

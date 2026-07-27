@@ -259,7 +259,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 
 		// comments_upsert batch: a create item, then thread its id + currentVersion into a patch,
 		// a get, a search and a delta (uniform-entity-verbs matrix).
-		var created = await Call("comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { nodeId = "a", author = "tester", body = "first" } } });
+		var created = await Call("comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { node = "a", author = "tester", body = "first" } } });
 		Conforms(failures, "comments_upsert", created);
 		var addedArr = created.StructuredContent?.GetProperty("added");
 		var cid = addedArr is { ValueKind: JsonValueKind.Array } a && a.GetArrayLength() > 0 ? a[0].GetProperty("id").GetString() : null;
@@ -269,7 +269,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			await Ok(failures, "comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { id = cid, body = "edited", version = cver } } });
 			await Ok(failures, "comments_get", new { projectKey = ProjectKey, id = cid });
 		}
-		await Ok(failures, "comments_search", new { projectKey = ProjectKey, board = "work", nodeId = "a" });
+		await Ok(failures, "comments_search", new { projectKey = ProjectKey, board = "work", node = "a" });
 		await Ok(failures, "comments_delta", new { projectKey = ProjectKey, board = "work", sinceVersion = 0 });
 
 		// config_binding_upsert batch (PUT-by-(path,tagset), no version watermark): seed one binding,
@@ -307,7 +307,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("deploy_list", new { projectKey = ProjectKey }),
 			("deploy_node_list", new { projectKey = ProjectKey }),
 			("project_list", new { projectKey = ProjectKey }),
-			("relations_list", new { projectKey = ProjectKey, nodeId = "a" }),
+			("relations_list", new { projectKey = ProjectKey, node = "a" }),
 			("llm_config_get", new { projectKey = ProjectKey }),
 			("apikey_list", new { projectKey = ProjectKey }),
 			("db_list", new { projectKey = ProjectKey }),

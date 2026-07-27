@@ -227,7 +227,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		got.Entries.Select(e => e.Body).Should().Equal("bc", "ba");
 	}
 
-	// The batch is a SOFT filter (the tasks_search `keys[]` contract): a key that resolves to
+	// The batch is a SOFT filter (the tasks_search `nodes[]` contract): a key that resolves to
 	// nothing is silently dropped, and an all-missing batch is an EMPTY result, not an error —
 	// only a lone `key` miss stays a not-found throw (Get_MissingKey_Throws).
 	[Fact]

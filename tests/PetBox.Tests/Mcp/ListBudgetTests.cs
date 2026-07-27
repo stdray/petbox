@@ -191,7 +191,7 @@ public sealed class ListBudgetTests : IDisposable
 	// ---- comments_search (listing mode — the former comments_list) ----
 
 	static PetBox.Web.Mcp.Contract.CommentItemInput NewComment(string node, string body) =>
-		new() { NodeId = node, Author = "alice", Body = body };
+		new() { Node = node, Author = "alice", Body = body };
 
 	[Fact]
 	public async Task CommentsList_Small_NoMarkers()
@@ -199,7 +199,7 @@ public sealed class ListBudgetTests : IDisposable
 		var node = Guid.NewGuid().ToString("N");
 		await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, "short body")]);
 
-		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node);
+		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", node: node);
 
 		res.Items.Should().ContainSingle();
 		res.Truncated.Should().BeNull();
@@ -220,7 +220,7 @@ public sealed class ListBudgetTests : IDisposable
 		for (var i = 1; i < total; i++)
 			await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)]);
 
-		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node, bodyLen: -1);
+		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", node: node, bodyLen: -1);
 
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Items[0].Id.Should().Be(firstId); // chronological head kept (prefix cut)

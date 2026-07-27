@@ -173,7 +173,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 //     - setting a terminal status (done) requires the `tasks:approve` scope (approve-gate)
 //   tasks_workflow(projectKey, board) → { kind, workflows:[{ types:[...], initial, statuses, transitions }] }
 //   relations_create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
-//   relations_list(projectKey, nodeId, direction?)             direction ∈ from|to|both (default both)
+//   relations_list(projectKey, node, direction?)                direction ∈ from|to|both (default both)
 //   report_issue(title, detail) → lands on an intake-kind board, status `reported`
 //
 // The scenarios live in four sibling classes, grouped by theme — TasksMethodologyBoardsTests,
@@ -288,7 +288,7 @@ public abstract class TasksMethodologySmokeBase : IAsyncLifetime
 			board = "ideas",
 			nodes = Nodes(new { key, type = "idea", status = "exploring", title = key, body = "x" })
 		}), key);
-		await Agent("comments_upsert", new { projectKey = ProjectKey, board = "ideas", items = new[] { new { nodeId = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } } } });
+		await Agent("comments_upsert", new { projectKey = ProjectKey, board = "ideas", items = new[] { new { node = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } } } });
 		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "review", version = 1 }) });
 		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "accepted", version = 2 }) });
 		return ideaId;

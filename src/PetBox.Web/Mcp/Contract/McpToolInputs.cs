@@ -384,13 +384,13 @@ public sealed record ConfigBindingItemInput
 }
 
 // One item of a comments_upsert batch (typed array, like PlanNodeInput/MemoryEntryInputDto).
-// `id` null/absent ⇒ CREATE (needs `nodeId` slug|NodeId + `author`; `parentId` = a COMMENT id
+// `id` null/absent ⇒ CREATE (needs `node` slug|NodeId + `author`; `parentId` = a COMMENT id
 // makes it a reply); `id` present ⇒ PATCH `body`/`tags` of that comment under the `version`
 // watermark. `tags`: null = leave as-is on an edit, [] clears, a list replaces the set.
 public sealed record CommentItemInput
 {
 	public string? Id { get; init; }
-	public string? NodeId { get; init; }
+	public string? Node { get; init; }
 	public string? ParentId { get; init; }
 	public string? Author { get; init; }
 	public string? Body { get; init; }

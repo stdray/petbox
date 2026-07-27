@@ -35,7 +35,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		work.IsError.Should().NotBe(true);
 		var taskId = NodeId(work, "do-login");
 
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = specId, direction = "to" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = specId, direction = "to" });
 		rels.IsError.Should().NotBe(true);
 		Text(rels).Should().Contain(taskId);
 	}
@@ -127,7 +127,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 
 		// edges INTO the spec node: exactly the task_spec edge from the new task — keyed by
 		// the resolved NodeId (a raw slug would make this list empty / dangle elsewhere).
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = specId, direction = "to" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = specId, direction = "to" });
 		rels.IsError.Should().NotBe(true);
 		Text(rels).Should().Contain("task_spec");
 		Text(rels).Should().Contain(taskId);
@@ -189,7 +189,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		IsErr(spec).Should().BeFalse(Text(spec));
 		var specId = NodeId(spec, "x");
 
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = specId, direction = "to" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = specId, direction = "to" });
 		Text(rels).Should().Contain("idea_spec");
 		Text(rels).Should().Contain(ideaId); // the resolved NodeId, never the raw slug
 	}
@@ -261,7 +261,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		});
 		IsErr(b).Should().BeFalse(Text(b));
 
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(b, "cites"), direction = "from" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = NodeId(b, "cites"), direction = "from" });
 		Text(rels).Should().Contain("relates_to");
 		Text(rels).Should().Contain(peerId); // the RESOLVED NodeId, never the raw slug
 	}
@@ -289,7 +289,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		});
 		IsErr(b).Should().BeFalse(Text(b));
 
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(b, "cites"), direction = "from" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = NodeId(b, "cites"), direction = "from" });
 		Text(rels).Should().Contain("depends_on");
 		Text(rels).Should().Contain(peerId);
 	}
@@ -317,7 +317,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		});
 		IsErr(i).Should().BeFalse(Text(i));
 
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(i, "notion"), direction = "from" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = NodeId(i, "notion"), direction = "from" });
 		Text(rels).Should().Contain("relates_to");
 		Text(rels).Should().Contain(jobId);
 	}
@@ -356,7 +356,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		IsErr(viaRelations).Should().BeFalse(Text(viaRelations));
 
 		// One edge, not two: the idempotent create returned the row the links door had written.
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = citesId, direction = "from" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = citesId, direction = "from" });
 		var edges = JsonDocument.Parse(Text(rels)).RootElement.GetProperty("relations").EnumerateArray()
 			.Count(e => e.GetProperty("kind").GetString() == "relates_to");
 		edges.Should().Be(1, "the links: path and relations_create must resolve to the SAME edge");
@@ -482,7 +482,7 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", links = new { idea_spec = ideaId } })
 		});
 		IsErr(spec).Should().BeFalse(Text(spec));
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(spec, "x"), direction = "to" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = NodeId(spec, "x"), direction = "to" });
 		Text(rels).Should().Contain(ideaId);
 	}
 }

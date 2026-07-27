@@ -820,14 +820,14 @@ public static class TasksTools
 		visibility is never silent.
 
 		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
-		empty result, never an error): `under` = a part_of subtree root (slug or NodeId; a slug
+		empty result, never an error): `underNode` = a part_of subtree root (slug or NodeId; a slug
 		resolves on `board`, or project-wide when board is omitted; a root that matches nothing →
 		an empty result, an ambiguous slug → the union of its subtrees); `status` = keep only
 		these slugs (case-insensitive; naming a TERMINAL status returns its nodes even without
 		widening the statusKind facet — an explicit ask; an unknown slug is silently dropped, and
-		an all-unknown set → an empty result); `keys` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
+		an all-unknown set → an empty result); `nodes` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
 		is silently dropped (NOT an error), an ambiguous cross-board slug contributes ALL its
-		matches, terminal nodes are included, and an all-missing keys set yields an empty result;
+		matches, terminal nodes are included, and an all-missing nodes set yields an empty result;
 		`commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
 
 		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
@@ -868,7 +868,7 @@ public static class TasksTools
 		Examples: {board:"work"} → the work board; {board:"work", status:["Review"]} →
 		what awaits review; {q:"vector index cursor"} → related nodes anywhere;
 		{q:"flaky tests", board:"work", sort:{by:"updated", desc:true}, bodyLen:200} →
-		recent matches, snippeted; {keys:["node-comments-v1"]} → one addressed row (any
+		recent matches, snippeted; {nodes:["node-comments-v1"]} → one addressed row (any
 		status). Requires tasks:read.
 		""")]
 	public static async Task<TaskSearchResultView> SearchAsync(
@@ -876,9 +876,9 @@ public static class TasksTools
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board (listing then carries kind/wiredBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
-		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? under = null,
+		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? underNode = null,
 		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
-		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? keys = null,
+		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? nodes = null,
 		[LogArg][Description("DEPRECATED alias for statusKind — prefer statusKind. Maps onto the facet: includeClosed:true → omit the facet (every kind); includeClosed:false + q → statusKind:[open,terminalok]; includeClosed:false without q → statusKind:[open]. Ignored when statusKind is set. (A default query already reaches terminal-OK — accepted/Done — regardless of this flag.)")] bool includeClosed = false,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
@@ -909,7 +909,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed, commit, statusKind),
+			Filter = new TaskNodeFilter(board, underNode, status, nodes, includeClosed, commit, statusKind),
 			Sort = ParseSort(sort),
 			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
@@ -935,8 +935,8 @@ public static class TasksTools
 	// Surfaced on TaskSearchResultView.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =
 		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
-		"read: `board` (one board), `under` (one part_of subtree), `status` (only the statuses " +
-		"you need), `keys` (address specific nodes), `bodyLen` (snippet bodies), a smaller " +
+		"read: `board` (one board), `underNode` (one part_of subtree), `status` (only the statuses " +
+		"you need), `nodes` (address specific nodes), `bodyLen` (snippet bodies), a smaller " +
 		"`limit`, `groupBy` (keys-only tag projection), or tasks_node_get for one full node.";
 
 	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.

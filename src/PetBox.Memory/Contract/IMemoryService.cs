@@ -26,7 +26,7 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	Task<IReadOnlyList<MemoryEntryView>> ListAsync(string projectKey, string store, string? type, CancellationToken ct = default);
 	Task<MemoryEntryView?> GetAsync(string projectKey, string store, string key, CancellationToken ct = default);
 	// BATCHED addressed read (spec addressed-read-batched): the active entries for `keys` in ONE
-	// query, returned in the requested key order. A SOFT filter, like tasks_search `keys[]` — a key
+	// query, returned in the requested key order. A SOFT filter, like tasks_search `nodes[]` — a key
 	// that resolves to nothing is silently absent from the result (never an error), and an empty
 	// ask is an empty result. Not-found is therefore the CALLER's decision, not this method's.
 	Task<IReadOnlyList<MemoryEntryView>> GetManyAsync(string projectKey, string store, IReadOnlyList<string> keys, CancellationToken ct = default);

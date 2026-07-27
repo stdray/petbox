@@ -78,11 +78,11 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 	}
 
 	Task<TaskSearchResultView> Search(
-		string? q = null, string? board = null, string? under = null, string[]? status = null,
-		string[]? keys = null, bool includeClosed = false, SortInput? sort = null,
+		string? q = null, string? board = null, string? underNode = null, string[]? status = null,
+		string[]? nodes = null, bool includeClosed = false, SortInput? sort = null,
 		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false,
 		string[]? statusKind = null, string? commit = null) =>
-		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, under, status, keys,
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, underNode, status, nodes,
 			includeClosed, sort, groupBy, bodyLen, limit, includeUrl, commit: commit, statusKind: statusKind);
 
 	// ---- listing mode (no q) ----
@@ -141,7 +141,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 			.Should().BeEquivalentTo("open-one", "done-one");
 	}
 
-	// ---- keys: a SOFT node filter (miss-tolerant), slug|NodeId mixed ----
+	// ---- nodes: a SOFT node filter (miss-tolerant), slug|NodeId mixed ----
 
 	[Fact]
 	public async Task Keys_MixedSlugAndNodeId_TerminalNodeReturnedWithoutIncludeClosed()
@@ -155,12 +155,12 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		await Seed("b", """[{"key":"beta","status":"Done","version":1}]""");
 
 		// One slug + one 32-hex NodeId, mixed; the addressed terminal node comes back too.
-		var res = await Search(board: "b", keys: ["alpha", betaId]);
+		var res = await Search(board: "b", nodes: ["alpha", betaId]);
 		res.Nodes.Select(n => n.Key).Should().BeEquivalentTo("alpha", "beta");
 		res.Nodes.Single(n => n.Key == "beta").Status.Should().Be("Done");
 
 		// A miss is silently dropped (keys is a soft filter), never an error → empty result.
-		var miss = await Search(board: "b", keys: ["ghost"]);
+		var miss = await Search(board: "b", nodes: ["ghost"]);
 		miss.Nodes.Should().BeEmpty();
 	}
 
@@ -172,12 +172,12 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		await Seed("b", """[{"key":"twin","status":"Todo","title":"T","body":"x"}]""");
 
 		// Unambiguous slug resolves without a board...
-		var res = await Search(keys: ["unique-slug"]);
+		var res = await Search(nodes: ["unique-slug"]);
 		res.Nodes.Single().Board.Should().Be("a");
 
 		// ...an ambiguous one (same slug on 2+ boards) surfaces ALL its matches — keys is a soft
 		// filter, so a multi-board slug is not an error; each hit carries its own board.
-		var dup = await Search(keys: ["twin"]);
+		var dup = await Search(nodes: ["twin"]);
 		dup.Nodes.Select(n => n.Board).Should().BeEquivalentTo("a", "b");
 	}
 
@@ -476,10 +476,10 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 
 		// Default query under the subtree (the root is in its own subtree): the entity predicate keeps
 		// the subtree, the facet still hides the cancelled child — under did NOT select past the опорный слой.
-		(await Search(q: "wombat", under: "burrow")).Nodes.Select(n => n.Key)
+		(await Search(q: "wombat", underNode: "burrow")).Nodes.Select(n => n.Key)
 			.Should().BeEquivalentTo("burrow", "kid-open");
 		// Orthogonal: name terminalcancel and the SAME under predicate now yields the cancelled child.
-		(await Search(q: "wombat", under: "burrow", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key)
+		(await Search(q: "wombat", underNode: "burrow", statusKind: ["terminalcancel"])).Nodes.Select(n => n.Key)
 			.Should().BeEquivalentTo("kid-gone");
 	}
 
@@ -749,7 +749,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		(await noBoard.Should().ThrowAsync<ArgumentException>()).WithMessage("*groupBy needs a board*");
 	}
 
-	// ---- under: subtree predicate, both modes ----
+	// ---- underNode: subtree predicate, both modes ----
 
 	[Fact]
 	public async Task Under_ScopesListing_AndQuery_ToTheSubtree()
@@ -760,9 +760,9 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 			 {"key":"stray","status":"Todo","title":"Stray","body":"puffin outside"}]
 			""");
 
-		(await Search(board: "b", under: "apex")).Nodes.Select(n => n.Key)
+		(await Search(board: "b", underNode: "apex")).Nodes.Select(n => n.Key)
 			.Should().BeEquivalentTo("apex", "apex-leaf");
-		(await Search(q: "puffin", under: "apex")).Nodes.Select(n => n.Key)
+		(await Search(q: "puffin", underNode: "apex")).Nodes.Select(n => n.Key)
 			.Should().BeEquivalentTo("apex", "apex-leaf"); // "stray" matched but is outside the subtree
 	}
 

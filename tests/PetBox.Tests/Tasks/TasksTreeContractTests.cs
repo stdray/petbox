@@ -54,7 +54,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } }));
 		var ideaId = idea.Added[0].NodeId;
 		await CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-			[new CommentItemInput { NodeId = ideaId, Author = "t", Body = "plan", Tags = new[] { "artifact:spec_plan" } }]);
+			[new CommentItemInput { Node = ideaId, Author = "t", Body = "plan", Tags = new[] { "artifact:spec_plan" } }]);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "review", version = 1 } }));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",

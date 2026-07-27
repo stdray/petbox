@@ -157,8 +157,8 @@ public sealed class TasksGetBudgetTests : IDisposable
 			 {"key":"apex-leaf","status":"Todo","title":"Leaf","body":"tiny","partOf":"apex"}]
 			"""));
 
-		// `under` narrows below the budget → complete answer, no markers.
-		var under = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", under: "apex");
+		// `underNode` narrows below the budget → complete answer, no markers.
+		var under = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", underNode: "apex");
 		under.Nodes.Select(n => n.Key).Should().BeEquivalentTo("apex", "apex-leaf");
 		under.Truncated.Should().BeNull();
 		under.Hint.Should().BeNull();

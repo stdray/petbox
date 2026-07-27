@@ -96,7 +96,7 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 	{
 		var http = Http(15_000);
 		var node = Guid.NewGuid().ToString("N"); // 32-hex passes through node-ref resolution unresolved
-		var items = new[] { new CommentItemInput { NodeId = node, Author = "alice", Body = "a comment" } };
+		var items = new[] { new CommentItemInput { Node = node, Author = "alice", Body = "a comment" } };
 
 		var res = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "board", items);
 

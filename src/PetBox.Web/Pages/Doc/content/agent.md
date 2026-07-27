@@ -68,7 +68,7 @@ tasks_upsert board="spec" projectKey="<proj>" nodes=[
 ## 5. Tools
 
 - `tasks_board_create(kind?) / board_list / board_delete` — named boards; `kind` ∈ spec|work|ideas|intake|simple. A cold `tasks_upsert` auto-creates a simple board.
-- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `keys`, `under`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links.
+- `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `nodes`, `underNode`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
 - `relations_create / list / delete` — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the [cheatsheet](/doc/methodology).
 - `memory_store_list / store_create / store_delete` — named memory stores (a cold `memory_upsert` auto-creates the store).
@@ -129,7 +129,7 @@ your ceiling is Review — never set Done, the maintainer confirms it. Blocked n
 
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one
 board, omit for the project), with q a hybrid relevance search; both modes take status[],
-keys[] (slug|nodeId), under=<slug> (subtree) and sort{by,desc}. A board listing carries
+nodes[] (slug|nodeId), underNode=<slug> (subtree) and sort{by,desc}. A board listing carries
 kind, wiredBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
 HIDES terminal nodes by default — includeClosed=true to include. One full node:
 tasks_node_get. Partial update: send only what changes — a status change needs just
