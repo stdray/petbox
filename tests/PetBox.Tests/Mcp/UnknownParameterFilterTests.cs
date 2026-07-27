@@ -113,4 +113,62 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 		result.IsError.Should().NotBe(true, Text(result));
 	}
+
+	// THE CARD'S MAIN SCENARIO, previously uncovered entirely: the live incident was a RENAME
+	// (`under`->`underNode`, commit e328c7cf), not a typo. NamespaceSuggest's budget discarded this
+	// candidate outright (length gap 4 > budget 1, before distance was even scored) — that is the
+	// root cause the card asked to be pinned, not "the hint is lost in serialization".
+	[Fact]
+	public async Task UnknownTopLevelKey_RenamedParameter_SuggestsNewName()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_search");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["under"] = "umbrella-mcp-surface-consistency", // the exact retired param from the incident
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("under").And.Contain("Did you mean").And.Contain("underNode");
+	}
+
+	// A transposition (`boadr`->`board`, distance 2 under plain Levenshtein — no single-op swap)
+	// is a second scenario the old NamespaceSuggest-budget path missed: equal length, so the
+	// length-gap guard did not discard it, but budget 1 was still one short of distance 2.
+	[Fact]
+	public async Task UnknownTopLevelKey_Transposition_SuggestsNearestKnownName()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_search");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["boadr"] = "work",
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("boadr").And.Contain("Did you mean").And.Contain("board");
+	}
+
+	// The enumeration arm: a rename that shares neither prefix nor edit-distance shape with any
+	// known parameter (`keys`->`nodes`, `nodeId`->`hostId` are this shape in production) gets NO
+	// near-hit — but the caller still needs a way out, so the accepted-parameter list always rides
+	// along. `zzz_nonexistent` is deliberately unlike anything in tasks_search's schema, so this
+	// also doubles as the noise negative: a name with truly nothing near it must not be handed a
+	// far-fetched "Did you mean" that would just be noise.
+	[Fact]
+	public async Task UnknownTopLevelKey_NoNearMatch_ListsAcceptedParametersAndSkipsTheHint()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_search");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["zzz_nonexistent"] = 1,
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("Accepted parameters").And.Contain("board");
+		text.Should().NotContain("Did you mean");
+	}
 }

@@ -19,8 +19,19 @@ namespace PetBox.Web.Mcp;
 //
 // This filter closes the gap: a tools/call whose TOP-LEVEL argument keys include one absent from
 // the tool's own generated input schema `properties` is REJECTED, with the same "did you mean 'X'?"
-// quality memory_upsert.store already gives for an unknown VALUE — NamespaceSuggest is reused
-// as-is, not reimplemented, for the edit-distance ranking.
+// quality memory_upsert.store already gives for an unknown VALUE.
+//
+// The hint text is built by ParamNameSuggest (see its header for the full rationale), NOT
+// NamespaceSuggest directly, though NamespaceSuggest.Distance is still the shared Levenshtein
+// core. FOUND-DURING-VERIFICATION (do not regress this): an earlier version of this filter called
+// NamespaceSuggest.Nearest directly and shipped with a green test — but on the live incident's
+// actual renames (`under`->`underNode`, `boadr`->`board`) that produced NO hint at all in
+// production. NamespaceSuggest's budget is tuned for its own open-ended namespace domain and is too
+// tight for this closed, short parameter-name domain. ParamNameSuggest also always appends the
+// tool's accepted-parameter list, because a rename can land nowhere near the old name at all
+// (`keys`->`nodes`) — no edit-distance or prefix threshold will ever bridge that, and the caller's
+// schema snapshot is stale by construction (this card's whole premise), so it cannot look the
+// rename up itself.
 //
 // SCOPE IS DELIBERATELY SHALLOW: only the TOP-LEVEL argument keys are checked against the
 // TOP-LEVEL schema properties. A batch verb's nested objects (tasks_upsert's `nodes[]`,
@@ -58,9 +69,11 @@ static class McpUnknownParameterFilter
 		{
 			if (knownSet.Contains(key)) continue;
 
-			var near = NamespaceSuggest.Nearest(key, known);
+			var near = ParamNameSuggest.Nearest(key, known);
 			var hint = near.Count == 0 ? "" : $" Did you mean {string.Join(" / ", near.Select(n => $"'{n}'"))}?";
-			throw new ArgumentException($"Unknown parameter '{key}' for tool '{tool}'.{hint}");
+			var accepted = ParamNameSuggest.Describe(known);
+			throw new ArgumentException(
+				$"Unknown parameter '{key}' for tool '{tool}'.{hint} Accepted parameters: {accepted}.");
 		}
 	}
 }
