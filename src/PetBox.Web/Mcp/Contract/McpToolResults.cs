@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 
@@ -304,11 +305,15 @@ public sealed record MemoryEntryRow(
 //
 // `SemanticLag` (spec search-semantic-lag) is the vector leg's coverage trail — docs the async
 // worker has not embedded yet (0 = fully drained); null when no semantic leg answered. It stops
-// `semantic:true` reading as "coverage complete" after a reindex/outage. `Reranked` (spec
-// search-degraded-provenance) is laid in NOW so switching the deferred reranker on is not a contract
-// change; today it is always false (no rerank pass runs yet).
+// `semantic:true` reading as "coverage complete" after a reindex/outage. `Ranking` (spec
+// search-rerank-in-loop / search-ranking-mode-is-caller-choice) is the tri-state ranking outcome —
+// Reranked (the precision path ran), DegradedRrf (Precision was asked for but the rerank path
+// couldn't run — a degradation) or ChosenRrf (the caller explicitly asked for Speed — RRF because
+// that's what was asked for, never confused with a degradation). Null when no ranking pass applies
+// (e.g. a listing, which runs no relevance leg at all). Serialized as a readable string
+// (SearchRankingOutcome carries its own JsonStringEnumConverter).
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded, string? DegradedReason = null,
-	long? SemanticLag = null, bool Reranked = false);
+	long? SemanticLag = null, SearchRankingOutcome? Ranking = null);
 
 // memory_upsert / memory_delta echo (mirrors the old anonymous Serialize shape).
 // ChangedFields (Stale only): THIS entry's payload fields that moved past the author's

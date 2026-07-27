@@ -677,6 +677,9 @@ public static class MemoryTools
 				Sort = ParseSort(sort),
 				Limit = remaining,
 				BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
+				// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting
+				// on the answer, where a ranking mistake costs more than latency — Precision.
+				RankingMode = SearchRankingMode.Precision,
 			}, ct);
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
@@ -684,9 +687,11 @@ public static class MemoryTools
 					// owns it (a mute degraded:true is exactly what this leaf exists to kill). SemanticLag
 					// SUMS across scopes (each container's vector leg trails its own data, so the total
 					// "docs not embedded yet" is the sum; null when neither scope ran a semantic leg);
-					// Reranked ORs (a rerank pass in any scope means the answer was reranked).
+					// Ranking merges by MergeRanking (both scopes share the SAME requested mode, so they
+					// can only disagree on Reranked vs DegradedRrf — Reranked wins if either reranked,
+					// otherwise a degradation in any scope must not be hidden behind the other's success).
 					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded,
-						agg.DegradedReason ?? r.DegradedReason, SumLag(agg.SemanticLag, r.SemanticLag), agg.Reranked | r.Reranked)
+						agg.DegradedReason ?? r.DegradedReason, SumLag(agg.SemanticLag, r.SemanticLag), MergeRanking(agg.Ranking, r.Ranking))
 					: r;
 
 			// Usage counters are keyed per (store, key) — rows may span stores in one container.
@@ -772,7 +777,7 @@ public static class MemoryTools
 		return new MemorySearchResultView(
 			kept,
 			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason,
-				fin.SemanticLag, fin.Reranked) : null,
+				fin.SemanticLag, fin.Ranking) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null);
@@ -782,6 +787,17 @@ public static class MemoryTools
 	// is no coverage to be behind on); otherwise the sum, treating a scope that answered lexically-
 	// only (null lag) as contributing 0.
 	static long? SumLag(long? a, long? b) => a is null && b is null ? null : (a ?? 0) + (b ?? 0);
+
+	// Merge the ranking outcome of two scopes (spec: search-rerank-in-loop): every scope in this
+	// cascade shares the SAME requested SearchRankingMode, so they can only ever disagree on Reranked
+	// vs DegradedRrf (one container had a live rerank route, another's outage/no-route fell back) —
+	// Reranked wins so a partial success is never hidden, and a degradation in either scope is never
+	// masked by the other's success or by a Speed-choice reading. Falls back to whichever side is set
+	// (both ChosenRrf, or one null) when neither is Reranked/DegradedRrf.
+	static SearchRankingOutcome? MergeRanking(SearchRankingOutcome? a, SearchRankingOutcome? b) =>
+		a == SearchRankingOutcome.Reranked || b == SearchRankingOutcome.Reranked ? SearchRankingOutcome.Reranked
+		: a == SearchRankingOutcome.DegradedRrf || b == SearchRankingOutcome.DegradedRrf ? SearchRankingOutcome.DegradedRrf
+		: a ?? b;
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;

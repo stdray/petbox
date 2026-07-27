@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;
+using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
@@ -962,6 +963,9 @@ public static class TasksTools
 			// candidate pool, which is a selection decision, not a presentation one.
 			Limit = hasQuery ? limit ?? DefaultSearchLimit : 0,
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
+			// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on
+			// the answer, where a ranking mistake costs more than latency — Precision.
+			RankingMode = SearchRankingMode.Precision,
 		}, urlPrefix, ct);
 
 		// Keyset seek (MCP-adapter-only, spec bounded-result-sets): resume strictly after the row
@@ -995,7 +999,7 @@ public static class TasksTools
 			: null;
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
-			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Reranked) : null,
+			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Ranking) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,

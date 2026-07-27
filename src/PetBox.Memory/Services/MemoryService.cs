@@ -262,7 +262,7 @@ public sealed class MemoryService : IMemoryService
 			// leaves the post-fusion type predicate room to drop candidates and still fill the
 			// limit; the 50 floor keeps recall sane for small/unbounded asks).
 			var (hits, r) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
-				Math.Max(request.Limit * 3, 50), lexical: null, semantic: null, ct);
+				Math.Max(request.Limit * 3, 50), lexical: null, semantic: null, ct, mode: request.RankingMode);
 			retrievers = r;
 			var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
 			selected.AddRange(hits.Select(h => new Candidate(h.Entry.Store, h.Entry, h.Score,
@@ -440,7 +440,7 @@ public sealed class MemoryService : IMemoryService
 	// The MemoryType taxonomy filter still applies post-resolution (it is not the index's Type).
 	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers)> SearchStoresAsync(
 		string projectKey, IReadOnlyList<string> stores, string query, MemoryType? typeFilter, int k,
-		bool? lexical, bool? semantic, CancellationToken ct)
+		bool? lexical, bool? semantic, CancellationToken ct, SearchRankingMode mode = SearchRankingMode.Precision)
 	{
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
 
@@ -474,7 +474,11 @@ public sealed class MemoryService : IMemoryService
 		// candidate's INDEXED text (Description + Body — the SAME shape MemorySearchDocs.ToDoc indexes)
 		// for the budget-capped (store,key) pool, aligned to the candidate order; one read over the
 		// active entries, missing → "". No LLM route → reranker is null → honest RRF (DegradedRrf).
-		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		// An explicit Speed ask (search-ranking-mode-is-caller-choice) short-circuits BEFORE any of
+		// that: no reranker is constructed at all, so the facade never even probes
+		// IsRerankAvailableAsync — RRF answers directly and provenance reports ChosenRrf, not a
+		// degradation.
+		IReranker? reranker = mode == SearchRankingMode.Speed ? null : _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
 		CandidateTextResolver resolveText = (candidates, _) =>
 		{
 			var keys = candidates.Select(h => h.Id).Distinct().ToList();
@@ -487,7 +491,7 @@ public sealed class MemoryService : IMemoryService
 			return Task.FromResult(texts);
 		};
 		var resp = await new SearchService(indexes, _log, reranker)
-			.SearchAsync(projectKey, query, filter, k, resolveCandidateText: resolveText, ct: ct);
+			.SearchAsync(projectKey, query, filter, k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is

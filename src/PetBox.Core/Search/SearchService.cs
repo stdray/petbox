@@ -60,8 +60,15 @@ public sealed partial class SearchService
 	//     categorically excluded because it has no "all that matched"), return the FULL fused set
 	//     WITHOUT truncation, and report `semantic:false` — a visible contract limit, not a silent
 	//     drop. The consumer decides presentation order + its own limit.
+	// `mode` is the RANKING axis the caller chose (spec: search-ranking-mode-is-caller-choice) — the
+	// facade never infers it from _reranker's presence. Precision (the default here) preserves this
+	// facade's long-standing behavior for call sites that predate the mode (still the honest choice
+	// when nothing says otherwise); Speed short-circuits straight to RRF below WITHOUT ever awaiting
+	// IsRerankAvailableAsync, whether or not a reranker happens to be wired. The EDGE default per
+	// caller type (MCP verb vs UI page) is decided upstream — never guessed here.
 	public async Task<SearchResponse> SearchAsync(string scope, string query, SearchFilter filter, int k,
 		SearchSelection selection = SearchSelection.Relevance,
+		SearchRankingMode mode = SearchRankingMode.Precision,
 		CandidateTextResolver? resolveCandidateText = null, CancellationToken ct = default)
 	{
 		var rankings = new List<IReadOnlyList<string>>();
@@ -116,8 +123,8 @@ public sealed partial class SearchService
 		// goes wrong here — no rerank route, an outage, a resolver failure — falls THROUGH to the RRF
 		// path below with Reranked=false: RRF is honest degradation (DegradedRrf), and a rerank outage
 		// must NEVER take search down.
-		if (selection == SearchSelection.Relevance && _reranker is not null && resolveCandidateText is not null
-			&& byId.Count > 0 && await IsRerankAvailableAsync(scope, ct))
+		if (selection == SearchSelection.Relevance && mode == SearchRankingMode.Precision && _reranker is not null
+			&& resolveCandidateText is not null && byId.Count > 0 && await IsRerankAvailableAsync(scope, ct))
 		{
 			var pool = fused.Take(_budget.Candidates()).Select(f => byId[f.Key] with { Score = f.Score }).ToList();
 			try
@@ -132,7 +139,7 @@ public sealed partial class SearchService
 					.Where(r => r.Index >= 0 && r.Index < pool.Count)
 					.Select(r => pool[r.Index] with { Score = r.Score })
 					.ToList();
-				return new SearchResponse(rerankedHits, new SearchRetrievers(lexical, semantic, degraded, reason, Reranked: true));
+				return new SearchResponse(rerankedHits, new SearchRetrievers(lexical, semantic, degraded, reason, Ranking: SearchRankingOutcome.Reranked));
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
 			{
@@ -146,7 +153,15 @@ public sealed partial class SearchService
 		var ranked = selection == SearchSelection.Enumerable ? fused : fused.Take(k);
 		var hitsOut = ranked.Select(f => byId[f.Key] with { Score = f.Score }).ToList();
 		if (selection == SearchSelection.Enumerable) semantic = false;
-		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded, reason));
+		// RRF answered — provenance is honest about WHY (spec: search-rerank-in-loop /
+		// search-ranking-mode-is-caller-choice): an Enumerable selection never runs a ranking pass at
+		// all (no rerank, no RRF-as-a-ranking-decision — Ranking stays null); a Relevance selection
+		// under Speed got RRF because the caller CHOSE it (ChosenRrf); a Relevance selection under
+		// Precision fell through here because the rerank path could not run — a DEGRADATION (DegradedRrf).
+		SearchRankingOutcome? ranking = selection != SearchSelection.Relevance
+			? null
+			: mode == SearchRankingMode.Speed ? SearchRankingOutcome.ChosenRrf : SearchRankingOutcome.DegradedRrf;
+		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded, reason, Ranking: ranking));
 	}
 
 	// Fast-down gate on the precision pass: skip rerank (and its candidate-text resolution) when no
