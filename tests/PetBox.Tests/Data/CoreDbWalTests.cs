@@ -14,8 +14,10 @@ namespace PetBox.Tests.Data;
 //
 // journal_mode is written into the DB file HEADER, so it is set once and survives every reopen —
 // which is why the assertion is made on a FRESH connection, not on the one that ran the pragma.
-public sealed class CoreDbWalTests
+public sealed class CoreDbWalTests : IDisposable
 {
+	readonly List<string> _dirs = [];
+
 	static string ReadJournalMode(string connectionString)
 	{
 		using var conn = new SqliteConnection(connectionString);
@@ -25,10 +27,22 @@ public sealed class CoreDbWalTests
 		return ((string)cmd.ExecuteScalar()!).ToLowerInvariant();
 	}
 
+	string NewCs()
+	{
+		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
+		return cs;
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
+	}
+
 	[Fact]
 	public void MigrationRunner_LeavesCoreDbInWal()
 	{
-		var cs = TestSchema.NewTempConnectionString();
+		var cs = NewCs();
 
 		MigrationRunner.Run(cs);
 
@@ -45,7 +59,7 @@ public sealed class CoreDbWalTests
 	[Fact]
 	public void TemplateCopy_PreservesWal_AndTheMigratedSchema()
 	{
-		var cs = TestSchema.NewTempConnectionString();
+		var cs = NewCs();
 
 		TestSchema.Core(cs);
 

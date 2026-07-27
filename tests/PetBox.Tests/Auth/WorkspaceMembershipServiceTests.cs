@@ -1,5 +1,6 @@
 using System.Threading;
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -10,14 +11,22 @@ namespace PetBox.Tests.Auth;
 // including the two Core ones (AdminBootstrapper's seed, WorkspaceProvisioning's atomic quota claim).
 // These cover the rules that are welded into it: the last admin is never orphaned, the quota is
 // spent by the INSERT itself, and a cascade takes the ledger rows with it.
-public sealed class WorkspaceMembershipServiceTests
+public sealed class WorkspaceMembershipServiceTests : IDisposable
 {
-	static (WorkspaceMembershipService Svc, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(WorkspaceMembershipService Svc, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		return (new WorkspaceMembershipService(dbf), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static long SeedUser(ICoreDbFactory dbf, string name, int quota)

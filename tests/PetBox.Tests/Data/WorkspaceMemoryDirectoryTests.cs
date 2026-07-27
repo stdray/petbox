@@ -1,5 +1,6 @@
 using LinqToDB;
 using LinqToDB.Async;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -10,14 +11,22 @@ namespace PetBox.Tests.Data;
 // same lazy, idempotent provisioning through the factory instead (the static helper's own behavior,
 // incl. the concurrent-insert race, is covered exhaustively by WorkspaceMemoryTests; this file only
 // proves the directory's method is correctly wired to it).
-public sealed class WorkspaceMemoryDirectoryTests
+public sealed class WorkspaceMemoryDirectoryTests : IDisposable
 {
-	static (IWorkspaceMemoryDirectory Svc, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(IWorkspaceMemoryDirectory Svc, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		return (new WorkspaceMemoryDirectory(dbf), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static void SeedWorkspace(ICoreDbFactory dbf, string key)

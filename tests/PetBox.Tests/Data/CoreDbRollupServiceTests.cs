@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -7,14 +8,22 @@ namespace PetBox.Tests.Data;
 
 // ICoreDbRollupService is the COUNTS door onto core.db: Admin/Index, Dashboard/Index and
 // ProjectHome/Index ask it instead of opening core.db themselves (db-out-of-pages-remaining-24).
-public sealed class CoreDbRollupServiceTests
+public sealed class CoreDbRollupServiceTests : IDisposable
 {
-	static (CoreDbRollupService Svc, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(CoreDbRollupService Svc, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		return (new CoreDbRollupService(dbf), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static void SeedWorkspace(ICoreDbFactory dbf, string key)

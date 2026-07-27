@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
@@ -16,8 +17,10 @@ namespace PetBox.Tests.Web;
 // every workspace, an account with no membership sees NOTHING (and must not fall back to $system — see
 // workspace-access-isolation), and the $ws-* memory containers are not user projects and never appear
 // in a project list.
-public sealed class NavigationContextTests
+public sealed class NavigationContextTests : IDisposable
 {
+	readonly List<string> _dirs = [];
+
 	sealed class FakeAccessor(HttpContext ctx) : IHttpContextAccessor
 	{
 		public HttpContext? HttpContext { get; set; } = ctx;
@@ -36,11 +39,17 @@ public sealed class NavigationContextTests
 		return new FeatureFlags(cfg);
 	}
 
-	static ICoreDbFactory NewDb()
+	ICoreDbFactory NewDb()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		return new CoreDbFactory(cs);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static void SeedWorkspace(ICoreDbFactory dbf, string key)

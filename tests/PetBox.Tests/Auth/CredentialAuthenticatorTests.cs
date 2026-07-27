@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
@@ -11,16 +12,24 @@ namespace PetBox.Tests.Auth;
 // login page and the REST login path share, and the self-service password change every logged-in user
 // reaches. Neither may be IUserAdminService — that one resets ANY account's password — so what these
 // tests pin is mostly what the doors CANNOT do.
-public sealed class CredentialAuthenticatorTests
+public sealed class CredentialAuthenticatorTests : IDisposable
 {
 	// "test123", hashed. The same fixture hash LoginAuthTests uses.
 	const string Password = "test123";
 	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	static (CredentialAuthenticator Auth, AccountSelfService Self, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New(
+	readonly List<string> _dirs = [];
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
+	}
+
+	(CredentialAuthenticator Auth, AccountSelfService Self, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New(
 		string? bootstrapAdmin = null)
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		var members = new WorkspaceMembershipService(dbf);

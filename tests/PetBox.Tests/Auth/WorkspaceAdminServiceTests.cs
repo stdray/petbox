@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -10,17 +11,25 @@ namespace PetBox.Tests.Auth;
 // must refuse a workspace that still holds USER projects, must NOT be blocked by the workspace's own
 // memory container (which is a Projects row, and blocking on it made a fresh workspace undeletable),
 // and must take the memberships with it — they are the owner's quota ledger.
-public sealed class WorkspaceAdminServiceTests
+public sealed class WorkspaceAdminServiceTests : IDisposable
 {
-	static (WorkspaceAdminService Svc, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(WorkspaceAdminService Svc, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		var members = new WorkspaceMembershipService(dbf);
 		var svc = new WorkspaceAdminService(
 			dbf, new ProjectDirectory(dbf), members, new WorkspaceProvisioning(dbf, members));
 		return (svc, members, dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static long SeedUser(ICoreDbFactory dbf, string name, int quota)

@@ -1,5 +1,6 @@
 using LinqToDB;
 using LinqToDB.Async;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -8,13 +9,21 @@ namespace PetBox.Tests.Data;
 // ICoreDbFactory is how core.db is meant to be reached: a fresh, caller-owned connection per call,
 // so no DataConnection is ever shared across threads (a linq2db DataConnection is not thread-safe;
 // the request-shared one is what 500'd the cross-scope search).
-public sealed class CoreDbFactoryTests
+public sealed class CoreDbFactoryTests : IDisposable
 {
-	static ICoreDbFactory NewFactory(out string cs)
+	readonly List<string> _dirs = [];
+
+	ICoreDbFactory NewFactory(out string cs)
 	{
 		cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		return new CoreDbFactory(cs);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	[Fact]

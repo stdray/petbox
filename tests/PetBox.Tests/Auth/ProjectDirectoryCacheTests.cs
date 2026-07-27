@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Memory;
 using PetBox.Core.Models;
 using PetBox.Tests.Web;
@@ -10,14 +11,22 @@ namespace PetBox.Tests.Auth;
 // the cache" is a COUNT of core.db opens on the counting factory — never a timing guess. The
 // invalidation tests were verified RED first: with the cache.Remove calls in CreateAsync/DeleteAsync
 // commented out, Create_then_read and Delete_then_read fail on the stale answer.
-public sealed class ProjectDirectoryCacheTests
+public sealed class ProjectDirectoryCacheTests : IDisposable
 {
-	static (ProjectDirectory Svc, CountingCoreDbFactory Dbf) New(TimeSpan? ttl = null)
+	readonly List<string> _dirs = [];
+
+	(ProjectDirectory Svc, CountingCoreDbFactory Dbf) New(TimeSpan? ttl = null)
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CountingCoreDbFactory(cs);
 		return (new ProjectDirectory(dbf, new MemoryCache(new MemoryCacheOptions()), ttl), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static void Seed(CountingCoreDbFactory dbf, string ws, params string[] projects)
