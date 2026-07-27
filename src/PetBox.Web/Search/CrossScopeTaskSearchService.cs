@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Contract;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Navigation;
@@ -157,6 +158,10 @@ public sealed class CrossScopeTaskSearchService(
 			Query = query,
 			Limit = MaxFullTextPerProject,
 			BodyLen = 0,
+			// EDGE default (search-ranking-mode-is-caller-choice): a UI results page is a human
+			// skimming a locator list across many projects at once — latency costs more than a
+			// ranking mistake here, so Speed (never even constructs a reranker, straight to RRF).
+			RankingMode = SearchRankingMode.Speed,
 		}, urlPrefix, ct).ConfigureAwait(false);
 		var classifyText = await ClassifyByBoardAsync(tasks, project.Key, textRes.Hits, ct).ConfigureAwait(false);
 		var fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false, classifyText(h))).ToList();

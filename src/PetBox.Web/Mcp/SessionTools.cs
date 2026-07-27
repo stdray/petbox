@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;
+using PetBox.Core.Search;
 using PetBox.Sessions.Contract;
 using PetBox.Web.Mcp.Contract;
 
@@ -271,6 +272,7 @@ public static class SessionTools
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}).")] int? bodyLen = null,
+		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging; a cursor from a different query is an ERROR, not a silent restart. It is bound to the discovery ORDER it was issued for, so a new session or a fresh digest mid-walk also errors — drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -279,6 +281,15 @@ public static class SessionTools
 
 		if (string.IsNullOrWhiteSpace(q))
 		{
+			// A cursor belongs to the walk that issued it. The listing branch has no ranked pool and no
+			// resume token of its own (that is listing-keyset-memory-sessions' work), so a token arriving
+			// here came from a QUERY walk — refuse it rather than ignoring it and serving an unrelated
+			// first page that looks like a continuation.
+			if (!string.IsNullOrWhiteSpace(cursor))
+				throw new ArgumentException(
+					"session_search: this cursor was issued for a `q` walk — dropping `q` changes both the "
+					+ "selection and the ordering basis, so continuing would splice two orderings. Keep the "
+					+ "query while paging, or drop the cursor.");
 			// LISTING (the former session.list): compact rows, budget-enveloped.
 			var list = await sessionSvc.ListAsync(projectKey, ct);
 			var rows = list.Select(s => new SessionSearchItemView(s.SessionId, s.Agent, s.Version)).ToList();
@@ -293,15 +304,46 @@ public static class SessionTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen, ct);
+		// The token's POSITION is read up front (structure, format version and shape are all refused here);
+		// its FINGERPRINT is checked below, the moment the discovery order — which the stamp is made of —
+		// exists. Nothing is returned to the caller between the two, so the guarantee is unchanged: an
+		// invalid cursor is an error, never a plausible-looking wrong page.
+		var token = string.IsNullOrWhiteSpace(cursor) ? (KeysetCursor?)null : KeysetCursor.Peek(cursor, "session_search");
+		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen,
+			afterSessionId: token?.Key, ct: ct);
+		// The discovery ORDER moved out of the fingerprint and into the order commitment, where the other
+		// two surfaces now carry it. Same guarantee, better words: a fingerprint mismatch tells the caller
+		// to keep their arguments identical, which is wrong advice when their arguments were identical and
+		// the server's ranking is what changed.
+		var fingerprint = SearchFingerprint(projectKey, q, fullScan);
+		token?.AssertFingerprint(fingerprint, "session_search");
+		token?.AssertPoolOrder(o.DataVersion ?? "", "session_search");
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
 			c.SessionId, c.Agent,
 			Description: c.Description,
 			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
 			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded, c.Retrievers.DegradedReason,
-				c.Retrievers.SemanticLag, c.Retrievers.Reranked),
+				c.Retrievers.SemanticLag, c.Retrievers.Ranking),
 			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
+		// Rows remain if the pool has more behind this page OR the budget cut rows off this one.
+		var more = o.MoreInPool || omitted > 0;
+		// RESUME FROM THE LAST ROW ACTUALLY SENT, not from the end of the slice we considered. When the
+		// response budget cut candidates off this page (omitted > 0), those candidates never reached the
+		// caller — resuming past them would skip them for good, which is the same lost-rows defect the
+		// budget seek in tasks_search and memory_search exists to avoid. Only when NOTHING was kept (the
+		// whole slice went stale and hydrated to nothing) do we fall back to the slice end, because there
+		// is no delivered row to resume from and stopping there would strand the rest of the pool.
+		var resumeAfter = kept.Count > 0 ? kept[^1].SessionId : o.LastPoolKey;
+		var nextCursor = more && resumeAfter is not null
+			? new KeysetCursor(fingerprint, "", resumeAfter, projectKey, o.DataVersion ?? "").Encode()
+			: null;
+		// WHY THE WALK STOPPED — the SAME three words tasks_search and memory_search use. Always present
+		// with `q`, so a caller never has to read "nextCursor is absent" and guess whether it reached the
+		// end of the matches or the end of what discovery ever looked at.
+		var stop = more ? SearchPoolStop.More
+			: o.PoolBounded ? SearchPoolStop.PoolBoundary
+			: SearchPoolStop.Exhausted;
 		return new SessionSearchResultView(
 			kept,
 			Distilled: o.Distilled,
@@ -313,8 +355,26 @@ public static class SessionTools
 			FullScanRequested: o.FullScanRequested,
 			FullScanRan: o.FullScanRan,
 			FullScanReason: o.FullScanReason,
-			FullScanCapped: o.FullScanCapped);
+			FullScanCapped: o.FullScanCapped,
+			NextCursor: nextCursor,
+			Stop: MemoryTools.StopWire(stop),
+			PoolLimit: o.PoolLimit,
+			PoolBoundaryHint: stop == SearchPoolStop.PoolBoundary ? PoolBoundaryHintText : null);
 	}
+
+	// Surfaced ONLY on stop:"pool-boundary" — the case a caller must not read as "that was everything".
+	const string PoolBoundaryHintText =
+		"Discovery depth reached (see poolLimit): more sessions were discovered than the pool walks, so "
+		+ "this is a PREFIX of what matched, NOT all of it — and there is no further page to fetch. "
+		+ "Narrow the read (a more specific `q`), or list without `q` to enumerate the archive.";
+
+	// The query identity a cursor is bound to — the QUESTION only. The discovery ORDER lives in the
+	// token's order commitment instead (see AssertPoolOrder at the call site), so the two failures stay
+	// tellable apart: "you changed the query" versus "the ranking moved under you".
+	// `sessions`/`hitsPerSession`/`bodyLen` are deliberately EXCLUDED: they shape a page, not the
+	// sequence, so a caller may vary them mid-walk.
+	static string SearchFingerprint(string projectKey, string? query, bool fullScan) =>
+		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0");
 
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =

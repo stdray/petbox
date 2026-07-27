@@ -16,17 +16,21 @@ namespace PetBox.Core.Search;
 // leg (0) from one behind by N. Null when no semantic leg ran (lexical-only / no embedder /
 // degraded — nothing answered, so there is no coverage to be behind on).
 //
-// `Reranked` marks the PRECISION mode (spec: search-rerank-in-loop): true = the cross-encoder rescored
-// the candidate union on one model (the штатный path when a rerank route is live), false = the honest
-// RRF degradation (DegradedRrf) ran instead — no route, a rerank outage, or an enumerable selection.
-// It is provenance the caller can always trust to tell precision from degradation, never dressed up.
+// `Ranking` marks the RANKING outcome (spec: search-rerank-in-loop / search-ranking-mode-is-caller-
+// choice) — a THREE-way honest tri-state, not a bool: Reranked (the cross-encoder rescored the
+// candidate union — the штатный precision path), DegradedRrf (Precision was asked for but the rerank
+// path could not run — an honest DEGRADATION), or ChosenRrf (the caller explicitly asked for Speed —
+// RRF answered because that is what was asked for, an honest CHOICE, never confused with a
+// degradation). Null only when no ranking pass applies at all (an Enumerable selection, which never
+// runs RRF-as-a-ranking-decision or the reranker). This is provenance the caller can always trust to
+// tell precision from degradation from deliberate choice — never dressed up, never a second flag.
 public readonly record struct SearchRetrievers(
 	bool Lexical,
 	bool Semantic,
 	bool Degraded,
 	string? DegradedReason = null,
 	long? SemanticLag = null,
-	bool Reranked = false);
+	SearchRankingOutcome? Ranking = null);
 
 // The stable, machine-readable degradation codes carried by SearchRetrievers.DegradedReason.
 // These are a CONTRACT (clients/alerts match on them) — extend, never rename.

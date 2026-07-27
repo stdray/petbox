@@ -49,6 +49,13 @@ public sealed partial class TasksService : ITasksService
 	readonly MethodologyTemplateService _methodologyTemplates;
 	// Named methodology instances (live process automata + board membership).
 	readonly MethodologyInstanceService _methodologyInstances;
+	// The ordered relevance POOL cache (spec: result-set-pageable) — what keeps page 2 from paying for
+	// the cross-encoder a second time. MUST be a SINGLETON to do its job: TasksService itself is scoped
+	// per request, so an instance-local cache would be born empty on every page. When DI supplies
+	// nothing (tests, direct construction) the fallback is a private instance — the feature stays
+	// CORRECT (every page re-materializes the pool deterministically) and only loses the latency win,
+	// which is the right way round for a cache to fail.
+	readonly SearchPoolCache _poolCache;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -57,8 +64,13 @@ public sealed partial class TasksService : ITasksService
 	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
 	const int VectorDim = 1024;
 
+	// The per-leg candidate depth a PAGED (WholePool) query uses — fixed, so the pool a caller walks
+	// cannot change shape when they change page size (spec: result-set-pageable). 50 is the floor a
+	// default read already used, so the common path is unchanged.
+	public const int PagedCandidateDepth = 50;
+
 	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null,
-		ILogger<TasksService>? log = null)
+		ILogger<TasksService>? log = null, SearchPoolCache? poolCache = null)
 	{
 		_boards = boards;
 		_relations = relations;
@@ -66,6 +78,7 @@ public sealed partial class TasksService : ITasksService
 		_comments = comments;
 		_llm = llm;
 		_log = log;
+		_poolCache = poolCache ?? new SearchPoolCache();
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
@@ -1978,6 +1991,18 @@ public sealed partial class TasksService : ITasksService
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
 		long? currentVersion = null;
+		// Pool facts of a RELEVANCE selection (spec: result-set-pageable) — null in listing mode, which
+		// has no ranked pool and no ranking-depth boundary to declare.
+		int? poolLimit = null;
+		bool poolBounded = false;
+		// The stamp of the data this result was computed over. The adapter folds it into the cursor
+		// fingerprint, which is what turns "the board changed under an in-flight walk" into a loud
+		// refusal instead of two orderings spliced together.
+		string? dataVersion = null;
+		// The identity of the ORDER this result was ranked in — the other half of that guard, for the
+		// case where nothing was written but the ranking still moved (a rerank route recovering or
+		// failing between pages). Rides into the cursor beside the fingerprint.
+		string? poolOrderHash = null;
 		// search-echo-effective-statuskind-filter: the facet ResolveStatusKindFacet ACTUALLY
 		// resolved for this read, captured verbatim from whichever branch below computes it — so
 		// the response echoes the true applied value (including when defaulted), never a recompute.
@@ -2044,8 +2069,94 @@ public sealed partial class TasksService : ITasksService
 			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
 			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
 			effectiveStatusKind = queryFacet;
-			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, ct);
+			// CANDIDATE DEPTH, and why paging pins it. `Limit` normally sizes the per-leg top-K, which is
+			// fine when a call is a one-shot answer. It is NOT fine while paging: the depth decides WHICH
+			// entities are candidates, so letting it follow the page size means page 2 with a different
+			// `limit` ranks a DIFFERENT POOL — and since neither the fingerprint nor the tool contract
+			// treats `limit` as part of the query (both promise it may vary between pages), the cursor is
+			// accepted and the identity seek runs against an ordering it never saw. Skips and duplicates,
+			// no error anywhere.
+			//
+			// So a paged read uses a FIXED depth. Pinning it (rather than binding `limit` into the token)
+			// keeps the documented freedom to change page size mid-walk, and makes the pool a property of
+			// the QUERY instead of a property of how you happened to ask for it. The constant is the depth
+			// a default read already got, so nothing changes for it; only an explicit `limit > 50` now
+			// gets the same pool as everyone else instead of a private, wider one.
+			var legK = req.WholePool ? PagedCandidateDepth : Math.Max(req.Limit, 50);
+
+			// The DATA VERSION of everything this query can see (spec: result-set-pageable, требование 4).
+			// GetBoardChangeStampAsync is the scalar "has this board changed at all" probe — two SQL
+			// aggregates, no row materialization — so stamping every board in scope stays cheap enough to
+			// do on EVERY q-mode call, which is what it has to be: the stamp is both the pool cache's
+			// identity and (echoed to the adapter) part of the cursor fingerprint, so it must be recomputed
+			// per request or it would certify an ordering that has since moved.
+			var stamps = new List<string>(boardsMeta.Count);
+			foreach (var b in boardsMeta)
+			{
+				var stamp = await GetBoardChangeStampAsync(projectKey, b.Name, ct);
+				stamps.Add($"{b.Name}:{stamp.NodeVersion}:{stamp.TagStamp?.Ticks ?? 0}");
+			}
+			dataVersion = string.Join('|', stamps);
+
+			// The pool cache key covers exactly what decides the POOL's membership and order — not the
+			// post-filters (under/status/keys/commit) or the presentation sort, which are applied below
+			// over whatever the pool contains and are therefore free to vary between pages without
+			// invalidating it.
+			var poolKey = KeysetCursor.FingerprintOf(
+				"tasks-pool", projectKey, query, boardFilter,
+				queryFacet is null ? null : string.Join(',', queryFacet.Order(StringComparer.Ordinal)),
+				legK.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				req.RankingMode.ToString(), dataVersion);
+
+			if (_poolCache.TryGet(poolKey, out var cachedPool))
+			{
+				// PAGE 2+ ON A LIVE POOL — HYDRATE THE STORED ADDRESSES. Emphatically NOT "re-run the
+				// search and re-sort by the cached order", which is what this did first and which lost
+				// rows: an unchanged `dataVersion` means the DATA did not move, it does NOT mean the world
+				// did not. A transient Embed outage between pages is AVAILABILITY, not data — the cache
+				// key still matches, but the re-derived union comes back without the vector leg's
+				// candidates, and every cached row missing from that union silently evaporated. If the
+				// remainder of the walk happened to be semantic-only rows, the page came back EMPTY and
+				// reported `stop:"exhausted"` — the consumer reading "we stopped looking" as "there is no
+				// more", which is the exact lie this feature was built to make impossible.
+				//
+				// Hydrating by address cannot express that bug: the pool IS the answer, and the only
+				// question left is what each row's current body says. Storing addresses rather than rows
+				// was always what made this possible — this is that decision being cashed in. It is also
+				// strictly cheaper: no second index query and no reranker, ever.
+				hits = await HydratePoolAsync(projectKey, cachedPool, urlPrefix, runtime,
+					PoolKeepsTerminalCancel(queryFacet), ct);
+				// Provenance describes the pass that actually DECIDED this order — the cached one, which by
+				// A2 below is never a degraded pool.
+				retrievers = cachedPool.Retrievers;
+				poolLimit = cachedPool.PoolLimit;
+				poolBounded = cachedPool.PoolBounded;
+				poolOrderHash = cachedPool.OrderHash;
+			}
+			else
+			{
+				var (freshHits, freshRetrievers, freshLimit, freshBounded, freshOrderHash) = await HybridCandidatesAsync(
+					projectKey, query, boardFilter, legK, urlPrefix, runtime, queryFacet, req.RankingMode, ct);
+				hits = freshHits;
+				retrievers = freshRetrievers;
+				poolLimit = freshLimit;
+				poolBounded = freshBounded;
+				poolOrderHash = freshOrderHash;
+				// A DEGRADED pool is never stored. It is cheap to recompute (the reranker did not run
+				// anyway) and expensive to keep: caching it pins a half-answer — plus its now-stale
+				// provenance — for the whole TTL, so every repeat of the query keeps hitting the outage
+				// long after the route came back. That turns a self-healing blip into ten minutes of
+				// quietly worse results, a direct worsening of search-degraded-returns-empty-not-lexical
+				// rather than a new trade-off.
+				if (!freshRetrievers.Degraded && freshRetrievers.Ranking != SearchRankingOutcome.DegradedRrf)
+					// Store the ADDRESSES + fused order only (never the rendered rows): a page re-hydrates
+					// its own bodies, so a cached pool can go stale in ORDER — refused by the fingerprint —
+					// but never in CONTENT. MatchedIn rides along so a hydrated page reproduces page 1.
+					_poolCache.Put(poolKey, new SearchPool(
+						[.. hits.Select(h => new Hit(h.Board, h.Node.Key, h.Score ?? 0, h.Retriever))],
+						freshLimit, freshBounded, freshRetrievers,
+						[.. hits.Select(h => h.MatchedIn)]));
+			}
 
 			// search-identity-leg (spec): a query that exactly matches a node's slug OR its NodeId reads
 			// as an addressed ask in disguise — the identity leg (equality over search_meta_alias)
@@ -2087,7 +2198,11 @@ public sealed partial class TasksService : ITasksService
 			hits = Tiering.StablePartition(hits, h => TasksSearchDocs.StatusKindTier(
 				runtime.StatusKindOf(kindByBoard.GetValueOrDefault(h.Board), h.Node.Status) ?? StatusKind.Open));
 		}
-		if (req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
+		// WholePool (spec: result-set-pageable) suppresses the truncation entirely — the caller is paging
+		// and will seek + slice the full order itself. `Limit` still did its OTHER job upstream (it sized
+		// the candidate depth), so suppressing the cut here changes no row's rank and no candidate's
+		// membership; it only stops the tail from being discarded.
+		if (!req.WholePool && req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
 		if (req.BodyLen > 0)
 			hits = hits.Select(h => h with { Node = h.Node with { Body = SnippetBody(h.Node.Body, req.BodyLen) } }).ToList();
 
@@ -2099,7 +2214,11 @@ public sealed partial class TasksService : ITasksService
 			WiredBoard: meta?.WiredBoard,
 			CurrentVersion: currentVersion,
 			Retrievers: retrievers,
-			EffectiveStatusKind: effectiveStatusKind);
+			EffectiveStatusKind: effectiveStatusKind,
+			PoolLimit: poolLimit,
+			PoolBounded: poolBounded,
+			DataVersion: dataVersion,
+			PoolOrderHash: poolOrderHash);
 	}
 
 	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
@@ -2107,9 +2226,9 @@ public sealed partial class TasksService : ITasksService
 	// board filter is applied at the index level (SearchFilter(Type=board)). No embedder →
 	// the vector index is simply absent (semantic=false, not degraded); a query-time embed
 	// failure is caught by the facade and flagged degraded.
-	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
+	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded, string OrderHash)> HybridCandidatesAsync(
 		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime,
-		IReadOnlyList<string>? statusKindFacet, CancellationToken ct)
+		IReadOnlyList<string>? statusKindFacet, SearchRankingMode mode, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
@@ -2134,8 +2253,7 @@ public sealed partial class TasksService : ITasksService
 		// The hit-resolve pool below must AGREE with the leg's selection: keep terminal-CANCEL nodes in
 		// the pool iff the facet admits them (neutral set, or a set naming terminalcancel). A comment
 		// hit whose owner is an excluded terminal-CANCEL node then resolves to nothing and drops, as before.
-		bool poolKeepsTerminalCancel = statusKindFacet is not { Count: > 0 }
-			|| statusKindFacet.Contains(TasksSearchDocs.TerminalCancelFacet);
+		bool poolKeepsTerminalCancel = PoolKeepsTerminalCancel(statusKindFacet);
 
 		// PRECISION mode (spec: search-rerank-in-loop): the cross-encoder reranks the candidate union
 		// as the штатный path when an LLM route is configured. The candidate-text resolver fetches each
@@ -2143,7 +2261,11 @@ public sealed partial class TasksService : ITasksService
 		// (Type=board, Id=slug) resolves to Name + Body (the ToDoc shape) and a COMMENT (Id "c:"+key)
 		// to its Body (CommentToDoc's shape); two reads over the ACTIVE rows, missing → "". No LLM
 		// route → reranker null → honest RRF (DegradedRrf).
-		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		// An explicit Speed ask (search-ranking-mode-is-caller-choice) short-circuits BEFORE any of
+		// that: no reranker is constructed at all, so the facade never even probes
+		// IsRerankAvailableAsync — RRF answers directly and provenance reports ChosenRrf, not a
+		// degradation.
+		IReranker? reranker = mode == SearchRankingMode.Speed ? null : _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
 		CandidateTextResolver resolveText = (candidates, _) =>
 		{
 			var slugs = candidates
@@ -2172,9 +2294,15 @@ public sealed partial class TasksService : ITasksService
 					: nodeText.GetValueOrDefault((h.Type, h.Id), "")).ToList();
 			return Task.FromResult(texts);
 		};
-		var resp = await new SearchService(indexes, _log, reranker)
-			.SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, resolveCandidateText: resolveText, ct: ct);
-		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
+		// SearchPoolAsync, not SearchAsync (spec: result-set-pageable): take the WHOLE ranked pool rather
+		// than its first k rows. `k` still bounds the per-leg top-K (it is what the vector leg needs —
+		// cosine has no "all that matched"); the pool's own ceiling is the rerank candidate budget the
+		// facade reports back as PoolLimit. Everything past the page the caller asked for used to be
+		// computed and thrown away right here — that discarded tail IS the pagination.
+		var pool = await new SearchService(indexes, _log, reranker)
+			.SearchPoolAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, mode: mode, resolveCandidateText: resolveText, ct: ct);
+		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
+		if (resp.Hits.Count == 0) return ([], resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
 
 		// No semantic floor (spec: search-leg-classification — the tau membership threshold is gone):
 		// under this RELEVANCE selection a vector-only hit ENTERS as a peer, bounded only by the fused
@@ -2232,7 +2360,49 @@ public sealed partial class TasksService : ITasksService
 				ranked.Add((rank, new TaskSearchHit(g.Key, node, h.Score, h.Retriever, isComment ? "comment" : null)));
 			}
 		}
-		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers);
+		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
+	}
+
+	// Keep terminal-CANCEL nodes in a query's resolve pool iff the facet admits them. Lifted out of
+	// HybridCandidatesAsync so the cached-pool hydration path below computes it from the SAME facet by
+	// the SAME rule — two copies of this predicate would let a hydrated page and a fresh one disagree
+	// about which nodes exist.
+	static bool PoolKeepsTerminalCancel(IReadOnlyList<string>? statusKindFacet) =>
+		statusKindFacet is not { Count: > 0 } || statusKindFacet.Contains(TasksSearchDocs.TerminalCancelFacet);
+
+	// Hydrate a CACHED pool: its stored addresses, in its stored order, with each row's CURRENT body.
+	// No index query, no fusion, no reranker — the ordering was decided once and this only re-reads what
+	// the rows say now.
+	//
+	// A stored address that no longer resolves (deleted, or hidden by the facet since) is DROPPED, not
+	// faked. That is safe precisely because it is nearly unreachable: any such change moves the board's
+	// change stamp, which is in the cursor fingerprint, so an in-flight walk is refused before it gets
+	// here. What it must never do is what the old re-derivation did — drop a row because a RETRIEVER was
+	// briefly unavailable, which is not a fact about the row at all.
+	async Task<List<TaskSearchHit>> HydratePoolAsync(string projectKey, SearchPool pool, string? urlPrefix,
+		MethodologyRuntime runtime, bool keepsTerminalCancel, CancellationToken ct)
+	{
+		var hits = new List<TaskSearchHit>(pool.Count);
+		// One lean projection per board, reused across every address on it.
+		var byBoard = new Dictionary<string, Dictionary<string, PlanNodeView>>(StringComparer.Ordinal);
+		for (var i = 0; i < pool.Ordered.Count; i++)
+		{
+			ct.ThrowIfCancellationRequested();
+			var addr = pool.Ordered[i];
+			if (!byBoard.TryGetValue(addr.Type, out var bySlug))
+			{
+				var meta = await _boards.FindAsync(projectKey, addr.Type, ct);
+				// A board dropped since the pool was built leaves orphan addresses — skip the group
+				// rather than throwing, exactly as the fresh resolve path does.
+				bySlug = meta is null
+					? new Dictionary<string, PlanNodeView>(StringComparer.Ordinal)
+					: (await ProjectBoardLeanOpenAsync(projectKey, addr.Type, meta.Kind, runtime, urlPrefix, keepsTerminalCancel, ct)).BySlug;
+				byBoard[addr.Type] = bySlug;
+			}
+			if (!bySlug.TryGetValue(addr.Id, out var node)) continue;
+			hits.Add(new TaskSearchHit(addr.Type, node, addr.Score, addr.Retriever, pool.AnnotationAt(i)));
+		}
+		return hits;
 	}
 
 	// Lean projection for query-mode hit resolve: active nodes + tags, no per-node relation

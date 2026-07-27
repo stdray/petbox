@@ -51,9 +51,15 @@ public sealed class McpTracingShaperTests
 	{
 		var marked = McpLoggedArgs.For("memory_search");
 		marked.Select(a => a.Name).Should()
-			.BeEquivalentTo(["q", "scope", "store", "limit", "bodyLen", "includeUsage"]);
+			.BeEquivalentTo(["q", "scope", "store", "limit", "bodyLen", "includeUsage", "cursor"]);
 		marked.Single(a => a.Name == "q").Mode.Should().Be(LogArgMode.Presence);
 		marked.Single(a => a.Name == "bodyLen").Mode.Should().Be(LogArgMode.Value);
+
+		// `cursor` joined when memory_search became pageable (spec: result-set-pageable). PRESENCE, never
+		// Value — a token is an opaque base64 payload carrying the caller's position, so logging it
+		// verbatim would put caller data in telemetry for no diagnostic gain. "Was this a page 2?" is the
+		// only question worth answering, and presence answers it.
+		marked.Single(a => a.Name == "cursor").Mode.Should().Be(LogArgMode.Presence);
 
 		// store/scope are the only STRING knobs marked Value: their alphabet is fixed by our own
 		// contract (a store name, project|workspace), so they answer "where did the fat search
@@ -68,8 +74,11 @@ public sealed class McpTracingShaperTests
 		// session_search brought its own knobs — proof the registry is per-tool, not global.
 		// bodyLen joined the family (card bodylen-contract-has-two-holes, hole 2): it now
 		// shapes each hit's snippet, same knob name as the rest of the surface.
+		// `cursor` joined here too when session_search became pageable — same PRESENCE-only rule as
+		// memory_search's, for the same reason (an opaque token is caller position, not diagnostics).
 		McpLoggedArgs.For("session_search").Select(a => a.Name)
-			.Should().BeEquivalentTo(["q", "sessions", "hitsPerSession", "fullScan", "bodyLen"]);
+			.Should().BeEquivalentTo(["q", "sessions", "hitsPerSession", "fullScan", "bodyLen", "cursor"]);
+		McpLoggedArgs.For("session_search").Single(a => a.Name == "cursor").Mode.Should().Be(LogArgMode.Presence);
 	}
 
 	[Fact]

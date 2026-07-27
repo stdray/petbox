@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
+using PetBox.Core.Search;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
@@ -35,6 +36,10 @@ public sealed class TasksSearchCursorTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TasksService _tasks;
+	// Injected explicitly (production wires it as a singleton) so the q-mode tests can OBSERVE whether a
+	// page built a new pool or reused the stored one — the only end-to-end signal that requirement 5
+	// ("реранк считается один раз на пул") is actually holding rather than merely intended.
+	readonly SearchPoolCache _poolCache = new();
 
 	public TasksSearchCursorTests()
 	{
@@ -46,7 +51,8 @@ public sealed class TasksSearchCursorTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
+		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory),
+			poolCache: _poolCache);
 	}
 
 	public void Dispose()
@@ -240,31 +246,208 @@ public sealed class TasksSearchCursorTests : IDisposable
 		second.Nodes.Select(n => n.Key).Should().Equal("c");
 	}
 
-	// ── the deliberate refusals ──────────────────────────────────────────────────────────────
+	// ── q PAGES TOO (work/search-results-pageable) ───────────────────────────────────────────
+	//
+	// The card's complaint verbatim: «Поискав „e2e", я не могу итерировать страницами по 10». `q` used
+	// to be a REFUSAL to navigate, justified by a claim about the implementation (the order is
+	// re-derived per call) rather than about the task. The pool is finite and totally ordered, so the
+	// claim is now false and the refusal is gone. These tests hold the replacement to the same standard
+	// the listing walk is held to — pages must concatenate to the unpaged answer, exactly once each.
+
+	// Six nodes that all match "alpha", with distinct bodies so the lexical leg has something to rank.
+	Task SeedQueryable() => Seed("b", """
+		[{"key":"q1","status":"Todo","title":"alpha one","body":"alpha material one"},
+		 {"key":"q2","status":"Todo","title":"alpha two","body":"alpha material two"},
+		 {"key":"q3","status":"Todo","title":"alpha three","body":"alpha material three"},
+		 {"key":"q4","status":"Todo","title":"alpha four","body":"alpha material four"},
+		 {"key":"q5","status":"Todo","title":"alpha five","body":"alpha material five"},
+		 {"key":"q6","status":"Todo","title":"alpha six","body":"alpha material six"}]
+		""");
 
 	[Fact]
-	public async Task Cursor_WithQuery_IsRefused_WithTheAlternatives()
+	public async Task PageWalk_WithQuery_ConcatenatesToTheUnpagedSelection()
 	{
-		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
-		var token = new KeysetCursor("deadbeef", "0", "a", "b").Encode();
+		await SeedQueryable();
 
-		var act = () => Search(q: "A", board: "b", cursor: token);
+		var whole = (await Search(q: "alpha", board: "b", limit: 100)).Nodes.Select(n => n.Key).ToList();
+		whole.Should().HaveCount(6);
 
-		(await act.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*LISTING mode only*")
-			// the teaching part: what to do instead, all three ways out
-			.WithMessage("*limit*").WithMessage("*tasks_delta*").WithMessage("*SELECTION*");
+		var paged = await WalkAsync(c => Search(q: "alpha", board: "b", limit: 2, cursor: c));
+
+		paged.Should().Equal(whole, "paging must change presentation only — never selection or order");
+		paged.Should().OnlyHaveUniqueItems("a keyset seek re-serves nothing");
 	}
 
 	[Fact]
-	public async Task Cursor_WithSortRelevance_IsRefused()
+	public async Task PageWalk_WithQuery_PageSizeOfOne_StillCoversThePoolWithoutHoles()
 	{
-		await Seed("b", """[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
-		var token = new KeysetCursor("deadbeef", "0", "a", "b").Encode();
+		await SeedQueryable();
 
-		var act = () => Search(board: "b", sort: new SortInput { By = "relevance" }, cursor: token);
+		var whole = (await Search(q: "alpha", board: "b", limit: 100)).Nodes.Select(n => n.Key).ToList();
+		var paged = await WalkAsync(c => Search(q: "alpha", board: "b", limit: 1, cursor: c));
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*LISTING mode only*");
+		paged.Should().Equal(whole);
+	}
+
+	[Fact]
+	public async Task SecondWalk_OverUnchangedData_ReproducesTheFirstWalkExactly()
+	{
+		// Requirement: «повторный проход при неизменных данных даёт тот же порядок».
+		await SeedQueryable();
+
+		var first = await WalkAsync(c => Search(q: "alpha", board: "b", limit: 2, cursor: c));
+		var second = await WalkAsync(c => Search(q: "alpha", board: "b", limit: 2, cursor: c));
+
+		second.Should().Equal(first);
+	}
+
+	[Fact]
+	public async Task SecondPage_ReusesTheStoredPool_AndRunsNoSecondRerank()
+	{
+		// Requirement 5 observed end-to-end, and countable. It needs a WORKING rerank route: a pool that
+		// fell back to RRF is deliberately never stored (no cross-encoder pass to save, and keeping it
+		// would pin stale provenance), so a no-LLM service caches nothing — correct, but it cannot
+		// demonstrate the saving. A local service keeps the LLM out of this class's other tests.
+		await SeedQueryable();
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
+
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, null);
+		cache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		var passesAfterPageOne = llm.RerankCalls;
+		passesAfterPageOne.Should().BeGreaterThan(0, "the cross-encoder decided this order");
+
+		var second = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, first.NextCursor);
+
+		second.Nodes.Should().NotBeEmpty();
+		cache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		llm.RerankCalls.Should().Be(passesAfterPageOne,
+			"page 2 must not pay for the cross-encoder again — 3-4 seconds per page is what this avoids");
+	}
+
+	[Fact]
+	public async Task ExhaustedSelection_SaysExhausted_AndIssuesNoCursor()
+	{
+		await SeedQueryable();
+
+		var res = await Search(q: "alpha", board: "b", limit: 100);
+
+		res.NextCursor.Should().BeNull();
+		res.Stop.Should().Be("exhausted", "every matching node was ranked and served — there genuinely is no more");
+		res.PoolBoundaryHint.Should().BeNull("nothing was left unlooked-at, so there is nothing to warn about");
+	}
+
+	[Fact]
+	public async Task MidWalk_SaysMore_AndIssuesACursor()
+	{
+		await SeedQueryable();
+
+		var res = await Search(q: "alpha", board: "b", limit: 2);
+
+		res.Stop.Should().Be("more");
+		res.NextCursor.Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task QueryResponse_AlwaysStatesWhyItStopped()
+	{
+		// The anti-ambiguity rule: a consumer must never have to INFER the end from a missing cursor,
+		// because "exhausted" and "pool-boundary" both omit it and mean different things.
+		await SeedQueryable();
+
+		foreach (var pageSize in new[] { 1, 2, 5, 100 })
+			(await Search(q: "alpha", board: "b", limit: pageSize)).Stop
+				.Should().BeOneOf("more", "exhausted", "pool-boundary");
+
+		(await Search(board: "b")).Stop.Should().BeNull("a listing has no ranked pool, so it declares no pool stop");
+	}
+
+	[Fact]
+	public async Task QueryResponse_DeclaresTheRankingDepth()
+	{
+		await SeedQueryable();
+
+		var res = await Search(q: "alpha", board: "b", limit: 2);
+
+		res.PoolLimit.Should().NotBeNull().And.BeGreaterThan(0,
+			"the depth ranking was allowed to look is a NUMBER the caller can quote, not folklore");
+	}
+
+	[Fact]
+	public async Task PoolRebuiltWithADifferentRankingMode_IsRefused_NotSpliced()
+	{
+		// tasks survived this by ACCIDENT: its token carries a score, and Advance's moved-row guard
+		// compares sort values byte-for-byte, so a cross-encoder score never matched an RRF one. Nothing
+		// stated that as an invariant, and a refactor dropping the score from the token — as memory
+		// legitimately did — would have reopened it in silence. The order commitment makes it declared,
+		// and this test is what keeps it declared.
+		await SeedQueryable();
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
+
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, null);
+		first.NextCursor.Should().NotBeNull();
+
+		// Evict the pool, then take the route down: page 2 rebuilds as plain RRF — same rows, different
+		// order, nothing written, every data stamp still agreeing.
+		for (var i = 0; i < 200; i++)
+			cache.Put($"evict-{i}", new SearchPool([], 1, false, new SearchRetrievers(true, false, false)));
+		llm.EmbedDown = true;
+
+		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, first.NextCursor);
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*ranked DIFFERENTLY*").WithMessage("*Your arguments are fine*");
+	}
+
+	// ── the deliberate refusals ──────────────────────────────────────────────────────────────
+
+	[Fact]
+	public async Task Cursor_WithQuery_AfterTheBoardChanged_IsRefused_NotSilentlyRestarted()
+	{
+		// Requirement 4, and the sharpest difference from listing paging: in a RELEVANCE order a single
+		// edit can move ANY row to ANY position, so continuing after one would splice two rankings. The
+		// data version rides in the fingerprint precisely so this is a loud error.
+		await SeedQueryable();
+		var first = await Search(q: "alpha", board: "b", limit: 2);
+		first.NextCursor.Should().NotBeNull();
+
+		await Seed("b", """[{"key":"q7","status":"Todo","title":"alpha seven","body":"alpha material seven"}]""");
+
+		var act = () => Search(q: "alpha", board: "b", limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Cursor_FromAQuery_IsRefused_AgainstADifferentQuery()
+	{
+		await SeedQueryable();
+		var first = await Search(q: "alpha", board: "b", limit: 2);
+
+		var act = () => Search(q: "material", board: "b", limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+	}
+
+	[Fact]
+	public async Task Cursor_FromAQuery_IsRefused_InListingMode()
+	{
+		// Dropping `q` changes both the selection and the ordering basis — the textbook silent-splice.
+		await SeedQueryable();
+		var first = await Search(q: "alpha", board: "b", limit: 2);
+
+		var act = () => Search(board: "b", limit: 2, cursor: first.NextCursor);
+
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
 	}
 
 	[Fact]

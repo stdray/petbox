@@ -185,6 +185,11 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITaskBoardStore, PetBox.Tasks.Data.TaskBoardStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.IRelationStore, PetBox.Tasks.Data.RelationStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITagStore, PetBox.Tasks.Data.TagStore>();
+		// The ranked-relevance POOL cache (spec: result-set-pageable) — SINGLETON by necessity, not by
+		// taste: it is what lets page 2 of a `q` walk reuse page 1's order instead of paying for the
+		// cross-encoder again, and the services that read it are SCOPED per request, so anything
+		// narrower would be born empty on every page and the rerank would run per page after all.
+		builder.Services.AddSingleton<PetBox.Core.Search.SearchPoolCache>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ICommentService, PetBox.Tasks.Services.CommentService>();
 		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(sp => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(

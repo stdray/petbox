@@ -634,16 +634,32 @@ public static class MemoryTools
 		[LogArg][Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
 		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
-		[LogArg][Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
+		[LogArg][Description("Max rows returned — one PAGE (default 20; 0 = no cap — the output budget still applies). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (60), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 16, where 3×limit used to exceed 60) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var cap = limit ?? DefaultLimit;
+		var hasCursor = !string.IsNullOrWhiteSpace(cursor);
+		// The stamps of EVERY container the cascade actually read, in cascade order. All of them, not
+		// just the near leg: a workspace-container write must refuse an in-flight cursor exactly like a
+		// project-container one, because the merged pool below is spliced from both and either can
+		// reorder it. Collected as the legs run and folded into the fingerprint afterwards.
+		var containerStamps = new List<string>();
+		// The ORDER each leg came back in. Separate from the stamps because it answers a different
+		// question: a stamp says whether the DATA moved, this says whether the RANKING did — which it can
+		// with nothing written at all, and which memory had no way to notice until now.
+		var containerOrderHashes = new List<string>();
+		// Pool facts merged across the cascade: the depth is the same declared budget in every leg, and
+		// the walk is bounded if ANY leg was bounded — a truncated pool anywhere means the merged order
+		// is a prefix of the merged match set.
+		int? poolLimit = null;
+		var poolBounded = false;
 		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
 		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
@@ -677,16 +693,32 @@ public static class MemoryTools
 				Sort = ParseSort(sort),
 				Limit = remaining,
 				BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
+				// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting
+				// on the answer, where a ranking mistake costs more than latency — Precision.
+				RankingMode = SearchRankingMode.Precision,
+				// Query mode asks each leg for its WHOLE ranked pool and pages the MERGED order here —
+				// the same division of labour tasks_search uses. `Limit` above keeps sizing the candidate
+				// depth, which is a selection decision that must not shift with the page size.
+				WholePool = hasQuery,
 			}, ct);
+			// Stamp + pool facts of THIS leg, folded into the cascade-wide answer. The ORDER hash is
+			// collected per leg and joined in cascade sequence: the merged list is a splice of both pools,
+			// so either one being re-ranked differently is a different list to page.
+			containerStamps.Add(scopeName + "=" + (res.DataVersion ?? ""));
+			containerOrderHashes.Add(scopeName + "=" + (res.PoolOrderHash ?? ""));
+			if (res.PoolLimit is { } pl) poolLimit = poolLimit is { } cur ? Math.Min(cur, pl) : pl;
+			poolBounded |= res.PoolBounded;
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
 					// The reason survives the OR-merge across scopes: the first scope that degraded
 					// owns it (a mute degraded:true is exactly what this leaf exists to kill). SemanticLag
 					// SUMS across scopes (each container's vector leg trails its own data, so the total
 					// "docs not embedded yet" is the sum; null when neither scope ran a semantic leg);
-					// Reranked ORs (a rerank pass in any scope means the answer was reranked).
+					// Ranking merges by MergeRanking (both scopes share the SAME requested mode, so they
+					// can only disagree on Reranked vs DegradedRrf — Reranked wins if either reranked,
+					// otherwise a degradation in any scope must not be hidden behind the other's success).
 					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded,
-						agg.DegradedReason ?? r.DegradedReason, SumLag(agg.SemanticLag, r.SemanticLag), agg.Reranked | r.Reranked)
+						agg.DegradedReason ?? r.DegradedReason, SumLag(agg.SemanticLag, r.SemanticLag), MergeRanking(agg.Ranking, r.Ranking))
 					: r;
 
 			// Usage counters are keyed per (store, key) — rows may span stores in one container.
@@ -740,7 +772,39 @@ public static class MemoryTools
 				? scored.OrderByDescending(s => Math.Round(s.Score, 6)).ThenBy(s => s.ScopeRank)
 				: scored;
 		var ordered = orderedScored.ToList();
-		if (cap > 0 && ordered.Count > cap) ordered = ordered.Take(cap).ToList();
+
+		// KEYSET SEEK over the MERGED cascade order (spec: result-set-pageable), before the page cut and
+		// before the budget — a skipped prefix must not spend budget it already spent last call.
+		//
+		// The resume key is the row's full ADDRESS: (scope, store, key). Store alone is not unique across
+		// scopes and key alone is not unique across stores, so anything less would let a token land on the
+		// wrong row; with all three the position is exact, which is what lets the relevance order stay
+		// pageable despite repeated scores (a score tie cannot make an identity ambiguous).
+		var fingerprint = SearchFingerprint(hasQuery ? q!.Trim() : null, scope, projectKey, store, type,
+			sort, containerStamps);
+		var orderHash = string.Join('|', containerOrderHashes);
+		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> seeking = ordered;
+		if (hasCursor)
+		{
+			var token = KeysetCursor.Decode(cursor, fingerprint, "memory_search");
+			// THE ORDER COMMITMENT (spec: result-set-pageable) — and memory needed it most. Its token
+			// carries no scalar (the relevance order has none), so the moved-row guard inside Advance is
+			// vacuous here and identity resume would accept the boundary row wherever it now sat. Combined
+			// with "a degraded pool is never cached", the common shape was: page 1 lands during a rerank
+			// outage → not cached → page 2 is always a rebuild → route has recovered → same rows, reranked
+			// order, same stamp, same fingerprint → seek into a list the caller never saw. Minutes-long
+			// recoveries are the observed pattern, so this was not exotic.
+			if (hasQuery) token.AssertPoolOrder(orderHash, "memory_search");
+			seeking = KeysetCursor.Advance(
+				ordered, token,
+				s => (CursorSortValue(s.Score, hasQuery), s.Row.Store + "\x1f" + s.Row.Key, s.Row.Scope),
+				CursorSortComparison(hasQuery), desc: false, "memory_search");
+		}
+
+		var page = seeking.ToList();
+		if (cap > 0 && page.Count > cap) page = page.Take(cap).ToList();
+		var moreInPool = page.Count < seeking.Count;
+		ordered = page;
 		var rows = ordered.Select(s => s.Row).ToList();
 
 		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
@@ -769,19 +833,116 @@ public static class MemoryTools
 			sessionId: McpSessionId(http),
 			usageSource: deliberate ? DeliberateSource : MachineSource);
 
+		// A resume token only when rows were actually withheld (by `limit` or by the budget) AND this page
+		// has a last row to resume from.
+		var more = moreInPool || omitted > 0;
+		var last = kept.Count > 0 ? ordered[kept.Count - 1] : default;
+		var nextCursor = kept.Count > 0 && more
+			? new KeysetCursor(fingerprint, CursorSortValue(last.Score, hasQuery),
+				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope, hasQuery ? orderHash : "").Encode()
+			: null;
+		// WHY THE WALK STOPPED — stated, not implied, and the SAME three words tasks_search uses. In query
+		// mode this is always present, so a caller never has to read "nextCursor is absent" and guess
+		// whether it reached the end of the matches or the end of what ranking ever looked at.
+		var stop = !hasQuery ? (SearchPoolStop?)null
+			: more ? SearchPoolStop.More
+			: poolBounded ? SearchPoolStop.PoolBoundary
+			: SearchPoolStop.Exhausted;
+
 		return new MemorySearchResultView(
 			kept,
 			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason,
-				fin.SemanticLag, fin.Reranked) : null,
+				fin.SemanticLag, fin.Ranking) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
-			Hint: omitted > 0 ? SearchBudgetHint : null);
+			Hint: omitted > 0 ? SearchBudgetHint : null,
+			NextCursor: nextCursor,
+			Stop: stop is null ? null : StopWire(stop.Value),
+			PoolLimit: hasQuery ? poolLimit : null,
+			PoolBoundaryHint: stop == SearchPoolStop.PoolBoundary ? PoolBoundaryHintText : null);
 	}
+
+	// The wire form of the stop reason — the SAME lowercase kebab vocabulary tasks_search and
+	// session_search emit. Three surfaces answering in three shapes is exactly what this work exists to
+	// prevent, so the mapping is duplicated deliberately rather than each adapter inventing its own.
+	internal static string StopWire(SearchPoolStop stop) => stop switch
+	{
+		SearchPoolStop.More => "more",
+		SearchPoolStop.Exhausted => "exhausted",
+		SearchPoolStop.PoolBoundary => "pool-boundary",
+		_ => "exhausted",
+	};
+
+	// Surfaced ONLY on stop:"pool-boundary" — the case a caller must not read as "that was everything".
+	const string PoolBoundaryHintText =
+		"Ranking depth reached (see poolLimit): more entries matched your filters than relevance ranking "
+		+ "looked at, so this is a PREFIX of the match set, NOT the whole of it — and there is no further "
+		+ "page to fetch, because the rest was never ranked. To reach it, NARROW the read (`store`, "
+		+ "`type`, `scope`, a more specific `q`), list without `q`, or use memory_delta to enumerate a "
+		+ "whole store incrementally.";
+
+	// The canonical sort-key value a cursor carries — CONSTANT here, in both modes, because neither of
+	// memory's orders has a scalar that means anything.
+	//
+	// It used to carry the query-mode score, which was actively wrong: that score is FRESHNESS-DECAYED
+	// against `now`, so the same row reports a slightly different value on every call. Nothing in the
+	// data has to change for it to drift. Once KeysetCursor learned to distrust an identity match whose
+	// sort value moved (the volatile-axis fix), that drift made every second page look like a row that
+	// had jumped, sending a perfectly valid walk into the comparison path — which memory refuses outright.
+	//
+	// A constant is the honest encoding: resumption here is by IDENTITY (scope + store + key, unique in
+	// the pool), the pool is pinned by the container stamps in the fingerprint, and a scalar that cannot
+	// order the list has no business pretending to describe a position in it.
+	static string CursorSortValue(double score, bool hasQuery) => "";
+
+	// How two of those values compare. Resumption is by IDENTITY first (KeysetCursor.Advance), and this
+	// delegate is reached only when the row a token names is GONE from the pool. With the container
+	// stamps pinned into the fingerprint that cannot happen inside a valid walk, and neither order here
+	// is a sound scalar one anyway — the query order is decay-blended and MMR-diversified, the listing
+	// order is a cascade concatenation. So refuse explicitly instead of guessing a boundary.
+	static Comparison<string> CursorSortComparison(bool hasQuery) => (_, _) => throw new ArgumentException(
+		hasQuery
+			? "memory_search: the row this cursor names is no longer in the ranked pool, and a relevance "
+			+ "position cannot be re-derived from its score (the order is freshness-decayed and "
+			+ "MMR-diversified). Drop the cursor and start the query over."
+			: "memory_search: the row this cursor names is no longer in the listing. Drop the cursor and "
+			+ "start over.");
+
+	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected and in
+	// WHAT order, plus the change stamp of EVERY container the cascade read. Deliberately EXCLUDES
+	// bodyLen/includeUsage/limit — those shape a page, not the sequence.
+	static string SearchFingerprint(string? query, string? scope, string? projectKey, string? store,
+		string? type, SortInput? sort, IReadOnlyList<string> containerStamps) =>
+		KeysetCursor.FingerprintOf(
+			"memory_search", query, scope, projectKey, store, type,
+			sort?.By, sort?.Desc == true ? "1" : "0",
+			string.Join('|', containerStamps));
 
 	// Merge the vector-lag counts of two scopes: null only when NEITHER ran a semantic leg (there
 	// is no coverage to be behind on); otherwise the sum, treating a scope that answered lexically-
 	// only (null lag) as contributing 0.
 	static long? SumLag(long? a, long? b) => a is null && b is null ? null : (a ?? 0) + (b ?? 0);
+
+	// Merge the ranking outcome of two scopes (spec: search-rerank-in-loop). Every scope in this cascade
+	// shares the SAME requested SearchRankingMode, so they can only disagree on Reranked vs DegradedRrf
+	// — one container had a live rerank route, the other's outage or missing route fell back.
+	//
+	// DEGRADATION DOMINATES. The rule used to be the other way round ("Reranked wins so a partial
+	// success is never hidden"), which had it exactly backwards: the merged answer is ONE list, and if
+	// any part of it was never reranked then the list as a whole was not. The common case is not even an
+	// outage — a project with a rerank route cascading into a workspace container without one is a
+	// PERMANENT arrangement, so every cascade answer reported `Reranked` and `degraded:false` forever
+	// while half its rows were plain RRF. The tri-state exists precisely to keep precision, degradation
+	// and deliberate choice apart; a merge that resolves toward the flattering value throws away the
+	// distinction it was introduced for. A caller can now trust the pessimistic reading: "reranked"
+	// means all of it was.
+	//
+	// Falls back to whichever side is set (both ChosenRrf, or one null) when neither is
+	// Reranked/DegradedRrf.
+	internal static SearchRankingOutcome? MergeRanking(SearchRankingOutcome? a, SearchRankingOutcome? b) =>
+		a == SearchRankingOutcome.DegradedRrf || b == SearchRankingOutcome.DegradedRrf ? SearchRankingOutcome.DegradedRrf
+		: a == SearchRankingOutcome.Reranked || b == SearchRankingOutcome.Reranked ? SearchRankingOutcome.Reranked
+		: a ?? b;
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;

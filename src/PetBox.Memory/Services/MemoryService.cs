@@ -50,13 +50,21 @@ public sealed class MemoryService : IMemoryService
 	// per-query SearchService so a degraded retriever leg is LOGGED, not just flagged.
 	readonly ILogger<MemoryService>? _log;
 
+	// The ordered relevance POOL cache (spec: result-set-pageable) — what keeps page 2 from paying for
+	// the cross-encoder a second time. MUST be a SINGLETON to do its job: MemoryService is scoped per
+	// request, so an instance-local cache would be born empty on every page. When DI supplies nothing
+	// (tests, direct construction) the fallback is a private instance — the feature stays CORRECT (every
+	// page re-materializes the pool deterministically) and only loses the latency win.
+	readonly SearchPoolCache _poolCache;
+
 	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchOrderingPolicies? rerank = null,
-		ILogger<MemoryService>? log = null)
+		ILogger<MemoryService>? log = null, SearchPoolCache? poolCache = null)
 	{
 		_stores = stores;
 		_llm = llm;
 		_ordering = rerank ?? new SearchOrderingPolicies();
 		_log = log;
+		_poolCache = poolCache ?? new SearchPoolCache();
 	}
 
 	// ---- store lifecycle ----
@@ -179,7 +187,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
 		return new MemorySearchResult(hits.Select(h => View(h.Entry)).ToList(), retrievers);
 	}
 
@@ -187,7 +195,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
 		// Load the pool's vectors ONCE (when an embedder is wired) so a caller's MMR has proximity;
 		// without an embedder there is nothing to load and MMR degrades to identity downstream.
 		var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
@@ -245,6 +253,16 @@ public sealed class MemoryService : IMemoryService
 		// and the raw vector (for MMR; null in listing mode / no embedder).
 		var selected = new List<Candidate>();
 		SearchRetrievers? retrievers = null;
+		// Pool facts of a RELEVANCE selection (spec: result-set-pageable) — null in listing mode, which
+		// has no ranked pool and no ranking-depth boundary to declare.
+		int? poolLimit = null;
+		bool poolBounded = false;
+		// The change stamp of the stores this result was computed over; the adapter folds it into the
+		// cursor fingerprint so a mid-walk write is an error, not a silent restart.
+		string? dataVersion = null;
+		// The identity of the ORDER this result was ranked in — the guard for the case where nothing was
+		// written but the ranking still moved. Rides into the cursor beside the fingerprint.
+		string? poolOrderHash = null;
 		if (stores.Count > 0 && query is null)
 		{
 			// LISTING: the active entries of every store in scope — ONE query over the project
@@ -261,9 +279,69 @@ public sealed class MemoryService : IMemoryService
 			// bounded CANDIDATE POOL of max(3×limit, 50) — the same formula as tasks_search (3×
 			// leaves the post-fusion type predicate room to drop candidates and still fill the
 			// limit; the 50 floor keeps recall sane for small/unbounded asks).
-			var (hits, r) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
-				Math.Max(request.Limit * 3, 50), lexical: null, semantic: null, ct);
-			retrievers = r;
+			// CANDIDATE DEPTH, pinned while paging (spec: result-set-pageable). `Limit` normally sizes the
+			// per-leg top-K, which decides WHICH entries are candidates. Letting that follow the page size
+			// means page 2 with a different `limit` ranks a DIFFERENT POOL — and since `limit` is
+			// deliberately NOT in the fingerprint (the tool promises it may vary between pages), the
+			// cursor is accepted and the identity seek runs against an ordering it never saw: skips and
+			// duplicates with no error. Reachable on plain defaults here — page 1 with no `limit` is
+			// depth 60, page 2 with `limit:10` is depth 50.
+			//
+			// A fixed depth keeps the documented freedom to change page size and makes the pool a
+			// property of the QUERY. 60 is what a default read (cap 20) already used, so nothing changes
+			// for it.
+			var legK = request.WholePool ? PagedCandidateDepth : Math.Max(request.Limit * 3, 50);
+
+			// The DATA VERSION of every store this query can see (spec: result-set-pageable). It keys the
+			// pool cache AND rides out to the adapter for the cursor fingerprint, so an edit mid-walk is
+			// a loud refusal rather than two orderings spliced together.
+			dataVersion = await ChangeStampAsync(projectKey, stores, ct);
+
+			// The pool cache key covers what decides the POOL's membership and order. The type filter is
+			// applied INSIDE SearchStoresAsync (post-resolution), so it belongs here; `Limit` matters only
+			// through legK, which is included as the candidate depth it implies.
+			var poolKey = KeysetCursor.FingerprintOf(
+				"memory-pool", projectKey, query, string.Join(',', stores.Order(StringComparer.Ordinal)),
+				typeFilter?.ToString(), legK.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				request.RankingMode.ToString(), dataVersion);
+
+			List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> hits;
+			if (_poolCache.TryGet(poolKey, out var cachedPool))
+			{
+				// PAGE 2+ ON A LIVE POOL — HYDRATE THE STORED ADDRESSES, never re-run the search and
+				// re-sort. An unchanged stamp means the DATA did not move; it does NOT mean the world did
+				// not. A transient Embed outage between pages is AVAILABILITY, so the cache key still
+				// matches, but a re-derived union arrives without the vector leg's candidates and every
+				// cached row missing from it silently evaporates — and if the rest of the walk was
+				// semantic-only rows, the page comes back empty and says `stop:"exhausted"`. Storing
+				// addresses is exactly what lets this path not have that bug.
+				hits = HydratePool(projectKey, cachedPool, typeFilter);
+				// Provenance describes the pass that DECIDED this order — the cached one, which is never a
+				// degraded pool (see the Put guard below).
+				retrievers = cachedPool.Retrievers;
+				poolLimit = cachedPool.PoolLimit;
+				poolBounded = cachedPool.PoolBounded;
+				poolOrderHash = cachedPool.OrderHash;
+			}
+			else
+			{
+				var (fresh, r, freshLimit, freshBounded, freshOrderHash) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
+					legK, lexical: null, semantic: null, ct, mode: request.RankingMode);
+				hits = fresh;
+				retrievers = r;
+				poolLimit = freshLimit;
+				poolBounded = freshBounded;
+				poolOrderHash = freshOrderHash;
+				// A DEGRADED pool is never stored: cheap to recompute (the reranker did not run anyway) and
+				// expensive to keep, since caching it pins a half-answer plus its stale provenance for the
+				// whole TTL — every repeat of the query then keeps hitting an outage that has already
+				// healed. Only ADDRESSES are stored, never rendered rows, so a cached pool can go stale in
+				// ORDER — refused by the fingerprint — but never in CONTENT.
+				if (!r.Degraded && r.Ranking != SearchRankingOutcome.DegradedRrf)
+					_poolCache.Put(poolKey, new SearchPool(
+						[.. hits.Select(h => new Hit(h.Entry.Store, h.Entry.Key, h.Score, h.LexicalConfirmed ? "lexical" : "semantic"))],
+						freshLimit, freshBounded, r));
+			}
 			var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
 			selected.AddRange(hits.Select(h => new Candidate(h.Entry.Store, h.Entry, h.Score,
 				vecs is not null && vecs.TryGetValue((h.Entry.Store, h.Entry.Key), out var v) ? v : null,
@@ -282,7 +360,10 @@ public sealed class MemoryService : IMemoryService
 			selected = RankRelevance(selected);
 
 		selected = SortSelected(selected, request.Sort, hasQuery: query is not null);
-		if (request.Limit > 0 && selected.Count > request.Limit) selected = selected.Take(request.Limit).ToList();
+		// WholePool (spec: result-set-pageable) suppresses the truncation entirely — the caller is paging
+		// and will seek + slice the full order itself. `Limit` still did its OTHER job upstream (it sized
+		// the candidate depth), so suppressing the cut changes no row's rank and no candidate's membership.
+		if (!request.WholePool && request.Limit > 0 && selected.Count > request.Limit) selected = selected.Take(request.Limit).ToList();
 
 		// Retriever provenance: query mode names how the hit surfaced (lexically confirmed vs
 		// vector-only); a listing ran no relevance leg, so it stays null.
@@ -291,7 +372,7 @@ public sealed class MemoryService : IMemoryService
 			x.Score,
 			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"),
 			x.ScoreRaw)).ToList();
-		return new MemoryEntrySearchResult(hits2, retrievers);
+		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion, poolOrderHash);
 	}
 
 	// One selection candidate: its owning store, the entry, the fused relevance Score (query
@@ -438,9 +519,9 @@ public sealed class MemoryService : IMemoryService
 	// and stitched the pools together afterwards).
 	//
 	// The MemoryType taxonomy filter still applies post-resolution (it is not the index's Type).
-	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers)> SearchStoresAsync(
+	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers, int PoolLimit, bool PoolBounded, string OrderHash)> SearchStoresAsync(
 		string projectKey, IReadOnlyList<string> stores, string query, MemoryType? typeFilter, int k,
-		bool? lexical, bool? semantic, CancellationToken ct)
+		bool? lexical, bool? semantic, CancellationToken ct, SearchRankingMode mode = SearchRankingMode.Precision)
 	{
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
 
@@ -453,7 +534,11 @@ public sealed class MemoryService : IMemoryService
 		{
 			var listing = ListActive(ctx, stores, typeFilter);
 			var scoredListing = listing.Select((e, i) => (e, 1.0 / (i + 1), true)).ToList();
-			return (scoredListing, new SearchRetrievers(true, false, false));
+			// A degraded-to-listing query ranked NOTHING, so there is no ranking-depth boundary to
+			// declare: the set is complete by construction (PoolBounded false), and PoolLimit reports
+			// its own size rather than a budget that never applied.
+			return (scoredListing, new SearchRetrievers(true, false, false), scoredListing.Count, false,
+				KeysetCursor.OrderHashOf(scoredListing.Select(x => (x.Item1.Store + "" + x.Item1.Key, x.Item2))));
 		}
 
 		await EnsureLexicalBackfillAsync(ctx, projectKey, stores, ct);
@@ -474,7 +559,11 @@ public sealed class MemoryService : IMemoryService
 		// candidate's INDEXED text (Description + Body — the SAME shape MemorySearchDocs.ToDoc indexes)
 		// for the budget-capped (store,key) pool, aligned to the candidate order; one read over the
 		// active entries, missing → "". No LLM route → reranker is null → honest RRF (DegradedRrf).
-		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		// An explicit Speed ask (search-ranking-mode-is-caller-choice) short-circuits BEFORE any of
+		// that: no reranker is constructed at all, so the facade never even probes
+		// IsRerankAvailableAsync — RRF answers directly and provenance reports ChosenRrf, not a
+		// degradation.
+		IReranker? reranker = mode == SearchRankingMode.Speed ? null : _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
 		CandidateTextResolver resolveText = (candidates, _) =>
 		{
 			var keys = candidates.Select(h => h.Id).Distinct().ToList();
@@ -486,8 +575,12 @@ public sealed class MemoryService : IMemoryService
 			IReadOnlyList<string> texts = candidates.Select(h => byAddr.GetValueOrDefault((h.Type, h.Id), "")).ToList();
 			return Task.FromResult(texts);
 		};
-		var resp = await new SearchService(indexes, _log, reranker)
-			.SearchAsync(projectKey, query, filter, k, resolveCandidateText: resolveText, ct: ct);
+		// SearchPoolAsync, not SearchAsync (spec: result-set-pageable): the WHOLE ranked pool rather than
+		// its first k rows. `k` still bounds the per-leg top-K (what the vector leg needs); the pool's own
+		// ceiling is the rerank candidate budget the facade reports back as PoolLimit.
+		var pool = await new SearchService(indexes, _log, reranker)
+			.SearchPoolAsync(projectKey, query, filter, k, mode: mode, resolveCandidateText: resolveText, ct: ct);
+		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is
@@ -515,7 +608,7 @@ public sealed class MemoryService : IMemoryService
 		if (retrievers.Semantic)
 			retrievers = retrievers with { SemanticLag = SemanticLag(ctx, stores) };
 
-		return (hits, retrievers);
+		return (hits, retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);
 	}
 
 	// The vector leg's coverage LAG (spec search-semantic-lag): Σ over the scope's stores of
@@ -909,6 +1002,68 @@ public sealed class MemoryService : IMemoryService
 	}
 
 	// Active entries of ONE store — the single-store listing path.
+	// The per-leg candidate depth a PAGED (WholePool) query uses — fixed, so the pool a caller walks
+	// cannot change shape when they change page size. 60 is what a default read (cap 20 → 3×20) already
+	// used, so the common path is unchanged.
+	public const int PagedCandidateDepth = 60;
+
+	// Hydrate a CACHED pool: its stored (store, key) addresses, in its stored order, with each row's
+	// CURRENT content. One query for the whole pool, no index leg and no reranker involved — the order
+	// was decided once and this only re-reads what the rows say now.
+	//
+	// An address that no longer resolves (deleted, or excluded by the type filter) is DROPPED, not
+	// faked — safe because any such change moves the store's change stamp, which is in the cursor
+	// fingerprint, so an in-flight walk is refused before reaching here. What this must never do is drop
+	// a row because a RETRIEVER blipped, which is not a fact about the row at all.
+	List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> HydratePool(
+		string projectKey, SearchPool pool, MemoryType? typeFilter)
+	{
+		if (pool.Count == 0) return [];
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var poolStores = pool.Ordered.Select(h => h.Type).Distinct().ToList();
+		var poolKeys = pool.Ordered.Select(h => h.Id).Distinct().ToList();
+		var byAddr = ctx.Entries
+			.Where(e => e.ActiveTo == null && poolStores.Contains(e.Store) && poolKeys.Contains(e.Key))
+			.ToList()
+			.Where(e => typeFilter == null || e.Type == typeFilter)
+			.ToDictionary(e => (e.Store, e.Key));
+
+		var hits = new List<(MemoryEntry, double, bool)>(pool.Count);
+		foreach (var addr in pool.Ordered)
+			if (byAddr.TryGetValue((addr.Type, addr.Id), out var entry))
+				hits.Add((entry, addr.Score, addr.Retriever == "lexical"));
+		return hits;
+	}
+
+	// The scalar CHANGE STAMP of the stores in scope (spec: result-set-pageable) — memory's answer to
+	// TasksService.GetBoardChangeStampAsync. Two SQL aggregates over the revision table, NO row
+	// materialization, so it is cheap enough to run on EVERY q-mode call, which it must be: the stamp
+	// is both the pool cache's identity and part of the cursor fingerprint, so a stale one would
+	// certify an ordering that has already moved.
+	//
+	// MAX(Version) ALONE IS NOT ENOUGH, and the earlier version of this comment was wrong about why.
+	// A delete here does NOT append a revision: TemporalStore stamps `ActiveTo` on the EXISTING row and
+	// inserts nothing. So MAX(Version) does not move, the row COUNT does not move either (the row is
+	// still there, just retired), and a pure delete was invisible to this stamp — a cursor would survive
+	// the disappearance of the very rows it was walking, and the deleted entries would simply not
+	// hydrate, silently shortening the answer.
+	//
+	// `ActiveTo` is itself a VERSION (long?), not a timestamp, so MAX(COALESCE(ActiveTo, Version)) reads
+	// "the highest version at which anything in scope was written OR retired" — one aggregate that moves
+	// on inserts, edits and deletes alike. The plain MAX(Version) rides along beside it because the two
+	// answer different questions (newest write vs newest event) and a change that moved only one of them
+	// must still show up.
+	public async Task<string> ChangeStampAsync(string projectKey, IReadOnlyList<string> stores, CancellationToken ct = default)
+	{
+		if (stores.Count == 0) return "0:0:0";
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var rows = ctx.Entries.Where(e => stores.Contains(e.Store));
+		var maxVersion = await rows.Select(e => (long?)e.Version).MaxAsync(ct) ?? 0;
+		var maxEvent = await rows.Select(e => (long?)(e.ActiveTo ?? e.Version)).MaxAsync(ct) ?? 0;
+		var count = await rows.CountAsync(ct);
+		return $"{maxVersion}:{maxEvent}:{count}";
+	}
+
 	static List<MemoryEntry> ListActive(MemoryDb ctx, string store, MemoryType? typeFilter) =>
 		ListActive(ctx, [store], typeFilter);
 

@@ -17,6 +17,15 @@ namespace PetBox.Core.Contract;
 // sorting by relevance is an error. `Limit` caps the rows (0 = the family default);
 // `BodyLen` slices row bodies to the first N chars (0 = full) — the response budget then
 // measures the post-slice wire rows.
+// `RankingMode` is the RANKING axis the caller chose (spec: search-ranking-mode-is-caller-choice) —
+// Precision (the default) attempts the штатный cross-encoder rerank pass when a route is live and
+// falls through to the honest RRF degradation otherwise; Speed short-circuits straight to RRF,
+// never even constructing a reranker. The service layer (TasksService/MemoryService) only
+// PROPAGATES this value — it never guesses one when a caller leaves it at the default. The DEFAULT
+// itself is an EDGE decision: MCP verbs (tasks_search/memory_search/session_search) want Precision
+// (an agent acts on the answer — a ranking mistake costs more than latency), UI search pages want
+// Speed (a human skims a list — latency costs more) — so each edge sets it explicitly when it
+// builds the request rather than leaning on this record's bare default.
 public sealed record SearchRequest<TFilter, TSort>
 {
 	public string? Query { get; init; }
@@ -24,6 +33,19 @@ public sealed record SearchRequest<TFilter, TSort>
 	public (TSort By, bool Desc)? Sort { get; init; }
 	public int Limit { get; init; }
 	public int BodyLen { get; init; }
+	public SearchRankingMode RankingMode { get; init; } = SearchRankingMode.Precision;
+
+	// PAGING (spec: result-set-pageable). When true the service returns the WHOLE ranked pool instead
+	// of its first `Limit` rows, because the caller intends to seek into it with a keyset cursor and
+	// slice its own page — the same division of labour a LISTING already uses, where the adapter owns
+	// the cursor and the service owns the order.
+	//
+	// It is a separate flag rather than `Limit = 0` on purpose. In query mode `Limit` has a SECOND job:
+	// it sizes the per-leg candidate depth (max(Limit, 50)), which is a SELECTION decision. Collapsing
+	// "give me everything" onto Limit = 0 would silently shrink that depth to the floor and change
+	// WHICH entities are candidates — a ranking change disguised as a pagination knob. So `Limit` keeps
+	// meaning "the page, and the candidate depth it implies", and this flag says "don't truncate to it".
+	public bool WholePool { get; init; }
 }
 
 // One read response: the selected rows plus the two cross-cutting envelopes every read

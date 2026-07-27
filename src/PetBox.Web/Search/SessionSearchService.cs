@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PetBox.Core.Contract;
 using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.Memory.Contract;
@@ -72,8 +73,22 @@ public sealed class SessionSearchService
 		_ordering = rerank ?? new SearchOrderingPolicies();
 	}
 
+	// How deep the DISCOVERY pool is allowed to be paged (spec: result-set-pageable) — sessions' analogue
+	// of the rerank candidate budget. It bounds the ORDER a caller may walk, never the cost of one call:
+	// each page still hydrates only `sessions` (≤ MaxSessions) candidates, so paging cannot turn a
+	// sublinear discovery into a full archive scan. Today's callers never see it bite — the legs' own
+	// pools (termPool, the digest store's) are far smaller — but it is what `poolLimit` names, so it is a
+	// declared constant rather than an emergent accident.
+	public const int DiscoveryPoolLimit = 200;
+
+	// `afterSessionId` is the RESUME POINT: hydrate the candidates that come strictly after that session
+	// in the discovery order. The adapter still owns the cursor token (encode/decode/fingerprint, exactly
+	// as tasks_search and memory_search do); this parameter is only the position it decoded, kept here
+	// because the discovery order lives here and re-deriving it in the adapter would mean hydrating the
+	// whole pool just to find one row.
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
-		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, int? bodyLen = null, CancellationToken ct = default)
+		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, int? bodyLen = null,
+		string? afterSessionId = null, CancellationToken ct = default)
 	{
 		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
@@ -172,10 +187,46 @@ public sealed class SessionSearchService
 			}
 		}
 
-		var ranked = RankDiscovery(pool, _ordering);
+		var rankedAll = RankDiscovery(pool, _ordering);
+
+		// THE PAGEABLE POOL is the discovery order — the sessions that WILL BE SHOWN, ranked. Not the
+		// intermediate digest entries: a digest is how a session was found, not the thing the caller pages
+		// through, and several digests can point at one session. Truncated to the declared depth so the
+		// boundary a caller is told about is a constant, and recorded as PoolBounded when it actually bit.
+		var poolBounded = rankedAll.Count > DiscoveryPoolLimit;
+		var ranked = rankedAll.Count > DiscoveryPoolLimit ? rankedAll.Take(DiscoveryPoolLimit).ToList() : rankedAll;
+
+		// The DATA VERSION of this walk is a hash of the discovery order ITSELF (session id + fused score,
+		// in order). That is exact rather than approximate: the basis of the ordering is precisely what a
+		// cursor must stay bound to, and every input that could move a row — a new session, a fresh
+		// digest, a term-index update, a changed leg — shows up here by construction. It also costs
+		// nothing: the fused ranking is already in hand, so no extra query is needed to stamp it, which is
+		// what makes it affordable on EVERY call (a stale stamp would certify an order that has moved).
+		var dataVersion = KeysetCursor.FingerprintOf(
+			[.. ranked.Select(h => h.Entry.Key + "=" + h.Score.ToString("R", System.Globalization.CultureInfo.InvariantCulture))]);
+
+		// KEYSET SEEK by IDENTITY: resume strictly after the session the token names, wherever it now
+		// sits. Identity is the whole key — a session id is unique in the pool, so a repeated score cannot
+		// make the boundary ambiguous. A resume point that is no longer in the pool cannot occur inside a
+		// valid walk (the stamp above would have refused the token first); if it somehow does, we refuse
+		// rather than silently restarting at the top, which is the failure this design exists to prevent.
+		var start = 0;
+		if (afterSessionId is not null)
+		{
+			var at = ranked.FindIndex(h => string.Equals(h.Entry.Key, afterSessionId, StringComparison.Ordinal));
+			if (at < 0)
+				throw new ArgumentException(
+					"session_search: the session this cursor names is no longer in the discovery pool — "
+					+ "drop the cursor and start the query over.");
+			start = at + 1;
+		}
 
 		var candidates = new List<SessionSearchCandidate>();
-		foreach (var digest in ranked.Take(sessions))
+		var pageSlice = ranked.Skip(start).Take(sessions).ToList();
+		// Rows remaining in the pool AFTER this page — the "more" signal, computed on the POOL (before
+		// hydration can drop a stale candidate) so it describes the walk, not this page's luck.
+		var moreInPool = start + pageSlice.Count < ranked.Count;
+		foreach (var digest in pageSlice)
 		{
 			ct.ThrowIfCancellationRequested();
 			var (sessionId, agent) = Provenance(digest.Entry);
@@ -194,7 +245,13 @@ public sealed class SessionSearchService
 		// Distilled/Reason stay an HONEST informational signal — but candidates are no longer
 		// gated on it: the term (and opt-in fullscan) legs answer regardless of the digest store.
 		return new SessionSearchOutcome(distilled, distilled ? null : "no-digest-store", candidates, retrievers,
-			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped);
+			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped,
+			DiscoveryPoolLimit, poolBounded, moreInPool, dataVersion,
+			// The resume point is the last candidate this page CONSIDERED, not the last it managed to
+			// hydrate. A stale candidate (session deleted after distillation) is skipped, and resuming
+			// before it would re-consider it forever; resuming after the slice also keeps a page whose
+			// every candidate went stale from ending the walk while the pool still has rows.
+			pageSlice.Count > 0 ? pageSlice[^1].Entry.Key : null);
 	}
 
 	// allowed = system.SystemEnabled AND project.ProjectEnabled — TWO independent switches
@@ -283,6 +340,17 @@ public sealed record SessionSearchCandidate(
 //     reported, not silently ignored.
 //   FullScanRan=true  — the scan ran; `FullScanCapped=true` means the project holds more
 //     sessions than the scan cap, so some were never looked at (also logged, never silent).
+//
+// PAGING (spec: result-set-pageable). `PoolLimit` is how deep the discovery order may be walked;
+// `PoolBounded` says that depth was actually reached, so the pool is a PREFIX of what discovery found;
+// `MoreInPool` says rows remain after this page. `DataVersion` stamps the discovery ORDER a cursor is
+// bound to, and `LastPoolKey` is the session this page ended on — the position a resume token names.
+//
+// NOTE on ranking modes (spec: search-ranking-modes-uniform-across-entities): session discovery has NO
+// cross-encoder rerank of its own — the fused legs run through SearchOrderingPolicies only. These fields
+// are about PAGINATION and deliberately say nothing about a ranking mode, so this contract never offers
+// session_search a Precision/Speed choice it cannot honour. (A rerank for sessions is its own unstarted
+// card, search-rerank-for-sessions; nothing here anticipates it.)
 public sealed record SessionSearchOutcome(
 	bool Distilled,
 	string? Reason,
@@ -291,4 +359,9 @@ public sealed record SessionSearchOutcome(
 	bool? FullScanRequested = null,
 	bool? FullScanRan = null,
 	string? FullScanReason = null,
-	bool? FullScanCapped = null);
+	bool? FullScanCapped = null,
+	int? PoolLimit = null,
+	bool PoolBounded = false,
+	bool MoreInPool = false,
+	string? DataVersion = null,
+	string? LastPoolKey = null);

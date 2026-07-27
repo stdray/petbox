@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 
@@ -304,11 +305,15 @@ public sealed record MemoryEntryRow(
 //
 // `SemanticLag` (spec search-semantic-lag) is the vector leg's coverage trail — docs the async
 // worker has not embedded yet (0 = fully drained); null when no semantic leg answered. It stops
-// `semantic:true` reading as "coverage complete" after a reindex/outage. `Reranked` (spec
-// search-degraded-provenance) is laid in NOW so switching the deferred reranker on is not a contract
-// change; today it is always false (no rerank pass runs yet).
+// `semantic:true` reading as "coverage complete" after a reindex/outage. `Ranking` (spec
+// search-rerank-in-loop / search-ranking-mode-is-caller-choice) is the tri-state ranking outcome —
+// Reranked (the precision path ran), DegradedRrf (Precision was asked for but the rerank path
+// couldn't run — a degradation) or ChosenRrf (the caller explicitly asked for Speed — RRF because
+// that's what was asked for, never confused with a degradation). Null when no ranking pass applies
+// (e.g. a listing, which runs no relevance leg at all). Serialized as a readable string
+// (SearchRankingOutcome carries its own JsonStringEnumConverter).
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded, string? DegradedReason = null,
-	long? SemanticLag = null, bool Reranked = false);
+	long? SemanticLag = null, SearchRankingOutcome? Ranking = null);
 
 // memory_upsert / memory_delta echo (mirrors the old anonymous Serialize shape).
 // ChangedFields (Stale only): THIS entry's payload fields that moved past the author's
@@ -380,12 +385,22 @@ public sealed record MemorySearchHitView(
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
 // response-budget markers Truncated/Omitted/Hint (null = complete).
+// PAGINATION (spec: result-set-pageable): `NextCursor` is the opaque keyset resume token, present only
+// when rows were withheld. With `q`, `Stop` is ALWAYS present and answers WHY the walk stopped in the
+// SAME vocabulary tasks_search and session_search use — "more" | "exhausted" | "pool-boundary" — because
+// three read surfaces answering in three shapes is the thing this work exists to prevent. Do not infer
+// the end from a missing cursor: "exhausted" and "pool-boundary" both omit it and mean different things
+// ("nothing else matched" vs "ranking looked only PoolLimit deep and more matched behind it").
 public sealed record MemorySearchResultView(
 	IReadOnlyList<MemorySearchHitView> Items,
 	RetrieverInfo? Retrievers = null,
 	bool? Truncated = null,
 	int? Omitted = null,
-	string? Hint = null);
+	string? Hint = null,
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // ---- relations.* ---------------------------------------------------------------------
 
@@ -497,7 +512,17 @@ public sealed record SessionSearchResultView(
 	bool? FullScanRequested = null,
 	bool? FullScanRan = null,
 	string? FullScanReason = null,
-	bool? FullScanCapped = null);
+	bool? FullScanCapped = null,
+	// PAGINATION (spec: result-set-pageable), query mode only — the SAME shape tasks_search and
+	// memory_search return, because three read surfaces answering in three shapes is what this work
+	// exists to prevent. `Stop` is "more" | "exhausted" | "pool-boundary"; do not infer the end from a
+	// missing NextCursor, since the last two both omit it and mean different things. `PoolLimit` is the
+	// discovery depth the walk may reach. Nothing here names a RANKING MODE: session discovery has no
+	// cross-encoder pass, and this contract must not offer a choice it cannot honour.
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
@@ -570,12 +595,22 @@ public sealed record TaskSearchNodeView(
 //                    kind). null on the groupBy tag-projection branch (no rows selected by facet).
 //   groupBy        → `GroupBy`+`Groups` (the tag projection; `Nodes` empty);
 //   any            → the response-budget markers Truncated/Omitted/Hint (null = complete).
-//   listing        → `NextCursor`, the keyset resume token (PetBox.Core.Contract.KeysetCursor),
+//   any            → `NextCursor`, the keyset resume token (PetBox.Core.Contract.KeysetCursor),
 //                    present ONLY when rows were withheld — the budget cut them, or `limit`
-//                    capped the page. Absent means this page IS the tail, which is why it is a
-//                    marker and not a always-present field: the caller stops when it stops
-//                    coming. Never issued in query mode (relevance is re-derived per call, so a
-//                    resume token there would splice two rankings).
+//                    capped the page. Issued in BOTH modes now (spec: result-set-pageable): the
+//                    relevance order is materialized once into a ranked pool and paged over, so a
+//                    query-mode token no longer splices two rankings.
+//   q              → `Stop`, `PoolLimit`, `PoolBoundaryHint` — the honesty trio of a paged
+//                    relevance walk. `Stop` is ALWAYS present with `q` and answers WHY the walk
+//                    stopped in words: "more" (page again with NextCursor), "exhausted" (every
+//                    matching row was ranked and served — there is genuinely nothing else), or
+//                    "pool-boundary" (ranking looked only `PoolLimit` deep and MORE entities
+//                    matched behind it, so these rows are a PREFIX of the match set and no further
+//                    page exists to fetch). That last distinction is the entire reason this field
+//                    exists rather than leaving the caller to infer the end from a missing cursor:
+//                    "we stopped looking" and "there is no more" are different answers, and a
+//                    missing cursor cannot tell them apart. `PoolBoundaryHint` carries the
+//                    actionable advice for that one case only.
 public sealed record TaskSearchResultView(
 	IReadOnlyList<TaskSearchNodeView> Nodes,
 	string? Board = null,
@@ -589,7 +624,10 @@ public sealed record TaskSearchResultView(
 	int? Omitted = null,
 	string? Hint = null,
 	IReadOnlyList<string>? EffectiveStatusKind = null,
-	string? NextCursor = null);
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // tasks_node_get result (batch 3, mirrors memory_get's addressed-read-batched shape): ALWAYS
 // a list, whether the caller addressed one `node` or a batch of `nodes[]` — one shape for
