@@ -8,6 +8,12 @@
 	// carries every control that's part of the fingerprint (q/type/scope/sort) plus the new cursor.
 	// There is no "prev" link by design: a keyset cursor only names how to resume FORWARD; each "next"
 	// click lands on its own bookmarkable URL, so the browser's own Back does what a "prev" button would.
+	//
+	// ui-search-page-position-and-size: ALSO carries `size` (the CURRENT page size, so paging forward
+	// never silently reverts to the default) and `pos` (rows already delivered — RangeTo IS that count,
+	// since this page's range ends exactly where the next page's position counter should start).
+	// Neither is part of the cursor's own fingerprint (KeysetCursor.cs:38-40) — they ride alongside it
+	// as plain presentation/shape parameters, same as q/type/scope/sort already do here.
 	string NextHref(string cursor)
 	{
 		var href = $"{Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, Model.Store)}?cursor={Uri.EscapeDataString(cursor)}";
@@ -15,6 +21,7 @@
 		if (!string.IsNullOrWhiteSpace(Model.Type)) href += $"&type={Uri.EscapeDataString(Model.Type)}";
 		if (!string.IsNullOrWhiteSpace(Model.Scope)) href += $"&scope={Uri.EscapeDataString(Model.Scope)}";
 		if (!string.IsNullOrWhiteSpace(Model.Sort)) href += $"&sort={Uri.EscapeDataString(Model.Sort)}";
+		href += $"&size={Model.EffectiveSize}&pos={Model.RangeTo}";
 		return href;
 	}
 
@@ -101,6 +108,15 @@
 		<option value="updated" selected="@(Model.Sort == "updated")">Updated</option>
 		<option value="created" selected="@(Model.Sort == "created")">Created</option>
 	</select>
+	@* ui-search-page-position-and-size: page size lives in the FILTER form on purpose (a plain GET
+	   with no cursor/pos hidden field) — changing it always starts the walk over rather than trying
+	   to reconcile a keyset position against a different page shape. *@
+	<select name="size" class="select select-bordered select-sm" data-testid="store-search-size">
+		@foreach (var s in PetBox.Web.Search.PageSizeOptions.Allowed)
+		{
+			<option value="@s" selected="@(Model.EffectiveSize == s)">@s / page</option>
+		}
+	</select>
 	<button type="submit" class="btn btn-sm btn-primary" data-testid="store-search-submit">Search</button>
 	@if (!string.IsNullOrWhiteSpace(Model.Query))
 	{
@@ -133,6 +149,12 @@
 		retrievers: @(retr.Lexical ? "lexical" : null) @(retr.Semantic ? "semantic" : null)
 		@(retr.Degraded ? $"(degraded: {retr.DegradedReason})" : null)
 	</div>
+	@* ui-search-ranking-mode-preference: the honest three-way ranking outcome (Reranked /
+	   DegradedRrf / ChosenRrf) the preference toggle actually changes — see BrowserState.SearchRankingMode. *@
+	@if (retr.Ranking is { } ranking)
+	{
+		<div class="text-xs opacity-60 mb-2" data-testid="store-search-ranking">ranking: @ranking</div>
+	}
 }
 
 @if (Model.IsSearch)
@@ -196,7 +218,7 @@
 		</ul>
 		<div class="flex items-center justify-between mt-4 text-sm">
 			<span class="opacity-60" data-testid="store-search-info">
-				@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s"), ranked by relevance
+				rows @Model.RangeFrom-@Model.RangeTo, ranked by relevance
 				@(Model.Stop switch
 				{
 					"exhausted" => "— end of the match set.",
@@ -284,7 +306,7 @@ else
 	</ul>
 
 	<div class="flex items-center justify-between mt-4 text-sm">
-		<span class="opacity-60" data-testid="store-page-info">@Model.Entries.Count of @Model.Total</span>
+		<span class="opacity-60" data-testid="store-page-info">rows @Model.RangeFrom-@Model.RangeTo of @Model.Total</span>
 		<div class="join">
 			@if (Model.HasNext && Model.NextCursor is { } nextCursor)
 			{

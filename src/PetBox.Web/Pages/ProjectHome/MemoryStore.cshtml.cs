@@ -10,6 +10,8 @@ using PetBox.Core.Search;
 using PetBox.Memory.Contract;
 using PetBox.Web.Auth;
 using PetBox.Web.Memory;
+using PetBox.Web.Search;
+using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -54,13 +56,20 @@ public sealed class MemoryStoreModel : PageModel
 	// always supplies it (IProjectCatalog is registered unconditionally), a bare unit-test
 	// construction that never exercises a workspace/cascade search may omit it.
 	readonly IProjectCatalog? _catalog;
+	// Optional, same posture as _catalog: resolves the caller's ui-search-ranking-mode-preference
+	// override (BrowserState.SearchRankingMode) of the UI edge default. DI always supplies it
+	// (IUiState is registered unconditionally); a bare unit-test construction with no HttpContext
+	// may omit it and falls back to the pre-existing hardcoded Speed default below.
+	readonly IUiState? _uiState;
 
-	public MemoryStoreModel(IProjectDirectory projects, FeatureFlags features, IMemoryService memory, IProjectCatalog? catalog = null)
+	public MemoryStoreModel(IProjectDirectory projects, FeatureFlags features, IMemoryService memory,
+		IProjectCatalog? catalog = null, IUiState? uiState = null)
 	{
 		_projects = projects;
 		_features = features;
 		_memory = memory;
 		_catalog = catalog;
+		_uiState = uiState;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -101,6 +110,31 @@ public sealed class MemoryStoreModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "sort")]
 	public string? Sort { get; set; }
 
+	// ui-search-page-position-and-size: page size is a control now, not the bare PageSize=40
+	// constant it used to be. A stale/hand-edited value degrades to PageSizeOptions.Default rather
+	// than erroring (EffectiveSize below). Deliberately NOT part of any cursor fingerprint
+	// (KeysetCursor.cs:38-40 — it shapes the page, never the sequence) — living in the FILTER form
+	// (a plain GET, no cursor/pos carried) is what makes changing it start the walk over.
+	[BindProperty(SupportsGet = true, Name = "size")]
+	public int? Size { get; set; }
+	public int EffectiveSize => PageSizeOptions.Resolve(Size);
+
+	// ui-search-page-position-and-size: rows already delivered BEFORE this page — a plain
+	// presentation counter, NOT part of the keyset cursor (the cursor is a position in the ORDER;
+	// this is a position in the WALK, and the two must not be conflated — mixing a presentational
+	// counter into a token whose bytes are checked for integrity (fingerprint/order-hash) would
+	// make an unrelated concern able to invalidate it). Carried as its own query param, propagated
+	// by the Next link, defaulting to 0 (the first page) when absent/negative.
+	[BindProperty(SupportsGet = true, Name = "pos")]
+	public int Pos { get; set; }
+	int EffectivePos => Pos < 0 ? 0 : Pos;
+
+	// The inclusive 1-based range of rows THIS page shows (spec result-set-pageable: "what range of
+	// rows is shown", never an invented total). Set once, after the branch below knows how many rows
+	// actually landed on this page — 0 rows renders neither (the empty-state alert covers that case).
+	public int RangeFrom { get; private set; }
+	public int RangeTo { get; private set; }
+
 	// The scope control is moot when this project IS already the workspace's shared-memory
 	// container (MemorySearchScope.ResolveContainersAsync collapses to one leg regardless) — hide
 	// it rather than offer a choice with no effect.
@@ -117,8 +151,6 @@ public sealed class MemoryStoreModel : PageModel
 	// The key the request asked for AND that this page actually renders — the card is marked
 	// `data-highlight="true"` so the highlight does not hang on `:target` alone.
 	public string? HighlightKey { get; private set; }
-
-	const int PageSize = 40;
 
 	// True once a non-empty (trimmed) `q` is in play — the page renders Hits instead of Entries.
 	public bool IsSearch { get; private set; }
@@ -197,18 +229,21 @@ public sealed class MemoryStoreModel : PageModel
 		if (IsSearch)
 		{
 			var searchSort = ParseSearchSortBy(Sort);
+			// EDGE default (spec: search-ranking-mode-is-caller-choice) — Speed, because a human
+			// skimming a page pays more for latency than for a ranking mistake; the MCP surface takes
+			// the opposite default for the opposite reason. ui-search-ranking-mode-preference: this
+			// EDGE default is now overridable per-user (BrowserState.SearchRankingMode,
+			// /ui/me/preferences) — no longer a bare constant. _uiState null (bare unit-test
+			// construction, no HttpContext) falls back to the same Speed the constant used to be.
+			var rankingMode = _uiState is not null ? (await _uiState.GetAsync(ct)).SearchRankingMode : PetBox.Core.Search.SearchRankingMode.Speed;
 			var result = await MemorySearchScope.SearchAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope,
 				new SearchRequest<MemoryEntryFilter, MemorySortBy>
 				{
 					Query = q,
 					Filter = new MemoryEntryFilter(Store, Type),
 					Sort = searchSort,
-					Limit = PageSize,
-					// EDGE default (spec: search-ranking-mode-is-caller-choice) — a human skimming a
-					// page, where latency costs more than a ranking mistake. Precision here would put
-					// the measured 3-4s cross-encoder in front of a person for every keystroke's worth
-					// of query; the MCP surface takes the opposite default for the opposite reason.
-					RankingMode = PetBox.Core.Search.SearchRankingMode.Speed,
+					Limit = EffectiveSize,
+					RankingMode = rankingMode,
 					BodyLen = 0, // full bodies — the page already rendered full bodies in listing mode
 								 // PAGING (spec: result-set-pageable) — materialize the WHOLE ranked pool instead of a
 								 // bare top-K so this adapter can seek a KeysetCursor through it, mirroring the listing
@@ -242,9 +277,9 @@ public sealed class MemoryStoreModel : PageModel
 				}
 			}
 
-			Hits = afterCursor.Take(PageSize).ToList();
+			Hits = afterCursor.Take(EffectiveSize).ToList();
 			Total = Hits.Count;
-			HasNext = afterCursor.Count > PageSize;
+			HasNext = afterCursor.Count > EffectiveSize;
 			if (HasNext)
 			{
 				var last = Hits[^1];
@@ -254,6 +289,10 @@ public sealed class MemoryStoreModel : PageModel
 			// WHY THE WALK STOPPED — stated, not implied (card requirement 2). Never infer the end from a
 			// missing cursor: "exhausted" and "pool-boundary" both omit it and mean different things.
 			Stop = HasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
+			// ui-search-page-position-and-size: the range of rows THIS page shows — never an invented
+			// total (the ranked pool's true match count is unknowable mid-walk; poolLimit is ranking
+			// DEPTH, not a match count). 0 rows leaves both at 0 — the empty-state alert covers that.
+			if (Hits.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + Hits.Count; }
 			PoolBoundaryHint = Stop == "pool-boundary" ? PoolBoundaryHintText : null;
 			HitUsage = await MemorySearchScope.LoadUsageAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope, Hits, ct);
 		}
@@ -279,13 +318,17 @@ public sealed class MemoryStoreModel : PageModel
 			}
 
 			Total = ordered.Count;
-			Entries = afterCursor.Take(PageSize).ToList();
-			HasNext = afterCursor.Count > PageSize;
+			Entries = afterCursor.Take(EffectiveSize).ToList();
+			HasNext = afterCursor.Count > EffectiveSize;
 			if (HasNext)
 			{
 				var last = Entries[^1];
 				NextCursor = new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Entry.Key, last.Store).Encode();
 			}
+			// ui-search-page-position-and-size: same range presentation as the search branch — here
+			// Total is a REAL count (the full deterministic listing), so this range is "of Total", not
+			// a prefix-of-unknown.
+			if (Entries.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + Entries.Count; }
 			HitUsage = await MemorySearchScope.LoadUsageAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope, Entries, ct);
 		}
 		Aggregate = await _memory.GetUsageAggregateAsync(ProjectKey, Store, ct: ct);

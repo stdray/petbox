@@ -41,14 +41,14 @@ public sealed class PreferencesModel : PageModel
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostSaveAsync(Theme Theme)
+	public async Task<IActionResult> OnPostSaveAsync(Theme Theme, PetBox.Core.Search.SearchRankingMode SearchRankingMode)
 	{
 		if (!TryGetUserId(out var userId, out var userIdString))
 			return RedirectToPage("/Login");
 
 		UserIdString = userIdString;
 		var old = await _resolver.GetAsync<BrowserState>(Scope.User, userIdString);
-		var updated = old with { Theme = Theme };
+		var updated = old with { Theme = Theme, SearchRankingMode = SearchRankingMode };
 
 		await _resolver.SetAsync(Scope.User, userIdString, updated, old, userId);
 

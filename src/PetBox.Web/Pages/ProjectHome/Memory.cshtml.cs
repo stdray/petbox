@@ -10,6 +10,8 @@ using PetBox.Core.Search;
 using PetBox.Memory.Contract;
 using PetBox.Web.Auth;
 using PetBox.Web.Memory;
+using PetBox.Web.Search;
+using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -38,16 +40,22 @@ public sealed class MemoryModel : PageModel
 	// always supplies it (IProjectCatalog is registered unconditionally), a bare unit-test
 	// construction that never exercises a workspace/cascade search may omit it.
 	readonly IProjectCatalog? _catalog;
+	// Optional, same posture as _catalog: resolves the caller's ui-search-ranking-mode-preference
+	// override (BrowserState.SearchRankingMode) of the UI edge default. DI always supplies it
+	// (IUiState is registered unconditionally); a bare unit-test construction with no HttpContext
+	// may omit it and falls back to the pre-existing hardcoded Speed default below.
+	readonly IUiState? _uiState;
 
 	public MemoryModel(
 		IWorkspaceMemoryDirectory workspaceMemory, IProjectDirectory projects, FeatureFlags features, IMemoryService memory,
-		IProjectCatalog? catalog = null)
+		IProjectCatalog? catalog = null, IUiState? uiState = null)
 	{
 		_workspaceMemory = workspaceMemory;
 		_projects = projects;
 		_features = features;
 		_memory = memory;
 		_catalog = catalog;
+		_uiState = uiState;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -73,9 +81,23 @@ public sealed class MemoryModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "cursor")]
 	public string? Cursor { get; set; }
 
-	public bool ScopeSelectable => !WorkspaceMemory.IsWorkspaceContainer(ProjectKey);
+	// ui-search-page-position-and-size: see MemoryStoreModel's identical pair for the full
+	// rationale (not part of the cursor fingerprint; lives in the filter form so a size change
+	// starts the walk over; `pos` is a plain presentation counter, never mixed into the cursor).
+	[BindProperty(SupportsGet = true, Name = "size")]
+	public int? Size { get; set; }
+	public int EffectiveSize => PageSizeOptions.Resolve(Size);
 
-	const int SearchLimit = 40;
+	[BindProperty(SupportsGet = true, Name = "pos")]
+	public int Pos { get; set; }
+	int EffectivePos => Pos < 0 ? 0 : Pos;
+
+	// The inclusive 1-based range of rows THIS page shows — never an invented total (the ranked
+	// pool's true match count is unknowable mid-walk).
+	public int RangeFrom { get; private set; }
+	public int RangeTo { get; private set; }
+
+	public bool ScopeSelectable => !WorkspaceMemory.IsWorkspaceContainer(ProjectKey);
 
 	public Project? Project { get; private set; }
 	public bool MemoryEnabled => _features.IsEnabled(Feature.Memory);
@@ -121,6 +143,11 @@ public sealed class MemoryModel : PageModel
 		if (!IsSearch) return;
 
 		var sort = ParseSortBy(Sort);
+		// EDGE default (spec: search-ranking-mode-is-caller-choice): UI is the speed side.
+		// ui-search-ranking-mode-preference: overridable per-user (BrowserState.SearchRankingMode,
+		// /ui/me/preferences) — no longer a bare constant. _uiState null (bare unit-test
+		// construction, no HttpContext) falls back to the same Speed the constant used to be.
+		var rankingMode = _uiState is not null ? (await _uiState.GetAsync(ct)).SearchRankingMode : PetBox.Core.Search.SearchRankingMode.Speed;
 		var result = await MemorySearchScope.SearchAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope,
 			new SearchRequest<MemoryEntryFilter, MemorySortBy>
 			{
@@ -129,9 +156,8 @@ public sealed class MemoryModel : PageModel
 				// twin of memory_search called with no `store` arg.
 				Filter = new MemoryEntryFilter(null, Type),
 				Sort = sort,
-				Limit = SearchLimit,
-				// EDGE default (spec: search-ranking-mode-is-caller-choice): UI is the speed side.
-				RankingMode = PetBox.Core.Search.SearchRankingMode.Speed,
+				Limit = EffectiveSize,
+				RankingMode = rankingMode,
 				BodyLen = 240, // a snippet — this view lists across stores, not one store's full cards
 							   // PAGING (spec: result-set-pageable) — the whole ranked pool, seeked below with a
 							   // KeysetCursor exactly like MemoryStoreModel's search branch.
@@ -159,8 +185,8 @@ public sealed class MemoryModel : PageModel
 			}
 		}
 
-		Hits = afterCursor.Take(SearchLimit).ToList();
-		HasNext = afterCursor.Count > SearchLimit;
+		Hits = afterCursor.Take(EffectiveSize).ToList();
+		HasNext = afterCursor.Count > EffectiveSize;
 		if (HasNext)
 		{
 			var last = Hits[^1];
@@ -169,6 +195,8 @@ public sealed class MemoryModel : PageModel
 		}
 		// WHY THE WALK STOPPED — stated, not implied (card requirement 2).
 		Stop = HasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
+		// ui-search-page-position-and-size: the range of rows THIS page shows.
+		if (Hits.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + Hits.Count; }
 		PoolBoundaryHint = Stop == "pool-boundary" ? PoolBoundaryHintText : null;
 		HitUsage = await MemorySearchScope.LoadUsageAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope, Hits, ct);
 	}

@@ -18,6 +18,9 @@
 		if (!string.IsNullOrWhiteSpace(Model.Type)) href += $"&type={Uri.EscapeDataString(Model.Type)}";
 		if (!string.IsNullOrWhiteSpace(Model.Scope)) href += $"&scope={Uri.EscapeDataString(Model.Scope)}";
 		if (!string.IsNullOrWhiteSpace(Model.Sort)) href += $"&sort={Uri.EscapeDataString(Model.Sort)}";
+		// ui-search-page-position-and-size: carry the CURRENT size forward and advance `pos` to
+		// where this page's range ended — see MemoryStoreModel.NextHref for the full rationale.
+		href += $"&size={Model.EffectiveSize}&pos={Model.RangeTo}";
 		return href;
 	}
 }
@@ -73,6 +76,14 @@
 		<option value="updated" selected="@(Model.Sort == "updated")">Updated</option>
 		<option value="created" selected="@(Model.Sort == "created")">Created</option>
 	</select>
+	@* ui-search-page-position-and-size: in the FILTER form on purpose — see MemoryStore.cshtml's
+	   identical control for why a size change must start the walk over. *@
+	<select name="size" class="select select-bordered select-sm" data-testid="memory-search-size">
+		@foreach (var s in PetBox.Web.Search.PageSizeOptions.Allowed)
+		{
+			<option value="@s" selected="@(Model.EffectiveSize == s)">@s / page</option>
+		}
+	</select>
 	<button type="submit" class="btn btn-sm btn-primary" data-testid="memory-search-submit">Search</button>
 	@if (!string.IsNullOrWhiteSpace(Model.Query))
 	{
@@ -103,6 +114,12 @@
 			retrievers: @(retr.Lexical ? "lexical" : null) @(retr.Semantic ? "semantic" : null)
 			@(retr.Degraded ? $"(degraded: {retr.DegradedReason})" : null)
 		</div>
+		@* ui-search-ranking-mode-preference: the honest three-way ranking outcome (Reranked /
+		   DegradedRrf / ChosenRrf) the preference toggle actually changes — see BrowserState.SearchRankingMode. *@
+		@if (retr.Ranking is { } ranking)
+		{
+			<div class="text-xs opacity-60 mb-2" data-testid="memory-search-ranking">ranking: @ranking</div>
+		}
 	}
 	@if (Model.Hits.Count == 0)
 	{
@@ -156,7 +173,7 @@
 		</ul>
 		<div class="flex items-center justify-between mt-4 text-sm">
 			<span class="opacity-60" data-testid="memory-search-info">
-				@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s"), ranked by relevance
+				rows @Model.RangeFrom-@Model.RangeTo, ranked by relevance
 				@(Model.Stop switch
 				{
 					"exhausted" => "— end of the match set.",

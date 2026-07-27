@@ -6,6 +6,7 @@ using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Navigation;
+using PetBox.Web.Settings;
 
 namespace PetBox.Web.Search;
 
@@ -48,6 +49,7 @@ public sealed class CrossScopeTaskSearchService(
 	INavigationContext nav,
 	IHttpContextAccessor http,
 	IServiceScopeFactory scopes,
+	IUiState? uiState = null,
 	ILogger<CrossScopeTaskSearchService>? log = null)
 {
 	// Bounded fan-out: enough parallelism to make a many-project search feel instant without
@@ -62,18 +64,28 @@ public sealed class CrossScopeTaskSearchService(
 	// Convenience overload: pulls the access-scoped project enumeration and the current
 	// request's scheme/host from the injected NavigationContext/HttpContextAccessor. This is
 	// what the Razor page calls.
-	public Task<IReadOnlyList<CrossScopeSearchHit>> SearchAsync(string? q, CancellationToken ct = default)
+	public async Task<IReadOnlyList<CrossScopeSearchHit>> SearchAsync(string? q, CancellationToken ct = default)
 	{
 		var req = http.HttpContext?.Request;
-		return SearchAsync(nav.ProjectsByWorkspace, q, req?.Scheme, req?.Host.ToString(), ct);
+		// ui-search-ranking-mode-preference: the caller's own Scope.User preference
+		// (BrowserState.SearchRankingMode) overrides the bare Speed constant this fan-out used to
+		// hardcode. `uiState` is optional (mirrors the fan-out's other optional ctor params) — a
+		// unit test wiring this service without IUiState registered (CrossScopeTestHost) falls back
+		// to the same Speed the constant used to be.
+		var mode = uiState is not null ? (await uiState.GetAsync(ct)).SearchRankingMode : SearchRankingMode.Speed;
+		return await SearchAsync(nav.ProjectsByWorkspace, q, req?.Scheme, req?.Host.ToString(), mode, ct);
 	}
 
 	// The testable core: fan out + merge against an EXPLICIT project enumeration and an
 	// explicit scheme/host (so permalinks can be built without a live HttpContext). The caller
-	// owns access scoping — this method trusts `projectsByWorkspace` completely.
+	// owns access scoping — this method trusts `projectsByWorkspace` completely. `mode` defaults to
+	// Speed (the pre-existing hardcoded value) so every existing direct caller — every unit test in
+	// CrossScopeTaskSearchServiceTests/CrossScopeSearchFanOutIntegrationTests — keeps its exact prior
+	// behaviour unless it opts into a different mode.
 	public async Task<IReadOnlyList<CrossScopeSearchHit>> SearchAsync(
 		IReadOnlyDictionary<string, IReadOnlyList<Project>> projectsByWorkspace,
-		string? q, string? scheme, string? host, CancellationToken ct = default)
+		string? q, string? scheme, string? host, SearchRankingMode mode = SearchRankingMode.Speed,
+		CancellationToken ct = default)
 	{
 		var query = q?.Trim();
 		if (string.IsNullOrEmpty(query)) return [];
@@ -89,7 +101,7 @@ public sealed class CrossScopeTaskSearchService(
 			await gate.WaitAsync(ct).ConfigureAwait(false);
 			try
 			{
-				return await SearchOneProjectAsync(job.Ws, job.Project, query, scheme, host, ct).ConfigureAwait(false);
+				return await SearchOneProjectAsync(job.Ws, job.Project, query, scheme, host, mode, ct).ConfigureAwait(false);
 			}
 			// PARTIAL DEGRADATION, not a 500: one sick project must not take the whole page down.
 			// The catch used to be `ArgumentException` around the full-text leg only, so anything
@@ -122,7 +134,7 @@ public sealed class CrossScopeTaskSearchService(
 	}
 
 	async Task<(IReadOnlyList<CrossScopeSearchHit> Exact, IReadOnlyList<CrossScopeSearchHit> FullText)> SearchOneProjectAsync(
-		string ws, Project project, string query, string? scheme, string? host, CancellationToken ct)
+		string ws, Project project, string query, string? scheme, string? host, SearchRankingMode mode, CancellationToken ct)
 	{
 		// The branch's own DI scope: its own PetBoxDb and its own scoped graph (see the class note).
 		// Everything it returns is a materialized record, so the scope — and every connection in it —
@@ -160,8 +172,10 @@ public sealed class CrossScopeTaskSearchService(
 			BodyLen = 0,
 			// EDGE default (search-ranking-mode-is-caller-choice): a UI results page is a human
 			// skimming a locator list across many projects at once — latency costs more than a
-			// ranking mistake here, so Speed (never even constructs a reranker, straight to RRF).
-			RankingMode = SearchRankingMode.Speed,
+			// ranking mistake here, so Speed is the fallback (never even constructs a reranker,
+			// straight to RRF). ui-search-ranking-mode-preference: overridable per-user via
+			// BrowserState.SearchRankingMode — `mode` carries whatever SearchAsync resolved above.
+			RankingMode = mode,
 		}, urlPrefix, ct).ConfigureAwait(false);
 		var classifyText = await ClassifyByBoardAsync(tasks, project.Key, textRes.Hits, ct).ConfigureAwait(false);
 		var fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false, classifyText(h))).ToList();
