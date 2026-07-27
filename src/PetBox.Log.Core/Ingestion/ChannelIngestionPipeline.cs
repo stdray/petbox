@@ -42,7 +42,7 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 
 		using var activity = projectKey == LogNames.SystemProject
 			? null
-			: ActivitySources.Ingestion.StartActivity("ingest.enqueue");
+			: ActivitySources.Ingestion.StartActivity("ingest_enqueue");
 		activity?.SetTag("project", projectKey);
 		activity?.SetTag("log", logName);
 		activity?.SetTag("batch.size", batch.Count);

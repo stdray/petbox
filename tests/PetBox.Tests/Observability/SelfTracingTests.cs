@@ -78,13 +78,13 @@ public sealed class SelfTracingTests : IDisposable
 		}
 
 		var snap = Snapshot(started);
-		var op = Assert.Single(snap, a => a.OperationName == "tasks.upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
+		var op = Assert.Single(snap, a => a.OperationName == "tasks_upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
 		Assert.Equal("b", op.GetTagItem("petbox.board"));
-		var temporal = Assert.Single(snap, a => a.OperationName == "tasks.upsert.temporal" && a.ParentSpanId == op.SpanId);
+		var temporal = Assert.Single(snap, a => a.OperationName == "tasks_upsert_temporal" && a.ParentSpanId == op.SpanId);
 		Assert.Equal(op.SpanId, temporal.ParentSpanId);
 		// The applied write also runs the links and fts-tags segments under the same parent.
-		Assert.Contains(snap, a => a.OperationName == "tasks.upsert.links" && a.ParentSpanId == op.SpanId);
-		Assert.Contains(snap, a => a.OperationName == "tasks.upsert.fts-tags" && a.ParentSpanId == op.SpanId);
+		Assert.Contains(snap, a => a.OperationName == "tasks_upsert_links" && a.ParentSpanId == op.SpanId);
+		Assert.Contains(snap, a => a.OperationName == "tasks_upsert_fts-tags" && a.ParentSpanId == op.SpanId);
 	}
 
 	[Fact]
@@ -103,7 +103,7 @@ public sealed class SelfTracingTests : IDisposable
 			Assert.True(r.Result.Applied);
 		}
 
-		var op = Assert.Single(Snapshot(started), a => a.OperationName == "memory.upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
+		var op = Assert.Single(Snapshot(started), a => a.OperationName == "memory_upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
 		Assert.Equal("notes", op.GetTagItem("petbox.store"));
 		Assert.Equal(1, op.GetTagItem("petbox.upsert_count"));
 	}

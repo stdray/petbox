@@ -1526,7 +1526,7 @@ public sealed partial class TasksService : ITasksService
 	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, CancellationToken ct = default)
 	{
 		actor ??= TasksActor.None;
-		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
+		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks_upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.board", board);
 		op?.SetTag("petbox.node_count", nodes.Count);
@@ -1592,7 +1592,7 @@ public sealed partial class TasksService : ITasksService
 			{
 				desired = live.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor, p.Reason) with { Board = board }).ToArray();
 				ValidateChanges(desired, prior);
-				using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
+				using (PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_guards"))
 				{
 					// ONE pure decision replaces the inline resolve/guard calls that each used to
 					// fetch for themselves. The engine resolves every link (the generic links:{} door
@@ -1682,7 +1682,7 @@ public sealed partial class TasksService : ITasksService
 		// node's facets/aliases commit and roll back exactly with its text row. StatusKind comes from
 		// the runtime authority; `kindSlug` (the board's kind) gives per-board classification.
 		TemporalUpsertResult<PlanNode> r;
-		using (var temporalSpan = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
+		using (var temporalSpan = PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_temporal"))
 		{
 			// ONE engine decides the batch outcome: atomicity, the guard rejections, and the
 			// topological cascade over this call's own references all live in TemporalStore —
@@ -1739,7 +1739,7 @@ public sealed partial class TasksService : ITasksService
 		// cascade effects below (supersedes obsoletion, unblocking) — the echo scoping keys on it.
 		var mainCursor = r.CurrentVersion;
 		if (r.Applied)
-			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.links"))
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_links"))
 			{
 				await _boards.TouchAsync(projectKey, board, ct);
 				await LinkRefsAsync(projectKey, landed, resolvedLinks, ct);
@@ -1752,7 +1752,7 @@ public sealed partial class TasksService : ITasksService
 		// on a no-op the NodeId in `desired` is the existing one). In atomic mode `Applied` is
 		// exactly the old `Conflicts.Count == 0` (applied ⟺ no conflicts).
 		if (r.Applied)
-			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_meta"))
 			{
 				await _associations.SetTagsAsync(projectKey, board, runtime, kindSlug, landedPatches, landed, ct);
 				await TaskUpsertAssociations.SetCommitsAsync(ctx, board, landedPatches, landed, ct);
@@ -1767,7 +1767,7 @@ public sealed partial class TasksService : ITasksService
 		// now-current tags. Content/membership are already committed with the entity; vectors are
 		// materialized off the write path by the async-vectorization worker.
 		if (r.Applied)
-			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.fts-tags"))
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_fts-tags"))
 				await RefreshFtsTagsAsync(ctx, projectKey, board, landed, runtime, ct);
 		if (r.Applied)
 		{

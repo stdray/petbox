@@ -551,7 +551,7 @@ public sealed class MemoryService : IMemoryService
 
 	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default)
 	{
-		using var op = PetBoxActivitySources.Memory.StartActivity("memory.upsert");
+		using var op = PetBoxActivitySources.Memory.StartActivity("memory_upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.store", store);
 		op?.SetTag("petbox.upsert_count", upserts.Count);
