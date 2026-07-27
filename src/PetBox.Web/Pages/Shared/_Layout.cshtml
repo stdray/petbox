@@ -83,7 +83,7 @@
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full">
-	<div id="app-drawer" class="drawer @(browserState.SidebarPinned ? "drawer-open" : "")">
+	<div id="app-drawer" class="drawer @(browserState.SidebarPinned ? "drawer-open" : "")" data-testid="app-drawer">
 		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		@* min-w-0: a flex/grid item defaults to min-width:auto, so it won't shrink below its
 		   content's intrinsic width. Without it, a wide row (e.g. the kanban view's column
