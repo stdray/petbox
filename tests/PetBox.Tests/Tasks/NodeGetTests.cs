@@ -78,7 +78,7 @@ public sealed class NodeGetTests : IDisposable
 			$$"""[{"key":"parent","status":"Todo","title":"P"},{"key":"leaf","status":"Todo","title":"Leaf","body":"{{body}}","partOf":"parent","tags":["area:tasks"]}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b", nodes);
 
-		var bySlug = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf");
+		var bySlug = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf")).Nodes.Single();
 		bySlug.Board.Should().Be("b");
 		bySlug.Node.Key.Should().Be("leaf");
 		bySlug.Node.Title.Should().Be("Leaf");
@@ -90,12 +90,12 @@ public sealed class NodeGetTests : IDisposable
 		bySlug.Node.Url.Should().BeNull(); // includeUrl off by default
 
 		// The same node addressed by its 32-hex NodeId.
-		var byId = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", bySlug.Node.NodeId);
+		var byId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", bySlug.Node.NodeId)).Nodes.Single();
 		byId.Node.Key.Should().Be("leaf");
 		byId.Node.NodeId.Should().Be(bySlug.Node.NodeId);
 
 		// includeUrl: the canonical slug permalink.
-		var withUrl = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf", includeUrl: true);
+		var withUrl = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf", includeUrl: true)).Nodes.Single();
 		withUrl.Node.Url.Should().Be($"https://box.test/ui/ws/{Proj}/tasks/b/leaf");
 	}
 
@@ -113,7 +113,7 @@ public sealed class NodeGetTests : IDisposable
 			.Nodes.Should().BeEmpty();
 
 		// …but the ADDRESSED read returns it regardless of terminality.
-		var got = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "done-one");
+		var got = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "done-one")).Nodes.Single();
 		got.Node.Status.Should().Be("Done");
 		got.Node.Body.Should().Be("finished work");
 	}
@@ -125,6 +125,7 @@ public sealed class NodeGetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.NodesJson("""[{"key":"real","status":"Todo","title":"R"}]"""));
 
+		// A single strict `node` miss THROWS — unchanged by the batch3 nodes[] addition.
 		var missing = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "ghost");
 		(await missing.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*ghost*").WithMessage("*board 'b'*");
@@ -132,10 +133,52 @@ public sealed class NodeGetTests : IDisposable
 		// A NodeId that resolves onto ANOTHER board is refused with both board names.
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "other",
 			McpInputs.NodesJson("""[{"key":"elsewhere","status":"Todo","title":"E"}]"""));
-		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "other", "elsewhere")).Node.NodeId;
+		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
 		var wrongBoard = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", otherId);
 		(await wrongBoard.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*board 'other'*").WithMessage("*'b'*");
+	}
+
+	// batch3 (read-surface-shape-batch-and-dead-delta P.1): `nodes[]` is the SOFT batch sibling
+	// of `node`, exact contract split as memory_get key/keys.
+	[Fact]
+	public async Task NodeGet_Batch_PreservesRequestOrderAndDropsMisses()
+	{
+		var http = Http();
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b", McpInputs.NodesJson(
+			"""[{"key":"a","status":"Todo","title":"A"},{"key":"b-node","status":"Todo","title":"B"},{"key":"c","status":"Todo","title":"C"}]"""));
+
+		// Requested order c, ghost, a, b-node → ghost silently dropped, the rest come back in
+		// the ORDER ASKED (not board/sort order).
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b",
+			nodes: ["c", "ghost", "a", "b-node"]);
+		res.Nodes.Select(n => n.Node.Key).Should().Equal("c", "a", "b-node");
+	}
+
+	[Fact]
+	public async Task NodeGet_Batch_AllMiss_ReturnsEmptyNotError()
+	{
+		var http = Http();
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"key":"real","status":"Todo","title":"R"}]"""));
+
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", nodes: ["ghost-1", "ghost-2"]);
+		res.Nodes.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task NodeGet_Batch_WrongBoardHit_IsDroppedNotThrown()
+	{
+		var http = Http();
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"key":"here","status":"Todo","title":"H"}]"""));
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "other",
+			McpInputs.NodesJson("""[{"key":"elsewhere","status":"Todo","title":"E"}]"""));
+		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
+
+		// In a BATCH, a NodeId resolving to a DIFFERENT board is a soft miss, not a thrown error.
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", nodes: ["here", otherId]);
+		res.Nodes.Select(n => n.Node.Key).Should().Equal("here");
 	}
 
 	[Fact]

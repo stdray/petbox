@@ -120,7 +120,7 @@ public sealed class QuartetTests : IDisposable
 
 		// The persisted row agrees too (not just the write echo).
 		var read = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, board, "untyped-a");
-		read.Node.Type.Should().Be(defaultType);
+		read.Nodes.Single().Node.Type.Should().Be(defaultType);
 	}
 
 	// Builtin templates are copyable via template_get (source=builtin, version 0) and valid
@@ -455,9 +455,9 @@ public sealed class QuartetTests : IDisposable
 			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n")).Node.Body.Length.Should().Be(400); // default = full
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 50)).Node.Body.Length.Should().Be(51); // snippet
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 0)).Node.Body.Should().BeEmpty(); // none
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n")).Nodes.Single().Node.Body.Length.Should().Be(400); // default = full
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 50)).Nodes.Single().Node.Body.Length.Should().Be(51); // snippet
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 0)).Nodes.Single().Node.Body.Should().BeEmpty(); // none
 	}
 
 	// spec upsert-ack-echo-clean: a write that did NOT apply echoes NOTHING. A FutureBaseline
@@ -486,6 +486,6 @@ public sealed class QuartetTests : IDisposable
 		res.Removed.Should().BeEmpty();
 
 		// The node was NOT mutated by the rejected write.
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "conf", "a")).Node.Title.Should().Be("A");
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "conf", "a")).Nodes.Single().Node.Title.Should().Be("A");
 	}
 }

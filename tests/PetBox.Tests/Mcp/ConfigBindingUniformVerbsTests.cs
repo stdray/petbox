@@ -11,10 +11,12 @@ using PetBox.Web.Mcp.Contract;
 namespace PetBox.Tests.Mcp;
 
 // The config_binding family on the uniform-entity-verbs matrix (config_binding_upsert / _search /
-// _delta / _get), exercised through the MCP adapter over a real per-workspace ConfigDb. Config is
-// NOT temporally watermarked — a binding is PUT by (path, tag SET), immutable, keyed by an
-// auto-increment id — so this verifies the documented deviations: PUT-supersede, added/updated
-// classification, the max-id cursor for delta, the lexical-substring q, and secret-safety.
+// _get — no _delta, batch3 (read-surface-shape-batch-and-dead-delta P.3): config bindings have no
+// tombstone, so a delta would only ever repeat _search), exercised through the MCP adapter over a
+// real per-workspace ConfigDb. Config is NOT temporally watermarked — a binding is PUT by (path,
+// tag SET), immutable, keyed by an auto-increment id — so this verifies the documented deviations:
+// PUT-supersede, added/updated classification, the max-id cursor, the lexical-substring q, and
+// secret-safety.
 public sealed class ConfigBindingUniformVerbsTests : IDisposable
 {
 	const string Ws = "w";
@@ -148,23 +150,6 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 		q.Retrievers!.Lexical.Should().BeTrue();
 		q.Retrievers.Semantic.Should().BeFalse();
 		q.Retrievers.Degraded.Should().BeFalse();
-	}
-
-	[Fact]
-	public async Task Delta_ReturnsBindingsSinceIdCursor()
-	{
-		var http = Http();
-		var first = await Upsert(http, Item($"d/{Guid.NewGuid():N}"[..10], "1"));
-		var cursor = first.CurrentVersion;
-
-		await Upsert(http, Item($"d/{Guid.NewGuid():N}"[..10], "2"));
-		await Upsert(http, Item($"d/{Guid.NewGuid():N}"[..10], "3"));
-
-		var delta = await ConfigTools.BindingDeltaAsync(http, _factory, Ws, cursor);
-		delta.Added.Should().HaveCount(2);                          // only the post-cursor ids
-		delta.Added.Should().OnlyContain(r => true);
-		delta.Updated.Should().BeEmpty();                           // immutable rows → adds only
-		delta.CurrentVersion.Should().BeGreaterThan(cursor);
 	}
 
 	[Fact]

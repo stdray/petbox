@@ -539,8 +539,9 @@ public static class MemoryTools
 		An unauthorized leg is SKIPPED SILENTLY, so an empty result means "nothing here OR not
 		yours", never "nothing exists".
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
-		memory_get); each row's `version` is the CAS baseline for memory_upsert. Hard ~30k-char
-		output budget. Requires memory:read.
+		memory_get); each row's `version` is the CAS baseline for memory_upsert. Tracking changes
+		since a known version cursor (added/updated/removed, including tombstones this search
+		cannot show)? Use memory_delta instead. Hard ~30k-char output budget. Requires memory:read.
 
 		Cost — your context pays it. Same query, same rows: bodyLen:0 = 1x, default snippet
 		~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long entry can add thousands

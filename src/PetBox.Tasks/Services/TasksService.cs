@@ -1104,6 +1104,31 @@ public sealed partial class TasksService : ITasksService
 		return detail;
 	}
 
+	// Soft batch sibling of GetNodeOnBoardAsync (tasks_node_get `nodes[]`) — same slug-or-NodeId
+	// resolution per entry, but a miss (or a resolved node that lives on a DIFFERENT board) is
+	// dropped rather than thrown, and the result is emitted in the CALLER'S requested order —
+	// mirrors MemoryTools.GetAsync's key/keys batch contract.
+	public async Task<IReadOnlyList<NodeDetailView>> GetNodesOnBoardAsync(string projectKey, string board, IReadOnlyList<string> nodes, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		var results = new List<NodeDetailView>(nodes.Count);
+		foreach (var raw in nodes)
+		{
+			ct.ThrowIfCancellationRequested();
+			var v = (raw ?? "").Trim();
+			if (v.Length == 0) continue;
+			var detail = NodeRefResolver.LooksLikeNodeId(v)
+				? await GetNodeAsync(projectKey, v, ct)
+				: await GetNodeBySlugAsync(projectKey, board, v.ToLowerInvariant(), ct);
+			if (detail is null || !string.Equals(detail.Board, board, StringComparison.Ordinal))
+				continue;
+			if (urlPrefix is not null)
+				detail = detail with { Node = detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key } };
+			results.Add(detail);
+		}
+		return results;
+	}
+
 	// Uniform slug-or-NodeId resolution for bare node refs — NodeRefPolicy.Strict.
 	public Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default) =>
 		_nodeRefs.ResolveStrictAsync(projectKey, nodeRef, board, ct);
