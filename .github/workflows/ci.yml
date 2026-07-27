@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ['deploy', 'nuget', 'npm', 'npm-wire', 'pypi']
+  # Manual trigger so a `test`-job timing measurement (e.g. an xunit parallelism A/B)
+  # doesn't cost a commit to main — before this, every measurement meant pushing
+  # something just to get a run, and reading the wall-clock back out via `gh api`
+  # because the job carried no timing artifact either. Deliberately does NOT flip the
+  # `sdk`/`publish`/`deploy`/tag-publish jobs' `if:` on: they still gate on
+  # `github.event_name == 'push'`, so a manual dispatch runs ONLY `test` — no image
+  # build, no push, no deploy risk from a stray click.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,8 +31,10 @@ jobs:
   # both — so tests and the image build no longer run back-to-back. The image build
   # may still push even if tests fail (harmless: `deploy` is gated on this job).
   # Skipped on the package-publish tags (nuget/npm/npm-wire/pypi), which carry no app change.
+  # `workflow_dispatch` is always allowed through regardless of ref/tag — a manual run
+  # is by definition someone deliberately asking for a `test`-job measurement.
   test:
-    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -84,6 +94,22 @@ jobs:
       # `sdk` job below (bun + uv toolchains, in parallel with this one).
       - name: Cake Test target (format + build + unit + E2E)
         run: ./build.sh --target=Test --playwrightWithDeps=false
+
+      # `if: always()` is load-bearing, not decorative: a red run is exactly the run
+      # whose telemetry matters most (flake history, which class hung), and the
+      # default step condition would skip this upload the moment the previous step
+      # failed — telemetry would vanish precisely when it's needed. build.cs's `Test`
+      # target writes one .trx per test project to ./artifacts/test-results (`Loggers
+      # = ["trx"]`, `ResultsDirectory`); `if-no-files-found: warn` covers the case
+      # where DotNetTest itself never got called (e.g. Build/FormatVerify failed
+      # first) without failing the job on a missing-artifact technicality.
+      - name: Upload TRX test-result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-test-results
+          path: artifacts/test-results/**/*.trx
+          if-no-files-found: warn
 
   # Client-SDK gate. The TS and Python SDKs are published to public registries (npm/PyPI) on
   # their own tags; until this job existed NOTHING checked them in CI — the targets were only

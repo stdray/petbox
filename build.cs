@@ -161,9 +161,36 @@ Task("Test")
 			// `research`-category tests are excluded from the default/CI run
 			// (they may hit the network, e.g. DuckDB `INSTALL fts`); run them
 			// explicitly with `dotnet test --filter Category=Research`.
-			Filter = "Category!=Research"
+			Filter = "Category!=Research",
+			// TRX telemetry: before this, a job's actual test timing only existed by
+			// asking `gh api` for the job's wall-clock after the fact — no per-class/
+			// per-test breakdown, no flake history, nothing CI could upload. `--logger
+			// trx` (no LogFileName override — the solution has multiple test projects,
+			// and a fixed name would have each one overwrite the last in the shared
+			// ResultsDirectory) makes every project emit its own uniquely-named .trx.
+			// CI uploads the whole directory as an artifact (`if: always()`, so a red
+			// run still yields telemetry — that is exactly the run you need it for).
+			// `dotnet run scripts/trx-timings.cs -- <run.trx>` reads this format directly.
+			Loggers = new[] { "trx" },
+			ResultsDirectory = "./artifacts/test-results"
 		});
 	});
+
+// xunit parallelism note (tests/PetBox.Tests/xunit.runner.json): it used to carry
+// `"maxParallelThreads": "0.5x"` — a MULTIPLIER of Environment.ProcessorCount, not an
+// absolute thread count. One committed file is read on both a 24C/32T dev workstation
+// AND a 4-core hosted CI runner, so the SAME multiplier means "leave 16 threads free"
+// on one and "use only 2 of your 4 cores" on the other — measured on the CI `test` job:
+// 6:14 before the cap landed, 6:45 after (worse, not better). The sweep that originally
+// picked 0.5x (4/8/16/32) is not trustworthy evidence either way — it ran on a machine
+// with other work in flight at the time. Rather than teach build.cs to detect CI and
+// inject a second, CI-specific value into a file the test host reads independently at
+// run time (a second machine-relative guess, now duplicated in two places), the cap was
+// removed outright: an absent `maxParallelThreads` is xunit's own default (== logical
+// processor count), which is correct on both machines by construction — nobody has to
+// know either one's core count. A developer who wants to reserve headroom on their own
+// box can still pass `dotnet test -- -parallel collections -maxthreads .5x` locally;
+// that preference has no reason to be checked in.
 
 // The image is built from the Dockerfile, which restores+publishes INSIDE the
 // container — it needs neither the host Build nor Test output, only the git version
