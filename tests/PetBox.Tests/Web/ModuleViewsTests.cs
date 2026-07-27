@@ -1512,8 +1512,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 
 		html.Should().Contain($"id=\"{target}\"");                                     // the card IS in the DOM
 		html.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");      // …and it is the highlighted one
-		// Listing is keyset-paged now (spec listing-tail-reachable) — there is no "page N" to name;
-		// the seek instead makes the target the FIRST row of whichever window it lands in.
+																					   // Listing is keyset-paged now (spec listing-tail-reachable) — there is no "page N" to name;
+																					   // the seek instead makes the target the FIRST row of whichever window it lands in.
 		html.Should().MatchRegex($"<ul[^>]*data-testid=\"store-entries\"[^>]*>\\s*<li id=\"{target}\"");
 		html.Should().NotContain($"id=\"{BigKey(1, 1)}\"");                            // page 0 is NOT what rendered
 	}

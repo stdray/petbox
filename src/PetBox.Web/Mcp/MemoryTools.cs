@@ -693,8 +693,8 @@ public static class MemoryTools
 				Sort = ParseSort(sort),
 				Limit = remaining,
 				BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
-				// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting
-				// on the answer, where a ranking mistake costs more than latency — Precision.
+							 // EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting
+							 // on the answer, where a ranking mistake costs more than latency — Precision.
 				RankingMode = SearchRankingMode.Precision,
 				// Query mode asks each leg for its WHOLE ranked pool and pages the MERGED order here —
 				// the same division of labour tasks_search uses. `Limit` above keeps sizing the candidate

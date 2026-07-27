@@ -981,8 +981,8 @@ public static class TasksTools
 			// change just because the caller asked for a smaller page).
 			WholePool = hasQuery,
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
-			// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on
-			// the answer, where a ranking mistake costs more than latency — Precision.
+						 // EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on
+						 // the answer, where a ranking mistake costs more than latency — Precision.
 			RankingMode = SearchRankingMode.Precision,
 		}, urlPrefix, ct);
 

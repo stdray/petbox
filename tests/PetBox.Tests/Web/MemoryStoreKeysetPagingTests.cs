@@ -87,7 +87,11 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 		await memory.UpsertAsync(Proj, Store,
 			Enumerable.Range(1, count).Select(i => new MemoryEntryInput
 			{
-				Key = Key(i), Version = 0, Type = type, Description = $"entry {i}", Body = $"body {i}",
+				Key = Key(i),
+				Version = 0,
+				Type = type,
+				Description = $"entry {i}",
+				Body = $"body {i}",
 			}).ToList(), []);
 	}
 
