@@ -2,6 +2,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
+using PetBox.Core.Data;
 using PetBox.Core.Models;
 
 namespace PetBox.Config.Data;
@@ -53,5 +54,5 @@ public sealed class ConfigDb : DataConnection
 	public ITable<TagVocabularyEntry> Tags => this.GetTable<TagVocabularyEntry>();
 
 	public static DataOptions<ConfigDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions().UseSQLite(connectionString).WithDurability());
 }

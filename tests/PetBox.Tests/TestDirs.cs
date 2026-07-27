@@ -92,16 +92,15 @@ public static class TestDirs
 
 	static void ClearPoolsFor(string dbPath)
 	{
-		// Pool identity is the connection string; cover the spellings in use.
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath}"));
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Cache=Shared"));
-		// TasksDb.CreateOptions appends this one — without it the tasks pools survive a clear.
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Foreign Keys=True"));
-		// PetBoxDb.CreateOptions (core.db, via CoreDbFactory/TestSchema.NewTempConnectionString)
-		// appends Foreign Keys=True onto a connection string that already carries Cache=Shared —
-		// neither spelling above matches that COMBINED string, so without this the pool for every
-		// core.db-backed test (WorkspaceMembershipServiceTests, ProjectDirectoryTests, and the rest
-		// of the plain-class Auth/Data tests) survived every clear and the temp dir stayed locked.
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Cache=Shared;Foreign Keys=True"));
+		// Pool identity is the connection string, so this has to name every spelling production
+		// can open the file with. That list used to be typed out here by hand, and the combined
+		// `;Cache=Shared;Foreign Keys=True` one — PetBoxDb.CreateOptions' output for core.db — was
+		// missing from it: for twelve test classes nothing was ever cleared and the temp dir
+		// stayed locked, silently. It is now DERIVED from the production spelling functions
+		// (SqliteConnectionStrings), so a change to either decoration reaches teardown for free;
+		// SqliteConnectionStringSpellingTests fails if a context ever produces a spelling the
+		// derivation does not cover.
+		foreach (var connectionString in SqliteConnectionStrings.Spellings(dbPath))
+			SqliteConnection.ClearPool(new SqliteConnection(connectionString));
 	}
 }

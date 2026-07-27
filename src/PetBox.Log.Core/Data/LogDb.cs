@@ -2,6 +2,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.DuckDB;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Data;
 using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
@@ -22,7 +23,8 @@ public sealed class LogDb : DataConnection
 			// Loads the vendored sqlean `regexp` extension per connection so its regexp_* SQL functions are
 			// available: the KQL translator maps `matches regex`/`extract`/`has`/`has_cs` and the well-formedness
 			// gates of the typed conversions (tolong/todouble) to native SQL over them.
-			.UseInterceptor(LoadSqleanRegexpInterceptor.Instance));
+			.UseInterceptor(LoadSqleanRegexpInterceptor.Instance)
+			.WithDurability());
 
 	// The DuckDb backend options. DuckDB's regexp_*/TRY_CAST/json_* are native (no per-connection extension
 	// load like sqlean), so the interceptor only pins `SET TimeZone='UTC'` — required so todatetime

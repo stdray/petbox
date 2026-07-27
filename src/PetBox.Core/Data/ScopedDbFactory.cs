@@ -72,7 +72,7 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 		var dir = Path.GetDirectoryName(dbPath);
 		if (!string.IsNullOrEmpty(dir))
 			Directory.CreateDirectory(dir);
-		var cs = $"Data Source={dbPath}";
+		var cs = SqliteConnectionStrings.ForFile(dbPath);
 
 		// Flag+lock serializes ONLY the first DDL per file — without the flag two threads
 		// both see "not migrated" and race on the FluentMigrator journal table. After the
@@ -99,7 +99,8 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 		{
 			_ensured.Remove(cacheKey);
 		}
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={ScopedDbFiles.PathFor(_baseDir, scopeKey, name)}"));
+		SqliteConnection.ClearPool(new SqliteConnection(
+			SqliteConnectionStrings.ForFile(ScopedDbFiles.PathFor(_baseDir, scopeKey, name))));
 		await Task.CompletedTask;
 	}
 

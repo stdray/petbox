@@ -50,9 +50,8 @@ public sealed class PetBoxDb : DataConnection
 	// core.db declares a FK, so switching enforcement on changes no other write path. Mirrors TasksDb.
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString)
 	{
-		if (!connectionString.Contains("Foreign Keys", StringComparison.OrdinalIgnoreCase))
-			connectionString = connectionString.TrimEnd(';') + ";Foreign Keys=True";
-		return new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema));
+		connectionString = SqliteConnectionStrings.WithForeignKeys(connectionString);
+		return new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema).WithDurability());
 	}
 
 	// Fluent mapping is built ONCE into this shared schema and handed to every

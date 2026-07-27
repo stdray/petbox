@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Data;
 
 namespace PetBox.Data;
 
@@ -83,7 +84,7 @@ public sealed class DataDbFactory : IDataDbFactory
 		var path = GetDbPath(projectKey, dbName);
 		if (!File.Exists(path))
 			throw new FileNotFoundException($"DataDb file not found: {path}");
-		return $"Data Source={path}";
+		return SqliteConnectionStrings.ForFile(path);
 	}
 
 	public async Task<SqliteConnection> OpenAsync(string projectKey, string dbName, long maxPageCount, CancellationToken ct = default)
@@ -92,6 +93,8 @@ public sealed class DataDbFactory : IDataDbFactory
 		try
 		{
 			await conn.OpenAsync(ct);
+			// Same per-connection rule as the quota below; no-op in production.
+			SqliteDurability.ApplyTo(conn);
 			// Per-connection, not persisted in the file: re-apply on every open or the
 			// quota silently does not exist for this connection.
 			await using var pragma = conn.CreateCommand();
@@ -115,9 +118,10 @@ public sealed class DataDbFactory : IDataDbFactory
 		if (File.Exists(path))
 			throw new InvalidOperationException($"DataDb already exists: {path}");
 
-		var cs = $"Data Source={path}";
+		var cs = SqliteConnectionStrings.ForFile(path);
 		await using var raw = new SqliteConnection(cs);
 		await raw.OpenAsync(ct);
+		SqliteDurability.ApplyTo(raw);
 
 		await using (var pragma = raw.CreateCommand())
 		{

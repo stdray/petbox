@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Data;
 
 namespace PetBox.Sessions.Data;
 
@@ -16,5 +17,5 @@ public sealed class SessionsDb : DataConnection
 	public ITable<MessageVec> MessageVectors => this.GetTable<MessageVec>();
 
 	public static DataOptions<SessionsDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions().UseSQLite(connectionString).WithDurability());
 }
