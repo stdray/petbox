@@ -248,6 +248,68 @@ public sealed class MemoryToolsContractTests : IDisposable
 		none.Entries.Should().BeEmpty();
 	}
 
+	// spec bodylen-uniform-contract, hole 1 (card bodylen-contract-has-two-holes): memory_get
+	// had NO bodyLen knob at all. Now it follows the same four-state contract as the pointed
+	// reads next to it (tasks_node_get, comments_get): omitted = FULL (the pointed-read
+	// default — distinct from a listing's snippet default), 0 = no body, N>0 = a cut snippet
+	// with "…", -1 = FULL again.
+	[Fact]
+	public async Task Get_BodyLen_OmittedIsFull()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('z', 500);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = big },
+		}));
+
+		var omitted = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k")).Entries.Single();
+		omitted.Body.Should().Be(big);
+	}
+
+	[Fact]
+	public async Task Get_BodyLen_ZeroIsNoBody()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('z', 500);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = big },
+		}));
+
+		var none = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k", bodyLen: 0)).Entries.Single();
+		none.Body.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task Get_BodyLen_NCutsWithEllipsis()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('z', 500);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = big },
+		}));
+
+		var cut = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k", bodyLen: 100)).Entries.Single();
+		cut.Body.Length.Should().Be(101);
+		cut.Body.Should().EndWith("…");
+	}
+
+	[Fact]
+	public async Task Get_BodyLen_MinusOneIsFull()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('z', 500);
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "d", body = big },
+		}));
+
+		var full = (await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, new NoopUsageRecorder(), Proj, "notes", "k", bodyLen: -1)).Entries.Single();
+		full.Body.Should().Be(big);
+	}
+
 	[Fact]
 	public async Task Upsert_AutoVivifies_NormalisesTags_AndFiltersByType()
 	{

@@ -135,7 +135,8 @@ public static class MemoryTools
 		Get the active entries by key — full bodies, addressed. `key` reads ONE; `keys` reads a
 		BATCH in one call (the cheap path after a bodyLen:0 search: pull the 1-5 keys you actually
 		need at once, not one round-trip each). Always returns { entries: [...] }, in the asked
-		order.
+		order. The body is COMPLETE by default (this is the pointed full read — the uniform
+		bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full).
 		In a BATCH a key that matches nothing is silently dropped (soft filter, like tasks_search
 		`keys`) and an empty result is not an error; with a single `key` a miss stays a not-found
 		ERROR (never a bare null — strict MCP clients reject a null structured result; the error
@@ -152,6 +153,7 @@ public static class MemoryTools
 		[Description("One key to read. Combine with `keys` or use either alone.")] string? key = null,
 		[Description("Batch of keys read in ONE call; a key that matches nothing is silently dropped (soft filter).")] string[]? keys = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
+		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -202,20 +204,29 @@ public static class MemoryTools
 
 		var entries = wanted.Where(found.ContainsKey).Select(k => found[k]).ToList();
 
+		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only —
+		// usage/cost below still measures against the STORED full body (BodyChars), the delivered
+		// count against what actually went on the wire (DeliveredChars, RowChars).
+		var wireEntries = entries
+			.Select(e => e with { Body = ModuleMcp.Body(e.Body, bodyLen, ModuleMcp.FullBody) ?? "" })
+			.ToList();
+
 		// Delivery events (spec: usage-cost-and-fit-separate) — one per entry HANDED OVER, so a
-		// batch of N bodies is N deliveries. A get sends the FULL body (deliveredChars ==
-		// bodyChars) and is a perfect fit by construction — the caller named the key — so kRel = 1
-		// with no fused score behind it. Rank is the entry's position in the answer.
-		foreach (var g in entries.Select((e, i) => (Entry: e, Rank: i + 1, From: origin[e.Key]))
+		// batch of N bodies is N deliveries. A get is a perfect fit by construction — the caller
+		// named the key — so kRel = 1 with no fused score behind it. Rank is the entry's position
+		// in the answer. bodyLen can shrink what actually ships (DeliveredChars/RowChars) below
+		// the stored full body (BodyChars); a full read (the default) keeps the two equal.
+		foreach (var g in entries.Zip(wireEntries, (Entry, Wire) => (Entry, Wire))
+			.Select((x, i) => (x.Entry, x.Wire, Rank: i + 1, From: origin[x.Entry.Key]))
 			.GroupBy(x => x.From.Container, StringComparer.OrdinalIgnoreCase))
 			usage.Delivered(g.Key, [.. g.Select(x => new MemoryDeliveryEvent(
 				Tool: "get", Scope: x.From.Scope, Store: store, Key: x.Entry.Key,
-				DeliveredChars: x.Entry.Body.Length, BodyChars: x.Entry.Body.Length,
-				RowChars: ResponseBudget.CostOf(x.Entry),
+				DeliveredChars: x.Wire.Body.Length, BodyChars: x.Entry.Body.Length,
+				RowChars: ResponseBudget.CostOf(x.Wire),
 				Rank: x.Rank, ScoreRaw: null, KRel: 1, SessionId: McpSessionId(http),
 				UsageSource: DeliberateSource))]);
 
-		return new MemoryGetResultView(entries);
+		return new MemoryGetResultView(wireEntries);
 	}
 
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
