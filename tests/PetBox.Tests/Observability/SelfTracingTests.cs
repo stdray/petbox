@@ -66,7 +66,7 @@ public sealed class SelfTracingTests : IDisposable
 	public async Task Tasks_upsert_emits_operation_span_with_segment_children()
 	{
 		var factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), factory), new RelationStore(factory),
 			new TagStore(factory), new CommentService(factory));
 
@@ -91,7 +91,7 @@ public sealed class SelfTracingTests : IDisposable
 	public async Task Memory_upsert_emits_operation_span()
 	{
 		var factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		var memory = new MemoryService(new MemoryStore(_db.Factory(), factory));
 
 		var (listener, started) = Listen(PetBoxActivitySources.MemorySourceName);

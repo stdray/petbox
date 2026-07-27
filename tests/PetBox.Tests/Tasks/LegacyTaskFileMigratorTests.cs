@@ -20,7 +20,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		_tasksDir = Path.Combine(_dir, "tasks");
 		Directory.CreateDirectory(_tasksDir);
 		_factory = new ScopedDbFactory<TasksDb>(_tasksDir, Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 	}
 
 	public void Dispose()
@@ -35,7 +35,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		var dir = Path.Combine(_tasksDir, project);
 		Directory.CreateDirectory(dir);
 		var cs = $"Data Source={Path.Combine(dir, board + ".db")};Pooling=False";
-		TasksSchema.Ensure(cs);
+		TestSchema.Tasks(cs);
 		using var db = new TasksDb(TasksDb.CreateOptions(cs));
 		var now = DateTime.UtcNow;
 		for (var i = 1; i <= count; i++)

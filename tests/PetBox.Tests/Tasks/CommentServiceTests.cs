@@ -19,7 +19,7 @@ public sealed class CommentServiceTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-comments-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		// Ensure the per-project tasks file exists + schema is applied before the
 		// comment-service tests hit NewConnection (mirrors CreateAsync in production).
 		_factory.GetDb("p");

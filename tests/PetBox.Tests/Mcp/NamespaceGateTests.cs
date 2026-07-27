@@ -93,7 +93,7 @@ public sealed class MemoryNamespaceGateTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store);
 	}
@@ -185,7 +185,7 @@ public sealed class TasksNamespaceGateTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
 	}
 

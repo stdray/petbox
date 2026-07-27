@@ -26,7 +26,7 @@ public sealed class TagStoreTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		// Ensure the per-project tasks file exists + schema is applied before the
 		// tag-store tests hit NewConnection (mirrors CreateAsync in production).
 		_factory.GetDb(Proj);

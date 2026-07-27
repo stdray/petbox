@@ -26,7 +26,7 @@ public sealed class MetricSqliteKqlIntegrationTests : IAsyncLifetime
 	public async ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={_dbPath};Cache=Shared";
-		LogSchema.Ensure(connStr); // creates LogEntries + Spans + MetricPoints (idempotent)
+		TestSchema.Log(connStr); // creates LogEntries + Spans + MetricPoints (idempotent)
 		_logDb = new LogDb(LogDb.CreateOptions(connStr));
 		await _logDb.MetricPoints.BulkCopyAsync(Seed);
 	}

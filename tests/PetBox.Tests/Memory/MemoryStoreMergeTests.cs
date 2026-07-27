@@ -33,6 +33,10 @@ public sealed class MemoryStoreMergeTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_memoryDir = Path.Combine(_dir, "memory");
+		// Real Ensure, not TestSchema.Memory: M010's legacy-store merge scans SIBLING per-store files
+		// in the SAME directory at ensure time (SeedLegacyStore below writes them there first) —
+		// TestSchema.Memory's template was built once, in an EMPTY directory, and a File.Copy here
+		// would never run M010 against these seeded siblings at all.
 		_factory = new ScopedDbFactory<MemoryDb>(_memoryDir, Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
 		_store = new MemoryStore(_db.Factory(), _factory);

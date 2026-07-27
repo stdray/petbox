@@ -6,10 +6,10 @@ using PetBox.Log.Core.Metrics;
 
 namespace PetBox.Tests.Data;
 
-// Storage-layer smoke test for the MetricPoints table: LogSchema.Ensure must CREATE it on the same
+// Storage-layer smoke test for the MetricPoints table: TestSchema.Log must CREATE it on the same
 // per-log SQLite file as LogEntries/Spans, and MetricPointRecord must round-trip through BulkCopyAsync
 // (the path the future OTLP ingest endpoint uses). Mirrors how the spans KQL integration tests exercise
-// the Spans table via LogSchema.Ensure + BulkCopyAsync.
+// the Spans table via TestSchema.Log + BulkCopyAsync.
 public sealed class MetricPointsSchemaTests : IAsyncLifetime
 {
 	readonly string _tempDir;
@@ -26,7 +26,7 @@ public sealed class MetricPointsSchemaTests : IAsyncLifetime
 	public ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={_dbPath};Cache=Shared";
-		LogSchema.Ensure(connStr); // creates LogEntries + Spans + MetricPoints (idempotent)
+		TestSchema.Log(connStr); // creates LogEntries + Spans + MetricPoints (idempotent)
 		_logDb = new LogDb(LogDb.CreateOptions(connStr));
 		return ValueTask.CompletedTask;
 	}

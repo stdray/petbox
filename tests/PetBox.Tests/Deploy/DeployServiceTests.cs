@@ -22,7 +22,7 @@ public sealed class DeployServiceTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-deploysvc-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "deploy.db")};Cache=Shared";
-		DeploySchema.Ensure(cs);
+		TestSchema.Deploy(cs);
 		_db = new DeployDb(DeployDb.CreateOptions(cs));
 		_svc = new DeployService(new DeployDbFactory(cs));
 	}

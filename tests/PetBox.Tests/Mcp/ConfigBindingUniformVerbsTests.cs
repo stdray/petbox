@@ -30,7 +30,7 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-config-verbs-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_inner = new ScopedDbFactory<ConfigDb>(Path.Combine(_dir, "config"), Scope.Workspace,
-			c => new ConfigDb(ConfigDb.CreateOptions(c)), ConfigSchema.Ensure);
+			c => new ConfigDb(ConfigDb.CreateOptions(c)), TestSchema.Config);
 		_factory = new ConfigDbFactory(_inner);
 		_secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
 	}

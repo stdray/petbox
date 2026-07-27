@@ -14,5 +14,5 @@ namespace PetBox.Tests.Search;
 // a fresh temp directory.
 static class SearchTestSchema
 {
-	public static void Ensure(string connectionString) => MemorySchema.Ensure(connectionString);
+	public static void Ensure(string connectionString) => TestSchema.Memory(connectionString);
 }

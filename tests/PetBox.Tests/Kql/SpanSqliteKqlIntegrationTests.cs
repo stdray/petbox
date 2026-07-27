@@ -25,7 +25,7 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 	public async ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={_dbPath};Cache=Shared";
-		LogSchema.Ensure(connStr); // creates LogEntries + Spans (idempotent)
+		TestSchema.Log(connStr); // creates LogEntries + Spans (idempotent)
 		_logDb = new LogDb(LogDb.CreateOptions(connStr));
 		await _logDb.Spans.BulkCopyAsync(Seed);
 	}

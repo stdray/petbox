@@ -28,7 +28,7 @@ public sealed class SharedPetBoxDbRaceReproTests : IDisposable
 		for (var i = 0; i < 8; i++)
 			_db.Insert(new Project { Key = $"proj-{i}", WorkspaceKey = "ws1", Name = $"P{i}", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_store = new TaskBoardStore(_db.Factory(), _factory);
 	}
 

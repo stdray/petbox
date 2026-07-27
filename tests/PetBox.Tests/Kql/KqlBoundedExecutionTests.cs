@@ -33,7 +33,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 	public async ValueTask InitializeAsync()
 	{
 		var connStr = $"Data Source={Path.Combine(_tempDir, "test.db")};Cache=Shared";
-		LogSchema.Ensure(connStr); // LogEntries + Spans
+		TestSchema.Log(connStr); // LogEntries + Spans
 		_logDb = new LogDb(LogDb.CreateOptions(connStr));
 		await _logDb.LogEntries.BulkCopyAsync(Enumerable.Range(1, SeededEvents).Select(i => Rec(i)));
 		await _logDb.Spans.BulkCopyAsync(Enumerable.Range(1, 3).Select(i => Span($"s{i}")));

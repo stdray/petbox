@@ -37,7 +37,7 @@ public sealed class BoardChangeStampTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_tags = new TagStore(_factory);
 		_tasks = new TasksService(_store, new RelationStore(_factory), _tags, new CommentService(_factory));

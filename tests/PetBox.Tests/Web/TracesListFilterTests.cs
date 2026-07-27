@@ -31,7 +31,7 @@ public sealed class TracesListFilterTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<LogDb>(Path.Combine(_dir, "logs"), Scope.Project,
-			c => new LogDb(LogDb.CreateOptions(c)), LogSchema.Ensure);
+			c => new LogDb(LogDb.CreateOptions(c)), TestSchema.Log);
 		_store = new LogStore(_db.Factory(), _factory);
 	}
 

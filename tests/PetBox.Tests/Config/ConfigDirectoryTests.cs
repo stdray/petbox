@@ -30,7 +30,7 @@ public sealed class ConfigDirectoryTests : IDisposable
 		Directory.CreateDirectory(_dir);
 
 		_scopedConfig = new ScopedDbFactory<ConfigDb>(Path.Combine(_dir, "config"), Scope.Workspace,
-			c => new ConfigDb(ConfigDb.CreateOptions(c)), ConfigSchema.Ensure);
+			c => new ConfigDb(ConfigDb.CreateOptions(c)), TestSchema.Config);
 		_configFactory = new ConfigDbFactory(_scopedConfig);
 
 		var coreCs = TestSchema.NewTempConnectionString("petbox-configdir-core");

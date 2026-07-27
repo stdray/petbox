@@ -63,7 +63,7 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 					if (logFactory is not null) svc.Remove(logFactory);
 					svc.AddSingleton<IScopedDbFactory<LogDb>>(_ => new ScopedDbFactory<LogDb>(
 						Path.Combine(_baseDir, "logs"), PetBox.Core.Settings.Scope.Project,
-						cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
+						cs => new LogDb(LogDb.CreateOptions(cs)), TestSchema.Log));
 				});
 			});
 	}

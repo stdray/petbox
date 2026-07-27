@@ -46,7 +46,7 @@ public sealed class ProjectDirectorySeedsCanonTests : IDisposable
 			seed.Insert(new Workspace { Key = "alpha", Name = "alpha", Description = "", CreatedAt = DateTime.UtcNow });
 
 		var memFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 
 		var services = new ServiceCollection();
 		services.AddSingleton(_dbf);

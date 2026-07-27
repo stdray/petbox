@@ -39,7 +39,7 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 		_db.Insert(new Project { Key = ProjB, WorkspaceKey = "ws1", Name = "B", Description = "" });
 		_db.Insert(new Project { Key = ProjC, WorkspaceKey = "ws2", Name = "C", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		var store = new TaskBoardStore(_db.Factory(), _factory);
 		_tasks = new TasksService(store, new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
 		_sp = CrossScopeTestHost.SharedTasksService(_tasks);

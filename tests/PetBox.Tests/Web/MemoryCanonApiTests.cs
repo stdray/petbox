@@ -65,7 +65,7 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 					if (existing is not null) svc.Remove(existing);
 					svc.AddSingleton<IScopedDbFactory<MemoryDb>>(_ => new ScopedDbFactory<MemoryDb>(
 						Path.Combine(_baseDir, "memory"), Scope.Project,
-						cs => new MemoryDb(MemoryDb.CreateOptions(cs)), MemorySchema.Ensure));
+						cs => new MemoryDb(MemoryDb.CreateOptions(cs)), TestSchema.Memory));
 				});
 			});
 	}
