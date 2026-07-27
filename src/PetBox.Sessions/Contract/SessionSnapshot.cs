@@ -44,10 +44,15 @@ public sealed record SessionSnapshot(
 // doesn't supply it — SessionStore's own listings always do).
 public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated, string? MetaJson = null, DateTime Created = default);
 
-// One server-paged slice of a project's session headers: the page rows, whether a further
-// page exists (probe row), and the total matching the current search. Keeps the UI's OFFSET/
-// LIMIT paging off the full set (spec ui-list-pagination).
-public sealed record SessionHeaderPage(IReadOnlyList<SessionHeader> Headers, bool HasNext, int Total);
+// One KEYSET-paged slice of a project's session headers (spec listing-tail-reachable):
+// the page rows and an opaque NextCursor (PetBox.Core.Contract.KeysetCursor) — null means
+// this page is the tail. Replaces the former (HasNext, Total) offset shape: an offset
+// silently re-serves or swallows a row under concurrent writes (a row inserted/deleted before
+// the boundary shifts what "skip N" points at); a cursor instead names the last row actually
+// emitted, so "after this row" is stable no matter what else changed. No Total: a keyset walk
+// has no cheap notion of "how many pages" — the presence of NextCursor is the only "more
+// exists" signal a caller needs (mirrors tasks_search's listing mode).
+public sealed record SessionHeaderPage(IReadOnlyList<SessionHeader> Headers, string? NextCursor);
 
 // Server-side sort axes for the session listing (card ui-search-sessions-hybrid — human parity
 // with the agent surface's filter/sort set, spec search-one-engine-for-human-and-agent). Length

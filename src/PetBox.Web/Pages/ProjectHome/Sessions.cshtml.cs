@@ -42,10 +42,12 @@ public sealed class SessionsModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
-	// The paging arg is 'pageNum', not 'page' — 'page' is a reserved route-key in Razor
-	// Pages, so a ?page=N value never binds (see the Data-module table view lesson).
-	[BindProperty(SupportsGet = true, Name = "pageNum")]
-	public int PageNum { get; set; }
+	// LISTING pagination (card listing-keyset-memory-sessions, spec listing-tail-reachable):
+	// the opaque KeysetCursor token from the previous page's NextCursor, passed back verbatim.
+	// Not accepted with `q` — search mode is a relevance SELECTION recomputed per call, there is
+	// no tail behind the capped candidate pool to page into (same boundary as tasks_search).
+	[BindProperty(SupportsGet = true, Name = "cursor")]
+	public string? Cursor { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "q")]
 	public string? Query { get; set; }
@@ -88,8 +90,22 @@ public sealed class SessionsModel : PageModel
 	// recall floor and still ran (SessionSearchOutcome.Distilled).
 	public bool Distilled { get; private set; } = true;
 
+	// Search mode: the candidate count (a bounded selection, not a corpus total). Listing mode:
+	// the row count on THIS page — keyset paging has no cheap "total rows" (that would need an
+	// extra COUNT the spec doesn't ask for); NextCursor is the only "more exists" signal.
 	public int Total { get; private set; }
-	public bool HasNext { get; private set; }
+
+	// Listing mode only: the opaque token for the next page, or null at the tail. Always built
+	// from THIS response's last row, so it can never itself be stale (see CursorWasReset for
+	// the case where the INCOMING cursor was).
+	public string? NextCursor { get; private set; }
+
+	// Set when the incoming `cursor` was rejected (KeysetCursor.Decode throws on a fingerprint
+	// mismatch — a stale link, or a hand-edited URL mixing a cursor from one filter/sort with
+	// another). The listing restarts from the top rather than surfacing a raw 500: the mismatch
+	// is still CAUGHT (never silently spliced), just presented as a notice instead of a crash —
+	// a browser page gets the LogCursor-style courtesy, tasks_search's MCP callers get the throw.
+	public bool CursorWasReset { get; private set; }
 
 	// The agent-filter dropdown's options — every distinct agent that has written a (non-
 	// deleted) session in this project.
@@ -104,8 +120,6 @@ public sealed class SessionsModel : PageModel
 		// ProjectWorkspaceBindingFilter, not a replacement for it (see ProjectHome/Index).
 		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
-
-		if (PageNum < 0) PageNum = 0;
 
 		// Header-only (no ContentZ decode — ISessionStore.ListAsync's own contract), used for
 		// BOTH the agent-filter dropdown's options and (in search mode) as the Updated/
@@ -142,22 +156,33 @@ public sealed class SessionsModel : PageModel
 
 			SearchResults = pool.ToList();
 			Total = SearchResults.Count;
-			HasNext = false;
 		}
 		else
 		{
-			// LISTING: agent filter + sort are real SQL (ListPageAsync), never an in-memory pass
-			// over the whole set.
+			// LISTING: agent filter + sort are real SQL (ListPageAsync); paging is KEYSET, not
+			// offset (card listing-keyset-memory-sessions) — a stale/foreign cursor is CAUGHT
+			// (ArgumentException from KeysetCursor.Decode) and the listing restarts from the top
+			// rather than raising a raw error to a browser tab.
 			var sort = EffectiveSortBy switch
 			{
 				SessionSortKeys.Created => SessionSortField.Created,
 				SessionSortKeys.Length => SessionSortField.Length,
 				_ => SessionSortField.Updated,
 			};
-			var page = await _store.ListPageAsync(ProjectKey, null, PageNum, PageSize, Agent, sort, EffectiveSortDesc, ct);
+			SessionHeaderPage page;
+			try
+			{
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, Cursor, PageSize, ct);
+			}
+			catch (ArgumentException)
+			{
+				CursorWasReset = true;
+				Cursor = null;
+				page = await _store.ListPageAsync(ProjectKey, null, Agent, sort, EffectiveSortDesc, null, PageSize, ct);
+			}
 			Sessions = page.Headers;
-			HasNext = page.HasNext;
-			Total = page.Total;
+			NextCursor = page.NextCursor;
+			Total = Sessions.Count;
 		}
 	}
 

@@ -1,5 +1,7 @@
+using System.Globalization;
 using LinqToDB;
 using LinqToDB.Async;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Sessions.Contract;
 
@@ -13,14 +15,21 @@ public interface ISessionStore
 {
 	SessionsDb GetContext(string projectKey);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
-	// Server-paged header slice, optionally filtered by a substring over SessionId/Agent
+	// KEYSET-paged header slice (spec listing-tail-reachable; card
+	// listing-keyset-memory-sessions), optionally filtered by a substring over SessionId/Agent
 	// (case-insensitive LIKE) AND/OR an exact `agent` match (the UI's agent-filter dropdown —
-	// a distinct predicate from the free-text `search` box, combinable with it). `sort` is a real
-	// SQL ORDER BY (never loads the whole set to sort in memory); null keeps the PRE-EXISTING
-	// deterministic default (SessionId asc) so old callers see no behavior change. OFFSET/LIMIT
-	// at the query — never loads the whole set to page.
-	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize,
-		string? agent = null, SessionSortField? sort = null, bool sortDesc = true, CancellationToken ct = default);
+	// a distinct predicate from the free-text `search` box, combinable with it). `sort` is a
+	// real SQL ORDER BY, SessionId always the secondary key (Updated/Created/Version — the
+	// length proxy — are none of them unique, so without this tiebreak the cursor boundary
+	// would be unstable). `cursor` is the opaque token from a PREVIOUS page's NextCursor — a
+	// token issued for a different search/agent/sort/direction is a thrown ArgumentException
+	// (KeysetCursor's own strict-decode contract), never a silent restart. Never OFFSETs:
+	// an offset is wrong under concurrent writes (a row inserted/deleted before the boundary
+	// silently re-serves/swallows a row) — this fetches the full filtered+sorted HEADER set
+	// (no ContentZ blobs, so still cheap) and seeks past the cursor in memory
+	// (KeysetCursor.Advance), mirroring tasks_search's listing mode.
+	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, string? agent,
+		SessionSortField sort, bool sortDesc, string? cursor, int pageSize, CancellationToken ct = default);
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	// Cheap lookup: the row's Created timestamp ONLY (no content decode) — no IsDeleted filter,
 	// so Created survives a soft-delete/resurrect cycle. Used by SessionService to preserve a
@@ -60,8 +69,8 @@ public sealed class SessionStore : ISessionStore
 		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson, r.Created)).ToList();
 	}
 
-	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize,
-		string? agent = null, SessionSortField? sort = null, bool sortDesc = true, CancellationToken ct = default)
+	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, string? agent,
+		SessionSortField sort, bool sortDesc, string? cursor, int pageSize, CancellationToken ct = default)
 	{
 		using var db = _factory.NewEnsuredConnection(projectKey);
 		var q = db.Sessions.Where(s => !s.IsDeleted);
@@ -76,35 +85,69 @@ public sealed class SessionStore : ISessionStore
 			q = q.Where(s => s.Agent == a);
 		}
 
-		var total = await q.CountAsync(ct);
-		var offset = Math.Max(0, pageNum) * pageSize;
+		// Fingerprint: everything that decides WHICH rows are selected and in WHAT order —
+		// search/agent/sort/direction (spec listing-tail-reachable). pageSize is deliberately
+		// excluded: it shapes the PAGE, not the sequence, so a caller may vary it between pages
+		// (mirrors tasks_search's SearchFingerprint).
+		var fingerprint = KeysetCursor.FingerprintOf(
+			"sessions", projectKey, search?.Trim(), agent?.Trim(), sort.ToString(), sortDesc ? "1" : "0");
 
-		// `sort == null` keeps the pre-existing deterministic default (SessionId asc) — the ONLY
-		// order every caller before this card ever saw, still exercised by callers that never
-		// pass `sort`. An explicit axis reorders for real (a SQL ORDER BY, not an in-memory
-		// sort) with SessionId as a stable tiebreak so same-timestamp rows never reshuffle
-		// across pages.
+		// A real SQL ORDER BY over the header columns only (never ContentZ) — SessionId is
+		// ALWAYS the secondary key: Updated/Created can tie (same-second writes) and Version
+		// (the length proxy) is far from unique, so without this tiebreak the keyset boundary
+		// would be unstable (spec listing-tail-reachable: the cursor addresses a row inside a
+		// TOTAL order, not just a sort-value bucket).
 		var ordered = sort switch
 		{
-			null => q.OrderBy(s => s.SessionId),
-			SessionSortField.Created => sortDesc ? q.OrderByDescending(s => s.Created).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Created).ThenBy(s => s.SessionId),
-			SessionSortField.Length => sortDesc ? q.OrderByDescending(s => s.Version).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Version).ThenBy(s => s.SessionId),
-			_ => sortDesc ? q.OrderByDescending(s => s.Updated).ThenBy(s => s.SessionId) : q.OrderBy(s => s.Updated).ThenBy(s => s.SessionId),
+			SessionSortField.Created => sortDesc ? q.OrderByDescending(s => s.Created) : q.OrderBy(s => s.Created),
+			SessionSortField.Length => sortDesc ? q.OrderByDescending(s => s.Version) : q.OrderBy(s => s.Version),
+			_ => sortDesc ? q.OrderByDescending(s => s.Updated) : q.OrderBy(s => s.Updated),
 		};
-
-		// Project only the header columns (never the ContentZ blob); take one extra row as a
-		// cheap HasNext probe.
-		var rows = await ordered
-			.Skip(offset)
-			.Take(pageSize + 1)
+		var rows = await ordered.ThenBy(s => s.SessionId)
 			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson, s.Created })
 			.ToListAsync(ct);
-
-		var hasNext = rows.Count > pageSize;
-		if (hasNext) rows.RemoveAt(rows.Count - 1);
 		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson, r.Created)).ToList();
-		return new SessionHeaderPage(headers, hasNext, total);
+
+		// Seek past the cursor (KeysetCursor.Advance — the SAME primitive tasks_search's
+		// listing mode uses): a foreign/stale token (a different search/agent/sort/direction)
+		// throws rather than silently restarting the walk under a different ordering.
+		IReadOnlyList<SessionHeader> afterCursor = headers;
+		if (!string.IsNullOrWhiteSpace(cursor))
+		{
+			var decoded = KeysetCursor.Decode(cursor, fingerprint, "sessions listing");
+			afterCursor = KeysetCursor.Advance(
+				headers, decoded,
+				h => (CursorSortValue(h, sort), h.SessionId, "sessions"),
+				CursorSortComparison(sort), sortDesc, "sessions listing");
+		}
+
+		var hasMore = afterCursor.Count > pageSize;
+		var page = hasMore ? afterCursor.Take(pageSize).ToList() : afterCursor.ToList();
+		var nextCursor = hasMore
+			? new KeysetCursor(fingerprint, CursorSortValue(page[^1], sort), page[^1].SessionId, "sessions").Encode()
+			: null;
+		return new SessionHeaderPage(page, nextCursor);
 	}
+
+	// The canonical sort-key value of one header, as the string a cursor carries — mirrors
+	// TasksTools.CursorSortValue's shape for the same reason (a keyset token needs a
+	// STRING the store can also re-parse to find the boundary; see CursorSortComparison).
+	static string CursorSortValue(SessionHeader h, SessionSortField sort) => sort switch
+	{
+		SessionSortField.Created => h.Created.ToString("O", CultureInfo.InvariantCulture),
+		SessionSortField.Length => h.Version.ToString(CultureInfo.InvariantCulture),
+		_ => h.Updated.ToString("O", CultureInfo.InvariantCulture),
+	};
+
+	// How two of those canonical values compare — Length numerically, the timestamps as
+	// instants (never as text, where "2026-07-02" would sort after "2026-07-10").
+	static Comparison<string> CursorSortComparison(SessionSortField sort) => sort switch
+	{
+		SessionSortField.Length => static (a, b) =>
+			long.Parse(a, CultureInfo.InvariantCulture).CompareTo(long.Parse(b, CultureInfo.InvariantCulture)),
+		_ => static (a, b) => DateTime.Parse(a, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
+			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
+	};
 
 	public async Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default)
 	{
