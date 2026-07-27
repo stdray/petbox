@@ -61,4 +61,31 @@ public sealed class VectorMathTests
 			.ToArray();
 		VectorMath.TopK(query, candidates, 2).Should().HaveCount(2);
 	}
+
+	// search-legs-tie-break-nondeterministic: OrderByDescending(Score) alone is stable only
+	// relative to `candidates`' own enumeration order — and that order comes from a caller's SQL
+	// scan with no ORDER BY (VectorSearchIndex.SearchAsync), which is not guaranteed stable across
+	// pool rebuilds. Same equal-scoring candidate SET, fed in two different orders (standing in
+	// for two independent rebuilds), must sort identically. Reverting the ThenBy(Key, Ordinal)
+	// fix reproduces the divergence directly: without it TopK just echoes each call's input
+	// order verbatim (LINQ OrderBy is a stable sort), so feeding the reverse permutation is
+	// GUARANTEED to reverse the tied output too — a reliable, non-flaky red.
+	[Fact]
+	public void TopK_TiesBrokenByKeyOrdinal_RegardlessOfCandidateOrder()
+	{
+		var query = new[] { 1f, 0f };
+		var equalScoring = new (string, float[])[]
+		{
+			("zzz", new[] { 1f, 0f }),
+			("mmm", new[] { 1f, 0f }),
+			("aaa", new[] { 1f, 0f }),
+		};
+
+		var topForward = VectorMath.TopK(query, equalScoring, 10);
+		var topReversed = VectorMath.TopK(query, equalScoring.Reverse().ToArray(), 10);
+
+		var expected = new[] { "aaa", "mmm", "zzz" }; // ordinal key order
+		topForward.Select(t => t.Key).Should().Equal(expected);
+		topReversed.Select(t => t.Key).Should().Equal(expected);
+	}
 }

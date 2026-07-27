@@ -28,6 +28,12 @@ public static class VectorMath
 			if (vec.Length != query.Length) continue;
 			scored.Add((key, Cosine(query, vec)));
 		}
-		return scored.OrderByDescending(x => x.Score).Take(k).ToList();
+		// Tie-break (search-legs-tie-break-nondeterministic): OrderByDescending is stable
+		// relative to `scored`'s insertion order, which mirrors `candidates`' enumeration order
+		// (e.g. an unordered-by-key SQL scan) — not stable across rebuilds of a cold pool. ThenBy
+		// the document address (Key = Type + Id) with an explicit ordinal comparer fixes an
+		// otherwise-arbitrary order among equal scores without touching order between distinct
+		// scores.
+		return scored.OrderByDescending(x => x.Score).ThenBy(x => x.Key, StringComparer.Ordinal).Take(k).ToList();
 	}
 }

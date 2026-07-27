@@ -116,10 +116,17 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		// [Scope, Type, Id, Text, Tags, Key, Title] — the UNINDEXED address columns included (they
 		// score nothing but still occupy positions 0..2). The VALUES live once in FtsColumnWeights;
 		// they are `const` so the compiler inlines them as the literals fts5's bm25() spread requires.
+		// Tie-break (search-legs-tie-break-nondeterministic): bm25 alone leaves equal-score rows in
+		// SQLite's unspecified row order, which is not stable across rebuilds of a cold pool.
+		// ThenBy the document address (Type, Id — SQLite's default BINARY collation is byte/ordinal
+		// comparison, matching the vector leg's Key tie-break) fixes an otherwise-arbitrary order
+		// WITHOUT touching relative order between distinct scores.
 		var rows = await q
 			.OrderBy(r => Sql.Ext.SQLite().FTS5bm25(r,
 				FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed, FtsColumnWeights.Unindexed,
 				FtsColumnWeights.Body, FtsColumnWeights.Tags, FtsColumnWeights.Key, FtsColumnWeights.Title))
+			.ThenBy(r => r.Type)
+			.ThenBy(r => r.Id)
 			.Select(r => new
 			{
 				r.Type,
