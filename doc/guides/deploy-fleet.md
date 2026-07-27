@@ -77,7 +77,7 @@ Create a deployment — the agent on that node will pull the image and run it.
 
 **Via MCP:**
 ```
-deploy_upsert(service="bot", projectKey="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="bot", projectKey="yobapub", hostId="vdsina-1",
               imageDigest="ghcr.io/you/bot:sha-abc123", running=true,
               requiredTags="net.x", configTags="env:prod")
 ```
@@ -92,7 +92,7 @@ Within a poll the container `petbox-<service>` is up. Check actual state: UI gri
 A deployment can carry a declarative **run-spec** — the compose-subset the agent maps 1:1 to `docker run` flags (env is *not* part of it; env stays config-resolved). All fields are optional:
 
 ```
-deploy_upsert(service="web", projectKey="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", projectKey="yobapub", hostId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],                 # [ip:]host:container[/tcp|udp]
               volumes=["/opt/web/logs:/app/logs",            # /host:/container[:ro|rw] (bind mounts only)
@@ -113,7 +113,7 @@ The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network/
 A deployment with a **`domain`** is a *site*: besides the container, the node agent keeps a Caddy route (domain → loopback port) in line with it.
 
 ```
-deploy_upsert(service="web", projectKey="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", projectKey="yobapub", hostId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],
               domain="app.example.com")          # sitePort defaults to 8080 (ports[0] host port)
@@ -146,7 +146,7 @@ To roll a new image, set the new digest on the deployment — `deploy_upsert` wi
 - **Status / list** — UI grid or `deploy_list` (per node/service filter); `deploy_node_list` for the fleet (incl. agent-detected `capabilities`, the `host` snapshot — memory/disk/os/ssh-posture — and computed `warnings`).
 - **Host health** — the agent heartbeats a host report every cycle; thresholds live server-side (low memory: <10% or <150 MB; low disk: <10% or <2 GB). Warning transitions (appeared/cleared) are logged to the `$system` self-log, so history needs no separate monitoring stack.
 - **Stop / start** — `deploy_stop(id)` / `deploy_start(id)` or the UI buttons (sets desired state; the agent reconciles).
-- **Move** — `deploy_move(id, toNodeId)` (the source agent self-fences the old container, the target agent starts it).
+- **Move** — `deploy_move(id, toHostId)` (the source agent self-fences the old container, the target agent starts it).
 - **Copies** — create a deployment of the same service on another node (one per node).
 - **Remove** — `deploy_delete(id)` removes the deployment (the owning agent then removes the container); `deploy_node_delete(id)` removes a node and cascades its deployments.
 
