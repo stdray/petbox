@@ -168,13 +168,21 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 	// already sorted by (sort value, key, board) — the exact order the caller paged last time.
 	//
 	// Two ways to find the boundary, in this order:
-	//  1. IDENTITY. If the row named by the token is still in the list, resume right after it,
-	//     wherever it now sits. This is exact and immune to any modelling error in the
-	//     comparison below — and it is also the honest reading of the accepted anomaly: you
-	//     continue after the row you last SAW.
-	//  2. COMPARISON. If that row is gone (deleted, renamed, filtered out since), fall back to
-	//     the keyset predicate — skip while the row is not after the token. Deleting the
-	//     boundary row must not restart the walk.
+	//  1. IDENTITY, **and only while the row has not MOVED**. If the row named by the token is still in
+	//     the list AND its sort value still matches the one the token recorded, resume right after it.
+	//     That is exact and immune to any modelling error in the comparison below.
+	//
+	//     The sort-value guard is not paranoia — without it this path silently eats the tail of a walk
+	//     on any VOLATILE axis. Sessions sort by `Updated`, which every write moves: let the boundary
+	//     row receive a message between pages and it jumps to the far end of the list, and "resume after
+	//     it, wherever it now sits" resumes after its NEW position — skipping every unvisited row in
+	//     between, with nothing on the wire to say so. The documented anomaly below promises that ONE
+	//     row may be missed or repeated; losing the middle of the list is a different thing entirely, so
+	//     a row that moved is handed to the comparison path instead, which resumes at the POSITION the
+	//     token described rather than at wherever the row wandered to.
+	//  2. COMPARISON. If that row is gone (deleted, renamed, filtered out since) or has MOVED along the
+	//     sort axis, fall back to the keyset predicate — skip while the row is not after the token.
+	//     Deleting the boundary row must not restart the walk.
 	//
 	// `sortComparison` compares two canonical sort-value strings for the axis in play; the
 	// caller supplies it because only the caller knows whether "12" is a number, a title or a
@@ -190,10 +198,16 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 	{
 		for (var i = 0; i < ordered.Count; i++)
 		{
-			var (_, key, board) = keyOf(ordered[i]);
+			var (sort, key, board) = keyOf(ordered[i]);
 			if (string.Equals(key, cursor.Key, StringComparison.Ordinal)
 				&& string.Equals(board, cursor.Board, StringComparison.Ordinal))
+			{
+				// Same row, same place on the axis → resume after it. If its sort value MOVED, this is no
+				// longer the position the token described, so fall through to the comparison path (which
+				// resumes at the token's POSITION) instead of skipping everything the row jumped over.
+				if (!string.Equals(sort, cursor.SortValue, StringComparison.Ordinal)) break;
 				return i + 1 >= ordered.Count ? [] : ordered.Skip(i + 1).ToList();
+			}
 		}
 
 		try

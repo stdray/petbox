@@ -19,13 +19,24 @@ namespace PetBox.Core.Search;
 // The pool holds ADDRESSES (Hit = type + id + score), never rendered rows. A page re-hydrates its
 // own rows from the entity store, so a cached pool can never serve a stale body — only a stale
 // ORDER, which the data-version fingerprint refuses outright (see SearchPoolCache).
+// `Annotations`, when present, is a per-row label the CONSUMER owns and this type carries opaquely,
+// index-aligned with `Ordered`. It exists so a page served from a cached pool reproduces page 1 EXACTLY:
+// a consumer may derive a display fact from something that is gone by the time the page is hydrated
+// (tasks: whether the row surfaced through a COMMENT doc, which the resolved node address no longer
+// says). Without a slot for it, a later page would quietly drop that fact — a small version of the same
+// "page 2 is not page 1" defect this whole design exists to prevent. Null when the consumer has none.
 public sealed record SearchPool(
 	IReadOnlyList<Hit> Ordered,
 	int PoolLimit,
 	bool PoolBounded,
-	SearchRetrievers Retrievers)
+	SearchRetrievers Retrievers,
+	IReadOnlyList<string?>? Annotations = null)
 {
 	public int Count => Ordered.Count;
+
+	// The consumer label for row `i`, or null. Tolerates a missing/short Annotations list rather than
+	// throwing: an absent label must degrade to "no label", never to a failed page.
+	public string? AnnotationAt(int i) => Annotations is not null && i < Annotations.Count ? Annotations[i] : null;
 }
 
 // WHY THE WALK STOPPED — an explicit three-way answer, and the reason this feature cannot quietly

@@ -323,8 +323,15 @@ public static class SessionTools
 		var (kept, omitted) = new ResponseBudget().Take(items);
 		// Rows remain if the pool has more behind this page OR the budget cut rows off this one.
 		var more = o.MoreInPool || omitted > 0;
-		var nextCursor = more && o.LastPoolKey is not null
-			? new KeysetCursor(fingerprint, "", o.LastPoolKey, projectKey).Encode()
+		// RESUME FROM THE LAST ROW ACTUALLY SENT, not from the end of the slice we considered. When the
+		// response budget cut candidates off this page (omitted > 0), those candidates never reached the
+		// caller — resuming past them would skip them for good, which is the same lost-rows defect the
+		// budget seek in tasks_search and memory_search exists to avoid. Only when NOTHING was kept (the
+		// whole slice went stale and hydrated to nothing) do we fall back to the slice end, because there
+		// is no delivered row to resume from and stopping there would strand the rest of the pool.
+		var resumeAfter = kept.Count > 0 ? kept[^1].SessionId : o.LastPoolKey;
+		var nextCursor = more && resumeAfter is not null
+			? new KeysetCursor(fingerprint, "", resumeAfter, projectKey).Encode()
 			: null;
 		// WHY THE WALK STOPPED — the SAME three words tasks_search and memory_search use. Always present
 		// with `q`, so a caller never has to read "nextCursor is absent" and guess whether it reached the

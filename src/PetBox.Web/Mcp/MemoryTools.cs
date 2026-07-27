@@ -863,11 +863,19 @@ public static class MemoryTools
 		+ "`type`, `scope`, a more specific `q`), list without `q`, or use memory_delta to enumerate a "
 		+ "whole store incrementally.";
 
-	// The canonical sort-key value a cursor carries. In query mode it is the fused+decayed score; in a
-	// listing the merged order is the cascade's own (project-first, then the service's updated-desc), for
-	// which no scalar exists — the empty string is an honest placeholder, since resumption is by IDENTITY.
-	static string CursorSortValue(double score, bool hasQuery) =>
-		hasQuery ? score.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : "";
+	// The canonical sort-key value a cursor carries — CONSTANT here, in both modes, because neither of
+	// memory's orders has a scalar that means anything.
+	//
+	// It used to carry the query-mode score, which was actively wrong: that score is FRESHNESS-DECAYED
+	// against `now`, so the same row reports a slightly different value on every call. Nothing in the
+	// data has to change for it to drift. Once KeysetCursor learned to distrust an identity match whose
+	// sort value moved (the volatile-axis fix), that drift made every second page look like a row that
+	// had jumped, sending a perfectly valid walk into the comparison path — which memory refuses outright.
+	//
+	// A constant is the honest encoding: resumption here is by IDENTITY (scope + store + key, unique in
+	// the pool), the pool is pinned by the container stamps in the fingerprint, and a scalar that cannot
+	// order the list has no business pretending to describe a position in it.
+	static string CursorSortValue(double score, bool hasQuery) => "";
 
 	// How two of those values compare. Resumption is by IDENTITY first (KeysetCursor.Advance), and this
 	// delegate is reached only when the row a token names is GONE from the pool. With the container
@@ -897,15 +905,25 @@ public static class MemoryTools
 	// only (null lag) as contributing 0.
 	static long? SumLag(long? a, long? b) => a is null && b is null ? null : (a ?? 0) + (b ?? 0);
 
-	// Merge the ranking outcome of two scopes (spec: search-rerank-in-loop): every scope in this
-	// cascade shares the SAME requested SearchRankingMode, so they can only ever disagree on Reranked
-	// vs DegradedRrf (one container had a live rerank route, another's outage/no-route fell back) —
-	// Reranked wins so a partial success is never hidden, and a degradation in either scope is never
-	// masked by the other's success or by a Speed-choice reading. Falls back to whichever side is set
-	// (both ChosenRrf, or one null) when neither is Reranked/DegradedRrf.
-	static SearchRankingOutcome? MergeRanking(SearchRankingOutcome? a, SearchRankingOutcome? b) =>
-		a == SearchRankingOutcome.Reranked || b == SearchRankingOutcome.Reranked ? SearchRankingOutcome.Reranked
-		: a == SearchRankingOutcome.DegradedRrf || b == SearchRankingOutcome.DegradedRrf ? SearchRankingOutcome.DegradedRrf
+	// Merge the ranking outcome of two scopes (spec: search-rerank-in-loop). Every scope in this cascade
+	// shares the SAME requested SearchRankingMode, so they can only disagree on Reranked vs DegradedRrf
+	// — one container had a live rerank route, the other's outage or missing route fell back.
+	//
+	// DEGRADATION DOMINATES. The rule used to be the other way round ("Reranked wins so a partial
+	// success is never hidden"), which had it exactly backwards: the merged answer is ONE list, and if
+	// any part of it was never reranked then the list as a whole was not. The common case is not even an
+	// outage — a project with a rerank route cascading into a workspace container without one is a
+	// PERMANENT arrangement, so every cascade answer reported `Reranked` and `degraded:false` forever
+	// while half its rows were plain RRF. The tri-state exists precisely to keep precision, degradation
+	// and deliberate choice apart; a merge that resolves toward the flattering value throws away the
+	// distinction it was introduced for. A caller can now trust the pessimistic reading: "reranked"
+	// means all of it was.
+	//
+	// Falls back to whichever side is set (both ChosenRrf, or one null) when neither is
+	// Reranked/DegradedRrf.
+	internal static SearchRankingOutcome? MergeRanking(SearchRankingOutcome? a, SearchRankingOutcome? b) =>
+		a == SearchRankingOutcome.DegradedRrf || b == SearchRankingOutcome.DegradedRrf ? SearchRankingOutcome.DegradedRrf
+		: a == SearchRankingOutcome.Reranked || b == SearchRankingOutcome.Reranked ? SearchRankingOutcome.Reranked
 		: a ?? b;
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).

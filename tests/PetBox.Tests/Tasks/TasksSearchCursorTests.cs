@@ -302,20 +302,31 @@ public sealed class TasksSearchCursorTests : IDisposable
 	}
 
 	[Fact]
-	public async Task SecondPage_ReusesTheStoredPool_InsteadOfBuildingANewOne()
+	public async Task SecondPage_ReusesTheStoredPool_AndRunsNoSecondRerank()
 	{
-		// Requirement 5 observed end-to-end: the pool is materialized ONCE. If page 2 rebuilt it, a
-		// second entry would appear under a second fingerprint — and with a live LLM route that second
-		// build is the 3-4 second rerank this design exists to avoid.
+		// Requirement 5 observed end-to-end, and countable. It needs a WORKING rerank route: a pool that
+		// fell back to RRF is deliberately never stored (no cross-encoder pass to save, and keeping it
+		// would pin stale provenance), so a no-LLM service caches nothing — correct, but it cannot
+		// demonstrate the saving. A local service keeps the LLM out of this class's other tests.
 		await SeedQueryable();
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
-		var first = await Search(q: "alpha", board: "b", limit: 2);
-		_poolCache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, null);
+		cache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		var passesAfterPageOne = llm.RerankCalls;
+		passesAfterPageOne.Should().BeGreaterThan(0, "the cross-encoder decided this order");
 
-		var second = await Search(q: "alpha", board: "b", limit: 2, cursor: first.NextCursor);
+		var second = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, first.NextCursor);
 
 		second.Nodes.Should().NotBeEmpty();
-		_poolCache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		cache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		llm.RerankCalls.Should().Be(passesAfterPageOne,
+			"page 2 must not pay for the cross-encoder again — 3-4 seconds per page is what this avoids");
 	}
 
 	[Fact]

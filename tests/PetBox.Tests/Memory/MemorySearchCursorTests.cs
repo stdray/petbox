@@ -201,17 +201,31 @@ public sealed class MemorySearchCursorTests : IDisposable
 	// ── one pool, one ranking pass ───────────────────────────────────────────────────────────
 
 	[Fact]
-	public async Task SecondPage_ReusesTheStoredPool_InsteadOfBuildingANewOne()
+	public async Task SecondPage_ReusesTheStoredPool_AndRunsNoSecondRerank()
 	{
+		// The cache exists to save ONE thing: the cross-encoder pass. So this test needs a rerank route
+		// that actually works — a pool that fell back to RRF is deliberately never stored (there is no
+		// pass to save, and keeping it would only pin stale provenance), which is why a no-LLM service
+		// caches nothing at all. With a live route the saving is directly countable.
 		await SeedSixProject();
+		var llm = new FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var memory = new MemoryService(new MemoryStore(_db.Factory(), _factory), llm: llm, poolCache: cache);
 
-		var first = await Search(q: "deploy", scope: "project", limit: 2);
-		_poolCache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		var first = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), memory,
+			new NoopUsageRecorder(), "deploy", "project", null, null, null, null, 2, null, false, null, null);
+		cache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		first.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.Reranked);
+		var passesAfterPageOne = llm.RerankCalls;
+		passesAfterPageOne.Should().BeGreaterThan(0);
 
-		var second = await Search(q: "deploy", scope: "project", limit: 2, cursor: first.NextCursor);
+		var second = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), memory,
+			new NoopUsageRecorder(), "deploy", "project", null, null, null, null, 2, null, false, null, first.NextCursor);
 
 		second.Items.Should().NotBeEmpty();
-		_poolCache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		cache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		llm.RerankCalls.Should().Be(passesAfterPageOne,
+			"the cross-encoder runs ONCE per pool — that is the whole point of caching it");
 	}
 
 	// ── the boundary is stated, in the same words as the other surfaces ──────────────────────

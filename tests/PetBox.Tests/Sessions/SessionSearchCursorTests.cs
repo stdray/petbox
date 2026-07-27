@@ -1,5 +1,8 @@
 using LinqToDB;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using PetBox.Config;
+using PetBox.Core.Features;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -237,6 +240,70 @@ public sealed class SessionSearchCursorTests : IDisposable
 		var act = () => _search.SearchAsync(Proj, "векторизацию", sessions: 2, afterSessionId: "s-never-existed");
 
 		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*no longer in the discovery pool*");
+	}
+
+	// ── B3: a page cut by the response budget must not strand the rows it cut ────────────────
+
+	[Fact]
+	public async Task B3_WhenTheBudgetCutsThePage_TheWalkStillDeliversTheCutRows()
+	{
+		// `nextCursor` used to encode the last candidate the page CONSIDERED, while `kept` could be a
+		// budget-trimmed prefix of it. Page 2 then resumed past the end of the slice and the trimmed
+		// candidates were never delivered — by ANY page. tasks_search and memory_search both resume from
+		// the last row actually SENT; sessions must too.
+		//
+		// Fat transcripts + bodyLen:-1 (full raw messages) are what make the budget, not `sessions`, the
+		// thing that cuts the page.
+		var fat = new string('я', 4000);
+		for (var i = 0; i < 12; i++)
+			await _sessions.UpsertAsync(Proj, $"big-{i:d2}", "claude-code",
+				Msgs($"разговор {i} про векторизацию индекса {fat}"));
+		(await Distill()).Should().Be(12);
+
+		var first = await SearchTool(sessions: 30, bodyLen: -1);
+		first.Omitted.Should().NotBeNull().And.BeGreaterThan(0, "this test is only meaningful if the budget cut rows");
+		first.NextCursor.Should().NotBeNull("a cut page must hand back a way to reach what it cut");
+
+		var seen = first.Items.Select(i => i.SessionId).ToList();
+		string? cursor = first.NextCursor;
+		for (var guard = 0; guard < 40 && cursor is not null; guard++)
+		{
+			var page = await SearchTool(sessions: 30, bodyLen: -1, cursor: cursor);
+			seen.AddRange(page.Items.Select(i => i.SessionId));
+			cursor = page.NextCursor;
+		}
+
+		seen.Should().OnlyHaveUniqueItems("resuming from the last SENT row re-serves nothing");
+		seen.Should().BeEquivalentTo(Enumerable.Range(0, 12).Select(i => $"big-{i:d2}"),
+			"every discovered session must reach the caller on some page");
+	}
+
+	Task<PetBox.Web.Mcp.Contract.SessionSearchResultView> SearchTool(
+		int sessions = 0, int? bodyLen = null, string? cursor = null) =>
+		PetBox.Web.Mcp.SessionTools.SearchAsync(ToolHttp(), ToolFlags(), _sessions, _search, Proj,
+			"векторизацию", sessions, 0, false, bodyLen, cursor);
+
+	static IHttpContextAccessor ToolHttp()
+	{
+		var id = new System.Security.Claims.ClaimsIdentity(
+			[new System.Security.Claims.Claim("project", Proj),
+			 new System.Security.Claims.Claim("scopes", "tasks:read,memory:read")], "test");
+		var ctx = new DefaultHttpContext
+		{
+			RequestServices = TestProjectCatalog.Services,
+			User = new System.Security.Claims.ClaimsPrincipal(id),
+		};
+		return new HttpContextAccessor { HttpContext = ctx };
+	}
+
+	static FeatureFlags ToolFlags()
+	{
+		var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+		{
+			["Features:Tasks"] = "true",
+			["Features:Memory"] = "true",
+		}).Build();
+		return new FeatureFlags(cfg);
 	}
 
 	// ── fixtures (local copies: the originals are private to SessionSearchServiceTests) ──────
