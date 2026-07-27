@@ -16,10 +16,21 @@ namespace PetBox.Tests.Mcp;
 // unknown key before the server sees it).
 public sealed class UnknownParameterFilterFixture() : TasksMcpFixture("unkp", "UnknownParam");
 
-public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameterFilterFixture>
+public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameterFilterFixture>, IAsyncLifetime
 {
 	readonly UnknownParameterFilterFixture _fx;
 	public UnknownParameterFilterTests(UnknownParameterFilterFixture fx) => _fx = fx;
+
+	// The same proven pattern as every other TasksMcpFixture consumer (MethodologyDefinitionTests
+	// et al.): the shared per-class host means per-test DATA isolation has to be restored
+	// explicitly. This class used to be the one consumer that didn't — AllValidParameters_
+	// PassesThrough had to be patched (c70cd815) to provision its own board rather than rely on
+	// BatchVerbWithNestedObjects_IsNotBroken having run first and left one behind, which was the
+	// symptom of exactly this gap. ResetAsync wipes the board catalog + per-project tasks file
+	// between tests, so no test here may assume another has already run.
+	public ValueTask InitializeAsync() => new(_fx.ResetAsync());
+
+	public ValueTask DisposeAsync() => ValueTask.CompletedTask; // the fixture owns host teardown
 
 	static async Task<McpClientTool> Tool(McpClient mcp, string name) =>
 		(await mcp.ListToolsAsync()).First(t => t.Name == name);
