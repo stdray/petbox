@@ -16,6 +16,12 @@ namespace PetBox.Tasks.Data;
 public interface IRelationStore
 {
 	Task<Relation> CreateAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default);
+	// Batch form of CreateAsync for the relations_create atomic:true contract: ONE connection,
+	// ONE transaction for the whole batch — idempotency lookup, node-existence check and insert
+	// per item, all-or-nothing (any failure, including a write-phase FK/existence miss, rolls
+	// back everything already inserted earlier in the same call). Per-item CreateAsync stays as
+	// it is for the single form and atomic:false (partial-apply is intentionally non-transactional).
+	Task<IReadOnlyList<Relation>> CreateBatchAsync(string projectKey, IReadOnlyList<(string Kind, string From, string To)> items, CancellationToken ct = default);
 	// direction: "from" (edges out of nodeId), "to" (edges into nodeId), "both" (default).
 	// includeHistory=false returns only active edges (ClosedAt is null).
 	Task<IReadOnlyList<Relation>> ListAsync(string projectKey, string nodeId, string direction = "both", bool includeHistory = false, CancellationToken ct = default);
@@ -82,6 +88,60 @@ public sealed class RelationStore : IRelationStore
 		};
 		await ctx.InsertAsync(rel, token: ct);
 		return rel;
+	}
+
+	// Same steps as CreateAsync (idempotency lookup, existence check, insert) but for the WHOLE
+	// batch inside one BeginTransactionAsync/CommitAsync, rollback on any exception — mirrors
+	// TemporalStore.ApplyAsync's transaction shape (TemporalStore.cs). This is what makes
+	// relations_create's atomic:true promise true: a write-phase failure (e.g. a syntactically
+	// valid 32-hex NodeId that NodeRefResolver let through but that names no real node) undoes
+	// every insert already made earlier in the same call, not just the failing item.
+	public async Task<IReadOnlyList<Relation>> CreateBatchAsync(
+		string projectKey, IReadOnlyList<(string Kind, string From, string To)> items, CancellationToken ct = default)
+	{
+		if (items.Count == 0) return [];
+
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			var results = new List<Relation>(items.Count);
+			foreach (var (kindRaw, fromNodeId, toNodeId) in items)
+			{
+				var kind = (kindRaw ?? "").ToLowerInvariant();
+
+				var existing = await ctx.GetTable<Relation>().FirstOrDefaultAsync(
+					r => r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null, ct);
+				if (existing is not null)
+				{
+					results.Add(existing);
+					continue;
+				}
+
+				await AssertNodeExistsAsync(ctx, projectKey, fromNodeId, "fromNodeId", ct);
+				await AssertNodeExistsAsync(ctx, projectKey, toNodeId, "toNodeId", ct);
+
+				var rel = new Relation
+				{
+					Id = Guid.NewGuid().ToString("N"),
+					Kind = kind,
+					FromNodeId = fromNodeId,
+					ToNodeId = toNodeId,
+					CreatedAt = DateTime.UtcNow,
+					ClosedAt = null,
+				};
+				await ctx.InsertAsync(rel, token: ct);
+				results.Add(rel);
+			}
+
+			await tx.CommitAsync(ct);
+			return results;
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
 	}
 
 	public async Task<IReadOnlyList<Relation>> ListAsync(string projectKey, string nodeId, string direction = "both", bool includeHistory = false, CancellationToken ct = default)

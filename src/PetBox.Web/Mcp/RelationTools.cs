@@ -83,11 +83,25 @@ public static class RelationTools
 			}
 		}
 
-		var created = new List<RelationCreatedResult>(resolved.Count);
-		foreach (var (k, from, to) in resolved)
+		// atomic:true writes the whole batch in ONE store transaction (CreateBatchAsync) so a
+		// write-phase failure — e.g. a syntactically valid NodeId that NodeRefResolver passed
+		// through but that names no real node — rolls back everything, matching the "nothing is
+		// written" promise above. atomic:false keeps the per-item loop: each resolved item is
+		// independent and a mid-batch write failure there is allowed to leave earlier items landed.
+		List<RelationCreatedResult> created;
+		if (atomic)
 		{
-			var rel = await relations.CreateAsync(projectKey, k, from, to, ct);
-			created.Add(new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId));
+			var relsAtomic = await relations.CreateBatchAsync(projectKey, resolved, ct);
+			created = relsAtomic.Select(rel => new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId)).ToList();
+		}
+		else
+		{
+			created = new List<RelationCreatedResult>(resolved.Count);
+			foreach (var (k, from, to) in resolved)
+			{
+				var rel = await relations.CreateAsync(projectKey, k, from, to, ct);
+				created.Add(new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId));
+			}
 		}
 		// applied: false only when atomic:false rejected every item (nothing landed) — an atomic call
 		// never reaches here with a conflict (it threw above instead).
