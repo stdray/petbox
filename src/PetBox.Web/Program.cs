@@ -392,6 +392,13 @@ public partial class Program
 																		  // filter, which is what resolves the projectKey it authorizes.
 				PetBox.Web.Mcp.McpTenantEnforcementFilter.Register(filters); // default-deny by tenant (spec authz-tenant-default-deny)
 				PetBox.Web.Mcp.McpProjectExistsFilter.Register(filters);  // …and the RESOLVED project must exist (W3)
+																		  // INNERMOST OF ALL, deliberately: an unauthorized/existence-refused call must never see a
+																		  // parameter-name verdict first (same reasoning as ProjectExists sitting below the tenant
+																		  // PEP above) — otherwise this becomes a schema oracle for a caller with no business asking.
+																		  // A legitimate caller who reaches here with a renamed-away argument (work:
+																		  // unknown-param-silently-ignored-breaks-renames-quietly) gets a loud, named rejection
+																		  // instead of the framework's old silent drop-and-succeed.
+				PetBox.Web.Mcp.McpUnknownParameterFilter.Register(filters);
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
 

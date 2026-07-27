@@ -157,7 +157,10 @@ static class McpProjectDefaultFilter
 		&& properties.ValueKind == JsonValueKind.Object
 		&& properties.TryGetProperty(ProjectKeyArg, out _);
 
-	static JsonElement? Schema(IServiceProvider? services, string? tool)
+	// Internal, not private: McpUnknownParameterFilter reads the SAME live schema (the canonical
+	// ToolCollection) to know a tool's known top-level argument names — one source, so the two
+	// guards can never disagree about what a tool declares.
+	internal static JsonElement? Schema(IServiceProvider? services, string? tool)
 	{
 		if (services is null || string.IsNullOrEmpty(tool)) return null;
 		var collection = services.GetService<IOptions<McpServerOptions>>()?.Value.ToolCollection;
