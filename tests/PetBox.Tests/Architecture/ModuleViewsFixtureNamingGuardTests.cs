@@ -13,14 +13,16 @@ namespace PetBox.Tests.Architecture;
 // four files (ModuleViewsTests.cs's fixture header): "the class only ADDS distinctly-named
 // containers ... every assertion is Contains/NotContain on names no other test touches —
 // accumulated state is invisible across tests." Nothing enforced "distinctly-named" before this
-// guard — a new test in any of the four files that copies an existing board/store/project/instance/
-// session literal collides silently with whichever sibling claimed it first, and the failure surfaces
-// on the SIBLING's assertion, not on the new test's.
+// guard — a new test that copies a board/store/project/instance/session literal already claimed by
+// another test IN ITS OWN CLASS collides silently, and the failure surfaces on the SIBLING's
+// assertion, not on the new test's.
 //
 // THIS GUARD makes that convention mechanical: every entity-name literal declared via
-// `const string {board|store|project|source|instance|spec|work|sessionId} = "...";` in one of the
-// four consumer files must be globally unique across all four — not just within its own file. A
-// human re-deriving "which names are already taken" across 109 tests spread over four files is
+// `const string {board|store|project|source|instance|spec|work|sessionId} = "...";` must be unique
+// WITHIN its own consumer file. Deliberately not across files: the per-class fixture instance means
+// two consumers never share a db, so the same literal in two of them cannot collide, and flagging it
+// would be a false constraint on an author who did nothing wrong. A
+// human re-deriving "which names are already taken" across 70 tests in one file is
 // exactly the kind of count this codebase has stopped trusting (DbLayerGuardTests,
 // SandboxContainmentCallSiteGuardTests — three humans counted the MCP surface and got three
 // different wrong numbers). A regex sweep does not get tired on test 87.
@@ -105,22 +107,25 @@ public sealed class ModuleViewsFixtureNamingGuardTests
 	}
 
 	[Fact]
-	public void NoTwoConsumers_ReuseTheSameEntityName()
+	public void NoTwoTestsInAConsumer_ReuseTheSameEntityName()
 	{
 		var offenders = Sweep()
-			.GroupBy(o => o.Value, StringComparer.Ordinal)
+			.GroupBy(o => (o.File, o.Value))
 			.Where(g => g.Count() > 1)
-			.Select(g => $"  \"{g.Key}\" claimed at:\n" + string.Join("\n", g.Select(o => $"    {o.File}:{o.Line}")))
+			.Select(g => $"  \"{g.Key.Value}\" claimed twice in {g.Key.File} at lines "
+				+ string.Join(", ", g.Select(o => o.Line)))
 			.ToList();
 
 		offenders.Should().BeEmpty(
-			"ModuleViewsFixture gives each of the four consumer classes its own db, but the convention "
-			+ "documented in ModuleViewsTests.cs's fixture header ('the class only ADDS distinctly-named "
-			+ "containers ... accumulated state is invisible across tests') is written in only that one "
-			+ "file and enforced nowhere — a reused literal here means two tests (possibly in different "
-			+ "files) now assert Contains/NotContain against the SAME name, and whichever runs second "
-			+ "silently inherits the FIRST test's leftover state instead of its own. Pick a name no "
-			+ "sibling test — in any of the four files — has already claimed. Offenders:\n"
+			"a consumer declares IClassFixture<ModuleViewsFixture>, so xUnit builds the fixture ONCE per "
+			+ "class and never resets it between that class's tests — the containers one test creates are "
+			+ "still there for the next. The convention that keeps that safe ('the class only ADDS "
+			+ "distinctly-named containers ... accumulated state is invisible across tests') is written in "
+			+ "ModuleViewsTests.cs's fixture header alone; two tests in the SAME file claiming one literal "
+			+ "means whichever runs second asserts Contains/NotContain against its neighbour's leftovers. "
+			+ "Deliberately per-file: each class gets its own fixture instance and its own db "
+			+ "(petbox-modviews-<guid> + NewTempConnectionString), so the SAME literal in two DIFFERENT "
+			+ "consumers cannot collide and is not an offence here. Offenders:\n"
 			+ string.Join("\n", offenders));
 	}
 
@@ -145,17 +150,20 @@ public sealed class ModuleViewsFixtureNamingGuardTests
 	// currently contain — this is what proves the detector WORKS, not that today's tree happens to
 	// be clean (the same lesson SandboxContainmentCallSiteGuardTests' Detector_* theories encode).
 	[Theory]
-	// Same literal, different consumer AND different local-name "kind" — still a real collision:
-	// two containers under the same name in the same $system scope, whichever kind either is.
-	[InlineData("const string board = \"alpha\";", "const string project = \"alpha\";", true)]
-	// Distinct literals — no collision, regardless of how many times each file declares one.
-	[InlineData("const string board = \"alpha\";", "const string board = \"beta\";", false)]
+	// Same literal twice in ONE file under different local-name "kinds" — a real collision: both
+	// tests hit the same never-reset fixture db, whichever kind either container is.
+	[InlineData("const string board = \"alpha\";\nconst string project = \"alpha\";", "", true)]
+	// Distinct literals in one file — no collision, however many each file declares.
+	[InlineData("const string board = \"alpha\";\nconst string board = \"beta\";", "", false)]
 	// A commented-out declaration must not count as a claim.
-	[InlineData("// const string board = \"alpha\";", "const string store = \"alpha\";", false)]
-	public void Detector_FindsCollisionsAcrossSyntheticFiles(string fileA, string fileB, bool expectCollision)
+	[InlineData("// const string board = \"alpha\";\nconst string store = \"alpha\";", "", false)]
+	// The SAME literal in two DIFFERENT consumers is legal — separate fixture instances, separate
+	// dbs. This case is what pins the guard to per-file scope; grouping by value alone fails it.
+	[InlineData("const string board = \"alpha\";", "const string board = \"alpha\";", false)]
+	public void Detector_FindsCollisionsWithinAFileButNotAcrossFiles(string fileA, string fileB, bool expectCollision)
 	{
 		var occurrences = SweepFile("A", StripComments(fileA)).Concat(SweepFile("B", StripComments(fileB)));
-		var hasCollision = occurrences.GroupBy(o => o.Value, StringComparer.Ordinal).Any(g => g.Count() > 1);
+		var hasCollision = occurrences.GroupBy(o => (o.File, o.Value)).Any(g => g.Count() > 1);
 		hasCollision.Should().Be(expectCollision, $"'{fileA}' vs '{fileB}'");
 	}
 }
