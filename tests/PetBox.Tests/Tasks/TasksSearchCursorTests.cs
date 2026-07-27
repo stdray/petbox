@@ -408,6 +408,85 @@ public sealed class TasksSearchCursorTests : IDisposable
 			.WithMessage("*ranked DIFFERENTLY*").WithMessage("*Your arguments are fine*");
 	}
 
+	// ── the order guard must fire on DRIFT, never on the resolve step ────────────────────────
+	//
+	// THE production defect (work/tasks-search-order-hash-nondeterministic): on the live box EVERY
+	// tasks_search cursor was refused by the order guard, while the two calls returned byte-identical
+	// rows and scores — the order hash was not a function of the order the caller was paging.
+	//
+	// The cause is that tasks pages a DIFFERENT pool from the one it hashed. `HybridCandidatesAsync`
+	// returned the CORE search pool's hash — raw index docs, where a comment is addressed `c:<key>` and
+	// an unresolvable doc still occupies a slot — but what gets cached, hydrated and walked is the
+	// RESOLVED pool: comment docs mapped onto their owner NODE, duplicates dropped. Page 1 (a cache
+	// miss) therefore minted a token carrying the core hash, and page 2 (a cache hit) recomputed the
+	// resolved hash. Two different strings for one unchanged ordering → a guaranteed refusal.
+	//
+	// The existing q-mode walk tests cannot see it: with no LLM the pool is DegradedRrf and is never
+	// cached, so both pages take the fresh branch and compare core-hash to core-hash; and with an LLM
+	// but no comments the two pools happen to coincide row for row. A single comment in the pool is the
+	// smallest corpus where the two addressings diverge — and on a real board comments are everywhere,
+	// which is why prod failed on every query while every local walk was green.
+
+	[Fact]
+	public async Task PageWalk_WithQuery_WhenACommentIsInThePool_IsNotRefusedByTheOrderGuard()
+	{
+		await SeedQueryable();
+		var comments = new CommentService(_factory);
+		// A comment doc that MATCHES the query: it enters the core pool as `c:<key>` and leaves the
+		// resolved pool as its owner node — the exact divergence the hash used to straddle.
+		(await comments.AddAsync(Proj, "b", "q1", null, "alice", "alpha discussion of the material", null))
+			.Applied.Should().BeTrue();
+
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), comments, llm: llm, poolCache: cache);
+
+		Task<TaskSearchResultView> Page(string? cursor) => TasksTools.SearchAsync(
+			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, cursor);
+
+		var whole = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 100, false, null, null, null);
+		var first = await Page(null);
+		first.NextCursor.Should().NotBeNull("the walk has to start for the refusal to be reachable at all");
+		cache.Count.Should().Be(1, "a reranked pool is cached — so page 2 takes the hydrate branch");
+
+		var walked = await WalkAsync(Page);
+
+		walked.Should().Equal(whole.Nodes.Select(n => n.Key),
+			"nothing drifted between the pages — the guard must not stand in the way of an unchanged order");
+		walked.Should().OnlyHaveUniqueItems();
+	}
+
+	[Fact]
+	public async Task TwoIdenticalQueries_MintTheSameCursor_EvenAcrossTheCacheBoundary()
+	{
+		// The observed prod symptom stated directly: call 1 misses the pool cache and call 2 hits it, the
+		// answer is byte-identical — so the token, which commits to nothing but the query and the order,
+		// must be byte-identical too. It was not: the two branches hashed two different pools.
+		await SeedQueryable();
+		var comments = new CommentService(_factory);
+		await comments.AddAsync(Proj, "b", "q1", null, "alice", "alpha discussion of the material", null);
+
+		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
+		var cache = new SearchPoolCache();
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), comments, llm: llm, poolCache: cache);
+
+		Task<TaskSearchResultView> Call() => TasksTools.SearchAsync(
+			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			false, null, null, null, 2, false, null, null, null);
+
+		var one = await Call();   // cache MISS — the pool is built and stored
+		var two = await Call();   // cache HIT  — the pool is hydrated
+
+		two.Nodes.Select(n => n.Key).Should().Equal(one.Nodes.Select(n => n.Key), "the answer itself is unchanged");
+		two.NextCursor.Should().Be(one.NextCursor,
+			"the same rows in the same order must mint the same token — an order hash that moves under an "
+			+ "unchanged order is not a hash of the order");
+	}
+
 	// ── the deliberate refusals ──────────────────────────────────────────────────────────────
 
 	[Fact]
