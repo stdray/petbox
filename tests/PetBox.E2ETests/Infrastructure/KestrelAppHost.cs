@@ -78,15 +78,22 @@ public sealed class KestrelAppHost : IAsyncDisposable
 		}
 	}
 
-	static string WebProjectWwwroot()
+	// Baked in at compile time via <AssemblyMetadata> in PetBox.E2ETests.csproj
+	// ($(MSBuildThisFileDirectory)-relative), so this resolves robustly regardless of the
+	// test runner's working/output directory — no brittle "../../../.." walk needed.
+	// Shared with FrontendBuildPreflight, which needs the same project dir to locate the
+	// frontend sources (ts/, package.json, tailwind.config.js) alongside wwwroot.
+	public static string WebProjectDir()
 	{
 		var attr = typeof(KestrelAppHost).Assembly
 			.GetCustomAttributes<AssemblyMetadataAttribute>()
 			.FirstOrDefault(a => a.Key == "PetBoxWebProjectDir")
 			?? throw new InvalidOperationException(
 				"AssemblyMetadataAttribute('PetBoxWebProjectDir') missing — check PetBox.E2ETests.csproj.");
-		return Path.Combine(attr.Value!, "wwwroot");
+		return attr.Value!;
 	}
+
+	static string WebProjectWwwroot() => Path.Combine(WebProjectDir(), "wwwroot");
 
 	public async ValueTask DisposeAsync()
 	{

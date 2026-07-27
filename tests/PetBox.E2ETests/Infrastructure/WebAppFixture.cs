@@ -20,6 +20,8 @@ public sealed class WebAppFixture : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
+		FrontendBuildPreflight.EnsureBuilt();
+
 		var hash = AdminPasswordHasher.Hash(AdminPassword);
 		await _host.StartAsync(s =>
 		{
