@@ -63,7 +63,7 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`.
+\`<your model name> · orchestrator\`
 
 **Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`.
 
@@ -74,7 +74,9 @@ Orchestrator notes (from definition): ${notes}`;
   return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
-\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). This harness does not declare spawn_subagents — do not assume subagent fan-out is available; work in the main session.`;
+\`<your model name> · main\`
+
+This harness does not declare spawn_subagents — do not assume subagent fan-out is available; work in the main session.`;
 }
 
 // Build the memory-protocol block for a project. `tool` maps a bare verb to the agent's
@@ -89,7 +91,6 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const memoryUpsert = tool("memory_upsert");
   const tasksUpsert = tool("tasks_upsert");
   const tasksMethodologyGuide = tool("tasks_methodology_guide");
-  const tasksMethodologyGet = tool("tasks_methodology_get");
   const tasksWorkflow = tool("tasks_workflow");
 
   const allowSpawn = orchestrationPrescriptionsAllowed(opts?.harness);
@@ -102,21 +103,17 @@ This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP
 
 ${intro}
 
-PetBox remembers curated facts AND full session history. Start from SEARCH, not assumption.
-
-**Rule — search before rework:** before re-deriving, re-investigating, re-deciding anything about this project's past, run \`${memorySearch}\` FIRST — redoing remembered work is the failure this protocol prevents. Before storing a fact, search for an existing entry and edit it (duplicates poison recall).
+**Rule — search before rework:** before re-deriving, re-investigating or re-deciding anything about this project's past, run \`${memorySearch}\` FIRST. Before storing a fact, search for an existing entry and edit it — duplicates poison recall.
 
 **Entry points:**
 
-- **Facts — \`${memorySearch}\`**: \`q\` of confident words (ANDed, prefix-match, stemmed). \`bodyLen\` for snippets. No \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\` (per-hit label). No \`q\` = listing. Full body: \`${memoryGet}\`.
-- **Conversations — \`${sessionSearch}\`**: for HOW something was decided, error text, or detail a fact wouldn't carry — two-stage session-archive search; each hit carries the message ordinal → \`${sessionGet}\` for verbatim source.
-- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget — a large canon or definition can push it out. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace).
+- **Facts — \`${memorySearch}\`** (no \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\`); full body: \`${memoryGet}\`.
+- **Conversations — \`${sessionSearch}\`**: HOW something was decided, error text, detail a fact wouldn't carry; each hit carries the message ordinal → \`${sessionGet}\`.
+- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace).
 
-**Capture-as-you-go** — don't wait. After a decision, fix, pattern, or preference: \`${memoryRemember}\` (\`text\` = learning; \`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts, else omit). Curated/temporal edits: \`${memoryUpsert}\`.
+**Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts). Curated/temporal edits: \`${memoryUpsert}\`. The server also autocaptures after each session — don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
 
-**Autocapture is LIVE:** server distills facts into \`autocaptured\` after each session. So: (1) don't re-store autocaptured entries — promotion is owner's call; (2) end-of-session sweep = INSURANCE: before stopping, store 1-3 must-not-wait learnings (decision+why, root cause, gotcha) and 0-2 friction notes (what got in the way, what looked stale). Skip narration, skip anything derivable from code/git.
-
-**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it on THIS project's methodology (do not invent board/type/status). Read process via \`${tasksMethodologyGuide}\` / \`${tasksMethodologyGet}\`; legal types/statuses for a board via \`${tasksWorkflow}\`; then \`${tasksUpsert}\` with those values. Process criticism is welcome, never scope creep.`;
+**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (do not invent board/type/status).`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {

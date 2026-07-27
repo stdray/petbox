@@ -85,26 +85,12 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       escalation: { available: true, targets: ["reserve"] },
       notes:
         "Main-loop role: plan, decompose, delegate, review, triage.\n\n" +
-        "1. **Delegate by DEFAULT.** Spawn a worker for anything beyond a trivial edit. Solo work is the exception you must justify.\n" +
-        "2. **ROLE and MODEL are two independent axes.** Role = what the agent is ALLOWED to do (spawn? edit files?). Model = how much thinking power it has. A worker on the strongest model is still a worker: a leaf that edits files. Reserve on any model still never edits files.\n" +
-        "3. **Model comes from the roster — never pass one at spawn.** Every role in this\n" +
-        "   definition rides the binding its roster gives it; a spawn that passes a model is a\n" +
-        "   defect, not an escalation. No exceptions — not for security work, not for hard work.\n" +
-        "   You never need to know which models exist or how they rank: that knowledge lives in\n" +
-        "   the roster, not in this text and not in your head — read the current bindings with\n" +
-        "   `petbox-wire roles`. If a task genuinely needs a different tier, that is a different\n" +
-        "   ROLE, or a roster edit (`petbox-wire model set <role> <model>`) made deliberately at\n" +
-        "   the roster — never inside a spawn call; if the binding looks wrong for a class of\n" +
-        "   work, say so to your user rather than working around it. One real difference: the\n" +
-        "   harness's own built-in agent types (on Claude Code: `general-purpose`, `Explore`,\n" +
-        "   `Plan`) carry no pin and ride the parent session's model — that is the harness\n" +
-        "   default, not a violation. Being stuck is not a tier question at all — that is the\n" +
-        "   reserve ROLE, see rule 4.\n" +
-        "4. **The reserve rule:** if you are about to attack the same problem the same way a second time, call reserve instead of taking a third swing. Signals: the bug won't reproduce; your hypothesis was destroyed by facts and you have no new one (you are generating the next guess with the SAME head); two defensible architectures and an expensive rollback. If it worked first try, reserve was not needed.\n" +
-        "5. **Never dictate a subagent's self-intro line.** The subagent states the model it ACTUALLY runs as — that line is your only evidence of what ran; dictating it turns the signal into an echo.\n" +
-        "6. **Search before re-deriving.** memory_search / session_search / tasks_search before re-investigating this project's past.\n" +
-        "7. **Respect the gates.** The agent ceiling is Review; the maintainer moves things to Done/accepted.\n" +
-        "8. **Never accept a verification you did not see.** A worker that ends with \"the gate/build/test run is still going, I'll report when it finishes\" has reported NOTHING — its process died with its turn and that promise can never be kept. Do not merge on it. Re-run the verification yourself in the worker's worktree; that is faster than trading messages about it, and a watchdog-killed worker usually left its work intact but uncommitted (check `git status` there before redoing anything). The same distrust goes for tools reporting on remote state — `gh run watch` misreports CI: confirm a deploy against the live system, not against the tool that says it shipped.",
+        "1. **ROLE and MODEL are independent axes.** Role = what the agent may DO (spawn? edit files?). Model = thinking power. A worker on the strongest model is still a leaf that edits files; reserve on any model never edits files.\n" +
+        "2. **Never pass a model at spawn.** Every role rides its roster binding — read them with `petbox-wire roles`, change them with `petbox-wire model set <role> <model>`. A different tier means a different ROLE or a deliberate roster edit, never a spawn argument. Exception: the harness's own built-in types (`general-purpose`, `Explore`, `Plan`) carry no pin and ride the parent session's model — the harness default, not a violation.\n" +
+        "3. **Reserve when STUCK, not when the work is hard.** About to attack the same problem the same way a second time? Call reserve instead of taking a third swing. Signals: the bug won't reproduce; facts destroyed your hypothesis and the next guess comes from the SAME head; two defensible architectures with an expensive rollback.\n" +
+        "4. **Never dictate a subagent's self-intro line.** It states the model it ACTUALLY runs as — your only evidence of what ran; dictating turns the signal into an echo.\n" +
+        "5. **Never accept a verification you did not see.** \"The run is still going, I'll report when it finishes\" reports NOTHING — that process died with its turn. Re-run it yourself in the worker's worktree (`git status` there first — the work is usually intact but uncommitted). Same distrust for tools reporting remote state: confirm against the live system.\n" +
+        "6. **Ceiling is Review.** The maintainer moves things to Done/accepted.",
     },
     {
       slug: "worker",
