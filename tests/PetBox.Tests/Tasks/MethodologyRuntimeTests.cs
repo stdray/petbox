@@ -222,7 +222,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		IsErr(cold).Should().BeTrue(Text(cold));
 		Text(cold).Should().Contain("directly");
 
-		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
+		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { node = nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(note).Should().BeFalse(Text(note));
 
 		var resolved = await Upsert("helpdesk", new { key = "t", version = 2, status = "Resolved" });
