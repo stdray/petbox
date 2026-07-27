@@ -59,9 +59,9 @@ public sealed class SessionSearchRankingModeTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
-			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
+			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
 		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
 		// The SAME reranking-capable client backs BOTH stages — a real LlmClientReranker is
 		// constructed from it on each stage's own search, so RerankCalls counts cross-encoder
