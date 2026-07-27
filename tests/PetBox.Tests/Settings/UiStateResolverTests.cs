@@ -71,9 +71,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = await UiStateResolver.ResolveAsync<TestUiState>(resolver, userId: null, cookieValue: null);
 
-		result.NotifyByEmail.Should().BeTrue();
-		result.SidebarPinned.Should().BeTrue();
-		result.KqlPanelPinned.Should().BeFalse();
+		result.Should().BeEquivalentTo(new TestUiState(),
+			"with no user id and no cookie, every property must fall back to its record default");
 	}
 
 	[Fact]
@@ -84,10 +83,9 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = await UiStateResolver.ResolveAsync<TestUiState>(resolver, userId: null, cookieValue: cookie);
 
-		result.SidebarPinned.Should().BeFalse();
-		result.KqlPanelPinned.Should().BeTrue();
 		// No user id → the DB branch is never attempted; the [Setting] property stays at its default.
-		result.NotifyByEmail.Should().BeTrue();
+		result.Should().BeEquivalentTo(new TestUiState { SidebarPinned = false, KqlPanelPinned = true },
+			"the cookie branch must apply for an anonymous request, while the DB branch ([Setting]) is skipped entirely and its property stays at the record default");
 	}
 
 	[Fact]
@@ -97,8 +95,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = await UiStateResolver.ResolveAsync<TestUiState>(resolver, userId: null, cookieValue: "not json{{{");
 
-		result.SidebarPinned.Should().BeTrue();
-		result.KqlPanelPinned.Should().BeFalse();
+		result.Should().BeEquivalentTo(new TestUiState(),
+			"a malformed cookie must be ignored, falling back to record defaults rather than throwing or partially applying");
 	}
 
 	[Fact]
@@ -118,9 +116,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = await UiStateResolver.ResolveAsync<TestUiState>(resolver, userId: "user-uistate-combo", cookieValue: cookie);
 
-		result.NotifyByEmail.Should().BeFalse(); // DB branch
-		result.SidebarPinned.Should().BeFalse(); // cookie branch
-		result.KqlPanelPinned.Should().BeFalse(); // untouched default
+		result.Should().BeEquivalentTo(new TestUiState { NotifyByEmail = false, SidebarPinned = false, KqlPanelPinned = false },
+			"NotifyByEmail must come from the DB branch, SidebarPinned from the cookie branch, and KqlPanelPinned must stay at its untouched default — combined in one resolved record");
 	}
 
 	// --- ResolveForCurrentUserAsync (ASP.NET wiring) ---
@@ -136,8 +133,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = await UiStateResolver.ResolveForCurrentUserAsync<TestUiState>(nav, resolver, http);
 
-		result.SidebarPinned.Should().BeFalse();
-		result.NotifyByEmail.Should().BeTrue(); // anonymous → DB branch skipped
+		result.Should().BeEquivalentTo(new TestUiState { SidebarPinned = false },
+			"an anonymous request must apply only the cookie branch — SidebarPinned from the cookie, NotifyByEmail left at its DB-branch-skipped default");
 	}
 
 	// --- ApplyBrowserState (pure) ---
@@ -149,7 +146,7 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = UiStateResolver.ApplyBrowserState(new TestUiState(), cookie);
 
-		result.SidebarPinned.Should().BeFalse();
+		result.SidebarPinned.Should().BeFalse("the known cookie key must still apply even though an unrelated unknown key is present alongside it");
 	}
 
 	[Fact]
@@ -161,8 +158,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var result = UiStateResolver.ApplyBrowserState(new TestUiState(), cookie);
 
-		result.SidebarPinned.Should().BeTrue(); // default retained
-		result.KqlPanelPinned.Should().BeTrue(); // still applied
+		result.Should().BeEquivalentTo(new TestUiState { KqlPanelPinned = true },
+			"a wrong-typed cookie value for one key must fail to apply only THAT property (SidebarPinned keeps its default) without aborting the rest of the cookie (KqlPanelPinned still applies)");
 	}
 
 	// --- MergeCookieValue (pure) — proves "one cookie, not N" ---
@@ -178,8 +175,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var obj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(merged)!;
 		obj["someOtherFeatureKey"].GetString().Should().Be("keep-me");
-		obj["sidebarPinned"].GetBoolean().Should().BeFalse();
-		obj["kqlPanelPinned"].GetBoolean().Should().BeFalse();
+		obj["sidebarPinned"].GetBoolean().Should().BeFalse("the merge must still carry TestUiState's own SidebarPinned value");
+		obj["kqlPanelPinned"].GetBoolean().Should().BeFalse("the merge must still carry TestUiState's own KqlPanelPinned value (its record default, since this test didn't set it)");
 	}
 
 	[Fact]
@@ -198,8 +195,8 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		var resolved = UiStateResolver.ApplyBrowserState(new TestUiState(), cookie);
 
-		resolved.SidebarPinned.Should().BeFalse();
-		resolved.KqlPanelPinned.Should().BeTrue();
+		resolved.Should().BeEquivalentTo(new TestUiState { SidebarPinned = false, KqlPanelPinned = true },
+			"a merge-then-apply round trip must reproduce exactly the values written in, proving the cookie format survives serialize→merge→parse→apply");
 	}
 
 	// --- Theme unification (work `ui-state-theme-unify`) ---

@@ -31,7 +31,7 @@ public sealed class TemporalStoreTests : IDisposable
 			Node("p16", PlanStatus.InProgress, "Phase 16"),
 			Node("p16/w1", PlanStatus.Done, "Wave 1"));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("brand-new nodes carry no prior baseline to conflict against, so the insert must succeed");
 		r.Inserted.Should().Be(2);
 		(Active()).Should().HaveCount(2);
 		(ActiveOf("p16"))!.Version.Should().Be(1);
@@ -43,7 +43,7 @@ public sealed class TemporalStoreTests : IDisposable
 		await Upsert(Node("wal", PlanStatus.Pending, "WAL"));                         // v1
 		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL done", baseline: 1));  // v2
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("an edit at the correct baseline against the row it targets must apply");
 		r.Closed.Should().Be(1);
 		r.Inserted.Should().Be(1);
 		(ActiveOf("wal"))!.Status.Should().Be(PlanStatus.Done);
@@ -56,7 +56,7 @@ public sealed class TemporalStoreTests : IDisposable
 		await Upsert(Node("wal", PlanStatus.Done, "WAL"));                       // v1
 		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 1)); // identical
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("resubmitting the identical payload at its own baseline must succeed as a no-op, not a conflict");
 		r.Inserted.Should().Be(0);
 		r.Closed.Should().Be(0);
 		(All()).Count(x => x.Key == "wal").Should().Be(1);
@@ -71,7 +71,7 @@ public sealed class TemporalStoreTests : IDisposable
 		// A still believes baseline is v1 (it read the plan before B committed).
 		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL-by-A", baseline: 1));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("an edit whose baseline was already superseded by another writer must be rejected, not silently overwrite it");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.Stale);
 		(ActiveOf("wal"))!.Body.Should().Be("WAL-by-B"); // B's change preserved
 	}
@@ -84,7 +84,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("p16", PlanStatus.Done, "Phase 16 done", baseline: 1));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("an edit to one node must not be blocked by a concurrent edit to an unrelated node");
 		(ActiveOf("p30"))!.Body.Should().Be("Phase 30"); // untouched, survives
 	}
 
@@ -97,7 +97,7 @@ public sealed class TemporalStoreTests : IDisposable
 	{
 		var r = await Upsert(Node("ghost", PlanStatus.Done, "was here", baseline: 5));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a baseline above the scope's own cursor names a wrong-scope read, not a valid edit of this node");
 		var c = r.Conflicts.Should().ContainSingle(c => c.Key == "ghost").Subject;
 		c.Kind.Should().Be(TemporalConflictKind.FutureBaseline);
 		c.ActiveVersion.Should().Be(0);                     // the scope cursor it's ahead of
@@ -116,7 +116,7 @@ public sealed class TemporalStoreTests : IDisposable
 			Node("wal", PlanStatus.Done, "WAL-by-A", baseline: 1),
 			onBeforeApply: () => Upsert(Node("wal", PlanStatus.Done, "WAL-by-B", baseline: 1)));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a close racing a concurrent advance past the baseline must be detected as a conflict, not silently lost");
 		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.CloseRace);
 		ActiveOf("wal")!.Body.Should().Be("WAL-by-B"); // B stands; A wrote nothing
 	}
@@ -127,7 +127,7 @@ public sealed class TemporalStoreTests : IDisposable
 		await Upsert(Node("wal", PlanStatus.Done, "WAL"));                                       // v1, no commit
 		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 1, commit: "8b2e97d")); // only CommitRef changes
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a CommitRef-only change is still a real payload change and must produce a new revision");
 		r.Inserted.Should().Be(1);
 		(ActiveOf("wal"))!.CommitRef.Should().Be("8b2e97d");
 	}
@@ -153,7 +153,7 @@ public sealed class TemporalStoreTests : IDisposable
 		// new node slots between via a gap priority — no renumbering of a/c
 		var r = await Upsert(Node("b", PlanStatus.Pending, "B", priority: 200));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("inserting a node at a sparse gap priority must apply without disturbing its neighbours");
 		Ordered().Select(x => x.Key).Should().Equal("a", "b", "c");
 		All().Count(x => x.Key == "a").Should().Be(1); // neighbours untouched: still one revision each
 		All().Count(x => x.Key == "c").Should().Be(1);
@@ -165,7 +165,7 @@ public sealed class TemporalStoreTests : IDisposable
 		await Upsert(Node("old", PlanStatus.Done, "body"));                          // v1 at "old"
 		var r = await Upsert(Node("new", PlanStatus.Done, "body", baseline: 1, prevKey: "old"));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a rename must retire the old key and create the new one in a single applied batch");
 		ActiveOf("old").Should().BeNull();                  // old retired
 		ActiveOf("new")!.PrevKey.Should().Be("old");        // lineage edge on the birth revision
 	}
@@ -178,7 +178,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("taken", PlanStatus.Done, "x", baseline: 1, prevKey: "old"));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a rename onto an already-occupied key must be refused, not silently overwrite the occupant");
 		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.TargetOccupied);
 		ActiveOf("old").Should().NotBeNull();               // both untouched
 		ActiveOf("taken")!.Body.Should().Be("t");
@@ -213,7 +213,7 @@ public sealed class TemporalStoreTests : IDisposable
 		// The author read the scope at cursor 2 and edits a with baseline 2 (> a's own v1).
 		var r = await Upsert(Node("a", PlanStatus.InProgress, "A2", baseline: 2));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a baseline equal to the scope cursor (above the entity's own version) is a valid watermark and must apply");
 		r.Inserted.Should().Be(1);
 		r.Closed.Should().Be(1);
 		ActiveOf("a")!.Status.Should().Be(PlanStatus.InProgress);
@@ -235,7 +235,7 @@ public sealed class TemporalStoreTests : IDisposable
 			Node("b", PlanStatus.Done, "B-edited", baseline: 2), // real edit (b is v1 < 2) -> applies
 			Node("c", PlanStatus.Done, "C", baseline: 2));       // identical to current -> no-op
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("untouched rows resubmitted at the scope cursor must collapse to no-ops so the real edit in the same batch still lands");
 		r.Inserted.Should().Be(1); // only b
 		r.Closed.Should().Be(1);
 		ActiveOf("b")!.Body.Should().Be("B-edited");
@@ -250,13 +250,13 @@ public sealed class TemporalStoreTests : IDisposable
 
 		// A brand-new key stamped with the scope cursor (author read, then added) creates.
 		var withCursor = await Upsert(Node("fresh", PlanStatus.Pending, "F", baseline: 1));
-		withCursor.Applied.Should().BeTrue();
+		withCursor.Applied.Should().BeTrue("a brand-new key stamped with the scope cursor as baseline must still create");
 		withCursor.Inserted.Should().Be(1);
 		ActiveOf("fresh")!.Version.Should().Be(2);
 
 		// baseline 0 still creates (unchanged classic path).
 		var withZero = await Upsert(Node("fresh0", PlanStatus.Done, "F0"));
-		withZero.Applied.Should().BeTrue();
+		withZero.Applied.Should().BeTrue("baseline 0 must still create a brand-new key (the classic path)");
 		ActiveOf("fresh0").Should().NotBeNull();
 	}
 
@@ -274,7 +274,7 @@ public sealed class TemporalStoreTests : IDisposable
 		// A resubmits the SAME payload as the current revision, but still believes baseline is v1.
 		var r = await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 1));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("an identical payload must collapse to a no-op even when resubmitted at a stale baseline");
 		r.Inserted.Should().Be(0);
 		r.Closed.Should().Be(0);
 		r.AutoResolved.Should().BeEmpty();                 // a no-op is not a resolved write
@@ -290,7 +290,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 9));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a future baseline must conflict even when the resubmitted payload matches the current revision");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.FutureBaseline);
 	}
 
@@ -309,7 +309,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("wal", PlanStatus.InProgress, "mine", baseline: 1)); // author edits on v1
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a stale edit whose payload never moved since the author's read must auto-resolve, not force a blind re-read");
 		r.AutoResolved.Should().Equal("wal");
 		r.Conflicts.Should().BeEmpty();
 		ActiveOf("wal")!.Body.Should().Be("mine");
@@ -326,7 +326,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("wal", PlanStatus.InProgress, "mine", baseline: 1));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a stale edit against a payload that genuinely moved must still conflict");
 		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "wal" && x.Kind == TemporalConflictKind.Stale).Subject;
 		c.ChangedFields.Should().Equal("status");           // body did NOT move — not named
 		c.Reason.Should().Contain("status").And.Contain("rebase");
@@ -342,7 +342,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("wal", PlanStatus.Pending, "mine")); // baseline 0 = "new"
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a baseline of 0 against an existing key must conflict — the author never read this row");
 		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "wal" && x.Kind == TemporalConflictKind.Stale).Subject;
 		c.ChangedFields.Should().BeNull();
 		c.Reason.Should().Contain("baseline 0");
@@ -360,7 +360,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Delete(("a", 1));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a stale delete whose payload never moved since the read must auto-resolve, just like a stale edit");
 		r.AutoResolved.Should().Equal("a");
 		ActiveOf("a").Should().BeNull();
 	}
@@ -373,7 +373,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Delete(("a", 1));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a stale delete against a payload that genuinely moved must still conflict");
 		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "a" && x.Kind == TemporalConflictKind.Stale).Subject;
 		c.ChangedFields.Should().BeEquivalentTo(["status", "body"]);
 		ActiveOf("a").Should().NotBeNull();
@@ -393,7 +393,7 @@ public sealed class TemporalStoreTests : IDisposable
 			Node("ok", PlanStatus.InProgress, "mine", baseline: 1),   // would auto-resolve
 			Node("bad", PlanStatus.InProgress, "mine", baseline: 1)); // genuine Stale
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("one genuine conflict in a batch must abort the whole batch, even when another row in it would auto-resolve on its own");
 		r.AutoResolved.Should().BeEmpty();
 		r.Conflicts.Should().ContainSingle(c => c.Key == "bad" && c.Kind == TemporalConflictKind.Stale);
 		ActiveOf("ok")!.Body.Should().Be("P1"); // nothing written
@@ -409,7 +409,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 2)); // identical, baseline = cursor 2 > wal's v1
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("an identical payload on a valid watermark baseline must still collapse to a no-op");
 		r.Inserted.Should().Be(0);
 		All().Count(x => x.Key == "wal").Should().Be(1);
 	}
@@ -422,7 +422,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("new", PlanStatus.Done, "body", baseline: 2, prevKey: "old"));
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a rename baseline at the scope cursor (above the source's own version) must apply");
 		ActiveOf("old").Should().BeNull();
 		ActiveOf("new")!.PrevKey.Should().Be("old");
 	}
@@ -435,7 +435,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Upsert(Node("new", PlanStatus.Done, "b2", baseline: 1, prevKey: "old"));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a rename whose source moved past the given baseline must conflict, not silently rename a stale snapshot");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "old" && c.Kind == TemporalConflictKind.Stale);
 		ActiveOf("old").Should().NotBeNull(); // untouched
 	}
@@ -446,7 +446,7 @@ public sealed class TemporalStoreTests : IDisposable
 	{
 		var r = await Upsert(Node("new", PlanStatus.Done, "b", prevKey: "ghost"));
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a rename whose source key has no active row must report Vanished, not silently create an orphan");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "ghost" && c.Kind == TemporalConflictKind.Vanished);
 	}
 
@@ -458,7 +458,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Delete(("a", 2)); // baseline 2 (cursor) > a's own v1
 
-		r.Applied.Should().BeTrue();
+		r.Applied.Should().BeTrue("a delete baseline at the scope cursor (above the entity's own version) must close the row");
 		r.Closed.Should().Be(1);
 		ActiveOf("a").Should().BeNull();
 	}
@@ -471,7 +471,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Delete(("a", 1)); // baseline 1 < current v2
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a delete against a stale baseline must conflict, not silently remove a row the author never read");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "a" && c.Kind == TemporalConflictKind.Stale);
 		ActiveOf("a").Should().NotBeNull();
 	}
@@ -483,7 +483,7 @@ public sealed class TemporalStoreTests : IDisposable
 
 		var r = await Delete(("a", 9)); // 9 > cursor 1
 
-		r.Applied.Should().BeFalse();
+		r.Applied.Should().BeFalse("a delete baseline above the scope cursor names a wrong-scope read and must conflict");
 		r.Conflicts.Should().ContainSingle(c => c.Key == "a" && c.Kind == TemporalConflictKind.FutureBaseline);
 		ActiveOf("a").Should().NotBeNull();
 	}

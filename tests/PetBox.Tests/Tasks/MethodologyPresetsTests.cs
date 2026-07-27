@@ -185,12 +185,17 @@ public sealed class MethodologyPresetsTests
 	public void QuickAddPolicy_AndDefaults_MatchCatalog()
 	{
 		// The single knob: only Spec and Work reject the bare quick-add form.
-		MethodologyPresets.QuickAddAllowed(BoardKind.Simple).Should().BeTrue();
-		MethodologyPresets.QuickAddAllowed(BoardKind.Classic).Should().BeTrue();
-		MethodologyPresets.QuickAddAllowed(BoardKind.Ideas).Should().BeTrue();
-		MethodologyPresets.QuickAddAllowed(BoardKind.Intake).Should().BeTrue();
-		MethodologyPresets.QuickAddAllowed(BoardKind.Spec).Should().BeFalse();
-		MethodologyPresets.QuickAddAllowed(BoardKind.Work).Should().BeFalse();
+		var expectedQuickAdd = new Dictionary<BoardKind, bool>
+		{
+			[BoardKind.Simple] = true,
+			[BoardKind.Classic] = true,
+			[BoardKind.Ideas] = true,
+			[BoardKind.Intake] = true,
+			[BoardKind.Spec] = false,
+			[BoardKind.Work] = false,
+		};
+		expectedQuickAdd.Keys.ToDictionary(k => k, MethodologyPresets.QuickAddAllowed).Should().BeEquivalentTo(expectedQuickAdd,
+			"quick-add must be allowed for every kind except Spec and Work, which require an explicit type");
 
 		// The untyped/quick-add default type per kind = first type of the first block.
 		Runtime.DefaultType("ideas").Should().Be("idea");
@@ -282,7 +287,7 @@ public sealed class MethodologyPresetsTests
 		// to a deliberation idea) — no classic transition carries checklist data, so the
 		// task and bug renderings are identical by construction.
 		var kind = MethodologyPresets.KindDef(BoardKind.Classic);
-		kind.QuickAddAllowed.Should().BeTrue();
+		kind.QuickAddAllowed.Should().BeTrue("classic must allow quick-add like every other non-Spec/Work kind");
 		kind.Workflows.Should().ContainSingle().Which.Transitions
 			.Should().OnlyContain(t => t.Checklist == null || t.Checklist.Count == 0);
 	}
@@ -307,15 +312,20 @@ public sealed class MethodologyPresetsTests
 		// board-less terminal question is expressed through the ONE surviving authority
 		// (StatusKindOf's terminal projection) — the former IsTerminalSlug fork is gone
 		// (spec tasks-status-kind-classifier). On PresetsOnly, StatusKindOf(null, slug) == KindOfSlug(slug).
-		Runtime.IsTerminalStatus(null, "Done").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "Cancelled").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "deprecated").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "accepted").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "rejected").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "wontfix").Should().BeTrue();
-		Runtime.IsTerminalStatus(null, "Duplicate").Should().BeTrue(); // intake + classic agree: TerminalCancel
-		Runtime.IsTerminalStatus(null, "Blocked").Should().BeFalse();
-		Runtime.IsTerminalStatus(null, "review").Should().BeFalse();
+		var expectedTerminal = new Dictionary<string, bool>
+		{
+			["Done"] = true,
+			["Cancelled"] = true,
+			["deprecated"] = true,
+			["accepted"] = true,
+			["rejected"] = true,
+			["wontfix"] = true,
+			["Duplicate"] = true, // intake + classic agree: TerminalCancel
+			["Blocked"] = false,
+			["review"] = false,
+		};
+		expectedTerminal.Keys.ToDictionary(s => s, s => Runtime.IsTerminalStatus(null, s)).Should().BeEquivalentTo(expectedTerminal,
+			"IsTerminalStatus must classify every cross-preset slug exactly per its StatusKind — terminal for Done/Cancelled/deprecated/accepted/rejected/wontfix/Duplicate, open for Blocked/review");
 		// classic's new open slugs classify as open, not legacy-unknown.
 		Runtime.KindOfSlug("Backlog").Should().Be(StatusKind.Open);
 		Runtime.KindOfSlug("InReview").Should().Be(StatusKind.Open);
@@ -559,7 +569,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		// With an artifact:spec_plan comment the same transition applies.
 		await _comments.AddAsync(Proj, "ideas", node.NodeId, parentId: null, "t", "the plan", ["artifact:spec_plan"]);
 		var ok = await Upsert("ideas", new NodePatch { Key = "i", Status = "review", Version = node.Version });
-		ok.Result.Applied.Should().BeTrue();
+		ok.Result.Applied.Should().BeTrue("the transition must apply now that the spec_plan artifact comment is present");
 		(await _tasks.GetAsync(Proj, "ideas")).Nodes.Single().Status.Should().Be("review");
 	}
 

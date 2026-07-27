@@ -56,7 +56,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	public async Task Upsert_Get_List_Delete_RoundTrip()
 	{
 		var ack = await _svc.UpsertAsync(Proj, "default", SampleRoster(), 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("a brand-new document must report Changed=true");
 		ack.Key.Should().Be("default");
 		ack.Version.Should().BeGreaterThan(0);
 
@@ -66,9 +66,12 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		view.Definition.Roles.Should().HaveCount(2);
 		view.Definition.Roles[0].Slug.Should().Be("orchestrator");
 		view.Definition.Roles[0].RequiredCapabilities.Should().Equal("mcp", "spawn");
-		view.Definition.Roles[0].Spawn!.Allowed.Should().BeTrue();
-		view.Definition.Roles[0].Spawn!.AllowedRoles.Should().Equal("worker", "utility", "explore");
-		view.Definition.Roles[0].Escalation!.Available.Should().BeTrue();
+		view.Definition.Roles[0].Spawn.Should().BeEquivalentTo(
+			new AgentDefinitionSpawn(Allowed: true, AllowedRoles: ["worker", "utility", "explore"]),
+			"the orchestrator role's spawn capability (allowed + its role allowlist) must round-trip exactly");
+		view.Definition.Roles[0].Escalation.Should().BeEquivalentTo(
+			new AgentDefinitionEscalation(Available: true, Targets: ["reserve"]),
+			"the orchestrator role's escalation availability + targets must round-trip exactly");
 		view.Version.Should().Be(ack.Version);
 
 		var list = await _svc.ListAsync(Proj);
@@ -76,12 +79,12 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		list[0].Version.Should().Be(ack.Version);
 
 		var del = await _svc.DeleteAsync(Proj, "default", ack.Version);
-		del.Changed.Should().BeTrue();
+		del.Changed.Should().BeTrue("deleting an existing document at its current version must report Changed=true");
 		(await _svc.GetAsync(Proj, "default")).Should().BeNull();
 
 		// Idempotent delete of missing.
 		var del2 = await _svc.DeleteAsync(Proj, "default", 0);
-		del2.Changed.Should().BeFalse();
+		del2.Changed.Should().BeFalse("deleting an already-missing key must be a no-op, not report a phantom change");
 		del2.Version.Should().Be(0);
 	}
 
@@ -90,12 +93,12 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	{
 		var ack = await _svc.UpsertAsync(Proj, "default", SampleRoster(), 0);
 		var again = await _svc.UpsertAsync(Proj, "default", SampleRoster(), ack.Version);
-		again.Changed.Should().BeFalse();
+		again.Changed.Should().BeFalse("resubmitting the identical payload at the current version must be a no-op");
 		again.Version.Should().Be(ack.Version);
 
 		// Stale baseline with identical payload is also a no-op (TemporalStore SamePayload).
 		var staleSame = await _svc.UpsertAsync(Proj, "default", SampleRoster(), 0);
-		staleSame.Changed.Should().BeFalse();
+		staleSame.Changed.Should().BeFalse("an identical payload must be a no-op even against a stale baseline (TemporalStore SamePayload semantics)");
 	}
 
 	[Fact]
@@ -104,7 +107,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		var ack = await _svc.UpsertAsync(Proj, "default", SampleRoster("v1"), 0);
 		// Advance past the create revision.
 		var v2 = await _svc.UpsertAsync(Proj, "default", SampleRoster("v2"), ack.Version);
-		v2.Changed.Should().BeTrue();
+		v2.Changed.Should().BeTrue("the second upsert carries a genuinely different payload and must be recorded as a change");
 		v2.Version.Should().BeGreaterThan(ack.Version);
 
 		// Submit against the old baseline with a different payload → conflict.
@@ -224,7 +227,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 			}
 			""";
 		var ack = await _svc.UpsertJsonAsync(Proj, "default", json, 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("a document carrying unknown forward-compat fields must still be accepted as a real change");
 		var view = await _svc.GetAsync(Proj, "default");
 		view!.Definition.Roles.Should().ContainSingle(r => r.Slug == "worker");
 	}
@@ -256,14 +259,14 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	public async Task RawUpsert_PreservesUnknownFields_OnRoundTrip()
 	{
 		var ack = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("the initial raw upsert must be recorded as a change");
 
 		var raw = await _svc.GetJsonAsync(Proj, "default");
 		raw.Should().NotBeNull();
 		using var doc = JsonDocument.Parse(raw!);
 		var root = doc.RootElement;
 		root.GetProperty("notes").GetString().Should().Be("root-level prose");
-		root.GetProperty("futureFlag").GetBoolean().Should().BeTrue();
+		root.GetProperty("futureFlag").GetBoolean().Should().BeTrue("an unknown root-level field must survive the raw-JSON round trip verbatim, value included");
 		var role = root.GetProperty("roles")[0];
 		role.GetProperty("notes").GetString().Should().Be("does the work");
 		role.GetProperty("slug").GetString().Should().Be("worker");
@@ -282,13 +285,13 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	{
 		var ack = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, 0);
 		var again = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, ack.Version);
-		again.Changed.Should().BeFalse();
+		again.Changed.Should().BeFalse("an identical resubmission must be a no-op");
 		again.Version.Should().Be(ack.Version);
 
 		// Same document, different whitespace: canonical storage must not mint a revision either.
 		var reformatted = JsonSerializer.Serialize(JsonDocument.Parse(RosterWithUnknownFields).RootElement);
 		var third = await _svc.UpsertJsonAsync(Proj, "default", reformatted, ack.Version);
-		third.Changed.Should().BeFalse();
+		third.Changed.Should().BeFalse("the same document reformatted with different whitespace must canonicalize identically and remain a no-op");
 		third.Version.Should().Be(ack.Version);
 	}
 
@@ -303,7 +306,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 			}
 			""";
 		var ack = await _svc.UpsertJsonAsync(Proj, "squad", nameless, 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("a nameless document must still be accepted as a new document, keyed by its slug");
 
 		(await _svc.GetAsync(Proj, "squad"))!.Definition.Name.Should().Be("squad");
 		using var doc = JsonDocument.Parse((await _svc.GetJsonAsync(Proj, "squad"))!);
@@ -350,7 +353,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		]);
 
 		var ack = await _svc.UpsertAsync(Proj, "default", doc, 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("a document introducing role notes for the first time must be recorded as a change");
 
 		var view = await _svc.GetAsync(Proj, "default");
 		view.Should().NotBeNull();
@@ -363,7 +366,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	public async Task TypedUpsert_RoleWithoutNotes_NotesIsNull()
 	{
 		var ack = await _svc.UpsertAsync(Proj, "default", SampleRoster(), 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("the initial upsert of the sample roster must be recorded as a change");
 
 		var view = await _svc.GetAsync(Proj, "default");
 		view!.Definition.Roles[0].Notes.Should().BeNull();
@@ -385,7 +388,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		]);
 
 		var ack = await _svc.UpsertAsync(Proj, "default", RosterWithNotes("first notes"), 0);
-		ack.Changed.Should().BeTrue();
+		ack.Changed.Should().BeTrue("the initial upsert must be recorded as a change");
 
 		var again = await _svc.UpsertAsync(Proj, "default", RosterWithNotes("completely different notes"), ack.Version);
 		again.Changed.Should().BeTrue("a role differing only in notes is a different stored payload");
@@ -460,6 +463,6 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		// Still present.
 		(await _svc.GetAsync(Proj, "default")).Should().NotBeNull();
 		// Correct baseline deletes.
-		(await _svc.DeleteAsync(Proj, "default", v2.Version)).Changed.Should().BeTrue();
+		(await _svc.DeleteAsync(Proj, "default", v2.Version)).Changed.Should().BeTrue("deleting at the correct (current) baseline version must succeed");
 	}
 }
