@@ -392,8 +392,23 @@ public sealed record MemorySearchResultView(
 // One row of a relations_create batch (and the historical single-create shape).
 public sealed record RelationCreatedResult(string Id, string Kind, string FromNodeId, string ToNodeId);
 
+// One item a relations_create batch refused (uniform-entity-verbs, mirrors CommentConflict/
+// UpsertConflictView). Relations carry no version watermark and no natural id at input time
+// (kind+from+to, never an id) — so unlike tasks_upsert/comments_upsert there is no Stale/
+// BaselineVersion axis here, only domain-guard refusals (bad kind, unresolvable/ambiguous ref).
+// Key is always the item's batch POSITION ("#0", "#1", …) — the same convention comments_upsert
+// uses for a rejected CREATE, which also has no id yet.
+public sealed record RelationConflict(string Key, string Reason);
+
 // Batch create result — Relations is always present (length 1 for the single-form BC path).
-public sealed record RelationsCreatedResult(IReadOnlyList<RelationCreatedResult> Relations);
+// `Applied` is the SINGLE source of truth (mirrors tasks_upsert/comments_upsert): false ⇒
+// nothing was written, see Conflicts. Under atomic:true (default) a refusal instead throws
+// (unchanged BC — every relations_create failure is a domain-guard refusal, and a domain-guard
+// refusal aborts an atomic call as an exception, same as tasks_upsert/comments_upsert do for
+// theirs; relations have no concurrency/version axis, so ATOMIC never has to hand back
+// applied:false + conflicts the way a Stale conflict would).
+public sealed record RelationsCreatedResult(
+	bool Applied, IReadOnlyList<RelationCreatedResult> Relations, IReadOnlyList<RelationConflict> Conflicts);
 
 public sealed record RelationRow(string Id, string Kind, string FromNodeId, string ToNodeId, DateTime CreatedAt, DateTime? ClosedAt);
 
