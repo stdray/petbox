@@ -183,19 +183,19 @@ public sealed class MemoryService : IMemoryService
 	static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyResolution =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
-	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
+	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct, mode);
 		return new MemorySearchResult(hits.Select(h => View(h.Entry)).ToList(), retrievers);
 	}
 
-	public async Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
+	public async Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct);
+		var (hits, retrievers, _, _, _) = await SearchStoresAsync(projectKey, [store], query, typeFilter, SearchK, lexical, semantic, ct, mode);
 		// Load the pool's vectors ONCE (when an embedder is wired) so a caller's MMR has proximity;
 		// without an embedder there is nothing to load and MMR degrades to identity downstream.
 		var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());

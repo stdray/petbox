@@ -309,8 +309,11 @@ public static class SessionTools
 		// exists. Nothing is returned to the caller between the two, so the guarantee is unchanged: an
 		// invalid cursor is an error, never a plausible-looking wrong page.
 		var token = string.IsNullOrWhiteSpace(cursor) ? (KeysetCursor?)null : KeysetCursor.Peek(cursor, "session_search");
+		// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on the
+		// answer, where a ranking mistake costs more than latency — Precision, same as
+		// memory_search/tasks_search. Not a caller-exposed argument (mirrors those two verbs).
 		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, bodyLen,
-			afterSessionId: token?.Key, ct: ct);
+			afterSessionId: token?.Key, mode: SearchRankingMode.Precision, ct: ct);
 		// The discovery ORDER moved out of the fingerprint and into the order commitment, where the other
 		// two surfaces now carry it. Same guarantee, better words: a fingerprint mismatch tells the caller
 		// to keep their arguments identical, which is wrong advice when their arguments were identical and
@@ -348,7 +351,8 @@ public static class SessionTools
 			kept,
 			Distilled: o.Distilled,
 			Reason: o.Reason,
-			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded, o.Discovery.DegradedReason),
+			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded, o.Discovery.DegradedReason,
+				o.Discovery.SemanticLag, o.Discovery.Ranking),
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,

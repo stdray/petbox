@@ -14,7 +14,12 @@ public interface ISessionEpisodicIndex
 	// `bodyLen` (uniform contract) shapes each hit's Snippet: omitted -> the default
 	// query-centered preview (SnippetLength); 0 -> no snippet text; N>0 -> a
 	// query-centered preview N chars wide; -1 -> the FULL raw message content.
-	Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, CancellationToken ct = default);
+	// `mode` (spec: search-ranking-mode-is-caller-choice) is the RANKING axis the CALLER chose —
+	// Precision (the default here, matching this index's pre-existing hardcoded behavior) reranks
+	// the in-session candidate pool with a cross-encoder when a rerank route is live; Speed skips
+	// it outright. The default preserves this index's historical behavior for any caller that
+	// predates the mode.
+	Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default);
 
 	// Drops hydrated sessions idle past the TTL (and trims over capacity); returns how
 	// many were evicted. Runs implicitly on every search — exposed for tests/ops.

@@ -1,5 +1,6 @@
 using PetBox.Core.Contract;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Memory.Data;
 
 namespace PetBox.Memory.Contract;
@@ -42,14 +43,20 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// ranked; optional taxonomy filter. `lexical`/`semantic` (null = enabled) toggle each
 	// retriever; semantic is silently off when no embedding capability is available. The
 	// result carries which retrievers ran and whether it degraded.
-	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
+	// `mode` (spec: search-ranking-mode-is-caller-choice) is the RANKING axis — Precision (the
+	// default here) preserves this old direct verb's long-standing behavior for every call site
+	// that predates the mode parameter, so adding it never silently changes what an unchanged
+	// caller gets; a caller that now HAS a mode of its own (e.g. session discovery) passes it
+	// explicitly instead of being stuck on the historical default.
+	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default);
 	// Store-scoped hybrid search that RETAINS the re-ranking signals the plain SearchAsync drops:
 	// per-hit fused Score, freshness Updated, lexical-confirmation provenance and the entry Vector
 	// (spec search-fair-fusion). The one door for a caller that wants to run its OWN relevance
 	// policy (a semantic-noise floor, freshness decay, MMR diversity) over a single store's raw
 	// pool — e.g. session discovery over the digest store. Same retriever toggles / degradation
 	// semantics as SearchAsync (semantic silently off with no embedder → every hit LexicalConfirmed).
-	Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
+	// `mode` — same backward-compatible Precision default as SearchAsync above, same reason.
+	Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default);
 	// The unified read of ONE container (spec uniform-entity-verbs v2) behind memory_search.
 	//   No Query  → deterministic LISTING over the stores in scope (Filter.Store or the
 	//     implicit sweep, which skips sensitive stores); default order Updated desc (then

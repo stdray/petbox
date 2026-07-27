@@ -86,9 +86,15 @@ public sealed class SessionSearchService
 	// as tasks_search and memory_search do); this parameter is only the position it decoded, kept here
 	// because the discovery order lives here and re-deriving it in the adapter would mean hydrating the
 	// whole pool just to find one row.
+	// `mode` (spec: search-ranking-mode-is-caller-choice) is threaded through BOTH discovery-leg-1
+	// (the digest store's hybrid search) and episodic hydration — this service never picks a
+	// default of its own, it simply propagates whatever the caller supplies (the same posture
+	// MemoryService/TasksService take for SearchRequest.RankingMode). The EDGE decides: the MCP
+	// verb (session_search) hardcodes Precision, the UI page reads the human's
+	// ui-search-ranking-mode-preference override of the Speed default.
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
 		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, int? bodyLen = null,
-		string? afterSessionId = null, CancellationToken ct = default)
+		string? afterSessionId = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default)
 	{
 		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
@@ -108,7 +114,7 @@ public sealed class SessionSearchService
 		var digestRetrievers = new SearchRetrievers(false, false, false);
 		if (distilled)
 		{
-			var discovery = await _memory.SearchScoredAsync(projectKey, SessionDigestJob.Store, query, type: null, ct: ct);
+			var discovery = await _memory.SearchScoredAsync(projectKey, SessionDigestJob.Store, query, type: null, mode: mode, ct: ct);
 			digestRetrievers = discovery.Retrievers;
 			foreach (var hit in discovery.Hits)
 			{
@@ -232,7 +238,7 @@ public sealed class SessionSearchService
 			var (sessionId, agent) = Provenance(digest.Entry);
 			if (agent.Length == 0 && headers is not null && headers.TryGetValue(sessionId, out var hdr))
 				agent = hdr.Agent; // term/fullscan-only candidate — the digest metadata never carried an agent
-			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, bodyLen, ct);
+			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, bodyLen, mode: mode, ct: ct);
 			if (inner is null) continue; // session deleted after distillation — stale digest
 			var sources = sourcesBySession.GetValueOrDefault(sessionId, (IReadOnlyList<string>)["digest"]);
 			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Entry.Description, inner.Hits, inner.Retrievers, sources));
@@ -346,11 +352,13 @@ public sealed record SessionSearchCandidate(
 // `MoreInPool` says rows remain after this page. `DataVersion` stamps the discovery ORDER a cursor is
 // bound to, and `LastPoolKey` is the session this page ended on — the position a resume token names.
 //
-// NOTE on ranking modes (spec: search-ranking-modes-uniform-across-entities): session discovery has NO
-// cross-encoder rerank of its own — the fused legs run through SearchOrderingPolicies only. These fields
-// are about PAGINATION and deliberately say nothing about a ranking mode, so this contract never offers
-// session_search a Precision/Speed choice it cannot honour. (A rerank for sessions is its own unstarted
-// card, search-rerank-for-sessions; nothing here anticipates it.)
+// NOTE on ranking modes (spec: search-ranking-modes-uniform-across-entities, search-rerank-for-sessions):
+// sessions DO carry a cross-encoder rerank, on BOTH stages — `Discovery` (this envelope) carries the
+// digest leg's `Ranking` (Reranked/DegradedRrf/ChosenRrf), and each `SessionSearchCandidate.Retrievers`
+// carries the episodic-hydration leg's own `Ranking`, same three-way contract memory/tasks use. Neither
+// is hardcoded: `SearchAsync`'s `mode` parameter is the caller's choice, threaded through both legs — the
+// fused-legs' PRESENTATION reshape (SearchOrderingPolicies: freshness decay, MMR) is a SEPARATE axis from
+// this ranking-mode choice and runs regardless of it.
 public sealed record SessionSearchOutcome(
 	bool Distilled,
 	string? Reason,

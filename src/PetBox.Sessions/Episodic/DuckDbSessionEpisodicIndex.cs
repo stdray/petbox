@@ -110,7 +110,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		public void Dispose() => Scope?.Dispose();
 	}
 
-	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, CancellationToken ct = default)
+	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, int? bodyLen = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default)
 	{
 		if (k <= 0) k = 10;
 		await _gate.WaitAsync(ct);
@@ -140,7 +140,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			}
 
 			entry.LastAccess = _time.GetUtcNow().UtcDateTime;
-			return await QueryAsync(entry, projectKey, query, k, bodyLen, ct);
+			return await QueryAsync(entry, projectKey, query, k, bodyLen, mode, ct);
 		}
 		finally
 		{
@@ -242,7 +242,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		}
 	}
 
-	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, int? bodyLen, CancellationToken ct)
+	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, int? bodyLen, SearchRankingMode mode, CancellationToken ct)
 	{
 		// The rental spans the whole query: the semantic leg's embed calls run INSIDE the
 		// SearchService.SearchAsync await below (VectorLeg.SearchAsync → EnsureVectors…), so the
@@ -269,7 +269,12 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		// cross-encoder when a rerank route is live. The candidate text is the message CONTENT, already
 		// in memory (no extra read), aligned to candidate order; an unparsable/absent version → "". No
 		// route → reranker null → honest RRF (DegradedRrf).
-		IReranker? reranker = llm is not null ? new LlmClientReranker(llm, projectKey) : null;
+		// An explicit Speed ask (search-ranking-mode-is-caller-choice) short-circuits BEFORE any of
+		// that: no reranker is constructed at all, so the facade never even probes
+		// IsRerankAvailableAsync — RRF answers directly and provenance reports ChosenRrf, not a
+		// degradation. `mode` is the CALLER's choice, threaded in from SessionSearchService — this
+		// index never decides it itself.
+		IReranker? reranker = mode == SearchRankingMode.Speed ? null : llm is not null ? new LlmClientReranker(llm, projectKey) : null;
 		CandidateTextResolver resolveText = (candidates, _) =>
 		{
 			IReadOnlyList<string> texts = candidates
@@ -278,7 +283,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			return Task.FromResult(texts);
 		};
 		var resp = await new SearchService(indexes, _logger, reranker)
-			.SearchAsync(projectKey, query, new SearchFilter(null), pool, resolveCandidateText: resolveText, ct: ct);
+			.SearchAsync(projectKey, query, new SearchFilter(null), pool, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)
 		{

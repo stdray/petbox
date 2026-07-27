@@ -105,13 +105,15 @@ public sealed record BrowserState
 	// ui-search-ranking-mode-preference: the human's override of the UI EDGE default (spec
 	// search-ranking-mode-is-caller-choice — Speed) for every UI search surface that presents a
 	// ranking mode at all (Memory.cshtml.cs, MemoryStore.cshtml.cs, CrossScopeTaskSearchService /
-	// Search.cshtml.cs). This NEVER reaches the MCP path — an agent is always Precision regardless
-	// of this setting (the owner's 2026-07-27 decision: the only caller who gets a UI-exposed
-	// override is a human on this page). Default Speed matches the pre-existing hardcoded constant
-	// those pages used to print, so a first-time user sees unchanged behaviour until they opt in.
-	// Session search is NOT influenced by this setting: it has no cross-encoder rerank of its own
-	// yet (spec note on SessionSearchOutcome, work `search-rerank-for-sessions`, still Pending) — a
-	// mode toggle with no reranker behind it would LIE, so it stays out until that work lands.
+	// Search.cshtml.cs, Sessions.cshtml.cs). This NEVER reaches the MCP path — an agent is always
+	// Precision regardless of this setting (the owner's 2026-07-27 decision: the only caller who
+	// gets a UI-exposed override is a human on this page). Default Speed matches the pre-existing
+	// hardcoded constant those pages used to print, so a first-time user sees unchanged behaviour
+	// until they opt in.
+	// Session search IS influenced by this setting (work `search-rerank-for-sessions`): sessions
+	// carry a cross-encoder rerank on BOTH stages of the two-stage pipeline — digest discovery
+	// (SessionSearchService → MemoryService.SearchScoredAsync) and episodic hydration
+	// (DuckDbSessionEpisodicIndex) — and this toggle now reaches both, same as every other surface.
 	//
 	// The label is a COMPROMISE, never a correctness claim (RRF is not "wrong", it is a different
 	// price — the owner separately struck the "correct ordering" framing): Precision reranks the
