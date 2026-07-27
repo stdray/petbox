@@ -216,6 +216,12 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// when the node doesn't exist (never an empty answer). Composes GetNodeAsync /
 	// GetNodeBySlugAsync (the node-detail-page precedent).
 	Task<NodeDetailView> GetNodeOnBoardAsync(string projectKey, string board, string node, string? urlPrefix = null, CancellationToken ct = default);
+	// Batch sibling of GetNodeOnBoardAsync (tasks_node_get `nodes[]`, mirrors memory_get
+	// key/keys): SOFT — a slug/NodeId that doesn't resolve on `board` (miss, or a hit that
+	// lives on a different board) is silently dropped rather than throwing, and the answer
+	// preserves the CALLER'S requested order (not dedup/sort order). An empty `nodes` or an
+	// all-miss batch returns an empty list — never an error.
+	Task<IReadOnlyList<NodeDetailView>> GetNodesOnBoardAsync(string projectKey, string board, IReadOnlyList<string> nodes, string? urlPrefix = null, CancellationToken ct = default);
 	// Resolve a node reference (slug or 32-hex NodeId) to its stable NodeId — the uniform
 	// slug-or-NodeId convention (uniform-node-refs) for surfaces that take a bare node ref
 	// (relations, comments). A NodeId-shaped value passes through untouched. A slug resolves

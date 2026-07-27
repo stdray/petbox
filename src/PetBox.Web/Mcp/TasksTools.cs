@@ -702,25 +702,33 @@ public static class TasksTools
 	// MethodologyWire — shared with the admin methodology-editor page, so the editor's JSON is
 	// shape-identical to the template/rules documents.
 
-	[McpServerTool(Name = "tasks_node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
+	[McpServerTool(Name = "tasks_node_get", Title = "Get one or more nodes in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeGetResultView))]
 	[Description("""
-		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex
-		NodeId (the same slug-or-NodeId convention as blockedBy/partOf). The answer carries the
-		owning `board`, its `kind`, the part_of `ancestors` chain (root→parent), and the
-		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
-		the `body` (COMPLETE by default — this is the pointed full read; the uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full), priority, version, tags, links (`spec`,
-		`blockedBy`; on a spec node `linkedTasks` + the computed `delivery`), plus `url` when
-		includeUrl. `relations` is the EXHAUSTIVE two-way relation panel — one labelled group per
-		non-empty kind×direction (children, blocks/blocked by, implements/linked tasks, idea/spec,
-		issue/tasks, supersedes/superseded by), each target carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
-		returned like any other (no includeClosed needed). A node that doesn't exist on the
-		board is a clear error, not an empty result. Use this instead of re-fetching a whole
-		board when you need one node's full body. Requires tasks:read.
+		Return one or more nodes of a board in FULL, addressed by slug key OR 32-hex NodeId (the
+		same slug-or-NodeId convention as blockedBy/partOf). `node` reads ONE; `nodes` reads a
+		BATCH in one call — the same split as memory_get `key`/`keys`: combine them or use either
+		alone. Always returns { nodes: [...] }, one shape for both arities.
+		In a BATCH a node that doesn't resolve on `board` (miss, or a hit that lives on a
+		DIFFERENT board) is silently dropped (soft filter) and an empty result is not an error;
+		rows come back in the REQUESTED order. With a single `node` a miss (or wrong-board hit)
+		stays a not-found ERROR, same as before.
+		Each row carries the owning `board`, its `kind`, the part_of `ancestors` chain
+		(root→parent), and the fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth,
+		status, type, title, the `body` (COMPLETE by default — this is the pointed full read; the
+		uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full),
+		priority, version, tags, links (`spec`, `blockedBy`; on a spec node `linkedTasks` + the
+		computed `delivery`), plus `url` when includeUrl. `relations` is the EXHAUSTIVE two-way
+		relation panel — one labelled group per non-empty kind×direction (children, blocks/blocked
+		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by), each target
+		carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated
+		node is returned like any other (no includeClosed needed). Use this instead of re-fetching a
+		whole board when you need one or a few nodes' full bodies. Requires tasks:read.
 		""")]
-	public static async Task<NodeDetailView> NodeGetAsync(
+	public static async Task<NodeGetResultView> NodeGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("The node's slug key on the board, or its 32-hex NodeId.")] string node,
+		[Description("One node's slug key on the board, or its 32-hex NodeId. Combine with `nodes` or use either alone.")] string? node = null,
+		[Description("Batch of nodes (slug key or 32-hex NodeId) read in ONE call; a node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -728,9 +736,33 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		var detail = await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
+
+		// The ask: `node` ⊕ `nodes`, de-duped, order preserved — exactly memory_get's key/keys
+		// split. A BATCH ask (any `nodes` supplied) tolerates misses; a lone `node` keeps the
+		// historic strict not-found error.
+		var batch = nodes is { Length: > 0 };
+		var wanted = new[] { node }.Concat(nodes ?? [])
+			.Where(n => !string.IsNullOrWhiteSpace(n))
+			.Select(n => n!.Trim())
+			.Distinct(StringComparer.Ordinal)
+			.ToList();
+		if (wanted.Count == 0) throw new ArgumentException("node or nodes is required");
+
+		IReadOnlyList<NodeDetailView> details;
+		if (!batch)
+		{
+			// Strict single-address path, unchanged behavior: a miss throws.
+			var detail = await tasks.GetNodeOnBoardAsync(projectKey, board, wanted[0], urlPrefix, ct);
+			details = [detail];
+		}
+		else
+		{
+			details = await tasks.GetNodesOnBoardAsync(projectKey, board, wanted, urlPrefix, ct);
+		}
+
 		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only.
-		return detail with { Node = detail.Node with { Body = ModuleMcp.Body(detail.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } };
+		return new NodeGetResultView([.. details.Select(d =>
+			d with { Node = d.Node with { Body = ModuleMcp.Body(d.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } })]);
 	}
 
 	[McpServerTool(Name = "tasks_search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]

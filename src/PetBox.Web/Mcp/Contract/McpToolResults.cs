@@ -580,6 +580,13 @@ public sealed record TaskSearchResultView(
 	string? Hint = null,
 	IReadOnlyList<string>? EffectiveStatusKind = null);
 
+// tasks_node_get result (batch 3, mirrors memory_get's addressed-read-batched shape): ALWAYS
+// a list, whether the caller addressed one `node` or a batch of `nodes[]` — one shape for
+// both arities. A single `node` still fills exactly one row (a miss throws before this type
+// is built); a `nodes[]` batch is a SOFT filter — a miss is simply absent, and rows come back
+// in the caller's requested order (not dedup/sort order).
+public sealed record NodeGetResultView(IReadOnlyList<NodeDetailView> Nodes);
+
 // tasks_workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind, string? Description = null);
 
