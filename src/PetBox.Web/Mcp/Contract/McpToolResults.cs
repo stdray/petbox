@@ -63,12 +63,12 @@ public sealed record CommentDeleteResult(bool Deleted);
 
 public sealed record ConfigBindingRow(long Id, string Path, string Tags, string Kind);
 
-// config_binding_upsert / config_binding_delta echo — the uniform-entity-verbs batch envelope,
-// adapted to the config store's model. NOTE the deliberate deviations from the tasks/memory/comments
-// envelope (config bindings are NOT temporally watermarked — see the tool docs):
+// config_binding_upsert echo — the uniform-entity-verbs batch envelope, adapted to the config
+// store's model. NOTE the deliberate deviations from the tasks/memory/comments envelope (config
+// bindings are NOT temporally watermarked, and — batch3 — have NO _delta verb: no tombstone, so a
+// delta would only ever repeat _search — see the tool docs):
 //   • `CurrentVersion` is the store's MAX binding Id (the auto-increment identity is the store-wide
-//     monotonic cursor; there is no per-row Version watermark — Version is always 1). Pass it to
-//     config_binding_delta as `sinceVersion`.
+//     monotonic cursor; there is no per-row Version watermark — Version is always 1).
 //   • A write is PUT-by-(path, tagset): `Added` = items that created a fresh (path, tagset);
 //     `Updated` = items that superseded an active twin (a NEW immutable row replaced it).
 //   • `Superseded` = the soft-closed twin ids (kept for the PUT-by semantics visibility).
@@ -478,22 +478,6 @@ public sealed record SessionSearchResultView(
 	bool? FullScanRan = null,
 	string? FullScanReason = null,
 	bool? FullScanCapped = null);
-
-// session_delta echo — the sessions family's catch-up surface, kept uniform with the other _delta
-// verbs (a store cursor + the rows changed since it + the response-budget markers). Sessions are
-// last-write-wins BLOBS with no store-wide version watermark, so:
-//   • `CurrentVersion` is the newest session's `Updated` time as Unix epoch MILLISECONDS — the real
-//     monotonic field the archive tracks (each per-session `Version` is only that session's message
-//     ordinal, not a global cursor). Pass it back as the next `sinceVersion`.
-//   • `Items` = the active sessions whose Updated-ms > sinceVersion (LWW blobs → a flat "changed
-//     since" list; no added/updated split, and a soft-DELETE is not surfaced as removed).
-// `Items` reuses SessionSearchItemView (SessionId/Agent/Version — the listing arm) for family shape.
-public sealed record SessionDeltaResult(
-	long CurrentVersion,
-	IReadOnlyList<SessionSearchItemView> Items,
-	bool? Truncated = null,
-	int? Omitted = null,
-	string? Hint = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 

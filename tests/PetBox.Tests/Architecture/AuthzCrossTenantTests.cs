@@ -4,20 +4,21 @@ using Xunit;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 217 surfaces: 55 REST, 65 Razor, 97 MCP). One test source, one
-// inventory: a second enumeration would drift from the ratchet's and the two would quietly stop
-// talking about the same system.
+// ratchet guards (AuthzSurfaces — 215 surfaces: 55 REST, 65 Razor, 95 MCP; was 217/97 MCP before
+// batch3 (read-surface-shape-batch-and-dead-delta) removed session_delta and config_binding_delta).
+// One test source, one inventory: a second enumeration would drift from the ratchet's and the two
+// would quietly stop talking about the same system.
 //
 // THE ASSERTION, for every surface where a foreign tenant can be NAMED: the call is refused on the
 // authorization axis. Never served, never answered with an argument error. See AuthzCrossTenantProbe
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 217 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 215 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 141 addressed surfaces that already deny a foreign tenant today.
-//   * KnownDeviations       —  13 addressed surfaces that do NOT, each named, with the behaviour that
+//   * REFUSED               — 143 addressed surfaces that already deny a foreign tenant today.
+//   * KnownDeviations       —   9 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
@@ -27,7 +28,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 141 + 13 + 63 = 217, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 143 + 9 + 63 = 215, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -74,8 +75,9 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 				"WROTE the victim workspace's config (\"applied\":true) with admin:provision; the REST twin denies"),
 			["mcp:config_binding_search"] = (CrossTenantVerdict.Allowed,
 				"read the victim workspace's bindings with admin:provision; the REST twin denies"),
-			["mcp:config_binding_delta"] = (CrossTenantVerdict.Allowed,
-				"read the victim workspace's config delta with admin:provision; the REST twin denies"),
+			// mcp:config_binding_delta was here — same "REST twin denies" deviation as upsert/search. GONE
+			// (batch3, read-surface-shape-batch-and-dead-delta P.3): config_binding_delta itself was
+			// removed (no tombstone, so a delta could only ever repeat _search — never called).
 
 			// Provisioning, as declared: admin:provision is de facto root over every tenant
 			// (TenantDeclaration.cs says so in the enum). project_create is the one that MUTATES —
@@ -388,8 +390,9 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(217,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 55 REST + 65 Razor + 97 MCP. "
+		_host.Surfaces.Should().HaveCount(215,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 55 REST + 65 Razor + 95 MCP "
+			+ "(was 97 MCP / 217 before batch3 removed session_delta and config_binding_delta). "
 			+ "If that number moved, a surface was added or removed and this test must be re-read, not "
 			+ "re-baselined");
 
@@ -402,7 +405,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(144,
+		refused.Should().Be(143,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -411,7 +414,9 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "two session POST routes were reached for the first time (see the KnownDeviations note on why "
 			+ "the old 415 measured the probe rather than the surface); 143 -> 144 with DELETE "
 			+ "/api/config/{{workspaceKey}}/bindings, whose 400 came from binding its query parameters inside "
-			+ "the endpoint and is now a 403 decided above it. "
+			+ "the endpoint and is now a 403 decided above it; 144 -> 143 when batch3 "
+			+ "(read-surface-shape-batch-and-dead-delta) removed session_delta, a surface that was itself "
+			+ "part of this Denied count. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
@@ -442,10 +447,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	{
 		// The scope axis is already centralised and already works. If the probe key were short a scope,
 		// the surfaces guarded by it would deny for the WRONG reason and read as passes.
-		_host.ToolsVisibleToAttacker.Should().HaveCount(97,
+		_host.ToolsVisibleToAttacker.Should().HaveCount(95,
 			"McpToolScopeFilter trims tools/list to what the key's scopes allow. A key missing a scope sees "
-			+ "fewer than the full 97 verbs, and every tool it cannot see would deny on the scope axis — a "
-			+ "field of false greens. Seeing all 97 is the proof that every MCP denial above is about the "
+			+ "fewer than the full 95 verbs (was 97 before batch3 removed session_delta and "
+			+ "config_binding_delta), and every tool it cannot see would deny on the scope axis — a "
+			+ "field of false greens. Seeing all 95 is the proof that every MCP denial above is about the "
 			+ "TENANT");
 
 		// The two scopes the deviation list BLAMES for the seven surfaces a foreign tenant reaches. If

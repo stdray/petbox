@@ -15,16 +15,22 @@ namespace PetBox.Web.Mcp;
 
 // Typed config-binding tools (mcp-typing wave), on the uniform-entity-verbs matrix mirroring
 // tasks/memory/comments: config_binding_upsert (batch write) · config_binding_search (list =
-// search without q) · config_binding_delta (id-cursor catch-up) · config_binding_get (addressed
-// single read) · config_binding_delete. Provisioning ops — admin:provision scope, no per-project
-// claim. Secrets are stored encrypted, never returned as plaintext Value.
+// search without q) · config_binding_get (addressed single read) · config_binding_delete.
+// Provisioning ops — admin:provision scope, no per-project claim. Secrets are stored encrypted,
+// never returned as plaintext Value.
+//
+// NO config_binding_delta (batch3, read-surface-shape-batch-and-dead-delta P.3): config bindings
+// are immutable rows with no tombstone — a delete just drops the row from _search, so a delta
+// would only ever surface `added` with no `removed`, i.e. the one thing a delta verb exists for
+// (a tombstone _search can't give you) was never there. Never called; removed with spec/
+// uniform-entity-verbs updated in the same commit to stop claiming this asymmetry doesn't exist.
 //
 // DEVIATION from the temporal families: config bindings are NOT watermark-versioned. A binding is
 // identified by (path, normalized tag SET) within a workspace; the row's `Version` is always 1 and
 // its addressable identity is the auto-increment `Id`. A write is a PUT-by-(path,tagset) that
 // supersedes (soft-closes) the active twin and inserts a NEW immutable row. So there is no CAS
 // conflict (a PUT always applies or the batch throws) and the store-wide monotonic cursor is the
-// MAX id, which config_binding_delta reads as `sinceVersion`. See the config_binding_upsert essay.
+// MAX id (`currentVersion` on config_binding_upsert/_search). See the config_binding_upsert essay.
 //
 // Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
 // TENANT DECLARATION (spec authz-scope-declaration): `provisioning`, as the spec has it today — and
@@ -88,9 +94,11 @@ public static class ConfigTools
 		tagset); `updated` = items that superseded an active twin (a new immutable row replaced it);
 		each row carries { id, path, tags, kind } — never a value. `superseded` = the soft-closed twin
 		ids. `conflicts` is always empty (PUT-by-key has no CAS conflict; it exists for matrix shape
-		parity). `currentVersion` is the store's MAX binding id — the monotonic cursor: pass it to
-		config_binding_delta as `sinceVersion` for the catch-up. To delete a binding use
-		config_binding_delete (delete is not folded into upsert). Requires admin:provision.
+		parity). `currentVersion` is the store's MAX binding id — the monotonic cursor (no
+		config_binding_delta: config bindings have no tombstone, so a delta would only ever repeat
+		what config_binding_search already shows — use that for the current active set). To delete
+		a binding use config_binding_delete (delete is not folded into upsert). Requires
+		admin:provision.
 		""")]
 	public static async Task<ConfigBindingsUpsertResult> BindingUpsertAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory, ISecretEncryptor secrets,
@@ -245,27 +253,6 @@ public static class ConfigTools
 		return omitted == 0
 			? new ConfigBindingsSearchResult(kept, retrievers)
 			: new ConfigBindingsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
-	}
-
-	[McpServerTool(Name = "config_binding_delta", Title = "Config bindings delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsUpsertResult))]
-	[Description("Return config bindings created/replaced since `sinceVersion` (no writes) — the catch-up surface (a config_binding_upsert ack echoes only its own call; pass its `currentVersion` here). The cursor is the store's auto-increment binding id: this returns the ACTIVE bindings with id > sinceVersion (in `added`; config rows are immutable so a change is a new id, hence everything is an add — `updated` is empty). NOTE (documented limitation): a pure delete of a pre-cursor binding is NOT surfaced here — the id cursor can't see a soft-delete of a low-id row; use config_binding_search for the current active set. Requires admin:provision.")]
-	public static async Task<ConfigBindingsUpsertResult> BindingDeltaAsync(
-		IHttpContextAccessor http, IConfigDbFactory configFactory,
-		[Description("Workspace key the bindings belong to.")] string workspaceKey,
-		[Description("The binding-id cursor from a prior config_binding_upsert/_delta `currentVersion`.")] long sinceVersion,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
-		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
-		using var configDb = configFactory.NewConfigDb(workspaceKey);
-		var current = await MaxIdAsync(configDb, ct);
-		var rows = await configDb.Bindings
-			.Where(b => !b.IsDeleted && b.Id > sinceVersion)
-			.OrderBy(b => b.Id)
-			.Select(b => new { b.Id, b.Path, b.Tags, b.Kind })
-			.ToListAsync(ct);
-		var added = rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString())).ToList();
-		return new ConfigBindingsUpsertResult(Applied: true, current, added, [], [], []);
 	}
 
 	[McpServerTool(Name = "config_binding_get", Title = "Get one config binding", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingRow))]
