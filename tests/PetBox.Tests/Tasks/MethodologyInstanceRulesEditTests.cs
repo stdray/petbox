@@ -370,7 +370,7 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 
 		async Task<string[]> Query(string[] statusKind) =>
 			(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, q: "flight", board: board,
-				under: null, status: null, keys: null, includeClosed: false, sort: null, groupBy: null,
+				underNode: null, status: null, nodes: null, includeClosed: false, sort: null, groupBy: null,
 				bodyLen: null, limit: null, includeUrl: false, statusKind: statusKind))
 			.Nodes.Select(n => n.Key).ToArray();
 

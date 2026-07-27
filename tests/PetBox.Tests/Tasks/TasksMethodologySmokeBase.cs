@@ -288,7 +288,7 @@ public abstract class TasksMethodologySmokeBase : IAsyncLifetime
 			board = "ideas",
 			nodes = Nodes(new { key, type = "idea", status = "exploring", title = key, body = "x" })
 		}), key);
-		await Agent("comments_upsert", new { projectKey = ProjectKey, board = "ideas", items = new[] { new { nodeId = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } } } });
+		await Agent("comments_upsert", new { projectKey = ProjectKey, board = "ideas", items = new[] { new { node = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } } } });
 		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "review", version = 1 }) });
 		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "accepted", version = 2 }) });
 		return ideaId;

@@ -246,7 +246,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		// fixed: New → Open → (artifact) → Resolved; dup: New → Rejected (reason).
 		var fixedId = NodeIdOf(up, "fixed");
 		await Upsert("helpdesk", new { key = "fixed", version = 1, status = "Open" });
-		await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
+		await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { node = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(await Upsert("helpdesk", new { key = "fixed", version = 2, status = "Resolved" })).Should().BeFalse();
 		IsErr(await Upsert("helpdesk", new { key = "dup", version = 1, status = "Rejected", reason = "dup of fixed" })).Should().BeFalse();
 

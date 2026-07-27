@@ -46,7 +46,7 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 		var specId = NodeId(spec, "x");
 
 		// ideaRef auto-creates the idea_spec edge (accepted idea -> spec node).
-		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = specId, direction = "to" });
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = specId, direction = "to" });
 		Text(rels).Should().Contain("idea_spec");
 		Text(rels).Should().Contain(ideaId);
 	}

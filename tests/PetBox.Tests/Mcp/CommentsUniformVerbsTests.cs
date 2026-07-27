@@ -60,7 +60,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Features:Tasks"] = "true" }).Build());
 
 	static CommentItemInput Create(string node, string author, string body, string[]? tags = null) =>
-		new() { NodeId = node, Author = author, Body = body, Tags = tags };
+		new() { Node = node, Author = author, Body = body, Tags = tags };
 
 	Task<CommentsUpsertResult> Upsert(IHttpContextAccessor http, params CommentItemInput[] items) =>
 		CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, Board, items);
@@ -82,7 +82,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		var r = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, Board,
 			[
 				Create(node, "alice", "a real comment"),
-				new CommentItemInput { NodeId = node, Author = "bob", Body = "   " },              // empty body
+				new CommentItemInput { Node = node, Author = "bob", Body = "   " },              // empty body
 				new CommentItemInput { Id = "deadbeef", Body = "patch of a ghost", Version = 1 },  // unknown id
 			],
 			atomic: false);
@@ -94,7 +94,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		r.Conflicts.Single(c => c.Id == "#1").Reason.Should().Contain("body is required");
 		r.Conflicts.Single(c => c.Id == "deadbeef").Reason.Should().Contain("not found");
 
-		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, node: node);
 		list.Items.Should().ContainSingle(); // only the valid comment exists
 	}
 
@@ -106,10 +106,10 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 
 		var act = () => Upsert(http,
 			Create(node, "alice", "a real comment"),
-			new CommentItemInput { NodeId = node, Author = "bob", Body = "" });
+			new CommentItemInput { Node = node, Author = "bob", Body = "" });
 
 		await act.Should().ThrowAsync<ArgumentException>();
-		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, node: node);
 		list.Items.Should().BeEmpty(); // the valid sibling did not land either
 	}
 
@@ -163,7 +163,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		await Upsert(http, Create(node, "a", "alpha comment"));
 		await Upsert(http, Create(node, "b", "bravo comment"));
 
-		var res = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		var res = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, node: node);
 		res.Retrievers.Should().BeNull(); // a listing carries no retrieval provenance
 		res.Items.Select(c => c.Body).Should().Equal("alpha comment", "bravo comment"); // chronological
 	}
@@ -179,7 +179,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		var longBody = new string('x', ModuleMcp.DefaultSnippet + 100);
 		await Upsert(http, Create(node, "a", longBody));
 
-		var res = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		var res = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, node: node);
 
 		res.Items.Should().ContainSingle();
 		res.Items.Single().Body.Should().HaveLength(ModuleMcp.DefaultSnippet + 1).And.EndWith("…"); // cut + ellipsis

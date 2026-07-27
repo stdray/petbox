@@ -368,7 +368,7 @@ public sealed class UniformNodeRefTests : IDisposable
 	// ---- comments_upsert/search: slug resolves on the `board` param ----
 
 	static CommentItemInput NewComment(string node, string author, string body) =>
-		new() { NodeId = node, Author = author, Body = body };
+		new() { Node = node, Author = author, Body = body };
 
 	[Fact]
 	public async Task CommentsCreate_And_List_BySlug()
@@ -380,9 +380,9 @@ public sealed class UniformNodeRefTests : IDisposable
 		add.Applied.Should().BeTrue();
 
 		// The thread binds the node's stable NodeId; slug and NodeId list the same thread.
-		var bySlug = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: "talky");
+		var bySlug = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", node: "talky");
 		bySlug.Items.Single().NodeId.Should().Be(ids["talky"]);
-		var byId = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: ids["talky"]);
+		var byId = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", node: ids["talky"]);
 		byId.Items.Should().BeEquivalentTo(bySlug.Items);
 	}
 
@@ -399,7 +399,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		// A slug that lives on ANOTHER board doesn't leak in — comments are board-scoped: a node
 		// not on this board yields an EMPTY result (soft read), not an error.
 		await Seed(http, "other", """[{"key":"elsewhere","status":"Todo","title":"E"}]""");
-		var wrongBoard = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: "elsewhere");
+		var wrongBoard = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", node: "elsewhere");
 		wrongBoard.Items.Should().BeEmpty();
 	}
 
