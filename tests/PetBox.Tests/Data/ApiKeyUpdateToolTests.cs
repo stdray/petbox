@@ -248,12 +248,16 @@ public sealed class ApiKeyUpdateToolTests
 
 	// param-names-collide-across-families pt.1: `key` renamed to `keyValue` (a raw secret must not
 	// share a name with the public slug convention used elsewhere). The pre-rename argument name is
-	// now unrecognized — the call fails on the missing required `keyValue`, not on the new name.
+	// now unrecognized — and per work/unknown-param-silently-ignored-breaks-renames-quietly,
+	// McpUnknownParameterFilter rejects it LOUDLY, by its own name, before the tool body ever runs
+	// (previously it fell on the missing-required-`keyValue` message instead — a silent drop that
+	// only accidentally read as a rejection).
 	[Fact]
 	public async Task OldParamName_Key_NoLongerAccepted()
 	{
 		var key = await SeedAsync();
-		(await UpdateAsync(new() { ["key"] = key, ["name"] = "x" })).Should().Contain("keyValue");
+		(await UpdateAsync(new() { ["key"] = key, ["name"] = "x" }))
+			.Should().Contain("Unknown parameter").And.Contain("key").And.Contain("apikey_update");
 	}
 
 	[Fact]

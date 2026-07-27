@@ -304,9 +304,13 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("log_list", new { projectKey = ProjectKey }),
 			("log_query", new { projectKey = ProjectKey, logName = "audit", kql = "events | take 10" }),
 			("health_search", new { projectKey = ProjectKey }),
-			("deploy_list", new { projectKey = ProjectKey }),
-			("deploy_node_list", new { projectKey = ProjectKey }),
-			("project_list", new { projectKey = ProjectKey }),
+			// deploy_list/deploy_node_list/project_list take no `projectKey` at all (fleet-wide /
+			// admin-provision reads — their own [Description]s say so) — passing one used to be
+			// silently ignored (the exact bug work/unknown-param-silently-ignored-breaks-renames-quietly
+			// closes) and is now a hard reject, so the battery must not send it here.
+			("deploy_list", new { }),
+			("deploy_node_list", new { }),
+			("project_list", new { }),
 			("relations_list", new { projectKey = ProjectKey, node = "a" }),
 			("llm_config_get", new { projectKey = ProjectKey }),
 			("apikey_list", new { projectKey = ProjectKey }),

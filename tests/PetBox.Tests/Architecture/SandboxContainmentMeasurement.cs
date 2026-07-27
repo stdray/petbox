@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -298,32 +299,58 @@ public sealed class SandboxContainmentHost : IAsyncLifetime
 	//                   semantics: a workspace holding a sandbox project is still not itself a sandbox.
 	//                   It is also the exact target read on production on 2026-07-25.
 	//   $ws-sandboxws — a container belonging to a workspace the key's project is NOT in.
+	// Generic garbage, but only the flavour McpUnknownParameterFilter (work:
+	// unknown-param-silently-ignored-breaks-renames-quietly) now lets through: a name the binder
+	// used to accept unconditionally (and silently drop when a tool didn't declare it) is a HARD
+	// reject today, so a shared probe payload must be trimmed to each tool's OWN declared
+	// properties or it never reaches the tool body at all — which this sweep exists to reach.
+	static readonly Dictionary<string, object?> DummyByName = new(StringComparer.Ordinal)
+	{
+		["store"] = "petbox-probe",
+		["key"] = "petbox-probe",
+		["keys"] = new[] { "petbox-probe" },
+		["text"] = "petbox-probe",
+		["type"] = "Reference",
+		["q"] = "petbox-probe",
+		["sinceVersion"] = 0,
+		["bodyLen"] = 0,
+		["includeUsage"] = false,
+		["usageWindowDays"] = 30,
+		// memory_upsert's `entries` is REQUIRED — a syntactically valid, semantically inert entry so
+		// binding succeeds and the call reaches AssertMemoryProjectAsync (which runs before entries
+		// are ever parsed/used).
+		["entries"] = new[] { new Dictionary<string, object?>
+			{ ["key"] = "petbox-probe", ["type"] = "Project", ["description"] = "p", ["body"] = "p" } },
+	};
+
 	async Task<IReadOnlyList<ContainerProbe>> SweepContainersAsync()
 	{
 		var tools = Factory.Services.GetServices<ModelContextProtocol.Server.McpServerTool>()
 			.Select(t => t.ProtocolTool)
 			.Where(t => t.Name.StartsWith("memory_", StringComparison.Ordinal))
-			.Select(t => t.Name)
-			.Distinct(StringComparer.Ordinal)
-			.Order(StringComparer.Ordinal)
+			.DistinctBy(t => t.Name, StringComparer.Ordinal)
+			.OrderBy(t => t.Name, StringComparer.Ordinal)
 			.ToList();
 
 		var probes = new List<ContainerProbe>();
 		await using var mcp = await ConnectAsync(KeySysSandbox);
 		foreach (var container in new[] { WorkspaceMemory.SystemContainer, WorkspaceMemory.ContainerKeyFor(SandboxWorkspace) })
 		{
-			foreach (var tool in tools)
+			foreach (var t in tools)
 			{
-				// Required arguments filled with type-shaped garbage, exactly as the cross-tenant probe
-				// does it: the call has to reach the tool body, or a binder error would be mistaken for a
-				// refusal. `store` and `text` are the only required non-tenant arguments in this family.
-				var args = new Dictionary<string, object?>(StringComparer.Ordinal)
+				var tool = t.Name;
+
+				// Only the property names THIS tool actually declares get a value — anything else is
+				// now an unknown-parameter rejection, not a silently-dropped extra.
+				var args = new Dictionary<string, object?>(StringComparer.Ordinal) { ["projectKey"] = container };
+				if (t.InputSchema.ValueKind == JsonValueKind.Object
+					&& t.InputSchema.TryGetProperty("properties", out var properties)
+					&& properties.ValueKind == JsonValueKind.Object)
 				{
-					["projectKey"] = container,
-					["store"] = "petbox-probe",
-					["text"] = "petbox-probe",
-					["key"] = "petbox-probe",
-				};
+					foreach (var prop in properties.EnumerateObject())
+						if (DummyByName.TryGetValue(prop.Name, out var dummy))
+							args[prop.Name] = dummy;
+				}
 
 				string observed;
 				bool denied;
