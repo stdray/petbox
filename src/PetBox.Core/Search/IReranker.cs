@@ -24,8 +24,8 @@ public interface IReranker
 	// Rerank `documents` for `query` with query-model AFFINITY (ONE model scores the WHOLE pool, spec
 	// search-rerank-single-model), returning the best-first reordered GLOBAL indices into `documents`
 	// with the cross-encoder score, truncated to topN. Throws SearchDegradedException on a rerank
-	// outage/no-route so the facade falls back to RRF honestly (reranked=false) — an outage must never
-	// take search down.
+	// outage/no-route so the facade falls back to RRF honestly (Ranking=DegradedRrf) — an outage must
+	// never take search down.
 	Task<IReadOnlyList<RerankedHit>> RerankAsync(string query, IReadOnlyList<string> documents, int topN, CancellationToken ct = default);
 }
 

@@ -76,7 +76,7 @@ public sealed class MemoryVisibilityParityTests : IDisposable
 		// semantic:false isolates the lexical leg + the precision pass over its candidate union.
 		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null, semantic: false);
 
-		res.Retrievers.Reranked.Should().BeTrue("the cross-encoder rescored the candidate union — the штатный precision path");
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.Reranked, "the cross-encoder rescored the candidate union — the штатный precision path");
 		res.Retrievers.Degraded.Should().BeFalse();
 		res.Hits.Select(h => h.Key).Should().Contain("winner").And.Contain("decoy");
 		res.Hits[0].Key.Should().Be("winner",
@@ -96,10 +96,41 @@ public sealed class MemoryVisibilityParityTests : IDisposable
 
 		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null, semantic: false);
 
-		res.Retrievers.Reranked.Should().BeFalse("no rerank route → the honest RRF degradation, never dressed up as precision");
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.DegradedRrf, "no rerank route → the honest RRF degradation, never dressed up as precision");
 		res.Hits.Select(h => h.Key).Should().Contain("winner").And.Contain("decoy");
 		res.Hits[0].Key.Should().Be("decoy",
 			"with no reranker the pure lexical/RRF order stands — the stronger lexical hit leads, no cross-encoder promotion");
+	}
+
+	[Fact]
+	public async Task ExplicitSpeed_SkipsRerankerEntirely_EvenWhenRouteIsLive_ReportsChosenRrf()
+	{
+		// search-ranking-mode-is-caller-choice: an explicit Speed ask on the request contract must
+		// short-circuit to RRF BEFORE the reranker is even constructed — the LLM client's rerank
+		// endpoint (availability probe AND the rerank call itself) must never be touched, even though
+		// a live route exists (rerankAvailable: true). Provenance must call this a CHOICE (ChosenRrf),
+		// never dressed up as the DegradedRrf a missing/broken route would report.
+		var llm = new RerankingLlmClient(rerankAvailable: true);
+		var memory = new MemoryService(_store, llm);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes",
+		[
+			Entry("decoy", "alpha alpha alpha alpha note"),
+			Entry("winner", "alpha WINNER note"),
+		], []);
+
+		var res = await memory.SearchEntriesAsync(Proj, new SearchRequest<MemoryEntryFilter, MemorySortBy>
+		{
+			Query = "alpha",
+			RankingMode = SearchRankingMode.Speed,
+		});
+
+		llm.AvailabilityChecks.Should().Be(0, "Speed must never probe rerank availability");
+		llm.RerankCalls.Should().Be(0, "Speed must never construct/call the reranker");
+		res.Retrievers!.Value.Ranking.Should().Be(SearchRankingOutcome.ChosenRrf);
+		// No cross-encoder promotion ran at all (RerankCalls is 0, proven above) — both candidates
+		// still surface, just never reordered by a reranker that was never invoked.
+		res.Hits.Select(h => h.Entry.Key).Should().Contain("winner").And.Contain("decoy");
 	}
 
 	// ---- specialization WITH REASON: Description IS the title, a free port to the weighted Title
@@ -211,6 +242,12 @@ public sealed class MemoryVisibilityParityTests : IDisposable
 	// is a trivial stub (the precision tests run semantic:false, so it is never called).
 	sealed class RerankingLlmClient(bool rerankAvailable) : ILlmClient
 	{
+		// Call counters (search-ranking-mode-is-caller-choice): an explicit Speed ask must never even
+		// construct a reranker, so neither of these should move — see
+		// ExplicitSpeed_SkipsRerankerEntirely_EvenWhenRouteIsLive_ReportsChosenRrf below.
+		public int AvailabilityChecks;
+		public int RerankCalls;
+
 		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
 			Task.FromResult(new EmbedResult(
 				request.Inputs.Select(_ => new float[] { 1f }).ToList(),
@@ -218,6 +255,7 @@ public sealed class MemoryVisibilityParityTests : IDisposable
 
 		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default)
 		{
+			RerankCalls++;
 			var hits = request.Documents
 				.Select((doc, i) => new RerankHit(i, doc.Contains("WINNER") ? 100.0 : -i))
 				.OrderByDescending(h => h.Score)
@@ -229,7 +267,10 @@ public sealed class MemoryVisibilityParityTests : IDisposable
 		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
 			throw new NotSupportedException();
 
-		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
-			Task.FromResult(capability != LlmCapability.Rerank || rerankAvailable);
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default)
+		{
+			if (capability == LlmCapability.Rerank) AvailabilityChecks++;
+			return Task.FromResult(capability != LlmCapability.Rerank || rerankAvailable);
+		}
 	}
 }

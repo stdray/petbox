@@ -175,7 +175,7 @@ public sealed class SearchProvenanceTests : IDisposable
 		res.Retrievers.Semantic.Should().BeTrue();
 		res.Retrievers.Degraded.Should().BeFalse();
 		res.Retrievers.SemanticLag.Should().Be(0);
-		res.Retrievers.Reranked.Should().BeFalse();
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.DegradedRrf);
 	}
 
 	[Fact]

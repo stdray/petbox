@@ -2045,7 +2045,7 @@ public sealed partial class TasksService : ITasksService
 			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
 			effectiveStatusKind = queryFacet;
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, ct);
+				Math.Max(req.Limit, 50), urlPrefix, runtime, queryFacet, req.RankingMode, ct);
 
 			// search-identity-leg (spec): a query that exactly matches a node's slug OR its NodeId reads
 			// as an addressed ask in disguise — the identity leg (equality over search_meta_alias)
@@ -2109,7 +2109,7 @@ public sealed partial class TasksService : ITasksService
 	// failure is caught by the facade and flagged degraded.
 	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
 		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime,
-		IReadOnlyList<string>? statusKindFacet, CancellationToken ct)
+		IReadOnlyList<string>? statusKindFacet, SearchRankingMode mode, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
@@ -2143,7 +2143,11 @@ public sealed partial class TasksService : ITasksService
 		// (Type=board, Id=slug) resolves to Name + Body (the ToDoc shape) and a COMMENT (Id "c:"+key)
 		// to its Body (CommentToDoc's shape); two reads over the ACTIVE rows, missing → "". No LLM
 		// route → reranker null → honest RRF (DegradedRrf).
-		IReranker? reranker = _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
+		// An explicit Speed ask (search-ranking-mode-is-caller-choice) short-circuits BEFORE any of
+		// that: no reranker is constructed at all, so the facade never even probes
+		// IsRerankAvailableAsync — RRF answers directly and provenance reports ChosenRrf, not a
+		// degradation.
+		IReranker? reranker = mode == SearchRankingMode.Speed ? null : _llm is not null ? new LlmClientReranker(_llm, projectKey) : null;
 		CandidateTextResolver resolveText = (candidates, _) =>
 		{
 			var slugs = candidates
@@ -2173,7 +2177,7 @@ public sealed partial class TasksService : ITasksService
 			return Task.FromResult(texts);
 		};
 		var resp = await new SearchService(indexes, _log, reranker)
-			.SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, resolveCandidateText: resolveText, ct: ct);
+			.SearchAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
 		// No semantic floor (spec: search-leg-classification — the tau membership threshold is gone):

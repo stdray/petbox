@@ -299,7 +299,7 @@ public static class SessionTools
 			Description: c.Description,
 			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
 			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded, c.Retrievers.DegradedReason,
-				c.Retrievers.SemanticLag, c.Retrievers.Reranked),
+				c.Retrievers.SemanticLag, c.Retrievers.Ranking),
 			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
 		return new SessionSearchResultView(

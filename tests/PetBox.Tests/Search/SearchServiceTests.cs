@@ -190,7 +190,7 @@ public sealed class SearchServiceTests : IDisposable
 		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
 
 		res.Hits.Select(h => h.Id).Should().Equal("c", "b", "a");
-		res.Retrievers.Reranked.Should().BeTrue();
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.Reranked);
 		res.Retrievers.Lexical.Should().BeTrue();
 	}
 
@@ -207,7 +207,7 @@ public sealed class SearchServiceTests : IDisposable
 		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
 
 		res.Hits.Select(h => h.Id).Should().Equal("a");
-		res.Retrievers.Reranked.Should().BeFalse();
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.DegradedRrf);
 		res.Retrievers.Degraded.Should().BeFalse(); // the LEGS answered fine; only the precision layer degraded
 	}
 
@@ -215,7 +215,7 @@ public sealed class SearchServiceTests : IDisposable
 	public async Task RerankUnavailable_SkipsPrecisionPass_WithoutResolvingText()
 	{
 		// Fast-down (llm-fast-down): when no rerank route is live the facade skips the precision pass
-		// UP FRONT — no candidate-text resolution, no thrown exception — and reports Reranked=false.
+		// UP FRONT — no candidate-text resolution, no thrown exception — and reports DegradedRrf.
 		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList()) { Available = false };
 		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker);
 		await IndexAsync(svc, commit: true, Doc("a", "alpha keyword"));
@@ -229,7 +229,7 @@ public sealed class SearchServiceTests : IDisposable
 		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: resolve);
 
 		res.Hits.Select(h => h.Id).Should().Equal("a");
-		res.Retrievers.Reranked.Should().BeFalse();
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.DegradedRrf);
 		resolverCalled.Should().BeFalse();
 	}
 
@@ -250,7 +250,35 @@ public sealed class SearchServiceTests : IDisposable
 
 		reranker.LastDocs!.Count.Should().Be(2);
 		res.Hits.Count.Should().Be(2);
-		res.Retrievers.Reranked.Should().BeTrue();
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.Reranked);
+	}
+
+	[Fact]
+	public async Task ExplicitSpeedMode_SkipsRerankerEntirely_EvenWhenAvailable_ReportsChosenRrf()
+	{
+		// search-ranking-mode-is-caller-choice + search-rerank-in-loop: an explicit Speed ask must
+		// short-circuit to RRF WITHOUT ever probing IsAvailableAsync or calling RerankAsync — even
+		// when the reranker IS wired and available. Provenance must call this a CHOICE (ChosenRrf),
+		// never a degradation (DegradedRrf) — the two must stay distinguishable.
+		var probed = false;
+		var reranked = false;
+		var reranker = new StubReranker(docs => docs
+			.Select((d, i) => (d, i))
+			.OrderByDescending(x => x.d, StringComparer.Ordinal)
+			.Select(x => new RerankedHit(x.i, 1.0)).ToList())
+		{ OnProbe = () => probed = true, OnRerank = () => reranked = true };
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker);
+		await IndexAsync(svc, commit: true,
+			Doc("a", "alpha one"), Doc("b", "alpha two"), Doc("c", "alpha three"));
+
+		var res = await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10,
+			mode: SearchRankingMode.Speed, resolveCandidateText: IdAsText);
+
+		probed.Should().BeFalse("Speed must never even probe rerank availability");
+		reranked.Should().BeFalse("Speed must never call the reranker");
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.ChosenRrf);
+		res.Retrievers.Ranking.Should().NotBe(SearchRankingOutcome.DegradedRrf,
+			"an explicit choice must never read as a degradation");
 	}
 
 	// The candidate-text resolver used by the rerank tests: the stub reranker only needs SOMETHING
@@ -265,11 +293,20 @@ public sealed class SearchServiceTests : IDisposable
 	{
 		public bool Available = true;
 		public List<string>? LastDocs;
+		// Optional probes for tests that must prove a code path was never reached at all (e.g. an
+		// explicit Speed ask must never even call IsAvailableAsync — see ExplicitSpeedMode... below).
+		public Action? OnProbe;
+		public Action? OnRerank;
 
-		public Task<bool> IsAvailableAsync(CancellationToken ct = default) => Task.FromResult(Available);
+		public Task<bool> IsAvailableAsync(CancellationToken ct = default)
+		{
+			OnProbe?.Invoke();
+			return Task.FromResult(Available);
+		}
 
 		public Task<IReadOnlyList<RerankedHit>> RerankAsync(string query, IReadOnlyList<string> documents, int topN, CancellationToken ct = default)
 		{
+			OnRerank?.Invoke();
 			LastDocs = documents.ToList();
 			IReadOnlyList<RerankedHit> ranked = rank(documents).Take(topN).ToList();
 			return Task.FromResult(ranked);
