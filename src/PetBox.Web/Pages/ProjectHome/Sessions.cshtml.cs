@@ -5,10 +5,12 @@ using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 using PetBox.Web.Auth;
 using PetBox.Web.Search;
+using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -28,13 +30,22 @@ public sealed class SessionsModel : PageModel
 	readonly FeatureFlags _features;
 	readonly ISessionStore _store;
 	readonly SessionSearchService _search;
+	// Optional, same posture as MemoryModel._uiState: resolves the caller's
+	// ui-search-ranking-mode-preference override (BrowserState.SearchRankingMode) of the UI edge
+	// default (Speed) — this NOW reaches session search too (search-rerank-for-sessions), on BOTH
+	// its discovery and episodic-hydration legs. DI always supplies it (IUiState is registered
+	// unconditionally); a bare unit-test construction with no HttpContext may omit it and falls
+	// back to the pre-existing hardcoded Speed default below.
+	readonly IUiState? _uiState;
 
-	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store, SessionSearchService search)
+	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store, SessionSearchService search,
+		IUiState? uiState = null)
 	{
 		_projects = projects;
 		_features = features;
 		_store = store;
 		_search = search;
+		_uiState = uiState;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -180,17 +191,21 @@ public sealed class SessionsModel : PageModel
 				catch (ArgumentException) { CursorWasReset = true; }
 			}
 
+			// ui-search-ranking-mode-preference: overridable per-user (BrowserState.SearchRankingMode,
+			// UI edge default Speed) — session search now honours it on BOTH stages (search-rerank-for-sessions).
+			var rankingMode = _uiState is not null ? (await _uiState.GetAsync(ct)).SearchRankingMode : SearchRankingMode.Speed;
+
 			SessionSearchOutcome outcome;
 			try
 			{
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, afterSessionId: peeked?.Key, ct: ct);
+				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, afterSessionId: peeked?.Key, mode: rankingMode, ct: ct);
 			}
 			catch (ArgumentException)
 			{
 				// The session this cursor named fell out of the discovery pool (SessionSearchService's
 				// own refusal) — restart the walk from the top rather than a raw 500.
 				CursorWasReset = true;
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, ct: ct);
+				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, mode: rankingMode, ct: ct);
 			}
 			if (peeked is { } token && !CursorWasReset)
 			{
@@ -201,7 +216,7 @@ public sealed class SessionsModel : PageModel
 					// ranked differently (a rerank/discovery input moved between pages) — restart rather
 					// than splice two orderings.
 					CursorWasReset = true;
-					outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, ct: ct);
+					outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, mode: rankingMode, ct: ct);
 				}
 			}
 			Distilled = outcome.Distilled;
