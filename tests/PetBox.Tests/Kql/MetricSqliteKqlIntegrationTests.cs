@@ -34,8 +34,11 @@ public sealed class MetricSqliteKqlIntegrationTests : IAsyncLifetime
 	public Task DisposeAsync()
 	{
 		_logDb?.Dispose();
-		try { Directory.Delete(_tempDir, recursive: true); }
-		catch { /* best effort */ }
+		// Microsoft.Data.Sqlite pools by connection string, so a bare try/catch delete here
+		// throws into an empty catch whenever the pool still holds the handle open — route
+		// through TestDirs so the pool is cleared first, and a still-locked delete is deferred
+		// to process exit instead of silently leaking the whole directory.
+		TestDirs.CleanupOrDefer(_tempDir);
 		return Task.CompletedTask;
 	}
 

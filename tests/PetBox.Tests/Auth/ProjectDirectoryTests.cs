@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Web.Auth;
@@ -7,14 +8,22 @@ namespace PetBox.Tests.Auth;
 
 // IProjectDirectory is the catalog of projects: the IDOR answer (BelongsAsync / GetInWorkspaceAsync),
 // the container filter that no page may re-derive, and the create/delete rules.
-public sealed class ProjectDirectoryTests
+public sealed class ProjectDirectoryTests : IDisposable
 {
-	static (ProjectDirectory Svc, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(ProjectDirectory Svc, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		return (new ProjectDirectory(dbf), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static void SeedWorkspace(ICoreDbFactory dbf, string key)

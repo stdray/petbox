@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Data;
@@ -17,6 +18,7 @@ public sealed class ConfigDirectoryTests : IDisposable
 {
 	const string Ws = "cfgdir-ws";
 	readonly string _dir;
+	readonly string _coreDir;
 	readonly ScopedDbFactory<ConfigDb> _scopedConfig;
 	readonly ConfigDbFactory _configFactory;
 	readonly ICoreDbFactory _coreFactory;
@@ -32,6 +34,7 @@ public sealed class ConfigDirectoryTests : IDisposable
 		_configFactory = new ConfigDbFactory(_scopedConfig);
 
 		var coreCs = TestSchema.NewTempConnectionString("petbox-configdir-core");
+		_coreDir = Path.GetDirectoryName(new SqliteConnectionStringBuilder(coreCs).DataSource)!;
 		TestSchema.Core(coreCs);
 		_coreFactory = TestCoreDb.CoreFactory(coreCs);
 
@@ -42,6 +45,7 @@ public sealed class ConfigDirectoryTests : IDisposable
 	{
 		_scopedConfig.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
+		TestDirs.CleanupOrDefer(_coreDir);
 	}
 
 	ConfigDb OpenConfigDb() => _configFactory.NewConfigDb(Ws);

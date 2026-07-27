@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -7,14 +8,22 @@ namespace PetBox.Tests.Data;
 // must resolve a token to EXACTLY the row it names — and only a caller who already holds the token can
 // reach anything (there is no list/enumerate method to prove that against, by design: these tests prove
 // the lookup itself does not widen what a token grants).
-public sealed class ShareLinkDirectoryTests
+public sealed class ShareLinkDirectoryTests : IDisposable
 {
-	static (ShareLinkDirectory Svc, ICoreDbFactory Dbf) New()
+	readonly List<string> _dirs = [];
+
+	(ShareLinkDirectory Svc, ICoreDbFactory Dbf) New()
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		return (new ShareLinkDirectory(dbf), dbf);
+	}
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
 	}
 
 	static ShareLink NewLink(string id, DateTime expiresAt) => new()

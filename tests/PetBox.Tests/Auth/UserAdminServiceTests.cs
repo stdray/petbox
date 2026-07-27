@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
@@ -9,14 +10,22 @@ namespace PetBox.Tests.Auth;
 // IUserAdminService owns the three rules that entangle Users with WorkspaceMembers: the allowance is
 // spent by Admin memberships, the last $system admin may never be deleted, and deleting an account
 // takes its memberships (the quota ledger) with it.
-public sealed class UserAdminServiceTests
+public sealed class UserAdminServiceTests : IDisposable
 {
 	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	static (UserAdminService Users, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New(
+	readonly List<string> _dirs = [];
+
+	public void Dispose()
+	{
+		foreach (var dir in _dirs) TestDirs.CleanupOrDefer(dir);
+	}
+
+	(UserAdminService Users, IWorkspaceMembershipService Members, ICoreDbFactory Dbf) New(
 		string? bootstrapAdmin = null)
 	{
 		var cs = TestSchema.NewTempConnectionString();
+		_dirs.Add(Path.GetDirectoryName(new SqliteConnectionStringBuilder(cs).DataSource)!);
 		TestSchema.Core(cs);
 		var dbf = new CoreDbFactory(cs);
 		var members = new WorkspaceMembershipService(dbf);

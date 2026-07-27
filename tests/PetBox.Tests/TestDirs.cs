@@ -97,5 +97,11 @@ public static class TestDirs
 		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Cache=Shared"));
 		// TasksDb.CreateOptions appends this one — without it the tasks pools survive a clear.
 		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Foreign Keys=True"));
+		// PetBoxDb.CreateOptions (core.db, via CoreDbFactory/TestSchema.NewTempConnectionString)
+		// appends Foreign Keys=True onto a connection string that already carries Cache=Shared —
+		// neither spelling above matches that COMBINED string, so without this the pool for every
+		// core.db-backed test (WorkspaceMembershipServiceTests, ProjectDirectoryTests, and the rest
+		// of the plain-class Auth/Data tests) survived every clear and the temp dir stayed locked.
+		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={dbPath};Cache=Shared;Foreign Keys=True"));
 	}
 }
