@@ -443,7 +443,12 @@ public sealed record SessionUpsertResult(string SessionId, long Version, int Mes
 public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason, string? Warning = null);
 
 // Meta is the optional observed client stamp (raw JSON object string) when present.
-public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version, string? Meta = null);
+// LastOrdinal (card session-get-from-ordinal) is the ordinal of the LAST message = the
+// message count — the cursor for incremental reads, named the way session_append already
+// names it (fromOrdinal/lastOrdinal). It is the ORDINAL axis; Length stays the CHAR axis
+// (always the full transcript's length, regardless of bodyLen AND of fromOrdinal), so the
+// two growth signals never have to be read as one.
+public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version, long LastOrdinal = 0, string? Meta = null);
 
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 

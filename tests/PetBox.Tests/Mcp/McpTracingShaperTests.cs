@@ -101,7 +101,10 @@ public sealed class McpTracingShaperTests
 	public void BodyLen_Marked_OnPointedReads()
 	{
 		McpLoggedArgs.For("memory_get").Select(a => a.Name).Should().BeEquivalentTo(["bodyLen"]);
-		McpLoggedArgs.For("session_get").Select(a => a.Name).Should().BeEquivalentTo(["bodyLen"]);
+		// session_get also logs `fromOrdinal` (card session-get-from-ordinal): the incremental-read
+		// cursor is a navigation knob of the same class as bodyLen, and a polling loop is only
+		// legible in a trace if the ordinal it polled from is in it.
+		McpLoggedArgs.For("session_get").Select(a => a.Name).Should().BeEquivalentTo(["bodyLen", "fromOrdinal"]);
 	}
 
 	// --- Presence mode: the value NEVER leaves the process ---

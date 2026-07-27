@@ -123,7 +123,18 @@ public static class SessionTools
 		instead). The returned `sessionId` is always the resolved full id. The blob is COMPLETE by
 		default (this is the pointed full read — the uniform bodyLen knob still applies: 0 = no
 		body, N>0 = the first N chars, -1 = full). `length` (total chars, always the FULL blob's
-		length regardless of bodyLen) is ALWAYS returned so a caller can poll for growth.
+		length regardless of bodyLen AND of fromOrdinal) is ALWAYS returned so a caller can poll
+		for growth.
+
+		INCREMENTAL READ — `fromOrdinal` (1-based, default 1) starts the window at that MESSAGE,
+		so a growing session is re-read by what is new, not re-read whole. The unit is the message
+		ordinal, the same cursor `session_append` writes against (fromOrdinal/lastOrdinal) and the
+		same ordinal `session_search` hits carry — messages are immutable and dense 1..N, so this
+		cursor can never go stale. The response's `lastOrdinal` (= the message count) is the cursor
+		to pass back as `fromOrdinal+1` next time. `fromOrdinal` PAST `lastOrdinal` is NOT an error:
+		it is the normal poll for growth and returns an empty body plus the current `lastOrdinal`.
+		The window is exactly a suffix of the full blob. `bodyLen` and `fromOrdinal` compose
+		predictably — "from here, this many chars"; neither takes precedence over the other.
 		Requires tasks:read.
 		""")]
 	public static async Task<SessionGetResult> GetAsync(
@@ -131,15 +142,27 @@ public static class SessionTools
 		string projectKey,
 		[Description("Full session id or a unique prefix of one (e.g. the first UUID block).")] string sessionId,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[LogArg][Description("Ordinal (1-based) of the first message to return — the incremental-read cursor (default 1 = the whole transcript). Pass the previous response's lastOrdinal+1 to read only what was appended since; past the last ordinal is not an error but an empty body + the current lastOrdinal.")] long fromOrdinal = 1,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// Reject 0/negative rather than leniently reading it as "the whole thing": ordinals are
+		// 1-based everywhere on this surface (session_append rejects the same way), and a caller
+		// holding a 0-based mental model must find out here, not by silently re-reading the
+		// transcript it thought it was skipping.
+		if (fromOrdinal < 1)
+			throw new ArgumentOutOfRangeException(nameof(fromOrdinal), fromOrdinal, "fromOrdinal must be >= 1");
 		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
 		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
 		if (s is null) throw new InvalidOperationException($"session '{sessionId}' not found in project '{projectKey}'");
-		var full = s.Content;
-		return new SessionGetResult(s.SessionId, s.Agent, ModuleMcp.Body(full, bodyLen, ModuleMcp.FullBody) ?? "", full.Length, s.Version, s.MetaJson);
+		// Two independent axes, applied in order and without precedence: fromOrdinal picks the
+		// WINDOW (a suffix of the transcript), bodyLen then cuts LENGTH inside it. `length` keeps
+		// reporting the full transcript so the char-axis growth signal survives both knobs.
+		var window = s.ContentFrom(fromOrdinal);
+		return new SessionGetResult(
+			s.SessionId, s.Agent, ModuleMcp.Body(window, bodyLen, ModuleMcp.FullBody) ?? "",
+			s.Length, s.Version, s.Messages.Count, s.MetaJson);
 	}
 
 	// Resolve a full-or-prefix session id to its stored full id. Returns null on a miss (the
@@ -216,7 +239,9 @@ public static class SessionTools
 		candidates are lazily hydrated (transient in-memory index: russian-stem FTS +
 		vectors) and searched INSIDE, up to `hitsPerSession` messages each. Every hit
 		carries the message ordinal — the provenance bridge: jump to the verbatim source
-		with session_get. Each hit's `snippet` follows the uniform bodyLen contract: omitted
+		with `session_get {fromOrdinal: <the hit's message ordinal>}`, which starts the
+		read AT that message instead of returning the whole transcript. Each hit's
+		`snippet` follows the uniform bodyLen contract: omitted
 		= a query-centered ~240-char preview (the compact default — width-only reading of N,
 		since a hit's natural anchor is the query match, not the message head); 0 = no
 		snippet text; N>0 = a query-centered preview N chars wide; -1 = the FULL raw message
@@ -243,7 +268,7 @@ public static class SessionTools
 		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
-		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get at the hit's `message` ordinal).")] int? bodyLen = null,
+		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}).")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);

@@ -114,7 +114,9 @@ public sealed class SessionService : ISessionService
 	{
 		var snap = await _sessions.GetAsync(projectKey, sessionId, ct);
 		if (snap is null) return Array.Empty<SessionMessage>();
-		return snap.Messages.Where(m => m.Version > sinceVersion).ToList();
+		// SessionSnapshot.Since is the single home of this predicate — session_get's
+		// `fromOrdinal` window renders the same slice, so the two cannot disagree.
+		return snap.Since(sinceVersion);
 	}
 
 	public Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default) =>
