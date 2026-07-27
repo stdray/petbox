@@ -22,8 +22,9 @@ namespace PetBox.Tests.Mcp;
 // SizeGuidanceText in its [Description] (WriteVerbSizeGuidanceTests), but the runtime `warning`
 // field on an actually-oversized APPLIED write was simply absent. One test per verb, mirroring
 // MemoryToolsContractTests.Upsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning: an applied
-// write whose request ContentLength exceeds the 8,000-byte guidance threshold must carry a
-// `warning` naming both the accepted size and the threshold.
+// write whose request ContentLength exceeds the WriteCallSizeGuidanceBytes guidance threshold
+// (12,000 bytes as of work drop-size-number-from-tool-descriptions, raised from 8,000) must
+// carry a `warning` naming both the accepted size and the threshold.
 public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 {
 	const string Proj = "proj";
@@ -88,7 +89,7 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "board", nodes);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("15,000").And.Contain("12,000");
 	}
 
 	[Fact]
@@ -101,7 +102,7 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		var res = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "board", items);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("15,000").And.Contain("12,000");
 	}
 
 	[Fact]
@@ -113,7 +114,7 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		var res = await SessionTools.AppendAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", fromOrdinal: 1, messages);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("15,000").And.Contain("12,000");
 	}
 
 	[Fact]
@@ -123,7 +124,7 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 
 		var res = await SessionTools.UpsertAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", "hello");
 
-		res.Warning.Should().Contain("15,000").And.Contain("8,000");
+		res.Warning.Should().Contain("15,000").And.Contain("12,000");
 	}
 
 	[Fact]

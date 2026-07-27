@@ -349,7 +349,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		http.HttpContext!.Request.ContentLength = 20_000;
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
-		rem.Warning.Should().Contain("20,000").And.Contain("8,000");
+		rem.Warning.Should().Contain("20,000").And.Contain("12,000");
 	}
 
 	[Fact]
