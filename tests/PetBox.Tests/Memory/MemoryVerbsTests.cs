@@ -9,6 +9,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
+using PetBox.Tests.Mcp;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
@@ -341,28 +342,26 @@ public sealed class MemoryVerbsTests : IDisposable
 
 	// card mcp-write-degrades-silently-fix, point 4 (updated by work escape-inflation-warning): a
 	// write the server ACCEPTED and applied can still have paid a silent \uXXXX-escaping tax — the
-	// server cannot see the escaping by reading, but it CAN measure it: Request.ContentLength
-	// against the request's own expected raw-UTF-8 byte count (ExpectedRawBytesItemKey). Stashed
-	// by hand here because this test calls MemoryTools.RememberAsync directly, bypassing the
-	// McpTracingFilter that stashes it for real in production.
+	// server cannot see the escaping by reading, but it CAN measure it on the wire body: what this
+	// request cost against what the SAME request costs spelled raw UTF-8. Published by hand here
+	// (from a real envelope, through the production scanner) because this test calls
+	// MemoryTools.RememberAsync directly, bypassing the middleware that publishes it in production.
 	[Fact]
 	public async Task Remember_EscapedRequestBody_ReturnsSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
-		http.HttpContext!.Request.ContentLength = 20_000;
-		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 5_000; // inflation 4.0x
+		McpWireBody.Publish(http.HttpContext!, McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: true));
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
-		rem.Warning.Should().Contain("4.0");
+		rem.Warning.Should().Contain(McpWireBody.InflationOf(McpWireBody.CyrillicPayload).ToString("0.0"));
 	}
 
-	// The headline behavioral flip: a raw-UTF-8 call (inflation ~1.0) gets NO warning even at a
-	// size the old absolute threshold would have flagged on its own.
+	// The headline behavioral flip: the SAME request spelled raw UTF-8 (inflation 1.0) gets NO
+	// warning — size on its own is no longer a complaint.
 	[Fact]
 	public async Task Remember_RawUtf8Body_NoSizeWarning()
 	{
 		var http = Http("memory:read,memory:write");
-		http.HttpContext!.Request.ContentLength = 20_000;
-		http.HttpContext!.Items[ModuleMcp.ExpectedRawBytesItemKey] = 20_000; // inflation 1.0x
+		McpWireBody.Publish(http.HttpContext!, McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: false));
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "a fact", description: "d");
 		rem.Warning.Should().BeNull();
 	}

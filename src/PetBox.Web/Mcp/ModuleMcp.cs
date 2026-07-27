@@ -163,24 +163,29 @@ static class ModuleMcp
 	// non-ASCII (2.5x/char) — no threshold on that ratio can separate the two classes (card
 	// escape-inflation-warning).
 	//
-	// What separates them cleanly is not an average but a MEASUREMENT: the server already holds
-	// the parsed request args, so it can compute exactly how many raw-UTF-8 bytes THIS call's JSON
-	// should have cost (McpTracingFilter reserializes them for reqChars anyway — the byte count
-	// rides along for free, stashed under ExpectedRawBytesItemKey) and compare that to what
-	// Request.ContentLength actually shows:
+	// What separates them cleanly is not an average but a MEASUREMENT of the request body itself:
 	//
-	//     inflation = ContentLength / expectedRawBytes
+	//     inflation = <bytes this body spent on the wire> / <bytes the SAME body needs as raw UTF-8>
+	//
+	// Both numbers describe the WHOLE request, envelope included (McpWireBodyMeasurementMiddleware
+	// scans the body as it streams past — see JsonEscapeInflationScanner for why a scan and not a
+	// reparse). That "same body" is the load-bearing word. The first cut of this detector divided
+	// Request.ContentLength (the whole request) by the reserialized tool ARGUMENTS (a part of it),
+	// so the ~178-byte JSON-RPC envelope sat in the numerator only: every call carrying under ~356
+	// bytes of arguments measured (X + 178) / X >= 1.5 and got warned, pure ASCII included. Now the
+	// envelope appears identically on both sides and cancels.
 	//
 	// inflation ≈ 1.0 is a raw-UTF-8 client — nothing to say, on ANY size. At or above
-	// EscapeInflationWarningThreshold, the gap is too large for reserialization noise
-	// (indentation, key order — single-digit percent, not 50%) to explain: the client is spending
-	// real bytes on \uXXXX.
-	internal const string ExpectedRawBytesItemKey = "petbox.mcp.expected_raw_bytes";
+	// EscapeInflationWarningThreshold the client is spending real bytes on \uXXXX.
+	internal const string WireBodyMeasurementItemKey = "petbox.mcp.wire_body_measurement";
 
-	// 1.5x: chosen well under the ~2.7-2.9x Cyrillic-escaping tax actually measured (see
-	// SizeGuidanceText) so the warning fires with margin, while staying well above what
-	// indentation/key-order drift between the wire JSON and the reserialized copy could ever
-	// explain — a 50% inflation is not formatting noise.
+	// 1.5x, unchanged from the first cut but now meaning something different — and something
+	// stricter. Measured over the WHOLE body it says: at least a third of everything this call put
+	// on the wire ((1 - 1/1.5) = 33%) was pure escape overhead. That is well clear of noise (there
+	// is none left to speak of: the scan is exact, not a reserialized approximation, and it never
+	// claims a saving it cannot justify), and comfortably under what a Cyrillic-carrying call
+	// actually measures end to end — the prod evidence on this card is 2.33x for a body whose
+	// ASCII scaffolding already dilutes the per-character 3.0x tax.
 	internal const double EscapeInflationWarningThreshold = 1.5;
 
 	// Shared wording for every write verb that carries a body (memory_remember, memory_upsert,
@@ -201,30 +206,36 @@ static class ModuleMcp
 	// call crosses the client's truncation edge, and by then the caller has no warning to have
 	// acted on. The server cannot tell an escaped payload from a raw one by READING it (the JSON
 	// parser already decoded it by the time a tool method runs — the same boundary SizeGuidanceText
-	// documents), but it CAN measure it: Request.ContentLength against the expected raw-UTF-8 byte
-	// count of the same request (ExpectedRawBytesItemKey, stashed by McpTracingFilter). Surfaced
-	// as a WARNING on an already-successful write, never a refusal — the write already landed,
-	// and the point is to inform the NEXT call, not punish this one.
+	// documents), but it CAN measure it, on the wire bytes themselves: what this body cost against
+	// what the SAME body would cost with its non-ASCII spelled raw (WireBodyMeasurementItemKey,
+	// published by McpWireBodyMeasurementMiddleware). Surfaced as a WARNING on an already-successful
+	// write, never a refusal — the write already landed, and the point is to inform the NEXT call,
+	// not punish this one.
 	//
-	// Null whenever the comparison cannot be trusted:
-	//   * no Content-Length (chunked transfer) — unknown, as before;
-	//   * no expectedRawBytes stashed, or it is 0 — unknown, never divide by it;
-	//   * ContentLength < expectedRawBytes — transport compression, not an escaping saving.
+	// Null whenever there is nothing trustworthy to compare:
+	//   * no measurement on this context — a call that did not come through POST /mcp (a direct
+	//     tool invocation in a test, a future in-process transport) is unknown, never guessed at;
+	//   * an empty body — nothing was measured, never divide by zero;
+	//   * wire < raw — structurally impossible for this scanner (it only ever subtracts), kept as
+	//     a belt against a future measurement source that could be lossy, e.g. transport
+	//     compression counted after the fact.
 	public static string? SizeWarningOrNull(IHttpContextAccessor http)
 	{
-		var ctx = http.HttpContext;
-		if (ctx?.Request.ContentLength is not { } bytes) return null;
-		if (!ctx.Items.TryGetValue(ExpectedRawBytesItemKey, out var raw) ||
-			raw is not int expectedRaw || expectedRaw <= 0)
+		if (http.HttpContext is not { } ctx) return null;
+		if (!ctx.Items.TryGetValue(WireBodyMeasurementItemKey, out var item) ||
+			item is not JsonEscapeInflationScanner scanner)
 			return null;
-		if (bytes < expectedRaw) return null;
 
-		var inflation = (double)bytes / expectedRaw;
+		var wire = scanner.WireBytes;
+		var rawUtf8 = scanner.RawUtf8Bytes;
+		if (wire <= 0 || rawUtf8 <= 0 || wire < rawUtf8) return null;
+
+		var inflation = (double)wire / rawUtf8;
 		if (inflation < EscapeInflationWarningThreshold) return null;
 
-		return $"This call's request body measured {inflation:0.0}x its expected raw-UTF-8 size " +
-			$"({bytes:N0} vs ~{expectedRaw:N0} bytes) — that looks like \\uXXXX-escaped non-ASCII rather " +
-			"than raw UTF-8. The write applied — this is informational, not a refusal — but sending raw " +
-			"UTF-8 avoids paying that multiplier on every call.";
+		return $"This call's request body measured {inflation:0.0}x what the same body costs as raw " +
+			$"UTF-8 ({wire:N0} vs {rawUtf8:N0} bytes) — its non-ASCII is \\uXXXX-escaped. The write " +
+			"applied — this is informational, not a refusal — but sending raw UTF-8 avoids paying that " +
+			"multiplier on every call.";
 	}
 }

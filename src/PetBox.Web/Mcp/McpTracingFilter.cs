@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,20 +51,19 @@ static partial class McpTracingFilter
 				.CreateLogger(ToolCallLogCategory);
 			var tool = request.Params?.Name;
 			var session = request.Server.SessionId ?? NoSession;
-			var (reqChars, expectedRawBytes) = SerializedShape(request.Params?.Arguments);
+			var reqChars = SerializedLength(request.Params?.Arguments);
 			// request_bytes: the RAW HTTP request body size, straight off Request.ContentLength —
 			// BEFORE JSON parsing, unlike reqChars above (which re-serializes the ALREADY-PARSED
 			// JsonElement, so it cannot see how the wire spelled a character). reqChars is "how
 			// much meaning", reqBytes is "how many bytes it cost to say it". Their RATIO drifts
 			// with script mix (raw-UTF-8 Cyrillic/CJK already cost >1x/char), so it cannot tell a
 			// well-behaved raw-UTF-8 client from one that \uXXXX-escapes (card
-			// escape-inflation-warning) — expectedRawBytes (from SerializedShape, same serialize
-			// pass as reqChars — no double-serialize) is the fix: THIS call's own measured
-			// raw-UTF-8 byte count, stashed below for ModuleMcp.SizeWarningOrNull to compare
-			// directly against ContentLength. Null on a transport that never sets Content-Length
-			// (e.g. chunked) — present-only, never backfilled from reqChars.
+			// escape-inflation-warning) — that detection is NOT done here: it needs the wire body,
+			// which this filter never sees, and lives in McpWireBodyMeasurementMiddleware +
+			// ModuleMcp.SizeWarningOrNull. These two stay pure telemetry. Null on a transport that
+			// never sets Content-Length (e.g. chunked) — present-only, never backfilled from
+			// reqChars.
 			var reqBytes = RequestBytes(request.Services);
-			StashExpectedRawBytes(request.Services, expectedRawBytes);
 			// The [LogArg]-marked args, extracted ONCE (one registry lookup by tool name) and fed
 			// to BOTH sinks: the span tags below and the self-log event's dynamic properties.
 			var args = request.Params?.Arguments;
@@ -186,28 +184,6 @@ static partial class McpTracingFilter
 	// serialize pass, no second copy.
 	static int SerializedLength(object? value) =>
 		value is null ? 0 : JsonSerializer.Serialize(value, SizeJson).Length;
-
-	// Char length AND expected raw-UTF-8 byte count of the serialized value, from ONE serialize
-	// pass — the byte count is what ModuleMcp.SizeWarningOrNull compares Request.ContentLength
-	// against to measure \uXXXX-escaping inflation (card escape-inflation-warning). (0, 0) for
-	// null. Used only for the REQUEST args (reqChars); ResponseChars keeps using SerializedLength
-	// above since only the char count is needed there.
-	static (int Chars, int Utf8Bytes) SerializedShape(object? value)
-	{
-		if (value is null) return (0, 0);
-		var json = JsonSerializer.Serialize(value, SizeJson);
-		return (json.Length, Encoding.UTF8.GetByteCount(json));
-	}
-
-	// Stashes the request's expected raw-UTF-8 byte count on HttpContext.Items so ModuleMcp.
-	// SizeWarningOrNull — invoked later, from inside a tool body running under `next` — can read
-	// it without a second reserialize. See ModuleMcp.ExpectedRawBytesItemKey.
-	static void StashExpectedRawBytes(IServiceProvider? services, int expectedRawBytes)
-	{
-		var ctx = services?.GetService<IHttpContextAccessor>()?.HttpContext;
-		if (ctx is not null)
-			ctx.Items[ModuleMcp.ExpectedRawBytesItemKey] = expectedRawBytes;
-	}
 
 	// request_bytes: Request.ContentLength — the size ASP.NET Core read off the wire (or the
 	// Content-Length header) BEFORE any JSON parsing happened. Deliberately NOT derived from

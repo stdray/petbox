@@ -23,11 +23,12 @@ namespace PetBox.Tests.Mcp;
 // mirroring MemoryToolsContractTests.Upsert_LargeRequestBody_AppliedWrite_ReturnsSizeWarning.
 //
 // Updated by work escape-inflation-warning: SizeWarningOrNull no longer compares an absolute
-// Content-Length threshold — it compares ContentLength against the request's own expected
-// raw-UTF-8 byte count (ModuleMcp.ExpectedRawBytesItemKey), which in production is stashed by
-// McpTracingFilter and which these tests, calling the tool bodies directly (bypassing the MCP
-// pipeline), stash by hand via the Http() helper below to simulate an escaped or a raw-UTF-8
-// call.
+// Content-Length threshold — it compares the request body's WIRE size against what that same body
+// would cost as raw UTF-8. In production McpWireBodyMeasurementMiddleware measures both while the
+// body streams past; these tests call the tool bodies directly (bypassing the MCP pipeline), so
+// the Http() helper below runs the SAME scanner over a real envelope. These stay WIRING tests —
+// "does this verb surface the warning at all" — and the units they divide are pinned over a real
+// POST /mcp in McpEscapeInflationRealPathTests.
 public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 {
 	const string Proj = "proj";
@@ -67,19 +68,23 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	// expectedRawBytes, when given, simulates what McpTracingFilter would have stashed on
-	// HttpContext.Items from reserializing the request args — these tests call the tool bodies
-	// directly, so nothing stashes it for real. Omitted → SizeWarningOrNull sees "unknown" and
-	// stays silent, same as a call that bypassed the tracing filter in production.
-	static IHttpContextAccessor Http(long contentLength, int? expectedRawBytes = null)
+	// `wireBody`, when given, is measured by the production scanner exactly as the middleware would
+	// have measured it off POST /mcp — these tests call the tool bodies directly, so nothing
+	// publishes it for real. Omitted → SizeWarningOrNull sees "no measurement" and stays silent,
+	// same as a call that never went through the MCP endpoint.
+	static IHttpContextAccessor Http(string? wireBody = null)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test");
 		var ctx = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) };
-		ctx.Request.ContentLength = contentLength;
-		if (expectedRawBytes is { } expected)
-			ctx.Items[ModuleMcp.ExpectedRawBytesItemKey] = expected;
+		if (wireBody is not null)
+			McpWireBody.Publish(ctx, wireBody);
 		return new HttpContextAccessor { HttpContext = ctx };
 	}
+
+	// The escaped spelling of one fixed request, plus the multiplier the server must report for it
+	// — derived from the two spellings' byte counts, never stated.
+	static string EscapedBody => McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: true);
+	static string ExpectedMultiplier => McpWireBody.InflationOf(McpWireBody.CyrillicPayload).ToString("0.0");
 
 	static FeatureFlags Flags() =>
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -91,58 +96,57 @@ public sealed class WriteVerbSizeWarningWiringTests : IDisposable
 	[Fact]
 	public async Task TasksUpsert_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
+		var http = Http(EscapedBody);
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "board");
 		var nodes = McpInputs.Nodes(new object[] { new { key = "n1", body = "hi" } });
 
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "board", nodes);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("3.0");
+		res.Warning.Should().Contain(ExpectedMultiplier);
 	}
 
 	[Fact]
 	public async Task CommentsUpsert_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
+		var http = Http(EscapedBody);
 		var node = Guid.NewGuid().ToString("N"); // 32-hex passes through node-ref resolution unresolved
 		var items = new[] { new CommentItemInput { Node = node, Author = "alice", Body = "a comment" } };
 
 		var res = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "board", items);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("3.0");
+		res.Warning.Should().Contain(ExpectedMultiplier);
 	}
 
 	[Fact]
 	public async Task SessionAppend_EscapedRequestBody_AppliedWrite_ReturnsSizeWarning()
 	{
-		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
+		var http = Http(EscapedBody);
 		var messages = new[] { new SessionMessageDto { Role = "user", Content = "hi" } };
 
 		var res = await SessionTools.AppendAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", fromOrdinal: 1, messages);
 
 		res.Applied.Should().BeTrue();
-		res.Warning.Should().Contain("3.0");
+		res.Warning.Should().Contain(ExpectedMultiplier);
 	}
 
 	[Fact]
 	public async Task SessionUpsert_EscapedRequestBody_ReturnsSizeWarning()
 	{
-		var http = Http(contentLength: 15_000, expectedRawBytes: 5_000); // inflation 3.0x
+		var http = Http(EscapedBody);
 
 		var res = await SessionTools.UpsertAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", "hello");
 
-		res.Warning.Should().Contain("3.0");
+		res.Warning.Should().Contain(ExpectedMultiplier);
 	}
 
-	// The headline behavioral flip (card escape-inflation-warning): a raw-UTF-8 call gets NO
-	// warning even at a size ("15,000") that the old absolute threshold ("12,000") would have
-	// flagged on its own.
+	// The headline behavioral flip (card escape-inflation-warning): the SAME request, spelled raw
+	// UTF-8, gets NO warning — the escaped spelling above is the only difference between them.
 	[Fact]
 	public async Task TasksUpsert_RawUtf8Body_NoSizeWarning()
 	{
-		var http = Http(contentLength: 15_000, expectedRawBytes: 15_000); // inflation 1.0x
+		var http = Http(McpWireBody.Envelope(McpWireBody.CyrillicPayload, escaped: false));
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "board");
 		var nodes = McpInputs.Nodes(new object[] { new { key = "n1", body = "hi" } });
 
