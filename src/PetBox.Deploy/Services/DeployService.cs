@@ -54,9 +54,11 @@ public sealed class DeployService : IDeployService
 		var node = new Node
 		{
 			Id = id,
-			DisplayName = string.IsNullOrWhiteSpace(input.DisplayName) ? id : input.DisplayName.Trim(),
-			Tags = NormalizeCsv(input.Tags),
-			Ephemeral = input.Ephemeral,
+			DisplayName = input.DisplayName is null
+				? existing?.DisplayName ?? id
+				: (string.IsNullOrWhiteSpace(input.DisplayName) ? id : input.DisplayName.Trim()),
+			Tags = input.Tags is null ? existing?.Tags ?? string.Empty : NormalizeCsv(input.Tags),
+			Ephemeral = input.Ephemeral ?? existing?.Ephemeral ?? false,
 			KeyRef = string.IsNullOrWhiteSpace(input.KeyRef) ? existing?.KeyRef : input.KeyRef!.Trim(),
 			LastSeenAt = existing?.LastSeenAt,
 			// agent-reported facts survive an operator re-upsert (re-enroll/edit) — wiping
@@ -113,18 +115,29 @@ public sealed class DeployService : IDeployService
 		if (service.Length == 0 || nodeId.Length == 0 || project.Length == 0)
 			throw new ArgumentException("Service, Project and NodeId are required.");
 
+		// Fetch the row being updated BY ID (not via the collision lookup below) — a rename
+		// that also changes Service/NodeId in the same call must still find its own prior
+		// RunSpec to merge onto, and the collision lookup below can't see it once those
+		// fields have already changed in `input`.
+		var rawId = NormalizeId(input.Id ?? string.Empty);
+		var existing = rawId.Length == 0 ? null : await db.Deployments.FirstOrDefaultAsync(d => d.Id == rawId, ct);
+
 		// One deployment per (Service, NodeId). Reject a colliding row owned by another Id.
 		var collision = await db.Deployments
 			.FirstOrDefaultAsync(d => d.Service == service && d.NodeId == nodeId, ct);
-		var id = NormalizeId(input.Id ?? string.Empty);
-		if (id.Length == 0) id = Guid.NewGuid().ToString("n");
+		var id = rawId.Length == 0 ? Guid.NewGuid().ToString("n") : rawId;
 		if (collision is not null && collision.Id != id)
 			throw new InvalidOperationException(
 				$"Service '{service}' already has a deployment on node '{nodeId}' (id {collision.Id}). One copy per node.");
 
 		var imageDigest = input.ImageDigest.Trim();
 		var configTags = NormalizeCsv(input.ConfigTags);
-		var runSpecJson = RunSpecJson.ToCanonicalJson(input.RunSpec);   // validates; throws ArgumentException on bad fields
+		// PATCH semantics (see DeploymentInput doc): merge the caller's RunSpec fields onto
+		// the row's previously stored one BEFORE normalizing/validating — Normalize collapses
+		// an explicit empty list to null, which would erase the omit-vs-clear distinction
+		// MergeRunSpec depends on if it ran after.
+		var mergedRunSpec = MergeRunSpec(input.RunSpec, existing is null ? null : RunSpecJson.Parse(existing.RunSpec));
+		var runSpecJson = RunSpecJson.ToCanonicalJson(mergedRunSpec);   // validates; throws ArgumentException on bad fields
 		var deployment = new Deployment
 		{
 			Id = id,
@@ -366,6 +379,58 @@ public sealed class DeployService : IDeployService
 		var payload = $"{imageDigest}\0{configTags}\0{(int)desired}\0{project}\0{runSpecJson}";
 		var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
 		return Convert.ToHexString(bytes).ToLowerInvariant();
+	}
+
+	// Merges an operator-supplied RunSpec onto the row's previously stored one, field by
+	// field, so update-without-a-field never wipes it (the deploy_upsert instance of
+	// `patch-vs-put-class-needs-a-mechanical-gate`). Per field: C# null = omitted = keep
+	// the stored value; an explicit "empty" sentinel (empty list, "", or 0 for Cpus) =
+	// clear it; anything else = replace it. MUST run on the RAW incoming spec — i.e.
+	// before RunSpecJson.Normalize, which collapses an explicit empty list to null and
+	// would make it indistinguishable from omitted.
+	//
+	// Healthcheck/Site are nested objects behind one "trigger" field (Cmd/Domain): the
+	// trigger's own null/""/value carries the omit/clear/set signal for the WHOLE
+	// sub-object — there's no per-inner-field patch (e.g. changing healthcheckRetries
+	// alone still requires resending Cmd). That's a narrower merge than the flat fields
+	// get, but a per-field nested patch has no natural "keep the rest, but I'm not
+	// resending Cmd" reading, so this class did not force it and DeployTools' prose
+	// says so explicitly.
+	internal static RunSpec MergeRunSpec(RunSpec? incoming, RunSpec? existing)
+	{
+		if (incoming is null) return existing ?? new RunSpec();
+		var prev = existing ?? new RunSpec();
+		return new RunSpec(
+			Ports: incoming.Ports is null ? prev.Ports : (incoming.Ports.Count == 0 ? null : incoming.Ports),
+			Volumes: incoming.Volumes is null ? prev.Volumes : (incoming.Volumes.Count == 0 ? null : incoming.Volumes),
+			Restart: incoming.Restart is null ? prev.Restart : (incoming.Restart.Length == 0 ? null : incoming.Restart),
+			Healthcheck: incoming.Healthcheck switch
+			{
+				null => prev.Healthcheck,                 // healthcheckCmd omitted -> keep stored healthcheck
+				{ Cmd.Length: 0 } => null,                 // healthcheckCmd:"" -> explicit clear
+				var hc => hc,                              // healthcheckCmd:<value> -> replace the whole block
+			},
+			Resources: MergeResources(incoming.Resources, prev.Resources),
+			Network: incoming.Network is null ? prev.Network : (incoming.Network.Length == 0 ? null : incoming.Network),
+			Command: incoming.Command is null ? prev.Command : (incoming.Command.Count == 0 ? null : incoming.Command),
+			Labels: incoming.Labels is null ? prev.Labels : (incoming.Labels.Count == 0 ? null : incoming.Labels),
+			Site: incoming.Site switch
+			{
+				null => prev.Site,                         // domain omitted -> keep stored site
+				{ Domain.Length: 0 } => null,               // domain:"" -> explicit clear
+				var s => s,                                 // domain:<value> -> replace the whole block
+			});
+	}
+
+	// Resources is memory+cpus, each with its own omit/clear signal (memory: null=keep,
+	// ""=clear; cpus: null=keep, 0=clear — 0 is otherwise never a valid Cpus value, same
+	// sentinel-reuse apikey_update already does with expiresInSeconds:0).
+	private static ResourcesSpec? MergeResources(ResourcesSpec? incoming, ResourcesSpec? prev)
+	{
+		if (incoming is null) return prev;
+		var memory = incoming.Memory is null ? prev?.Memory : (incoming.Memory.Length == 0 ? null : incoming.Memory);
+		var cpus = incoming.Cpus is null ? prev?.Cpus : (incoming.Cpus == 0 ? null : incoming.Cpus);
+		return memory is null && cpus is null ? null : new ResourcesSpec(memory, cpus);
 	}
 
 	// Lowercase-trim slug normalization (ids/services/tags are case-insensitive).

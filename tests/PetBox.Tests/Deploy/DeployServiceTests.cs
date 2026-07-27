@@ -278,6 +278,53 @@ public sealed class DeployServiceTests : IDisposable
 		await act(new RunSpec(Labels: new Dictionary<string, string> { ["petbox.service"] = "x" })).Should().ThrowAsync<ArgumentException>();
 	}
 
+	// patch-vs-put-class-needs-a-mechanical-gate: the deploy_upsert instance was that RunSpec
+	// got rebuilt from scratch on every update with no merge against the stored spec, so
+	// omitting any field (e.g. ports) silently wiped it. This exercises the fix directly
+	// through the service (DeployService.MergeRunSpec) across several field shapes:
+	// list/string/number/dict, each with its own clear sentinel ([]/""/0/{}).
+	[Fact]
+	public async Task Upsert_Update_Patches_RunSpec_Omitted_Fields_Kept_Explicit_Sentinels_Clear()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		var created = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "web", "proj", "n1", "img1", DesiredState.Running, false, "", "",
+			new RunSpec(
+				Volumes: ["/opt/app/logs:/app/logs"],
+				Restart: "always",
+				Resources: new ResourcesSpec("256m", 1.5),
+				Network: "bridge",
+				Command: ["python", "-m", "bot"],
+				Labels: new Dictionary<string, string> { ["team"] = "infra" })));
+
+		// update with RunSpec entirely omitted (null) -> every field survives untouched
+		var kept = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			created.Id, "web", "proj", "n1", "img2", DesiredState.Running, false, "", ""));
+		kept.RunSpec.Volumes.Should().Equal("/opt/app/logs:/app/logs");
+		kept.RunSpec.Restart.Should().Be("always");
+		kept.RunSpec.Resources!.Memory.Should().Be("256m");
+		kept.RunSpec.Resources!.Cpus.Should().Be(1.5);
+		kept.RunSpec.Network.Should().Be("bridge");
+		kept.RunSpec.Command.Should().Equal("python", "-m", "bot");
+		kept.RunSpec.Labels!["team"].Should().Be("infra");
+
+		// explicit clear sentinels ("" / 0 / {}) on the fields present in this call clear
+		// exactly those; fields left out of THIS RunSpec (volumes, command) stay untouched
+		var cleared = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			created.Id, "web", "proj", "n1", "img2", DesiredState.Running, false, "", "",
+			new RunSpec(
+				Restart: "",
+				Resources: new ResourcesSpec("", 0),
+				Network: "",
+				Labels: new Dictionary<string, string>())));
+		cleared.RunSpec.Restart.Should().BeNull();
+		cleared.RunSpec.Resources.Should().BeNull();          // both memory and cpus cleared
+		cleared.RunSpec.Network.Should().BeNull();
+		cleared.RunSpec.Labels.Should().BeNull();
+		cleared.RunSpec.Volumes.Should().Equal("/opt/app/logs:/app/logs");   // untouched (omitted this call)
+		cleared.RunSpec.Command.Should().Equal("python", "-m", "bot");      // untouched (omitted this call)
+	}
+
 	[Fact]
 	public async Task One_Copy_Per_Node_Is_Enforced()
 	{

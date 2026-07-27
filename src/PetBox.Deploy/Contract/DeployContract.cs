@@ -4,8 +4,14 @@ namespace PetBox.Deploy.Contract;
 
 // --- nodes ---
 
-// Operator input to register or update a node. Tags is the raw CSV capability vector.
-public sealed record NodeInput(string Id, string DisplayName, string Tags, bool Ephemeral, string? KeyRef = null);
+// Operator input to register or update a node. PATCH semantics on update (null = keep the
+// stored value, an explicit "empty" sentinel = clear/reset it — the same null=keep
+// convention McpToolInputs.cs already uses for Tags elsewhere): DisplayName null = keep
+// (or fall back to Id on first create); Tags null = keep the stored CSV, "" = clear it;
+// Ephemeral null = keep (or default false on first create). On CREATE (no existing row)
+// null uniformly falls back to the documented default, same as before this DTO went
+// nullable.
+public sealed record NodeInput(string Id, string? DisplayName, string? Tags, bool? Ephemeral, string? KeyRef = null);
 
 // Read view of a node. Online is computed by the service from LastSeenAt + a staleness
 // window; Deployments is how many deployments target this node. Capabilities is the
@@ -30,7 +36,13 @@ public sealed record NodeView(
 
 // Operator input for a deployment (desired state of a service on a node). Id null/empty
 // = create (a new id is generated); set = update that deployment. ConfigHash is computed
-// by the service, never supplied. RunSpec null = empty spec (image+env only).
+// by the service, never supplied. RunSpec: on CREATE, null/a field-omitted spec = no
+// value for that field (image+env only); on UPDATE, the service MERGES this spec's
+// fields onto the previously stored RunSpec field-by-field — per RunSpec field, an
+// OMITTED (C# null) value keeps the stored one, an explicit "empty" sentinel (empty
+// list, "", or 0 for Cpus) clears it, anything else replaces it. See
+// DeployService.MergeRunSpec. A wholly-null DeploymentInput.RunSpec keeps every field
+// on update / yields the empty spec on create.
 public sealed record DeploymentInput(
 	string? Id,
 	string Service,

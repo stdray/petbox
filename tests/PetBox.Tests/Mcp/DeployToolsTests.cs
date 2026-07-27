@@ -137,6 +137,49 @@ public sealed class DeployToolsTests : IDisposable
 		ex.Message.Should().Contain("port");
 	}
 
+	// patch-vs-put-class-needs-a-mechanical-gate, deploy_upsert instance: an update that omits
+	// ports must NOT wipe them; only an explicit empty array clears them.
+	[Fact]
+	public async Task Upsert_Update_Omitted_Ports_Are_Kept_Explicit_Empty_Clears_Them()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory().AgentKeys(), "n1");
+		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img1", ports: ["127.0.0.1:8080:8080"]));
+		var id = created.GetProperty("deployment").GetProperty("id").GetString()!;
+
+		// update without `ports` -> must keep the stored ones, not reset them
+		var kept = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img2", id: id));
+		kept.GetProperty("deployment").GetProperty("runSpec").GetProperty("ports")[0].GetString()
+			.Should().Be("127.0.0.1:8080:8080");
+
+		// explicit `ports: []` -> clears them
+		var cleared = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img2", id: id, ports: []));
+		cleared.GetProperty("deployment").GetProperty("runSpec").GetProperty("ports").ValueKind.Should().Be(JsonValueKind.Null);
+	}
+
+	// patch-vs-put-class-needs-a-mechanical-gate, deploy_node_upsert instance: an update that
+	// omits tags/ephemeral must keep them; explicit tags:"" / ephemeral:false reset them.
+	[Fact]
+	public async Task NodeUpsert_Update_Omitted_Tags_And_Ephemeral_Are_Kept_Explicit_Values_Reset_Them()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory().AgentKeys(),
+			"n1", "N1", tags: "net.x,disk=nvme", ephemeral: true);
+
+		// update with only `id` -> displayName/tags/ephemeral must all be kept, not reset
+		var kept = Json(await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory().AgentKeys(), "n1"));
+		kept.GetProperty("node").GetProperty("displayName").GetString().Should().Be("N1");
+		kept.GetProperty("node").GetProperty("tags").GetString().Should().Be("net.x,disk=nvme");
+		kept.GetProperty("node").GetProperty("ephemeral").GetBoolean().Should().BeTrue();
+
+		// explicit tags:"" clears the CSV; explicit ephemeral:false resets the flag
+		var cleared = Json(await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory().AgentKeys(),
+			"n1", tags: "", ephemeral: false));
+		cleared.GetProperty("node").GetProperty("tags").GetString().Should().Be("");
+		cleared.GetProperty("node").GetProperty("ephemeral").GetBoolean().Should().BeFalse();
+	}
+
 	[Fact]
 	public async Task Write_Tool_With_Only_ReadScope_Throws()
 	{
