@@ -2,17 +2,17 @@ using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Mcp;
 
-// tasks_methodology_describe (spec methodology-describe-verb): edit ONE primitive's prose
+// tasks_methodology_set_description (spec methodology-describe-verb): edit ONE primitive's prose
 // Description by its NATURAL KEY, apart from the structural whole-document upsert
 // (rules_upsert/template_upsert — version-CAS, full replace). This is the pure
-// lookup-and-replace half; TasksTools.MethodologyDescribeAsync does the read-current/
+// lookup-and-replace half; TasksTools.MethodologySetDescriptionAsync does the read-current/
 // write-back around it (rules_get → Apply → rules_upsert, retried a few times on a version
 // race — the caller of THIS verb never sees or supplies that version).
 //
 // Granular STRUCTURE patching was rejected (spec methodology-describe-verb — "structure is a
 // whole-doc upsert with version-CAS"); this only ever replaces a Description string, never
 // adds/removes/reorders a kind, block, status, transition, effect or constraint.
-static class MethodologyDescribe
+static class MethodologySetDescription
 {
 	public static readonly IReadOnlyList<string> Primitives =
 		["kind", "status", "transition", "effect", "constraint", "linkKind", "tagAxis"];

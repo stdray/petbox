@@ -739,12 +739,12 @@ public sealed record MethodologyUtilityGetResult(
 // how many live utility-homed nodes the migration rewrote.
 public sealed record MethodologyUtilityUpsertResult(long Version, bool Changed, int Migrated = 0);
 
-// tasks_methodology_describe ack (spec methodology-describe-verb): the natural-key-addressed
+// tasks_methodology_set_description ack (spec methodology-describe-verb): the natural-key-addressed
 // primitive was found and its Description replaced; `version` is the instance rules cursor
 // AFTER the write (a fresh baseline for rules_upsert, same field as rules_upsert's own ack —
 // this verb still writes through the whole document internally, it just never asks the
 // caller to supply it or its version).
-public sealed record MethodologyDescribeResult(string Name, string Primitive, long Version);
+public sealed record MethodologySetDescriptionResult(string Name, string Primitive, long Version);
 
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the

@@ -495,33 +495,33 @@ public sealed class McpModuleToolsTests : IDisposable
 			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, null));
 	}
 
-	// The second line I am holding: methodology_describe writes a LIVE instance's rules
+	// The second line I am holding: methodology_set_description writes a LIVE instance's rules
 	// document through the same service call as the gated rules_upsert, and still needs no
 	// governance scope — prose cannot change a rule. Structure is untouchable from here, and
 	// the guide derives every invariant from structure. Gating it would rot the docs.
 	[Fact]
-	public async Task Methodology_Describe_NeedsNoMethodologyWrite()
+	public async Task Methodology_SetDescription_NeedsNoMethodologyWrite()
 	{
 		var admin = Http(TasksAndMethodology);
 		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "d-inst", "builtin", "simple");
 
 		var http = Http(TasksOnly);
-		var ack = await TasksTools.MethodologyDescribeAsync(
+		var ack = await TasksTools.MethodologySetDescriptionAsync(
 			http, Flags(), _tasks, Proj, "d-inst", "kind", "prose set by a plain tasks:write key", kind: "simple");
 		ack.Primitive.Should().Be("kind");
 	}
 
-	// The claim the ungated decision rests on, asserted rather than trusted: a describe call
-	// changes ONLY prose. If someone ever teaches this verb to touch structure, this test goes
-	// red and the ungated decision must be revisited.
+	// The claim the ungated decision rests on, asserted rather than trusted: a set_description
+	// call changes ONLY prose. If someone ever teaches this verb to touch structure, this test
+	// goes red and the ungated decision must be revisited.
 	[Fact]
-	public async Task Methodology_Describe_CannotChangeStructure()
+	public async Task Methodology_SetDescription_CannotChangeStructure()
 	{
 		var admin = Http(TasksAndMethodology);
 		await TasksTools.MethodologyCreateAsync(admin, Flags(), _tasks, Proj, "s-inst", "builtin", "simple");
 		var before = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");
 
-		await TasksTools.MethodologyDescribeAsync(
+		await TasksTools.MethodologySetDescriptionAsync(
 			admin, Flags(), _tasks, Proj, "s-inst", "kind", "a description", kind: "simple");
 
 		var after = await TasksTools.MethodologyRulesGetAsync(admin, Flags(), _tasks, Proj, "s-inst");

@@ -78,7 +78,7 @@ static class MethodologyReference
 				["outlineReveal"] = "How the outline reveals descendants of a node. Omitted = the builtin default.",
 				["singleton"] = "true = at most one open board of this kind per methodology instance (the quartet's work/spec/ideas/intake are singleton; classic/simple are not). Omitted = falls back to the builtin preset of the same slug, else not singleton.",
 				["blocksGate"] = "The blocking-gate statuses: a node in `status` must name a blocker (a STATE invariant checked on every write, not a transition gate); a released node moves to `releaseTo`. Omitted = this kind has no blocking gate (falls back to the builtin preset of the same slug, else none) — only work is gated today, but a definition can opt any kind in.",
-				["description"] = "Optional free-form prose about this kind (data, not code). Surfaced by the compiled process guide (tasks_methodology_guide); never resolved or enforced. Edit it alone with tasks_methodology_describe instead of a whole-document rules_upsert.",
+				["description"] = "Optional free-form prose about this kind (data, not code). Surfaced by the compiled process guide (tasks_methodology_guide); never resolved or enforced. Edit it alone with tasks_methodology_set_description instead of a whole-document rules_upsert.",
 				["boardName"] = "The preferred board name for this kind, tried FIRST when a board of this kind is provisioned (still subject to the usual name-collision/reserved-name rules). Omitted = no opinion — the board is named from the kind slug as before.",
 			}),
 		Describe<MethodologyBlocksGateInput>(
@@ -111,7 +111,7 @@ static class MethodologyReference
 				["slug"] = "The stored status value (case-insensitive matching; PascalCase like \"InProgress\" is fine — status slugs are exempt from the lowercase slug spec).",
 				["name"] = "Human display name (defaults to the slug).",
 				["kind"] = $"{StatusKinds} (default open). Terminal statuses close the node (hidden from active listings); terminalok = delivered, terminalcancel = abandoned.",
-				["description"] = "Optional free-form prose about this status. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
+				["description"] = "Optional free-form prose about this status. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_set_description.",
 			}),
 		Describe<MethodologyTransitionInput>(
 			"A directed FSM edge with its gates. Gates are transition DATA — the server enforces requiresApproval(enforceApproval)/requiresReason/preconditionArtifact; checklist stays a convention. `requiredArtifacts`/`enforce` are the schema-v2 replacement for requiresReason/preconditionArtifact/enforceApproval (spec methodology-gate-strictness) — don't declare both shapes on one transition.",
@@ -124,7 +124,7 @@ static class MethodologyReference
 				["preconditionArtifact"] = $"LEGACY — a comment-artifact tag ({SlugSpec}) the node must carry before the transition — an `artifact:<slug>` comment (e.g. \"spec_plan\" gates exploring → review). Enforced. Prefer requiredArtifacts:[{{slug}}] in new documents; don't set both.",
 				["enforceApproval"] = "LEGACY — only with requiresApproval: true = the server BLOCKS the transition for a non-approver; false = owner-only by convention (the guide states it, the server does not block). Prefer enforce.approval in new documents.",
 				["checklist"] = "Free-text conditions to confirm before the transition. Rendered by the guide and marked on the graph; never server-enforced.",
-				["description"] = "Optional free-form prose about this transition. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
+				["description"] = "Optional free-form prose about this transition. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_set_description.",
 				["requiredArtifacts"] = "The unified artifact gate (schema v2, spec methodology-gate-strictness): every comment artifact this transition needs. `reason` is just an artifact with slug \"reason\", inline:true — there is no separate reason gate. Empty/omitted = declare via the legacy fields instead (or no artifact gate).",
 				["enforce"] = "This transition's strictness override: which of its declared gates the server actually blocks on. Omitted = fall through to the defaults (approval → the definition's strictMode; artifacts → always hard, reproducing today's behavior).",
 			}),
@@ -150,7 +150,7 @@ static class MethodologyReference
 				["link"] = $"The required relation kind — any kind the project knows ({BuiltinRelationKinds}, the quartet's task_spec/idea_spec/issue_task, or a declared linkKind). Expressed at write time via links:{{<link>:ref}}.",
 				["targetKind"] = "Optionally, the kind the linked node must be (e.g. a task_spec must point at a spec node). Omitted = any kind.",
 				["targetStatuses"] = "Optionally, statuses the linked node must be in (e.g. an idea_spec must point at an ACCEPTED idea) — pinning a status also makes the link required on EVERY write, not just creation. Omitted = any status.",
-				["description"] = "Optional free-form prose about why this constraint exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
+				["description"] = "Optional free-form prose about why this constraint exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_set_description.",
 			}),
 		Describe<MethodologyEffectInput>(
 			"A kind-level transition effect: when a node of this kind ENTERS status `on` (default) or LEAVES it (`onLeave`, Effect.onLeave), linked nodes are moved — the data form of cross-board automation like \"work Done closes the intake issues that spawned it\", or \"leaving Blocked closes the incoming blocks edges\".",
@@ -162,7 +162,7 @@ static class MethodologyReference
 				["set"] = "The status linked nodes are set to (a status of the LINKED node's kind — resolved at runtime). Omitted = a pure edge-consumption effect (no status propagated).",
 				["onlyFrom"] = "Optionally restrict the effect to linked nodes currently in this status (e.g. only Blocked nodes unblock).",
 				["onLeave"] = "true = fire when a node of this kind LEAVES `on` instead of entering it (Effect.onLeave). Default false (enter).",
-				["description"] = "Optional free-form prose about why this effect exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_describe.",
+				["description"] = "Optional free-form prose about why this effect exists. Surfaced by the compiled process guide; never resolved or enforced. Edit it alone with tasks_methodology_set_description.",
 			}),
 		Describe<MethodologyLinkKindInput>(
 			"A project-declared relation kind: a free semantic edge with no FSM effects, usable in relations_create.",
