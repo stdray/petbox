@@ -54,6 +54,11 @@ public sealed class WriteVerbOmissionProseTests
 		// silence on in-document omission — now both say the same thing explicitly.
 		{ "tasks_methodology_rules_upsert", ["Replace means the WHOLE document", "is REMOVED from what gets stored, not left as-is"] },
 		{ "tasks_methodology_template_upsert", ["Whole-document REPLACE, same as rules_upsert", "is REMOVED from what gets stored, not left as-is"] },
+		// deploy_node_upsert / deploy_upsert: fixed by fix/batch4-deploy-patch-semantics (447c148c),
+		// the parallel branch this card names as "оба deploy_* молчат". Replaces
+		// DescriptionNamesTheOmittedFieldFate_Deploy_PendingParallelFix below, which is now gone.
+		{ "deploy_node_upsert", ["an OMITTED displayName/tags/ephemeral keeps the node's current value", "it does NOT reset to a default"] },
+		{ "deploy_upsert", ["an OMITTED one keeps the deployment's current value", "are NOT patched — every call must resend the full deployment identity/desired-state for those"] },
 	};
 
 	[Theory]
@@ -65,24 +70,6 @@ public sealed class WriteVerbOmissionProseTests
 			$"{tool}'s description must say IN WORDS what happens to an omitted mutable field "
 			+ "(work/patch-vs-put-class-needs-a-mechanical-gate) — a caller reading the tool before "
 			+ "the call cannot see the DTO's nullability, only the prose.");
-	}
-
-	// KNOWN FAILING, LEFT UNFIXED ON THIS BRANCH — deploy_upsert / deploy_node_upsert are BOTH
-	// named in the parent card as silent on omission (the "Противоречия"/deploy row: "оба deploy_*
-	// молчат"). Fixed by the PARALLEL worker on fix/batch4-deploy-patch-semantics, which also owns
-	// their prose; this branch does not touch DeployTools.cs. Listed here — not folded into
-	// RequiredPhrases() — so the gap is COUNTED (a Skip is visible in the run, not a silent
-	// omission from the table) rather than just absent. When the parallel branch lands its prose
-	// fix, replace this Fact with real [InlineData] rows in RequiredPhrases() naming the sentence
-	// it adds — leaving this Skip in place after that merge would be the exact silent pass this
-	// card exists to prevent.
-	[Theory(Skip = "known failing pending fix/batch4-deploy-patch-semantics — see work/patch-vs-put-class-needs-a-mechanical-gate")]
-	[InlineData("deploy_upsert")]
-	[InlineData("deploy_node_upsert")]
-	public void DescriptionNamesTheOmittedFieldFate_Deploy_PendingParallelFix(string tool)
-	{
-		var full = McpToolDescriptions.Full(RegisteredDescription(tool));
-		full.Should().Contain("omit", $"{tool} should eventually say what an omitted field does");
 	}
 
 	// The registered [Description] essay for a tool, by its McpServerTool name (mirrors
