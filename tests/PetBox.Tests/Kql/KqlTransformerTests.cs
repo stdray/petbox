@@ -50,8 +50,10 @@ public sealed class KqlTransformerTests
 		result.Select(r => r.Id).Should().BeEquivalentTo(expectedIds);
 	}
 
-	// Ordering results, unlike filters, promise a SEQUENCE, so this second theory asserts
-	// ContainInOrder rather than reusing FilterCases' order-insensitive BeEquivalentTo.
+	// Ordering results, unlike filters, promise a SEQUENCE, so this second theory asserts the
+	// exact sequence rather than reusing FilterCases' order-insensitive BeEquivalentTo. Equal,
+	// not ContainInOrder: `top N` must also be held to the ROW COUNT — ContainInOrder tolerates
+	// extra rows, so `top 1` returning the whole table would slip through it.
 	public static TheoryData<string, long[]> OrderingCases() => new()
 	{
 		{ "events | order by Id", [4L, 3L, 2L, 1L] },
@@ -67,7 +69,7 @@ public sealed class KqlTransformerTests
 	public void Where_OrdersToExpectedSequence(string kql, long[] expectedIds)
 	{
 		var result = Apply(Parse(kql));
-		result.Select(r => r.Id).Should().ContainInOrder(expectedIds);
+		result.Select(r => r.Id).Should().Equal(expectedIds);
 	}
 
 	[Fact]
