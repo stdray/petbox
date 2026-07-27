@@ -68,6 +68,11 @@ public sealed class MemoryModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "sort")]
 	public string? Sort { get; set; }
 
+	// The query pool's resume token (spec: result-set-pageable) — a KeysetCursor.Encode() string,
+	// opaque by contract. Query mode only: this page has no listing branch to page (see class header).
+	[BindProperty(SupportsGet = true, Name = "cursor")]
+	public string? Cursor { get; set; }
+
 	public bool ScopeSelectable => !WorkspaceMemory.IsWorkspaceContainer(ProjectKey);
 
 	const int SearchLimit = 40;
@@ -81,6 +86,14 @@ public sealed class MemoryModel : PageModel
 	public SearchRetrievers? Retrievers { get; private set; }
 	public IReadOnlyDictionary<string, MemoryUsageView> HitUsage { get; private set; } =
 		new Dictionary<string, MemoryUsageView>();
+
+	// PAGING (spec: result-set-pageable card requirement 1/2) — the same three fields
+	// MemoryStoreModel's search branch carries, unified across both memory UI surfaces.
+	public bool HasNext { get; private set; }
+	public string? NextCursor { get; private set; }
+	public string? CursorError { get; private set; }
+	public string? Stop { get; private set; }
+	public string? PoolBoundaryHint { get; private set; }
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
@@ -107,6 +120,7 @@ public sealed class MemoryModel : PageModel
 		IsSearch = q is not null;
 		if (!IsSearch) return;
 
+		var sort = ParseSortBy(Sort);
 		var result = await MemorySearchScope.SearchAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope,
 			new SearchRequest<MemoryEntryFilter, MemorySortBy>
 			{
@@ -114,14 +128,48 @@ public sealed class MemoryModel : PageModel
 				// No Store filter — sweep every (non-sensitive) store in scope, the project-wide
 				// twin of memory_search called with no `store` arg.
 				Filter = new MemoryEntryFilter(null, Type),
-				Sort = ParseSortBy(Sort),
+				Sort = sort,
 				Limit = SearchLimit,
 				// EDGE default (spec: search-ranking-mode-is-caller-choice): UI is the speed side.
 				RankingMode = PetBox.Core.Search.SearchRankingMode.Speed,
 				BodyLen = 240, // a snippet — this view lists across stores, not one store's full cards
+							   // PAGING (spec: result-set-pageable) — the whole ranked pool, seeked below with a
+							   // KeysetCursor exactly like MemoryStoreModel's search branch.
+				WholePool = true,
 			}, ct);
-		Hits = result.Rows;
 		Retrievers = result.Retrievers;
+
+		var fingerprint = SearchFingerprint(q, sort, result.DataVersion);
+		var afterCursor = result.Rows;
+		if (!string.IsNullOrWhiteSpace(Cursor))
+		{
+			try
+			{
+				var decoded = KeysetCursor.Decode(Cursor, fingerprint, "memory-search");
+				if (!string.IsNullOrEmpty(result.PoolOrderHash))
+					decoded.AssertPoolOrder(result.PoolOrderHash, "memory-search");
+				afterCursor = KeysetCursor.Advance(
+					result.Rows, decoded, r => ("", r.Store + "\x1f" + r.Entry.Key, r.Scope),
+					SearchCursorComparison, desc: false, "memory-search");
+			}
+			catch (ArgumentException ex)
+			{
+				CursorError = ex.Message;
+				afterCursor = result.Rows;
+			}
+		}
+
+		Hits = afterCursor.Take(SearchLimit).ToList();
+		HasNext = afterCursor.Count > SearchLimit;
+		if (HasNext)
+		{
+			var last = Hits[^1];
+			NextCursor = new KeysetCursor(fingerprint, "", last.Store + "\x1f" + last.Entry.Key, last.Scope,
+				result.PoolOrderHash ?? "").Encode();
+		}
+		// WHY THE WALK STOPPED — stated, not implied (card requirement 2).
+		Stop = HasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
+		PoolBoundaryHint = Stop == "pool-boundary" ? PoolBoundaryHintText : null;
 		HitUsage = await MemorySearchScope.LoadUsageAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, Scope, Hits, ct);
 	}
 
@@ -131,4 +179,33 @@ public sealed class MemoryModel : PageModel
 		"updated" => (MemorySortBy.Updated, true),
 		_ => null,
 	};
+
+	// Everything that decides the QUERY's selection + order, hashed into the cursor — the project-wide
+	// twin of MemoryStoreModel.SearchFingerprint (no Store axis here: this page sweeps every store).
+	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort, string? dataVersion) =>
+		KeysetCursor.FingerprintOf(
+			"memory-search", WorkspaceKey, ProjectKey, NormalizeScope(Scope), NormalizeType(Type), q,
+			sort?.By.ToString(), sort?.Desc.ToString(), dataVersion);
+
+	static string NormalizeScope(string? scope) => scope?.Trim().ToLowerInvariant() switch
+	{
+		"workspace" => "workspace",
+		"cascade" => "cascade",
+		_ => "project",
+	};
+
+	static string NormalizeType(string? type) => string.IsNullOrWhiteSpace(type) ? "" : type.Trim().ToLowerInvariant();
+
+	// Same reasoning as MemoryStoreModel.SearchCursorComparison: the relevance order carries no sound
+	// scalar, resumption is by identity only, and reaching this delegate means the pinning above should
+	// already have refused the token — refuse explicitly rather than guess a boundary.
+	static Comparison<string> SearchCursorComparison => (_, _) => throw new ArgumentException(
+		"memory-search: the row this cursor names is no longer in the ranked pool, and a relevance position "
+		+ "cannot be re-derived from it (the order is score-fused and, in cascade scope, freshness-blended). "
+		+ "Drop the cursor and start the search over.");
+
+	const string PoolBoundaryHintText =
+		"Ranking depth reached: more entries matched this search than relevance ranking looked at, so this "
+		+ "is a prefix of the match set, not all of it — and there is no further page to fetch, because the "
+		+ "rest was never ranked. Narrow the search (type, scope, a more specific query) to reach it.";
 }

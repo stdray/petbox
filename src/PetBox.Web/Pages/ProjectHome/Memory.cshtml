@@ -7,6 +7,19 @@
 	string? HitHref(MemorySearchScope.Row hit) => hit.Scope == "workspace"
 		? MemoryLinks.WorkspaceEntry(Model.WorkspaceKey, hit.Store, hit.Entry.Key)
 		: MemoryLinks.ProjectEntry(Model.WorkspaceKey, Model.ProjectKey, hit.Store, hit.Entry.Key);
+
+	// The query pool's keyset "next" link (spec result-set-pageable) — carries every control that's
+	// part of the fingerprint (q/type/scope/sort) plus the new cursor. No "prev": a keyset cursor only
+	// resumes FORWARD, so each "next" click is its own bookmarkable URL and the browser's Back covers it.
+	string NextHref(string cursor)
+	{
+		var href = $"{Routes.ProjectMemory(Model.WorkspaceKey, Model.ProjectKey)}?cursor={Uri.EscapeDataString(cursor)}";
+		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
+		if (!string.IsNullOrWhiteSpace(Model.Type)) href += $"&type={Uri.EscapeDataString(Model.Type)}";
+		if (!string.IsNullOrWhiteSpace(Model.Scope)) href += $"&scope={Uri.EscapeDataString(Model.Scope)}";
+		if (!string.IsNullOrWhiteSpace(Model.Sort)) href += $"&sort={Uri.EscapeDataString(Model.Sort)}";
+		return href;
+	}
 }
 
 @{
@@ -67,6 +80,21 @@
 	}
 </form>
 
+@if (Model.CursorError is { } cursorError)
+{
+	<div class="alert alert-warning mb-2" data-testid="memory-cursor-error">
+		@cursorError
+	</div>
+}
+
+@if (Model.IsSearch && Model.Stop == "pool-boundary" && Model.PoolBoundaryHint is { } poolHint)
+{
+	@* card requirement 2: pool-boundary MUST read as "ranking depth reached, narrow the query". *@
+	<div class="alert alert-warning mb-2" data-testid="memory-search-pool-boundary">
+		@poolHint
+	</div>
+}
+
 @if (Model.IsSearch)
 {
 	@if (Model.Retrievers is { } retr)
@@ -126,8 +154,26 @@
 				</li>
 			}
 		</ul>
-		<div class="text-xs opacity-50 mt-2" data-testid="memory-search-info">
-			@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s") — top matches, ranked by relevance (not paginated).
+		<div class="flex items-center justify-between mt-4 text-sm">
+			<span class="opacity-60" data-testid="memory-search-info">
+				@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s"), ranked by relevance
+				@(Model.Stop switch
+				{
+					"exhausted" => "— end of the match set.",
+					"pool-boundary" => "— ranking depth reached, see above.",
+					_ => "",
+				})
+			</span>
+			<div class="join">
+				@if (Model.HasNext && Model.NextCursor is { } searchNextCursor)
+				{
+					<a href="@NextHref(searchNextCursor)" class="btn btn-sm join-item" data-testid="memory-search-next">Next ›</a>
+				}
+				else
+				{
+					<button class="btn btn-sm join-item btn-disabled" disabled data-testid="memory-search-next-disabled">Next ›</button>
+				}
+			</div>
 		</div>
 	}
 }

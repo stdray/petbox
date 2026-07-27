@@ -3,13 +3,15 @@
 @{
 	ViewData["Title"] = $"Sessions — {Model.Project?.Name ?? Model.ProjectKey}";
 
-	// KEYSET "load more" (card listing-keyset-memory-sessions): carries the CURRENT filter/sort
-	// plus the opaque NextCursor this response just issued — never a page NUMBER, so there is
-	// nothing here for a concurrent insert/delete to silently shift out from under (spec
-	// listing-tail-reachable). Listing mode only (q is empty whenever this is called).
+	// KEYSET "load more" (card listing-keyset-memory-sessions / spec result-set-pageable): carries
+	// the CURRENT filter/sort plus the opaque NextCursor this response just issued — never a page
+	// NUMBER, so there is nothing here for a concurrent insert/delete (or, in search mode, a rebuilt
+	// discovery pool) to silently shift out from under. Shared by both modes now — `q` rides along
+	// only when set, so a listing's href is unchanged.
 	string NextHref()
 	{
 		var href = $"{Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)}?cursor={Uri.EscapeDataString(Model.NextCursor!)}";
+		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
 		if (!string.IsNullOrWhiteSpace(Model.Agent)) href += $"&agent={Uri.EscapeDataString(Model.Agent)}";
 		href += $"&sortBy={Model.EffectiveSortBy}&sortDesc={Model.EffectiveSortDesc}";
 		return href;
@@ -72,13 +74,24 @@
 	}
 </form>
 
-@if (!Model.IsSearchMode && Model.CursorWasReset)
+@if (Model.CursorWasReset)
 {
-	@* The incoming `cursor` didn't match the current filter/sort — KeysetCursor.Decode threw
-	   rather than splicing two orderings together (spec listing-tail-reachable); this restarts
-	   the walk from the top instead of surfacing that as a raw error. *@
+	@* Shared by both modes now (spec result-set-pageable): the incoming `cursor` didn't match the
+	   current filter/sort/query, or (search mode) the session or discovery order it named moved —
+	   caught rather than spliced into a wrong page, and restarted from the top instead of a raw error. *@
 	<div class="alert alert-warning mb-3 text-sm" data-testid="sessions-cursor-reset">
-		Listing restarted from the top — the filter or sort changed since this page link was made.
+		@(Model.IsSearchMode
+			? "Search restarted from the top — the query changed, or the ranked order moved, since this page link was made."
+			: "Listing restarted from the top — the filter or sort changed since this page link was made.")
+	</div>
+}
+
+@if (Model.IsSearchMode && Model.Stop == "pool-boundary" && Model.PoolBoundaryHint is { } poolHint)
+{
+	@* card requirement 2: pool-boundary MUST read as "ranking depth reached, narrow the query" —
+	   never as a quiet end of the list. *@
+	<div class="alert alert-warning mb-3 text-sm" data-testid="sessions-search-pool-boundary">
+		@poolHint
 	</div>
 }
 
@@ -137,7 +150,19 @@
 		</section>
 
 		<div class="flex items-center justify-between mt-4 text-sm">
-			<span class="opacity-60" data-testid="sessions-page-info">@Model.SearchResults.Count session@(Model.SearchResults.Count == 1 ? "" : "s") found</span>
+			<span class="opacity-60" data-testid="sessions-page-info">
+				@Model.SearchResults.Count session@(Model.SearchResults.Count == 1 ? "" : "s") found
+				@(Model.Stop switch
+				{
+					"exhausted" => "— end of the discovery pool.",
+					"pool-boundary" => "— discovery depth reached, see above.",
+					_ => "",
+				})
+			</span>
+			@if (Model.NextCursor is not null)
+			{
+				<a href="@NextHref()" class="btn btn-sm" data-testid="sessions-search-next">Load more ›</a>
+			}
 		</div>
 	}
 }
