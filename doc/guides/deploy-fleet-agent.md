@@ -23,7 +23,7 @@ Tools: `deploy_node_list`, `deploy_node_upsert`, `deploy_node_delete`, `deploy_l
 2. **Know the image.** Get the pushed image ref/digest (e.g. `ghcr.io/you/bot:sha-…`) from the project's last build.
 3. **Create the deployment:**
    ```
-   deploy_upsert(service="<svc>", projectKey="<petbox-project>", nodeId="<node>",
+   deploy_upsert(service="<svc>", projectKey="<petbox-project>", hostId="<node>",
                  imageDigest="<image>", running=true,
                  requiredTags="<csv>", configTags="<csv>", relocatable=<bool>)
    ```
@@ -37,7 +37,7 @@ Tools: `deploy_node_list`, `deploy_node_upsert`, `deploy_node_delete`, `deploy_l
 `deploy_upsert` the same `(service, node)` with the new `imageDigest`. The config-hash changes → the agent recreates the container. Rollback = `deploy_upsert` with the previous digest. Pause = `deploy_stop(id)`.
 
 ## Recipe — other ops
-- Move to another node: `deploy_move(id, toNodeId)` (old agent self-fences, new one starts it).
+- Move to another node: `deploy_move(id, toHostId)` (old agent self-fences, new one starts it).
 - Second copy: `deploy_upsert` the same service on another node (one per node).
 - Decommission: `deploy_delete(id)` (agent removes the container) or `deploy_node_delete(id)` (cascades a node's deployments).
 

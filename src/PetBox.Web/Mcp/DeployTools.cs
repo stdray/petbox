@@ -89,13 +89,13 @@ public static class DeployTools
 	[Description("Lists deployments (desired + last actual state) across the WHOLE fleet, optionally filtered by node and/or service — NOT by project: there is no `projectKey` parameter, and the result spans every project's deployments a deploy:read key can see. Requires deploy:read.")]
 	public static async Task<DeployDeploymentsResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
-		[Description("Filter by node id.")] string? nodeId = null,
+		[Description("Filter by node id (the deploy-fleet host, not a plan node).")] string? hostId = null,
 		[Description("Filter by service.")] string? service = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployRead);
-		return new DeployDeploymentsResult(await svc.ListDeploymentsAsync(nodeId, service, ct));
+		return new DeployDeploymentsResult(await svc.ListDeploymentsAsync(hostId, service, ct));
 	}
 
 	[McpServerTool(Name = "deploy_upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
@@ -107,7 +107,7 @@ public static class DeployTools
 		// McpProjectDefaultFilter keys the key's-default injection on exactly that name — an odd one
 		// out would silently sit outside the coverage.
 		[Description("Project whose config resolves into the container's env — resolution input ONLY, not an access boundary: any project name is accepted regardless of the calling key's own project claim.")] string projectKey,
-		[Description("Target node id.")] string nodeId,
+		[Description("Target node id (the deploy-fleet host, not a plan node).")] string hostId,
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
 		[Description("Desired running (true) or stopped (false).")] bool running = true,
@@ -141,7 +141,7 @@ public static class DeployTools
 			Network: network, Command: command, Labels: ParseLabels(labels),
 			Site: string.IsNullOrWhiteSpace(domain) ? null : new SiteSpec(domain, sitePort));
 		var d = await svc.UpsertDeploymentAsync(new DeploymentInput(
-			id, service, projectKey, nodeId, imageDigest,
+			id, service, projectKey, hostId, imageDigest,
 			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",
 			runSpec), ct);
 		return new DeployDeploymentResult(d);
@@ -160,18 +160,18 @@ public static class DeployTools
 		SetDesiredAsync(http, features, svc, id, DesiredState.Stopped, ct);
 
 	[McpServerTool(Name = "deploy_move", Title = "Move a deployment to another node", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
-	[Description("Moves a deployment to a different node (the agents reconcile the move). FLEET-WIDE: `id`/`toNodeId` address the fleet directly with no project check — a deploy:write key can relocate ANY deployment to ANY node, not just your project's. Requires deploy:write.")]
+	[Description("Moves a deployment to a different node (the agents reconcile the move). FLEET-WIDE: `id`/`toHostId` address the fleet directly with no project check — a deploy:write key can relocate ANY deployment to ANY node, not just your project's. Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> MoveAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id,
-		[Description("Destination node id.")] string toNodeId,
+		[Description("Destination node id (the deploy-fleet host, not a plan node).")] string toHostId,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
-		if (string.IsNullOrWhiteSpace(toNodeId)) throw new ArgumentException("toNodeId is required");
+		if (string.IsNullOrWhiteSpace(toHostId)) throw new ArgumentException("toHostId is required");
 		var d = await svc.GetDeploymentAsync(id, ct) ?? throw new InvalidOperationException("deployment not found");
-		return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { NodeId = toNodeId }, ct));
+		return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { NodeId = toHostId }, ct));
 	}
 
 	[McpServerTool(Name = "deploy_delete", Title = "Delete a deployment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]

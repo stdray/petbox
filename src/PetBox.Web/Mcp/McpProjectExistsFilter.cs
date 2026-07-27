@@ -64,7 +64,7 @@ static class McpProjectExistsFilter
 {
 	// The tools whose projectKey addresses API KEYS by their project CLAIM rather than routing STORAGE:
 	// apikey_list('*') lists the cross-project keys, apikey_create carries the same "*" in that slot
-	// alongside allProjects:true. Verified against ApiKeyTools (apikey_delete takes `key`, not
+	// alongside allProjects:true. Verified against ApiKeyTools (apikey_delete takes `keyValue`, not
 	// `projectKey`). Two consequences, both below:
 	//   * "*" is a legitimate VALUE here and nowhere else (elsewhere it is a file name, not a wildcard);
 	//   * an ABSENT projectKey here names no project at all — these tools never resolve the caller's

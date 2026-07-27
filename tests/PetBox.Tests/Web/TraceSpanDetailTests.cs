@@ -12,7 +12,7 @@ public sealed class TraceSpanDetailTests
 	{
 		SpanId = "s1",
 		TraceId = "t1",
-		Name = "tasks.upsert",
+		Name = "tasks_upsert",
 		AttributesJson = attributesJson!,
 	};
 
