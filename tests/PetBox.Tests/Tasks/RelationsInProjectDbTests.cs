@@ -114,6 +114,26 @@ public sealed class RelationsInProjectDbTests : IDisposable
 		db.GetTable<Relation>().Count().Should().Be(0);
 	}
 
+	// relations_create atomic:true promises "nothing is written" on ANY failure — including one
+	// that only surfaces in the WRITE phase (a well-formed 32-hex NodeId that clears pre-validation
+	// but names no real node, same ghost as above). CreateBatchAsync must fail the WHOLE batch and
+	// leave the FIRST item's insert rolled back too, not just skip the bad one.
+	[Fact]
+	public async Task CreateBatchAsync_rolls_back_the_whole_batch_when_a_later_item_fails_at_write_time()
+	{
+		var (a, b) = await TwoNodesAsync();
+		var ghost = Guid.NewGuid().ToString("N"); // well-formed 32-hex NodeId of no node
+
+		var call = () => _relations.CreateBatchAsync(Proj,
+			[("blocks", a, b), ("relates_to", a, ghost)]);
+
+		(await call.Should().ThrowAsync<ArgumentException>())
+			.WithMessage($"*toNodeId '{ghost}' does not exist*");
+
+		using var db = _factory.GetDb(Proj);
+		db.GetTable<Relation>().Count().Should().Be(0); // the first item did NOT land either
+	}
+
 	// ...and even if a caller bypasses the store's guard entirely, the DATABASE rejects the
 	// row. This is the structural claim: a dangling edge is not merely discouraged, it is
 	// unrepresentable.
