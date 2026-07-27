@@ -63,9 +63,9 @@ public sealed class ProjectDeletePageTests : IDisposable
 			new NullSettingsResolver(),
 			new SearchReindexService(
 				new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-					c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure),
+					c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory),
 				new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-					c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure),
+					c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks),
 				new ProjectCatalog(_db.Factory())))
 		{ WorkspaceKey = "ws", ProjectKey = projectKey };
 

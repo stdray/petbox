@@ -65,7 +65,7 @@ public sealed class MemorySearchUiParityTests : IAsyncLifetime
 				if (existing is not null) svc.Remove(existing);
 				svc.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(_ => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
 					Path.Combine(_baseDir, "memory"), Scope.Project,
-					c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)), PetBox.Memory.Data.MemorySchema.Ensure));
+					c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)), TestSchema.Memory));
 			});
 		});
 

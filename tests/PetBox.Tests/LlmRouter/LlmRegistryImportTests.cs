@@ -48,7 +48,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 
 		_configDir = Path.Combine(_dir, "config");
 		_scoped = new ScopedDbFactory<ConfigDb>(_configDir, Scope.Workspace,
-			c => new ConfigDb(ConfigDb.CreateOptions(c)), ConfigSchema.Ensure);
+			c => new ConfigDb(ConfigDb.CreateOptions(c)), TestSchema.Config);
 		_configFactory = new ConfigDbFactory(_scoped);
 	}
 

@@ -21,7 +21,7 @@ public sealed class ConfigPreviewNullInputTests
 		var dir = Path.Combine(Path.GetTempPath(), "petbox-cfg-" + Guid.NewGuid().ToString("N")[..8]);
 		Directory.CreateDirectory(dir);
 		var cs = $"Data Source={Path.Combine(dir, "cfg.db")}";
-		ConfigSchema.Ensure(cs);
+		TestSchema.Config(cs);
 		// The page now goes through IConfigDirectory rather than holding the factory, so the stub
 		// factory is wrapped in the real directory — this keeps the test exercising a real (empty)
 		// ConfigDb read rather than a hand-written fake of the resolve path.

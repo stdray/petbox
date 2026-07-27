@@ -28,7 +28,7 @@ public sealed class FtsStemmingEvalTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-stemeval-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 	}
 
 	public void Dispose()

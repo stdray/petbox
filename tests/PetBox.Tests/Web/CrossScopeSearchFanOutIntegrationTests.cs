@@ -67,7 +67,7 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 		}
 
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 
 		var services = new ServiceCollection();
 		services.AddLogging(b => b.AddProvider(_logs).SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Debug));

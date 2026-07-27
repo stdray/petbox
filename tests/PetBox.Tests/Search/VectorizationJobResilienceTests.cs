@@ -40,6 +40,11 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		try { Directory.Delete(_dir, recursive: true); } catch { }
 	}
 
+	// Real Ensure, not TestSchema.Memory: Drain_migrates_a_project_file_left_behind_by_an_old_schema
+	// deliberately rolls a file's schema BACKWARD (drops tables, deletes a VersionInfo row) and then
+	// expects the drain job's next ensure to migrate it forward again — the file already exists at
+	// that point, so TestSchema.Memory's file-exists-skip would leave it broken; only the real
+	// FluentMigrator MigrateUp (VersionInfo-based idempotency) can heal it.
 	ScopedDbFactory<MemoryDb> NewFactory() =>
 		new(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);

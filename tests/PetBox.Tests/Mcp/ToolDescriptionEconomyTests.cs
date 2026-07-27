@@ -163,7 +163,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 				if (tasksFactory is not null) svc.Remove(tasksFactory);
 				svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
 					Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
-					cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
+					cs => new TasksDb(TasksDb.CreateOptions(cs)), TestSchema.Tasks));
 			});
 		});
 	}

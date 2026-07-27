@@ -15,7 +15,7 @@ public sealed class ConfigHistoryInsertTests
 		var dir = Path.Combine(Path.GetTempPath(), "petbox-cfg-" + Guid.NewGuid().ToString("N")[..8]);
 		Directory.CreateDirectory(dir);
 		var cs = $"Data Source={Path.Combine(dir, "cfg.db")}";
-		ConfigSchema.Ensure(cs);
+		TestSchema.Config(cs);
 
 		using var db = new ConfigDb(ConfigDb.CreateOptions(cs));
 

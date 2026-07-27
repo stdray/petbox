@@ -39,7 +39,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_relations = new RelationStore(_factory);
 		_comments = new CommentService(_factory);
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), _relations, new TagStore(_factory), _comments);

@@ -61,11 +61,11 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 		_catalog = new ProjectCatalog(_db.Factory());
 
 		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		_tasksFactory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
-			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
+			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
 
 		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));

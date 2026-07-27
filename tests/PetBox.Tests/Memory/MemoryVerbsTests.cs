@@ -43,7 +43,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = containerWs, Name = "P", Description = "" });
 		_db.Insert(new Project { Key = OtherProj, WorkspaceKey = "other-ws", Name = "O", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store);
 	}

@@ -34,7 +34,7 @@ public sealed class NodeCommitsTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_relations = new RelationStore(_factory);
 		_tasks = new TasksService(_store, _relations, new TagStore(_factory), new CommentService(_factory));
@@ -179,6 +179,9 @@ public sealed class NodeCommitsTests : IDisposable
 			}
 			TestDirs.ClearPoolsUnder(dir);
 
+			// Real Ensure, not TestSchema.Tasks: this file is deliberately hand-rolled at an OLD
+			// version, and only FluentMigrator's own VersionInfo-based idempotency advances a file
+			// that already exists but is behind — TestSchema.Tasks would see the file exists and skip.
 			TasksSchema.Ensure(cs); // runs M002..M011 in place
 
 			using var db = new TasksDb(TasksDb.CreateOptions(cs));

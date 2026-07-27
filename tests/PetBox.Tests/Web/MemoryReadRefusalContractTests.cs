@@ -354,7 +354,7 @@ public sealed class MemoryRefusalContractHost : IAsyncLifetime
 					new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
 						Path.Combine(_baseDir, "memory"), PetBox.Core.Settings.Scope.Project,
 						c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)),
-						PetBox.Memory.Data.MemorySchema.Ensure));
+						TestSchema.Memory));
 			});
 		});
 	}

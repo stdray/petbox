@@ -56,9 +56,9 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 				// test writes into the shared dev data dir and runs migrations there.
 				b.ConfigureServices(svc =>
 				{
-					Replace<PetBox.Tasks.Data.TasksDb>(svc, "tasks", c => new PetBox.Tasks.Data.TasksDb(PetBox.Tasks.Data.TasksDb.CreateOptions(c)), PetBox.Tasks.Data.TasksSchema.Ensure);
-					Replace<PetBox.Memory.Data.MemoryDb>(svc, "memory", c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)), PetBox.Memory.Data.MemorySchema.Ensure);
-					Replace<PetBox.Sessions.Data.SessionsDb>(svc, "sessions", c => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(c)), PetBox.Sessions.Data.SessionsSchema.Ensure);
+					Replace<PetBox.Tasks.Data.TasksDb>(svc, "tasks", c => new PetBox.Tasks.Data.TasksDb(PetBox.Tasks.Data.TasksDb.CreateOptions(c)), TestSchema.Tasks);
+					Replace<PetBox.Memory.Data.MemoryDb>(svc, "memory", c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)), TestSchema.Memory);
+					Replace<PetBox.Sessions.Data.SessionsDb>(svc, "sessions", c => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(c)), TestSchema.Sessions);
 				});
 			});
 	}

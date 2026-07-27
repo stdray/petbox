@@ -41,7 +41,7 @@ public sealed class SearchIdentityLegTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_db.Insert(new Project { Key = Proj2, WorkspaceKey = "ws", Name = "P2", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_relations = new RelationStore(_factory);
 		_commentSvc = new CommentService(_factory);

@@ -352,10 +352,10 @@ public sealed class VectorizationOutageTests
 		public ProjectCatalog Catalog { get; }
 
 		public ScopedDbFactory<MemoryDb> NewMemoryFactory() =>
-			new(Path.Combine(_dir, "memory"), Scope.Project, c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
+			new(Path.Combine(_dir, "memory"), Scope.Project, c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 
 		public ScopedDbFactory<TasksDb> NewTasksFactory() =>
-			new(Path.Combine(_dir, "tasks"), Scope.Project, c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+			new(Path.Combine(_dir, "tasks"), Scope.Project, c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 
 		public async Task SeedMemoryAsync()
 		{

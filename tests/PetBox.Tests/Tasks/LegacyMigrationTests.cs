@@ -40,6 +40,9 @@ public sealed class LegacyMigrationTests
 			TestDirs.ClearPoolsUnder(dir);
 
 			// New code opens the file → M002/M003/M004 run in place.
+			// Must be the REAL Ensure, not TestSchema.Tasks: the template-copy is idempotent by FILE
+			// EXISTENCE, but this file already exists (hand-written above) and is deliberately BEHIND —
+			// only the real FluentMigrator MigrateUp (VersionInfo-based idempotency) advances it.
 			TasksSchema.Ensure(cs);
 
 			using var db = new TasksDb(TasksDb.CreateOptions(cs));

@@ -29,7 +29,7 @@ public sealed class CountingTasksDbFactory : IScopedDbFactory<TasksDb>
 					if (info.TraceInfoStep == TraceInfoStep.BeforeExecute)
 						Interlocked.Increment(ref _statements);
 				}))),
-			TasksSchema.Ensure);
+			TestSchema.Tasks);
 
 	public Scope Scope => _inner.Scope;
 	public string BaseDir => _inner.BaseDir;

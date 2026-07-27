@@ -125,20 +125,46 @@ public static class MembershipProbe
 		db.Factory().MembershipRows();
 }
 
-// Building the Core (petbox.db) schema with FluentMigrator — a fresh DI container, an
-// assembly scan and MigrateUp — costs ~0.2s and runs in EVERY test constructor. Across
-// the suite that is ~100s of pure setup (it doesn't even show up in per-test durations,
-// so the suite's wall-clock dwarfs the sum of test times). Pay it ONCE: migrate into a
-// template file, then copy that file per test. Isolation is unchanged — each test still
+// Building a tier's schema with FluentMigrator — a fresh DI container, an assembly scan and
+// MigrateUp — costs real time and runs in EVERY test constructor (most DB tests are plain
+// IDisposable, not a shared fixture, so xUnit's per-test instantiation re-triggers it). Across
+// the suite that dwarfs the sum of test times. Pay it ONCE PER TIER PER PROCESS: migrate into a
+// template file lazily, then copy that file per test. Isolation is unchanged — each test still
 // gets its own physical DB — but setup is a file copy instead of a migration run.
+//
+// This generalizes what used to be Core-only (BuildCoreTemplate/Core) to every internal tier
+// (Tasks/Memory/Sessions/Log/Config/Deploy): `Templated` below is the ONE place that
+// builds-once-and-copies; each tier below is just `Templated(tag, itsRealEnsure)`, not a
+// copy-pasted builder. Wire the returned delegate into ScopedDbFactory's `ensure` parameter (or
+// call it directly) exactly where the tier's real `*Schema.Ensure` used to go — same signature,
+// same idempotency contract.
 public static class TestSchema
 {
-	static readonly Lazy<string> CoreTemplate = new(BuildCoreTemplate, LazyThreadSafetyMode.ExecutionAndPublication);
-
-	static string BuildCoreTemplate()
+	// Builds `tag`'s schema into a fresh temp .db file by calling `ensureSchema` (the tier's REAL
+	// production Ensure/MigrationRunner.Run — never re-derived here), checkpoints + releases the
+	// handle so the file is a complete, unlocked snapshot, then returns an idempotent
+	// Action<string> that clones the template with File.Copy instead of re-running migrations.
+	// The build itself is deferred (Lazy, ExecutionAndPublication) so it happens at most once per
+	// process, on whichever test first needs this tier, and is safe under parallel test execution.
+	static Action<string> Templated(string tag, Action<string> ensureSchema)
 	{
-		var path = Path.Combine(Path.GetTempPath(), "petbox-tmpl-core-" + Guid.NewGuid().ToString("N") + ".db");
-		MigrationRunner.Run($"Data Source={path}");
+		var template = new Lazy<string>(() => BuildTemplate(tag, ensureSchema), LazyThreadSafetyMode.ExecutionAndPublication);
+		return connectionString =>
+		{
+			// Idempotent like the Ensure it replaces: if the file already exists (a
+			// WebApplicationFactory test that keeps a static DB open and re-invokes setup per
+			// test) it's left untouched — overwriting it would yank the file out from under the
+			// live host. Fresh per-test dirs always get a copy.
+			var target = new SqliteConnectionStringBuilder(connectionString).DataSource;
+			if (File.Exists(target)) return;
+			File.Copy(template.Value, target);
+		};
+	}
+
+	static string BuildTemplate(string tag, Action<string> ensureSchema)
+	{
+		var path = Path.Combine(Path.GetTempPath(), $"petbox-tmpl-{tag}-" + Guid.NewGuid().ToString("N") + ".db");
+		ensureSchema($"Data Source={path}");
 		// Fold any WAL back into the .db file and release the OS handle, so the copied
 		// snapshot is complete and not locked. No-op if the file is in rollback-journal mode.
 		using (var conn = new SqliteConnection($"Data Source={path}"))
@@ -154,18 +180,31 @@ public static class TestSchema
 		return path;
 	}
 
+	// One Templated(...) per tier. The field initializers just close over a Lazy<string> — cheap —
+	// so nothing is actually built until the first real test in that tier calls the method below.
+	static readonly Action<string> CoreEnsure = Templated("core", MigrationRunner.Run);
+	static readonly Action<string> TasksEnsure = Templated("tasks", PetBox.Tasks.Data.TasksSchema.Ensure);
+	static readonly Action<string> MemoryEnsure = Templated("memory", PetBox.Memory.Data.MemorySchema.Ensure);
+	static readonly Action<string> SessionsEnsure = Templated("sessions", PetBox.Sessions.Data.SessionsSchema.Ensure);
+	static readonly Action<string> LogEnsure = Templated("log", PetBox.Log.Core.Data.LogSchema.Ensure);
+	static readonly Action<string> ConfigEnsure = Templated("config", PetBox.Config.Data.ConfigSchema.Ensure);
+	static readonly Action<string> DeployEnsure = Templated("deploy", PetBox.Deploy.Data.DeploySchema.Ensure);
+
 	// Materialize the Core schema at the DB file named by `connectionString` — a drop-in
-	// replacement for MigrationRunner.Run(cs) in test setup that copies the migrated
-	// template instead of re-running every migration. Idempotent like the migration run it
-	// replaces: if the file already exists (a WebApplicationFactory test that keeps a static
-	// DB open and re-invokes setup per test) it's left untouched — overwriting it would yank
-	// the file out from under the live host. Fresh per-test dirs always get a copy.
-	public static void Core(string connectionString)
-	{
-		var target = new SqliteConnectionStringBuilder(connectionString).DataSource;
-		if (File.Exists(target)) return;
-		File.Copy(CoreTemplate.Value, target);
-	}
+	// replacement for MigrationRunner.Run(cs) in test setup that copies the migrated template
+	// instead of re-running every migration.
+	public static void Core(string connectionString) => CoreEnsure(connectionString);
+
+	// Drop-in replacements for TasksSchema.Ensure / MemorySchema.Ensure / SessionsSchema.Ensure /
+	// LogSchema.Ensure / ConfigSchema.Ensure / DeploySchema.Ensure in test setup — same signature,
+	// so each is also valid wherever the production Ensure was passed as a bare delegate (e.g.
+	// ScopedDbFactory's `ensure` constructor parameter).
+	public static void Tasks(string connectionString) => TasksEnsure(connectionString);
+	public static void Memory(string connectionString) => MemoryEnsure(connectionString);
+	public static void Sessions(string connectionString) => SessionsEnsure(connectionString);
+	public static void Log(string connectionString) => LogEnsure(connectionString);
+	public static void Config(string connectionString) => ConfigEnsure(connectionString);
+	public static void Deploy(string connectionString) => DeployEnsure(connectionString);
 
 	// A `Data Source=...;Cache=Shared` connection string for a WebApplicationFactory
 	// test's Core db, rooted in a FRESH per-call directory — not a bare filename dropped

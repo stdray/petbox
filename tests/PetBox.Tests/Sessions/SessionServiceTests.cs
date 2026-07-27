@@ -20,7 +20,7 @@ public sealed class SessionServiceTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-sessionsvc-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_factory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
-			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
+			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
 		_svc = new SessionService(new SessionStore(_factory));
 	}
 

@@ -25,7 +25,7 @@ public sealed class DeployToolsTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-deploytools-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var deployCs = $"Data Source={Path.Combine(_dir, "deploy.db")};Cache=Shared";
-		DeploySchema.Ensure(deployCs);
+		TestSchema.Deploy(deployCs);
 		// The service owns its connections now (one per call, via the factory) — there is no
 		// long-lived DeployDb for the fixture to hold.
 		_svc = new DeployService(new DeployDbFactory(deployCs));

@@ -43,16 +43,16 @@ public sealed class ProjectFileOrphansTests : IDisposable
 	// A root-file-layout factory ({baseDir}/{scopeKey}.db) — tasks and sessions.
 	ScopedDbFactory<TasksDb> TasksFactory() =>
 		new(Path.Combine(_dir, "tasks"), Scope.Project,
-			cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure);
+			cs => new TasksDb(TasksDb.CreateOptions(cs)), TestSchema.Tasks);
 
 	ScopedDbFactory<SessionsDb> SessionsFactory() =>
 		new(Path.Combine(_dir, "sessions"), Scope.Project,
-			cs => new SessionsDb(SessionsDb.CreateOptions(cs)), SessionsSchema.Ensure);
+			cs => new SessionsDb(SessionsDb.CreateOptions(cs)), TestSchema.Sessions);
 
 	// A per-name-under-project-dir-layout factory ({baseDir}/{scopeKey}/{name}.db) — memory.
 	ScopedDbFactory<MemoryDb> MemoryFactory() =>
 		new(Path.Combine(_dir, "memory"), Scope.Project,
-			cs => new MemoryDb(MemoryDb.CreateOptions(cs)), MemorySchema.Ensure);
+			cs => new MemoryDb(MemoryDb.CreateOptions(cs)), TestSchema.Memory);
 
 	// Writes a fake `.db` file plus its WAL/SHM sidecars.
 	static void FakeDb(string path)
