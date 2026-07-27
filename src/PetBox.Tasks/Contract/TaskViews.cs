@@ -211,7 +211,15 @@ public sealed record TaskSearchResult(
 	string? WiredBoard = null,
 	long? CurrentVersion = null,
 	PetBox.Core.Search.SearchRetrievers? Retrievers = null,
-	IReadOnlyList<string>? EffectiveStatusKind = null);
+	IReadOnlyList<string>? EffectiveStatusKind = null,
+	// Pool facts of a RELEVANCE selection (spec: result-set-pageable). PoolLimit is how deep ranking
+	// was allowed to look; PoolBounded says the candidate union actually REACHED that depth, so the
+	// rows are a PREFIX of the match set and not the whole of it. Both null/false in listing mode.
+	int? PoolLimit = null,
+	bool PoolBounded = false,
+	// The change stamp of every board this query could see. Opaque to callers except as a cursor
+	// fingerprint ingredient — it is what makes a mid-walk data change an error, not a silent restart.
+	string? DataVersion = null);
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by

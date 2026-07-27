@@ -34,6 +34,18 @@ public sealed record SearchRequest<TFilter, TSort>
 	public int Limit { get; init; }
 	public int BodyLen { get; init; }
 	public SearchRankingMode RankingMode { get; init; } = SearchRankingMode.Precision;
+
+	// PAGING (spec: result-set-pageable). When true the service returns the WHOLE ranked pool instead
+	// of its first `Limit` rows, because the caller intends to seek into it with a keyset cursor and
+	// slice its own page — the same division of labour a LISTING already uses, where the adapter owns
+	// the cursor and the service owns the order.
+	//
+	// It is a separate flag rather than `Limit = 0` on purpose. In query mode `Limit` has a SECOND job:
+	// it sizes the per-leg candidate depth (max(Limit, 50)), which is a SELECTION decision. Collapsing
+	// "give me everything" onto Limit = 0 would silently shrink that depth to the floor and change
+	// WHICH entities are candidates — a ranking change disguised as a pagination knob. So `Limit` keeps
+	// meaning "the page, and the candidate depth it implies", and this flag says "don't truncate to it".
+	public bool WholePool { get; init; }
 }
 
 // One read response: the selected rows plus the two cross-cutting envelopes every read

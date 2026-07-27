@@ -575,12 +575,22 @@ public sealed record TaskSearchNodeView(
 //                    kind). null on the groupBy tag-projection branch (no rows selected by facet).
 //   groupBy        → `GroupBy`+`Groups` (the tag projection; `Nodes` empty);
 //   any            → the response-budget markers Truncated/Omitted/Hint (null = complete).
-//   listing        → `NextCursor`, the keyset resume token (PetBox.Core.Contract.KeysetCursor),
+//   any            → `NextCursor`, the keyset resume token (PetBox.Core.Contract.KeysetCursor),
 //                    present ONLY when rows were withheld — the budget cut them, or `limit`
-//                    capped the page. Absent means this page IS the tail, which is why it is a
-//                    marker and not a always-present field: the caller stops when it stops
-//                    coming. Never issued in query mode (relevance is re-derived per call, so a
-//                    resume token there would splice two rankings).
+//                    capped the page. Issued in BOTH modes now (spec: result-set-pageable): the
+//                    relevance order is materialized once into a ranked pool and paged over, so a
+//                    query-mode token no longer splices two rankings.
+//   q              → `Stop`, `PoolLimit`, `PoolBoundaryHint` — the honesty trio of a paged
+//                    relevance walk. `Stop` is ALWAYS present with `q` and answers WHY the walk
+//                    stopped in words: "more" (page again with NextCursor), "exhausted" (every
+//                    matching row was ranked and served — there is genuinely nothing else), or
+//                    "pool-boundary" (ranking looked only `PoolLimit` deep and MORE entities
+//                    matched behind it, so these rows are a PREFIX of the match set and no further
+//                    page exists to fetch). That last distinction is the entire reason this field
+//                    exists rather than leaving the caller to infer the end from a missing cursor:
+//                    "we stopped looking" and "there is no more" are different answers, and a
+//                    missing cursor cannot tell them apart. `PoolBoundaryHint` carries the
+//                    actionable advice for that one case only.
 public sealed record TaskSearchResultView(
 	IReadOnlyList<TaskSearchNodeView> Nodes,
 	string? Board = null,
@@ -594,7 +604,10 @@ public sealed record TaskSearchResultView(
 	int? Omitted = null,
 	string? Hint = null,
 	IReadOnlyList<string>? EffectiveStatusKind = null,
-	string? NextCursor = null);
+	string? NextCursor = null,
+	string? Stop = null,
+	int? PoolLimit = null,
+	string? PoolBoundaryHint = null);
 
 // tasks_node_get result (batch 3, mirrors memory_get's addressed-read-batched shape): ALWAYS
 // a list, whether the caller addressed one `node` or a batch of `nodes[]` — one shape for

@@ -778,11 +778,14 @@ public static class TasksTools
 		Nodes are FLAT (a single slug `key`); hierarchy is the part_of edge (parentSlug/`depth`).
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
-		output budget — overflow rows are prefix-cut + flagged, and a LISTING that was cut also
+		output budget — overflow rows are prefix-cut + flagged, and a page that was cut also
 		returns `nextCursor`: pass it back as `cursor` (everything else identical) to continue
-		after the last row. `q` mode gets no cursor — a query is a relevance SELECTION, not an
-		enumeration; to enumerate EVERYTHING, list without `q` (filters + cursor) or use
-		tasks_delta. `statusKind` visibility defaults
+		after the last row. `q` mode PAGES TOO: the ranked pool is materialized once and walked,
+		so `limit:10` + `cursor` iterates the relevance order. With `q` the response always says
+		WHY it stopped — `stop`: "more" | "exhausted" | "pool-boundary" — and "pool-boundary"
+		means ranking looked only `poolLimit` deep and MORE matched behind it, so narrow the query
+		rather than expecting another page. To enumerate EVERYTHING regardless of ranking depth,
+		list without `q` (filters + cursor) or use tasks_delta. `statusKind` visibility defaults
 		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
 		applied set as `effectiveStatusKind`, so the default is never silent. Tracking changes
 		since a known version cursor (added/updated/removed, including tombstones this search
@@ -844,11 +847,11 @@ public static class TasksTools
 		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
 		the default is priority (asking for relevance is an error); with `q` the default is
 		relevance, and an explicit sort reorders WITHIN the relevance-selected set (`desc`
-		is ignored for relevance). `limit` caps the rows (with `q` it defaults to 20, 0 =
-		no cap; a listing is unbounded by default — the output budget still applies). In a
-		LISTING `limit` caps ONE PAGE, so it combines with `cursor` instead of fighting it.
+		is ignored for relevance). `limit` caps the rows (with `q` it defaults to 20; a
+		listing is unbounded by default — the output budget still applies). `limit` caps ONE
+		PAGE in BOTH modes, so it combines with `cursor` instead of fighting it.
 
-		PAGINATION (listing only). The budget is a constant and a board is not, so a big
+		PAGINATION (both modes). The budget is a constant and a board is not, so a big
 		listing arrives in pages: when rows were withheld the response carries `nextCursor`
 		— an OPAQUE token naming the last row that was actually sent. Send it back as
 		`cursor` with EVERY OTHER ARGUMENT UNCHANGED to get the next page; no `nextCursor`
@@ -858,15 +861,26 @@ public static class TasksTools
 		the call FAILS with an explaining error rather than quietly restarting you inside a
 		different ordering — pass the token verbatim, never edit or build one. `bodyLen`,
 		`includeUrl` and `limit` are NOT bound and may vary between pages. One accepted
-		anomaly: if a node's own sort key is edited mid-walk (its priority changes, say) it
-		moves across the page boundary and can be missed or seen twice — paging follows the
-		live board, it is not a snapshot as-of a version.
-		A cursor is REFUSED with `q` or sort:relevance, and that refusal is permanent, not a
-		gap: the relevance order is recomputed on every call (live index + a reranker with a
-		fallback cascade), so consecutive pages could come from two different rankings, and
-		the candidate pool is bounded — there is no page 2 behind it to reach. `q` answers
-		"which nodes are most relevant", NOT "give me all of them". For the COMPLETE set use
-		listing mode (filters + cursor) or tasks_delta, which enumerates a whole board.
+		anomaly IN LISTING MODE: if a node's own sort key is edited mid-walk (its priority
+		changes, say) it moves across the page boundary and can be missed or seen twice —
+		listing paging follows the live board, it is not a snapshot as-of a version.
+
+		PAGING WITH `q` works the same way and is STRICTER about change. The ranked pool is
+		computed ONCE (one rerank pass, not one per page) and every later page is a slice of
+		that same order, so page 2 is fast and consistent with page 1. Because ANY edit can
+		move ANY row in a relevance order, the token is additionally bound to the board state
+		it was ranked over: if the board changes mid-walk the next page FAILS with an
+		explaining error — drop the cursor and start over. It is never a silent restart.
+
+		Three ways a `q` walk can stop, and the response always says which in `stop`:
+		  more           → more rows in the pool; page on with `nextCursor`.
+		  exhausted      → every entity matching your filters was ranked and served. Nothing else exists.
+		  pool-boundary  → relevance ranking looked only `poolLimit` deep and MORE entities
+		                   matched behind it. These rows are a PREFIX of the match set, NOT all
+		                   of it, and there is NO further page — the rest was never ranked.
+		                   Narrow the read, or enumerate in listing mode / via tasks_delta.
+		Do not infer the end from a missing `nextCursor`: "exhausted" and "pool-boundary" both
+		omit it and they mean different things. Read `stop`.
 
 		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
@@ -919,7 +933,7 @@ public static class TasksTools
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = NEUTRAL (every kind; a default read still finds accepted/Done). This is the first-class replacement for the deprecated includeClosed and OVERRIDES it when set; an unknown value is an error.")] string[]? statusKind = null,
-		[LogArg(LogArgMode.Presence)][Description("LISTING pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different sort/filter is an ERROR, not a silent restart. Not accepted with `q` (relevance is re-derived per call).")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different sort/filter is an ERROR, not a silent restart. With `q` it is additionally bound to the board state the ranked pool was built over, so an edit mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -942,12 +956,12 @@ public static class TasksTools
 		}
 
 		var parsedSort = ParseSort(sort);
-		// A cursor is a promise that the ORDER is the same on the next call. Relevance cannot make
-		// that promise (see CursorNeedsListingMode), so both ways of asking for it are refused here
-		// rather than paging an ordering that is re-derived per call.
-		if (hasCursor && (hasQuery || parsedSort?.By == TaskSortBy.Relevance))
-			throw new ArgumentException(CursorNeedsListingMode);
-
+		// The old refusal ("cursor works in LISTING mode only") is GONE (spec: result-set-pageable). It
+		// rested on a claim that turned out to be a property of the implementation, not of the task: the
+		// relevance order is no longer re-derived per call — the ranked pool is materialized once, cached
+		// under a fingerprint that includes the DATA VERSION, and paged over. A cursor here is therefore
+		// a promise the server can actually keep, and when it cannot (the data moved) the fingerprint
+		// mismatch refuses it out loud instead of splicing two orderings.
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
@@ -962,6 +976,10 @@ public static class TasksTools
 			// applies". Query mode keeps the service-side limit: there it also sizes the
 			// candidate pool, which is a selection decision, not a presentation one.
 			Limit = hasQuery ? limit ?? DefaultSearchLimit : 0,
+			// Query mode now asks for the WHOLE ranked pool and pages it here, exactly as listing does —
+			// while `Limit` above keeps sizing the candidate depth (a selection decision that must not
+			// change just because the caller asked for a smaller page).
+			WholePool = hasQuery,
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
 			// EDGE default (search-ranking-mode-is-caller-choice): an MCP verb is an agent acting on
 			// the answer, where a ranking mistake costs more than latency — Precision.
@@ -971,20 +989,27 @@ public static class TasksTools
 		// Keyset seek (MCP-adapter-only, spec bounded-result-sets): resume strictly after the row
 		// the previous page ended on, BEFORE the budget gets to cut anything — the skipped prefix
 		// must not spend budget it already spent last call.
-		var axis = parsedSort?.By ?? TaskSortBy.Priority;
+		var axis = hasQuery ? parsedSort?.By ?? TaskSortBy.Relevance : parsedSort?.By ?? TaskSortBy.Priority;
 		var desc = parsedSort?.Desc ?? false;
-		var fingerprint = hasQuery ? null : SearchFingerprint(projectKey, board, underNode, status, nodes, includeClosed, commit, statusKind, axis, desc);
+		// In query mode the DATA VERSION the pool was ranked over joins the fingerprint. That single
+		// addition is what makes a cursor honest here (card requirement 4): edit the board mid-walk and
+		// the next page is REFUSED with an instructive error, never quietly restarted against a new
+		// ordering — the failure mode the whole keyset design exists to avoid.
+		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
+			nodes, includeClosed, commit, statusKind, axis, desc, res.DataVersion);
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
 			hits = KeysetCursor.Advance(
 				hits,
-				KeysetCursor.Decode(cursor, fingerprint!, "tasks_search"),
+				KeysetCursor.Decode(cursor, fingerprint, "tasks_search"),
 				h => (CursorSortValue(h, axis), h.Node.Key, h.Board),
 				CursorSortComparison(axis), desc, "tasks_search");
 
-		// `limit` in listing mode = rows per PAGE, applied after the seek (see the Limit note above).
+		// `limit` = rows per PAGE in BOTH modes now, applied after the seek (see the Limit note above).
+		// Query mode falls back to the same default cap it always had when the caller names no limit.
+		var pageSize = hasQuery ? limit ?? DefaultSearchLimit : limit ?? 0;
 		IReadOnlyList<TaskSearchHit> page =
-			!hasQuery && limit is > 0 && hits.Count > limit.Value ? hits.Take(limit.Value).ToList() : hits;
+			pageSize > 0 && hits.Count > pageSize ? hits.Take(pageSize).ToList() : hits;
 
 		// Response budget (MCP-adapter-only): the adapter shapes each body per the uniform bodyLen
 		// knob (default a ~240-char snippet) THEN measures the wire form, prefix-cuts, marks — never silent.
@@ -994,9 +1019,18 @@ public static class TasksTools
 		// this page has a last row to resume from. Absence of nextCursor is the end-of-list signal,
 		// so it must never be emitted for a complete page.
 		var last = kept.Count > 0 ? page[kept.Count - 1] : null;
-		var nextCursor = last is not null && !hasQuery && kept.Count < hits.Count
-			? new KeysetCursor(fingerprint!, CursorSortValue(last, axis), last.Node.Key, last.Board).Encode()
+		var more = kept.Count < hits.Count;
+		var nextCursor = last is not null && more
+			? new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Node.Key, last.Board).Encode()
 			: null;
+		// WHY THE WALK STOPPED — stated, not implied (card requirement 2). In query mode this field is
+		// ALWAYS present, so a caller never has to read "nextCursor is absent" and guess whether it
+		// reached the end of the matches or the end of what ranking ever looked at. Those are different
+		// answers and this is the one place the difference can still be told.
+		var stop = !hasQuery ? (SearchPoolStop?)null
+			: more ? SearchPoolStop.More
+			: res.PoolBounded ? SearchPoolStop.PoolBoundary
+			: SearchPoolStop.Exhausted;
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Ranking) : null,
@@ -1004,30 +1038,48 @@ public static class TasksTools
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,
 			EffectiveStatusKind: res.EffectiveStatusKind,
-			NextCursor: nextCursor);
+			NextCursor: nextCursor,
+			Stop: stop is null ? null : StopWire(stop.Value),
+			PoolLimit: hasQuery ? res.PoolLimit : null,
+			PoolBoundaryHint: stop == SearchPoolStop.PoolBoundary ? PoolBoundaryHintText : null);
 	}
 
-	// Why a cursor is refused with `q` (and with sort:relevance, the same ask by another name).
-	// Not a limitation to be lifted later: the q-mode order is RE-DERIVED on every call from a live
-	// index plus a reranker with a fallback cascade, so page 2 can come out of a different ranking
-	// than page 1 with nothing on the wire to say so — and the candidate pool is bounded, so there
-	// is no tail behind it to page INTO. A token that promised otherwise would be lying.
-	const string CursorNeedsListingMode =
-		"tasks_search: cursor works in LISTING mode only — with `q` (or sort:relevance) there is no honest "
-		+ "cursor, because the relevance order is recomputed per call and the candidate pool is bounded, so "
-		+ "no page 2 of it exists to reach. A query is a relevance SELECTION, not an enumeration. Either "
-		+ "raise `limit` / narrow the query to get the selection you want in one call, or — if you need the "
-		+ "COMPLETE set — drop `q` and enumerate in listing mode with filters + cursor, or use tasks_delta.";
+	// The wire form of the stop reason: a lowercase kebab STRING, not the enum's number or a bare bool.
+	// A machine consumer matches on it and a human reading a raw response sees the answer spelled out.
+	static string StopWire(SearchPoolStop stop) => stop switch
+	{
+		SearchPoolStop.More => "more",
+		SearchPoolStop.Exhausted => "exhausted",
+		SearchPoolStop.PoolBoundary => "pool-boundary",
+		_ => "exhausted",
+	};
 
-	// The canonical sort-key value of one hit, as the string a cursor carries. Mirrors the axes
-	// TasksService sorts on (priority | title | created | updated); relevance never reaches here
-	// because a cursor is refused for it above.
+	// Surfaced ONLY on stop:"pool-boundary" — the case a caller must not read as "that was everything".
+	// It says the one thing that is actionable: there is no further page to fetch, so narrow the query.
+	const string PoolBoundaryHintText =
+		"Ranking depth reached (see poolLimit): more entities matched your filters than relevance ranking "
+		+ "looked at, so this is a PREFIX of the match set, NOT the whole of it — and there is no further "
+		+ "page to fetch, because the rest was never ranked. To reach it, NARROW the read (`board`, "
+		+ "`underNode`, `status`, `statusKind`, a more specific `q`), or enumerate the complete set in "
+		+ "listing mode (drop `q`, page with filters + cursor) or via tasks_delta.";
+
+	// The canonical sort-key value of one hit, as the string a cursor carries.
+	//
+	// RELEVANCE carries the fused/rerank score, and — deliberately — the cursor does NOT resume by
+	// comparing it. The relevance order is not a scalar order at all: the identity leg inserts exact
+	// matches at the front with NO score, and the statusKind tiering stably demotes terminalcancel rows
+	// regardless of score. A score comparison would therefore land on the wrong boundary. What DOES
+	// fully resolve the order (card requirement 3) is the row's IDENTITY — (Board, Key) is unique inside
+	// the pool, so a repeated score cannot make the boundary ambiguous — and KeysetCursor.Advance
+	// resumes by identity FIRST. The score still travels in the token as the position's honest
+	// description; see CursorSortComparison for what happens if identity ever fails to match.
 	static string CursorSortValue(TaskSearchHit h, TaskSortBy by) => by switch
 	{
 		TaskSortBy.Priority => h.Node.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
 		TaskSortBy.Title => h.Node.Title,
 		TaskSortBy.Created => (h.Node.CreatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
 		TaskSortBy.Updated => (h.Node.UpdatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+		TaskSortBy.Relevance => (h.Score ?? 0).ToString("R", System.Globalization.CultureInfo.InvariantCulture),
 		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
 	};
 
@@ -1041,19 +1093,42 @@ public static class TasksTools
 		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
 		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) => DateTime.Parse(a, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
 			.CompareTo(DateTime.Parse(b, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
+		// RELEVANCE has no sound scalar comparison (see CursorSortValue): exact-identity hits carry no
+		// score and the statusKind tiering reorders across scores, so "after this score" is simply not
+		// where the next page starts. Advance only reaches this delegate when the boundary row is NO
+		// LONGER IN THE POOL — which, with the data version pinned into the fingerprint, means the pool
+		// was rebuilt under a token that should already have been refused. So refuse it HERE, explicitly,
+		// rather than guessing a boundary from a number that does not order the list.
+		TaskSortBy.Relevance => static (_, _) => throw new ArgumentException(
+			"tasks_search: the row this cursor names is no longer in the ranked pool, and a relevance "
+			+ "position cannot be re-derived from its score (exact matches carry none, and status tiering "
+			+ "reorders across scores). Drop the cursor and start the query over."),
 		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
 	};
 
 	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected
 	// and in WHAT order. Deliberately EXCLUDES bodyLen/includeUrl/limit — those shape a page, not
 	// the sequence, so a caller may vary them mid-walk without invalidating the token.
+	//
+	// `dataVersion` (query mode only; null in listing mode, which keeps its long-standing, deliberately
+	// version-FREE token and its documented "a row whose sort key changed may shift across the boundary"
+	// anomaly) pins the token to the exact board state the pool was ranked over. Relevance has no
+	// equivalent of that tolerable anomaly: a single new or edited node can move ANY row to ANY position,
+	// so a version-free relevance token would be the silent-splice failure rather than a small anomaly.
+	//
+	// `q` ITSELF is an ingredient — the one this method did not need while a cursor was listing-only.
+	// In query mode the text decides both WHICH nodes are selected and in WHAT order they rank, so
+	// leaving it out would let a token issued for "alpha" be honoured against "material": same board,
+	// same filters, a completely different list, and a plausible-looking wrong page. It is also what
+	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
-		string projectKey, string? board, string? underNode, string[]? status, string[]? nodes,
-		bool includeClosed, string? commit, string[]? statusKind, TaskSortBy axis, bool desc) =>
+		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
+		bool includeClosed, string? commit, string[]? statusKind, TaskSortBy axis, bool desc,
+		string? dataVersion = null) =>
 		KeysetCursor.FingerprintOf(
-			"tasks_search", projectKey, board, underNode,
+			"tasks_search", projectKey, query, board, underNode,
 			CursorFilterSet(status), CursorFilterSet(nodes), includeClosed ? "1" : "0",
-			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0");
+			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0", dataVersion);
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
 	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled
