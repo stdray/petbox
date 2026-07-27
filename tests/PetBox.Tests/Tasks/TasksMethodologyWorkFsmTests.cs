@@ -86,12 +86,13 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		Text(intake).Should().Contain("done");
 	}
 
-	// 7. approve-gate: an agent's ceiling is Review; only the maintainer confirms Done.
-	// Enforcement is DEFERRED in v1 by decision — the capability is modelled in
-	// WorkflowEngine (RequiresApproval on Review->Done; TerminalOk = maintainer-only).
-	// Flip `enforceApproval` at the call site once constraints are clear from practice.
-	[Fact(Skip = "approve-gate enforcement deferred in v1; capability modelled in WorkflowEngine")]
-	public Task ApproveGate_AgentCannotSetDone_MaintainerCan() => Task.CompletedTask;
+	// 7. approve-gate (an agent's ceiling is Review; only the maintainer confirms Done) is covered
+	// in PetBox.Tasks.Engine.Tests/WorkflowEngineGateTests: ThePresetApproveGate_IsNotEnforced-
+	// ByDefault pins RequiresApproval=true + EnforceApproval=false on Review->Done, and the
+	// enforced path has its own cases there. A skipped placeholder used to sit here asserting
+	// nothing, which read as coverage while providing none — removed rather than un-skipped,
+	// because through the agent's MCP door the gate is convention, not enforcement, so an honest
+	// "agent cannot set Done" test would fail today.
 
 	// 11. a work task can't be Blocked without naming a blocker (blocked requires a `blocks` link).
 	[Fact]
