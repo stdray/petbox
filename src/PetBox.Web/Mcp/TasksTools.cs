@@ -777,7 +777,11 @@ public static class TasksTools
 		Nodes are FLAT (a single slug `key`); hierarchy is the part_of edge (parentSlug/`depth`).
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
-		output budget — overflow rows are prefix-cut + flagged. `statusKind` visibility defaults
+		output budget — overflow rows are prefix-cut + flagged, and a LISTING that was cut also
+		returns `nextCursor`: pass it back as `cursor` (everything else identical) to continue
+		after the last row. `q` mode gets no cursor — a query is a relevance SELECTION, not an
+		enumeration; to enumerate EVERYTHING, list without `q` (filters + cursor) or use
+		tasks_delta. `statusKind` visibility defaults
 		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
 		applied set as `effectiveStatusKind`, so the default is never silent. Tracking changes
 		since a known version cursor (added/updated/removed, including tombstones this search
@@ -840,7 +844,28 @@ public static class TasksTools
 		the default is priority (asking for relevance is an error); with `q` the default is
 		relevance, and an explicit sort reorders WITHIN the relevance-selected set (`desc`
 		is ignored for relevance). `limit` caps the rows (with `q` it defaults to 20, 0 =
-		no cap; a listing is unbounded by default — the output budget still applies).
+		no cap; a listing is unbounded by default — the output budget still applies). In a
+		LISTING `limit` caps ONE PAGE, so it combines with `cursor` instead of fighting it.
+
+		PAGINATION (listing only). The budget is a constant and a board is not, so a big
+		listing arrives in pages: when rows were withheld the response carries `nextCursor`
+		— an OPAQUE token naming the last row that was actually sent. Send it back as
+		`cursor` with EVERY OTHER ARGUMENT UNCHANGED to get the next page; no `nextCursor`
+		means you have the tail. It is a KEYSET position, not an offset, so a concurrent
+		insert or delete elsewhere in the list cannot silently duplicate or swallow rows.
+		The token is bound to the exact sort axis + filters that issued it: change one and
+		the call FAILS with an explaining error rather than quietly restarting you inside a
+		different ordering — pass the token verbatim, never edit or build one. `bodyLen`,
+		`includeUrl` and `limit` are NOT bound and may vary between pages. One accepted
+		anomaly: if a node's own sort key is edited mid-walk (its priority changes, say) it
+		moves across the page boundary and can be missed or seen twice — paging follows the
+		live board, it is not a snapshot as-of a version.
+		A cursor is REFUSED with `q` or sort:relevance, and that refusal is permanent, not a
+		gap: the relevance order is recomputed on every call (live index + a reranker with a
+		fallback cascade), so consecutive pages could come from two different rankings, and
+		the candidate pool is bounded — there is no page 2 behind it to reach. `q` answers
+		"which nodes are most relevant", NOT "give me all of them". For the COMPLETE set use
+		listing mode (filters + cursor) or tasks_delta, which enumerates a whole board.
 
 		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
@@ -893,46 +918,144 @@ public static class TasksTools
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = NEUTRAL (every kind; a default read still finds accepted/Done). This is the first-class replacement for the deprecated includeClosed and OVERRIDES it when set; an unknown value is an error.")] string[]? statusKind = null,
+		[LogArg(LogArgMode.Presence)][Description("LISTING pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different sort/filter is an ERROR, not a silent restart. Not accepted with `q` (relevance is re-derived per call).")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
+		var hasCursor = !string.IsNullOrWhiteSpace(cursor);
 		if (!string.IsNullOrWhiteSpace(groupBy))
 		{
 			// The tag projection is a deterministic single-board VIEW — routing it against a
 			// relevance selection would silently change what the buckets mean, so q is refused.
 			if (hasQuery)
 				throw new ArgumentException("groupBy and q don't combine — the tag projection is a deterministic view, a query is a relevance selection; drop one of them");
+			if (hasCursor)
+				throw new ArgumentException("groupBy and cursor don't combine — the tag projection is a bounded keys-only view, not a row stream; drop the cursor");
 			if (string.IsNullOrWhiteSpace(board))
 				throw new ArgumentException("groupBy needs a board — the tag projection is a single-board view");
 			var g = await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
 			return new TaskSearchResultView([], Board: board, Kind: g.Kind, GroupBy: g.GroupBy, Groups: g.Groups);
 		}
 
+		var parsedSort = ParseSort(sort);
+		// A cursor is a promise that the ORDER is the same on the next call. Relevance cannot make
+		// that promise (see CursorNeedsListingMode), so both ways of asking for it are refused here
+		// rather than paging an ordering that is re-derived per call.
+		if (hasCursor && (hasQuery || parsedSort?.By == TaskSortBy.Relevance))
+			throw new ArgumentException(CursorNeedsListingMode);
+
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
 			Filter = new TaskNodeFilter(board, underNode, status, nodes, includeClosed, commit, statusKind),
-			Sort = ParseSort(sort),
-			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
+			Sort = parsedSort,
+			// LISTING: ask for the whole ordered set and apply `limit` HERE (below), after the
+			// cursor skip. The service's own Limit is a plain prefix Take over that same ordered
+			// list, so moving it into the adapter changes no row and no order — but it is what
+			// lets the adapter SEE that rows remain past the page (so it can issue a nextCursor)
+			// and lets `limit` mean "rows per page" instead of "rows before the cursor even
+			// applies". Query mode keeps the service-side limit: there it also sizes the
+			// candidate pool, which is a selection decision, not a presentation one.
+			Limit = hasQuery ? limit ?? DefaultSearchLimit : 0,
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
 		}, urlPrefix, ct);
 
+		// Keyset seek (MCP-adapter-only, spec bounded-result-sets): resume strictly after the row
+		// the previous page ended on, BEFORE the budget gets to cut anything — the skipped prefix
+		// must not spend budget it already spent last call.
+		var axis = parsedSort?.By ?? TaskSortBy.Priority;
+		var desc = parsedSort?.Desc ?? false;
+		var fingerprint = hasQuery ? null : SearchFingerprint(projectKey, board, underNode, status, nodes, includeClosed, commit, statusKind, axis, desc);
+		IReadOnlyList<TaskSearchHit> hits = res.Hits;
+		if (hasCursor)
+			hits = KeysetCursor.Advance(
+				hits,
+				KeysetCursor.Decode(cursor, fingerprint!, "tasks_search"),
+				h => (CursorSortValue(h, axis), h.Node.Key, h.Board),
+				CursorSortComparison(axis), desc, "tasks_search");
+
+		// `limit` in listing mode = rows per PAGE, applied after the seek (see the Limit note above).
+		IReadOnlyList<TaskSearchHit> page =
+			!hasQuery && limit is > 0 && hits.Count > limit.Value ? hits.Take(limit.Value).ToList() : hits;
+
 		// Response budget (MCP-adapter-only): the adapter shapes each body per the uniform bodyLen
 		// knob (default a ~240-char snippet) THEN measures the wire form, prefix-cuts, marks — never silent.
-		var rows = res.Hits.Select(h => SearchRow(h, bodyLen, lean: hasQuery)).ToList();
+		var rows = page.Select(h => SearchRow(h, bodyLen, lean: hasQuery)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
+		// A resume token only when rows were actually withheld (by `limit` or by the budget) AND
+		// this page has a last row to resume from. Absence of nextCursor is the end-of-list signal,
+		// so it must never be emitted for a complete page.
+		var last = kept.Count > 0 ? page[kept.Count - 1] : null;
+		var nextCursor = last is not null && !hasQuery && kept.Count < hits.Count
+			? new KeysetCursor(fingerprint!, CursorSortValue(last, axis), last.Node.Key, last.Board).Encode()
+			: null;
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Reranked) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,
-			EffectiveStatusKind: res.EffectiveStatusKind);
+			EffectiveStatusKind: res.EffectiveStatusKind,
+			NextCursor: nextCursor);
 	}
+
+	// Why a cursor is refused with `q` (and with sort:relevance, the same ask by another name).
+	// Not a limitation to be lifted later: the q-mode order is RE-DERIVED on every call from a live
+	// index plus a reranker with a fallback cascade, so page 2 can come out of a different ranking
+	// than page 1 with nothing on the wire to say so — and the candidate pool is bounded, so there
+	// is no tail behind it to page INTO. A token that promised otherwise would be lying.
+	const string CursorNeedsListingMode =
+		"tasks_search: cursor works in LISTING mode only — with `q` (or sort:relevance) there is no honest "
+		+ "cursor, because the relevance order is recomputed per call and the candidate pool is bounded, so "
+		+ "no page 2 of it exists to reach. A query is a relevance SELECTION, not an enumeration. Either "
+		+ "raise `limit` / narrow the query to get the selection you want in one call, or — if you need the "
+		+ "COMPLETE set — drop `q` and enumerate in listing mode with filters + cursor, or use tasks_delta.";
+
+	// The canonical sort-key value of one hit, as the string a cursor carries. Mirrors the axes
+	// TasksService sorts on (priority | title | created | updated); relevance never reaches here
+	// because a cursor is refused for it above.
+	static string CursorSortValue(TaskSearchHit h, TaskSortBy by) => by switch
+	{
+		TaskSortBy.Priority => h.Node.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+		TaskSortBy.Title => h.Node.Title,
+		TaskSortBy.Created => (h.Node.CreatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+		TaskSortBy.Updated => (h.Node.UpdatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
+	};
+
+	// How two of those canonical values compare — the SAME comparison the service sorted with, so
+	// the keyset predicate lands on the same boundary the ordering did (priority numerically, title
+	// case-insensitively, the timestamps as instants — never as text).
+	static Comparison<string> CursorSortComparison(TaskSortBy by) => by switch
+	{
+		TaskSortBy.Priority => static (a, b) =>
+			long.Parse(a, System.Globalization.CultureInfo.InvariantCulture).CompareTo(long.Parse(b, System.Globalization.CultureInfo.InvariantCulture)),
+		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
+		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) => DateTime.Parse(a, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
+			.CompareTo(DateTime.Parse(b, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
+		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
+	};
+
+	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected
+	// and in WHAT order. Deliberately EXCLUDES bodyLen/includeUrl/limit — those shape a page, not
+	// the sequence, so a caller may vary them mid-walk without invalidating the token.
+	static string SearchFingerprint(
+		string projectKey, string? board, string? underNode, string[]? status, string[]? nodes,
+		bool includeClosed, string? commit, string[]? statusKind, TaskSortBy axis, bool desc) =>
+		KeysetCursor.FingerprintOf(
+			"tasks_search", projectKey, board, underNode,
+			CursorFilterSet(status), CursorFilterSet(nodes), includeClosed ? "1" : "0",
+			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0");
+
+	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
+	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled
+	// would reject a perfectly valid cursor).
+	static string? CursorFilterSet(string[]? values) =>
+		values is null ? null : string.Join(',', values.Order(StringComparer.Ordinal));
 
 	// With a query the result is capped even when the caller asks for nothing specific —
 	// the candidate pool (max(3×limit, 50)) and this default keep the answer bounded.
@@ -940,7 +1063,8 @@ public static class TasksTools
 
 	// Surfaced on TaskSearchResultView.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =
-		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
+		"Output budget exceeded: node rows were truncated (see truncated/omitted). In a LISTING the " +
+		"rest is reachable: pass `nextCursor` back as `cursor` with the same arguments. Or narrow the " +
 		"read: `board` (one board), `underNode` (one part_of subtree), `status` (only the statuses " +
 		"you need), `nodes` (address specific nodes), `bodyLen` (snippet bodies), a smaller " +
 		"`limit`, `groupBy` (keys-only tag projection), or tasks_node_get for one full node.";

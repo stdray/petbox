@@ -1,0 +1,177 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace PetBox.Core.Contract;
+
+// The pagination token of a LISTING read, and its wire form (spec surface-economy /
+// bounded-result-sets — the other half of ResponseBudget, which lives next door).
+//
+// ResponseBudget answers "how much of the answer fits in one response"; it does NOT answer
+// "how do I get the rest". Without a resume token a corpus that outgrows the ~30k budget has
+// an UNREACHABLE TAIL: the budget is a constant, the board is not, and there is nothing to
+// ask the tail with. This type is that missing half — the position a caller hands back to
+// continue where the previous page stopped.
+//
+// KEYSET, NOT OFFSET. An offset ("skip the first 40") is wrong under concurrent writes: a row
+// inserted before the boundary silently re-serves a row, a row deleted before it silently
+// swallows one, and neither is visible to the caller. A keyset token names the LAST ROW THAT
+// WAS ACTUALLY EMITTED — (sort-key value, key, board) — inside a TOTAL order, so "after this
+// row" means the same thing no matter what happened elsewhere in the list. Precedent in this
+// codebase: LogCursor (PetBox.Log.Core/Query/LogCursor.cs) pages the log the same way, on its
+// own total key (TimestampMs, Id).
+//
+// STRICT ON DECODE — deliberately unlike LogCursor. LogCursor decodes leniently (garbage =
+// "no cursor") because its other consumer is an SSE reconnect, where a bad Last-Event-ID must
+// degrade to "from now on" instead of killing the stream. A tool call has no such excuse: a
+// caller that pages with a token from a DIFFERENT query is mid-enumeration, and silently
+// restarting them at the top of some other ordering hands back a page that looks valid and is
+// not. So a malformed token, and a token whose Fingerprint does not match the query being
+// served, are ERRORS with instructive text. The caller is told to restart WITHOUT the cursor —
+// an explicit act — rather than being restarted behind their back.
+//
+// FINGERPRINT. Everything that decides WHICH rows are selected and in WHAT order — the sort
+// axis, its direction, and every filter predicate — is hashed into the token (FingerprintOf).
+// Paging is only coherent within one such query; changing a filter mid-walk produces a
+// different fingerprint and therefore an error rather than two half-lists stapled together.
+// Knobs that change only how a row is RENDERED (bodyLen, url inclusion) or how many rows one
+// page carries (limit) are deliberately NOT in the fingerprint: they change the page, not the
+// sequence, and a caller may vary them between pages.
+//
+// KNOWN, ACCEPTED ANOMALY. A node whose SORT KEY changes between two pages (its priority is
+// edited, say) can be skipped or served twice — it moved across the boundary the token names.
+// Fixing that needs an as-of snapshot read of the whole board, which is out of proportion to
+// the anomaly; the tools that expose a cursor document it instead.
+public readonly record struct KeysetCursor(string Fingerprint, string SortValue, string Key, string Board)
+{
+	// Bumped only if the payload's SHAPE changes; an old token then fails decode loudly
+	// (see the strictness note above) instead of being misread as the new shape.
+	const int FormatVersion = 1;
+
+	// The token's payload. Short names because the encoded form travels in every page request
+	// and back in every response — a token is overhead, not content.
+	// internal, not private: System.Text.Json's reflection path constructs this through its
+	// primary constructor, and a private nested type is needlessly close to that edge.
+	internal sealed record Payload(
+		[property: JsonPropertyName("v")] int Version,
+		[property: JsonPropertyName("f")] string Fingerprint,
+		[property: JsonPropertyName("s")] string SortValue,
+		[property: JsonPropertyName("k")] string Key,
+		[property: JsonPropertyName("b")] string Board);
+
+	static readonly JsonSerializerOptions TokenJson = new(JsonSerializerDefaults.Web);
+
+	// base64 of the JSON payload — OPAQUE by contract: the fields above are an implementation
+	// detail a caller must not parse, construct or edit. Base64 (not raw JSON) is what makes
+	// that stick: it is one line, safe in a JSON string argument, and visibly not a structure
+	// to reach into.
+	public string Encode() =>
+		Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(
+			new Payload(FormatVersion, Fingerprint, SortValue, Key, Board), TokenJson));
+
+	// Decode a token issued for the query identified by `expectedFingerprint`. Throws
+	// ArgumentException — never returns null, never falls back to "start from the top" — for a
+	// token that is malformed, of an unknown format version, or issued for a DIFFERENT query.
+	// `subject` names the tool in the error text so the message reads as advice, not a stack
+	// trace ("tasks_search: cursor …").
+	public static KeysetCursor Decode(string? cursor, string expectedFingerprint, string subject)
+	{
+		if (string.IsNullOrWhiteSpace(cursor))
+			throw new ArgumentException($"{subject}: cursor is empty — omit it to start from the first page");
+
+		Payload? p;
+		try
+		{
+			p = JsonSerializer.Deserialize<Payload>(Convert.FromBase64String(cursor), TokenJson);
+		}
+		catch (Exception e) when (e is FormatException or JsonException)
+		{
+			throw new ArgumentException(
+				$"{subject}: cursor is not a pagination token issued by this tool — a cursor is OPAQUE, "
+				+ "pass back the `nextCursor` from the previous page verbatim, or omit it to start over");
+		}
+
+		if (p is null || p.Version != FormatVersion || p.Fingerprint.Length == 0)
+			throw new ArgumentException(
+				$"{subject}: cursor is malformed or from an older token format — omit it to start over");
+
+		// The whole point of the strict decode: a token from another query is refused, not
+		// silently honoured against the wrong ordering.
+		if (!string.Equals(p.Fingerprint, expectedFingerprint, StringComparison.Ordinal))
+			throw new ArgumentException(
+				$"{subject}: this cursor was issued for a DIFFERENT query — the sort axis or a filter "
+				+ "changed since the page it came from, so continuing would splice two orderings. Keep "
+				+ "the query identical while paging, or drop the cursor to start the new query over.");
+
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board);
+	}
+
+	// The query identity a token is bound to: an order-sensitive hash of the caller-supplied
+	// parts that decide selection + ordering. Null and "" stay distinguishable (an absent filter
+	// is not an empty one — null becomes RS) and the parts join on US: two control characters no
+	// slug, board name or sort axis can contain, so no part can impersonate a boundary.
+	public static string FingerprintOf(params string?[] parts)
+	{
+		var joined = string.Join('\u001f', parts.Select(p => p ?? "\u001e"));
+		// Truncated to 10 bytes / 20 hex chars: this is a collision-shaped equality check on
+		// caller-supplied text, not a security boundary, and the token rides every request.
+		return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)).AsSpan(0, 10)).ToLowerInvariant();
+	}
+
+	// The rows of `ordered` that come strictly AFTER this cursor's position, where `ordered` is
+	// already sorted by (sort value, key, board) — the exact order the caller paged last time.
+	//
+	// Two ways to find the boundary, in this order:
+	//  1. IDENTITY. If the row named by the token is still in the list, resume right after it,
+	//     wherever it now sits. This is exact and immune to any modelling error in the
+	//     comparison below — and it is also the honest reading of the accepted anomaly: you
+	//     continue after the row you last SAW.
+	//  2. COMPARISON. If that row is gone (deleted, renamed, filtered out since), fall back to
+	//     the keyset predicate — skip while the row is not after the token. Deleting the
+	//     boundary row must not restart the walk.
+	//
+	// `sortComparison` compares two canonical sort-value strings for the axis in play; the
+	// caller supplies it because only the caller knows whether "12" is a number, a title or a
+	// timestamp. `desc` inverts the PRIMARY key only — key/board tie-breakers are ascending in
+	// both directions, matching how the sorts are actually built.
+	public static IReadOnlyList<T> Advance<T>(
+		IReadOnlyList<T> ordered,
+		KeysetCursor cursor,
+		Func<T, (string Sort, string Key, string Board)> keyOf,
+		Comparison<string> sortComparison,
+		bool desc,
+		string subject)
+	{
+		for (var i = 0; i < ordered.Count; i++)
+		{
+			var (_, key, board) = keyOf(ordered[i]);
+			if (string.Equals(key, cursor.Key, StringComparison.Ordinal)
+				&& string.Equals(board, cursor.Board, StringComparison.Ordinal))
+				return i + 1 >= ordered.Count ? [] : ordered.Skip(i + 1).ToList();
+		}
+
+		try
+		{
+			return ordered.SkipWhile(r => !IsAfter(keyOf(r), cursor, sortComparison, desc)).ToList();
+		}
+		catch (Exception e) when (e is FormatException or OverflowException)
+		{
+			// Only reachable from a forged token that somehow carries a matching fingerprint —
+			// still an explicit refusal rather than a 500 out of a comparison delegate.
+			throw new ArgumentException(
+				$"{subject}: cursor carries a position that does not belong to this sort axis — omit it to start over");
+		}
+	}
+
+	static bool IsAfter(
+		(string Sort, string Key, string Board) row, KeysetCursor cursor, Comparison<string> sortComparison, bool desc)
+	{
+		var cmp = sortComparison(row.Sort, cursor.SortValue);
+		if (desc) cmp = -cmp;
+		if (cmp != 0) return cmp > 0;
+		cmp = string.CompareOrdinal(row.Key, cursor.Key);
+		if (cmp != 0) return cmp > 0;
+		return string.CompareOrdinal(row.Board, cursor.Board) > 0;
+	}
+}
