@@ -91,7 +91,7 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 	{
 		var r = await Call("tasks_node_get", new { projectKey = ProjectKey, board, node });
 		IsErr(r).Should().BeFalse(Text(r));
-		return Parse(r).GetProperty("node");
+		return Parse(r).GetProperty("nodes")[0].GetProperty("node");
 	}
 
 	// The `support` definition; parameterized so v2 variants (status/type rename) build the
