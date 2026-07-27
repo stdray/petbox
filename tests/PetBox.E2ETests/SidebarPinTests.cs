@@ -54,7 +54,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 			await Expect(pin).ToBeVisibleAsync();
 			// Default state is pinned: the drawer is docked open, the button pressed.
 			await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
-			await Expect(_page.Locator(".drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+			await Expect(_page.GetByTestId("app-drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 		}
 	}
 
@@ -68,7 +68,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		// Unpin: button un-presses and the drawer sheds its docked-open class.
 		await pin.ClickAsync();
 		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "false");
-		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 
 		// Choice is remembered (the petbox.ui cookie, written by ts/sidebar.ts through
 		// ui-state.ts's writeUiState) — a reload comes back unpinned. No manual cleanup needed
@@ -77,7 +77,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		// value, which lived in the shared storageState snapshot).
 		await _page.ReloadAsync();
 		await Expect(_page.GetByTestId("nav-sidebar-pin")).ToHaveAttributeAsync("aria-pressed", "false");
-		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 	}
 
 	// board-ui-review-findings #4 (sidebar-unpin-admin-trap): root cause was `_AdminLayout.cshtml`
@@ -100,7 +100,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 
 		// Unpin: the drawer closes and the pin button (inside it) goes along with it.
 		await pin.ClickAsync();
-		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 
 		// The hamburger toggle must be there AND actually visible at this (desktop) viewport —
 		// `lg:hidden` would make Playwright's own visibility check fail here, which is exactly
@@ -114,7 +114,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		// Re-pin from inside that overlay — no navigation happened at any point.
 		await pin.ClickAsync();
 		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
-		await Expect(_page.Locator(".drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 		_page.Url.Should().Contain(adminUrl, "the whole unpin/reopen/re-pin cycle must stay inside the admin zone — no trip to /ui required");
 	}
 
@@ -130,7 +130,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
 
 		await pin.ClickAsync();
-		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 		await Expect(toggle).ToBeVisibleAsync();
 
 		await toggle.ClickAsync();
@@ -138,7 +138,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 
 		await pin.ClickAsync();
 		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
-		await Expect(_page.Locator(".drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(_page.GetByTestId("app-drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 		_page.Url.Should().Contain(accountUrl, "the whole unpin/reopen/re-pin cycle must stay inside the account zone");
 	}
 
