@@ -159,6 +159,32 @@ public sealed class DeployToolsTests : IDisposable
 		cleared.GetProperty("deployment").GetProperty("runSpec").GetProperty("ports").ValueKind.Should().Be(JsonValueKind.Null);
 	}
 
+	// work/deploy-upsert-three-fields-still-full-put: the residual deploy_upsert instance of
+	// the same defect — an update that omits relocatable/requiredTags/configTags must keep
+	// them; explicit values change/clear them.
+	[Fact]
+	public async Task Upsert_Update_Omitted_Relocatable_RequiredTags_ConfigTags_Are_Kept_Explicit_Values_Change_Them()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory().AgentKeys(), "n1");
+		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img1", relocatable: true, requiredTags: "net.x", configTags: "env:prod"));
+		var id = created.GetProperty("deployment").GetProperty("id").GetString()!;
+
+		// update without relocatable/requiredTags/configTags -> must keep the stored ones
+		var kept = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img2", id: id));
+		kept.GetProperty("deployment").GetProperty("relocatable").GetBoolean().Should().BeTrue();
+		kept.GetProperty("deployment").GetProperty("requiredTags").GetString().Should().Be("net.x");
+		kept.GetProperty("deployment").GetProperty("configTags").GetString().Should().Be("env:prod");
+
+		// explicit relocatable:false / requiredTags:"" / configTags:"" change/clear them
+		var cleared = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img2", id: id, relocatable: false, requiredTags: "", configTags: ""));
+		cleared.GetProperty("deployment").GetProperty("relocatable").GetBoolean().Should().BeFalse();
+		cleared.GetProperty("deployment").GetProperty("requiredTags").GetString().Should().Be("");
+		cleared.GetProperty("deployment").GetProperty("configTags").GetString().Should().Be("");
+	}
+
 	// patch-vs-put-class-needs-a-mechanical-gate, deploy_node_upsert instance: an update that
 	// omits tags/ephemeral must keep them; explicit tags:"" / ephemeral:false reset them.
 	[Fact]

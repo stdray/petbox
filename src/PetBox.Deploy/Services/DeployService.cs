@@ -131,7 +131,10 @@ public sealed class DeployService : IDeployService
 				$"Service '{service}' already has a deployment on node '{nodeId}' (id {collision.Id}). One copy per node.");
 
 		var imageDigest = input.ImageDigest.Trim();
-		var configTags = NormalizeCsv(input.ConfigTags);
+		// PATCH semantics for Relocatable/RequiredTags/ConfigTags (see DeploymentInput doc):
+		// same omit=keep convention as NodeInput.Tags/.Ephemeral above — null keeps the
+		// existing row's value (or the create default), an explicit "" clears the CSV.
+		var configTags = input.ConfigTags is null ? existing?.ConfigTags ?? string.Empty : NormalizeCsv(input.ConfigTags);
 		// PATCH semantics (see DeploymentInput doc): merge the caller's RunSpec fields onto
 		// the row's previously stored one BEFORE normalizing/validating — Normalize collapses
 		// an explicit empty list to null, which would erase the omit-vs-clear distinction
@@ -146,8 +149,8 @@ public sealed class DeployService : IDeployService
 			NodeId = nodeId,
 			ImageDigest = imageDigest,
 			DesiredState = input.DesiredState,
-			Relocatable = input.Relocatable,
-			RequiredTags = NormalizeCsv(input.RequiredTags),
+			Relocatable = input.Relocatable ?? existing?.Relocatable ?? false,
+			RequiredTags = input.RequiredTags is null ? existing?.RequiredTags ?? string.Empty : NormalizeCsv(input.RequiredTags),
 			ConfigTags = configTags,
 			RunSpec = runSpecJson,
 			ConfigHash = ComputeConfigHash(imageDigest, configTags, input.DesiredState, project, runSpecJson),

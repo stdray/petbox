@@ -43,6 +43,16 @@ public sealed record NodeView(
 // list, "", or 0 for Cpus) clears it, anything else replaces it. See
 // DeployService.MergeRunSpec. A wholly-null DeploymentInput.RunSpec keeps every field
 // on update / yields the empty spec on create.
+//
+// Relocatable/RequiredTags/ConfigTags follow the SAME omit=keep convention (fixed
+// alongside NodeInput.Tags/.Ephemeral above — work/deploy-upsert-three-fields-still-full-put,
+// the residual instance fix/batch4-deploy-patch-semantics/447c148c deliberately left open):
+// on UPDATE, RequiredTags/ConfigTags null = keep the stored CSV, "" = clear it (same
+// NormalizeCsv convention as NodeInput.Tags); Relocatable null = keep the stored flag (no
+// separate clear sentinel — send true/false explicitly to change it, same as
+// NodeInput.Ephemeral). On CREATE (no existing row) null uniformly falls back to the
+// documented default (RequiredTags/ConfigTags "", Relocatable false), same as before these
+// went nullable. See DeployService.UpsertDeploymentAsync.
 public sealed record DeploymentInput(
 	string? Id,
 	string Service,
@@ -50,9 +60,9 @@ public sealed record DeploymentInput(
 	string NodeId,
 	string ImageDigest,
 	DesiredState DesiredState,
-	bool Relocatable,
-	string RequiredTags,
-	string ConfigTags,
+	bool? Relocatable,
+	string? RequiredTags,
+	string? ConfigTags,
 	RunSpec? RunSpec = null);
 
 // --- host report (agent-observed host state, refreshed by heartbeat) ---

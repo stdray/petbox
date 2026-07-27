@@ -68,14 +68,12 @@ public sealed class WriteVerbFieldOmissionShapeTests
 		// Service/Project/NodeId/ImageDigest = identity/always-required inputs, not mergeable.
 		// DesiredState = the tool's own deliberate always-set toggle (`running`, default true),
 		// same status as tasks_upsert's `status` — not a silent-merge field.
-		// Relocatable/RequiredTags/ConfigTags: RESIDUAL, UNCLOSED instance of this same class —
-		// fix/batch4-deploy-patch-semantics (447c148c) deliberately left them full-PUT ("not in
-		// the diagnosed instance; flagged as a residual risk, not silently 'fixed' by inventing a
-		// third semantics for them" — commit message). Still plain bool/string/string, so a caller
-		// cannot omit-to-keep; every deploy_upsert call must resend them in full. Excluded on
-		// purpose, not by oversight — do not drop this without giving these fields an actual
-		// keep/clear representation first.
-		{ "deploy_upsert", typeof(DeploymentInput), ["Id", "Service", "Project", "NodeId", "ImageDigest", "DesiredState", "Relocatable", "RequiredTags", "ConfigTags"] },
+		// Relocatable/RequiredTags/ConfigTags were the residual, unclosed instance of this same
+		// class that fix/batch4-deploy-patch-semantics (447c148c) deliberately left full-PUT —
+		// closed by work/deploy-upsert-three-fields-still-full-put: all three are now nullable
+		// (omit=keep, same convention as NodeInput.Tags/.Ephemeral), so nothing is excluded here
+		// anymore.
+		{ "deploy_upsert", typeof(DeploymentInput), ["Id", "Service", "Project", "NodeId", "ImageDigest", "DesiredState"] },
 	};
 
 	[Theory]
