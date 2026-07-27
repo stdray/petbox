@@ -29,6 +29,15 @@ public interface ISessionService
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
 
+	// KEYSET-paged header slice (spec listing-tail-reachable) — the ONE listing mechanic every
+	// network-facing session listing surface shares (the UI page, the REST history-importer
+	// endpoint): never an offset, a token naming the last row emitted. See
+	// ISessionStore.ListPageAsync for the full contract (fingerprint, tiebreak, strict decode);
+	// this is a straight delegation, kept here (not a direct ISessionStore reach) because
+	// PetBox.Web.Sessions/PetBox.Web.Mcp are NetArchTest-forbidden from touching the store.
+	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, string? agent,
+		SessionSortField sort, bool sortDesc, string? cursor, int pageSize, CancellationToken ct = default);
+
 	// Resolve a possibly-shortened session id (a unique PREFIX of a full id) to the stored full
 	// id, so a human/agent can address a session by its first few chars — the short form that
 	// digests and session_search snippets use — instead of pasting the whole UUID. Read/delete

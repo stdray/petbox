@@ -112,6 +112,10 @@ public sealed class SessionService : ISessionService
 	public Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default) =>
 		_sessions.ListAsync(projectKey, ct);
 
+	public Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, string? agent,
+		SessionSortField sort, bool sortDesc, string? cursor, int pageSize, CancellationToken ct = default) =>
+		_sessions.ListPageAsync(projectKey, search, agent, sort, sortDesc, cursor, pageSize, ct);
+
 	// Prefix resolution is a pure read — delegate straight to the store. The write path
 	// (Upsert/Append) deliberately does NOT call this: it addresses by the exact id it's given.
 	public Task<SessionIdResolution> ResolveIdAsync(string projectKey, string idOrPrefix, CancellationToken ct = default) =>
