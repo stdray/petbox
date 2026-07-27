@@ -66,6 +66,10 @@ public static class AgentDefTools
 		Store a portable agent-definition document (roles/tier/requiredCapabilities/spawn/
 		escalation/notes). Does NOT carry model binding — role.model is rejected. `key` is the
 		definition slug; `version` is the watermark baseline from agent_def_get (0 = create).
+		Full-document REPLACE, not a per-field patch: `definition` OVERWRITES the whole stored
+		document — a role or field present in the OLD document but ABSENT from THIS call's
+		`definition` is GONE, not kept (there is no merge, unlike memory_upsert/tasks_upsert).
+		Read via agent_def_get, edit, then resubmit the COMPLETE document.
 		Identical resubmit → changed:false. Returns { key, version, changed }. Requires agents:write.
 		""")]
 	public static async Task<AgentDefUpsertResult> UpsertAsync(

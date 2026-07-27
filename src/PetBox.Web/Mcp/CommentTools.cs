@@ -36,8 +36,8 @@ public static class CommentTools
 	[Description("""
 		Batch declarative upsert of node comments (uniform-entity-verbs). Each item: {id?, node?,
 		parentId?, author?, body, tags?, version?}. `id` ABSENT ⇒ CREATE (needs node + author;
-		parentId = a COMMENT id, NOT a node ref, makes it a reply); `id` PRESENT ⇒ PATCH body/tags
-		under a `version` WATERMARK (a stale baseline ⇒ conflict, never clobber; version:0 = new,
+		parentId = a COMMENT id, NOT a node ref, makes it a reply); `id` PRESENT ⇒ PATCH body and, when `tags` is given, the WHOLE tag set — `tags:[]`
+		CLEARS it, omit `tags` to leave it as-is — under a `version` WATERMARK (a stale baseline ⇒ conflict, never clobber; version:0 = new,
 		exactly like tasks_upsert). `body` is GFM markdown — `##` headings and REAL newlines, NOT
 		literal `\n`, NOT `==headings==`. `applied` is the SINGLE source of truth — false = nothing
 		written, see conflicts[]. Requires tasks:write.

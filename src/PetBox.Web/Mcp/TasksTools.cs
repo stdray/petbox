@@ -347,6 +347,9 @@ public static class TasksTools
 	[Description("""
 		Replace the RULES of a LIVE methodology INSTANCE with optimistic concurrency and
 		declarative live-node migration. Does NOT mutate templates or other instances.
+		Replace means the WHOLE document: a field omitted ANYWHERE inside `definition` — not
+		just at the top level — is REMOVED from what gets stored, not left as-is. There is no
+		per-field merge; resend the COMPLETE document every time (rules_get, edit, resubmit whole).
 		`name` addresses the instance; `version` is the watermark baseline from
 		tasks_methodology_rules_get (a stale/future baseline is a clear conflict).
 		`definition` is the same document shape as tasks_methodology_template_upsert. A CHANGE
@@ -547,7 +550,10 @@ public static class TasksTools
 		Store a NAMED METHODOLOGY TEMPLATE — a reusable process document (kinds/types/
 		statuses/transitions) independent of running methodology instances. Does NOT create
 		boards and does NOT rewrite live nodes (no migration planner — templates are inert
-		documents). `key` is the template slug; `version` is the watermark baseline from your
+		documents). Whole-document REPLACE, same as rules_upsert: a field omitted ANYWHERE
+		inside `definition` is REMOVED from what gets stored, not left as-is — resend the
+		COMPLETE document every time (template_get, edit, resubmit whole). `key` is the
+		template slug; `version` is the watermark baseline from your
 		last template_get (0 = create). Builtin keys (quartet|classic|simple) are read-only
 		and rejected on write — copy into a new key instead. `definition` shape:
 		{ name, kinds:[{ kind, quickAddAllowed?, workflows:[{ types, statuses, transitions }],
@@ -997,16 +1003,20 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
-		Declarative temporal PATCH-upsert of plan nodes (omitted field = unchanged; tags:[] clears;
-		delete via {key, deleted:true}). Each node has a FLAT slug `key` and nests via `partOf`.
+		Declarative temporal PATCH-upsert of plan nodes. On an EDIT (version > 0) an omitted field
+		stays unchanged, tags:[] clears; on a NEW node (version 0) an omitted field starts empty —
+		there is no prior value to inherit. Delete via {key, deleted:true}. Each node has a FLAT slug
+		`key` and nests via `partOf`.
 		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
 		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
 		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
 
 		[[full]]
-		Declarative PATCH per node (omitted field = unchanged; tags: [] clears, omit leaves
-		as-is) — a temporal upsert of plan nodes. Requires tasks:write.
+		Declarative PATCH per node — a temporal upsert of plan nodes. On an EDIT (version > 0) an
+		omitted field stays unchanged; tags: [] clears, omit leaves as-is. On a NEW node (version 0)
+		an omitted field starts empty/default (there is no prior value an omission could preserve) —
+		same on-create convention as memory_upsert. Requires tasks:write.
 
 		Each node has a FLAT `key` — a single slug [a-z][a-z0-9_-]{0,99} (no '/'; the old
 		l1/l2/l3 path is gone). Nesting is the `partOf` field: a parent slug (on this board)
