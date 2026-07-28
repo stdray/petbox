@@ -16,38 +16,64 @@ namespace PetBox.Tests.Tasks;
 // makes the semantic leg reproducible so we can assert (a) the fused union, (b) graceful
 // degrade to lexical-only when embedding is absent, (c) the model/dim guard that ignores
 // incomparable stored vectors, (d) Cyrillic lexical match, and (e) board-filter scoping.
-public sealed class TasksHybridSearchTests : IDisposable
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// tasks DB files are the expensive part of the constructor, not the thin store wrappers over them —
+// the fixture owns the files, the test class rebuilds the (cheap) stores/services fresh per test.
+// Per-test DATA isolation is TestDataReset.WipeAllTables over the tasks file plus a TaskBoards wipe
+// in core (the board catalog lives there, not in the tasks file — TaskBoardStore) — not
+// TestDirs.ResetDbFile, which costs more than a fresh templated copy (see TestDataReset).
+public sealed class TasksHybridSearchFixture : IDisposable
 {
-	const string Proj = "proj";
+	public const string Proj = "proj";
+
 	readonly string _dir;
-	readonly PetBoxDb _db;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<TasksDb> Factory { get; }
+
+	public TasksHybridSearchFixture()
+	{
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-taskshybrid-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_dir);
+		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
+		TestSchema.Core(cs);
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		Factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
+	}
+
+	public void Reset()
+	{
+		Db.TaskBoards.Where(b => b.ProjectKey == Proj).Delete();
+		using var tasks = Factory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(tasks);
+	}
+
+	public void Dispose()
+	{
+		Db.Dispose();
+		Factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixture>
+{
+	const string Proj = TasksHybridSearchFixture.Proj;
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TaskBoardStore _store;
 	readonly RelationStore _relations;
 	readonly CommentService _commentSvc;
 	readonly TagStore _tags;
 
-	public TasksHybridSearchTests()
+	public TasksHybridSearchTests(TasksHybridSearchFixture fx)
 	{
-		_dir = Path.Combine(Path.GetTempPath(), "petbox-taskshybrid-" + Guid.NewGuid().ToString("N"));
-		Directory.CreateDirectory(_dir);
-		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
-			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
-		_store = new TaskBoardStore(_db.Factory(), _factory);
-		_relations = new RelationStore(_factory);
-		_commentSvc = new CommentService(_factory);
-		_tags = new TagStore(_factory);
-	}
-
-	public void Dispose()
-	{
-		_db.Dispose();
-		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		TestDirs.CleanupOrDefer(_dir);
+		fx.Reset();
+		_factory = fx.Factory;
+		_store = new TaskBoardStore(fx.Db.Factory(), fx.Factory);
+		_relations = new RelationStore(fx.Factory);
+		_commentSvc = new CommentService(fx.Factory);
+		_tags = new TagStore(fx.Factory);
 	}
 
 	TasksService Service(ILlmClient? llm) => new(_store, _relations, _tags, _commentSvc, llm);

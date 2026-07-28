@@ -31,15 +31,67 @@ namespace PetBox.Tests.Sessions;
 // mode. What must still hold is everything else: pages concatenate to the unpaged answer, a repeat walk
 // reproduces it, the stop reason is stated in the SAME words the other surfaces use, and a discovery
 // order that moved under an in-flight cursor is a refusal rather than a silent restart.
-public sealed class SessionSearchCursorTests : IDisposable
+//
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// sessions + memory DB files are the expensive part of this class's constructor, not the thin service
+// wrappers over them, so the fixture owns the FILES and the test class rebuilds the (cheap) services
+// fresh per test. Per-test DATA isolation is TestDataReset.WipeAllTables over both per-project files —
+// not TestDirs.ResetDbFile, which costs more than a fresh templated copy (see TestDataReset). The
+// episodic index (_episodic) is deliberately rebuilt per test rather than shared: its hydration cache
+// keys on (sessionId, session Version), and a reset test reusing the same session ids would otherwise
+// risk a stale cache hit against a same-numbered version from the PREVIOUS test's data.
+public sealed class SessionSearchCursorFixture : IDisposable
 {
-	const string Proj = "proj";
-	static readonly TimeSpan NoQuiet = TimeSpan.FromMinutes(-5);
+	public const string Proj = "proj";
 
 	readonly string _dir;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<SessionsDb> SessionsFactory { get; }
+	public ScopedDbFactory<MemoryDb> MemoryFactory { get; }
+
+	public SessionSearchCursorFixture()
+	{
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-sesscursor-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_dir);
+		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
+		TestSchema.Core(cs);
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		SessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
+			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
+		MemoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
+			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
+	}
+
+	// Wipe both per-project files, plus the memory store CATALOG (MemoryStoreMeta lives in core,
+	// like TaskBoards — MemoryStore.CreateAsync throws "already exists" against a leftover row).
+	// The core Project row itself is never mutated by these tests, so it (and the migrated schema
+	// everywhere) is left alone.
+	public void Reset()
+	{
+		Db.MemoryStores.Where(s => s.ProjectKey == Proj).Delete();
+		using var sessions = SessionsFactory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(sessions);
+		using var memory = MemoryFactory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(memory);
+	}
+
+	public void Dispose()
+	{
+		Db.Dispose();
+		SessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		MemoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class SessionSearchCursorTests : IClassFixture<SessionSearchCursorFixture>, IDisposable
+{
+	const string Proj = SessionSearchCursorFixture.Proj;
+	static readonly TimeSpan NoQuiet = TimeSpan.FromMinutes(-5);
+
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<SessionsDb> _sessionsFactory;
-	readonly ScopedDbFactory<MemoryDb> _memoryFactory;
 	readonly SessionService _sessions;
 	readonly MemoryService _memory;
 	readonly DuckDbSessionEpisodicIndex _episodic;
@@ -48,20 +100,13 @@ public sealed class SessionSearchCursorTests : IDisposable
 	readonly ISettingsResolver _settingsResolver;
 	readonly SessionSearchService _search;
 
-	public SessionSearchCursorTests()
+	public SessionSearchCursorTests(SessionSearchCursorFixture fx)
 	{
-		_dir = Path.Combine(Path.GetTempPath(), "petbox-sesscursor-" + Guid.NewGuid().ToString("N"));
-		Directory.CreateDirectory(_dir);
-		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
-			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
-		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
-			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
+		fx.Reset();
+		_db = fx.Db;
+		_sessionsFactory = fx.SessionsFactory;
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
-		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), llm: null);
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
 		_termIndex = new SessionTermIndex(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions);
 		_fullScanIndex = new SessionFullScanIndex(_sessions);
@@ -69,14 +114,7 @@ public sealed class SessionSearchCursorTests : IDisposable
 		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
 	}
 
-	public void Dispose()
-	{
-		_episodic.Dispose();
-		_db.Dispose();
-		_sessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		_memoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		TestDirs.CleanupOrDefer(_dir);
-	}
+	public void Dispose() => _episodic.Dispose();
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();

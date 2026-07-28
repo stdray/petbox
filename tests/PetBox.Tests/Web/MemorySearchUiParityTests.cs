@@ -28,24 +28,28 @@ namespace PetBox.Tests.Web;
 // LLM route configured, so the semantic leg degrades to lexical-only FTS5 — reported honestly by
 // both surfaces' retriever provenance; the parity claim is about ranking/filtering agreement, not
 // about the semantic leg specifically).
-public sealed class MemorySearchUiParityTests : IAsyncLifetime
+// Shared per-class host (work share-fixtures-across-per-test-classes): xUnit news the test
+// class per test, so without this fixture each of the 4 tests boots its own WebApplicationFactory.
+// No per-test reset needed — every [Fact] below only READS the dataset seeded once here; none of
+// them writes, so there is nothing a later test could observe leaking from an earlier one.
+public sealed class MemorySearchUiParityFixture : IAsyncLifetime
 {
-	const string Ws = "ws";
-	const string Proj = "proj";
-	const string DeployKey = "note-deploy-ru";
-	const string UnrelatedKey = "note-weather-ru";
-	const string WorkspaceDeployKey = "note-ws-deploy-ru";
-	const string OtherStoreKey = "note-decisions-ru";
+	public const string Ws = "ws";
+	public const string Proj = "proj";
+	public const string DeployKey = "note-deploy-ru";
+	public const string UnrelatedKey = "note-weather-ru";
+	public const string WorkspaceDeployKey = "note-ws-deploy-ru";
+	public const string OtherStoreKey = "note-decisions-ru";
 
 	string _baseDir = "";
-	WebApplicationFactory<Program> _factory = null!;
-	HttpClient _client = null!;
+	public WebApplicationFactory<Program> Factory { get; private set; } = null!;
+	public HttpClient Client { get; private set; } = null!;
 
 	public async ValueTask InitializeAsync()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-memparity-" + Guid.NewGuid().ToString("N"));
-		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment("Testing");
 			b.ConfigureAppConfiguration((_, cfg) =>
@@ -69,14 +73,14 @@ public sealed class MemorySearchUiParityTests : IAsyncLifetime
 			});
 		});
 
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 		using (var db = new PetBoxDb(PetBoxDb.CreateOptions(cs)))
 			db.Insert(new PetBox.Core.Models.Project { Key = Proj, WorkspaceKey = Ws, Name = "P", Description = "" });
 
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
 		// The workspace's shared-memory container needs its own Projects row before anything can
 		// be written to it (MemoryStore.CreateAsync checks project existence) — same lazy-ensure
@@ -129,9 +133,28 @@ public sealed class MemorySearchUiParityTests : IAsyncLifetime
 
 	public async ValueTask DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+public sealed class MemorySearchUiParityTests : IClassFixture<MemorySearchUiParityFixture>
+{
+	const string Ws = MemorySearchUiParityFixture.Ws;
+	const string Proj = MemorySearchUiParityFixture.Proj;
+	const string DeployKey = MemorySearchUiParityFixture.DeployKey;
+	const string UnrelatedKey = MemorySearchUiParityFixture.UnrelatedKey;
+	const string WorkspaceDeployKey = MemorySearchUiParityFixture.WorkspaceDeployKey;
+	const string OtherStoreKey = MemorySearchUiParityFixture.OtherStoreKey;
+
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+
+	public MemorySearchUiParityTests(MemorySearchUiParityFixture fx)
+	{
+		_factory = fx.Factory;
+		_client = fx.Client;
 	}
 
 	// Logs in (anti-forgery + cookie) and returns the authenticated response for url — same recipe
