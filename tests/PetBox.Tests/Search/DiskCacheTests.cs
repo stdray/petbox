@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Distributed;
 using PetBox.Core.Data;
@@ -318,6 +319,61 @@ public sealed class DiskCacheTests : IDisposable
 		got.Body["deploy"].Should().Equal(0, 1);
 		got.Body["cache"].Should().Equal(1);
 		got.Title["deploy"].Should().Equal(0);
+	}
+
+	// ── the sweep interval is configurable, and its absence changes nothing ───────────────────────
+
+	[Fact]
+	public void TheSweepInterval_BindsFromTheCacheSection()
+	{
+		// appsettings, not the Config module: PetBox never self-configures through ConfigModule
+		// (AGENTS.md hard invariant — that module serves EXTERNAL consumers), and a process-level
+		// restart-only knob belongs beside the connection string per doc/settings-taxonomy.md.
+		var config = new ConfigurationBuilder()
+			.AddInMemoryCollection(new Dictionary<string, string?> { ["Cache:CleanupInterval"] = "00:02:30" })
+			.Build();
+
+		var bound = config.GetSection("Cache").Get<SqliteDistributedCacheOptions>();
+
+		bound.Should().NotBeNull();
+		bound.CleanupInterval.Should().Be(TimeSpan.FromMinutes(2.5));
+	}
+
+	[Fact]
+	public void NoCacheSection_LeavesTheCompiledDefaultsExactlyAsTheyWere()
+	{
+		// The shipped appsettings.json deliberately carries NO `Cache` section, so this is the path
+		// production actually takes. It has to land on the same 15 minutes the type declares — a
+		// config binding that quietly changes behaviour by existing would be worse than none.
+		var config = new ConfigurationBuilder().Build();
+
+		var options = config.GetSection("Cache").Get<SqliteDistributedCacheOptions>()
+			?? new SqliteDistributedCacheOptions();
+
+		options.CleanupInterval.Should().Be(TimeSpan.FromMinutes(15));
+		options.CleanupInterval.Should().Be(new SqliteDistributedCacheOptions().CleanupInterval,
+			"the no-section path and the compiled default are the same thing, not two numbers that agree today");
+	}
+
+	[Fact]
+	public void TheShippedAppsettings_CarriesNoCacheSection_SoTheDefaultIsTheOneThatShips()
+	{
+		// Pins the claim the test above rests on. If someone adds a `Cache` section to the shipped
+		// appsettings, this fails and they have to decide deliberately whether the default moved.
+		var appsettings = Path.Combine(RepoRoot(), "src", "PetBox.Web", "appsettings.json");
+		File.Exists(appsettings).Should().BeTrue($"expected the shipped appsettings at {appsettings}");
+
+		using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appsettings));
+		doc.RootElement.TryGetProperty("Cache", out _).Should().BeFalse(
+			"the shipped config leaves the disk cache on its compiled defaults; a section here means the "
+			+ "default now lives in two places");
+	}
+
+	static string RepoRoot()
+	{
+		var dir = new DirectoryInfo(AppContext.BaseDirectory);
+		while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AGENTS.md"))) dir = dir.Parent;
+		return dir?.FullName ?? throw new InvalidOperationException("repo root (the dir holding AGENTS.md) not found");
 	}
 
 	[Fact]

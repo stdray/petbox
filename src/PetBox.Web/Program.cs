@@ -207,9 +207,20 @@ public partial class Program
 		// subtree whole.
 		builder.Services.AddSingleton<ICacheDbFactory>(sp =>
 			new CacheDbFactory(CacheSchema.ConnectionString(ResolveCacheDbPath(sp))));
+		//
+		// Bound from `appsettings.json`, section `Cache`. That is not a free choice between two
+		// mechanisms: PetBox NEVER configures itself through its own Config module (AGENTS.md, hard
+		// invariants — ConfigModule serves EXTERNAL consumers), and doc/settings-taxonomy.md puts a
+		// process-level restart-only knob owned by whoever runs the box in appsettings alongside the
+		// connection string and the feature gates. Same `?? new T()` shape as SearchOrderingPolicies /
+		// SessionFullScanOptions / SessionEpisodicOptions above, and like those the section is absent
+		// from the shipped appsettings.json: absence must land on exactly the compiled defaults, and
+		// the surest way to guarantee that is to have nothing to keep in sync.
+		var cacheOptions = builder.Configuration.GetSection("Cache").Get<SqliteDistributedCacheOptions>()
+			?? new SqliteDistributedCacheOptions();
 		builder.Services.AddSingleton<IDistributedCache>(sp => new SqliteDistributedCache(
 			sp.GetRequiredService<ICacheDbFactory>(),
-			new SqliteDistributedCacheOptions(),
+			cacheOptions,
 			sp.GetService<ILogger<SqliteDistributedCache>>()));
 		// The facade over it. L1 is switched OFF at every call site (see SearchPoolCache), so this is
 		// NOT here to hold a second copy in memory — it is here for the other thing it does: single-
