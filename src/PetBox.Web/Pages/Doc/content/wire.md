@@ -8,8 +8,18 @@ Requires **Node ≥ 23.6** (the kit is plain TypeScript run through native type-
 
 Run the full wire once per project directory. You need an API key for that project first — mint it on the project's **Connect agent** page in the UI; `petbox-wire` never mints keys.
 
+Pass the key as an **environment variable**, not `--key <KEY>` — npm writes the full command line
+of every invocation to `~/.npm/_logs/*.log` in plain text with no rotation, so an argument-passed
+key sits there readable indefinitely; an env-var assignment is never part of that logged argv.
+`petbox-wire` already reads the key straight from `process.env[VAR]` when `--key` is omitted, so
+no extra flag is needed:
+
 ```
-npx petbox-wire <dir> <projectKey> --key <API_KEY>
+# bash / zsh
+PETBOX_<PROJECT>_API_KEY=<API_KEY> npx petbox-wire <dir> <projectKey>
+
+# PowerShell
+$env:PETBOX_<PROJECT>_API_KEY='<API_KEY>'; npx petbox-wire <dir> <projectKey>
 ```
 
 It validates the key against the server **before** persisting anything, so a bad key never lands in your stores. Re-running is idempotent and self-heals a half-wired machine.
@@ -17,7 +27,7 @@ It validates the key against the server **before** persisting anything, so a bad
 | Flag | Effect |
 | --- | --- |
 | `--env VAR` | Name of the environment variable holding the key. Overrides the derived / registered name. |
-| `--key KEY` | The API key. Omitted → taken from the environment variable, then from `~/.petbox/keys.json`. |
+| `--key KEY` | The API key, passed directly. Still supported, but every use prints a warning: npm logs the full argv (this key included) to `~/.npm/_logs/*.log` in plain text with no rotation. Prefer the environment variable above. Omitted → taken from the environment variable, then from `~/.petbox/keys.json`. |
 | `--workspace WS` | Workspace stamped into the generated skill. Omitted → the workspace the server reports for your key. There is no hardcoded fallback: if the server reports none and you pass no flag, the wire stops with a usage error (exit 2). |
 | `--cleanup-legacy` | Remove wiring artefacts left by older kit versions from the project. |
 | `--telemetry` | Wire Claude Code OTLP export into the project's `.claude/settings.json` (off by default; Claude Code only). |

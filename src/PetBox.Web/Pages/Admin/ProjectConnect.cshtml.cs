@@ -63,12 +63,22 @@ public sealed class ProjectConnectModel : PageModel
 	public string? NewKey { get; private set; }
 
 	// The one-command wiring line: runs the npm kit from the project folder (`.`), passing the
-	// freshly minted key + per-project env-var name. Single source of truth for both the rendered
-	// <pre> and the copy button. Null until a key is minted. The project key is single-quoted so
-	// `$`-prefixed keys (e.g. "$system") aren't eaten by the shell.
-	public string? WireCommand => NewKey is null
+	// per-project env-var name. Deliberately NOT `--key <KEY>`: npm writes the full argv of every
+	// invocation to `~/.npm/_logs/*.log` in plain text with no rotation, so a key passed as an
+	// argument sits there readable indefinitely (key-in-argv-npm-log-leak, E2E onboarding finding
+	// 2026-07-28). Instead the key is exported as the env var `petbox-wire` already reads on its
+	// own (`process.env[envVar]` in wire.ts, no `--key` needed) — an env assignment is never part
+	// of argv, so it never reaches the npm debug log. Two forms because `VAR=value cmd` is POSIX
+	// shell syntax that PowerShell/cmd do not understand; the project key is single-quoted in both
+	// so a `$`-prefixed key (e.g. "$system") isn't eaten by the shell. Single source of truth for
+	// both rendered <pre> blocks and their copy buttons. Null until a key is minted.
+	public string? WireCommandPosix => NewKey is null
 		? null
-		: $"npx -y petbox-wire@latest . '{ProjectKey}' --key {NewKey} --env {EnvVarName}";
+		: $"{EnvVarName}={NewKey} npx -y petbox-wire@latest . '{ProjectKey}' --env {EnvVarName}";
+
+	public string? WireCommandPowerShell => NewKey is null
+		? null
+		: $"$env:{EnvVarName}='{NewKey}'; npx -y petbox-wire@latest . '{ProjectKey}' --env {EnvVarName}";
 
 	public IReadOnlyList<ApiKeyScope> AllScopes => ApiKeyScopes.All;
 

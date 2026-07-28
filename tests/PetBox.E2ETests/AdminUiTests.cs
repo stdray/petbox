@@ -47,11 +47,26 @@ public sealed class AdminUiTests(WebAppFixture app, ITestOutputHelper output) : 
 		var keyValue = (await _page.GetByTestId("connect-key-value").InnerTextAsync()).Trim();
 		keyValue.Should().StartWith("yb_key_");
 
-		// The one-command instruction carries the kit invocation, the fresh key and the env var.
+		// The one-command instruction carries the kit invocation, the fresh key and the env var —
+		// but the key rides as an env-var assignment, never as a `--key` argument: npm logs the
+		// full argv of every invocation to ~/.npm/_logs/*.log in plain text with no rotation, so a
+		// key passed as an argument leaks there (key-in-argv-npm-log-leak, E2E onboarding finding
+		// 2026-07-28). An env assignment is never part of argv.
 		var npx = await _page.GetByTestId("connect-npx-command").InnerTextAsync();
 		npx.Should().Contain("npx -y petbox-wire@latest");
 		npx.Should().Contain(keyValue);
 		npx.Should().Contain("--env PETBOX_SYSTEM_API_KEY");
+		npx.Should().StartWith("PETBOX_SYSTEM_API_KEY=");
+		npx.Should().NotContain("--key");
+
+		// Windows gets a PowerShell-syntax variant of the same command — `VAR=value cmd` is POSIX
+		// shell syntax and is not understood by PowerShell/cmd.
+		var pwsh = await _page.GetByTestId("connect-npx-command-powershell").InnerTextAsync();
+		pwsh.Should().Contain("npx -y petbox-wire@latest");
+		pwsh.Should().Contain(keyValue);
+		pwsh.Should().Contain("--env PETBOX_SYSTEM_API_KEY");
+		pwsh.Should().Contain("$env:PETBOX_SYSTEM_API_KEY=");
+		pwsh.Should().NotContain("--key");
 
 		// Appears in the sysadmin management list; revoke it there.
 		await _page.GotoAsync("/ui/admin/sys/agent-keys");
