@@ -1,0 +1,3 @@
+@model PetBox.Web.Pages.Shared.SearchQueryBoxModel
+<input type="@Model.Type" name="@Model.Name" value="@Model.Value" placeholder="@Model.Placeholder"
+	class="@Model.CssClass" data-testid="@Model.TestId" autofocus="@(Model.Autofocus ? "autofocus" : null)" />

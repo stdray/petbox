@@ -21,6 +21,11 @@ public sealed class SearchPoolPagingTests
 {
 	const string Scope = "proj";
 
+	// The declared candidate budget (RerankCandidateBudget, default 160). Taken from the type rather
+	// than written as a literal: these fixtures used to hardcode 495, the old latency-DERIVED ceiling,
+	// and went stale the moment the budget became a declared number.
+	static readonly int DeclaredBudget = new RerankCandidateBudget().Candidates();
+
 	// ── the pool IS the order, and top-k is its prefix ────────────────────────────────────────
 
 	[Fact]
@@ -74,7 +79,7 @@ public sealed class SearchPoolPagingTests
 	[Fact]
 	public async Task PoolWithinTheBudget_ReportsNotBounded_MeaningTrulyExhausted()
 	{
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var limit = budget.Candidates();
 		var svc = new SearchService([new StubIndex(Enumerable.Range(0, limit - 1).Select(i => $"n{i:d3}"))], budget: budget);
 
@@ -90,7 +95,7 @@ public sealed class SearchPoolPagingTests
 	{
 		// THE test of this feature's honesty. Same shape of answer as above — a full page and no more
 		// rows — but a completely different MEANING, and the response has to carry that difference.
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var limit = budget.Candidates();
 		var svc = new SearchService([new StubIndex(Enumerable.Range(0, limit + 50).Select(i => $"n{i:d3}"))], budget: budget);
 
@@ -108,7 +113,7 @@ public sealed class SearchPoolPagingTests
 		// A rerank outage must not silently change how DEEP the result goes. If it did, the boundary a
 		// caller was told about would depend on a degradation they cannot see, and two callers would be
 		// paging pools of different sizes while reading the same PoolLimit.
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var docs = Enumerable.Range(0, budget.Candidates() + 10).Select(i => $"n{i:d3}").ToList();
 
 		var withRerank = await new SearchService([new StubIndex(docs)], reranker: new CountingReranker(), budget: budget)
@@ -145,7 +150,7 @@ public sealed class SearchPoolPagingTests
 	public async Task PoolCache_ServesAStoredPool_SoASecondPageNeedsNoRerank()
 	{
 		using var harness = new PoolCacheHarness();
-		var pool = new SearchPool([new Hit("t", "a", 1.0)], PoolLimit: 495, PoolBounded: false, new SearchRetrievers(true, false, false));
+		var pool = new SearchPool([new Hit("t", "a", 1.0)], PoolLimit: DeclaredBudget, PoolBounded: false, new SearchRetrievers(true, false, false));
 
 		var first = await harness.Cache.GetOrComputeAsync("fp-1", _ => Computed(pool));
 		first.FromCache.Should().BeFalse("nothing was stored yet — this call is the one that materializes the pool");
@@ -169,7 +174,7 @@ public sealed class SearchPoolPagingTests
 		using var harness = new PoolCacheHarness();
 		var pool = new SearchPool(
 			[new Hit("board", "n1", 0.75, "lexical"), new Hit("board", "n2", 0.5, "semantic")],
-			PoolLimit: 495,
+			PoolLimit: DeclaredBudget,
 			PoolBounded: true,
 			new SearchRetrievers(true, true, false, null, SemanticLag: 7, SearchRankingOutcome.Reranked),
 			Annotations: ["comment", null]);
@@ -178,7 +183,7 @@ public sealed class SearchPoolPagingTests
 		var got = (await harness.Cache.GetOrComputeAsync("fp", _ => Computed(pool))).Pool;
 
 		got.Ordered.Should().Equal(pool.Ordered);
-		got.PoolLimit.Should().Be(495);
+		got.PoolLimit.Should().Be(DeclaredBudget);
 		got.PoolBounded.Should().BeTrue("a truncated pool reported as exhausted is the lie this feature exists to prevent");
 		got.Retrievers.Should().Be(pool.Retrievers);
 		got.AnnotationAt(0).Should().Be("comment");
@@ -196,7 +201,7 @@ public sealed class SearchPoolPagingTests
 		// still resumable after a hundred later ones, which under the old ceiling it would not have
 		// been.
 		using var harness = new PoolCacheHarness();
-		var pool = new SearchPool([new Hit("t", "a", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var pool = new SearchPool([new Hit("t", "a", 1.0)], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 
 		for (var i = 0; i < 100; i++)
 			await harness.Cache.GetOrComputeAsync($"fp-{i}", _ => Computed(pool));
@@ -215,7 +220,7 @@ public sealed class SearchPoolPagingTests
 		// the forty-nine that did not run it must be told so, because their branch is "hydrate the
 		// stored addresses", not "use the rows I just computed".
 		using var harness = new PoolCacheHarness();
-		var pool = new SearchPool([new Hit("t", "a", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var pool = new SearchPool([new Hit("t", "a", 1.0)], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 		var runs = 0;
 		var gate = new TaskCompletionSource();
 

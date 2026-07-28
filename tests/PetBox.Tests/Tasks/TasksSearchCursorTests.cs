@@ -31,41 +31,75 @@ namespace PetBox.Tests.Tasks;
 // all (their order is re-derived per call over a bounded candidate pool, so a resume token
 // would promise a tail that does not exist), and a token from a different query is an error
 // rather than a silent restart inside another ordering.
-public sealed class TasksSearchCursorTests : IDisposable
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// tasks DB files are the expensive part of the constructor — the fixture owns the files, the test
+// class rebuilds the (cheap) service graph, INCLUDING a fresh SearchPoolCache, per test. Per-test
+// DATA isolation is TestDataReset.WipeAllTables over the tasks file plus a TaskBoards wipe in core
+// (the board catalog lives there — TaskBoardStore) — not TestDirs.ResetDbFile, which costs more than
+// a fresh templated copy (see TestDataReset).
+public sealed class TasksSearchCursorFixture : IDisposable
 {
-	const string Proj = "proj";
-	readonly string _dir;
-	readonly PetBoxDb _db;
-	readonly ScopedDbFactory<TasksDb> _factory;
-	readonly TasksService _tasks;
-	// Injected explicitly (production wires it as a singleton) so the q-mode tests can OBSERVE whether a
-	// page built a new pool or reused the stored one — the only end-to-end signal that requirement 5
-	// ("реранк считается один раз на пул") is actually holding rather than merely intended.
-	readonly PoolCacheHarness _poolHarness = new();
-	readonly SearchPoolCache _poolCache;
+	public const string Proj = "proj";
 
-	public TasksSearchCursorTests()
+	readonly string _dir;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<TasksDb> Factory { get; }
+
+	public TasksSearchCursorFixture()
 	{
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-searchcursor-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		Factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
+	}
+
+	public void Reset()
+	{
+		Db.TaskBoards.Where(b => b.ProjectKey == Proj).Delete();
+		using var tasks = Factory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(tasks);
+	}
+
+	public void Dispose()
+	{
+		Db.Dispose();
+		Factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixture>, IDisposable
+{
+	const string Proj = TasksSearchCursorFixture.Proj;
+	readonly PetBoxDb _db;
+	readonly ScopedDbFactory<TasksDb> _factory;
+	readonly TasksService _tasks;
+	// Injected explicitly (production wires it as a singleton) so the q-mode tests can OBSERVE whether a
+	// page built a new pool or reused the stored one — the only end-to-end signal that requirement 5
+	// ("реранк считается один раз на пул") is actually holding rather than merely intended. Fresh per
+	// test (an instance field, not fixture state) — a pool cached from a PREVIOUS test's rows must
+	// never be served to this one.
+	// Disk-backed now: the harness owns a SQLite file plus the HybridCache over it. Still an instance
+	// field, so main's requirement holds and holds harder — a fresh harness per test is a fresh FILE
+	// per test, not merely a fresh dictionary.
+	readonly PoolCacheHarness _poolHarness = new();
+	readonly SearchPoolCache _poolCache;
+
+	public TasksSearchCursorTests(TasksSearchCursorFixture fx)
+	{
+		fx.Reset();
+		_db = fx.Db;
+		_factory = fx.Factory;
 		_poolCache = _poolHarness.Cache;
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory),
 			poolCache: _poolCache);
 	}
 
-	public void Dispose()
-	{
-		_poolHarness.Dispose();
-		_db.Dispose();
-		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		TestDirs.CleanupOrDefer(_dir);
-	}
+	public void Dispose() => _poolHarness.Dispose();
 
 	static IHttpContextAccessor Http()
 	{

@@ -108,8 +108,17 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 	// Wipe everything the previous test may have written under the shared host, so each
 	// test sees an empty project: only the board CATALOG lives in petbox.db (task_boards);
 	// nodes/edges/comments/tags/methodology definitions/version cursors/search index all
-	// live in the per-project tasks file, which we delete wholesale (relations moved there
-	// — relations-in-project-db — so they go with it).
+	// live in the per-project tasks file, whose rows we wipe (relations moved there
+	// — relations-in-project-db — so they go with them).
+	//
+	// Rows, not the file. This used to evict the factory entry and call TestDirs.ResetDbFile,
+	// which clears the file's pools, WAL-checkpoints it, then forces a full blocking GC to run
+	// SqliteConnection finalizers so Windows will let the file be deleted. Instrumented over a
+	// full run, that path cost 176-559 ms per call — more than creating the database from
+	// scratch (a templated copy is 1-14 ms), and GC.Collect stops every thread in a 16-way
+	// parallel suite, so the measured figure understates it. Deleting rows from an already
+	// migrated file leaves the same empty-project state without touching pools, the WAL, the
+	// collector, or the filesystem.
 	public async Task ResetAsync()
 	{
 		using (var scope = Factory.Services.CreateScope())
@@ -119,12 +128,8 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 		}
 
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
-		await tasksFactory.EvictAsync(ProjectKey);
-		var path = Path.Combine(_baseDir, "tasks", ProjectKey + ".db");
-		// Clears this file's pools, checkpoints, deletes — in that order, which matters.
-		// (Never ClearAllPools(): it is process-global and yanks pooled connections out from
-		// under every other collection running in parallel. See TestDirs.)
-		TestDirs.ResetDbFile(path);
+		using var tasks = tasksFactory.NewEnsuredConnection(ProjectKey);
+		TestDataReset.WipeAllTables(tasks);
 	}
 
 	// v3's IAsyncLifetime extends IAsyncDisposable, so CA1816 now applies to this unsealed type.

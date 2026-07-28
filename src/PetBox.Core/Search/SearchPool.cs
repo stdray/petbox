@@ -9,8 +9,9 @@ namespace PetBox.Core.Search;
 //
 // WHY THIS TYPE AND NOT JUST A LIST. Two facts have to travel together with the rows, and a bare
 // list carries neither:
-//   1. POOLLIMIT — how deep ranking was ever allowed to look (the latency-derived rerank candidate
-//      budget, ~495). Past it nothing was RANKED, so nothing can be served.
+//   1. POOLLIMIT — how deep ranking was ever allowed to look (the declared rerank candidate
+//      budget, default 160 — an assumption, not a value derived from latency). Past it nothing was
+//      RANKED, so nothing can be served.
 //   2. POOLBOUNDED — whether the candidate union actually HIT that limit. This is the difference
 //      between "we ranked everything that matched" and "there are more matches we never looked at",
 //      and it is the single most load-bearing bit in this feature: without it a consumer reports a
@@ -56,7 +57,7 @@ public sealed record SearchPool(
 // mislead (card requirement 2: «граница ВИДИМА и не выглядит как исчерпание»).
 //
 // The obvious design — "no nextCursor means the end" — is exactly the trap. It makes the honest
-// answer ("we ranked the top 495 of some larger match set; the rest was never looked at") and the
+// answer ("we ranked the top 160 of some larger match set; the rest was never looked at") and the
 // terminal answer ("that was all of it") the SAME wire shape, so a consumer that simply stops when
 // the cursor goes missing reports a truncated pool as an exhausted search. Nobody has to be careless
 // for that to happen; the shape invites it.

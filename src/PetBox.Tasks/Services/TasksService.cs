@@ -9,6 +9,7 @@ using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
 using PetBox.Core.Search;
+using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
@@ -56,6 +57,11 @@ public sealed partial class TasksService : ITasksService
 	// to be a private per-instance cache instead, which — on a service that is SCOPED per request —
 	// could never be read back by anyone and was therefore quiet slowness dressed as a cache.
 	readonly SearchPoolCache _poolCache;
+	// Rerank candidate budget inputs (rerank-budget-params-to-settings), read per query at
+	// Scope.Project via RerankCandidateBudget.ResolveAsync — null (DI absent, direct/test
+	// construction) falls back to the compiled-in RerankCandidateBudget() default, same posture as
+	// _llm/_log above.
+	readonly ISettingsResolver? _settings;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -70,7 +76,7 @@ public sealed partial class TasksService : ITasksService
 	public const int PagedCandidateDepth = 50;
 
 	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null,
-		ILogger<TasksService>? log = null, SearchPoolCache? poolCache = null)
+		ILogger<TasksService>? log = null, SearchPoolCache? poolCache = null, ISettingsResolver? settings = null)
 	{
 		_boards = boards;
 		_relations = relations;
@@ -79,6 +85,7 @@ public sealed partial class TasksService : ITasksService
 		_llm = llm;
 		_log = log;
 		_poolCache = poolCache ?? SearchPoolCache.Disabled;
+		_settings = settings;
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
@@ -2322,7 +2329,10 @@ public sealed partial class TasksService : ITasksService
 		// cosine has no "all that matched"); the pool's own ceiling is the rerank candidate budget the
 		// facade reports back as PoolLimit. Everything past the page the caller asked for used to be
 		// computed and thrown away right here — that discarded tail IS the pagination.
-		var pool = await new SearchService(indexes, _log, reranker)
+		// Budget resolved from settings (rerank-budget-params-to-settings) at THIS project's scope, so
+		// a Project-level override actually lands here rather than the compiled-in default only.
+		var budget = await RerankCandidateBudget.ResolveAsync(_settings, projectKey, ct);
+		var pool = await new SearchService(indexes, _log, reranker, budget)
 			.SearchPoolAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);

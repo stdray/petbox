@@ -1,44 +1,60 @@
+using PetBox.Core.Settings;
+
 namespace PetBox.Core.Search;
 
-// The rerank CANDIDATE BUDGET — how many candidates a search query is allowed to carry into a
-// (future) cross-encoder rerank pass (spec: search-rerank-candidate-budget). Its whole point is
-// that the number is DERIVED from the latency bar and the MEASURED per-document cost of the real
-// rerank route — NOT a relevance intuition, NOT a "generous top-K" constant picked by feel.
+// The rerank CANDIDATE BUDGET — how many candidates a search query carries into the cross-encoder
+// rerank pass (spec: search-rerank-candidate-budget). It is a single DECLARED number, an
+// assumption the owner states, NOT a value derived from a formula over "measured" latency/cost
+// inputs.
 //
-// MEASURED (2026-07-18, warm, home route qwen3-rerank-0.6b, whole list one POST):
-//   n=100 ~0.95s · n=200 ~1.6-1.9s · n=300 ~2.25-2.4s · n=500 ~3.4-4.0s · n=750 ~4.9-5.5s (5s
-//   bar breaks here) · n=1000 ~6.5-7.1s. Linear fit: ~6.1 ms/doc over a ~0.31-0.35s base (the
-//   owner's ~0.535s base, warm p95 ~1.0-1.2s @ n=100, both reproduced). The local reranker
-//   accepted up to 8000 docs in ONE call with NO error, NO chunking, NO degradation — so on this
-//   route the binding constraint is LATENCY, not a provider doc-cap. Chunking (and the quota it
-//   multiplies) only exists on the external fallback, which was not exercised here.
+// That formula (LatencyBarMs, PerDocMs, BaseMs, HeadroomFraction) is GONE (owner decision
+// 2026-07-28, idea rerank-budget-is-a-declared-assumption): it gave the appearance of a model
+// derived from data that the underlying measurements could not support — synthetic documents, a
+// seven-fold run-to-run spread, one machine, one day — and when a specific target number was
+// wanted instead, the input was back-solved to produce it (commit 24479d59: PerDocMs back-solved
+// to 11.6 so the formula would land on 160). Latency belongs to the rerank PROVIDER — a slow
+// provider is a reason to accept it or switch providers, not to shrink the search depth.
 //
-// So the budget is (LatencyBarMs − BaseMs) / PerDocMs, with headroom: at the 5s bar the raw
-// ceiling is ~770 docs (min) / ~700 (p95), and ~500 keeps the MEASURED p95 (max 3.99s @ n=500)
-// comfortably under 5s. This budget is the VECTOR leg's top-K only: the «лексическая нога» is
-// enumerable (it returns everything the facet predicate leaves, it has NO top-K), so the budget
-// never caps it — a generous top-K on the lexical leg is exactly the defect this must not carry.
+// Overridable System -> Workspace -> Project (spec: settings-uniform-override, deeper wins) via
+// PetBox.Core.Settings.RerankBudgetSettings — build one from resolved settings via
+// FromSettings(...) below. The default here (160) matches RerankBudgetSettings' own default, so a
+// caller that still does `new RerankCandidateBudget()` (nothing resolved) gets the same honest
+// number as one that reads settings and finds no override.
+//
+// This budget is the VECTOR leg's top-K only: the enumerable «лексическая нога» returns everything
+// the facet predicate leaves and has NO top-K, so the budget never caps it — a generous top-K on
+// the lexical leg is exactly the defect this must not carry.
 public sealed record RerankCandidateBudget
 {
-	// The owner's latency bar for the whole search response (spec decision: 5 seconds).
-	public double LatencyBarMs { get; init; } = 5000;
+	// The declared candidate budget. An assumption, not a measurement — see the type-level comment.
+	public int Value { get; init; } = 160;
 
-	// Measured per-document marginal cost and fixed per-call base of the real rerank route (warm).
-	// These are the empirical slope/intercept above — change them ONLY behind a fresh measurement.
-	public double PerDocMs { get; init; } = 6.1;
-	public double BaseMs { get; init; } = 350;
-
-	// Fraction of the raw latency ceiling kept as budget, so warm p95 (not just the min) stays
-	// under the bar. 0.65 puts the budget at ~500 candidates against the measured curve — the
-	// "wide pool with several-fold headroom" the owner described, not the anonymous SearchK=50.
-	public double HeadroomFraction { get; init; } = 0.65;
-
-	// The derived budget: how many candidates fit under the latency bar, with headroom. Never a
-	// stored constant — recompute it whenever the route or the bar changes and re-measure PerDocMs.
-	public int Candidates()
+	// Builds a budget from resolved settings (RerankBudgetSettings), so a caller with an
+	// ISettingsResolver in hand can honor the owner's override instead of this compiled-in
+	// fallback.
+	public static RerankCandidateBudget FromSettings(RerankBudgetSettings settings) => new()
 	{
-		var rawCeiling = (LatencyBarMs - BaseMs) / PerDocMs;   // docs that fit at the hard bar
-		var budget = (int)System.Math.Floor(rawCeiling * HeadroomFraction);
-		return budget < 1 ? 1 : budget;
+		Value = settings.Candidates,
+	};
+
+	// THE production door: every SearchService call site resolves its budget through here instead of
+	// constructing RerankCandidateBudget directly, so "переопределяемы" (settings-uniform-override)
+	// is true in prod, not just in a settings-layer test. `settingsResolver` is nullable for the same
+	// reason every other optional collaborator in these services is (ILlmClient?, ILogger?, ...): a
+	// hand-constructed test/adapter instance with no DI graph still gets an honest, unwired budget
+	// rather than a null-ref. Settings are resolved at Scope.Project — the cascade still reaches
+	// Workspace and System for a project with no override of its own (settings-uniform-override,
+	// deeper wins) — so a Project-scope override on the search's own project is what actually lands.
+	public static async Task<RerankCandidateBudget> ResolveAsync(
+		ISettingsResolver? settingsResolver, string projectKey, CancellationToken ct = default)
+	{
+		if (settingsResolver is null) return new RerankCandidateBudget();
+		var settings = await settingsResolver.GetAsync<RerankBudgetSettings>(Scope.Project, projectKey, ct);
+		return FromSettings(settings);
 	}
+
+	// The declared budget, floored at 1. A 0-or-negative override is now trivial to set (it used to
+	// take a contrived combination of the four old inputs to hit this path) — it must degrade to
+	// "rank 1 candidate", never to an empty search.
+	public int Candidates() => Value < 1 ? 1 : Value;
 }

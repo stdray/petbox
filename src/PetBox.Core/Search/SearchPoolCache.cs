@@ -10,9 +10,9 @@ namespace PetBox.Core.Search;
 //
 // WHY A CACHE AT ALL — the alternative was considered and REJECTED. Deterministic recomputation
 // (re-run the query per page, fold a data version into the token so a changed basis is refused) gets
-// the ORDER right, but it re-runs the RERANK on every page: 3-4 seconds per page against the measured
-// curve (RerankCandidateBudget), paid again and again to reproduce a list the server had in its hands
-// one request ago. Requirement 5 rules that out. So the ordered pool is computed ONCE and kept.
+// the ORDER right, but it re-runs the RERANK on every page: a few seconds per page against the declared
+// candidate budget (RerankCandidateBudget), paid again and again to reproduce a list the server had in
+// its hands one request ago. Requirement 5 rules that out. So the ordered pool is computed ONCE and kept.
 //
 // WHAT KEYS IT — the cursor's FINGERPRINT, which already hashes every selection/ordering input and,
 // here, the DATA VERSION of the container being searched. One value therefore does both jobs:
@@ -71,7 +71,7 @@ public sealed class SearchPoolCache
 	// longer competing for process memory, so the only thing a longer window costs is disk that the
 	// sweep reclaims anyway. The case it is sized for is an AGENT rather than a human — a walk can sit
 	// idle for many minutes while the caller reasons about page 1, and every expiry inside that window
-	// bills the next page a 3-4 second cross-encoder pass for nothing.
+	// bills the next page a multi-second cross-encoder pass for nothing.
 	//
 	// Correctness does not depend on this number in either direction: the data version in the key
 	// refuses a stale ordering however long the entry lives, and a cold page re-materializes

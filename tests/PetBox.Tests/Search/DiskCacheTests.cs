@@ -18,6 +18,11 @@ public sealed class DiskCacheTests : IDisposable
 {
 	readonly string _dir;
 
+	// The declared candidate budget (RerankCandidateBudget, default 160). Taken from the type rather
+	// than written as a literal: these fixtures used to hardcode 495, the old latency-DERIVED ceiling,
+	// and went stale the moment the budget became a declared number.
+	static readonly int DeclaredBudget = new RerankCandidateBudget().Candidates();
+
 	public DiskCacheTests()
 	{
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-diskcache-" + Guid.NewGuid().ToString("N"));
@@ -58,7 +63,7 @@ public sealed class DiskCacheTests : IDisposable
 	{
 		// The same claim one layer up, where it is the one anybody cares about.
 		using var first = new PoolCacheHarness();
-		var pool = new SearchPool([new Hit("b", "n1", 0.9, "lexical")], 495, false, new SearchRetrievers(true, false, false));
+		var pool = new SearchPool([new Hit("b", "n1", 0.9, "lexical")], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 		await first.Cache.GetOrComputeAsync("fp", _ => ValueTask.FromResult(new SearchPoolCache.PoolComputation(pool, true)));
 
 		using var afterRestart = first.Restart();
@@ -87,7 +92,7 @@ public sealed class DiskCacheTests : IDisposable
 		var foreign = System.Text.Encoding.UTF8.GetBytes("""{"v":999,"h":[],"pl":1,"pb":false,"r":{"l":true,"s":false,"d":false}}""");
 		await StoreRawAsync(harness, "pool:v1:0:fp", foreign);
 
-		var recomputed = new SearchPool([new Hit("b", "fresh", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var recomputed = new SearchPool([new Hit("b", "fresh", 1.0)], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 		var got = await harness.Cache.GetOrComputeAsync("fp",
 			_ => ValueTask.FromResult(new SearchPoolCache.PoolComputation(recomputed, true)));
 
@@ -104,7 +109,7 @@ public sealed class DiskCacheTests : IDisposable
 		using var harness = new PoolCacheHarness();
 		await StoreRawAsync(harness, "pool:v1:0:fp", [0x7B, 0x22, 0x76]); // `{"v` and then nothing
 
-		var recomputed = new SearchPool([new Hit("b", "fresh", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var recomputed = new SearchPool([new Hit("b", "fresh", 1.0)], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 		var got = await harness.Cache.GetOrComputeAsync("fp",
 			_ => ValueTask.FromResult(new SearchPoolCache.PoolComputation(recomputed, true)));
 
@@ -173,7 +178,7 @@ public sealed class DiskCacheTests : IDisposable
 			Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
 				.GetRequiredService<Microsoft.Extensions.Caching.Hybrid.HybridCache>(sp));
 
-		var pool = new SearchPool([new Hit("b", "n1", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var pool = new SearchPool([new Hit("b", "n1", 1.0)], DeclaredBudget, false, new SearchRetrievers(true, false, false));
 		var got = await cache.GetOrComputeAsync("fp", _ => ValueTask.FromResult(new SearchPoolCache.PoolComputation(pool, true)));
 
 		got.Pool.Ordered.Select(h => h.Id).Should().Equal(["n1"],

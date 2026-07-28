@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Settings;
@@ -382,5 +383,35 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 
 		var resolved = await resolver.GetAsync<RepoSettings>(Scope.Project, "proj-repo");
 		resolved.CommitUrlTemplate.Should().Be("https://github.com/user/repo/commit/{sha}");
+	}
+
+	[Fact]
+	public async Task RerankBudgetSettings_DefaultMatchesTheRecord_AndProjectOverrideBeatsSystem()
+	{
+		// rerank-budget-collapse-to-one-number: the rerank candidate budget is now a SINGLE
+		// declared number (spec: search-rerank-candidate-budget — an assumption, not a value
+		// derived from measurement), resolved through the SAME System -> Workspace -> Project
+		// cascade (spec: settings-uniform-override, deeper wins) as everything else in this file.
+		var (resolver, _) = await GetResolverAsync(projectKey: "proj-rerank-budget", workspaceKey: "ws-rerank-budget");
+
+		var defaults = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		defaults.Candidates.Should().Be(160);
+
+		// A System-scope override cascades down to a project that has none of its own.
+		await resolver.SetAsync(Scope.System, "$",
+			new RerankBudgetSettings { Candidates = 90 }, new RerankBudgetSettings(), updatedBy: null);
+		var systemOverridden = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		systemOverridden.Candidates.Should().Be(90);
+
+		// The project overriding it locally wins over the System row it just inherited — deeper wins,
+		// exactly the override settings-uniform-override requires down to Project.
+		await resolver.SetAsync(Scope.Project, "proj-rerank-budget",
+			new RerankBudgetSettings { Candidates = 40 }, new RerankBudgetSettings(), updatedBy: null);
+		var projectOverridden = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		projectOverridden.Candidates.Should().Be(40);
+
+		// And the override actually reaches RerankCandidateBudget, not just the settings record.
+		RerankCandidateBudget.FromSettings(defaults).Candidates().Should().Be(160);
+		RerankCandidateBudget.FromSettings(projectOverridden).Candidates().Should().Be(40);
 	}
 }

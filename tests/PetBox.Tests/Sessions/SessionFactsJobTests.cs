@@ -18,40 +18,71 @@ namespace PetBox.Tests.Sessions;
 // store with verbatim provenance; repeats are judged against retrieved neighbors and
 // never duplicate; curated stores are never machine-modified; bad LLM output neither
 // crashes the pass nor burns chat calls forever.
-public sealed class SessionFactsJobTests : IDisposable
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// sessions + memory DB files are the expensive part of the constructor — the fixture owns the
+// files, the test class rebuilds the (cheap) service graph per test. Per-test DATA isolation is
+// TestDataReset.WipeAllTables over both per-project files — not TestDirs.ResetDbFile, which costs
+// more than a fresh templated copy (see TestDataReset).
+public sealed class SessionFactsJobFixture : IDisposable
 {
-	const string Proj = "proj";
-	static readonly TimeSpan NoQuiet = TimeSpan.FromMinutes(-5);
+	public const string Proj = "proj";
 
 	readonly string _dir;
-	readonly PetBoxDb _db;
-	readonly ScopedDbFactory<SessionsDb> _sessionsFactory;
-	readonly ScopedDbFactory<MemoryDb> _memoryFactory;
-	readonly SessionService _sessions;
-	readonly MemoryService _memory;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<SessionsDb> SessionsFactory { get; }
+	public ScopedDbFactory<MemoryDb> MemoryFactory { get; }
 
-	public SessionFactsJobTests()
+	public SessionFactsJobFixture()
 	{
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-sessfacts-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		SessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
-		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
+		MemoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
-		_sessions = new SessionService(new SessionStore(_sessionsFactory));
-		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
+	}
+
+	// Wipe both per-project files, plus the memory store CATALOG (MemoryStoreMeta lives in core,
+	// like TaskBoards — MemoryStore.CreateAsync throws "already exists" against a leftover row).
+	public void Reset()
+	{
+		Db.MemoryStores.Where(s => s.ProjectKey == Proj).Delete();
+		using var sessions = SessionsFactory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(sessions);
+		using var memory = MemoryFactory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(memory);
 	}
 
 	public void Dispose()
 	{
-		_db.Dispose();
-		_sessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		_memoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		Db.Dispose();
+		SessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		MemoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
+{
+	const string Proj = SessionFactsJobFixture.Proj;
+	static readonly TimeSpan NoQuiet = TimeSpan.FromMinutes(-5);
+
+	readonly PetBoxDb _db;
+	readonly ScopedDbFactory<SessionsDb> _sessionsFactory;
+	readonly SessionService _sessions;
+	readonly MemoryService _memory;
+
+	public SessionFactsJobTests(SessionFactsJobFixture fx)
+	{
+		fx.Reset();
+		_db = fx.Db;
+		_sessionsFactory = fx.SessionsFactory;
+		_sessions = new SessionService(new SessionStore(_sessionsFactory));
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), llm: null);
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>

@@ -3,6 +3,7 @@ using LinqToDB.Async;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Search;
+using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 
@@ -16,7 +17,15 @@ namespace PetBox.Tasks.Services;
 public sealed class CommentService : ICommentService
 {
 	readonly IScopedDbFactory<TasksDb> _factory;
-	public CommentService(IScopedDbFactory<TasksDb> factory) => _factory = factory;
+	// Rerank candidate budget inputs (rerank-budget-params-to-settings), read per query at
+	// Scope.Project via RerankCandidateBudget.ResolveAsync — null (DI absent, direct/test
+	// construction) falls back to the compiled-in RerankCandidateBudget() default.
+	readonly ISettingsResolver? _settings;
+	public CommentService(IScopedDbFactory<TasksDb> factory, ISettingsResolver? settings = null)
+	{
+		_factory = factory;
+		_settings = settings;
+	}
 
 	// ── uniform-entity verbs (comments_upsert / _search / _delta / _get) ───────────────
 
@@ -153,7 +162,10 @@ public sealed class CommentService : ICommentService
 		// a FRESH connection (SqliteFtsIndex disposes it) — never the cached request context.
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewEnsuredConnection(projectKey)) };
 		var k = limit > 0 ? Math.Max(limit * 3, 50) : 200;
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, q, new SearchFilter(board), k, ct: ct);
+		// The candidate budget caps the fused pool on EVERY ranking path, reranked or not
+		// (rerank-budget-params-to-settings) — resolved from settings at this project's scope.
+		var budget = await RerankCandidateBudget.ResolveAsync(_settings, projectKey, ct);
+		var resp = await new SearchService(indexes, budget: budget).SearchAsync(projectKey, q, new SearchFilter(board), k, ct: ct);
 
 		// The FTS covers node docs AND comment docs in the same (scope, board) partition — keep
 		// only comment hits ("c:"+key), in fused-rank order, dedup by key.

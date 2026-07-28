@@ -25,7 +25,10 @@ else
 	// Fields.Body says — BodyUnavailable disables the dialog checkbox and says why, same mechanism
 	// Outline's Navigate mode already uses for the same "checking it would have zero effect" honesty.
 	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
-	<partial name="_BoardFilterSort" model="filterSortModel" />
+	if (Model.ShowFilterBar)
+	{
+		<partial name="_BoardFilterSort" model="filterSortModel" />
+	}
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
 			<thead>

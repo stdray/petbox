@@ -46,7 +46,7 @@ public sealed class SqliteDistributedCacheOptions
 // linq2db for uniformity with every other database access in this repository. Measured against a raw
 // Microsoft.Data.Sqlite implementation of the identical schema on the same stand: warm
 // GET+deserialize of a 56 KB payload averaged 157-161 us raw versus 170-176 us here — ~13 us per
-// hit, against a miss that costs a 3-4 SECOND cross-encoder pass. p95/p99 and a 12,000-operation
+// hit, against a miss that costs a MULTI-SECOND cross-encoder pass. p95/p99 and a 12,000-operation
 // concurrency run (0 exceptions either way) were indistinguishable.
 //
 // CompiledQuery is NOT used, on applicability rather than taste. It covers the async READ
