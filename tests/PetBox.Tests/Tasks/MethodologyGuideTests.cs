@@ -138,6 +138,9 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().Contain("area, concern");
 		// Simple's all-pairs block collapses instead of listing 20 edges.
 		md.Should().Contain("Transitions: free — any status may move to any other (Todo | InProgress | Blocked | Done | Cancelled)");
+		// Simple has NO approval gate anywhere — the absence must be an explicit assertion in
+		// the guide, not silence an agent has to infer from a missing line.
+		md.Should().Contain("No approval gate in this kind — the executor sets Done themselves; nobody else is expected to approve.");
 
 		// classic (preset-classic, reworked): ONE workflow section for all types — task,
 		// feature and bug are labels over the same FSM, so the task and bug renderings
@@ -148,6 +151,12 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().NotContain("### Workflow: bug");
 		md.Should().Contain("- Types: task (default), feature, bug");
 		md.Should().Contain("InProgress -> Duplicate requires a reason");
+		// Owner review part A: Done is reachable ONLY from Review, owner-only by CONVENTION
+		// (the exact soft shape as WorkKind's own Review -> Done) — the guide states the mode
+		// honestly, holding on the agent's honesty rather than a server block.
+		md.Should().Contain("The agent NEVER performs Review -> Done");
+		md.Should().Contain("owner-only (convention — the server does not block it; this gate holds only because the agent is honest about it)");
+		md.Should().Contain("Review -> Done [OWNER-ONLY]");
 		md.Should().NotContain("Cancelled requires a reason");
 		md.Should().NotContain("convention — the server does not check these");
 		md.Should().NotContain("Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет");
@@ -170,13 +179,15 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().Contain("defect types (bug)");
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");
 
-		// classic's gates, machine-readable: the Duplicate reason gate ONLY — no Cancelled
-		// reasons, no checklist, no axes, no approval gate anywhere in the kind.
+		// classic's gates, machine-readable: the Duplicate reason gate, no Cancelled reasons,
+		// no checklist, no axes — and ONE soft owner-only approval gate into Done, reachable
+		// only from Review (owner review, part A).
 		inv.Should().Contain(("classic", "reason_required", "Todo -> Duplicate"));
-		inv.Should().Contain(("classic", "reason_required", "InReview -> Duplicate"));
+		inv.Should().Contain(("classic", "reason_required", "Review -> Duplicate"));
+		inv.Should().Contain(("classic", "approval_gate", "Review -> Done"));
 		inv.Should().NotContain(i => i.Kind == "classic" && i.Rule == "reason_required" && i.Detail.EndsWith("Cancelled"));
-		inv.Should().NotContain(i => i.Kind == "classic" &&
-			(i.Rule == "checklist" || i.Rule == "tag_axes" || i.Rule.StartsWith("approval_gate")));
+		inv.Should().NotContain(i => i.Kind == "classic" && i.Rule == "approval_gate_enforced");
+		inv.Should().NotContain(i => i.Kind == "classic" && (i.Rule == "checklist" || i.Rule == "tag_axes"));
 	}
 
 	// (b) an instance kind renders its gates/constraints/axes from DATA — the same renderer,

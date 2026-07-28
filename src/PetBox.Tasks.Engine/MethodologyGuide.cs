@@ -156,8 +156,24 @@ public static class MethodologyGuide
 		var gated = block.Transitions
 			.Where(t => t.RequiresApproval || t.EffectiveRequiredArtifacts().Count > 0 || t.Checklist is { Count: > 0 })
 			.ToList();
-		if (gated.Count == 0) return;
+
+		// The absence of an approval gate must be an ASSERTION, not silence: an agent taught
+		// "the ceiling is Review/an approval gate" must not have to infer "no gate" from "no
+		// line here" — a rule it reliably fails to draw. When this block has a terminal-ok
+		// status and NO RequiresApproval transition reaches it, say so explicitly, naming the
+		// status the executor is expected to set unaccompanied.
+		var terminalOk = block.Statuses.Where(s => s.Kind == StatusKind.TerminalOk).ToList();
+		var hasApprovalIntoTerminalOk = terminalOk.Count > 0 && block.Transitions
+			.Any(t => t.RequiresApproval && terminalOk.Any(s => string.Equals(s.Slug, t.To, StringComparison.OrdinalIgnoreCase)));
+		var needsNoGateLine = terminalOk.Count > 0 && !hasApprovalIntoTerminalOk;
+
+		if (gated.Count == 0 && !needsNoGateLine) return;
 		md.AppendLine("- GATES (behavioral invariants):");
+		if (needsNoGateLine)
+		{
+			var terminals = string.Join("/", terminalOk.Select(s => s.Slug));
+			md.AppendLine($"  - No approval gate in this kind — the executor sets {terminals} themselves; nobody else is expected to approve.");
+		}
 		foreach (var t in gated)
 		{
 			if (t.RequiresApproval)
@@ -167,7 +183,7 @@ public static class MethodologyGuide
 				var enforceApproval = t.EffectiveEnforceApproval(strictMode);
 				var mode = enforceApproval
 					? "owner-only (enforced by the server — it blocks the transition)"
-					: "owner-only (convention — the server does not block it)";
+					: "owner-only (convention — the server does not block it; this gate holds only because the agent is honest about it)";
 				md.AppendLine($"  - The agent NEVER performs {t.From} -> {t.To} — that transition is the owner's/maintainer's call, {mode}. Stop at {t.From} and hand over.");
 				invariants.Add(new(kind, enforceApproval ? "approval_gate_enforced" : "approval_gate", $"{t.From} -> {t.To}"));
 			}

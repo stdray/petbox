@@ -318,7 +318,7 @@ public sealed class MethodologyGuideSchemaV2Tests
 		guide.Markdown.Should().Contain("The agent NEVER performs Open -> Resolved")
 			.And.Contain("owner-only (enforced by the server — it blocks the transition)");
 		guide.Markdown.Should().Contain("The agent NEVER performs Open -> Junk")
-			.And.Contain("owner-only (convention — the server does not block it)");
+			.And.Contain("owner-only (convention — the server does not block it; this gate holds only because the agent is honest about it)");
 		// The transition map marks the mode too.
 		guide.Markdown.Should().Contain("Open -> Resolved [OWNER-ONLY (enforced)]");
 		guide.Markdown.Should().Contain("Open -> Junk [OWNER-ONLY]");

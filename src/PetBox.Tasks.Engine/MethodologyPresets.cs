@@ -55,30 +55,37 @@ public static class MethodologyPresets
 
 	// CLASSIC (spec preset-classic) — a single-kind status model at the level of the
 	// GitHub/Jira/Linear defaults: Backlog/Todo (Linear + GitHub Projects), InProgress (all
-	// three), InReview (Linear's default started status; GitHub models review outside
+	// three), Review (Linear's default started status; GitHub models review outside
 	// Issues), Done, and the not-delivered pair Cancelled/Duplicate (GitHub close reasons
 	// "not planned"/"duplicate", Linear's Canceled/Duplicate). Transitions are FREE among
 	// the OPEN statuses (Jira's default workflow allows all transitions; Linear/GitHub
 	// don't gate status moves — low ceremony wins); terminals are reached EXPLICITLY, with
 	// a reason required only INTO Duplicate (a duplicate without a pointer to the original
 	// is useless; Cancelled needs none — GitHub closes "not planned" without a mandatory
-	// reason), and a closed node reopens to Todo (the GitHub reopen). No approval gates
-	// anywhere, no link constraints, no effects, no checklists, free-form tags — and NO
-	// quartet semantics (no singleton rule, no auto-wire), same as `simple`.
+	// reason), and a closed node reopens to Todo (the GitHub reopen). ONE owner gate: Done
+	// is reachable ONLY from Review (Backlog/Todo/InProgress cannot jump straight to Done),
+	// mirroring the "agent ceiling is Review" rule the PetBox protocol teaches everywhere
+	// else — an agent that never sees that rule spelled out as a synonym still can't self-
+	// close from an open, non-review status. The gate is the SAME soft shape as the
+	// quartet's `work` kind (Review -> Done, RequiresApproval, no Enforce/EnforceApproval):
+	// owner-only by CONVENTION, the server does not block it (methodology-gate-strictness).
+	// No link constraints, no effects, no checklists, free-form tags — and NO quartet
+	// semantics (no singleton rule, no auto-wire), same as `simple`.
 	static readonly WorkflowStatus[] ClassicStatuses =
 	[
 		new("Backlog", "Backlog", StatusKind.Open),
 		new("Todo", "Todo", StatusKind.Open),
 		new("InProgress", "In progress", StatusKind.Open),
-		new("InReview", "In review", StatusKind.Open),
+		new("Review", "Review", StatusKind.Open),
 		new("Done", "Done", StatusKind.TerminalOk),
 		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
 		new("Duplicate", "Duplicate", StatusKind.TerminalCancel),
 	];
 
-	// Classic's edge set: all ordered pairs among the OPEN statuses (free movement), every
-	// open status may close explicitly (Done and Cancelled ungated; Duplicate demands a
-	// reason — the pointer to the original), and each terminal reopens to Todo.
+	// Classic's edge set: all ordered pairs among the OPEN statuses (free movement); every
+	// open status may close into Cancelled (ungated) or Duplicate (reason required — the
+	// pointer to the original); Done is reached ONLY from Review, owner-only by convention
+	// (same soft shape as WorkKind's Review -> Done just below); each terminal reopens to Todo.
 	static List<MethodologyTransitionDef> ClassicTransitions()
 	{
 		var open = ClassicStatuses.Where(s => s.Kind == StatusKind.Open).Select(s => s.Slug).ToList();
@@ -88,10 +95,10 @@ public static class MethodologyPresets
 				edges.Add(new(from, to));
 		foreach (var from in open)
 		{
-			edges.Add(new(from, "Done"));
 			edges.Add(new(from, "Cancelled"));
 			edges.Add(new(from, "Duplicate", RequiresReason: true));
 		}
+		edges.Add(new("Review", "Done", RequiresApproval: true)); // owner-only, convention (server doesn't block)
 		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
 			edges.Add(new(terminal, "Todo"));
 		return edges;

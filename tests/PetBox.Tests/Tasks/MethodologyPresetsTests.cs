@@ -213,14 +213,15 @@ public sealed class MethodologyPresetsTests
 		new("Backlog", "Backlog", StatusKind.Open),
 		new("Todo", "Todo", StatusKind.Open),
 		new("InProgress", "In progress", StatusKind.Open),
-		new("InReview", "In review", StatusKind.Open),
+		new("Review", "Review", StatusKind.Open),
 		new("Done", "Done", StatusKind.TerminalOk),
 		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
 		new("Duplicate", "Duplicate", StatusKind.TerminalCancel),
 	];
 
-	// The full classic edge set: free among the open statuses, explicit closes (a reason
-	// only into Duplicate — Done and Cancelled are ungated), reopen-to-Todo from every
+	// The full classic edge set: free among the open statuses, explicit closes into
+	// Cancelled (ungated) and Duplicate (reason required), Done reachable ONLY from Review
+	// (owner-only by convention — the server does not block it), reopen-to-Todo from every
 	// terminal.
 	static IReadOnlyList<(string From, string To, bool Reason)> ClassicEdges()
 	{
@@ -231,10 +232,10 @@ public sealed class MethodologyPresetsTests
 				edges.Add((from, to, false));
 		foreach (var from in open)
 		{
-			edges.Add((from, "Done", false));
 			edges.Add((from, "Cancelled", false));
 			edges.Add((from, "Duplicate", true));
 		}
+		edges.Add(("Review", "Done", false));
 		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
 			edges.Add((terminal, "Todo", false));
 		return edges;
@@ -255,11 +256,30 @@ public sealed class MethodologyPresetsTests
 			// Duplicate is the ONE reason-gated target (a duplicate without a pointer to
 			// the original is useless; Cancelled closes reason-free, the GitHub way).
 			wf.Transitions.Where(t => t.RequiresReason).Should().OnlyContain(t => t.To == "Duplicate");
-			// No approval gates at all, no precondition artifacts — low-ceremony by design.
-			wf.Transitions.Should().OnlyContain(t =>
-				!t.RequiresApproval && !t.EnforceApproval && t.PreconditionArtifact == null);
+			// Done is reachable ONLY from Review, and that one edge is the sole approval
+			// gate in the kind — owner-only by CONVENTION (never server-enforced: no legacy
+			// EnforceApproval flag, no Enforce.Approval override).
+			wf.Transitions.Where(t => t.To == "Done").Should().Equal(new WorkflowTransition("Review", "Done", RequiresApproval: true));
+			wf.Transitions.Should().OnlyContain(t => t.To != "Done" || t.From == "Review");
+			wf.Transitions.Where(t => t.RequiresApproval).Should().OnlyContain(t => t.From == "Review" && t.To == "Done");
+			wf.Transitions.Should().OnlyContain(t => !t.EnforceApproval && t.PreconditionArtifact == null);
 		}
 		Runtime.ValidTypes("classic").Should().Be("task|feature|bug");
+	}
+
+	[Fact]
+	public void ClassicPreset_Done_UnreachableFromNonReviewOpenStatuses()
+	{
+		// Owner review, part A: Backlog/Todo/InProgress must NOT carry a direct edge to
+		// Done — the agent ceiling for classic is Review, exactly as the protocol teaches
+		// (an agent that stalls at Review can't route around it via a sibling open status).
+		foreach (var type in new[] { "task", "feature", "bug" })
+		{
+			var wf = Runtime.For("classic", type)!;
+			foreach (var from in new[] { "Backlog", "Todo", "InProgress" })
+				wf.Transition(from, "Done").Should().BeNull($"{from} -> Done must not exist — Done is reachable only from Review");
+			wf.Transition("Review", "Done").Should().NotBeNull("Review -> Done is the one path to Done");
+		}
 	}
 
 	[Fact]
@@ -300,7 +320,7 @@ public sealed class MethodologyPresetsTests
 		foreach (var type in new[] { "task", "feature", "bug" })
 		{
 			var wf = Runtime.For("classic", type)!;
-			foreach (var slug in new[] { "Backlog", "Todo", "InProgress", "InReview", "Done", "Cancelled", "Duplicate" })
+			foreach (var slug in new[] { "Backlog", "Todo", "InProgress", "Review", "Done", "Cancelled", "Duplicate" })
 				wf.Statuses.Should().Contain(s => s.Slug == slug, $"a live {type} in {slug} must stay valid");
 		}
 	}
@@ -328,7 +348,7 @@ public sealed class MethodologyPresetsTests
 			"IsTerminalStatus must classify every cross-preset slug exactly per its StatusKind — terminal for Done/Cancelled/deprecated/accepted/rejected/wontfix/Duplicate, open for Blocked/review");
 		// classic's new open slugs classify as open, not legacy-unknown.
 		Runtime.KindOfSlug("Backlog").Should().Be(StatusKind.Open);
-		Runtime.KindOfSlug("InReview").Should().Be(StatusKind.Open);
+		Runtime.KindOfSlug("Review").Should().Be(StatusKind.Open);
 		Runtime.KindOfSlug("not-a-status").Should().BeNull(); // legacy/unknown slug
 		MethodologyPresets.ParseKind("free").Should().Be(BoardKind.Simple); // M029 legacy mapping
 	}
@@ -644,6 +664,35 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "t").Tags.Should().Equal("severity:high", "tag:urgent");
 	}
 
+	// Owner review, part A, exercised end-to-end through the service: Done is reachable
+	// ONLY from Review — a direct Backlog/Todo/InProgress -> Done is refused as "no
+	// transition" (same rejection shape as the bad-reopen case above) — and Review -> Done
+	// itself is OWNER-ONLY but SOFT: an ordinary (non-approving) actor still applies it,
+	// because the classic preset never sets EnforceApproval and the global enforceApproval
+	// switch stays off for every preset write (methodology-gate-strictness convention shape,
+	// the same one WorkKind's Review -> Done already relies on).
+	[Fact]
+	public async Task Classic_Done_OnlyFromReview_AndTheGateIsSoft()
+	{
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		await Upsert("backlog", new NodePatch { Key = "n", Title = "N", Body = "x" }); // born in Backlog
+		var v0 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
+
+		// Backlog -> Done directly: no such edge.
+		var directClose = () => Upsert("backlog", new NodePatch { Key = "n", Status = "Done", Version = v0 });
+		(await directClose.Should().ThrowAsync<ArgumentException>()).WithMessage("*no transition*");
+
+		// Move to Review (free, like any other open-to-open edge), then InProgress -> Done
+		// would also be refused had we stayed there — go through Review to reach Done.
+		await Upsert("backlog", new NodePatch { Key = "n", Status = "Review", Version = v0 });
+		var v1 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
+
+		// Review -> Done applies even though this actor carries no approve capability
+		// (default/no actor passed) — owner-only is a CONVENTION here, not a server block.
+		await Upsert("backlog", new NodePatch { Key = "n", Status = "Done", Version = v1 });
+		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Done");
+	}
+
 	// Title-only create (empty body) remains OK — the reason gate is a transition concern,
 	// not a create-time body requirement.
 	[Fact]
@@ -665,7 +714,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 	public async Task Classic_NodeInEveryStatus_StillValid_UnderSingleBlock()
 	{
 		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
-		var statuses = new[] { "Backlog", "Todo", "InProgress", "InReview", "Done", "Cancelled", "Duplicate" };
+		var statuses = new[] { "Backlog", "Todo", "InProgress", "Review", "Done", "Cancelled", "Duplicate" };
 		foreach (var (status, i) in statuses.Select((s, i) => (s, i)))
 			await Upsert("backlog", new NodePatch
 			{
