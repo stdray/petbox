@@ -134,7 +134,8 @@ export function finishWireRun(opts: {
     lines: [
       `done. NOTE: start a NEW terminal${opts.platform === "win32" ? "" : " (login shell)"} before ` +
         `launching agents — their MCP configs read ${opts.envVar} from the environment. The kit ` +
-        `hooks work immediately (keys.json).`,
+        `hooks work immediately (keys.json). The project-scoped MCP server also needs a one-time ` +
+        `approval on first launch.`,
     ],
   };
 }

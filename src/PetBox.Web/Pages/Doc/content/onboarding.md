@@ -43,7 +43,16 @@ The run doesn't stop there — it continues into a `[11/10]` phase (the numberin
 
 Wiring persists the key to a real environment variable, which only new shells pick up. **Open a new terminal**, `cd` back into the project directory, and start the agent there.
 
-**Check:** the agent's first reply opens with the injected memory banner (`🧠 PetBox memory active` or similar); calling `tasks_board_list` returns a list — even an empty one. An auth error means a bad or wrong-project key; a missing tool means the MCP tool list is stale (reconnect and retry).
+**Expect a one-time approval prompt first.** The project-scoped MCP server in `.mcp.json` needs a one-time trust grant before either call below works — this is the normal first outcome on a fresh machine, not a symptom. Interactively, `claude mcp list` shows it pending:
+
+```
+$ claude mcp list
+petbox: https://petbox.3po.su/mcp (HTTP) - Pending approval (run `claude` to approve)
+```
+
+and a headless run instead returns `Claude requested permissions to use mcp__petbox__whoami, but you haven't granted it yet.` for every petbox tool call. Clear it with a one-time interactive approval (run `claude`, approve when prompted) or by skipping the prompt entirely via `--mcp-config .mcp.json --strict-mcp-config`.
+
+**Check:** the agent's first reply opens with the injected memory banner (`🧠 PetBox memory active` or similar); calling `tasks_board_list` returns a list — even an empty one. An auth error means a bad or wrong-project key; a missing tool means the MCP tool list is stale (reconnect and retry); a permissions/approval error means the server is still pending the one-time trust grant above.
 
 ## 3. Read the platform, then confirm understanding
 
@@ -59,7 +68,9 @@ Before writing anything, the agent reads the [overview](/doc/overview) (what Pet
 
 Step 1 already installed `SKILL.md` at the right path for your agent type — nothing to copy by hand.
 
-**Check:** in a fresh session the agent lists the petbox skill and can answer one question from it (e.g. "what is your status ceiling?" → `Review`). If it's missing, re-run the wire command from step 1 — a skill in the wrong place silently won't load, and `petbox-wire` always writes the right path per harness.
+**Check:** in a fresh session the agent lists the petbox skill and can answer one question from it (e.g. "what memory store and key does the canon index live at?" → store `canon`, key `index`). If it's missing, re-run the wire command from step 1 — a skill in the wrong place silently won't load, and `petbox-wire` always writes the right path per harness.
+
+The skill deliberately doesn't say what the status ceiling is — that depends on the board's kind (e.g. `Review` for `classic`/`work`, no ceiling at all for `simple`), so the agent reads it off the SessionStart memory banner and `tasks_methodology_guide`, not the skill.
 
 ## 5. Do one real piece of work end-to-end
 
