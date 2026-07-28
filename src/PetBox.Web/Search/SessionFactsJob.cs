@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
@@ -44,7 +45,10 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	const string ExtractPrompt =
 		"""
 		You extract DURABLE facts from a fragment of an AI-agent work-session transcript.
-		Output STRICT JSON only — an array (possibly empty) of objects:
+		Output STRICT JSON only. Your response MUST START with the array's opening `[` as its
+		very first character — no preamble, no explanation, no <reasoning>/<thinking> block, no
+		markdown fence. Stop the instant the closing `]` is written; nothing follows it, not even
+		a newline of commentary. The array (possibly empty) holds objects:
 		  {"type":"User|Feedback|Project|Reference","description":"<one line>","body":"<2-5 lines of detail>","tags":"<csv, optional>"}
 		Qualifying facts ONLY: a decision plus its why; a fixed bug's root cause; a discovered
 		convention or gotcha; a stated user preference; a durable project fact or constraint;
@@ -73,7 +77,10 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	const string JudgePrompt =
 		"""
 		You are the write-gate for an agent's long-term memory. Given a CANDIDATE fact and
-		EXISTING entries (each with store, key, description, body), answer with STRICT JSON only:
+		EXISTING entries (each with store, key, description, body), answer with STRICT JSON only.
+		Your response MUST START with the object's opening `{` as its very first character — no
+		preamble, no explanation, no <reasoning>/<thinking> block, no markdown fence. Stop the
+		instant the closing `}` is written; nothing follows it, not even a newline of commentary:
 		  {"action":"add|update|skip|drop|delete","key":"<existing key for update/delete>","description":"<merged>","body":"<merged>"}
 		Decide TWO things in this one answer:
 		1. Is it worth storing AT ALL? If the candidate is narration of work done, a
@@ -90,6 +97,11 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		Never pick an entry from the notes store for update or delete — those are human-curated
 		and off-limits to the machine.
 		""";
+
+	// The corrective retry turn (ChatParseWithRetryAsync): replayed as a user message after the
+	// model's own unparseable answer, so the correction reads as feedback on THAT answer.
+	const string ExtractCorrection = "верни ТОЛЬКО JSON-массив, ничего кроме";
+	const string JudgeCorrection = "верни ТОЛЬКО JSON-объект, ничего кроме";
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
 	readonly IProjectCatalog _catalog;
@@ -193,19 +205,26 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		{
 			ct.ThrowIfCancellationRequested();
 			var (batch, lastVersion) = TakeBatch(remaining);
-			var raw = await ChatAsync(project, ExtractPrompt, RenderTranscript(batch), ct);
-			var candidates = ParseCandidates(raw);
+			var (candidates, recovered, raw) = await ChatParseWithRetryAsync<List<FactCandidate>>(
+				project, ExtractPrompt, RenderTranscript(batch), ExtractCorrection, ct);
 			if (candidates is null)
 			{
-				// Unparseable output: advancing past the batch is deliberate — holding the
-				// cursor would re-spend a chat call on the same bad input every tick. Dead-letter
-				// the raw body so a lost extraction is findable in the self-log (log_query), not
-				// a silent drop.
-				_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped. raw={Raw}",
+				// Genuinely unparseable after a corrective retry: advancing past the batch is
+				// deliberate — holding the cursor would re-spend chat calls on the same bad input
+				// every tick. Dead-letter the raw body so a lost extraction is findable in the
+				// self-log (log_query), not a silent drop.
+				_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped after retry. raw={Raw}",
 					project, sessionId, Clip(raw, 2000));
 			}
 			else
 			{
+				// The dominant "loss" turned out to be the model answering correctly ([]) and
+				// then padding with prose/reasoning — recovered here, NOT a warning-worthy loss.
+				// Kept at Information (not Debug) and phrased distinctly so log_query can tell
+				// the two apart and measure how often the tolerant parser is doing real work.
+				if (recovered && _logger is not null && _logger.IsEnabled(LogLevel.Information))
+					_logger.LogInformation("facts extraction RECOVERED candidates from non-strict output for {Project}/{Session}; count={Count}",
+						project, sessionId, candidates.Count);
 				foreach (var candidate in candidates)
 				{
 					ct.ThrowIfCancellationRequested();
@@ -230,7 +249,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		// The judge is ALWAYS consulted now — it is the worth-gate as well as the dedup gate,
 		// so even a candidate with no retrieved neighbors must clear "is this worth storing?".
 		var neighbors = await CollectNeighborsAsync(project, candidate, ct);
-		var verdict = await JudgeAsync(project, candidate, neighbors, ct);
+		var verdict = await JudgeAsync(project, sessionId, candidate, neighbors, ct);
 		if (verdict is null || verdict.Action == "skip") return false;
 
 		// Worth-gate: the judge ruled this not durable (narration / session bookkeeping /
@@ -343,7 +362,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		return neighbors;
 	}
 
-	async Task<JudgeVerdict?> JudgeAsync(string project, FactCandidate candidate,
+	async Task<JudgeVerdict?> JudgeAsync(string project, string sessionId, FactCandidate candidate,
 		IReadOnlyList<Neighbor> neighbors, CancellationToken ct)
 	{
 		var sb = new StringBuilder();
@@ -352,34 +371,58 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		sb.AppendLine();
 		sb.AppendLine("EXISTING:");
 		sb.AppendLine(JsonSerializer.Serialize(neighbors, PromptJson));
-		var raw = await ChatAsync(project, JudgePrompt, sb.ToString(), ct);
-		try
+		var (verdict, recovered, raw) = await ChatParseWithRetryAsync<JudgeVerdict>(
+			project, JudgePrompt, sb.ToString(), JudgeCorrection, ct);
+		if (verdict is null || verdict.Action is not ("add" or "update" or "skip" or "drop" or "delete"))
 		{
-			var verdict = JsonSerializer.Deserialize<JudgeVerdict>(StripFences(raw), JsonOpts);
-			if (verdict is null || verdict.Action is not ("add" or "update" or "skip" or "drop" or "delete"))
-				return Fallback();
-			return verdict;
-		}
-		catch (JsonException)
-		{
-			return Fallback();
-		}
-
-		// A broken judge answer defaults to SKIP, not ADD: quarantine quality first — a
-		// lost fact stays recoverable in the episodic tier, junk would multiply.
-		JudgeVerdict? Fallback()
-		{
-			_logger?.LogWarning("facts judge returned unparseable verdict; candidate skipped");
+			// A broken judge answer defaults to SKIP, not ADD: quarantine quality first — a
+			// lost fact stays recoverable in the episodic tier, junk would multiply. Same
+			// transport disease as extraction — same dead-letter treatment, findable via log_query.
+			_logger?.LogWarning("facts judge returned unparseable verdict for {Project}/{Session} after retry; candidate skipped. raw={Raw}",
+				project, sessionId, Clip(raw, 1000));
 			return null;
 		}
+		if (recovered && _logger is not null && _logger.IsEnabled(LogLevel.Information))
+			_logger.LogInformation("facts judge RECOVERED verdict from non-strict output for {Project}/{Session}; action={Action}",
+				project, sessionId, verdict.Action);
+		return verdict;
 	}
 
-	async Task<string> ChatAsync(string project, string system, string user, CancellationToken ct)
+	// One corrective retry on genuine parse failure — not a chat-burn loop. `T` fails to
+	// materialize only when EVERY tolerant-parse stage in ResilientJson misses; then the bad
+	// assistant answer plus a blunt correction is replayed as the whole retry turn. Success on
+	// either attempt is reported as `Recovered` whenever the FIRST attempt needed anything past
+	// strict parsing (including the retry itself) — callers use that to log recovery distinctly
+	// from a genuine, still-warning-worthy failure.
+	async Task<(T? Value, bool Recovered, string LastRaw)> ChatParseWithRetryAsync<T>(
+		string project, string system, string user, string correction, CancellationToken ct) where T : class
 	{
+		var raw = await ChatAsync(project, system, user, ct);
+		var (value, recovered) = ResilientJson.TryParse<T>(raw, JsonOpts);
+		if (value is not null) return (value, recovered, raw);
+
+		var retryRaw = await ChatAsync(project, system, user, ct,
+			extra: [new ChatMessage("assistant", raw), new ChatMessage("user", correction)]);
+		var (retryValue, _) = ResilientJson.TryParse<T>(retryRaw, JsonOpts);
+		return retryValue is not null ? (retryValue, true, retryRaw) : (null, false, retryRaw);
+	}
+
+	// Preamble/reasoning ahead of the JSON (the retry's corrective turn, or a model that ignores
+	// the "JSON first" instruction) eats into the token budget that used to be spent entirely on
+	// the JSON payload; 2000 left too little headroom and risked truncating the JSON itself
+	// before its closing bracket. Raised, not removed — the destination store's caps
+	// (MaxCandidatesPerSession, per-field lengths) still bound what a well-formed answer can cost.
+	const int ChatMaxTokens = 3000;
+
+	async Task<string> ChatAsync(string project, string system, string user, CancellationToken ct,
+		IReadOnlyList<ChatMessage>? extra = null)
+	{
+		List<ChatMessage> messages = [new("system", system), new("user", user)];
+		if (extra is { Count: > 0 }) messages.AddRange(extra);
 		var res = await _llm!.ChatAsync(project, new ChatRequest(
-			[new ChatMessage("system", system), new ChatMessage("user", user)],
+			messages,
 			Temperature: 0.1,
-			MaxTokens: 2000), ct);
+			MaxTokens: ChatMaxTokens), ct);
 		return res.Text;
 	}
 
@@ -409,18 +452,6 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			sb.AppendLine(content);
 		}
 		return sb.ToString();
-	}
-
-	internal static IReadOnlyList<FactCandidate>? ParseCandidates(string raw)
-	{
-		try
-		{
-			return JsonSerializer.Deserialize<List<FactCandidate>>(StripFences(raw), JsonOpts);
-		}
-		catch (JsonException)
-		{
-			return null;
-		}
 	}
 
 	internal static string StripFences(string raw)
@@ -461,4 +492,108 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	sealed record Neighbor(string Store, string Key, string Description, string Body);
 
 	sealed record JudgeVerdict(string Action, string? Key, string? Description, string? Body);
+}
+
+// Tolerant JSON extraction shared by SessionFactsJob's extraction AND judge parsing — both
+// hit the SAME transport disease: an LLM that answers correctly but pads the answer with
+// prose/reasoning around the JSON (facts-extraction-unparseable-batches). Escalating stages,
+// cheapest/most-precise first; the FIRST stage that yields a value wins:
+//   a. strict  — the whole (fence-stripped) text must be exactly one JSON value; this is the
+//                pre-existing behavior and stays fastest for the common well-formed answer.
+//   b. reasoning-stripped — cut <reasoning>/<thinking>...</...> pairs, and an UNCLOSED opening
+//                tag truncates the text from that tag to the end; then retry (a).
+//   c. fenced-anywhere — a ```json (preferred) or plain ``` block located ANYWHERE in the text
+//                (not just a leading fence, unlike StripFences), tried in order of appearance.
+//   d. first-value scan — walk `[`/`{` start positions left to right and, at each, hand the
+//                REST of the text to a Utf8JsonReader-based Deserialize(ref reader, ...): that
+//                overload reads exactly one JSON value and does not choke on trailing content,
+//                which is exactly the dominant "[]\n\n**Explanation:**..." shape. A stray
+//                bracket from surrounding prose almost never parses into the target T's shape,
+//                so it is silently skipped in favor of the next candidate position.
+internal static class ResilientJson
+{
+	public static (T? Value, bool Recovered) TryParse<T>(string raw, JsonSerializerOptions opts) where T : class
+	{
+		var trimmed = (raw ?? "").Trim();
+		if (trimmed.Length == 0) return (null, false);
+
+		if (TryStrict<T>(SessionFactsJob.StripFences(trimmed), opts, out var strict))
+			return (strict, false);
+
+		var cleaned = StripReasoningBlocks(trimmed).Trim();
+		if (cleaned.Length > 0 && cleaned != trimmed && TryStrict<T>(SessionFactsJob.StripFences(cleaned), opts, out var afterReasoning))
+			return (afterReasoning, true);
+
+		foreach (var fenced in FindFencedBlocksAnywhere(cleaned))
+			if (TryStrict<T>(fenced, opts, out var fromFence))
+				return (fromFence, true);
+
+		if (TryReadFirstJsonValue<T>(cleaned, opts, out var scanned))
+			return (scanned, true);
+
+		return (null, false);
+	}
+
+	static bool TryStrict<T>(string s, JsonSerializerOptions opts, out T? value) where T : class
+	{
+		value = null;
+		if (string.IsNullOrWhiteSpace(s)) return false;
+		try
+		{
+			value = JsonSerializer.Deserialize<T>(s, opts);
+			return value is not null;
+		}
+		catch (JsonException) { return false; }
+	}
+
+	static bool TryReadFirstJsonValue<T>(string text, JsonSerializerOptions opts, out T? value) where T : class
+	{
+		value = null;
+		for (var i = 0; i < text.Length; i++)
+		{
+			if (text[i] != '[' && text[i] != '{') continue;
+			var slice = text[i..].TrimEnd();
+			if (slice.Length == 0) continue;
+			try
+			{
+				var bytes = Encoding.UTF8.GetBytes(slice);
+				var reader = new Utf8JsonReader(bytes, isFinalBlock: true, state: default);
+				// Deserialize(ref reader, ...) reads exactly ONE value and is silent about
+				// whatever bytes remain after it — unlike Deserialize(string, ...), which is
+				// the strict-stage behavior above and is exactly what trips on trailing prose.
+				var parsed = JsonSerializer.Deserialize<T>(ref reader, opts);
+				if (parsed is not null)
+				{
+					value = parsed;
+					return true;
+				}
+			}
+			catch (JsonException) { }
+			catch (NotSupportedException) { }
+		}
+		return false;
+	}
+
+	static readonly Regex ReasoningPair =
+		new(@"<(reasoning|thinking)>.*?</\1>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+	static readonly Regex ReasoningOpen =
+		new(@"<(reasoning|thinking)>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+	internal static string StripReasoningBlocks(string raw)
+	{
+		var s = ReasoningPair.Replace(raw, " ");
+		var open = ReasoningOpen.Match(s);
+		return open.Success ? s[..open.Index] : s;
+	}
+
+	static readonly Regex FencedJson =
+		new(@"```json\s*\r?\n?(.*?)```", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+	static readonly Regex FencedAny =
+		new(@"```\w*\s*\r?\n?(.*?)```", RegexOptions.Singleline | RegexOptions.Compiled);
+
+	static IEnumerable<string> FindFencedBlocksAnywhere(string text)
+	{
+		foreach (Match m in FencedJson.Matches(text)) yield return m.Groups[1].Value.Trim();
+		foreach (Match m in FencedAny.Matches(text)) yield return m.Groups[1].Value.Trim();
+	}
 }
