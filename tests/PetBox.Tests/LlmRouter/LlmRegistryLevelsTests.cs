@@ -203,8 +203,10 @@ public sealed class LlmRegistryLevelsTests : IDisposable
 
 		var act = async () => await _db.InsertAsync(cross);
 
+		// SqliteErrorCode 19 = SQLITE_CONSTRAINT — the typed code SQLite hands back for any
+		// constraint violation (the composite FK here), instead of grepping the driver's message text.
 		(await act.Should().ThrowAsync<SqliteException>())
-			.Which.Message.Should().Contain("FOREIGN KEY");
+			.Which.SqliteErrorCode.Should().Be(19);
 	}
 
 	// (g) LOCK #1's payoff. A key that will not decrypt is a HARD failure of that endpoint: the
