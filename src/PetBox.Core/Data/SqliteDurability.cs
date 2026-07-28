@@ -56,9 +56,11 @@ public enum SqliteTier
 // FULL buys the telemetry tier a guarantee nobody would ever use, so it is not worth any price at
 // all, measured or not.
 // THIS IS ALSO WHY `NORMAL` MUST NOT BE COPIED TO ANOTHER TIER WITHOUT CHECKING ITS JOURNAL MODE.
-// Everything above depends on WAL. Under journal_mode=DELETE (config.db still runs there —
-// ConfigSchema.Ensure does not call SqlitePragmas.ApplyWal) synchronous=NORMAL risks actual
-// CORRUPTION on power loss, not merely lost commits.
+// Everything above depends on WAL: under journal_mode=DELETE, synchronous=NORMAL risks actual
+// CORRUPTION on power loss, not merely lost commits. Every internal tier applies
+// SqlitePragmas.ApplyWal from its own *Schema.Ensure (core.db from MigrationRunner.Run), so that
+// precondition currently holds everywhere — config was the last exception and no longer is. A NEW
+// tier is not covered by that sentence until it applies WAL too.
 //
 // PATHS DELIBERATELY LEFT UNASSIGNED — the rest of the sweep's ledger. synchronous governs writes
 // only, so a read-only connection has nothing to decide: DataDbCatalog.DescribeAsync,
