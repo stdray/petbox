@@ -12,6 +12,8 @@ using PetBox.Memory.Services;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
 
+using PetBox.Tests.Search;
+
 namespace PetBox.Tests.Memory;
 
 // memory_search PAGINATION (work/search-results-pageable, spec result-set-pageable).
@@ -36,7 +38,8 @@ public sealed class MemorySearchCursorTests : IDisposable
 	// Injected explicitly (production wires it as a singleton) so a test can OBSERVE whether a page
 	// built a new pool or reused the stored one — the only end-to-end signal that "one rerank per pool"
 	// is actually holding rather than merely intended.
-	readonly SearchPoolCache _poolCache = new();
+	readonly PoolCacheHarness _poolHarness = new();
+	readonly SearchPoolCache _poolCache;
 
 	public MemorySearchCursorTests()
 	{
@@ -48,11 +51,13 @@ public sealed class MemorySearchCursorTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
+		_poolCache = _poolHarness.Cache;
 		_memory = new MemoryService(new MemoryStore(_db.Factory(), _factory), poolCache: _poolCache);
 	}
 
 	public void Dispose()
 	{
+		_poolHarness.Dispose();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
@@ -209,12 +214,12 @@ public sealed class MemorySearchCursorTests : IDisposable
 		// caches nothing at all. With a live route the saving is directly countable.
 		await SeedSixProject();
 		var llm = new FlakyLlmClient();
-		var cache = new SearchPoolCache();
+		var cache = _poolHarness.Cache;
 		var memory = new MemoryService(new MemoryStore(_db.Factory(), _factory), llm: llm, poolCache: cache);
 
 		var first = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), memory,
 			new NoopUsageRecorder(), "deploy", "project", null, null, null, null, 2, null, false, null, null);
-		cache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		cache.Stores.Should().Be(1, "page 1 materializes and stores the ranked pool");
 		first.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.Reranked);
 		var passesAfterPageOne = llm.RerankCalls;
 		passesAfterPageOne.Should().BeGreaterThan(0);
@@ -223,7 +228,7 @@ public sealed class MemorySearchCursorTests : IDisposable
 			new NoopUsageRecorder(), "deploy", "project", null, null, null, null, 2, null, false, null, first.NextCursor);
 
 		second.Items.Should().NotBeEmpty();
-		cache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		cache.Stores.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one — a second store would mean it reranked");
 		llm.RerankCalls.Should().Be(passesAfterPageOne,
 			"the cross-encoder runs ONCE per pool — that is the whole point of caching it");
 	}

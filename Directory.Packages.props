@@ -13,6 +13,10 @@
 		<PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.7" />
 		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
 		<PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.7" />
+		<!-- The cache facade over SqliteDistributedCache: single-flights concurrent misses (so fifty
+		     cold pages run one cross-encoder pass, not fifty) and owns the serialization boundary.
+		     Its L1 is switched OFF at every call site — see SearchPoolCache. -->
+		<PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
 		<PackageVersion Include="linq2db" Version="6.3.0" />
 		<PackageVersion Include="FluentValidation" Version="11.11.0" />
 		

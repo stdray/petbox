@@ -50,11 +50,11 @@ public sealed partial class TasksService : ITasksService
 	// Named methodology instances (live process automata + board membership).
 	readonly MethodologyInstanceService _methodologyInstances;
 	// The ordered relevance POOL cache (spec: result-set-pageable) — what keeps page 2 from paying for
-	// the cross-encoder a second time. MUST be a SINGLETON to do its job: TasksService itself is scoped
-	// per request, so an instance-local cache would be born empty on every page. When DI supplies
-	// nothing (tests, direct construction) the fallback is a private instance — the feature stays
-	// CORRECT (every page re-materializes the pool deterministically) and only loses the latency win,
-	// which is the right way round for a cache to fail.
+	// the cross-encoder a second time. When DI supplies nothing (tests, direct construction) the
+	// fallback is SearchPoolCache.Disabled, which stores nothing and says so: the feature stays CORRECT
+	// (every page re-materializes the pool deterministically) and loses only the latency win. It used
+	// to be a private per-instance cache instead, which — on a service that is SCOPED per request —
+	// could never be read back by anyone and was therefore quiet slowness dressed as a cache.
 	readonly SearchPoolCache _poolCache;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
@@ -78,7 +78,7 @@ public sealed partial class TasksService : ITasksService
 		_comments = comments;
 		_llm = llm;
 		_log = log;
-		_poolCache = poolCache ?? new SearchPoolCache();
+		_poolCache = poolCache ?? SearchPoolCache.Disabled;
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
@@ -2108,7 +2108,54 @@ public sealed partial class TasksService : ITasksService
 				legK.ToString(System.Globalization.CultureInfo.InvariantCulture),
 				req.RankingMode.ToString(), dataVersion);
 
-			if (_poolCache.TryGet(poolKey, out var cachedPool))
+			// The FRESH computation's by-product, kept only when THIS caller ran it. On a cache hit —
+			// and equally when a concurrent caller's in-flight computation was joined instead of run
+			// twice — this stays null and the stored ADDRESSES are hydrated instead.
+			List<TaskSearchHit>? freshHits = null;
+
+			var lookup = await _poolCache.GetOrComputeAsync(poolKey, async innerCt =>
+			{
+				// The core pool's own hash is DELIBERATELY discarded here (`_`). It addresses raw index
+				// docs — a comment is `c:<key>`, and a doc that resolves to nothing still holds a slot —
+				// whereas what gets cached, hydrated and WALKED is the RESOLVED pool: comment docs mapped
+				// onto their owner node, duplicates dropped. Minting the token from the core hash while
+				// page 2 recomputes the resolved one is TWO STRINGS FOR ONE UNCHANGED ORDERING, and it
+				// refused every cursor on the live box (work/tasks-search-order-hash-nondeterministic)
+				// while both pages returned byte-identical rows. The hash has to come off the same list
+				// the walk seeks in, so the pool is built ONCE here and both the token and the cache read
+				// their identity from it.
+				var (candidates, freshRetrievers, freshLimit, freshBounded, _) = await HybridCandidatesAsync(
+					projectKey, query, boardFilter, legK, urlPrefix, runtime, queryFacet, req.RankingMode, innerCt);
+				freshHits = candidates;
+				// Store the ADDRESSES + fused order only (never the rendered rows): a page re-hydrates its
+				// own bodies, so a cached pool can go stale in ORDER — refused by the order hash — but
+				// never in CONTENT. MatchedIn rides along so a hydrated page reproduces page 1.
+				var resolvedPool = new SearchPool(
+					[.. candidates.Select(h => new Hit(h.Board, h.Node.Key, h.Score ?? 0, h.Retriever))],
+					freshLimit, freshBounded, freshRetrievers,
+					[.. candidates.Select(h => h.MatchedIn)]);
+				// A DEGRADED pool is never KEPT. It is cheap to recompute (the reranker did not run
+				// anyway) and expensive to keep: storing it pins a half-answer — plus its now-stale
+				// provenance — for the whole TTL, so every repeat of the query keeps hitting the outage
+				// long after the route came back. That turns a self-healing blip into ten minutes of
+				// quietly worse results, a direct worsening of search-degraded-returns-empty-not-lexical
+				// rather than a new trade-off.
+				var cacheable = !freshRetrievers.Degraded && freshRetrievers.Ranking != SearchRankingOutcome.DegradedRrf;
+				// The SAME object whose hash goes into the token below — not a second one built from the
+				// same rows. Two constructions are two chances to drift apart, and that drift is exactly
+				// the defect this fixes.
+				return new SearchPoolCache.PoolComputation(resolvedPool, cacheable);
+			}, ct);
+
+			if (freshHits is not null)
+			{
+				hits = freshHits;
+				retrievers = lookup.Pool.Retrievers;
+				poolLimit = lookup.Pool.PoolLimit;
+				poolBounded = lookup.Pool.PoolBounded;
+				poolOrderHash = lookup.Pool.OrderHash;
+			}
+			else
 			{
 				// PAGE 2+ ON A LIVE POOL — HYDRATE THE STORED ADDRESSES. Emphatically NOT "re-run the
 				// search and re-sort by the cached order", which is what this did first and which lost
@@ -2124,51 +2171,14 @@ public sealed partial class TasksService : ITasksService
 				// question left is what each row's current body says. Storing addresses rather than rows
 				// was always what made this possible — this is that decision being cashed in. It is also
 				// strictly cheaper: no second index query and no reranker, ever.
-				hits = await HydratePoolAsync(projectKey, cachedPool, urlPrefix, runtime,
+				hits = await HydratePoolAsync(projectKey, lookup.Pool, urlPrefix, runtime,
 					PoolKeepsTerminalCancel(queryFacet), ct);
 				// Provenance describes the pass that actually DECIDED this order — the cached one, which by
-				// A2 below is never a degraded pool.
-				retrievers = cachedPool.Retrievers;
-				poolLimit = cachedPool.PoolLimit;
-				poolBounded = cachedPool.PoolBounded;
-				poolOrderHash = cachedPool.OrderHash;
-			}
-			else
-			{
-				// The core pool's own hash is DELIBERATELY discarded here (`_`). It addresses raw index
-				// docs — a comment is `c:<key>`, and a doc that resolves to nothing still holds a slot —
-				// whereas what gets cached, hydrated and WALKED is the RESOLVED pool: comment docs mapped
-				// onto their owner node, duplicates dropped. Minting the token from the core hash while
-				// page 2 recomputes the resolved one is TWO STRINGS FOR ONE UNCHANGED ORDERING, and it
-				// refused every cursor on the live box (work/tasks-search-order-hash-nondeterministic)
-				// while both pages returned byte-identical rows. The hash has to come off the same list
-				// the walk seeks in, so the pool is built ONCE here and both the token and the cache read
-				// their identity from it.
-				var (freshHits, freshRetrievers, freshLimit, freshBounded, _) = await HybridCandidatesAsync(
-					projectKey, query, boardFilter, legK, urlPrefix, runtime, queryFacet, req.RankingMode, ct);
-				hits = freshHits;
-				retrievers = freshRetrievers;
-				poolLimit = freshLimit;
-				poolBounded = freshBounded;
-				// Store the ADDRESSES + fused order only (never the rendered rows): a page re-hydrates its
-				// own bodies, so a cached pool can go stale in ORDER — refused by the order hash — but
-				// never in CONTENT. MatchedIn rides along so a hydrated page reproduces page 1.
-				var resolvedPool = new SearchPool(
-					[.. hits.Select(h => new Hit(h.Board, h.Node.Key, h.Score ?? 0, h.Retriever))],
-					freshLimit, freshBounded, freshRetrievers,
-					[.. hits.Select(h => h.MatchedIn)]);
-				poolOrderHash = resolvedPool.OrderHash;
-				// A DEGRADED pool is never stored. It is cheap to recompute (the reranker did not run
-				// anyway) and expensive to keep: caching it pins a half-answer — plus its now-stale
-				// provenance — for the whole TTL, so every repeat of the query keeps hitting the outage
-				// long after the route came back. That turns a self-healing blip into ten minutes of
-				// quietly worse results, a direct worsening of search-degraded-returns-empty-not-lexical
-				// rather than a new trade-off.
-				// The SAME object whose hash went into the token above — not a second one built from the
-				// same rows. Two constructions are two chances to drift apart, and that drift is exactly
-				// the defect this fixes.
-				if (!freshRetrievers.Degraded && freshRetrievers.Ranking != SearchRankingOutcome.DegradedRrf)
-					_poolCache.Put(poolKey, resolvedPool);
+				// the cacheable guard above is never a degraded pool.
+				retrievers = lookup.Pool.Retrievers;
+				poolLimit = lookup.Pool.PoolLimit;
+				poolBounded = lookup.Pool.PoolBounded;
+				poolOrderHash = lookup.Pool.OrderHash;
 			}
 
 			// search-identity-leg (spec): a query that exactly matches a node's slug OR its NodeId reads

@@ -30,7 +30,8 @@ public sealed class PagePoolRegressionTests : IDisposable
 	readonly ScopedDbFactory<MemoryDb> _factory;
 	readonly MemoryStore _store;
 	readonly FlakyLlmClient _llm = new();
-	readonly SearchPoolCache _poolCache = new();
+	readonly PoolCacheHarness _poolHarness = new();
+	readonly SearchPoolCache _poolCache;
 	readonly MemoryService _memory;
 
 	public PagePoolRegressionTests()
@@ -44,11 +45,13 @@ public sealed class PagePoolRegressionTests : IDisposable
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
 		_store = new MemoryStore(_db.Factory(), _factory);
+		_poolCache = _poolHarness.Cache;
 		_memory = new MemoryService(_store, llm: _llm, poolCache: _poolCache);
 	}
 
 	public void Dispose()
 	{
+		_poolHarness.Dispose();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
@@ -227,14 +230,14 @@ public sealed class PagePoolRegressionTests : IDisposable
 		var degraded = await Search(q: "deploy", limit: 2);
 
 		degraded.Retrievers!.Degraded.Should().BeTrue("the vector leg threw — this pool is a degradation");
-		_poolCache.Count.Should().Be(0, "a degraded pool is cheap to recompute and expensive to keep");
+		_poolCache.Stores.Should().Be(0, "a degraded pool is cheap to recompute and expensive to keep");
 
 		_llm.EmbedDown = false;
 		var healthy = await Search(q: "deploy", limit: 2);
 
 		healthy.Retrievers!.Degraded.Should().BeFalse("recovery must be visible on the very next call");
 		healthy.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.Reranked);
-		_poolCache.Count.Should().Be(1, "a healthy, actually-reranked pool is the one worth keeping");
+		_poolCache.Stores.Should().Be(1, "a healthy, actually-reranked pool is the one worth keeping");
 	}
 
 	// ── A3: the memory change stamp must move on a DELETE ────────────────────────────────────
@@ -351,7 +354,7 @@ public sealed class PagePoolRegressionTests : IDisposable
 		var first = await Search(q: "deploy", limit: 2);
 		first.Retrievers!.Degraded.Should().BeTrue();
 		first.NextCursor.Should().NotBeNull();
-		_poolCache.Count.Should().Be(0, "a degraded pool is never cached — so page 2 must rebuild");
+		_poolCache.Stores.Should().Be(0, "a degraded pool is never cached — so page 2 must rebuild");
 
 		_llm.EmbedDown = false; // the route heals between pages
 
@@ -415,13 +418,12 @@ public sealed class PagePoolRegressionTests : IDisposable
 		act.Should().Throw<ArgumentException>().WithMessage("*older token format*");
 	}
 
-	// Drop every cached pool, modelling TTL expiry / capacity eviction / a process restart — the state in
-	// which a page must REBUILD rather than reuse.
-	void EvictPools()
-	{
-		for (var i = 0; i < 200; i++)
-			_poolCache.Put($"evict-{i}", new SearchPool([], 1, false, new SearchRetrievers(true, false, false)));
-	}
+	// Drop every cached pool — the state in which a page must REBUILD rather than reuse.
+	//
+	// It used to reach that state by overflowing a 64-entry capacity. There is no capacity any more,
+	// and a disk cache does not lose pools to a restart either, so the only thing that still drops one
+	// is TTL — which a test cannot wait for. Invalidate() is the seam that stands in for it.
+	void EvictPools() => _poolCache.Invalidate();
 
 	// ── A4: identity resume is only sound while the row has not MOVED ────────────────────────
 

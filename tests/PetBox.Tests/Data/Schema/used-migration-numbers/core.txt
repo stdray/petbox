@@ -61,3 +61,12 @@
 46 LIVE M046_LlmRouteEmbedSpaceId
 47 LIVE M047_LlmRegistryLevelVersion
 48 LIVE M048_SmokeOwnWorkspace
+#
+# --- 1000+ : the DISK CACHE set (PetBox.Core.Data.CacheMigrations), not the core.db timeline ---
+# A second migration set shares this assembly, and FluentMigrator numbers are per-SCAN, so the two
+# sets share one number space whether or not they share a database. MigrationRunner keeps them apart
+# by NAMESPACE (that is what stops core.db growing cache_entries, and the cache file growing the core
+# schema); this range keeps them apart for every scan that does NOT pass the filter — eighteen
+# migration tests build their own runner over this assembly, and a second M001 made all of them fail
+# with DuplicateMigrationException. Recorded here so the reservation is permanent and visible.
+1001 LIVE M1001_CacheEntries

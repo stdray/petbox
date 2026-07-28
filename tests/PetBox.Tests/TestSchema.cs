@@ -189,6 +189,10 @@ public static class TestSchema
 	static readonly Action<string> LogEnsure = Templated("log", PetBox.Log.Core.Data.LogSchema.Ensure);
 	static readonly Action<string> ConfigEnsure = Templated("config", PetBox.Config.Data.ConfigSchema.Ensure);
 	static readonly Action<string> DeployEnsure = Templated("deploy", PetBox.Deploy.Data.DeploySchema.Ensure);
+	// The disk cache tier. Templated like the rest — and the template survives the File.Copy intact,
+	// including the auto_vacuum mode CacheSchema sets before the migrations, because auto_vacuum lives
+	// in the file header rather than in per-connection state.
+	static readonly Action<string> CacheEnsure = Templated("cache", PetBox.Core.Data.CacheSchema.Ensure);
 
 	// Materialize the Core schema at the DB file named by `connectionString` — a drop-in
 	// replacement for MigrationRunner.Run(cs) in test setup that copies the migrated template
@@ -205,6 +209,7 @@ public static class TestSchema
 	public static void Log(string connectionString) => LogEnsure(connectionString);
 	public static void Config(string connectionString) => ConfigEnsure(connectionString);
 	public static void Deploy(string connectionString) => DeployEnsure(connectionString);
+	public static void Cache(string connectionString) => CacheEnsure(connectionString);
 
 	// A `Data Source=...;Cache=Shared` connection string for a WebApplicationFactory
 	// test's Core db, rooted in a FRESH per-call directory — not a bare filename dropped

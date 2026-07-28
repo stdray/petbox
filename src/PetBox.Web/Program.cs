@@ -21,6 +21,7 @@ using PetBox.Web.Mcp;
 using PetBox.Web.Health;
 using PetBox.Web.Ingestion;
 using PetBox.Web.Navigation;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Models;
@@ -109,6 +110,10 @@ public partial class Program
 				?? "Data Source=./data/petbox.db;Cache=Shared";
 		static string ResolveDataDir(IServiceProvider sp) =>
 			Path.GetDirectoryName(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(ResolveCs(sp)).DataSource)!;
+		// The disk cache's file, in one place: the factory registration and the startup schema
+		// bootstrap must not be able to point at two different files.
+		static string ResolveCacheDbPath(IServiceProvider sp) =>
+			Path.Combine(ResolveDataDir(sp), PetBox.Core.Data.Backup.ExcludedCacheDirName, "cache.db");
 
 		// CreateDirectory still uses builder.Configuration here — fine because we're
 		// only ensuring the default path exists ahead of any first-write; test paths
@@ -185,10 +190,37 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITaskBoardStore, PetBox.Tasks.Data.TaskBoardStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.IRelationStore, PetBox.Tasks.Data.RelationStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITagStore, PetBox.Tasks.Data.TagStore>();
+		// THE on-disk cache tier (work/cache-backend-decision). One SQLite file of its own — never
+		// core.db, never a module tier's — under data/cache/, which Backup deliberately skips: every
+		// row here is a derived value whose source IS in the backup set.
+		//
+		// SINGLETON, and IDistributedCache is the abstraction on purpose: it is the seam HybridCache
+		// plugs into as an L2, and the one a future move to a network cache would replace without any
+		// consumer noticing. The implementation is ours rather than a package — NeoSmart.Caching.Sqlite
+		// was measured on the same stand and rejected for HANGING under a foreign transaction (8+
+		// minutes, 0 of 400 operations) and for never shrinking its file. Its fail-soft behaviour is
+		// part of the type, not of this registration: it cannot throw at a caller.
+		// Same three-layer shape as every other database here: a FACTORY over the file (fresh
+		// caller-owned connections, options built once), a SCHEMA bootstrap run at startup, and a
+		// consumer that only knows the four operations. Sibling path scheme to the tasks/memory/
+		// sessions factories above, in its OWN directory so Backup.ExcludedCacheDirName skips the
+		// subtree whole.
+		builder.Services.AddSingleton<ICacheDbFactory>(sp =>
+			new CacheDbFactory(CacheSchema.ConnectionString(ResolveCacheDbPath(sp))));
+		builder.Services.AddSingleton<IDistributedCache>(sp => new SqliteDistributedCache(
+			sp.GetRequiredService<ICacheDbFactory>(),
+			new SqliteDistributedCacheOptions(),
+			sp.GetService<ILogger<SqliteDistributedCache>>()));
+		// The facade over it. L1 is switched OFF at every call site (see SearchPoolCache), so this is
+		// NOT here to hold a second copy in memory — it is here for the other thing it does: single-
+		// flighting concurrent misses, so fifty simultaneous cold pages run ONE cross-encoder pass.
+		builder.Services.AddHybridCache();
 		// The ranked-relevance POOL cache (spec: result-set-pageable) — SINGLETON by necessity, not by
 		// taste: it is what lets page 2 of a `q` walk reuse page 1's order instead of paying for the
 		// cross-encoder again, and the services that read it are SCOPED per request, so anything
 		// narrower would be born empty on every page and the rerank would run per page after all.
+		// Absent this registration the services fall back to SearchPoolCache.Disabled — correct, and
+		// visibly not a cache, rather than the private per-request instance they used to invent.
 		builder.Services.AddSingleton<PetBox.Core.Search.SearchPoolCache>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ICommentService, PetBox.Tasks.Services.CommentService>();
@@ -808,6 +840,24 @@ public partial class Program
 		// Deploy: single fleet-wide db (data/deploy.db). Ensure its schema once at
 		// startup (the per-project stores ensure lazily via their factories instead).
 		PetBox.Deploy.Data.DeploySchema.Ensure($"Data Source={Path.Combine(dataDir, "deploy.db")};Cache=Shared");
+
+		// Disk cache: single file (data/cache/cache.db), schema ensured once at startup like deploy's.
+		//
+		// The try/catch is NOT the usual best-effort shrug — it is the same fail-soft contract the
+		// cache itself carries, applied at the one point where the cache could still take the process
+		// down. A cache that cannot build its schema must make PetBox slower, never unstartable:
+		// every subsequent operation then fails inside SqliteDistributedCache, is logged there, and
+		// degrades to a miss, so results stay correct and are simply recomputed each time.
+		var cacheDbPath = Path.Combine(dataDir, PetBox.Core.Data.Backup.ExcludedCacheDirName, "cache.db");
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(cacheDbPath)!);
+			PetBox.Core.Data.CacheSchema.Ensure(PetBox.Core.Data.CacheSchema.ConnectionString(cacheDbPath));
+		}
+		catch (Exception ex)
+		{
+			Console.Error.WriteLine($"PetBox disk cache unavailable (every lookup will miss): {ex.Message}");
+		}
 
 		// One-time, idempotent: fold legacy per-board task files (tasks/<proj>/<board>.db)
 		// into the per-project file (tasks/<proj>.db). Keeps originals (renamed .migrated)

@@ -13,6 +13,8 @@ using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
 
+using PetBox.Tests.Search;
+
 namespace PetBox.Tests.Tasks;
 
 // tasks_search LISTING pagination (work/tasks-search-listing-keyset-cursor): the response
@@ -39,7 +41,8 @@ public sealed class TasksSearchCursorTests : IDisposable
 	// Injected explicitly (production wires it as a singleton) so the q-mode tests can OBSERVE whether a
 	// page built a new pool or reused the stored one — the only end-to-end signal that requirement 5
 	// ("реранк считается один раз на пул") is actually holding rather than merely intended.
-	readonly SearchPoolCache _poolCache = new();
+	readonly PoolCacheHarness _poolHarness = new();
+	readonly SearchPoolCache _poolCache;
 
 	public TasksSearchCursorTests()
 	{
@@ -51,12 +54,14 @@ public sealed class TasksSearchCursorTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
+		_poolCache = _poolHarness.Cache;
 		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory),
 			poolCache: _poolCache);
 	}
 
 	public void Dispose()
 	{
+		_poolHarness.Dispose();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
@@ -310,13 +315,13 @@ public sealed class TasksSearchCursorTests : IDisposable
 		// demonstrate the saving. A local service keeps the LLM out of this class's other tests.
 		await SeedQueryable();
 		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
-		var cache = new SearchPoolCache();
+		var cache = _poolHarness.Cache;
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
 		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
 			false, null, null, null, 2, false, null, null, null);
-		cache.Count.Should().Be(1, "page 1 materializes and stores the ranked pool");
+		cache.Stores.Should().Be(1, "page 1 materializes and stores the ranked pool");
 		var passesAfterPageOne = llm.RerankCalls;
 		passesAfterPageOne.Should().BeGreaterThan(0, "the cross-encoder decided this order");
 
@@ -324,7 +329,7 @@ public sealed class TasksSearchCursorTests : IDisposable
 			false, null, null, null, 2, false, null, null, first.NextCursor);
 
 		second.Nodes.Should().NotBeEmpty();
-		cache.Count.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one");
+		cache.Stores.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one — a second store would mean it reranked");
 		llm.RerankCalls.Should().Be(passesAfterPageOne,
 			"page 2 must not pay for the cross-encoder again — 3-4 seconds per page is what this avoids");
 	}
@@ -387,7 +392,7 @@ public sealed class TasksSearchCursorTests : IDisposable
 		// and this test is what keeps it declared.
 		await SeedQueryable();
 		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
-		var cache = new SearchPoolCache();
+		var cache = _poolHarness.Cache;
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
@@ -397,8 +402,10 @@ public sealed class TasksSearchCursorTests : IDisposable
 
 		// Evict the pool, then take the route down: page 2 rebuilds as plain RRF — same rows, different
 		// order, nothing written, every data stamp still agreeing.
-		for (var i = 0; i < 200; i++)
-			cache.Put($"evict-{i}", new SearchPool([], 1, false, new SearchRetrievers(true, false, false)));
+		// Drop the stored pool. Capacity overflow used to do this; there is no capacity any more and a
+		// disk cache does not lose pools to a restart, so Invalidate() is the seam that stands in for
+		// the one thing that still drops one — TTL, which a test cannot wait for.
+		cache.Invalidate();
 		llm.EmbedDown = true;
 
 		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
@@ -438,7 +445,7 @@ public sealed class TasksSearchCursorTests : IDisposable
 			.Applied.Should().BeTrue();
 
 		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
-		var cache = new SearchPoolCache();
+		var cache = _poolHarness.Cache;
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), comments, llm: llm, poolCache: cache);
 
@@ -450,7 +457,7 @@ public sealed class TasksSearchCursorTests : IDisposable
 			false, null, null, null, 100, false, null, null, null);
 		var first = await Page(null);
 		first.NextCursor.Should().NotBeNull("the walk has to start for the refusal to be reachable at all");
-		cache.Count.Should().Be(1, "a reranked pool is cached — so page 2 takes the hydrate branch");
+		cache.Stores.Should().Be(1, "a reranked pool is cached — so page 2 takes the hydrate branch");
 
 		var walked = await WalkAsync(Page);
 
@@ -470,7 +477,7 @@ public sealed class TasksSearchCursorTests : IDisposable
 		await comments.AddAsync(Proj, "b", "q1", null, "alice", "alpha discussion of the material", null);
 
 		var llm = new PetBox.Tests.Memory.FlakyLlmClient();
-		var cache = new SearchPoolCache();
+		var cache = _poolHarness.Cache;
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), comments, llm: llm, poolCache: cache);
 

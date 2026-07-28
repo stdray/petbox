@@ -142,46 +142,105 @@ public sealed class SearchPoolPagingTests
 	}
 
 	[Fact]
-	public void PoolCache_ServesAStoredPool_SoASecondPageNeedsNoRerank()
+	public async Task PoolCache_ServesAStoredPool_SoASecondPageNeedsNoRerank()
 	{
-		var cache = new SearchPoolCache();
+		using var harness = new PoolCacheHarness();
 		var pool = new SearchPool([new Hit("t", "a", 1.0)], PoolLimit: 495, PoolBounded: false, new SearchRetrievers(true, false, false));
 
-		cache.Put("fp-1", pool);
+		var first = await harness.Cache.GetOrComputeAsync("fp-1", _ => Computed(pool));
+		first.FromCache.Should().BeFalse("nothing was stored yet — this call is the one that materializes the pool");
 
-		cache.TryGet("fp-1", out var got).Should().BeTrue();
-		got.Ordered.Select(h => h.Id).Should().Equal("a");
-		cache.TryGet("fp-2", out _).Should().BeFalse("a different fingerprint is a different pool, never a shared one");
+		var second = await harness.Cache.GetOrComputeAsync("fp-1", _ => throw new InvalidOperationException(
+			"page 2 must SERVE the stored pool — running the computation again is the 3-4s rerank this cache exists to avoid"));
+		second.FromCache.Should().BeTrue();
+		second.Pool.Ordered.Select(h => h.Id).Should().Equal("a");
+
+		var other = await harness.Cache.GetOrComputeAsync("fp-2", _ => Computed(pool));
+		other.FromCache.Should().BeFalse("a different fingerprint is a different pool, never a shared one");
 	}
 
 	[Fact]
-	public void PoolCache_ExpiredEntry_IsAMiss_NotAStaleHit()
+	public async Task PoolCache_RoundTripsEveryFactThePoolCarries_NotJustItsOrder()
 	{
-		// A cold page must RE-MATERIALIZE (deterministically, same order) rather than serve an aged pool
-		// behind the caller's back. Expiry is a memory bound; the data version is what guards staleness.
-		var clock = new FakeClock(DateTimeOffset.UnixEpoch);
-		var cache = new SearchPoolCache { Ttl = TimeSpan.FromMinutes(5), Clock = clock };
-		cache.Put("fp", new SearchPool([new Hit("t", "a", 1.0)], 495, false, new SearchRetrievers(true, false, false)));
+		// The pool is SERIALIZED now, not handed back by reference, so every field is a chance to
+		// lose something in transit. Two of them are load-bearing beyond the row order: PoolBounded
+		// is what stops a truncated pool being reported as an exhausted search, and Annotations is
+		// what makes a hydrated page 2 reproduce page 1 exactly.
+		using var harness = new PoolCacheHarness();
+		var pool = new SearchPool(
+			[new Hit("board", "n1", 0.75, "lexical"), new Hit("board", "n2", 0.5, "semantic")],
+			PoolLimit: 495,
+			PoolBounded: true,
+			new SearchRetrievers(true, true, false, null, SemanticLag: 7, SearchRankingOutcome.Reranked),
+			Annotations: ["comment", null]);
 
-		clock.Now += TimeSpan.FromMinutes(4);
-		cache.TryGet("fp", out _).Should().BeTrue();
+		await harness.Cache.GetOrComputeAsync("fp", _ => Computed(pool));
+		var got = (await harness.Cache.GetOrComputeAsync("fp", _ => Computed(pool))).Pool;
 
-		clock.Now += TimeSpan.FromMinutes(2);
-		cache.TryGet("fp", out _).Should().BeFalse();
-		cache.Count.Should().Be(0, "an expired entry is dropped, not left to be re-tested forever");
+		got.Ordered.Should().Equal(pool.Ordered);
+		got.PoolLimit.Should().Be(495);
+		got.PoolBounded.Should().BeTrue("a truncated pool reported as exhausted is the lie this feature exists to prevent");
+		got.Retrievers.Should().Be(pool.Retrievers);
+		got.AnnotationAt(0).Should().Be("comment");
+		got.AnnotationAt(1).Should().BeNull();
+		got.OrderHash.Should().Be(pool.OrderHash, "a cursor minted against the stored pool has to seek in the same list");
 	}
 
 	[Fact]
-	public void PoolCache_IsBounded_SoTheMemoryPriceIsACeilingNotAHope()
+	public async Task PoolCache_HoldsFarMoreThanTheOldCapacity_BecauseTheBoundIsNowTtlNotACount()
 	{
-		var cache = new SearchPoolCache { Capacity = 3 };
-		for (var i = 0; i < 10; i++)
-			cache.Put($"fp-{i}", new SearchPool([new Hit("t", $"a{i}", 1.0)], 495, false, new SearchRetrievers(true, false, false)));
+		// THE MEANING OF THIS TEST CHANGED WITH THE STORAGE, and deliberately so. It used to assert a
+		// 64-entry ceiling with oldest-first eviction, which existed to bound RAM — pools no longer
+		// live in RAM. The bound is now TTL plus the cache's sweep, so the honest claim is the
+		// opposite one: storing many pools evicts none of them, and in particular the FIRST walk is
+		// still resumable after a hundred later ones, which under the old ceiling it would not have
+		// been.
+		using var harness = new PoolCacheHarness();
+		var pool = new SearchPool([new Hit("t", "a", 1.0)], 495, false, new SearchRetrievers(true, false, false));
 
-		cache.Count.Should().BeLessThanOrEqualTo(3);
-		cache.TryGet("fp-9", out _).Should().BeTrue("the newest walk is the one still in flight");
-		cache.TryGet("fp-0", out _).Should().BeFalse("the oldest was evicted — a miss costs one recomputation, never a wrong answer");
+		for (var i = 0; i < 100; i++)
+			await harness.Cache.GetOrComputeAsync($"fp-{i}", _ => Computed(pool));
+
+		(await harness.Cache.GetOrComputeAsync("fp-0", _ => Computed(pool))).FromCache
+			.Should().BeTrue("the oldest walk is still in flight as far as anyone knows — nothing evicted it");
+		(await harness.Cache.GetOrComputeAsync("fp-99", _ => Computed(pool))).FromCache.Should().BeTrue();
+		harness.Cache.Stores.Should().Be(100);
 	}
+
+	[Fact]
+	public async Task PoolCache_SinglesFlightsConcurrentMisses_SoFiftyColdPagesRerankOnce()
+	{
+		// The reason HybridCache is in the stack at all (its in-memory tier is switched OFF). Fifty
+		// callers arriving on the same cold key must produce ONE cross-encoder pass, not fifty — and
+		// the forty-nine that did not run it must be told so, because their branch is "hydrate the
+		// stored addresses", not "use the rows I just computed".
+		using var harness = new PoolCacheHarness();
+		var pool = new SearchPool([new Hit("t", "a", 1.0)], 495, false, new SearchRetrievers(true, false, false));
+		var runs = 0;
+		var gate = new TaskCompletionSource();
+
+		var callers = Enumerable.Range(0, 50).Select(_ => Task.Run(async () =>
+		{
+			await gate.Task;
+			return await harness.Cache.GetOrComputeAsync("hot", async _ =>
+			{
+				Interlocked.Increment(ref runs);
+				await Task.Delay(50, CancellationToken.None);
+				return new SearchPoolCache.PoolComputation(pool, Cacheable: true);
+			});
+		})).ToArray();
+
+		gate.SetResult();
+		var results = await Task.WhenAll(callers);
+
+		runs.Should().Be(1, "fifty simultaneous misses must cost ONE computation");
+		results.Count(r => !r.FromCache).Should().Be(1,
+			"exactly the caller that ran the factory owns the fresh rows; everyone else hydrates");
+		results.Should().OnlyContain(r => r.Pool.Ordered.Count == 1);
+	}
+
+	static ValueTask<SearchPoolCache.PoolComputation> Computed(SearchPool pool) =>
+		ValueTask.FromResult(new SearchPoolCache.PoolComputation(pool, Cacheable: true));
 
 	// ── fixtures ──────────────────────────────────────────────────────────────────────────────
 

@@ -28,6 +28,21 @@ public static class SqliteConnectionStrings
 	public static string WithForeignKeys(string connectionString) =>
 		Has(connectionString, "Foreign Keys") ? connectionString : Append(connectionString, "Foreign Keys=True");
 
+	// ADO.NET's command-timeout seconds, as a connection-string keyword. This is NOT a synonym for
+	// `PRAGMA busy_timeout` and the difference was measured, not assumed: Microsoft.Data.Sqlite wraps
+	// every command in its OWN managed retry loop keyed to SqliteConnection.DefaultTimeout, so against
+	// a busy writer the PRAGMA alone does not bound the wait at all — a diagnostic at 200/1000/2000/
+	// 5000 ms PRAGMA values blocked ~30-34 s in EVERY case, i.e. the ADO.NET default (30 s) was the
+	// real ceiling throughout. `Default Timeout=` is the knob that actually moves it (confirmed at 1 s
+	// and 3 s giving ~1.1 s / ~3.1 s failures). Only the cache file uses it — see SqliteDistributedCache,
+	// which must fail FAST and degrade to a miss rather than hold a request behind a 30-second stall.
+	public const int DefaultTimeoutSeconds = SqlitePragmas.DefaultBusyTimeoutMs / 1000;
+
+	public static string WithDefaultTimeout(string connectionString) =>
+		Has(connectionString, "Default Timeout")
+			? connectionString
+			: Append(connectionString, $"Default Timeout={DefaultTimeoutSeconds}");
+
 	// Every connection string a pooled connection to `path` can carry: the cross product of the
 	// decorations above, each produced by APPLYING the production function rather than by
 	// repeating what it writes.
@@ -38,6 +53,13 @@ public static class SqliteConnectionStrings
 			yield return cs;
 			yield return WithForeignKeys(cs);
 		}
+
+		// NOT part of the cross product above, because production never crosses it with anything: the
+		// one file that carries a Default Timeout is the cache, which is deliberately never
+		// shared-cache and has no foreign keys. Listing the four unreachable combinations would make
+		// this derivation a superset of what production can open, and the point of the list is that it
+		// says what production DOES.
+		yield return WithDefaultTimeout(ForFile(path));
 	}
 
 	static bool Has(string connectionString, string keyword) =>

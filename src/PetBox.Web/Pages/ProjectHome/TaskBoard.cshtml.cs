@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Hybrid;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -39,11 +39,20 @@ public sealed class TaskBoardModel : PageModel
 	readonly PetBox.Memory.Contract.IMemoryService? _memory;
 
 	// board-search-stem-lookup: caches OnGetSearchIndexAsync's built BoardSearchIndex keyed by
-	// (project,board,boardVersion) — same optional-DI-param posture as _memory above (IMemoryCache
-	// is registered unconditionally via AddMemoryCache(), so real requests always get the shared
-	// singleton; a bare `new TaskBoardModel(...)` unit test that never calls the handler gets a
-	// throwaway per-instance cache instead of null-ref'ing).
-	readonly IMemoryCache _searchIndexCache;
+	// (project,board,boardVersion).
+	//
+	// ON DISK now, not in RAM (work/cache-backend-decision). The reason is size against value: the
+	// index is ~124 KB gzip for one 481-node board, it is worth keeping for as long as the board does
+	// not change, and holding every active board's copy in the process is exactly the unbounded
+	// memory this move exists to shed. The key is already ETag-versioned, so nothing here invalidates
+	// anything — a superseded index is simply never asked for again and ages out on TTL.
+	//
+	// Same optional-DI-param posture as _memory above: DI always supplies it, and a bare
+	// `new TaskBoardModel(...)` unit test that never calls this handler passes none. NULL therefore
+	// means "no cache", not "broken" — the handler below rebuilds the index every call, which is what
+	// a unit test wants anyway. That is a change from the old throwaway `new MemoryCache(...)`, which
+	// pretended to be a cache nobody could ever read from.
+	readonly HybridCache? _searchIndexCache;
 
 	// Optional ctor param, same posture as _memory above: needed only to gate MemoryRefMap's derived
 	// workspace-container leg (SandboxContainment.PermitsAsync) — DI always supplies it (IProjectCatalog
@@ -53,14 +62,14 @@ public sealed class TaskBoardModel : PageModel
 
 	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
 		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null,
-		IMemoryCache? searchIndexCache = null, IProjectCatalog? catalog = null)
+		HybridCache? searchIndexCache = null, IProjectCatalog? catalog = null)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
 		_settings = settings;
 		_memory = memory;
-		_searchIndexCache = searchIndexCache ?? new MemoryCache(new MemoryCacheOptions());
+		_searchIndexCache = searchIndexCache;
 		_catalog = catalog;
 	}
 
@@ -396,17 +405,37 @@ public sealed class TaskBoardModel : PageModel
 		if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
 			return StatusCode(304);
 
-		var cacheKey = $"board-search-index:{ProjectKey}:{Board}:{etag}";
-		if (!_searchIndexCache.TryGetValue(cacheKey, out BoardSearchIndex? index) || index is null)
-		{
-			var full = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: true, ct: ct);
-			index = BoardSearchIndexBuilder.Build(full.Nodes);
-			using var entry = _searchIndexCache.CreateEntry(cacheKey);
-			entry.SlidingExpiration = TimeSpan.FromMinutes(30);
-			entry.Value = index;
-		}
+		// v1: the payload SHAPE version, the same role KeysetCursor.FormatVersion plays for a cursor
+		// token. It rides in the key rather than inside the JSON because the key is already the only
+		// thing that decides identity here — an index written by a build with a different
+		// BoardSearchIndex shape is then never read at all, and ages out on its own TTL instead of
+		// being fetched and rejected on every request. A foreign version is a MISS, never garbage and
+		// never an error.
+		var cacheKey = $"board-search-index:v1:{ProjectKey}:{Board}:{etag}";
+		var index = _searchIndexCache is null
+			? await BuildSearchIndexAsync(ct)
+			: await _searchIndexCache.GetOrCreateAsync(cacheKey, BuildSearchIndexAsync, SearchIndexCacheOptions,
+				tags: null, cancellationToken: ct);
 		return new JsonResult(index);
 	}
+
+	// The bodies needed to build the index are read via a SEPARATE, independent
+	// GetAsync(includeBody:true) call, only on a cache MISS; the page's own render is untouched (it
+	// still skips Body whenever its view mode doesn't show it).
+	async ValueTask<BoardSearchIndex> BuildSearchIndexAsync(CancellationToken ct)
+	{
+		var full = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: true, ct: ct);
+		return BoardSearchIndexBuilder.Build(full.Nodes);
+	}
+
+	// 30 minutes, as before. L1 OFF in both directions: a 124 KB index per active board is precisely
+	// the kind of thing that should not accumulate in the process — and the browser already holds its
+	// own copy behind the ETag, so the memory tier would be a third copy of the same bytes.
+	static readonly HybridCacheEntryOptions SearchIndexCacheOptions = new()
+	{
+		Expiration = TimeSpan.FromMinutes(30),
+		Flags = HybridCacheEntryFlags.DisableLocalCacheRead | HybridCacheEntryFlags.DisableLocalCacheWrite,
+	};
 
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under `nodeId` — a
 	// hidden form field, since this page renders MANY node cards (unlike the node detail page,

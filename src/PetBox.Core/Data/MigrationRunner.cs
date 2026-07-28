@@ -34,7 +34,13 @@ public static class MigrationRunner
 	public static void Run(string connectionString)
 	{
 		SqlitePragmas.ApplyWal(connectionString);
-		Run(connectionString, typeof(Migrations.M001_Initial).Assembly);
+		// NAMESPACE-SCOPED, not assembly-wide. PetBox.Core hosts a SECOND, unrelated migration set —
+		// the disk cache's (PetBox.Core.Data.CacheMigrations) — and an unfiltered scan would run both
+		// sets against both files: core.db would grow a cache_entries table it has no use for, and
+		// (far worse) the cache file would be built with the entire Core schema. Neither would fail a
+		// build or a startup. Every Core migration lives in exactly one namespace, so the filter is
+		// precise rather than approximate.
+		Run(connectionString, typeof(Migrations.M001_Initial).Assembly, typeof(Migrations.M001_Initial).Namespace);
 	}
 
 	// Runs the migration set found in `migrationsAssembly` against `connectionString`.
@@ -43,7 +49,13 @@ public static class MigrationRunner
 	// `.db` files (Core migrations never leak into a tasks/memory/sessions file).
 	// Each `.db` file keeps its own VersionInfo table, so version numbers are
 	// per-tier-independent.
-	public static void Run(string connectionString, Assembly migrationsAssembly)
+	public static void Run(string connectionString, Assembly migrationsAssembly) =>
+		Run(connectionString, migrationsAssembly, migrationsNamespace: null);
+
+	// `migrationsNamespace` narrows the scan to ONE set inside an assembly that holds more than one
+	// (nested namespaces included). Null keeps the assembly-wide behaviour, which is what every
+	// per-tier assembly wants — each of those owns exactly one set.
+	public static void Run(string connectionString, Assembly migrationsAssembly, string? migrationsNamespace)
 	{
 		lock (Locks.GetOrAdd(connectionString, _ => new object()))
 		{
@@ -53,6 +65,11 @@ public static class MigrationRunner
 					.AddSQLite()
 					.WithGlobalConnectionString(connectionString)
 					.ScanIn(migrationsAssembly).For.Migrations())
+				.Configure<FluentMigrator.Runner.Initialization.TypeFilterOptions>(opt =>
+				{
+					opt.Namespace = migrationsNamespace;
+					opt.NestedNamespaces = migrationsNamespace is not null;
+				})
 				.BuildServiceProvider();
 
 			using var scope = services.CreateScope();
