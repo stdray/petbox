@@ -717,6 +717,21 @@ public sealed class MemoryService : IMemoryService
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var fts = new SqliteFtsIndex(() => ctx); // writes ride the tx below; connect unused
 
+		// Which of this call's keys already had an active row BEFORE this write — the same
+		// prior-existence check tasks_upsert uses (tasks-upsert-edit-reported-as-added) to tell
+		// a genuine CREATE from an EDIT that the echo must not misreport as Added. Computed here,
+		// before TemporalStore.UpsertAsync mutates anything.
+		var mentionedKeys = desired.Select(d => d.Key)
+			.Concat(desired.Where(d => d.PrevKey is not null).Select(d => d.PrevKey!))
+			.Concat(dels.Select(d => d.Key))
+			.Where(k => !string.IsNullOrEmpty(k))
+			.Distinct(StringComparer.Ordinal)
+			.ToList();
+		var priorKeys = mentionedKeys.Count == 0
+			? new HashSet<string>(StringComparer.Ordinal)
+			: (await ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null && mentionedKeys.Contains(e.Key))
+				.Select(e => e.Key).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+
 		// Class-A lexical floor is updated INSIDE the entity transaction: the just-inserted
 		// revisions are (re)indexed and soft-deleted keys dropped, all committing/rolling back
 		// with the entity. Class-B vectors are NOT touched here — the worker materializes them.
@@ -749,7 +764,7 @@ public sealed class MemoryService : IMemoryService
 
 		if (r.Applied)
 			await _stores.TouchAsync(projectKey, store, ct);
-		return new MemoryUpsertOutcome(ScopeEchoToCall(r, upserts, deletes));
+		return new MemoryUpsertOutcome(ScopeEchoToCall(r, upserts, deletes, priorKeys));
 	}
 
 	// Canon write-gate (spec agent-wiring, memory-canon-storage): the canon store is a curated
@@ -775,7 +790,7 @@ public sealed class MemoryService : IMemoryService
 	// key scoping is complete. CurrentVersion (the store-wide cursor for DeltaAsync) is
 	// untouched.
 	static TemporalUpsertResult<MemoryEntry> ScopeEchoToCall(TemporalUpsertResult<MemoryEntry> r,
-		IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes)
+		IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, HashSet<string> priorKeys)
 	{
 		// A write that did NOT apply changed nothing — the echo must be empty so the ack reads
 		// unambiguously as "not applied" (spec upsert-ack-echo-clean); the conflict (with its
@@ -791,10 +806,22 @@ public sealed class MemoryService : IMemoryService
 			.Where(k => !refused.Contains(k))
 			.ToHashSet(StringComparer.Ordinal);
 		var deleted = deletes.Select(d => d.Key).Where(k => !refused.Contains(k)).ToHashSet(StringComparer.Ordinal);
+
+		// Added vs Updated is NOT the raw Created==Updated split from the delta (that only means
+		// "brand new" against a REAL sinceVersion cursor; this call's TemporalStore.UpsertAsync
+		// always passes 0, so Created==Updated merely says "this row has never been revised EVER"
+		// — true for a genuine create, but ALSO true for a still-v1 entry whose mention this call
+		// was a genuine SamePayload no-op, e.g. a tags-only resubmit with an identical body
+		// (tasks-upsert-edit-reported-as-added — the same defect class, here for memory_upsert).
+		// `priorKeys` (captured before this call wrote anything) is the correct test: a mentioned
+		// key already active before the call is being EDITED, not created.
+		var ownAdded = r.Added.Where(e => mentioned.Contains(e.Key)).ToList();
+		var trueAdded = ownAdded.Where(e => !priorKeys.Contains(e.Key)).ToList();
+		var reclassifiedAsUpdated = ownAdded.Where(e => priorKeys.Contains(e.Key));
 		return r with
 		{
-			Added = r.Added.Where(e => mentioned.Contains(e.Key)).ToList(),
-			Updated = r.Updated.Where(e => mentioned.Contains(e.Key)).ToList(),
+			Added = trueAdded,
+			Updated = r.Updated.Where(e => mentioned.Contains(e.Key)).Concat(reclassifiedAsUpdated).ToList(),
 			Removed = r.Removed.Where(k => deleted.Contains(k)).ToList(),
 		};
 	}

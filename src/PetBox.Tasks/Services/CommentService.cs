@@ -45,6 +45,11 @@ public sealed class CommentService : ICommentService
 
 		var desired = new List<CommentRow>(items.Count);
 		var itemByKey = new Dictionary<string, CommentItem>(StringComparer.Ordinal);
+		// Keys that entered `desired` via the PATCH branch below — each one's presence in
+		// `currentById` (an ACTIVE row read before this call) was the precondition to get there,
+		// so a patched key is ALWAYS an edit of something that already existed, never a create.
+		// Used to correct the Added/Updated echo split (see mineAdded/mineUpdated below).
+		var patchedKeys = new HashSet<string>(StringComparer.Ordinal);
 		// PARTIAL mode (atomic:false): a refused item becomes a per-item Rejected conflict instead of
 		// killing the call. A comment's `parentId` must already be an ACTIVE comment (an intra-batch
 		// forward reference is not expressible — verified below), and comments carry no other
@@ -93,6 +98,7 @@ public sealed class CommentService : ICommentService
 						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
 					desired.Add(cur with { Version = it.Version, Body = it.Body });
 					itemByKey[it.Id!] = it;
+					patchedKeys.Add(it.Id!);
 				}
 			}
 			catch (ArgumentException ex) when (!atomic)
@@ -117,8 +123,20 @@ public sealed class CommentService : ICommentService
 		// comments). The ECHO must cover ONLY this call (like tasks_upsert/memory_upsert): keep just
 		// the rows whose key is in THIS batch, and — when the batch was REJECTED — nothing at all
 		// (applied:false ⇒ nothing written, added/updated empty).
-		var mineAdded = r.Applied ? r.Added.Where(x => itemByKey.ContainsKey(x.Key)).ToList() : [];
-		var mineUpdated = r.Applied ? r.Updated.Where(x => itemByKey.ContainsKey(x.Key)).ToList() : [];
+		//
+		// Added vs Updated does NOT trust the raw Created==Updated delta split for a PATCHED key:
+		// that split only means "brand new" against a REAL sinceVersion cursor, and this call always
+		// passes 0, so a still-v1 comment whose PATCH was a genuine SamePayload no-op (a tags-only
+		// edit resubmits an identical Body — comments_upsert has no other way to touch ONLY tags)
+		// reads as "added" even though nothing was inserted (tasks-upsert-edit-reported-as-added —
+		// the same defect class, here for comments_upsert). A key in `patchedKeys` came from
+		// `currentById` (an ACTIVE row read before this call) — it is ALWAYS an edit, never a
+		// create, so it is forced into Updated regardless of the raw split. This also fixes a real
+		// behavior bug below: a misclassified-as-added PATCH used to hit the CREATE tag branch
+		// ("null -> none"), silently clearing tags on a tags-omitted PATCH.
+		var mine = r.Applied ? r.Added.Concat(r.Updated).Where(x => itemByKey.ContainsKey(x.Key)).ToList() : [];
+		var mineAdded = mine.Where(x => !patchedKeys.Contains(x.Key)).ToList();
+		var mineUpdated = mine.Where(x => patchedKeys.Contains(x.Key)).ToList();
 		if (r.Applied)
 		{
 			// Tags: a create always writes its set (null → none); an edit only when tags != null

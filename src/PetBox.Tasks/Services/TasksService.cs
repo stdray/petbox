@@ -1704,7 +1704,7 @@ public sealed partial class TasksService : ITasksService
 					var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), 0,
 						partition: n => n.Board == board, ct: ct);
 					delta = delta with { Applied = false, Conflicts = guardConflicts };
-					return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion), runtime.KindName(kindSlug));
+					return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion, prior), runtime.KindName(kindSlug));
 				}
 				// PARTIAL: the refused delete is just another per-entry rejection — `dels` already
 				// excludes it, and the rest of the batch goes on (minus anything that referenced it).
@@ -1830,7 +1830,7 @@ public sealed partial class TasksService : ITasksService
 				Removed = removed,
 			};
 		}
-		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor), runtime.KindName(kindSlug));
+		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor, prior), runtime.KindName(kindSlug));
 	}
 
 	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no
@@ -1839,7 +1839,8 @@ public sealed partial class TasksService : ITasksService
 	// e.g. a `supersedes` target obsoleted, an unblocked task). Other writers' history is
 	// never echoed — a full board delta is DeltaAsync's job; CurrentVersion (the cursor) is
 	// untouched.
-	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor)
+	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(
+		TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor, Dictionary<string, PlanNode> prior)
 	{
 		// A write that did NOT apply changed nothing — the echo must be empty so the ack reads
 		// unambiguously as "not applied" (spec upsert-ack-echo-clean). The whole story is in
@@ -1860,10 +1861,32 @@ public sealed partial class TasksService : ITasksService
 			.Where(k => !refused.Contains(k))
 			.ToHashSet(StringComparer.Ordinal);
 		bool Own(PlanNode n) => !refused.Contains(n.Key) && (mentioned.Contains(n.Key) || n.Version > mainCursor);
+
+		// Added vs Updated is NOT the generic Created==Updated split here (that heuristic only
+		// means "brand new" against a REAL sinceVersion cursor; this echo re-reads the delta
+		// from a hardcoded 0, so Created==Updated only says "this row has never been revised
+		// EVER" — true for a genuine create, but ALSO true for a node that was mentioned this
+		// call yet is still sitting on its original revision because the edit never touched
+		// the versioned row at all: PlanNode.SamePayload is deliberately blind to links/tags/
+		// commits (they live in separate SCD-2 association tables — see PlanNode.SamePayload's
+		// own doc comment), so a links-only edit is a genuine Inserted:0 no-op at the temporal
+		// layer even though the relation store DID write something (tasks-upsert-edit-reported-
+		// as-added). The only question that actually answers "did THIS call create a new
+		// identity" is whether the key had an active row BEFORE the call started — `prior`,
+		// captured at the top of UpsertAsync. A key present in `prior` is being EDITED (with or
+		// without a new PlanNode revision); only a key absent from `prior` is a genuine CREATE.
+		// This also restores the invariant added.length <= Inserted: every `prior`-absent Own
+		// key must have gone through Classify's create branch (ToInsert), which is exactly what
+		// Inserted counts; a mentioned no-op key never inflates Added.
+		var ownAdded = r.Added.Where(Own).ToList();
+		var trueAdded = ownAdded.Where(n => !prior.ContainsKey(n.Key)).ToList();
+		var reclassifiedAsUpdated = ownAdded.Where(n => prior.ContainsKey(n.Key));
+		var ownUpdated = r.Updated.Where(Own).Concat(reclassifiedAsUpdated).ToList();
+
 		return r with
 		{
-			Added = r.Added.Where(Own).ToList(),
-			Updated = r.Updated.Where(Own).ToList(),
+			Added = trueAdded,
+			Updated = ownUpdated,
 			Removed = r.Removed.Where(k => mentioned.Contains(k)).ToList(),
 		};
 	}
