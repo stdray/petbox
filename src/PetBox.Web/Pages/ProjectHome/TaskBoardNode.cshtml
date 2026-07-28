@@ -68,10 +68,16 @@
 				{
 					<form method="post" asp-page-handler="Status" class="inline-flex items-center gap-1" data-testid="node-status-form">
 						<input type="hidden" name="version" value="@node.Version" />
+						@* approval-gate-enforced-visible: a target behind a declared approval gate is
+						   MARKED (text suffix + title + data-approval), so "Done" from "Review" no longer
+						   reads exactly like "Todo". Marking only — every option stays selectable; the
+						   owner is allowed the move, and the service re-validates it on POST. *@
 						<select name="status" class="select select-bordered select-xs" data-testid="node-status-select" aria-label="Change status">
-							@foreach (var s in Model.NextStatuses)
+							@foreach (var opt in Model.NextStatusOptions)
 							{
-								<option value="@s">@Model.Runtime.StatusName(Model.Detail.Kind, s)</option>
+								@* A null attribute value is OMITTED by Razor — an ungated option carries no
+								   empty title/data-approval noise. *@
+								<option value="@opt.Slug" title="@(opt.GateTitle.Length == 0 ? null : opt.GateTitle)" data-approval="@(opt.GateMode.Length == 0 ? null : opt.GateMode)">@(opt.Name + opt.GateMarker)</option>
 							}
 						</select>
 						<button type="submit" class="btn btn-xs" data-testid="node-status-submit" title="change status">→</button>

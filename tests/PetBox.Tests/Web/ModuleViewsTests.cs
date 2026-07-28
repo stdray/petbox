@@ -1832,6 +1832,29 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-board-name=\"roadmap\"");
 	}
 
+	// ui-preset-lead-vs-select: the paragraph above the Enable button used to state the QUARTET's
+	// outcome — four linked boards, work auto-wired to spec — regardless of what the preset select
+	// showed, so a first-timer picking Classic read a promise of four boards and got one. There is
+	// now one lead per preset (rendered off the registry), only the select's initial value visible.
+	[Fact]
+	public async Task TasksAdmin_PresetLead_IsPerPreset_OnlyTheSelectedOneVisible()
+	{
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/tasks");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-preset-lead\"");
+		foreach (var preset in PetBox.Tasks.Workflow.MethodologyPresets.ProvisioningPresets)
+			html.Should().Contain($"data-preset-lead=\"{preset.Slug}\"", "every offered preset needs its own lead");
+
+		// The select starts on the FIRST preset (quartet), so that lead renders visible and every
+		// other one renders hidden — the no-JS state is already truthful.
+		html.Should().MatchRegex("""data-preset-lead="quartet"(?![^>]*hidden)""");
+		html.Should().MatchRegex("""data-preset-lead="classic"[^>]*hidden""");
+		// Classic's lead says one board; it must not inherit the quartet's four-board claim.
+		html.Should().MatchRegex("""data-preset-lead="classic"[\s\S]{0,400}?one board""");
+	}
+
 	[Fact]
 	public async Task MemoryAdmin_RendersCreateForm_AndListsStore()
 	{

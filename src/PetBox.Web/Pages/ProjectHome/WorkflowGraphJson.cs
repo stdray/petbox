@@ -47,7 +47,7 @@ public static class WorkflowGraphJson
 				b.Types,
 				[.. b.Workflow.Statuses.Select(s => new GraphStatus(s.Slug, s.Name, s.Kind.ToString()))],
 				[.. b.Workflow.Transitions.Select(t => new GraphTransition(
-					t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
+					t.From, t.To, t.RequiresApproval, t.EnforceApproval, t.RequiresReason, t.PreconditionArtifact,
 					Checklist: t.Checklist.Count > 0))]))],
 			effectNotes);
 
@@ -60,10 +60,16 @@ public static class WorkflowGraphJson
 
 	sealed record GraphStatus(string Slug, string Name, string Kind);
 
+	// `EnforceApproval` rides along with `RequiresApproval` because the two say DIFFERENT things and
+	// the graph must not conflate them (approval-gate-enforced-visible): RequiresApproval declares the
+	// edge owner-only, EnforceApproval says whether the SERVER blocks it. The builtin presets declare
+	// without enforcing (classic's Review→Done), so an "approve"-only label reads as a hard gate where
+	// nothing actually blocks an agent — the label is split on this flag in ts/workflow-viz.ts.
 	sealed record GraphTransition(
 		string From,
 		string To,
 		bool RequiresApproval,
+		bool EnforceApproval,
 		bool RequiresReason,
 		string? PreconditionArtifact,
 		bool Checklist);

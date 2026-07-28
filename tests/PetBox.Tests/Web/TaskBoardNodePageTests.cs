@@ -191,6 +191,47 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		page.NextStatuses.Should().Equal("exploring"); // raw -> exploring is the only edge
 	}
 
+	// approval-gate-enforced-visible: on `classic`, Review -> Done is DECLARED owner-only
+	// (RequiresApproval) but the server does NOT block it (EnforceApproval false) — the difference
+	// the owner cares about ("mine alone" vs "an agent can push it too"). Both halves must reach the
+	// page: the status select marks the gated target, and the workflow island carries enforceApproval
+	// so the modal can label the edge as a convention rather than as law.
+	[Fact]
+	public async Task OnGet_ClassicReview_MarksApprovalGate_AndIslandCarriesEnforceApproval()
+	{
+		await _tasks.CreateBoardAsync(Proj, "board", "classic", null, null);
+		await Upsert("board", new NodePatch { Key = "c", Type = "task", Title = "C" }); // born Backlog
+		var id = NodeId("board", "c");
+		// The move to Review needs the CURRENT version — a Version-less patch on an existing node is
+		// a stale write and comes back as a silent conflict, leaving the node in Backlog.
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+		await _tasks.UpsertAsync(Proj, "board",
+			[new NodePatch { Key = "c", Status = "Review", Version = version }], TasksActor.Approver);
+
+		var page = Page();
+		page.NodeId = id;
+		await page.OnGetAsync(default);
+
+		var done = page.NextStatusOptions.Single(o => o.Slug == "Done");
+		done.RequiresApproval.Should().BeTrue();
+		done.EnforceApproval.Should().BeFalse();
+		done.GateMode.Should().Be("convention");
+		done.GateMarker.Should().Be(" · approve (not enforced)");
+		done.GateTitle.Should().Contain("an agent can push this move too");
+
+		// An ungated sibling target stays unmarked — the marker means something only if it is not
+		// on every option.
+		page.NextStatusOptions.Single(o => o.Slug == "Todo").GateMode.Should().BeEmpty();
+
+		// The island the modal reads: the same edge, both flags present and distinct.
+		using var doc = System.Text.Json.JsonDocument.Parse(page.WorkflowJson!);
+		var transitions = doc.RootElement.GetProperty("blocks")[0].GetProperty("transitions").EnumerateArray();
+		var edge = transitions.Single(t =>
+			t.GetProperty("from").GetString() == "Review" && t.GetProperty("to").GetString() == "Done");
+		edge.GetProperty("requiresApproval").GetBoolean().Should().BeTrue();
+		edge.GetProperty("enforceApproval").GetBoolean().Should().BeFalse();
+	}
+
 	[Fact]
 	public async Task OnPostEdit_UpdatesTitleAndBody_ThroughTheService()
 	{
