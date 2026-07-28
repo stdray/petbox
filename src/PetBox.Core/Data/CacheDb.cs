@@ -23,7 +23,7 @@ public sealed class CacheDb(DataOptions<CacheDb> options) : DataConnection(optio
 	// the ~290 MB production OOM documented on CoreDbFactory. The factory builds these options ONCE
 	// and clones them; nothing here may start handing a CacheDb a fresh schema.
 	public static DataOptions<CacheDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString).WithDurability());
+		new(new DataOptions().UseSQLite(connectionString).WithDurability(SqliteTier.Derived));
 }
 
 // One cached blob. `Key` is the caller's cache key verbatim — the IDistributedCache contract owns

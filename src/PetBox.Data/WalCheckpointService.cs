@@ -73,6 +73,11 @@ public sealed partial class WalCheckpointService(
 				var cs = factory.GetConnectionString(entry.ProjectKey, entry.Name);
 				await using var conn = new SqliteConnection(cs);
 				await conn.OpenAsync(ct);
+				// Unquota'd (above) but NOT un-tiered: a checkpoint folds WAL pages into the
+				// main data file, which is a write to a Durable-tier file, and this connection
+				// can come from the pool carrying a pet's leftover PRAGMA. Two settings, two
+				// different answers — the note above is about the quota alone.
+				SqliteDurability.ApplyTo(conn, SqliteTier.Durable);
 				await using var cmd = conn.CreateCommand();
 				cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE)";
 				// PRAGMA wal_checkpoint returns (busy, log, checkpointed); we

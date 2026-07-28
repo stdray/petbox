@@ -17,5 +17,5 @@ public sealed class DeployDb : DataConnection
 	public ITable<DeploymentStatus> Statuses => this.GetTable<DeploymentStatus>();
 
 	public static DataOptions<DeployDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString).WithDurability());
+		new(new DataOptions().UseSQLite(connectionString).WithDurability(SqliteTier.Durable));
 }

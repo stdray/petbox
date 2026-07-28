@@ -55,6 +55,11 @@ public sealed class TestSchemaBypassGuardTests
 			"asserts LogSchema.Ensure's own WAL-conversion behavior, including simulating the OLD " +
 			"pre-fix bootstrap it must upgrade an existing file FROM — needs the real calls, a template " +
 			"copy shares no code path with the conversion being tested.",
+		["ConfigSchemaWalTests.cs"] =
+			"asserts ConfigSchema.Ensure's own WAL-conversion behavior, including simulating the OLD " +
+			"pre-WAL bootstrap it must upgrade an existing populated file FROM — the exact sibling of " +
+			"LogSchemaWalTests above, and for the same reason: a template copy shares no code path " +
+			"with the conversion being tested.",
 		["GoldenSchemaTests.cs"] =
 			"snapshots the SHAPE each tier's real migration set produces on a clean db — the whole " +
 			"point is running the real Ensure/MigrationRunner.Run and inspecting the result, not " +

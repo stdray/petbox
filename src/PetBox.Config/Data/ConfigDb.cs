@@ -54,5 +54,5 @@ public sealed class ConfigDb : DataConnection
 	public ITable<TagVocabularyEntry> Tags => this.GetTable<TagVocabularyEntry>();
 
 	public static DataOptions<ConfigDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString).WithDurability());
+		new(new DataOptions().UseSQLite(connectionString).WithDurability(SqliteTier.Durable));
 }
