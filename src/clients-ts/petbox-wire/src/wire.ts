@@ -99,6 +99,7 @@ import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import {
   buildSkillReports,
+  describeWorkspaceProbeFailure,
   formatSkillFile,
   probeWorkspace,
   writeSkillFiles,
@@ -433,15 +434,10 @@ async function runDoctor(argv: string[]): Promise<void> {
   } else {
     const probe = await probeWorkspace(resolvedForSkillCheck.baseUrl, resolvedForSkillCheck.apiKey);
     if (!probe.ok) {
-      // Same taxonomy performApply's skill refresh already uses (wire-silent-failures-invisible):
-      // "forbidden" is a scope problem worth calling out by name, not indistinguishable from an
-      // ordinary offline/timeout miss.
-      const reasonText =
-        probe.reason === "forbidden"
-          ? "the API key was rejected (401/403 — check its scopes), not merely offline"
-          : probe.reason === "no-workspace-field"
-            ? "the server responded but did not report a workspace (older server?)"
-            : "could not reach /api/auth/validate (network/timeout)";
+      // Shared taxonomy + wording (skill-files.ts's describeWorkspaceProbeFailure) — same helper
+      // apply's skill refresh below uses, so a real HTTP error (bug:
+      // probe-collapses-http-errors-into-network) is never called "network/timeout" here either.
+      const reasonText = describeWorkspaceProbeFailure(probe);
       log(`doctor: skill check skipped (${reasonText}).`);
     } else {
       const reports = buildSkillReports(
@@ -714,23 +710,33 @@ async function performApply(opts: {
   // registered project's directory or it is not — `apply` never re-derives one, same as the
   // per-role definition fetch above (resolveApplyDefinition). `--offline` skips the network probe
   // for workspace, same spirit as `--offline` skipping the definition fetch.
+  // Skip bookkeeping (bug: probe-collapses-http-errors-into-network / apply's silent-partial
+  // side): a skipped skill refresh must never fall out of the final message and structured
+  // summary. `intentional` covers the two cases the user asked for themselves — `--offline` and
+  // an unregistered project directory — where the prior behavior is correct and untouched. Any
+  // other skip (the workspace probe itself failing) is UNINTENTIONAL: the user asked for a full
+  // apply and got a partial one, and that must be visible in both the final line and `summary`
+  // (WIRE_EXIT is unchanged — this is a visibility fix, not a new exit code, per the card's
+  // explicit boundary).
+  let skillsSkip: { readonly intentional: boolean; readonly reason: string } | undefined;
   const resolvedForSkills = resolveProject(root);
   if (opts.offline) {
+    const reason = "--offline (workspace requires a live /api/auth/validate)";
+    skillsSkip = { intentional: true, reason };
     log(`${opts.label}: skills — --offline, skipped (workspace requires a live /api/auth/validate).`);
   } else if (!resolvedForSkills) {
-    log(`${opts.label}: skills — skipped (${root} is not a registered project; run \`wire\` here first).`);
+    const reason = `${root} is not a registered project; run \`wire\` here first`;
+    skillsSkip = { intentional: true, reason };
+    log(`${opts.label}: skills — skipped (${reason}).`);
   } else {
     const probe = await probeWorkspace(resolvedForSkills.baseUrl, resolvedForSkills.apiKey);
     if (!probe.ok) {
-      // Distinguish WHY (wire-silent-failures-invisible): forbidden is a scope problem worth a
-      // Class-Б trace (it will otherwise look identical to "server down" run after run), the
-      // other two are ordinary/expected best-effort misses and stay stdout-only.
-      const reasonText =
-        probe.reason === "forbidden"
-          ? "the API key was rejected (401/403 — check its scopes), not merely offline"
-          : probe.reason === "no-workspace-field"
-            ? "the server responded but did not report a workspace (older server?)"
-            : "could not reach /api/auth/validate (network/timeout)";
+      // Shared taxonomy + wording (skill-files.ts's describeWorkspaceProbeFailure) — same helper
+      // doctor's skill-drift check uses, so a real HTTP error is never called "network/timeout"
+      // here either, and this bucket is genuinely unintentional: the probe was supposed to
+      // succeed and didn't.
+      const reasonText = describeWorkspaceProbeFailure(probe);
+      skillsSkip = { intentional: false, reason: reasonText };
       log(`${opts.label}: skills — skipped (${reasonText}).`);
       if (probe.reason === "forbidden") {
         wireLog(
@@ -754,13 +760,16 @@ async function performApply(opts: {
     }
   }
 
-  // Structured summary (machine-readable-ish one line + human detail above).
+  // Structured summary (machine-readable-ish one line + human detail above). skillsSkipped is
+  // always present (never silently dropped) so a machine reader can tell "no skip" from "skip
+  // information was omitted" — null means the skills step actually ran (skipped nothing).
   const summary = {
     writtenFiles: written,
     writtenHarnesses,
     partialHarnesses,
     blockedHarnesses,
     clobberBlockedPaths: clobberedPaths,
+    skillsSkipped: skillsSkip ?? null,
   };
   log(
     `${opts.label}: result written=${written} ` +
@@ -771,8 +780,19 @@ async function performApply(opts: {
   );
 
   const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
+  const unintendedSkillsSkip = skillsSkip !== undefined && !skillsSkip.intentional;
   const code = classifyApplyExit({ hardError: clobberBlocked, hadTruthfulnessBlock });
-  if (code === WIRE_EXIT.ok) {
+  if (code === WIRE_EXIT.ok && unintendedSkillsSkip) {
+    // Requirement 1 (probe-collapses-http-errors-into-network part B): the trailing line must
+    // NOT claim full success when the skills step was skipped for a reason the user did not ask
+    // for — name what was skipped and why. WIRE_EXIT stays 0 (owner-reserved decision, see the
+    // card) — this is a truthful message on an unchanged exit code, not a new failure class.
+    log(
+      `${opts.label}: done, but INCOMPLETE — every known harness accepted every role, ` +
+        `skills were NOT refreshed (${skillsSkip!.reason}). Not a full success; re-run once ` +
+        `resolved. ${JSON.stringify(summary)}`,
+    );
+  } else if (code === WIRE_EXIT.ok) {
     log(`${opts.label}: done — all known harnesses accepted every role.`);
   } else if (clobberBlocked) {
     console.error(

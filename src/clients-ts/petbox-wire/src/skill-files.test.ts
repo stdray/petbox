@@ -6,6 +6,8 @@
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,12 +15,15 @@ import { test } from "node:test";
 import {
   buildSkillReports,
   checkSkillFile,
+  describeWorkspaceProbeFailure,
   formatSkillFile,
   PROJECT_SKILLS,
+  probeWorkspace,
   SKILL_SURFACES,
   renderSkillTemplate,
   writeSkillFiles,
   type SkillWriteOutcome,
+  type WorkspaceProbeResult,
 } from "./skill-files.ts";
 import { hasPetboxMarker, PETBOX_MARKER_LINE } from "./origin-marker.ts";
 
@@ -315,5 +320,141 @@ test("buildSkillReports: workspace undefined -> 'unknown' match only for the spe
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- probeWorkspace taxonomy (bug: probe-collapses-http-errors-into-network) -----------------
+//
+// Regression coverage for the defect itself: a server that ANSWERED with an error status (500,
+// 404, and especially 503 — PetBox's own self-recovering "deploying" response) must never be
+// classified the same as a genuine transport failure (fetch throwing / a connection refused),
+// and the shared message helper must never call an HTTP response "network/timeout".
+
+function startJsonServer(
+  handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void,
+): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = createServer(handler);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+function expectHttpError(result: WorkspaceProbeResult): asserts result is Extract<WorkspaceProbeResult, { reason: "http-error" }> {
+  assert.equal(result.ok, false);
+  assert.equal((result as { reason: string }).reason, "http-error");
+}
+
+test("probeWorkspace: a genuine transport failure (connection refused) classifies as network, and ONLY that", async () => {
+  // Start a server, grab its port, then close it — the port is now refused, reproducing a real
+  // fetch-throws transport failure without relying on timing/timeout flakiness.
+  const fake = await startJsonServer((_req, res) => res.end());
+  const { baseUrl } = fake;
+  await fake.close();
+
+  const result = await probeWorkspace(baseUrl, "fake-key", 2000);
+  assert.equal(result.ok, false);
+  assert.equal((result as { reason: string }).reason, "network");
+  const text = describeWorkspaceProbeFailure(result as Extract<WorkspaceProbeResult, { ok: false }>);
+  assert.match(text, /could not reach/i, "a real transport failure must still say 'could not reach'");
+});
+
+test("probeWorkspace: HTTP 503 (deploy_in_progress) is NEVER classified as network — carries status + retryAfterSeconds, message is self-recovering", async () => {
+  const fake = await startJsonServer((_req, res) => {
+    res.writeHead(503, { "Content-Type": "application/json", "Retry-After": "60" });
+    res.end(JSON.stringify({ error: "service_unavailable", reason: "deploy_in_progress", retryAfterSeconds: 60 }));
+  });
+  try {
+    const result = await probeWorkspace(fake.baseUrl, "fake-key", 2000);
+    assert.equal(result.ok, false);
+    expectHttpError(result);
+    assert.notEqual(result.reason, "network", "503 must never fall into the network bucket");
+    assert.equal(result.status, 503);
+    assert.equal(result.retryAfterSeconds, 60);
+
+    const text = describeWorkspaceProbeFailure(result);
+    assert.doesNotMatch(text, /could not reach/i, "a 503 must never be described as unreachable — the server DID answer");
+    assert.doesNotMatch(text, /network\/timeout/i);
+    assert.match(text, /deploying|self-recovering/i, "503 must be named as the self-recovering deploy state");
+    assert.match(text, /60/, "the retry-after seconds must surface in the message");
+  } finally {
+    await fake.close();
+  }
+});
+
+test("probeWorkspace: other HTTP error statuses (500, 404) are 'http-error' with the real code, never 'network'", async () => {
+  for (const status of [500, 404]) {
+    const fake = await startJsonServer((_req, res) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "boom" }));
+    });
+    try {
+      const result = await probeWorkspace(fake.baseUrl, "fake-key", 2000);
+      assert.equal(result.ok, false);
+      expectHttpError(result);
+      assert.notEqual(result.reason, "network", `HTTP ${status} must never be classified as network`);
+      assert.equal(result.status, status);
+      assert.equal(result.retryAfterSeconds, undefined, "no retryAfterSeconds in the body -> field absent");
+
+      const text = describeWorkspaceProbeFailure(result);
+      assert.doesNotMatch(text, /could not reach/i, `HTTP ${status} must not be described as unreachable`);
+      assert.match(text, new RegExp(String(status)), "the message must name the actual status code");
+    } finally {
+      await fake.close();
+    }
+  }
+});
+
+test("probeWorkspace: 401/403 still classify as 'forbidden', distinct from 'http-error'", async () => {
+  for (const status of [401, 403]) {
+    const fake = await startJsonServer((_req, res) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+    });
+    try {
+      const result = await probeWorkspace(fake.baseUrl, "fake-key", 2000);
+      assert.equal(result.ok, false);
+      assert.equal((result as { reason: string }).reason, "forbidden");
+      const text = describeWorkspaceProbeFailure(result as Extract<WorkspaceProbeResult, { ok: false }>);
+      assert.match(text, /401\/403/);
+      assert.doesNotMatch(text, /could not reach/i);
+    } finally {
+      await fake.close();
+    }
+  }
+});
+
+test("probeWorkspace: 200 with unparseable JSON is 'parse-error', distinct from an HTTP error or a missing workspace field", async () => {
+  const fake = await startJsonServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end("not actually json{{{");
+  });
+  try {
+    const result = await probeWorkspace(fake.baseUrl, "fake-key", 2000);
+    assert.equal(result.ok, false);
+    assert.equal((result as { reason: string }).reason, "parse-error");
+    const text = describeWorkspaceProbeFailure(result as Extract<WorkspaceProbeResult, { ok: false }>);
+    assert.match(text, /did not parse as JSON/);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("probeWorkspace: 200 valid JSON with no workspace field stays 'no-workspace-field' (unaffected by this change)", async () => {
+  const fake = await startJsonServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  try {
+    const result = await probeWorkspace(fake.baseUrl, "fake-key", 2000);
+    assert.equal(result.ok, false);
+    assert.equal((result as { reason: string }).reason, "no-workspace-field");
+  } finally {
+    await fake.close();
   }
 });
