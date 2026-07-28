@@ -10,8 +10,9 @@ namespace PetBox.Core.Search;
 //
 // WHY THIS TYPE AND NOT JUST A LIST. Two facts have to travel together with the rows, and a bare
 // list carries neither:
-//   1. POOLLIMIT — how deep ranking was ever allowed to look (the latency-derived rerank candidate
-//      budget, ~160). Past it nothing was RANKED, so nothing can be served.
+//   1. POOLLIMIT — how deep ranking was ever allowed to look (the declared rerank candidate
+//      budget, default 160 — an assumption, not a value derived from latency). Past it nothing was
+//      RANKED, so nothing can be served.
 //   2. POOLBOUNDED — whether the candidate union actually HIT that limit. This is the difference
 //      between "we ranked everything that matched" and "there are more matches we never looked at",
 //      and it is the single most load-bearing bit in this feature: without it a consumer reports a
@@ -87,10 +88,10 @@ public enum SearchPoolStop
 //
 // WHY A CACHE AT ALL — the alternative was considered and REJECTED. Deterministic recomputation
 // (re-run the query per page, fold a data version into the token so a changed basis is refused)
-// gets the ORDER right, but it re-runs the RERANK on every page: 3-4 seconds per page against the
-// measured curve (RerankCandidateBudget), paid again and again to reproduce a list the server had
-// in its hands one request ago. Requirement 5 rules that out. So the ordered pool is computed ONCE
-// and kept.
+// gets the ORDER right, but it re-runs the RERANK on every page: a few seconds per page against the
+// declared candidate budget (RerankCandidateBudget), paid again and again to reproduce a list the
+// server had in its hands one request ago. Requirement 5 rules that out. So the ordered pool is
+// computed ONCE and kept.
 //
 // WHAT KEYS IT — the cursor's FINGERPRINT, which already hashes every selection/ordering input and,
 // here, the DATA VERSION of the container being searched. One value therefore does both jobs:

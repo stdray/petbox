@@ -74,7 +74,7 @@ public sealed class SearchPoolPagingTests
 	[Fact]
 	public async Task PoolWithinTheBudget_ReportsNotBounded_MeaningTrulyExhausted()
 	{
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var limit = budget.Candidates();
 		var svc = new SearchService([new StubIndex(Enumerable.Range(0, limit - 1).Select(i => $"n{i:d3}"))], budget: budget);
 
@@ -90,7 +90,7 @@ public sealed class SearchPoolPagingTests
 	{
 		// THE test of this feature's honesty. Same shape of answer as above — a full page and no more
 		// rows — but a completely different MEANING, and the response has to carry that difference.
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var limit = budget.Candidates();
 		var svc = new SearchService([new StubIndex(Enumerable.Range(0, limit + 50).Select(i => $"n{i:d3}"))], budget: budget);
 
@@ -108,7 +108,7 @@ public sealed class SearchPoolPagingTests
 		// A rerank outage must not silently change how DEEP the result goes. If it did, the boundary a
 		// caller was told about would depend on a degradation they cannot see, and two callers would be
 		// paging pools of different sizes while reading the same PoolLimit.
-		var budget = new RerankCandidateBudget { LatencyBarMs = 1000 };
+		var budget = new RerankCandidateBudget { Value = 30 };
 		var docs = Enumerable.Range(0, budget.Candidates() + 10).Select(i => $"n{i:d3}").ToList();
 
 		var withRerank = await new SearchService([new StubIndex(docs)], reranker: new CountingReranker(), budget: budget)

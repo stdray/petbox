@@ -80,11 +80,10 @@ public sealed class MemoryRerankBudgetSettingsWiringTests : IDisposable
 		before.Hits.Should().HaveCount(5);
 
 		// A Project-scope override (settings-uniform-override: deeper wins) that pins the budget to
-		// exactly 2 candidates: rawCeiling = (2175 - 2130) / 11.6 ≈ 3.88; × 0.65 headroom → floor 2.
-		// The bar is chosen mid-band (2 candidates hold for a bar of 2166-2183), so this does not sit
-		// on a rounding edge that a small PerDocMs change would tip.
+		// exactly 2 candidates — now just the declared number itself
+		// (rerank-budget-collapse-to-one-number), no back-solved latency bar required.
 		await _settings.SetAsync(Scope.Project, Proj,
-			new RerankBudgetSettings { LatencyBarMs = 2175 }, new RerankBudgetSettings(), updatedBy: null);
+			new RerankBudgetSettings { Candidates = 2 }, new RerankBudgetSettings(), updatedBy: null);
 
 		var after = await _memory.SearchEntriesAsync(Proj,
 			new SearchRequest<MemoryEntryFilter, MemorySortBy> { Query = "alpha", WholePool = true });

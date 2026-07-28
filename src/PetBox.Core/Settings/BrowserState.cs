@@ -117,12 +117,13 @@ public sealed record BrowserState
 	//
 	// The label is a COMPROMISE, never a correctness claim (RRF is not "wrong", it is a different
 	// price — the owner separately struck the "correct ordering" framing): Precision reranks the
-	// candidate union with a cross-encoder (MEASURED ~350ms base + ~6.1ms/candidate,
-	// RerankCandidateBudget.cs:8-14 — a few seconds at the full ~495-candidate pool); Speed skips the
-	// rerank and answers from the fused RRF order alone, instantly.
+	// candidate union with a cross-encoder over the declared candidate budget (RerankCandidateBudget,
+	// default 160 — a few seconds at that pool size); Speed skips the rerank and answers from the
+	// fused RRF order alone, instantly.
 	[Setting(TopLevel = Scope.User, Key = "search.rankingMode",
-		Description = "Precision reranks results with a cross-encoder for better ordering — measured "
-		+ "~350ms plus ~6ms per candidate (a few seconds at a full search). Speed skips the rerank and "
-		+ "answers instantly from the fused relevance order instead — a different trade-off, not a wrong one.")]
+		Description = "Precision reranks results with a cross-encoder for better ordering — a base "
+		+ "cost plus a per-candidate cost in ms, a few seconds total at the declared candidate budget. "
+		+ "Speed skips the rerank and answers instantly from the fused relevance order instead — a "
+		+ "different trade-off, not a wrong one.")]
 	public SearchRankingMode SearchRankingMode { get; init; } = SearchRankingMode.Speed;
 }
