@@ -172,7 +172,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	public async Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 	{
 		var (text, served, route) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,
-			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, ct), ct);
+			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, request.ResponseFormat, ct), ct);
 		// Chat identity is the provider model, unchanged — EmbedSpaceId is embed-only.
 		return new ChatResult(text, new ModelIdentity(route.Model), served);
 	}

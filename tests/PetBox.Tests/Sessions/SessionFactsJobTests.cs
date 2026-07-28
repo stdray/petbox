@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -85,8 +86,8 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		_memory = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), llm: null);
 	}
 
-	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>
-		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, llm, logger: null,
+	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null, ILogger<SessionFactsJob>? logger = null) =>
+		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, llm, logger,
 			quietPeriod: NoQuiet, budget: budget);
 
 	[Fact]
@@ -136,6 +137,29 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		fact.Tags.Should().Contain(SessionFactsJob.Tag);
 		fact.Metadata.Should().Contain("\"sessionId\":\"s1\"").And.Contain("[1,2]"); // the verbatim bridge
 		entries.Single(e => e.Type == "Feedback").Tags.Should().Contain("testing");
+	}
+
+	[Fact]
+	public async Task Extracts_AcceptsWrappedFactsObject_TheNewCanonicalShape()
+	{
+		// json_object response_format forbids a bare top-level array on some upstreams, so the
+		// canonical extraction shape going forward is {"facts":[...]} (facts-extraction-
+		// unparseable-batches). This must parse exactly like the bare-array shape above.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("обсуждение", "итог: чинили парсер"));
+		const string wrapped = """
+			{"facts":[
+			 {"type":"Feedback","description":"гоняй тесты с записью в лог","body":"повторный прогон ради скролла — расточительство","tags":"testing"},
+			 {"type":"Project","description":"крокодиловый парсер падал на токене БУРУНДУК-42","body":"переполнение хвостового буфера; увеличен до 8 КБ"}
+			]}
+			""";
+		var chat = new ScriptedChat(wrapped, """{"action":"add"}""");
+
+		var captured = await Job(chat).DrainAllAsync(CancellationToken.None);
+
+		captured.Should().Be(2);
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().HaveCount(2);
+		entries.Single(e => e.Type == "Project").Description.Should().Contain("БУРУНДУК-42");
 	}
 
 	[Fact]
@@ -281,16 +305,108 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	}
 
 	[Fact]
-	public async Task MalformedExtraction_AdvancesCursor_NoCrash_NoRetryLoop()
+	public async Task MalformedExtraction_RetriesOnceThenAdvancesCursor_NoCrash_NoRetryLoop()
 	{
+		// W: a genuinely unparseable answer (no JSON anywhere, real from the live log — the
+		// model continued the transcript instead of processing it) gets exactly ONE corrective
+		// retry, then gives up: warning logged, cursor advances, no repeat chat-burn on the
+		// next pass.
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
-		var chat = new ScriptedChat("это не json");
-		var job = Job(chat);
+		var chat = new ScriptedChat(
+			"Два воркера батча 2 отчитались, третий ещё идёт. Прод пока на старом sha — деплой в процессе. Жду.");
+		var logger = new CapturingLogger();
+		var job = Job(chat, logger: logger);
 
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		chat.Calls.Should().Be(2); // extraction + the one corrective retry
+		logger.Warnings.Should().ContainSingle(w =>
+			w.Contains("unparseable", StringComparison.Ordinal) && w.Contains("after retry", StringComparison.Ordinal));
+
 		var calls = chat.Calls;
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
 		chat.Calls.Should().Be(calls); // the cursor moved past the bad batch — no chat burn loop
+	}
+
+	[Theory]
+	[InlineData("[]\n\n---\n\n**Explanation:**  \nThe fragment is a deployment handoff between workers; nothing durable to record.")]
+	[InlineData("[]\n\n<reasoning>\nThe transcript shows a routine status check with nothing worth extracting, so the array is empty.")]
+	[InlineData("[]\n\n## Пояснение\n\nФрагмент содержит только служебный обмен статусами, извлекать нечего.")]
+	public async Task EmptyArrayFollowedByProseOrUnclosedReasoning_ZeroCandidates_NoWarning(string raw)
+	{
+		// The dominant real-log shape: the model answered CORRECTLY ([] = no facts) and then
+		// padded the answer with an explanation (verbatim forms from the live-log diagnosis,
+		// including an UNCLOSED <reasoning> tag). This must recover to zero candidates WITHOUT
+		// ever hitting the unparseable-batch warning path — the loss was never real.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
+		var chat = new ScriptedChat(raw);
+		var logger = new CapturingLogger();
+
+		(await Job(chat, logger: logger).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Calls.Should().Be(1); // recovered on the first attempt — no retry spent
+		logger.Warnings.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task ProseThenValidJsonArray_CandidatesExtracted()
+	{
+		// Preamble BEFORE the JSON (not just after it) must also recover.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
+		const string raw = """
+			Thinking about this fragment before answering.
+
+			Here is the result: [{"type":"Project","description":"тестовый факт из прозы","body":"извлечён после преамбулы"}]
+			""";
+		var chat = new ScriptedChat(raw, """{"action":"add"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().ContainSingle(e => e.Description.Contains("тестовый факт из прозы"));
+	}
+
+	[Fact]
+	public async Task FencedJsonAfterProse_CandidatesExtracted()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
+		const string raw = """
+			Let me think about this fragment first.
+
+			```json
+			[{"type":"Feedback","description":"процедура из fenced блока","body":"извлечена после прозы","tags":"behavior:pattern"}]
+			```
+
+			Done.
+			""";
+		var chat = new ScriptedChat(raw, """{"action":"add"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().ContainSingle(e => e.Description.Contains("процедура из fenced блока"));
+	}
+
+	[Fact]
+	public async Task JudgeVerdict_WithTrailingProse_ParsedNotSilentlySkipped()
+	{
+		// The judge parser shares ResilientJson with extraction: a `{...}` verdict followed by
+		// explanatory prose must be parsed, not silently degraded to skip.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("обсуждение факта"));
+		const string judgeRaw = """
+			{"action":"add"}
+
+			I'm adding this because it reflects a genuinely new, durable fact discovered this session.
+			""";
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"новый факт с хвостатым вердиктом","body":"тело"}]""",
+			judgeRaw);
+		var logger = new CapturingLogger();
+
+		(await Job(chat, logger: logger).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		chat.Calls.Should().Be(2); // extraction + judge, no retry needed
+		logger.Warnings.Should().NotContain(w => w.Contains("judge", StringComparison.OrdinalIgnoreCase));
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().ContainSingle();
 	}
 
 	[Fact]
@@ -410,6 +526,29 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(2); // both distinct facts written
 
 		chat.EmbedInputs.Count(t => t == seed).Should().Be(1); // store text embedded once, cache reused it
+	}
+
+	// Captures every logged message by level so a test can assert a warning was (or, more often
+	// here, was NOT) raised — the tolerant-parse recovery paths must stay silent at Warning.
+	sealed class CapturingLogger : ILogger<SessionFactsJob>
+	{
+		public List<string> Warnings { get; } = [];
+		public List<string> Infos { get; } = [];
+		public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+		public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, EventId eventId, TState state,
+			Exception? exception, Func<TState, Exception?, string> formatter)
+		{
+			var message = formatter(state, exception);
+			if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) Warnings.Add(message);
+			else if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information) Infos.Add(message);
+		}
+
+		sealed class NullScope : IDisposable
+		{
+			public static readonly NullScope Instance = new();
+			public void Dispose() { }
+		}
 	}
 
 	// Chat fake answering from a scripted queue (extraction first, then judge calls); the

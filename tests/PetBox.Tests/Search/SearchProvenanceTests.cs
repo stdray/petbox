@@ -298,7 +298,7 @@ public sealed class SearchProvenanceTests : IDisposable
 			throw new NotSupportedException("no route → the chain must never reach an endpoint");
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct) =>
 			throw new NotSupportedException();
 	}
 
@@ -308,7 +308,7 @@ public sealed class SearchProvenanceTests : IDisposable
 			throw new LlmUpstreamException(true, "connection refused");
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct) =>
 			throw new NotSupportedException();
 	}
 
@@ -320,7 +320,7 @@ public sealed class SearchProvenanceTests : IDisposable
 			throw new LlmUpstreamException(true, "HTTP 429: rate limit exceeded", rateLimited: true);
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
 			throw new NotSupportedException();
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct) =>
 			throw new NotSupportedException();
 	}
 
