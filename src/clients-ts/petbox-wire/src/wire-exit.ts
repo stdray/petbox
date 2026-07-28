@@ -33,6 +33,10 @@
 // "incomplete" only says a step did not get to run. The stronger claim wins, and the weaker one
 // is never lost — it stays in the `summary` JSON both failure branches print.
 //
+// The SAME priority also decides between codes produced by DIFFERENT non-aborting steps of one
+// run — see strongestExitCode below. classifyApplyExit ranks conditions inside a single apply
+// pass; strongestExitCode ranks the finished codes of several steps that each kept going.
+//
 // ---- how a run ends --------------------------------------------------------
 //
 // NEVER a hard `process.exit()`. It tears the process down while libuv may still be
@@ -98,6 +102,57 @@ export class RunAbort extends Error {
  */
 export function abortRun(code: number, message: string): never {
   throw new RunAbort(code, message);
+}
+
+// How STRONG a claim each exit code makes about the run. Higher wins. This is the same decision
+// classifyApplyExit encodes (1 > 3 > 4 > 0), lifted out so it can also arbitrate between codes
+// that come from DIFFERENT steps rather than from one apply pass.
+//
+// `usage` (2) is ranked with the hard failures purely so the table is total: a usage error ends
+// the run during argv parsing, before any step can produce a competing code, so this pairing is
+// unreachable today. It is written down rather than left to `?? fallback` so nobody has to guess.
+const EXIT_STRENGTH: ReadonlyMap<number, number> = new Map([
+  [WIRE_EXIT.ok, 0],
+  [WIRE_EXIT.incomplete, 1],
+  [WIRE_EXIT.truthfulness, 2],
+  [WIRE_EXIT.usage, 3],
+  [WIRE_EXIT.hard, 4],
+]);
+
+// An exit code outside the taxonomy (a future code, a value forwarded from elsewhere) outranks
+// every known one. We cannot rank what we do not know, and the one outcome this function exists
+// to prevent is a real failure being DOWNGRADED — so an unknown non-zero code is never allowed to
+// lose to a known weaker one.
+const UNRANKED_STRENGTH = 5;
+
+/**
+ * The strongest of several exit codes produced by one run, by the taxonomy's declared priority:
+ * `hard (1) > truthfulness (3) > incomplete (4) > ok (0)`.
+ *
+ * WHY this exists (full-wire-exit-ignores-step-11): a full `wire` has more than one step that
+ * fails WITHOUT aborting the run — step 10 (self-smoke) and step 11 (apply). Each one used to be
+ * (or, for step 11, was about to become) a bare `process.exitCode = …`, which makes the reported
+ * outcome depend on which step assigned LAST: a failed self-smoke (1) followed by an incomplete
+ * apply (4) would report 4, quietly downgrading a hard failure. The winner must be the decided
+ * priority, not the clock.
+ *
+ * Never downgrades: the result is always at least as strong as every argument. No arguments — or
+ * all of them `ok` — is `ok`. Ties keep the FIRST argument, which matters only for two distinct
+ * unranked codes (identical codes tie to the same value anyway).
+ */
+export function strongestExitCode(...codes: readonly number[]): number {
+  // Annotated `number`, not inferred: WIRE_EXIT is `as const`, so the initializer would pin this
+  // to the literal type 0 and every assignment below would be a type error.
+  let best: number = WIRE_EXIT.ok;
+  let bestStrength = EXIT_STRENGTH.get(WIRE_EXIT.ok) ?? 0;
+  for (const code of codes) {
+    const strength = EXIT_STRENGTH.get(code) ?? UNRANKED_STRENGTH;
+    if (strength > bestStrength) {
+      best = code;
+      bestStrength = strength;
+    }
+  }
+  return best;
 }
 
 /** Pure classifier for apply's process exit (testable without spawning). */
