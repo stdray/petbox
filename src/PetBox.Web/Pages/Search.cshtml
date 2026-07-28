@@ -43,10 +43,38 @@
 	</div>
 }
 
-@* board-view-mode-framework: reuse of the SAME table component TaskBoard's table view mode
-   renders (_TaskTable.cshtml) — with the workspace/project/board columns switched on, since a
-   result's location isn't implicit on this page the way it is inside a single board. Row order
-   is Model.Hits' own order (exact-identifier hits first, then full-text, each already
-   project-grouped/relevance-sorted) — the table itself does not re-sort unless the user picks a
-   sort key (board-sort-impl, reused verbatim). *@
-<partial name="_TaskTable" model="new TaskTableModel(Model.Rows, ShowScopeColumns: true)" />
+@{ var filterBarShown = false; }
+
+@if (Model.ExactRows.Count > 0)
+{
+	@* ui-search-group-by-project item 3: an exact-identifier hit (a pasted slug/NodeId) stays FIRST
+	   and UNGROUPED — this page's own file-header estimate is ~98% of real queries, so that path
+	   must stay instant, never buried inside a collapsed per-project section. Reuse of the SAME
+	   table component TaskBoard's table view mode renders (_TaskTable.cshtml,
+	   board-view-mode-framework) — with the workspace/project/board columns switched on, since a
+	   result's location isn't implicit on this page the way it is inside a single board. *@
+	<partial name="_TaskTable" model="new TaskTableModel(Model.ExactRows, ShowScopeColumns: true, ShowFilterBar: true)" />
+	filterBarShown = true;
+}
+
+@foreach (var group in Model.Groups)
+{
+	@* ui-search-group-by-project: the true order is project-by-project, not a cross-project
+	   relevance ranking (CrossScopeTaskSearchService.cs:126-133) — this makes that order VISIBLE as
+	   a collapsible section per project, open by default so the grouping never hides a result the
+	   flat list would have shown. The header names where the section's rows live (workspace +
+	   project) and how many were found; "Search in this project" is the bridge to the full search
+	   this cross-scope screen deliberately never grows (spec
+	   cross-scope-search-is-an-identifier-locator). *@
+	<details open class="border border-base-300 rounded-box mb-2" data-testid="search-project-group" data-workspace="@group.Workspace" data-project="@group.ProjectKey">
+		<summary class="cursor-pointer flex items-center gap-2 px-3 py-2 font-medium" data-testid="search-project-group-header">
+			<span class="font-mono text-sm" data-testid="search-project-group-name">@group.Workspace / @group.ProjectKey</span>
+			<span class="badge badge-ghost badge-sm" data-testid="search-project-group-count">@group.Rows.Count</span>
+		</summary>
+		<div class="px-3 pb-3">
+			<a href="@group.SearchInProjectUrl" class="btn btn-xs btn-outline mb-2" data-testid="search-in-project-link">Search in this project</a>
+			<partial name="_TaskTable" model="new TaskTableModel(group.Rows, ShowScopeColumns: true, ShowFilterBar: !filterBarShown)" />
+		</div>
+	</details>
+	filterBarShown = true;
+}
