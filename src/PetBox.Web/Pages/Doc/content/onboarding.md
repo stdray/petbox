@@ -10,11 +10,24 @@ The **maintainer** (you) does step 1 in the UI. The **agent** does the rest, fro
 
 On the project's **Connect** page (admin gear → project → Connect) mint an access key — this is the **only** legal place a project key is minted; nowhere else in the UI or docs issues one. The key is shown once — copy it, and copy the `npx petbox-wire@latest …` command shown right below it.
 
-From a terminal **inside the project directory**, run that one command:
+From a terminal **inside the project directory**, run that one command. The key rides as an
+**environment variable**, not a command-line argument — npm writes the full command line of every
+invocation to `~/.npm/_logs/*.log` in plain text with no rotation, so a key passed as `--key <KEY>`
+sits there readable indefinitely; an env-var assignment is never part of that logged argv. The
+Connect page shows both shell forms and copies the right one:
 
 ```
-npx petbox-wire@latest . '<project>' --key <KEY> --env PETBOX_<PROJECT>_API_KEY
+# bash / zsh (macOS, Linux, WSL)
+PETBOX_<PROJECT>_API_KEY=<KEY> npx petbox-wire@latest . '<project>' --env PETBOX_<PROJECT>_API_KEY
+
+# PowerShell (Windows)
+$env:PETBOX_<PROJECT>_API_KEY='<KEY>'; npx petbox-wire@latest . '<project>' --env PETBOX_<PROJECT>_API_KEY
 ```
+
+`--key <KEY>` still works as a flag (existing scripted wiring keeps running), but every use prints
+a warning pointing back here. Already ran with `--key`? The key is now sitting in a debug log —
+find and clean it up: `grep -l -F '<the key>' ~/.npm/_logs/*.log`, then delete or scrub the
+matching file(s).
 
 This single step replaces what older material described as several manual ones: it validates the key, persists it where every agent looks, writes the MCP config (`.mcp.json` for Claude Code, `.factory/mcp.json` for Factory Droid, `.opencode/opencode.json` for opencode), installs the `petbox` skill, and installs the session hooks that inject the memory protocol at the start of every session. See the [wire guide](/doc/wire) for exactly what it does and its full flag/command reference.
 

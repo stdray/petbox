@@ -97,12 +97,22 @@ else
 			<p class="text-sm mb-1">
 				Run from the project folder you want to wire — <code>.</code> is that current directory.
 				One command installs the hooks, plugins and MCP config and drops the key in place.
+				The key is passed as an environment variable, not a command-line argument — npm logs
+				the full argv of every invocation to <code>~/.npm/_logs/*.log</code> in plain text with
+				no rotation, so an argument-passed key sits there readable indefinitely. An env
+				assignment is never part of argv, so it never reaches that log.
 			</p>
+			<div class="text-xs font-semibold opacity-80 mt-2">bash / zsh (macOS, Linux, WSL)</div>
 			<div class="flex items-start gap-2">
-				<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0"><code data-testid="connect-npx-command">@Model.WireCommand</code></pre>
-				<button type="button" class="btn btn-xs" data-copy="@Model.WireCommand">Copy</button>
+				<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0"><code data-testid="connect-npx-command">@Model.WireCommandPosix</code></pre>
+				<button type="button" class="btn btn-xs" data-copy="@Model.WireCommandPosix">Copy</button>
 			</div>
-			<p class="text-xs opacity-70 mb-2">single quotes keep <code>$</code>-keys literal in bash/PowerShell</p>
+			<div class="text-xs font-semibold opacity-80 mt-3">PowerShell (Windows)</div>
+			<div class="flex items-start gap-2">
+				<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0"><code data-testid="connect-npx-command-powershell">@Model.WireCommandPowerShell</code></pre>
+				<button type="button" class="btn btn-xs" data-copy="@Model.WireCommandPowerShell">Copy</button>
+			</div>
+			<p class="text-xs opacity-70 mb-2 mt-1">single quotes keep <code>$</code>-keys literal in both shells</p>
 
 			<div class="text-sm font-semibold">What it installs</div>
 			<ul class="text-xs opacity-80 list-disc list-inside space-y-0.5 mb-2">

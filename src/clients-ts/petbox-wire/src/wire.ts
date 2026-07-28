@@ -236,6 +236,10 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "--workspace  Override the workspace the server reports at GET /api/auth/validate (it fills\n" +
     "  WS         {{WORKSPACE}} in the skill template). No hardcoded default: if the server reports\n" +
     "             none and the flag is absent, the wire fails with exit 2 (usage).\n" +
+    "--key KEY    The API key, passed directly. Prefer setting the env var (--env / above) instead:\n" +
+    "             npm logs the full argv — this key included — to ~/.npm/_logs/*.log in plain text\n" +
+    "             with no rotation. --key still works (existing automation keeps running) but every\n" +
+    "             use prints a warning pointing here; it never prints the key itself.\n" +
     "\n" +
     "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
     "             touch keys, registry, sticky telemetry, or per-project MCP/skills (it does prune the\n" +
@@ -2073,6 +2077,18 @@ async function main(): Promise<void> {
   let key = args.key;
   if (key) {
     log(`[2/10] using --key from the command line.`);
+    // key-in-argv-npm-log-leak: npm writes the FULL argv (this key included) to its own debug
+    // log (~/.npm/_logs/*.log) on every invocation, in plain text, with no rotation — a log from
+    // months ago can still carry it. --key stays supported (breaking an already-scripted wiring
+    // pipeline is worse), but every use gets a loud, un-suppressable warning pointing at the
+    // env-var alternative. Never print the key itself here.
+    console.error(
+      `[2/10] WARNING: --key puts the API key in argv. npm logs the full command line to\n` +
+        `  ~/.npm/_logs/*.log in plain text (no rotation) — that key will sit there readable.\n` +
+        `  Prefer setting ${envVar} in the environment instead (see the Connect page for the\n` +
+        `  exact command). Already ran with --key? Clean it up: grep -l -F <key> ~/.npm/_logs/*.log\n` +
+        `  and remove or scrub the matching file(s).`,
+    );
   } else {
     key = process.env[envVar] || readKeyFromStore(envVar) || "";
     if (!key) {

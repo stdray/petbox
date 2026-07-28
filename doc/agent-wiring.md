@@ -367,8 +367,11 @@ Workflow to ship a kit change:
    - kit text only (hooks / protocol / scripts / templates changed) → `npx petbox-wire@latest update`
      — no key, no registry write, no sticky-flag reset;
    - anything per-project (MCP config, rendered SKILL.md, registry entry, hook install) →
-     `npx petbox-wire@latest <dir> <project> --key <KEY>` (or the dev checkout command), which
-     refreshes `~/.petbox/wire/` *and* the generated config;
+     `PETBOX_<PROJECT>_API_KEY=<KEY> npx petbox-wire@latest <dir> <project>` (or the dev checkout
+     command), which refreshes `~/.petbox/wire/` *and* the generated config. `--key <KEY>` still
+     works but puts the key in argv, which npm logs in plain text to `~/.npm/_logs/*.log` with no
+     rotation — prefer the env var above (already wired? the key is already in `~/.petbox/keys.json`,
+     so re-running needs no key at all);
    - agent role files → `npx petbox-wire apply` (neither of the above compiles them).
 
 Editing `~/.petbox/wire/` in place is no longer canonical — it is overwritten on the next run.
