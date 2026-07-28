@@ -50,8 +50,9 @@ public interface IWorkspaceAdminService
 	// project itself, has no Workspaces row). This page is the ONE place a stray workspace can be
 	// seen — and, through the ordinary Delete gate, dealt with — at all, so it must not defer to a
 	// catalog that can lag reality. Synthesized entries carry Name = Key and a Description that
-	// says so; DeleteAsync already derives its "any user projects?" gate from Projects, not from
-	// this row, so Delete on a synthesized entry behaves exactly as it would on a real one.
+	// says so; DeleteAsync derives its "any user projects?" gate from Projects (not this row) AND
+	// its Changed/NotFound verdict from whatever it actually removed (not just this row either) —
+	// see DeleteAsync's own comment for why the second half needed fixing too.
 	Task<IReadOnlyList<Workspace>> ListForSysAdminAsync(CancellationToken ct = default);
 
 	Task<Workspace?> GetAsync(string workspaceKey, CancellationToken ct = default);
@@ -80,7 +81,9 @@ public interface IWorkspaceAdminService
 	// DBs, boards, memory, logs — so the operator must delete or move them first). The workspace's own
 	// memory container is not a user project and does NOT block the delete: it is the workspace's own
 	// belonging, so it dies WITH it. Cascade: container projects (full ProjectDeletion) → memberships
-	// → the workspace row.
+	// → the workspace row (which, for an entry ListForSysAdminAsync had to synthesize, may not exist
+	// at all — see the verdict logic at the end of the implementation for why NotFound is decided
+	// from everything the cascade touched, not from that one row's presence).
 	Task<WorkspaceChangeResult> DeleteAsync(string workspaceKey, CancellationToken ct = default);
 }
 
@@ -202,9 +205,18 @@ public sealed class WorkspaceAdminService(
 		// own connection — safe here precisely because no transaction is held (core.db runs
 		// Cache=Shared; a nested core-db call under an open transaction raises an un-retried
 		// SQLITE_LOCKED).
-		await members.RemoveWorkspaceAsync(workspaceKey, ct);
+		var membershipsRemoved = await members.RemoveWorkspaceAsync(workspaceKey, ct);
 
-		var affected = await db.Workspaces.Where(w => w.Key == workspaceKey).DeleteAsync(ct);
-		return affected > 0 ? new WorkspaceChangeResult.Changed() : new WorkspaceChangeResult.NotFound();
+		var rowRemoved = await db.Workspaces.Where(w => w.Key == workspaceKey).DeleteAsync(ct);
+
+		// NotFound means exactly that: NOTHING existed under this key — no catalog row, no
+		// projects/container, no memberships. It must NOT mean "the Workspaces row specifically was
+		// absent" — ListForSysAdminAsync's whole point is that a workspace can be real (own a
+		// container, own memberships) with no such row, and by the time this line runs the cascade
+		// above has already deleted that container and dropped those memberships. Reporting NotFound
+		// after real, irreversible work happened would tell the caller nothing was done when the
+		// opposite is true — worse than a refusal, because there is nothing left to retry.
+		var didWork = all.Count > 0 || membershipsRemoved > 0 || rowRemoved > 0;
+		return didWork ? new WorkspaceChangeResult.Changed() : new WorkspaceChangeResult.NotFound();
 	}
 }
