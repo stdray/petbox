@@ -1,11 +1,12 @@
 ---
 name: petbox
 description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Use to record/read plans, durable notes and working-session state for $system development.
+petbox: managed
 ---
 
 This project is connected to a PetBox instance over MCP (server `petbox`, https://petbox.3po.su).
 Pass projectKey "$system" in every call (the key is scoped to the $system project;
-boards/memory/sessions live at https://petbox.3po.su/ui/stdray/$system).
+boards/memory/sessions live at https://petbox.3po.su/ui/$system/$system).
 
 **Tool naming:** the base verbs are underscore-delimited (`tasks_upsert`, `memory_search`, …).
 In opencode the MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`, `petbox_memory_search`);
@@ -32,8 +33,9 @@ a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing
 desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 
 **Canon** — SessionStart injects an index from memory store `canon`, key `index` (per
-scope: `$system` project / `$workspace`). To edit it: `memory_upsert` with `store:"canon"`,
-`key:"index"` at the matching scope; keep it a compact index of pointers, not a growing doc.
+scope: `$system` project / `$system`). To edit it: `memory_upsert` with
+`store:"canon"`, `key:"index"` at the matching scope; keep it a compact index of pointers,
+not a growing doc.
 
 **What goes where:**
 - Session (`session_*`) — the current working plan/thinking. "Stale next week?" → session.
