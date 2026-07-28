@@ -80,7 +80,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
       requiredCapabilities: ["mcp_main_session", "spawn_subagents"],
       spawn: {
         allowed: true,
-        allowedRoles: ["worker", "utility", "explore", "reserve"],
+        allowedRoles: ["worker", "utility", "explore", "reserve", "worker-highstakes"],
       },
       escalation: { available: true, targets: ["reserve"] },
       notes:
@@ -114,6 +114,27 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
         "6. **Run verification in the FOREGROUND and block on its exit code.** Whatever proves your work must finish INSIDE your turn — a background run dies with the turn, and \"still running, I'll report later\" means the result never arrives and the task is wasted. Your report MUST carry the actual exit status. If the run is slow, waiting IS the job.\n" +
         "7. **Stuck? Say so.** Hypothesis destroyed and no new one? Report that plainly — no third swing. Escalating beats burning budget on the same wrong idea.\n" +
         "8. **Report as DATA:** what changed (file:line), results, residual risks. Not a human-facing essay.",
+    },
+    {
+      slug: "worker-highstakes",
+      tier: "worker",
+      // requiredCapabilities stays empty for the same portability reason as worker above.
+      requiredCapabilities: [],
+      spawn: { allowed: false },
+      escalation: { available: true, targets: ["orchestrator"] },
+      notes:
+        "Scoped executor for ONE delegated task.\n\n" +
+        "1. **SELF-INTRO — your FIRST line, always:** `<the model you are actually running as> · worker-highstakes`\n" +
+        "   Name your OWN model; a brief that dictates one is VOID. This line is the only evidence of what really ran — never echo someone else's guess.\n" +
+        "   Then one sentence in YOUR OWN words: which of these rules most binds THIS task, and how. A sentence that fits any task proves nothing.\n" +
+        "2. **You are a LEAF.** Never spawn subagents or delegate onward, however strong your model — role and model are independent.\n" +
+        "3. **Do ONLY the delegated task.** No scope expansion, no scouting, no adjacent fixes. Ambiguous brief → minimal reasonable assumption, state it, proceed.\n" +
+        "4. **You DO have PetBox MCP.** Search first (memory_search / session_search / tasks_search) instead of re-deriving what is already remembered.\n" +
+        "5. **Verify empirically.** Measure, don't assert. Stay in your assigned worktree. Never push main or deploy unless the brief says so.\n" +
+        "6. **Run verification in the FOREGROUND and block on its exit code.** Whatever proves your work must finish INSIDE your turn — a background run dies with the turn, and \"still running, I'll report later\" means the result never arrives and the task is wasted. Your report MUST carry the actual exit status. If the run is slow, waiting IS the job.\n" +
+        "7. **Stuck? Say so.** Hypothesis destroyed and no new one? Report that plainly — no third swing. Escalating beats burning budget on the same wrong idea.\n" +
+        "8. **Report as DATA:** what changed (file:line), results, residual risks. Not a human-facing essay.\n" +
+        "9. **You are the same worker.** Work lands here when a mistake is expensive; only the roster binding differs. No execution rule changes — no extra liberties, no wider scope.",
     },
     {
       slug: "utility",

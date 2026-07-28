@@ -315,12 +315,16 @@ test("doctor (online) does not raise alarm when the live definition is richer th
   // this is the "kit is poorer than the server" case (bug:
   // doctor-drift-conflates-degradation-and-divergence), which is NORM (an offline compile just
   // ships without the extra role), not drift, and must never hit console.error / "drifted".
+  // "worker-fixture-extra" is a fictitious slug chosen specifically because it is NOT one of
+  // DEFAULT_AGENT_DEFINITION's roles (worker-highstakes used to serve as this example, back when
+  // it was itself the live-only gap the built-in didn't know about — see the roster-vs-seed card
+  // that added it to DEFAULT_AGENT_DEFINITION; reusing that slug here now would duplicate it).
   const liveDefinition: AgentDefinition = {
     name: DEFAULT_AGENT_DEFINITION.name,
     roles: [
       ...DEFAULT_AGENT_DEFINITION.roles,
       {
-        slug: "worker-highstakes",
+        slug: "worker-fixture-extra",
         tier: "worker",
         requiredCapabilities: [],
         notes: "1. one",
@@ -344,7 +348,7 @@ test("doctor (online) does not raise alarm when the live definition is richer th
       /missing 1 role\(s\) present in the live server definition — normal/,
       `doctor must name the degradation at info level. Full output:\n${out}`,
     );
-    assert.match(out, /worker-highstakes/);
+    assert.match(out, /worker-fixture-extra/);
     assert.equal(status, 0);
   } finally {
     await fake.close();

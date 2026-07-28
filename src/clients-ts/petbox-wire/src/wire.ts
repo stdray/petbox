@@ -2001,7 +2001,8 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
   saveRoles(data);
   log(
     `${label} roles: seeded ${rolesPath()} — profile "default": claude-code aliases ` +
-      `(orchestrator=opus, worker=sonnet, utility=haiku, explore=haiku, reserve=fable), droid=inherit ` +
+      `(orchestrator=opus, worker=sonnet, worker-highstakes=opus, utility=haiku, explore=haiku, ` +
+      `reserve=fable), droid=inherit ` +
       `for every role. opencode is intentionally left unbound (its model space is open/unknowable ` +
       `from the kit) — apply will warn about it, not fail; bind it yourself with ` +
       `\`petbox-wire model set <role> <model> --agent opencode\` when you know what to bind it to.`,

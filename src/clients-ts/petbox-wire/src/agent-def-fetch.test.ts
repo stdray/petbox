@@ -314,6 +314,7 @@ test("offline DEFAULT_AGENT_DEFINITION still compiles (truthfulness + plan green
   const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {
     orchestrator: "opus",
     worker: "sonnet",
+    "worker-highstakes": "opus",
     utility: "haiku",
     explore: "haiku",
     reserve: "fable",

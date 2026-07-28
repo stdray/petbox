@@ -37,6 +37,7 @@ import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 const ALL_DEFAULT_BOUND: Readonly<Record<string, string>> = {
   orchestrator: "opus",
   worker: "sonnet",
+  "worker-highstakes": "opus",
   utility: "haiku",
   explore: "haiku",
   reserve: "fable",
@@ -410,6 +411,7 @@ test("checkTruthfulness (doctor path) also gates the local model binding", () =>
   const clean = checkTruthfulness(DEFAULT_AGENT_DEFINITION, "claude-code", {
     orchestrator: "opus",
     worker: "sonnet",
+    "worker-highstakes": "opus",
     utility: "haiku",
     reserve: "fable",
     explore: "haiku",

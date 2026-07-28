@@ -174,6 +174,7 @@ test("computeRosterState: absent / empty-shell / partial / complete", () => {
             roles: {
               orchestrator: { model: "opus" },
               worker: { model: "sonnet" },
+              "worker-highstakes": { model: "opus" },
               utility: { model: "haiku" },
               explore: { model: "haiku" },
               reserve: { model: "fable" },
@@ -522,6 +523,7 @@ test("CLI: roles.json missing exactly one role's binding -> that role prints 'no
                   roles: {
                     orchestrator: { model: "opus" },
                     worker: { model: "sonnet" },
+                    "worker-highstakes": { model: "opus" },
                     utility: { model: "haiku" },
                     reserve: { model: "fable" },
                     // "explore" deliberately absent.
