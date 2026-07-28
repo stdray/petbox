@@ -263,4 +263,22 @@ public sealed class ProjectTaskSearchTests(ProjectTaskSearchFixture fx) : IClass
 		html.Should().NotContain("ptsearch-foreign-1");
 		html.Should().NotContain("foreign secret");
 	}
+
+	// POSITIVE CONTROL for the two isolation tests above. Both of them assert NotContain, which is
+	// ALSO satisfied when the foreign row is simply absent — a green that proves nothing. This test
+	// pins the other half: the row exists, is searchable by the same term, and WOULD surface if the
+	// tenant boundary let it, because sysadmin reaching the foreign project by its OWN correct
+	// {ForeignWs}/{ForeignProj} URL does see it. If THIS goes red, the two tests above stop meaning
+	// anything and must not be read as evidence of isolation.
+	[Fact]
+	public async Task ForeignProjectsRow_IsReachableFromItsOwnCorrectUrl_SoTheIsolationTestsAreNotVacuous()
+	{
+		var ownUrl = $"/ui/{ProjectTaskSearchFixture.ForeignWs}/{ProjectTaskSearchFixture.ForeignProj}/tasks?q={ProjectTaskSearchFixture.GroupedTerm}";
+		using var resp = await GetAuthedAsync(ownUrl);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		ExtractNodeKeys(html).Should().Contain("ptsearch-foreign-1",
+			"the isolation tests' NotContain assertions only carry weight while this row is otherwise reachable and searchable");
+	}
 }
