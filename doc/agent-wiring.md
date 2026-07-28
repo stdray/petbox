@@ -58,7 +58,8 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `roles.ts` — the local role→model binding store `~/.petbox/roles.json` (`activeProfile` +
   `profiles.<name>.agents.<harness>.roles.<role>.model`). Machine-authoritative, offline, never
   uploaded, never invents a model.
-- `wire-exit.ts` — the exit taxonomy (`WIRE_EXIT`, `classifyApplyExit`); see §2b.
+- `wire-exit.ts` — the exit taxonomy (`WIRE_EXIT`, `classifyApplyExit`) **and** the two sanctioned
+  ways a run may end (`exitWith`, `abortRun`); see §2b and §2b-2.
 - `templates/SKILL.md` — per-project petbox skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
 - `templates/agent-factory/SKILL.md` — the on-demand `petbox-agent-factory` skill (no placeholders):
   the `roles` / `profile` / `doctor` / `apply` procedure.
@@ -181,20 +182,64 @@ none at all. They are dispatched **before** arg parsing, so they never require a
 ## 2b. Exit codes
 
 `src/wire-exit.ts` is the single definition (`WIRE_EXIT` + the pure `classifyApplyExit`, so the
-classification is unit-testable without spawning a process):
+classification is unit-testable without spawning a process). It also owns the only two sanctioned
+ways a run may end — see §2b-2.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. |
-| `1` | Hard failure — invalid definition, unexpected throw. |
+| `0` | Success — every requested step ran. |
+| `1` | Hard failure — invalid definition, unexpected throw, a refused clobbering write, a rejected/unreachable API key. |
 | `2` | Usage / bad arguments. |
 | `3` | Truthfulness policy block — some roles/harnesses were refused. **A partial write is possible.** |
+| `4` | **Incomplete** — a requested step did not run for a reason the user did not ask for. |
 
-**Be honest about the scope:** only `apply` and `doctor` use the full 0/1/2/3 taxonomy. The
-**full-wire path** exits `2` only through `usage()` (bad/absent args) and `1` on *any* other failure
-— missing key, validation abort, telemetry-log failure, self-smoke failure. Do not script against `3`
-outside `apply`/`doctor`. `3` is a *policy* outcome, not a crash: the definition asked a harness for a
-capability it does not declare. Fix the definition (or accept the skip) — retrying changes nothing.
+**Be honest about the scope:** only `apply` and `doctor` use the full taxonomy (and `doctor` never
+reports `4` — it skips no step of its own). The **full-wire path** exits `2` only through `usage()`
+(bad/absent args, and the no-workspace-resolvable case) and `1` on *any* other failure — missing key,
+validation abort, telemetry-log failure. Do not script against `3` or `4` outside `apply`.
+
+`3` is a *policy* outcome, not a crash: the definition asked a harness for a capability it does not
+declare. Fix the definition (or accept the skip) — retrying changes nothing.
+
+### `4` (incomplete) — added 2026-07-28, **breaking**
+
+A path that used to exit `0` now exits `4`. That is deliberate. `apply` could complete "successfully"
+while silently skipping its skills refresh, and the only trace was a line of stdout — invisible to
+the one reader that matters here, a CI step branching on the exit code
+(`wire-exit-incomplete-is-invisible-to-automation`).
+
+- **Unintentional** skip ⇒ `4`: the workspace probe that gates the skills refresh failed (HTTP error,
+  timeout, a key without the scope). Retrying later can succeed, so `4` means *retry*, not *broken*.
+- **Intentional** skip ⇒ still `0`: `--offline`, or a directory that is not a registered project.
+  The user asked for these; alarming on them trains people to ignore the alarm.
+- **Not `3`.** `3` means policy blocked something on purpose. A step that failed for a reason outside
+  the user's control is not policy, and folding them together would make `3` mean two things — the
+  exact ambiguity this taxonomy exists to prevent.
+- **Priority:** `1` > `3` > `4` > `0`. A refusal to write and a policy block are statements about what
+  the run *refused* to do; "a step did not get to run" is the weaker claim and yields to both. It is
+  never lost — it stays in the `summary` JSON under `skillsSkipped`. Pinned by `wire-exit.test.ts`
+  (pure classifier) and `apply-skills-skip.test.ts` (end-to-end, both orderings).
+
+## 2b-2. How a run ends (never `process.exit`)
+
+A hard exit tears the process down while libuv may still be closing a socket left by a just-completed
+`fetch`. On Windows that races the teardown —
+`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c` — and the caller observes
+**127** instead of the code the call site named. The same defect was fixed one place at a time in
+`doctor`, then `status`, then `apply`, then in six further sites in the full `wire` command plus
+`import-sessions.ts`. Three of those recurrences happened because each fix left no guard behind.
+
+So the mechanism now lives in `wire-exit.ts` and there are exactly two spellings:
+
+| Use | When |
+| --- | --- |
+| `exitWith(code)` | The run is over and control is already where it needs to be. Sets `process.exitCode`, unrefs handles still mid-close, lets Node exit naturally. Does **not** abort control flow — `return` after it. |
+| `abortRun(code, message)` | The run must end from deep inside a helper with no clean `return`. Returns `never`, so it cuts control flow exactly as `process.exit()` did; the entrypoint's `.catch` turns it back into `exitWith`. |
+
+`wire-process-exit-whitelist.test.ts` enforces this across **every** non-test source in the package:
+a new raw `process.exit(` fails the build unless it is added to that file's whitelist with a
+justification for why no network call can precede it. There is deliberately no "tracked risk"
+verdict — a site that would need one has `exitWith`/`abortRun` available instead.
 
 ## 2c. Telemetry (`--telemetry`, off by default)
 

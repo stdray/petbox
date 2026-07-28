@@ -93,7 +93,6 @@ import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
-import { unrefLingeringHandles } from "./hook-drain.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
@@ -113,7 +112,7 @@ import {
   runStatus,
 } from "./status.ts";
 import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
-import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
+import { abortRun, classifyApplyExit, exitWith, RunAbort, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
 import {
@@ -136,6 +135,52 @@ import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
+
+// ---- loopback sandbox (petbox-wire's OWN test suite only) ------------------
+//
+// The full `wire` command's base URL is a constant on purpose: no env var may redirect a real
+// wiring run at another host, because that run hands over an API key. But the six exit-code
+// regressions this seam exists for (wire-six-remaining-exit-races) live ONLY on the full-wire
+// path — validateKey, resolveWorkspace, ensureTelemetryLog — and wire.ts runs main() at import
+// time, so its internals cannot be imported by a test (see posix-env.ts / wire-identity.ts on
+// why testable logic is extracted instead). A spawn-based test therefore has no other way in,
+// and "no way in" is exactly how six live-network exit points went unproven for three fix rounds.
+//
+// So: honored ONLY when it names an http:// LOOPBACK address. Anything else — a real host, https,
+// a DNS name — is ignored with a loud warning, so this can never point a wire at a foreign server.
+// It also disables the one machine-GLOBAL write on the path (Windows user-scope env persistence,
+// step 4), so running the suite cannot leave junk in the developer's own environment.
+const SANDBOX_BASE_URL_ENV = "PETBOX_WIRE_TEST_LOOPBACK_BASE_URL";
+
+function loopbackSandboxBaseUrl(): string | undefined {
+  const raw = process.env[SANDBOX_BASE_URL_ENV]?.trim();
+  if (!raw) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    console.error(`${SANDBOX_BASE_URL_ENV} is not a URL — ignored; using ${DEFAULT_BASE_URL}.`);
+    return undefined;
+  }
+  const isLoopback =
+    parsed.protocol === "http:" &&
+    (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]");
+  if (!isLoopback) {
+    console.error(
+      `${SANDBOX_BASE_URL_ENV}=${raw} is not an http:// loopback address — ignored; using ` +
+        `${DEFAULT_BASE_URL}. (This seam exists for petbox-wire's own tests and may never point a ` +
+        `real wiring run, which hands over an API key, at another host.)`,
+    );
+    return undefined;
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+// Resolved ONCE, at module load, so the "ignored, not loopback" warning is unconditional: it must
+// fire even for an invocation that returns during arg parsing (`--help`), otherwise a mis-set
+// override could look accepted. undefined = no override in effect.
+const SANDBOX_BASE_URL: string | undefined = loopbackSandboxBaseUrl();
+
 // Where THIS run's kit lives (npx cache or a checkout's src dir).
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Stable install location: the kit is copied here and every global hook/plugin link points at
@@ -210,7 +255,11 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             a concrete model id. Clean roles written; dirty skipped and reported.\n" +
     "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw, OR a write was\n" +
     "             refused to avoid clobbering a non-PetBox file); 2 usage/args;\n" +
-    "             3 truthfulness partial/block (policy — distinct from usage).\n" +
+    "             3 truthfulness partial/block (policy — distinct from usage);\n" +
+    "             4 INCOMPLETE — a requested step did not run for a reason you did not ask for (the\n" +
+    "             workspace probe failed, so skills were not refreshed). An INTENTIONAL skip stays 0:\n" +
+    "             --offline and an unregistered directory are things you asked for. When 1 or 3 also\n" +
+    "             apply they win the code; the skip still shows in the printed summary.\n" +
     "status       Print FACT, not a verdict: per declared role x harness, the materialized artifact\n" +
     "             path, its bound model, WHERE that model came from (roster = ~/.petbox/roles.json;\n" +
     "             seed = DEFAULT_ROLE_MODEL_SEED preview, roles.json absent, nothing written; none =\n" +
@@ -225,7 +274,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
     "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
-    "             (same taxonomy as apply — policy block is not a hard crash). Offline.\n" +
+    "             (same taxonomy as apply — policy block is not a hard crash; doctor never reports 4,\n" +
+    "             it skips no step of its own). Offline.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -360,12 +410,10 @@ async function runDoctor(argv: string[]): Promise<void> {
     validateAgentDefinition(definition);
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
-    // Set exitCode + return, do NOT hard process.exit() — see the matching comment at this
-    // function's two other exit points below for why (doctor now does a SECOND live fetch, the
-    // workspace probe, and two sequential fetches in one process is exactly what turned this
-    // from a latent risk into a reproducible crash).
-    process.exitCode = WIRE_EXIT.hard;
-    unrefLingeringHandles();
+    // exitWith + return, never a hard process.exit() — see wire-exit.ts's header for why
+    // (doctor does a SECOND live fetch, the workspace probe, and two sequential fetches in one
+    // process is exactly what turned this from a latent risk into a reproducible crash).
+    exitWith(WIRE_EXIT.hard);
     return;
   }
 
@@ -537,26 +585,21 @@ async function runDoctor(argv: string[]): Promise<void> {
   if (code === WIRE_EXIT.ok) {
     log("doctor: all known harnesses OK.");
     // Exit cleanly instead of tearing the process down mid-close (bug surfaced by this task's
-    // skill-drift check): doctor can now make TWO sequential live fetches in one run (the
-    // definition fetch above, then the workspace probe) — a hard process.exit() right after races
-    // Windows' async-handle teardown for whichever socket is still closing
+    // skill-drift check): doctor can make TWO sequential live fetches in one run (the definition
+    // fetch above, then the workspace probe) — a hard process.exit() right after races Windows'
+    // async-handle teardown for whichever socket is still closing
     // (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c` — reproduced on
     // this machine against the real server, not merely a local test fixture: `Connection: close`
     // guarantees no keep-alive socket lingers, but does not make its OS-level teardown
-    // instantaneous). Same fix the SessionStart/Stop hooks already use for the identical crash
-    // (see pull-memory.ts's exit comment / hook-drain.ts): set exitCode and return, letting Node
-    // drain the event loop naturally, after unref'ing whatever handle is still mid-close so it
-    // can't hold the process open either.
-    process.exitCode = WIRE_EXIT.ok;
-    unrefLingeringHandles();
+    // instantaneous). exitWith (wire-exit.ts) is the one sanctioned spelling of that fix.
+    exitWith(WIRE_EXIT.ok);
     return;
   }
   console.error(
     `doctor: FAILED — a role requires a capability a harness does not declare, or is bound to a ` +
       `model a harness cannot resolve (exit ${WIRE_EXIT.truthfulness}).`,
   );
-  process.exitCode = WIRE_EXIT.truthfulness;
-  unrefLingeringHandles();
+  exitWith(WIRE_EXIT.truthfulness);
 }
 
 // Result of one apply compile pass — a plain data record so a caller can decide what to do
@@ -584,6 +627,8 @@ type ApplyRunResult = {
 //   0 — full success: every known harness wrote all its roles, no skips
 //   1 — hard failure: invalid definition / unexpected throw, or a clobber refusal
 //   3 — truthfulness: policy blocked some roles/harnesses (partial write possible)
+//   4 — incomplete: a requested step was skipped for a reason the user did not ask for (the
+//       workspace probe failed) — an INTENTIONAL skip (--offline, unregistered dir) stays 0
 // Best-effort workspace lookup for apply's skill refresh below (bug:
 // skill-files-clobber-and-apply-skips). UNLIKE validateKey (the full-wire path, step 3b), a
 // failure here must NEVER abort apply — skills are secondary to the agent artifacts apply exists
@@ -781,16 +826,22 @@ async function performApply(opts: {
 
   const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
   const unintendedSkillsSkip = skillsSkip !== undefined && !skillsSkip.intentional;
-  const code = classifyApplyExit({ hardError: clobberBlocked, hadTruthfulnessBlock });
-  if (code === WIRE_EXIT.ok && unintendedSkillsSkip) {
-    // Requirement 1 (probe-collapses-http-errors-into-network part B): the trailing line must
-    // NOT claim full success when the skills step was skipped for a reason the user did not ask
-    // for — name what was skipped and why. WIRE_EXIT stays 0 (owner-reserved decision, see the
-    // card) — this is a truthful message on an unchanged exit code, not a new failure class.
-    log(
+  const code = classifyApplyExit({
+    hardError: clobberBlocked,
+    hadTruthfulnessBlock,
+    unintendedIncomplete: unintendedSkillsSkip,
+  });
+  if (code === WIRE_EXIT.incomplete) {
+    // wire-exit-incomplete-is-invisible-to-automation: honesty used to live only in this text,
+    // so a CI step branching on the exit code could not tell a partial run from a complete one.
+    // It now also carries a code of its own (4) — see wire-exit.ts. stderr, not stdout: this is
+    // a non-zero outcome, and it must land where the other non-zero outcomes land.
+    // Only reached when nothing stronger fired: a clobber refusal (1) or a truthfulness block
+    // (3) outranks it, and the skip is still reported inside `summary` on those branches.
+    console.error(
       `${opts.label}: done, but INCOMPLETE — every known harness accepted every role, ` +
-        `skills were NOT refreshed (${skillsSkip!.reason}). Not a full success; re-run once ` +
-        `resolved. ${JSON.stringify(summary)}`,
+        `skills were NOT refreshed (${skillsSkip!.reason}). Not a full success (exit ` +
+        `${WIRE_EXIT.incomplete}); re-run once resolved. ${JSON.stringify(summary)}`,
     );
   } else if (code === WIRE_EXIT.ok) {
     log(`${opts.label}: done — all known harnesses accepted every role.`);
@@ -817,7 +868,8 @@ async function performApply(opts: {
 }
 
 // `apply` subcommand — parses CLI args, runs performApply, exits with its code (2 on bad args,
-// via usage()). Exit codes: 0 full success; 1 hard failure; 2 usage/args; 3 truthfulness.
+// via usage()). Exit codes: 0 full success; 1 hard failure; 2 usage/args; 3 truthfulness;
+// 4 incomplete (a step was skipped for a reason the user did not ask for).
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -856,11 +908,8 @@ async function runApply(argv: string[]): Promise<void> {
   // src\win\async.c): performApply's definition resolve + workspace probe are live network
   // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
   // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
-  // own message just printed. Set exitCode + return, letting Node drain the event loop naturally,
-  // after unref'ing whatever handle is still mid-close (see doctor's two exit points above /
-  // status.ts's identical fix / hook-drain.ts).
-  process.exitCode = result.code;
-  unrefLingeringHandles();
+  // own message just printed. exitWith (wire-exit.ts) is the one sanctioned spelling of the fix.
+  exitWith(result.code);
 }
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
@@ -1142,6 +1191,14 @@ function writeKeyToStore(name: string, value: string): void {
 //  - POSIX: regenerate ~/.petbox/env.sh from the whole key store and make sure the login
 //    profiles source it (marker-guarded, idempotent).
 function persistKeyForAgents(envVar: string): void {
+  if (SANDBOX_BASE_URL !== undefined) {
+    // Loopback sandbox: this is the only step on the full-wire path that writes MACHINE-GLOBAL
+    // state (HKCU Environment via PowerShell). Everything else lands under HOME, which the suite
+    // already redirects to a temp dir. Skipping it keeps a test run from persisting a junk
+    // PETBOX_*_API_KEY into the developer's own user environment.
+    log(`[4/10] loopback sandbox — SKIPPED user-scope env persistence for ${envVar}.`);
+    return;
+  }
   if (process.platform === "win32") {
     const value = readKeyFromStore(envVar);
     try {
@@ -1199,8 +1256,15 @@ type ValidatedKey = {
 };
 
 // Validate the key and RETURN what the server said about it (null when the server could not be
-// asked meaningfully: endpoint missing / non-JSON body). Hard-exits on a rejected key or a
+// asked meaningfully: endpoint missing / non-JSON body). ABORTS THE RUN on a rejected key or a
 // project mismatch, so nothing is persisted for a bad key.
+//
+// Aborts via abortRun (wire-exit.ts), never process.exit: all three failure branches fire
+// immediately after a completed live round trip, which is precisely the shape that races
+// Windows' socket teardown and surfaces as 127 instead of 1 (wire-six-remaining-exit-races —
+// the same defect fixed in doctor, status and apply before it). abortRun still cuts control
+// flow dead (it returns `never`), so nothing this function used to skip now runs: main() never
+// reaches step 4's persistence, exactly as before.
 async function validateKey(
   baseUrl: string,
   key: string,
@@ -1215,13 +1279,14 @@ async function validateKey(
       signal: AbortSignal.timeout(12000),
     });
   } catch (e) {
-    console.error(`[3/10] validate: could not reach ${uri} — ${(e as Error).message}. Aborting.`);
-    process.exit(1);
+    abortRun(
+      WIRE_EXIT.hard,
+      `[3/10] validate: could not reach ${uri} — ${(e as Error).message}. Aborting.`,
+    );
   }
 
   if (resp.status === 401) {
-    console.error(`[3/10] validate: server rejected the API key (401). Aborting.`);
-    process.exit(1);
+    abortRun(WIRE_EXIT.hard, `[3/10] validate: server rejected the API key (401). Aborting.`);
   }
   if (!resp.ok) {
     // Non-standard / endpoint missing → warn and continue. Class-Б: the key still gets
@@ -1244,10 +1309,10 @@ async function validateKey(
   const proj = body?.project ?? body?.Project;
   if (typeof proj === "string" && proj.length > 0) {
     if (proj !== projectKey) {
-      console.error(
+      abortRun(
+        WIRE_EXIT.hard,
         `[3/10] validate: key belongs to project '${proj}', not '${projectKey}'. Aborting.`,
       );
-      process.exit(1);
     }
     log(`[3/10] validate: OK — key scoped to '${proj}'.`);
   } else {
@@ -1499,6 +1564,11 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
 // Ensure the target named log exists. PetBox OTLP ingest is project+log-scoped in the PATH
 // (`/v1/{metrics,logs}/{project}/{log}`) and returns 404 if the log is absent, so the log MUST
 // pre-exist before Claude Code starts exporting. Idempotent: a 409 ("already exists") is success.
+//
+// Both failure branches abort via abortRun (wire-exit.ts), never process.exit: each fires right
+// after a completed live round trip — the socket-teardown race shape (wire-six-remaining-exit-
+// races). abortRun returns `never`, so the caller still skips writeTelemetrySettings and every
+// later step exactly as the hard exit did.
 async function ensureTelemetryLog(
   baseUrl: string,
   project: string,
@@ -1515,8 +1585,10 @@ async function ensureTelemetryLog(
       signal: AbortSignal.timeout(12000),
     });
   } catch (e) {
-    console.error(`[telemetry] could not reach ${uri} — ${(e as Error).message}. Aborting.`);
-    process.exit(1);
+    abortRun(
+      WIRE_EXIT.hard,
+      `[telemetry] could not reach ${uri} — ${(e as Error).message}. Aborting.`,
+    );
   }
   if (resp.ok || resp.status === 409) {
     // 201 Created (fresh) or 409 Conflict (already exists) — both mean the log is ready.
@@ -1524,8 +1596,10 @@ async function ensureTelemetryLog(
     return;
   }
   const text = await resp.text().catch(() => "");
-  console.error(`[telemetry] failed to ensure log '${logName}' — HTTP ${resp.status} ${text}. Aborting.`);
-  process.exit(1);
+  abortRun(
+    WIRE_EXIT.hard,
+    `[telemetry] failed to ensure log '${logName}' — HTTP ${resp.status} ${text}. Aborting.`,
+  );
 }
 
 // Persist the OTLP export env for Claude Code, SPLIT by secrecy (per-project, NOT machine-scope:
@@ -1905,7 +1979,10 @@ async function main(): Promise<void> {
   const args = parseArgs(argv);
   const dir = resolve(args.dir);
   const project = args.projectKey;
-  const baseUrl = DEFAULT_BASE_URL;
+  if (SANDBOX_BASE_URL !== undefined) {
+    log(`[0/10] loopback sandbox base URL in use: ${SANDBOX_BASE_URL} (petbox-wire's own tests).`);
+  }
+  const baseUrl = SANDBOX_BASE_URL ?? DEFAULT_BASE_URL;
 
   if (!existsSync(dir)) {
     console.error(`directory does not exist: ${dir}`);
@@ -1946,8 +2023,14 @@ async function main(): Promise<void> {
   // persistence so an unresolvable workspace leaves the machine untouched.
   const ws = resolveWorkspace(args.workspace, validated?.workspace);
   if (!ws.ok) {
+    // `ws.exitCode` READS like a child process's status being forwarded; it is not. It is a
+    // locally computed WIRE_EXIT.usage from resolveWorkspace (wire-identity.ts), fired the
+    // instant after step 3's `await validateKey(...)` finished a live round trip — i.e. exactly
+    // the socket-teardown race shape, and it was mis-triaged as safe on first reading twice.
+    // Plain early return works here (unlike validateKey's three sites) because this IS main().
     console.error(ws.message);
-    process.exit(ws.exitCode);
+    exitWith(ws.exitCode);
+    return;
   }
   const workspace = ws.workspace;
   log(
@@ -2022,7 +2105,23 @@ async function main(): Promise<void> {
   }
 }
 
+// The single entrypoint handler, and the place a deliberate deep abort becomes an exit code.
+//
+// Its fate was left open by wire-six-remaining-exit-races ("решить его судьбу явно"); decided:
+// it is NOT safe, so it is converted like the rest. It is the last-resort handler for ANY throw
+// out of main(), and main() can throw while a live fetch (validateKey, ensureTelemetryLog,
+// selfSmoke, performApply, the definition resolve) has just completed — the same
+// completed-round-trip-then-hard-exit shape, only reachable from more places than any single
+// call site. exitWith is correct here for the same reason it is correct there.
 main().catch((e) => {
+  if (e instanceof RunAbort) {
+    // A deliberate abort from depth (abortRun) — its message is the operator-facing report, not
+    // a crash. No stack: this is an expected outcome (bad key, unreachable server), and a stack
+    // would bury the actionable line.
+    console.error(e.message);
+    exitWith(e.code);
+    return;
+  }
   console.error(e?.stack ?? String(e));
-  process.exit(1);
+  exitWith(WIRE_EXIT.hard);
 });

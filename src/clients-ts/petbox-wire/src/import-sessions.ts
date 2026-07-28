@@ -24,6 +24,7 @@ import { join, basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readRegistry, resolveProject, type ResolvedProject } from "./registry.ts";
 import { buildMessages, readTranscriptCwd, type Msg } from "./transcript.ts";
+import { exitWith, WIRE_EXIT } from "./wire-exit.ts";
 
 const FETCH_TIMEOUT_MS = 30000;
 
@@ -270,19 +271,28 @@ async function main(): Promise<void> {
   );
   if (pushed > 0 && !args.dryRun)
     console.log("note: server pipelines (digest/facts/patterns) will backfill in the background over the next minutes.");
-  process.exit(failed > 0 ? 1 : 0);
+  // exitWith, never process.exit: this importer makes many live round trips (serverVersions
+  // walks a paged GET, push() POSTs each session), and the LAST of them may still be tearing its
+  // socket down right here — the exact shape that surfaced as 127 in doctor/status/apply
+  // (wire-six-remaining-exit-races, extended package-wide). Safe as a plain fall-through: this is
+  // already the final statement of main(), so nothing that used to be cut off now runs.
+  exitWith(failed > 0 ? WIRE_EXIT.hard : WIRE_EXIT.ok);
 }
 
 // Run main() ONLY when this file is the process entrypoint, never on import — mirrors
 // subagent-model-gate.ts's guard. Without it, importing serverVersions for a unit test also
-// starts main(), which reads process.argv/registry state and calls process.exit(), taking the
-// test runner down with it.
+// starts main(), which reads process.argv/registry state and ends the process, taking the test
+// runner down with it.
 const invokedDirectly =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
+  // exitWith, never process.exit — same reason as main()'s own ending above, and more acute
+  // here: this handler catches throws from serverVersions/push, i.e. it fires immediately after
+  // a network attempt by construction. Message-only (no stack) is the pre-existing style of this
+  // CLI and is left unchanged.
   main().catch((e) => {
     console.error(e instanceof Error ? e.message : e);
-    process.exit(1);
+    exitWith(WIRE_EXIT.hard);
   });
 }
