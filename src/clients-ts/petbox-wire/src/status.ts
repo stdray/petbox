@@ -84,6 +84,21 @@ export function formatDefinitionSource(resolved: ResolvedAgentDefinition): strin
     return `server (live) — key=${resolved.key} v${resolved.version}`;
   }
   if (resolved.source === "lkg") {
+    // An answered server (401/403, or any other HTTP error) is never "unreachable" (bug:
+    // doctor-reports-answering-server-unreachable, same class as
+    // probe-collapses-http-errors-into-network) — only a genuine network/timeout miss is.
+    if (resolved.forbidden) {
+      return (
+        `LKG CACHE — DEGRADED (server reachable but refused the request, 401/403) — ` +
+        `key=${resolved.key} v${resolved.version}, stale`
+      );
+    }
+    if (resolved.httpError) {
+      return (
+        `LKG CACHE — DEGRADED (server answered HTTP ${resolved.httpError.status}, not unreachable) — ` +
+        `key=${resolved.key} v${resolved.version}, stale`
+      );
+    }
     return (
       `LKG CACHE — DEGRADED (server unreachable) — key=${resolved.key} v${resolved.version}, ` +
       `stale`
@@ -92,6 +107,12 @@ export function formatDefinitionSource(resolved: ResolvedAgentDefinition): strin
   // source === "default"
   if (resolved.notFoundOnServer) {
     return "built-in copy — server reachable, no definition for this project yet (normal for a fresh project)";
+  }
+  if (resolved.forbidden) {
+    return "built-in copy — DEGRADED (server reachable but refused the request, 401/403 — check API key scopes)";
+  }
+  if (resolved.httpError) {
+    return `built-in copy — DEGRADED (server answered HTTP ${resolved.httpError.status}, not unreachable — no LKG cache on disk)`;
   }
   return "built-in copy — DEGRADED (no server reachable, no LKG cache on disk)";
 }

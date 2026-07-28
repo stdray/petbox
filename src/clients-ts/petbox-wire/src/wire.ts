@@ -450,7 +450,32 @@ async function runDoctor(argv: string[]): Promise<void> {
   // reached the server for the "default" key — an LKG or built-in-default source has nothing
   // live to compare against, so the check is a clean skip, not a failure (doctor is offline by
   // design; this is the one call that leaves that design, and its absence is not an error).
-  if (resolved.source !== "server") {
+  //
+  // Each skip reason below is named EXPLICITLY (bug: doctor-reports-answering-server-unreachable,
+  // same class as probe-collapses-http-errors-into-network) — an answered server (404/401/403/5xx)
+  // is never folded into "unreachable", and a deliberate `--offline` is never indistinguishable
+  // from a genuine failure. Only a true network/timeout miss (resolved carries none of these
+  // flags) still says "unreachable", and that word is now honest.
+  if (offline) {
+    log("doctor: drift check skipped (--offline).");
+  } else if (resolved.notFoundOnServer) {
+    log(
+      "doctor: drift check skipped (server reachable, but this project has no server-side " +
+        "definition yet — nothing to compare against).",
+    );
+  } else if (resolved.forbidden) {
+    log(
+      "doctor: drift check skipped (server reachable but refused the request — 401/403, check " +
+        "the API key's agents:read scope).",
+    );
+  } else if (resolved.httpError) {
+    log(`doctor: drift check skipped (${describeAgentDefHttpError(resolved.httpError)} — nothing to compare against).`);
+  } else if (resolved.parseError) {
+    log(
+      "doctor: drift check skipped (server answered but its response body did not parse — " +
+        "nothing to compare against).",
+    );
+  } else if (resolved.source !== "server") {
     log("doctor: drift check skipped (server unreachable).");
   } else if (definition.name !== DEFAULT_AGENT_DEFINITION.name) {
     log(
@@ -960,6 +985,11 @@ async function resolveApplyDefinition(opts: {
         `${label}: server reachable but refused the request (401/403 — API key likely missing ` +
           `the agents:read scope); ${got.staleMarker ?? "using LKG agent definition cache"}`,
       );
+    } else if (got.httpError) {
+      // Server ANSWERED with an error status (500, 503, ...) — never "unreachable" (bug:
+      // doctor-reports-answering-server-unreachable, same class as
+      // probe-collapses-http-errors-into-network).
+      log(`${label}: ${describeAgentDefHttpError(got.httpError)}; ${got.staleMarker ?? "using LKG agent definition cache"}`);
     } else {
       log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
     }
@@ -977,10 +1007,25 @@ async function resolveApplyDefinition(opts: {
         `agents:read scope) and no LKG cache exists — using kit default baseline. This is a ` +
         `permissions problem, not an offline one; check the key's scopes.`,
     );
+  } else if (got.httpError) {
+    // Server ANSWERED with an error status (500, 503, ...) and there is no LKG cache — distinct
+    // from a genuine network/timeout failure, which the final else below still covers.
+    log(`${label}: ${describeAgentDefHttpError(got.httpError)} and no LKG cache exists — using kit default baseline.`);
   } else {
     log(`${label}: offline default definition (no server, no LKG cache)`);
   }
   return got;
+}
+
+// Shared wording for an agent-def fetch that reached the server but got an error status (500,
+// 503, ...) — never "unreachable"/"offline" (bug: doctor-reports-answering-server-unreachable).
+// 503 gets its own self-recovering phrasing, same reasoning as skill-files.ts's
+// describeWorkspaceProbeFailure for PetBox's own deploy_in_progress window.
+function describeAgentDefHttpError(httpError: { status: number; retryAfterSeconds?: number }): string {
+  const retryNote =
+    httpError.retryAfterSeconds !== undefined ? ` (retry in ~${httpError.retryAfterSeconds}s)` : "";
+  const selfRecovering = httpError.status === 503 ? ", self-recovering" : "";
+  return `server reachable but answered HTTP ${httpError.status}${selfRecovering}${retryNote}`;
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.

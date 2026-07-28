@@ -86,6 +86,21 @@ export type ResolvedAgentDefinition = {
    * network one, which sent the owner chasing the wrong fix.
    */
   readonly forbidden?: boolean;
+  /**
+   * The live fetch reached the server and got a non-2xx status that is neither a 404
+   * (notFoundOnServer) nor a 401/403 (forbidden) — e.g. a 500, or PetBox's own self-recovering
+   * 503 deploy_in_progress. The server ANSWERED; this must never be described as "unreachable"
+   * (bug: doctor-reports-answering-server-unreachable — same class as
+   * probe-collapses-http-errors-into-network's WorkspaceProbeResult "http-error", reused here
+   * rather than reinvented). Carries `status` so callers can name it, plus best-effort
+   * `retryAfterSeconds` when the error body carries one (PetBox's 503 shape).
+   */
+  readonly httpError?: { readonly status: number; readonly retryAfterSeconds?: number };
+  /**
+   * The live fetch got a 2xx response but the body did not parse as a valid definition
+   * (bad JSON or wrong shape) — the server ANSWERED, this is a data problem, not connectivity.
+   */
+  readonly parseError?: boolean;
 };
 
 export function agentDefCacheDir(homeDir: string = homedir()): string {
@@ -139,13 +154,21 @@ export function parseAgentDefinitionResponse(json: unknown): FetchedAgentDefinit
  * (agent-def-404-not-offline). `status` is null when no response was ever obtained. */
 async function fetchAgentDefinitionRaw(
   opts: FetchAgentDefinitionOptions,
-): Promise<{ definition: FetchedAgentDefinition | null; status: number | null }> {
+): Promise<{
+  definition: FetchedAgentDefinition | null;
+  status: number | null;
+  /** True iff a 2xx response was actually received (even if the body then failed to parse) —
+   * lets the caller separate a genuine HTTP error status from a 2xx-but-unparseable body. */
+  ok: boolean;
+  /** Best-effort peek at the error body for PetBox's `{"retryAfterSeconds": N}` 503 shape. */
+  retryAfterSeconds?: number;
+}> {
   try {
     const base = String(opts.baseUrl ?? "").replace(/\/+$/, "");
     const project = String(opts.projectKey ?? "").trim();
     const apiKey = String(opts.apiKey ?? "").trim();
     const defKey = (opts.definitionKey?.trim() || DEFAULT_DEFINITION_KEY).trim();
-    if (!base || !project || !apiKey || !defKey) return { definition: null, status: null };
+    if (!base || !project || !apiKey || !defKey) return { definition: null, status: null, ok: false };
 
     const timeoutMs =
       typeof opts.timeoutMs === "number" && opts.timeoutMs > 0
@@ -164,14 +187,32 @@ async function fetchAgentDefinitionRaw(
         headers: { "X-Api-Key": apiKey, Connection: "close" },
         signal: ctrl.signal,
       });
-      if (!resp.ok) return { definition: null, status: resp.status };
+      if (!resp.ok) {
+        // The server answered with an error status — never "network"/"unreachable" (same
+        // taxonomy as skill-files.ts's probeWorkspace "http-error"). Best-effort peek at the
+        // body for a retryAfterSeconds field (PetBox's 503 deploy_in_progress shape); an
+        // unparseable or absent body still carries a meaningful status code.
+        let retryAfterSeconds: number | undefined;
+        try {
+          const errBody = (await resp.json()) as { retryAfterSeconds?: unknown } | null;
+          if (typeof errBody?.retryAfterSeconds === "number") retryAfterSeconds = errBody.retryAfterSeconds;
+        } catch {
+          // best-effort only
+        }
+        return {
+          definition: null,
+          status: resp.status,
+          ok: false,
+          ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        };
+      }
       const body = (await resp.json().catch(() => null)) as unknown;
-      return { definition: parseAgentDefinitionResponse(body), status: resp.status };
+      return { definition: parseAgentDefinitionResponse(body), status: resp.status, ok: true };
     } finally {
       clearTimeout(timer);
     }
   } catch {
-    return { definition: null, status: null };
+    return { definition: null, status: null, ok: false };
   }
 }
 
@@ -292,9 +333,21 @@ export async function resolveAgentDefinitionWithLkg(
   // opposed to a genuine network/timeout/5xx failure (wire-silent-failures-invisible, item 2 /
   // evidence 2026-07-26): both used to fall into the same "offline" bucket below.
   let forbidden = false;
+  // Tracks any OTHER non-2xx status the server actually answered with (500, 503, ...) — as
+  // opposed to a genuine network/timeout failure that never reached the server at all (bug:
+  // doctor-reports-answering-server-unreachable, same class as
+  // probe-collapses-http-errors-into-network). A 2xx-but-unparseable body is tracked separately
+  // (parseError) since it is a data problem, not an HTTP error.
+  let httpError: { status: number; retryAfterSeconds?: number } | undefined;
+  let parseError = false;
 
   if (!opts.offline && projectKey && opts.baseUrl && opts.apiKey) {
-    const { definition: fetched, status } = await fetchAgentDefinitionRaw({
+    const {
+      definition: fetched,
+      status,
+      ok,
+      retryAfterSeconds,
+    } = await fetchAgentDefinitionRaw({
       baseUrl: opts.baseUrl,
       projectKey,
       apiKey: opts.apiKey,
@@ -321,6 +374,16 @@ export async function resolveAgentDefinitionWithLkg(
           `likely missing the agents:read scope; falling back`,
         homeDir,
       );
+    } else if (status !== null && !ok && !notFoundOnServer) {
+      httpError = { status, ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}) };
+      wireLog(
+        "agent-def",
+        `server answered agent-def fetch for project '${projectKey}' with HTTP ${status} ` +
+          `(not offline/unreachable) — falling back`,
+        homeDir,
+      );
+    } else if (status !== null && ok && !fetched) {
+      parseError = true;
     }
   }
 
@@ -338,6 +401,8 @@ export async function resolveAgentDefinitionWithLkg(
           version: cached.version,
           staleMarker: AGENT_DEF_STALE_MARKER,
           ...(forbidden ? { forbidden: true } : {}),
+          ...(httpError ? { httpError } : {}),
+          ...(parseError ? { parseError: true } : {}),
         };
       }
     }
@@ -349,6 +414,8 @@ export async function resolveAgentDefinitionWithLkg(
     stale: false,
     ...(notFoundOnServer ? { notFoundOnServer: true } : {}),
     ...(forbidden ? { forbidden: true } : {}),
+    ...(httpError ? { httpError } : {}),
+    ...(parseError ? { parseError: true } : {}),
   };
 }
 
@@ -368,9 +435,13 @@ export async function resolveAgentDefinitionWithLkg(
 export function agentDefinitionBannerNote(resolved: ResolvedAgentDefinition): string {
   if (resolved.source === "server") return "";
   if (resolved.source === "lkg") {
-    return resolved.forbidden
-      ? "⚠ definition: using stale LKG cache — server refused the request (401/403, check API key scopes), not merely offline."
-      : (resolved.staleMarker ?? AGENT_DEF_STALE_MARKER);
+    if (resolved.forbidden) {
+      return "⚠ definition: using stale LKG cache — server refused the request (401/403, check API key scopes), not merely offline.";
+    }
+    if (resolved.httpError) {
+      return `⚠ definition: using stale LKG cache — server answered with HTTP ${resolved.httpError.status}, not merely offline.`;
+    }
+    return resolved.staleMarker ?? AGENT_DEF_STALE_MARKER;
   }
   // source === "default"
   if (resolved.notFoundOnServer) {
@@ -378,6 +449,9 @@ export function agentDefinitionBannerNote(resolved: ResolvedAgentDefinition): st
   }
   if (resolved.forbidden) {
     return "⚠ definition: built-in fallback — server refused the request (401/403, check API key scopes), not merely offline.";
+  }
+  if (resolved.httpError) {
+    return `⚠ definition: built-in fallback — server answered with HTTP ${resolved.httpError.status}, not merely offline.`;
   }
   return "⚠ definition: built-in fallback (server/LKG unavailable).";
 }

@@ -136,13 +136,14 @@ test("doctor --offline gates the LKG-cached definition, not the hard-coded built
       `doctor must NOT fall back to the built-in DEFAULT_AGENT_DEFINITION when an LKG cache exists. Full output:\n${out}`,
     );
     assert.match(out, /using LKG definition/, "doctor must name which link it resolved (LKG here)");
-    // Offline by construction (no server reached) — the built-in-vs-live drift check
+    // --offline is a DELIBERATE skip, never indistinguishable from a genuine failure (bug:
+    // doctor-reports-answering-server-unreachable) — the built-in-vs-live drift check
     // (bug: builtin-definition-drifts-no-catchup) has nothing live to compare against here,
-    // and that must be a clean skip, never a failure.
+    // and that must be a clean, honestly-labeled skip, never a failure.
     assert.match(
       out,
-      /drift check skipped \(server unreachable\)/,
-      "an LKG-sourced run never reached the server, so the drift check must skip, not silently omit itself",
+      /drift check skipped \(--offline\)/,
+      "an intentional --offline run must never be reported the same way as an unreachable server",
     );
     // The custom def's single worker role has no requiredCapabilities, so every known harness
     // passes trivially — doctor should exit clean.
@@ -162,7 +163,9 @@ test("doctor --offline with NO registry entry / NO LKG cache falls back to the b
     const out = stdout + stderr;
     assert.match(out, /definition="default"/, `expected the built-in default when nothing is registered. Full output:\n${out}`);
     assert.match(out, /offline default definition/);
-    assert.match(out, /drift check skipped \(server unreachable\)/);
+    // --offline: a deliberate skip, never the "unreachable" wording (bug:
+    // doctor-reports-answering-server-unreachable).
+    assert.match(out, /drift check skipped \(--offline\)/);
     assert.equal(status, 0);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
@@ -311,6 +314,113 @@ test("doctor (online) reports no drift when the live definition matches the buil
     assert.equal(status, 0);
   } finally {
     await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+// ---- doctor never calls an answered server "unreachable" (bug:
+// doctor-reports-answering-server-unreachable, same class as
+// probe-collapses-http-errors-into-network) --------------------------------------------------
+//
+// Reproduced live 28.07: a fresh project's server answers 404 on GET /api/{project}/agent-defs/
+// default (no server-side definition yet — normal), and doctor folded that into "drift check
+// skipped (server unreachable)" — a straight lie, since the FIRST line of the very same run
+// ("no server-side definition for this project yet") already proves the server responded.
+
+function startFakeStatusServer(status: number, body: unknown): Promise<{ baseUrl: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(body));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        close: () => new Promise((r) => server.close(() => r())),
+      });
+    });
+  });
+}
+
+test("doctor (online) 404 on agent-defs: drift check names 'nothing to compare', never 'unreachable'", async () => {
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  const fake = await startFakeStatusServer(404, { error: "not_found" });
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "doctor-404-proj", fake.baseUrl);
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(out, /no server-side definition for this project yet/, `Full output:\n${out}`);
+    assert.match(
+      out,
+      /drift check skipped \(server reachable, but this project has no server-side definition yet/,
+      `Full output:\n${out}`,
+    );
+    assert.doesNotMatch(out, /unreachable/, `an answered 404 must never say "unreachable". Full output:\n${out}`);
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("doctor (online) 403 on agent-defs: drift check names the scope problem, never 'unreachable'", async () => {
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  const fake = await startFakeStatusServer(403, { error: "forbidden" });
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "doctor-403-proj", fake.baseUrl);
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(out, /agents:read scope/, `Full output:\n${out}`);
+    assert.doesNotMatch(out, /drift check skipped \(server unreachable\)/, `Full output:\n${out}`);
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("doctor (online) 503 on agent-defs: drift check names the HTTP status as self-recovering, never 'unreachable'", async () => {
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  const fake = await startFakeStatusServer(503, { error: "service_unavailable", reason: "deploy_in_progress", retryAfterSeconds: 60 });
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "doctor-503-proj", fake.baseUrl);
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(out, /HTTP 503/, `Full output:\n${out}`);
+    assert.match(out, /self-recovering/, `Full output:\n${out}`);
+    assert.match(out, /retry in ~60s/, `Full output:\n${out}`);
+    assert.doesNotMatch(out, /drift check skipped \(server unreachable\)/, `Full output:\n${out}`);
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("doctor (online) genuine connection failure (bad port, not --offline): drift check honestly says 'server unreachable'", async () => {
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  try {
+    // Port 1 is reserved/unroutable — a real connection failure, never a --offline run, so the
+    // ONLY correct label left is the honest one: the server never answered at all.
+    writeOnlineRegistry(homeDir, projectDir, "doctor-deadhost-proj", "http://127.0.0.1:1");
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(out, /drift check skipped \(server unreachable\)/, `Full output:\n${out}`);
+    assert.equal(status, 0);
+  } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
   }
