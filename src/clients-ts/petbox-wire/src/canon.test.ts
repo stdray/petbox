@@ -1,17 +1,26 @@
-// Unit coverage for canon.ts's consumption of the empty-canon marker (card
-// canon-invisible-and-unfed, item 1 — the KIT side).
+// Unit coverage for canon.ts's consumption of the curated-empty leg (Version 0) — cards
+// canon-invisible-and-unfed (item 1, the KIT side) and canon-banner-empty-notice-unlabelled
+// (the empty notice must be attributed to its OWN leg, never glued unheaded onto the end of a
+// populated section).
 //
-// The card's acceptance criterion is about the INJECT, not the HTTP response: "empty canon ->
-// inject adds ONE line" that reads as an instruction to the agent, not as a curated fact about
-// the project. Before this fix, canon.ts's partBody()/buildBlock() treated ANY non-blank body
-// as real content — so even once the server started answering an empty leg with
-// `{ body: EmptyCanonMarker, version: 0 }` instead of null, this kit would have wrapped that
-// nudge in a "### Project (name)" heading exactly like real curated text, and (worse) cached it
-// under the same cache file the REAL canon uses, risking it resurfacing stale after a later
-// curation. Both are exercised here against an in-process fake HTTP server, never a spawned
-// child process (fetchCanonBlock is a plain async function — no need to pay the subprocess
-// cost or risk the documented spawnSync-vs-in-process-server deadlock some other tests in this
-// kit avoid by using async `spawn` instead).
+// Before canon-invisible-and-unfed, canon.ts's partBody()/buildBlock() treated ANY non-blank
+// body as real content — so once the server started answering an empty leg with
+// `{ body: "...", version: 0 }` instead of null, this kit would have wrapped that nudge in a
+// "### Project (name)" heading exactly like real curated text, and (worse) cached it under the
+// same cache file the REAL canon uses, risking it resurfacing stale after a later curation.
+//
+// Before canon-banner-empty-notice-unlabelled, the fix for THAT wrapped the empty notice with no
+// heading at all, gluing it onto the tail of the block — so a populated project section directly
+// followed by an unheaded "canon is empty" line read as a claim about the WHOLE canon rather than
+// just the empty workspace leg. The server ALSO used to carry that notice's prose in Body; it now
+// sends Body="" for an empty leg (MemoryApi.cs's ReadCanonAsync) and the kit synthesizes the
+// human-readable text itself (EMPTY_CANON_TEXT in canon.ts), attributed under a heading naming
+// the specific leg ("### Project (name) — empty" / "### Workspace — empty").
+//
+// All exercised here against an in-process fake HTTP server, never a spawned child process
+// (fetchCanonBlock is a plain async function — no need to pay the subprocess cost or risk the
+// documented spawnSync-vs-in-process-server deadlock some other tests in this kit avoid by using
+// async `spawn` instead).
 //
 // Run: node --test src/canon.test.ts
 
@@ -27,10 +36,16 @@ import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
 import { assembleSessionBanner } from "./session-budget.ts";
 import type { ResolvedProject } from "./registry.ts";
 
-// Pinned verbatim against src/PetBox.Web/Memory/MemoryApi.cs's EmptyCanonMarker (also pinned
-// server-side in tests/PetBox.Tests/Web/MemoryCanonApiTests.cs) — a wording drift on either
-// side should break a test, not slip through silently.
-const EMPTY_CANON_MARKER = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
+// Pinned verbatim against canon.ts's own EMPTY_CANON_TEXT (not exported — this is the kit's
+// OWN rendered text, no longer anything the server sends; see that file's comment on why the
+// server-side EmptyCanonMarker constant was retired). A wording drift here should break a test,
+// not slip through silently.
+const EMPTY_CANON_TEXT = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
+
+// What the server actually sends today for an empty leg (MemoryApi.cs's ReadCanonAsync): Body
+// is "", Version is 0. classification must go by Version alone — see the next test for a probe
+// that an OLDER server (still sending prose in Body at Version 0) degrades identically.
+const EMPTY_LEG = { body: "", updatedAt: new Date().toISOString(), version: 0 };
 
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;
 
@@ -92,70 +107,97 @@ test("BEFORE (pre-fix server contract): a genuinely empty leg is null, not a mar
   }
 });
 
-test("AFTER: a queried-but-empty leg (version 0) renders as exactly ONE marker line, not a '### Project' fact", async () => {
-  const { baseUrl, close } = await startFakeCanonServer(
-    jsonHandler({ project: { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 }, workspace: null }),
-  );
+test("AFTER: a queried-but-empty leg (version 0) renders under its OWN 'Project ... — empty' heading, attributed to that leg", async () => {
+  const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: null }));
   try {
     const block = await fetchCanonBlock(resolvedFor(baseUrl));
-    assert.notEqual(block, null, "a version-0 marker leg must produce a canon block, not silence");
+    assert.notEqual(block, null, "a version-0 leg must produce a canon block, not silence");
     const text = block as string;
 
-    const markerLines = text.split("\n").filter((l) => l === EMPTY_CANON_MARKER);
-    assert.equal(markerLines.length, 1, `expected exactly one marker line, got:\n${text}`);
+    const noticeLines = text.split("\n").filter((l) => l === EMPTY_CANON_TEXT);
+    assert.equal(noticeLines.length, 1, `expected exactly one empty-notice line, got:\n${text}`);
 
     assert.ok(
-      !text.includes(`### Project (${resolvedFor(baseUrl).project})`),
-      "the empty-canon nudge must NOT be wrapped in a '### Project (name)' heading — that framing " +
-        "would make an instruction read as a curated fact about the named project",
+      text.includes(`### Project (${resolvedFor(baseUrl).project}) — empty\n\n${EMPTY_CANON_TEXT}`),
+      `the empty-canon notice must be attributed to the SPECIFIC leg via its own heading, got:\n${text}`,
     );
   } finally {
     await close();
   }
 });
 
-test("AFTER: project has real content, workspace is the empty marker — content shown normally, marker still exactly one line", async () => {
+test("AFTER: project has real content, workspace is empty — content shown normally under its heading, empty leg gets its OWN heading (never glued unheaded onto the content section)", async () => {
   const { baseUrl, close } = await startFakeCanonServer(
     jsonHandler({
       project: { body: "- fact one\n- fact two", updatedAt: new Date().toISOString(), version: 3 },
-      workspace: { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 },
+      workspace: EMPTY_LEG,
     }),
   );
   try {
     const block = (await fetchCanonBlock(resolvedFor(baseUrl))) as string;
-    assert.ok(block.includes("### Project (fake-project)"), "real content keeps its heading");
-    assert.ok(block.includes("- fact one"), "real content body must survive");
-    const markerLines = block.split("\n").filter((l) => l === EMPTY_CANON_MARKER);
-    assert.equal(markerLines.length, 1, `expected exactly one marker line alongside real content, got:\n${block}`);
-    assert.ok(!block.includes("### Workspace\n\ncanon is empty"), "the empty workspace leg must not be headed like a fact");
+    assert.ok(block.includes("### Project (fake-project)\n\n- fact one"), "real content keeps its heading");
+    assert.ok(
+      block.includes(`### Workspace — empty\n\n${EMPTY_CANON_TEXT}`),
+      `the empty workspace leg must carry its OWN 'Workspace — empty' heading, not a bare instruction line ` +
+        `glued onto the tail of the project section (card canon-banner-empty-notice-unlabelled), got:\n${block}`,
+    );
+    assert.ok(
+      !block.includes(`- fact two\n\n${EMPTY_CANON_TEXT}`),
+      "the empty notice must never sit directly after populated content with no separating heading",
+    );
   } finally {
     await close();
   }
 });
 
-test("AFTER: both legs empty — identical marker text is DEDUPED to one line, not printed twice", async () => {
-  const marker = { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 };
-  const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: marker, workspace: marker }));
+test("AFTER: both legs empty — EACH gets its own attributed heading (never deduped into one unattributed line)", async () => {
+  const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: EMPTY_LEG }));
   try {
     const block = (await fetchCanonBlock(resolvedFor(baseUrl))) as string;
-    const occurrences = block.split(EMPTY_CANON_MARKER).length - 1;
-    assert.equal(occurrences, 1, `both legs sharing the same nudge text must collapse to ONE line, got ${occurrences} in:\n${block}`);
+    assert.ok(
+      block.includes(`### Project (fake-project) — empty\n\n${EMPTY_CANON_TEXT}`),
+      `project leg must be attributed, got:\n${block}`,
+    );
+    assert.ok(
+      block.includes(`### Workspace — empty\n\n${EMPTY_CANON_TEXT}`),
+      `workspace leg must ALSO be attributed (not silently collapsed away — "empty" is always about ` +
+        `a specific part, per the card's acceptance criteria), got:\n${block}`,
+    );
+    const occurrences = block.split(EMPTY_CANON_TEXT).length - 1;
+    assert.equal(occurrences, 2, `both legs being empty must show TWO attributed notices, got ${occurrences} in:\n${block}`);
   } finally {
     await close();
   }
 });
 
-test("cache stickiness: an empty-marker fetch is NEVER written to the offline cache", async () => {
-  await withIsolatedHome(async (home) => {
-    const { baseUrl, close } = await startFakeCanonServer(
-      jsonHandler({ project: { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 }, workspace: null }),
+test("AFTER: an older server still sending prose in Body at Version 0 is classified by VERSION, not Body text — the leg is still 'empty', the server's prose is discarded", async () => {
+  const { baseUrl, close } = await startFakeCanonServer(
+    jsonHandler({
+      project: { body: "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)", updatedAt: new Date().toISOString(), version: 0 },
+      workspace: null,
+    }),
+  );
+  try {
+    const block = (await fetchCanonBlock(resolvedFor(baseUrl))) as string;
+    assert.ok(
+      block.includes(`### Project (${resolvedFor(baseUrl).project}) — empty\n\n${EMPTY_CANON_TEXT}`),
+      `an older server's Version-0 leg must still classify as empty and render the kit's OWN text ` +
+        `under its own heading regardless of what Body carried, got:\n${block}`,
     );
+  } finally {
+    await close();
+  }
+});
+
+test("cache stickiness: an empty-leg-only fetch is NEVER written to the offline cache", async () => {
+  await withIsolatedHome(async (home) => {
+    const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: null }));
     try {
       const block = await fetchCanonBlock(resolvedFor(baseUrl));
-      assert.notEqual(block, null, "marker still shown live this session");
+      assert.notEqual(block, null, "empty notice still shown live this session");
       assert.throws(
         () => readFileSync(cacheFile(home, "fake-project"), "utf8"),
-        "an empty-marker-only response must not create a cache file at all",
+        "an empty-leg-only response must not create a cache file at all",
       );
     } finally {
       await close();
@@ -188,31 +230,27 @@ test("cache stickiness: a real-content fetch IS cached and survives a later netw
   });
 });
 
-test("cache stickiness: the empty marker never resurrects itself from cache after being (correctly) never cached", async () => {
+test("cache stickiness: the empty leg never resurrects itself from cache after being (correctly) never cached", async () => {
   await withIsolatedHome(async (home) => {
     const project = "fake-project";
-    const { baseUrl, close } = await startFakeCanonServer(
-      jsonHandler({ project: { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 }, workspace: null }),
-    );
+    const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: null }));
     try {
       await fetchCanonBlock(resolvedFor(baseUrl, project));
     } finally {
       await close();
     }
-    // Server now unreachable. Because the marker was never cached, there is nothing to fall
+    // Server now unreachable. Because the empty leg was never cached, there is nothing to fall
     // back to — the hook must show NOTHING this session, not a stale "canon is empty" claim
     // that could by now be false (the owner may have curated it in the meantime).
     const dead = resolvedFor("http://127.0.0.1:1", project);
     const block = await fetchCanonBlock(dead, { timeoutMs: 500 });
-    assert.equal(block, null, "no cache should exist for a marker-only leg, so offline fallback must be null");
+    assert.equal(block, null, "no cache should exist for an empty-leg-only response, so offline fallback must be null");
     assert.throws(() => readFileSync(cacheFile(home, project), "utf8"));
   });
 });
 
-test("end-to-end: assembleSessionBanner with the new marker shape ships exactly one empty-canon line, comfortably inside budget", async () => {
-  const { baseUrl, close } = await startFakeCanonServer(
-    jsonHandler({ project: { body: EMPTY_CANON_MARKER, updatedAt: new Date().toISOString(), version: 0 }, workspace: null }),
-  );
+test("end-to-end: assembleSessionBanner with the new attributed-heading shape ships exactly one empty-canon line, comfortably inside budget", async () => {
+  const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: null }));
   try {
     const canon = await fetchCanonBlock(resolvedFor(baseUrl));
     const protocol = buildProtocol("fake-project", mcpPetboxTool, {
@@ -222,19 +260,20 @@ test("end-to-end: assembleSessionBanner with the new marker shape ships exactly 
     });
     const banner = assembleSessionBanner(protocol, canon);
 
-    assert.equal(banner.overBudget, false, "protocol + a ~90-byte marker line must never be over budget");
-    assert.equal(banner.canonIncluded, true, "the tiny marker block always fits alongside the protocol block");
+    assert.equal(banner.overBudget, false, "protocol + a ~90-byte empty-notice line must never be over budget");
+    assert.equal(banner.canonIncluded, true, "the tiny empty-notice block always fits alongside the protocol block");
 
-    const markerLines = banner.text.split("\n").filter((l) => l === EMPTY_CANON_MARKER);
+    const noticeLines = banner.text.split("\n").filter((l) => l === EMPTY_CANON_TEXT);
     assert.equal(
-      markerLines.length,
+      noticeLines.length,
       1,
       `the ASSEMBLED banner (what the harness actually inlines) must carry exactly ONE line about ` +
-        `the empty canon, got ${markerLines.length} in:\n${banner.text}`,
+        `the empty canon, got ${noticeLines.length} in:\n${banner.text}`,
     );
     assert.ok(
-      markerLines[0]?.startsWith("canon is empty"),
-      "the line must read as an instruction ('canon is empty — curate...'), not as a fact framed by a project heading",
+      banner.text.includes(`### Project (fake-project) — empty\n\n${EMPTY_CANON_TEXT}`),
+      "the notice must be attributed to the specific leg via its own '... — empty' heading, " +
+        `never a bare instruction line unattached to any section, got:\n${banner.text}`,
     );
   } finally {
     await close();

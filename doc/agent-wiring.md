@@ -399,8 +399,17 @@ injection; within a session an agent pulls what it needs through the MCP tools.
 - **Endpoint:** `GET {baseUrl}/api/memory/{project}/canon` with header `X-Api-Key` → 200
   `{ "project": {body,updatedAt,version}|null, "workspace": {...}|null }`. Best-effort, a 2 s
   wall-clock budget (`SESSION_FETCH_BUDGET_MS` in `pull-memory.ts` / `droid-pull-memory.ts`).
-  The block carries a `### Project ({project})` section and/or a `### Workspace`
-  section — a section whose part is `null` is omitted; when both are empty nothing is injected.
+  A part is `null` only when that leg was never queryable at all (no workspace, or withheld by
+  sandbox containment) — a leg that WAS queried and has nothing curated yet comes back non-null
+  at `version: 0` with an empty `body` (`MemoryApi.CanonAsync`), not null.
+  `canon.ts` classifies each leg by `version` (0 = queried-but-empty, never by comparing `body`
+  text) and renders it under its OWN heading either way: real content as
+  `### Project ({project})` / `### Workspace`, an empty leg as `### Project ({project}) — empty`
+  / `### Workspace — empty` followed by the kit's own curation-nudge line. Every rendered leg
+  gets a heading — empty is always attributed to the SPECIFIC part it describes, and a populated
+  section is never left directly adjacent to an unheaded empty-notice (card
+  canon-banner-empty-notice-unlabelled). Nothing is injected only when BOTH legs are absent
+  (`null`).
 - **Offline cache:** every successful fetch writes the block to
   `~/.petbox/cache/{project}.canon.md`. If a later fetch fails and a cache file exists, the
   cached block is injected instead, prefixed with a stale marker line
