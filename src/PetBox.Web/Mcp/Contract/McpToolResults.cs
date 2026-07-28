@@ -37,9 +37,9 @@ public sealed record CommentsListResult(IReadOnlyList<CommentView> Comments,
 // an upsert — deletes go through comments_delete). CommentView/CommentConflict come from the Tasks
 // contract (reused, like memory reuses its own views).
 // `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryUpsertResultView.Warning):
-// set only when a comments_upsert call APPLIED and its request payload was large enough to risk
-// the client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
-// (ModuleMcp.SizeWarningOrNull) — never on a refused/conflicted call, where Conflicts is already
+// set only when a comments_upsert call APPLIED and its request body's \uXXXX-escape inflation
+// crossed the threshold ModuleMcp.SizeWarningOrNull measures (see ModuleMcp.SizeGuidanceText) —
+// independent of size — never on a refused/conflicted call, where Conflicts is already
 // the signal to act on. comments_delta never sets it (no write). Null/omitted the rest of the time.
 public sealed record CommentsUpsertResult(
 	bool Applied,
@@ -325,8 +325,8 @@ public sealed record MemoryConflictView(
 // AutoResolved: keys whose stale baseline was accepted because the entry's payload had not
 // semantically moved since the author's read (bookkeeping bumps only) — applied + reported.
 // `Warning` (card mcp-write-degrades-silently-fix, point 4): set only when the call APPLIED
-// and its request payload was large enough to risk the client-side \uXXXX-escaping truncation
-// the tool description warns about (ModuleMcp.SizeWarningOrNull) — never on a refused/conflicted
+// and its request body's \uXXXX-escape inflation crossed the threshold ModuleMcp.SizeWarningOrNull
+// measures (see ModuleMcp.SizeGuidanceText) — independent of size — never on a refused/conflicted
 // call, where conflicts[] is already the signal to act on. Null/omitted the rest of the time.
 public sealed record MemoryUpsertResultView(
 	bool Applied,
@@ -343,8 +343,8 @@ public sealed record MemoryUpsertResultView(
 // `Warning` (card mcp-write-degrades-silently-fix) is non-null when the write landed
 // DEGRADED in a way the caller could not see otherwise: an empty `description` (the primary
 // recall surface — memory_search ranks/shows it, so a factless one is quietly hard to find
-// again) or a request payload big enough to risk the client-side \uXXXX-escaping truncation
-// this tool's description warns about (ModuleMcp.SizeWarningOrNull). Never a refusal — the
+// again) or the request body's \uXXXX-escape inflation crossing the threshold
+// ModuleMcp.SizeWarningOrNull measures (see ModuleMcp.SizeGuidanceText). Never a refusal — the
 // entry is always written when this result is returned; null/omitted when neither applies.
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key, string? Warning = null);
 
@@ -443,18 +443,18 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 // `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryRememberResult.Warning):
 // session_upsert always writes (no conflict/reject path — it is a last-write-wins snapshot
-// replace), so this is set whenever the request payload was large enough to risk the
-// client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
-// (ModuleMcp.SizeWarningOrNull). Never a refusal. Null/omitted the rest of the time.
+// replace), so this is set whenever the request body's \uXXXX-escape inflation crosses the
+// threshold ModuleMcp.SizeWarningOrNull measures (see ModuleMcp.SizeGuidanceText) — independent
+// of size. Never a refusal. Null/omitted the rest of the time.
 public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount, string? Warning = null);
 
 // session_append: Applied=false + Reason="gap" is the STRUCTURED contiguity reject —
 // LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
 // `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryUpsertResultView.Warning):
-// set only when the call APPLIED and its request payload was large enough to risk the
-// client-side \uXXXX-escaping truncation ModuleMcp.SizeGuidanceText warns about
-// (ModuleMcp.SizeWarningOrNull) — never on a gap reject, where Reason is already the signal to
-// act on. Null/omitted the rest of the time.
+// set only when the call APPLIED and its request body's \uXXXX-escape inflation crossed the
+// threshold ModuleMcp.SizeWarningOrNull measures (see ModuleMcp.SizeGuidanceText) — independent
+// of size — never on a gap reject, where Reason is already the signal to act on. Null/omitted
+// the rest of the time.
 public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason, string? Warning = null);
 
 // Meta is the optional observed client stamp (raw JSON object string) when present.
