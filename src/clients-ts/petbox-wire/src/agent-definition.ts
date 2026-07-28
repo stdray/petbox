@@ -90,7 +90,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
         "3. **Reserve when STUCK, not when the work is hard.** About to attack the same problem the same way a second time? Call reserve instead of taking a third swing. Signals: the bug won't reproduce; facts destroyed your hypothesis and the next guess comes from the SAME head; two defensible architectures with an expensive rollback.\n" +
         "4. **Never dictate a subagent's self-intro line.** It states the model it ACTUALLY runs as — your only evidence of what ran; dictating turns the signal into an echo.\n" +
         "5. **Never accept a verification you did not see.** \"The run is still going, I'll report when it finishes\" reports NOTHING — that process died with its turn. Re-run it yourself in the worker's worktree (`git status` there first — the work is usually intact but uncommitted). Same distrust for tools reporting remote state: confirm against the live system.\n" +
-        "6. **Ceiling is Review.** The maintainer moves things to Done/accepted.",
+        "6. **Your ceiling is the approval gate — where the methodology declares one.** Read it off the live rules (`tasks_methodology_guide` → `invariants`), never from memory: where a kind declares an `approval_gate`, stop at the status right before it and hand over — the maintainer makes that move. Where a kind declares none, the guide says so explicitly and the executor sets the terminal status themselves. `Review` is that ceiling in the quartet and classic presets, but it is the NAME of a status, not the rule — a different methodology can place the gate elsewhere. The plain (non-`_enforced`) gate is SOFT: the server does not block it, so it holds only because you keep it.",
     },
     {
       slug: "worker",

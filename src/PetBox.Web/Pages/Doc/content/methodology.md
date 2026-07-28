@@ -11,6 +11,7 @@ Set `kind` on `tasks_board_create` (it can't be changed later). The kind drives 
 - **`ideas`** — deliberation, type `idea`. Status `raw→exploring→{rejected|deferred|accepted}`.
 - **`intake`** — raw issues, type `issue`. Status `reported→triage→{confirmed|duplicate|wontfix}→done`.
 - **`simple`** — a lightweight preset for ad-hoc/scratch work: type `task|bug|feature|chore|issue`, status `Todo→InProgress→Done` (+ `Blocked|Cancelled`) with FREE transitions (any valid status → any, no gates), and free-form tags. No spec/idea governance.
+- **`classic`** — a single self-contained board at the level of the GitHub/Jira/Linear defaults: type `task` (default) `|feature|bug`, quick-add allowed, free-form tags. The open statuses `Backlog→Todo→InProgress→Review` move freely among each other; **`Done` is reachable only from `Review`**; `Cancelled` closes from any open status with no reason; `Duplicate` closes from any open status but **requires a reason**. Any terminal reopens to `Todo`. No spec/idea governance — like `simple`, but modeling the Review-gated `Done` convention (see "Approve gate" below).
 
 **Standard boards.** A project uses one board of each kind, named for its kind: `ideas`, `spec`, `work`, `intake` (+ `simple` scratch). Use those names so every agent and session finds the same boards.
 
@@ -46,7 +47,7 @@ Edges bind to the stable `nodeId` (in every upsert/read response), so they survi
 
 ## Approve gate (convention)
 
-An agent's ceiling on a work item is **`Review`** — mark a finished item `Review`, never `Done`. Only the maintainer confirms `Done`. (Enforced by convention today; the engine models it.)
+Where a project's methodology declares an approval gate, an agent's ceiling is the status right before it — check `tasks_workflow`/`tasks_methodology_guide` for the live rule, not memory: a project can place the gate elsewhere, or not declare one at all. Today both built-in presets place it the same way: `quartet`'s `work` board and the `classic` board both cap the agent at **`Review`** — mark a finished item `Review`, never `Done`. Only the project owner confirms `Done`. The gate is a soft convention, not a server block — nothing stops an agent from setting `Done` itself, so it holds only because the agent honors it.
 
 ## What goes where
 
@@ -66,6 +67,13 @@ Match the structure to the work — the full rails pay off on a long-lived, mult
 - **Ongoing / multi-session / multi-agent project** → the full rails: `ideas` → `spec` → `work` + `intake`, with deeper deliberation and a real requirement tree.
 
 A tier scales *how deep* the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a `simple` board). The spec-link invariant on `work` holds at every tier — it's the forcing function.
+
+## Two built-in presets, one click each
+
+The **Enable methodology** panel offers two ready-made presets:
+
+- **`quartet`** — the four singleton boards above (`ideas`/`spec`/`work`/`intake`), spec-linked, a full requirement tree. Pick it for an ongoing, multi-session/multi-agent project where the spec is a durable asset.
+- **`classic`** — one flat `classic`-kind board (`task|feature|bug`, quick-add, free-form tags), no spec/idea linkage — see the kind description above for its statuses and the Review-gated `Done`. Pick it for single-board tracking at the GitHub/Jira/Linear level, without provisioning the other three boards.
 
 ## Tools
 

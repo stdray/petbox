@@ -54,6 +54,8 @@ First, **right-size the rails to the work** (see the [methodology](/doc/methodol
 
 Provision the standard boards (named for their kind: `ideas`, `spec`, `work`, `intake`) with **one click**: on the project's `.../projects/{proj}/tasks` page, the **Methodology** panel at the top already has the **"Methodology quartet"** preset selected — press **Enable methodology** and all four boards are created with the right kinds in one shot, plus `work → spec` auto-wire. It's idempotent (only adds what's missing), so it's also safe to press again later.
 
+The preset dropdown also offers **`classic`** — one flat board (`task`/`feature`/`bug`) with free movement among open statuses but `Done` reachable only from `Review`, and no spec/idea linkage at all. This walk-through uses `quartet` for the small-build tier below; pick `classic` instead when the project doesn't want the full rails — see the [methodology](/doc/methodology) page for the trade-off.
+
 Creating the boards explicitly, one at a time, with the right kind is the fallback — reach for it only if you need something the preset doesn't give you (e.g. a subset of the boards, or a non-default methodology). Whichever way you provision them, get the kind right **at creation**: not by a bare write (a cold write makes a plain `simple` board and the kind can't change).
 
 Capture the work as a short idea on `ideas` and accept it; record the requirement(s) it settles into on `spec` and note each `nodeId`; then create a `work` feature that links one by passing it as `links:{task_spec: <nodeId>}`. Move the feature `Pending → InProgress → Review` as you go, and stop at `Review`. The [methodology](/doc/methodology) spells out the contract if anything is unfamiliar.
