@@ -282,7 +282,9 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
     "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
     "             (same taxonomy as apply — policy block is not a hard crash; doctor never reports 4,\n" +
-    "             it skips no step of its own). Offline.\n" +
+    "             it skips no step of its own). Fetches the live agent definition from the server (LKG\n" +
+    "             cache / built-in default on miss); network checks are skipped with an explicit reason\n" +
+    "             when the server is unreachable.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
