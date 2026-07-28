@@ -189,8 +189,8 @@ records**, not the working plan — do not treat them as current state.
    and if it looks abandoned, say so instead of removing it.
 9. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
-10. **Delegating to workers (fan-out):** role rules — what a worker/orchestrator/utility/
-   reserve may do, the self-intro contract, escalation — live in exactly ONE place: the
+10. **Delegating to workers (fan-out):** role rules — what each declared role may do, the
+   self-intro contract, escalation — live in exactly ONE place: the
    server agent definition (`agent_def_get('default')`, project `$system`). Do not
    hand-copy that prose here; it drifts the moment either side changes (this rule used to
    quote a worker preamble that fell out of sync with the definition — see work

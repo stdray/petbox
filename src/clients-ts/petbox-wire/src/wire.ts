@@ -218,7 +218,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire update\n" +
     "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
     "       npx petbox-wire status [--offline]\n" +
-    "       npx petbox-wire doctor\n" +
+    "       npx petbox-wire doctor [--offline]\n" +
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
@@ -278,11 +278,21 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             apply/doctor use; never gates, never writes. --offline skips the definition/canon/\n" +
     "             skill-template network calls (materialization-only facts still print). Always exits\n" +
     "             0 unless status itself crashes — it asserts nothing about correctness.\n" +
-    "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
-    "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
-    "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
+    "doctor       Resolve the agent definition the same way apply does (server → LKG cache → built-in\n" +
+    "             default), then run the truthfulness gate for every known harness against THAT\n" +
+    "             definition, with the harness's local binding fed into the gate — so a roles.json id\n" +
+    "             the harness cannot resolve fails here rather than at runtime. Prints OK or each\n" +
+    "             violation. Also reports built-in-vs-server definition drift (a built-in that is merely\n" +
+    "             poorer than the server is labelled degradation and is normal; real divergence is\n" +
+    "             called out separately), skill-file drift against the kit templates, the session-banner\n" +
+    "             budget margin, and a tail of ~/.petbox/wire.log. Network checks are skipped with an\n" +
+    "             explicit reason when the server is unreachable, never silently. --offline skips them\n" +
+    "             itself up front: no live definition fetch (falls straight to LKG cache, then built-in\n" +
+    "             default), no skill-file drift check, no banner-budget check — the truthfulness gate\n" +
+    "             still runs, against whichever definition that leaves you with.\n" +
+    "             Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
     "             (same taxonomy as apply — policy block is not a hard crash; doctor never reports 4,\n" +
-    "             it skips no step of its own). Offline.\n" +
+    "             it skips no step of its own).\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +

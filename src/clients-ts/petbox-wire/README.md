@@ -21,12 +21,15 @@ Full documentation: <https://petbox.3po.su/doc/wire>.
 | `petbox-wire <dir> <project>` | Full wire: validate the key → persist it → copy the kit → register the directory → write per-project MCP configs and skills → install the global hooks → self-smoke. Idempotent. |
 | `petbox-wire update` | Refresh only the stable kit under `~/.petbox/wire/` (exact mirror + orphan cleanup, content hash before → after). No keys, no registry, no hook reinstall, no MCP/skills, no sticky-flag reset. Does **not** compile agent files. |
 | `petbox-wire apply [--definition <key>] [--offline]` | Compile the per-harness agent role files from the portable agent definition + your local role→model binding. |
-| `petbox-wire doctor` | Offline gate: check the default agent definition against every known harness; print OK or each violation. |
+| `petbox-wire status [--offline]` | Print fact, not a verdict: per role × harness, the materialized artifact path, its bound model and where that model came from, plus a definition/roster/canon/skills summary. Read-only, never gates; `--offline` skips network lookups. Always exits 0 unless `status` itself crashes. |
+| `petbox-wire doctor [--offline]` | Gate (exit code is significant): fetches the live agent definition from the server and checks it against every known harness, printing OK or each violation. Also reports definition drift against the built-in default (degradation vs. true divergence), skill-file drift against the kit templates, the session-banner budget margin, and a tail of `~/.petbox/wire.log`. Network checks are skipped with an explicit reason when the server is unreachable; `--offline` skips them itself up front (definition falls to LKG cache → built-in default, skill-file drift and banner-budget checks are skipped) and the truthfulness gate still runs against whatever that leaves you with. |
 | `petbox-wire roles` | Print the active profile and its role→model bindings (`~/.petbox/roles.json`). Offline; an empty store exits 0 — no model is ever invented. |
 | `petbox-wire roles export` | Write a bootstrap copy of `roles.json` to stdout (no secrets). Pipe it to a file on a new machine. |
 | `petbox-wire profile use <name>` | Set `activeProfile` in `~/.petbox/roles.json`. Compiles nothing — re-run `apply`. |
+| `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding to `~/.petbox/roles.json`. Compiles nothing — prints `next: petbox-wire apply`. |
+| `petbox-wire model unset <role> [--agent <id>] [--profile <name>]` | Remove a role→model binding for the given agent/profile from `~/.petbox/roles.json`. Compiles nothing — re-run `apply` afterwards. |
 
-`update`, `apply`, `doctor`, `roles` and `profile` take no `<dir> <project>`.
+`update`, `apply`, `status`, `doctor`, `roles`, `profile` and `model` take no `<dir> <project>`.
 
 ## Flags (full wire)
 
