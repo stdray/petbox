@@ -11,17 +11,23 @@ using PetBox.Tests;
 
 namespace PetBox.Tests;
 
-// Startup sweep for abandoned %TEMP%\petbox-* directories left by KILLED test runs.
+// Startup sweep for abandoned %TEMP%\petbox-* ROOTS left by KILLED test runs.
 //
-// TestDirs.CleanupOrDefer (see TestDirs.cs) defers a locked delete to
+// TestTempRoot.Cleanup (see TestTempRoot.cs) deletes its whole per-process root at
 // AppDomain.CurrentDomain.ProcessExit — but ProcessExit never fires when the testhost is
 // killed, crashes, or the run is cancelled mid-suite (a hung test, a debugger detach, a CI
-// job cancel). Every temp dir the interrupted run had created is then abandoned forever: the
-// OS temp cleaner does not reliably reclaim these (observed on this machine: 255k leftover
+// job cancel). The interrupted run's root is then abandoned forever: the OS temp cleaner does
+// not reliably reclaim these (observed on this machine, pre-single-root: 255k leftover
 // petbox-* dirs / 24.3 GB, accumulated purely from interrupted runs — a single SUCCESSFUL run
-// only ever leaks ~389 dirs / ~118 MB through the same ProcessExit gap). Nothing else ever
+// only ever leaks ~389 dirs / ~118 MB through the same ProcessExit gap; post-single-root that
+// same leak is ONE abandoned root instead of hundreds of scattered leaves). Nothing else ever
 // revisits %TEMP% to clean up after a dead process, so the only fix is to sweep at the START
 // of the NEXT run.
+//
+// Sweeps TestTempRoot.RealTempPath, NOT Path.GetTempPath(): by the time this fixture runs,
+// TestTempRoot's [ModuleInitializer] has already redirected TMP/TEMP/TMPDIR to point at THIS
+// process's own fresh (empty) root, so Path.GetTempPath() no longer answers with the shared OS
+// temp folder where a previous, killed process's root would actually be sitting.
 public sealed class TempDirReaper
 {
 	// Never touch a directory younger than this: another, still-running test process may own
@@ -45,7 +51,7 @@ public sealed class TempDirReaper
 		{
 			var cutoffUtc = DateTime.UtcNow - MinAge;
 			var deleted = 0;
-			foreach (var dir in Directory.EnumerateDirectories(Path.GetTempPath(), "petbox-*"))
+			foreach (var dir in Directory.EnumerateDirectories(TestTempRoot.RealTempPath, "petbox-*"))
 			{
 				if (deleted >= MaxDeletesPerRun) break;
 
