@@ -1053,6 +1053,32 @@ public partial class Program
 			},
 		});
 		app.UseRouting();
+
+		// "me" is the reserved account-zone segment (/ui/me/*, its own literal @page routes
+		// under Pages/Me/ — Account, Security, Preferences, NewWorkspace), never a real
+		// workspace key. A literal Me/* page never binds a {workspaceKey} route value (its
+		// route has no such parameter), so a non-null workspaceKey == "me" here can only mean
+		// a path under /ui/me/... that did NOT match one of those literal pages (a typo, e.g.
+		// /ui/me/new-workspace for /ui/me/workspaces/new) fell through to a generic
+		// {workspaceKey}/... catch-all (ProjectHome/Index, Dashboard/Index, …) instead. Left
+		// alone, that request reaches the WorkspaceViewer policy, which 403s it as "you are not
+		// a member of" a workspace named "me" — true of the literal string but misleading, since
+		// "me" was never offered as a workspace to begin with. 404 it here, BEFORE
+		// authentication/authorization ever look at it, rather than teach every {workspaceKey}
+		// page about the reserved segment. Every OTHER workspace key (known or unknown) is
+		// unaffected — same UseRouting-populated route value NavigationContext's cookie writer
+		// below already reads, so this adds no new routing behavior, only an earlier read of it.
+		app.Use(async (ctx, next) =>
+		{
+			if (ctx.GetRouteValue("workspaceKey") is string wsKey
+				&& string.Equals(wsKey, "me", StringComparison.OrdinalIgnoreCase))
+			{
+				ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+				return;
+			}
+			await next();
+		});
+
 		app.UseAuthentication();
 
 		// spec apikey-last-used: record the key's use IN MEMORY (KeyStatService), never in SQLite —

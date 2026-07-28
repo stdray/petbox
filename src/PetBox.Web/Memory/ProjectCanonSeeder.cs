@@ -40,8 +40,10 @@ public sealed class ProjectCanonSeeder(IMemoryService memory, ILogger<ProjectCan
 
 		Hard budget: 10,000 characters. An oversized body is REJECTED, not truncated.
 
-		To update: `memory_upsert` with `store: "canon"`, `key: "index"` (PATCH semantics —
-		pass the version you last read; 0 only for a fresh entry).
+		To update: `memory_upsert` `store:"canon"` `entries:[{key:"index", version:<version from
+		your last read>, body:"..."}]` — this key already exists (seeded here), so `version:0`
+		will always conflict; read first (`memory_get`/`memory_search`) to get the version.
+		`type` is required only when CREATING a brand-new key, not on an edit.
 
 		PetBox memory is PRIMARY; your harness's own local notes/autoindex is secondary —
 		durable facts land here via `memory_remember`/`memory_upsert`, never only in local
