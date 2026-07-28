@@ -68,7 +68,9 @@ public sealed class ProjectTaskSearchFixture : IAsyncLifetime
 			// A member restricted to Ws ONLY — proves the isolation, unlike sysadmin's free pass.
 			var memberId = await db.InsertWithInt64IdentityAsync(new User
 			{
-				Username = "ptsearch-member", PasswordHash = TestPasswordHash, CreatedAt = DateTime.UtcNow,
+				Username = "ptsearch-member",
+				PasswordHash = TestPasswordHash,
+				CreatedAt = DateTime.UtcNow,
 			});
 			await db.SeedMemberAsync(memberId, Ws, WorkspaceRole.Member);
 		}
