@@ -24,12 +24,12 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		Text(r).Should().Contain("spec");
 	}
 
-	// 5. intake: report_issue → reported; triage → confirmed; promote → work task + issue_task relation.
+	// 5. intake: petbox_report_issue → reported; triage → confirmed; promote → work task + issue_task relation.
 	[Fact]
 	public async Task Intake_ReportTriageConfirm_PromotesToWork()
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "intake", kind = "intake" });
-		var rep = await Agent("report_issue", new { title = "login 500s", detail = "POST /login returns 500" });
+		var rep = await Agent("petbox_report_issue", new { title = "login 500s", detail = "POST /login returns 500" });
 		rep.IsError.Should().NotBe(true);
 
 		// the issue lands on an intake-kind board in status `reported`; triage it to confirmed

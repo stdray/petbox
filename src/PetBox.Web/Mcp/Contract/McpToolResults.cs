@@ -435,7 +435,7 @@ public sealed record RelationDeletedResult(string Id, bool Deleted);
 // Batch delete result — Relations is always present (length 1 for the single-id BC path).
 public sealed record RelationsDeletedResult(IReadOnlyList<RelationDeletedResult> Relations);
 
-// ---- report_issue --------------------------------------------------------------------
+// ---- petbox_report_issue ---------------------------------------------------------------
 
 public sealed record ReportIssueResult(bool Reported, string Project, string Board, string Key);
 

@@ -121,7 +121,7 @@ public enum TenantExemption
 	// explicit stop-and-ask, not a line in a PR.
 	Provisioning,
 
-	// A report to the maintainer, landing in a FIXED tenant regardless of the caller's (report_issue).
+	// A report to the maintainer, landing in a FIXED tenant regardless of the caller's (petbox_report_issue).
 	Feedback,
 
 	// Facts about the caller and about the surface itself: whoami, /version, the OpenAPI document.

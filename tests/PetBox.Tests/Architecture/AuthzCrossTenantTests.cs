@@ -193,7 +193,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 		]),
 
 		("FEEDBACK — writes into the vendor's own project, never the caller's tenant", [
-			"mcp:report_issue",
+			"mcp:petbox_report_issue",
 		]),
 
 		("FLEET-WIDE — the deploy control plane is addressed by node/deployment id and carries NO tenant "

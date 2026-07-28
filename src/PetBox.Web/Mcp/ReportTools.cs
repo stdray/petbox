@@ -30,12 +30,13 @@ public static class ReportTools
 	const string IssuesProject = "$system";
 	const string IssuesBoard = "client-issues";
 
-	[McpServerTool(Name = "report_issue", Title = "Report a PetBox bug or issue", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
+	[McpServerTool(Name = "petbox_report_issue", Title = "Report an issue about PetBox itself", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
 	[Description("""
-		File a bug / issue / feedback about PetBox ITSELF — a tool misbehaved, a response is
-		confusing/opaque, something is broken. The report goes to the PetBox maintainer's triage
-		board, not your project. Friction with your OWN project's code or workflow is not an
-		issue here — remember it with memory_remember instead.
+		Report an issue about PetBox itself — a bug, confusing behavior, misleading docs, or a
+		missing capability — to the people who maintain PetBox. Every call lands on the
+		maintainers' fixed $system triage queue, never in your own project's intake, no matter
+		which project key you call with. Friction with your OWN project's code or workflow
+		belongs in memory_remember (or your own project's intake), not here.
 
 		Report SYSTEMIC friction, not one-off noise. Worth reporting: the same call fails twice
 		for the same root cause; you apply the same manual workaround more than once; a tool's
@@ -64,7 +65,7 @@ public static class ReportTools
 
 		var reporter = http.HttpContext?.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		var now = DateTime.UtcNow;
-		var body = $"{detail}\n\n— via report_issue, reporting project '{reporter ?? "(unknown)"}', {now:u}";
+		var body = $"{detail}\n\n— via petbox_report_issue, reporting project '{reporter ?? "(unknown)"}', {now:u}";
 
 		var key = await tasks.ReportIssueAsync(IssuesProject, IssuesBoard, title, body, ct);
 		return new ReportIssueResult(true, IssuesProject, IssuesBoard, key);

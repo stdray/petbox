@@ -73,4 +73,4 @@ A tier scales *how deep* the idea and how thick the spec are — not whether you
 - `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; plus surfaced links and on spec boards `delivery`). `search` is the one read verb: without `q` a deterministic listing (board-scoped responses carry the board `kind`), with `q` a hybrid relevance search; both modes take `status`/`nodes`/`underNode` filters and `sort`. It hides terminal nodes by default — pass `includeClosed=true`. **Partial update:** a field omitted from `upsert` keeps its prior value, so a status change needs only the key + `version` + `status`.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
 - `relations_create / list / delete` — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).
-- `report_issue` — file a PetBox bug/issue to the maintainer's intake.
+- `petbox_report_issue` — file a PetBox bug/issue to the maintainer's intake.

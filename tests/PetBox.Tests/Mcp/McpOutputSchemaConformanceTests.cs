@@ -194,7 +194,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		// Same reason as its two siblings — it addresses an EXISTING key, so the battery would have to
 		// mint one first. Its structured result is exercised end-to-end in ApiKeyUpdateToolTests.
 		["apikey_update"] = "pending: needs a minted key",
-		["report_issue"] = "pending: issue args not yet wired",
+		["petbox_report_issue"] = "pending: issue args not yet wired",
 		["llm_config_upsert"] = "pending: registry payload not yet wired",
 	};
 

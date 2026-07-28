@@ -2908,7 +2908,7 @@ public sealed partial class TasksService : ITasksService
 		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 32) + 7)];
 	}
 
-	// ---- system: report_issue ----
+	// ---- system: petbox_report_issue ----
 
 	public async Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default)
 	{

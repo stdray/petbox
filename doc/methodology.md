@@ -82,7 +82,7 @@ in `TasksService`, reading `ICommentService`; `WorkflowEngine` stays pure). The 
 
 Intake is the **inbox for raw observations** that are neither an idea nor a task yet:
 bugs ("font too small"), questions ("does model X cope with the methodology?"), wishes.
-Two queues (agent-reported, user-reported); items land at `reported` (via `report_issue`
+Two queues (agent-reported, user-reported); items land at `reported` (via `petbox_report_issue`
 or a direct upsert). It is NOT part of the requirements pipeline — it's a holding area
 until each item is routed.
 
@@ -202,7 +202,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 ## It rides on what PetBox already has
 - Spec = temporal tree ← `TemporalStore` (SCD-2).
 - Iteration = release ← CI `ci.NNN` + `commits[]` + deploy.
-- Intake ← the `incoming` phase + `report_issue`.
+- Intake ← the `incoming` phase + `petbox_report_issue`.
 - `type=auto` ← the agent already classifies incoming requests reliably.
 
 ## Adoption status
