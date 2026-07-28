@@ -26,16 +26,19 @@ with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both mo
 `status[]`, `nodes[]` (slug|NodeId), `underNode` (subtree), `includeClosed`; `sort{by,desc}`
 reorders; `bodyLen` snippets bodies. One node in full: `tasks_node_get`.
 
-**Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
-required on `memory_upsert`; `tags` is an ARRAY of strings ([] clears, omit keeps).
+**Memory entries are typed** (`User` | `Feedback` | `Project` | `Reference`) — `type` is
+required only when `memory_upsert` creates a NEW entry (version 0), not on an edit;
+`tags` is an ARRAY of strings ([] clears, omit keeps).
 `memory_search` is THE read verb: with `q`
 a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing (updated
 desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 
 **Canon** — SessionStart injects an index from memory store `canon`, key `index` (per
 scope: `{{PROJECT}}` project / `{{WORKSPACE}}`). To edit it: `memory_upsert` with
-`store:"canon"`, `key:"index"` at the matching scope; keep it a compact index of pointers,
-not a growing doc. PetBox memory is primary — your harness's own local notes/autoindex is
+`store:"canon"`, `entries:[{key:"index", version:<from your last read>, body:"..."}]` at
+the matching scope — the key already exists, so `version:0` always conflicts; read first
+(`memory_get`/`memory_search`). Keep it a compact index of pointers, not a growing doc.
+PetBox memory is primary — your harness's own local notes/autoindex is
 secondary, never a parallel store. Propose promoting a fact to canon when it keeps getting
 re-derived, a rule keeps getting repeated, or a gotcha bites twice — the owner curates, you
 don't push silently.
