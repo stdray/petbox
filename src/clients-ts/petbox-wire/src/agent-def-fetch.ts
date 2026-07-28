@@ -28,9 +28,16 @@ import { wireLog } from "./wire-log.ts";
 export const DEFAULT_DEFINITION_KEY = "default";
 export const AGENT_DEF_FETCH_TIMEOUT_MS = 8000;
 
-/** Shown when apply uses LKG cache instead of a live server fetch (definition-offline-lkg). */
+/** Shown when apply uses LKG cache because a live fetch was attempted and failed to reach the
+ * server (definition-offline-lkg) — a GENUINE network/timeout miss, never a deliberate choice. */
 export const AGENT_DEF_STALE_MARKER =
   "⚠ Agent definition is from the local LKG cache (PetBox unreachable) — may be stale.";
+
+/** Shown when apply/doctor uses the LKG cache because the CALLER asked for `--offline` — no live
+ * fetch was ever attempted, so this is never "PetBox unreachable" (bug:
+ * doctor-reports-answering-server-unreachable, round 2). */
+export const AGENT_DEF_OFFLINE_STALE_MARKER =
+  "⚠ Agent definition: --offline — using the local LKG cache (no live fetch attempted); may be stale.";
 
 /** Successful server fetch: key + version envelope around a portable definition. */
 export type FetchedAgentDefinition = {
@@ -101,6 +108,17 @@ export type ResolvedAgentDefinition = {
    * (bad JSON or wrong shape) — the server ANSWERED, this is a data problem, not connectivity.
    */
   readonly parseError?: boolean;
+  /**
+   * This resolution ran with `--offline` (or the SessionStart/session-banner equivalent): no
+   * live fetch was ever attempted, by the CALLER's own choice — never a failure. Round 2 of bug
+   * doctor-reports-answering-server-unreachable: the first round fixed every case where a live
+   * fetch reached the server and got an HTTP status, but `--offline` skips the fetch entirely, so
+   * none of notFoundOnServer/forbidden/httpError/parseError above can ever be set for it — without
+   * this flag, an intentional --offline run and a genuine network/timeout miss produced the exact
+   * same "unreachable"-worded LKG/built-in fallback text (reported live: `doctor --offline` against
+   * a server it had JUST reached moments earlier in the same run still said "PetBox unreachable").
+   */
+  readonly offline?: boolean;
 };
 
 export function agentDefCacheDir(homeDir: string = homedir()): string {
@@ -399,7 +417,11 @@ export async function resolveAgentDefinitionWithLkg(
           stale: true,
           key: cached.key,
           version: cached.version,
-          staleMarker: AGENT_DEF_STALE_MARKER,
+          // A deliberate --offline run never attempted a fetch, so it is never "unreachable" —
+          // its own marker, checked first by callers alongside `offline` below (bug:
+          // doctor-reports-answering-server-unreachable, round 2).
+          staleMarker: opts.offline ? AGENT_DEF_OFFLINE_STALE_MARKER : AGENT_DEF_STALE_MARKER,
+          ...(opts.offline ? { offline: true } : {}),
           ...(forbidden ? { forbidden: true } : {}),
           ...(httpError ? { httpError } : {}),
           ...(parseError ? { parseError: true } : {}),
@@ -416,6 +438,7 @@ export async function resolveAgentDefinitionWithLkg(
     ...(forbidden ? { forbidden: true } : {}),
     ...(httpError ? { httpError } : {}),
     ...(parseError ? { parseError: true } : {}),
+    ...(opts.offline ? { offline: true } : {}),
   };
 }
 
@@ -435,6 +458,14 @@ export async function resolveAgentDefinitionWithLkg(
 export function agentDefinitionBannerNote(resolved: ResolvedAgentDefinition): string {
   if (resolved.source === "server") return "";
   if (resolved.source === "lkg") {
+    // Deliberate --offline: no live fetch was ever attempted — checked FIRST, same taxonomy
+    // priority as doctor's own drift-check branch, never folded into the "unreachable" fallback
+    // (bug: doctor-reports-answering-server-unreachable, round 2 — reported live: this exact
+    // banner said "PetBox unreachable" for a run that had just reached the server moments
+    // earlier with the SAME flags, because only the caller's --offline choice explains it).
+    if (resolved.offline) {
+      return resolved.staleMarker ?? AGENT_DEF_OFFLINE_STALE_MARKER;
+    }
     if (resolved.forbidden) {
       return "⚠ definition: using stale LKG cache — server refused the request (401/403, check API key scopes), not merely offline.";
     }
@@ -444,6 +475,9 @@ export function agentDefinitionBannerNote(resolved: ResolvedAgentDefinition): st
     return resolved.staleMarker ?? AGENT_DEF_STALE_MARKER;
   }
   // source === "default"
+  if (resolved.offline) {
+    return "⚠ definition: built-in fallback — --offline, and no LKG cache exists (no live fetch attempted).";
+  }
   if (resolved.notFoundOnServer) {
     return "ℹ definition: no server-side definition for this project yet — using kit default baseline.";
   }
