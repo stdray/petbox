@@ -43,6 +43,14 @@ public sealed class ProjectCanonSeeder(IMemoryService memory, ILogger<ProjectCan
 		To update: `memory_upsert` with `store: "canon"`, `key: "index"` (PATCH semantics —
 		pass the version you last read; 0 only for a fresh entry).
 
+		PetBox memory is PRIMARY; your harness's own local notes/autoindex is secondary —
+		durable facts land here via `memory_remember`/`memory_upsert`, never only in local
+		files (invisible to `memory_search`, next session, any other agent).
+
+		Promote to canon when a fact keeps getting re-derived, a rule keeps getting repeated
+		across sessions, or a gotcha bites twice — PROPOSE it to the owner; curated, not
+		autocaptured.
+
 		Start curating here: durable facts, hot gotchas, open threads worth a newcomer's
 		first look.
 		""";

@@ -35,7 +35,10 @@ desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen`
 **Canon** — SessionStart injects an index from memory store `canon`, key `index` (per
 scope: `{{PROJECT}}` project / `{{WORKSPACE}}`). To edit it: `memory_upsert` with
 `store:"canon"`, `key:"index"` at the matching scope; keep it a compact index of pointers,
-not a growing doc.
+not a growing doc. PetBox memory is primary — your harness's own local notes/autoindex is
+secondary, never a parallel store. Propose promoting a fact to canon when it keeps getting
+re-derived, a rule keeps getting repeated, or a gotcha bites twice — the owner curates, you
+don't push silently.
 
 **What goes where:**
 - Session (`session_*`) — the current working plan/thinking. "Stale next week?" → session.

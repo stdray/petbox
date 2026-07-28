@@ -87,6 +87,8 @@ What belongs in **memory**: durable facts not derivable from code/git/config —
 
 Maintenance: search before you write; update an existing entry rather than duplicating; delete when wrong (history is kept, so deletes are safe). Put prose in `session` content or a task's `body`; when a finished task yields a generalizable lesson, move that lesson to memory as `feedback` — the task's `commits` stay on the node.
 
+**PetBox memory is primary; your coding harness's own memory is not.** Claude Code, opencode and similar tools keep their own local notes/autoindex (e.g. a project `CLAUDE.md`/memory file) alongside PetBox. That local store is secondary: a durable fact belongs in PetBox, written via `memory_remember`/`memory_upsert`, not only in a harness's own files — those are invisible to `memory_search`, to the next session, and to any other agent on the project. The curated top of PetBox memory is **canon** (store `canon`, key `index`, auto-seeded at project creation and injected into every session's context). Canon is curated, not autocaptured — an agent should *propose* promoting something into it, never push silently — and the moment to propose is observable: a fact that keeps getting re-derived, a rule that keeps getting repeated across sessions, or a gotcha that bites twice.
+
 ## 7. The project skill
 
 For Claude Code, opencode and Factory Droid, `petbox-wire` already wrote this `SKILL.md` at the right path (Claude Code `.claude/skills/petbox/`; Droid `.factory/skills/petbox/`; opencode reads the Claude Code copy) — nothing to do. For `omp`/`pi`, or any agent not wired automatically, drop it yourself at the right path for that agent (`omp`: `.pi/skills/` or `.agents/skills/`):
