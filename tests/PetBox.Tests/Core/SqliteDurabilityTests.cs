@@ -25,10 +25,10 @@ namespace PetBox.Tests;
 // So nothing here asserts against the shape of the code. Every case opens a connection through the
 // tier's PRODUCTION factory — the same door DI hands the running service — and asks SQLite.
 //
-// Everything lives in ONE class on purpose: xUnit runs a class's tests sequentially, and the
-// production-configuration cases have to null the process-wide SqliteDurability.Relaxed for the
-// length of their own assertion. Concurrent tests in other classes may open a connection inside
-// that window; the only consequence is that those few commits fsync (slower, never wrong).
+// These used to need to run in ONE class, sequentially, because each case had to null a
+// process-wide override for the length of its own assertion. That override is gone and
+// SqliteDurability.Synchronous is now a pure function of the tier, so there is no shared mutable
+// state left here and no ordering constraint between these tests at all.
 public sealed class SqliteDurabilityTests : IDisposable
 {
 	// SQLite's own numbering for PRAGMA synchronous: 0 OFF, 1 NORMAL, 2 FULL, 3 EXTRA.
@@ -56,17 +56,6 @@ public sealed class SqliteDurabilityTests : IDisposable
 	}
 
 	string Path_(string name) => Path.Combine(_dir, name + ".db");
-
-	// Runs `body` with the process configured EXACTLY as a deployed one: nobody has assigned
-	// Relaxed, so each tier gets the value its own factory chose. Restores the test host's
-	// relaxation afterwards so the rest of the suite keeps its fsync-free run.
-	static async Task AsDeployed(Func<Task> body)
-	{
-		var saved = SqliteDurability.Relaxed;
-		SqliteDurability.Relaxed = null;
-		try { await body(); }
-		finally { SqliteDurability.Relaxed = saved; }
-	}
 
 	// (tier key, the SqliteTier it is assigned, the pragma value that implies, why it got it).
 	// One row per SQLite tier PetBox opens.
@@ -176,16 +165,13 @@ public sealed class SqliteDurabilityTests : IDisposable
 	public async Task EveryTier_CarriesItsChosenDurabilityOnAWorkingConnection(
 		string tier, SqliteTier assigned, long expected, string why)
 	{
-		await AsDeployed(async () =>
-		{
-			var actual = await ReadThroughProductionFactory(tier);
+		var actual = await ReadThroughProductionFactory(tier);
 
-			actual.Should().Be(expected,
-				$"the {tier} tier is assigned SqliteTier.{assigned} " +
-				$"({why}), and PRAGMA synchronous is per-connection — a value that does not show up HERE, on a " +
-				"connection opened through the production factory, is a value that does not exist at runtime no " +
-				"matter what the factory source says");
-		});
+		actual.Should().Be(expected,
+			$"the {tier} tier is assigned SqliteTier.{assigned} " +
+			$"({why}), and PRAGMA synchronous is per-connection — a value that does not show up HERE, on a " +
+			"connection opened through the production factory, is a value that does not exist at runtime no " +
+			"matter what the factory source says");
 	}
 
 	// Guard the theory: a bug that made every tier report the same thing (a hook wired to one
@@ -221,45 +207,31 @@ public sealed class SqliteDurabilityTests : IDisposable
 	[Fact]
 	public void TheExpectedValues_MatchWhatProductionSaysEachTierMeans()
 	{
-		var saved = SqliteDurability.Relaxed;
-		SqliteDurability.Relaxed = null;
-		try
+		foreach (var row in EveryTier)
 		{
-			foreach (var row in EveryTier)
-			{
-				var (tier, assigned, expected, _) = row.Data;
-				var word = expected switch { Full => "FULL", Normal => "NORMAL", _ => "OFF" };
+			var (tier, assigned, expected, _) = row.Data;
+			var word = expected switch { Full => "FULL", Normal => "NORMAL", _ => "OFF" };
 
-				SqliteDurability.Synchronous(assigned).Should().Be(word,
-					$"the '{tier}' row claims SqliteTier.{assigned} means {word}");
-			}
-		}
-		finally
-		{
-			SqliteDurability.Relaxed = saved;
+			SqliteDurability.Synchronous(assigned).Should().Be(word,
+				$"the '{tier}' row claims SqliteTier.{assigned} means {word}");
 		}
 	}
 
 	// The pragma is per-CONNECTION and is NOT written into the file header, so a hook that fired
 	// only on the first physical open would leave every pooled reuse on whatever the last user set.
 	[Fact]
-	public async Task TheChosenValue_SurvivesAPooledReopenOfTheSameFile()
+	public void TheChosenValue_SurvivesAPooledReopenOfTheSameFile()
 	{
-		await AsDeployed(() =>
-		{
-			var cs = SqliteConnectionStrings.ForFile(Path_("pooled"));
-			TestSchema.Tasks(cs);
+		var cs = SqliteConnectionStrings.ForFile(Path_("pooled"));
+		TestSchema.Tasks(cs);
 
-			using (var first = new TasksDb(TasksDb.CreateOptions(cs)))
-				Synchronous(first).Should().Be(Full);
+		using (var first = new TasksDb(TasksDb.CreateOptions(cs)))
+			Synchronous(first).Should().Be(Full);
 
-			// The first connection is back in the pool now; this one very likely gets it handed back.
-			using var second = new TasksDb(TasksDb.CreateOptions(cs));
-			Synchronous(second).Should().Be(Full,
-				"the pragma rides every logical open, not just the first physical one");
-
-			return Task.CompletedTask;
-		});
+		// The first connection is back in the pool now; this one very likely gets it handed back.
+		using var second = new TasksDb(TasksDb.CreateOptions(cs));
+		Synchronous(second).Should().Be(Full,
+			"the pragma rides every logical open, not just the first physical one");
 	}
 
 	// THE DENY-LIST QUESTION, settled empirically. `synchronous` is deliberately NOT in
@@ -277,87 +249,49 @@ public sealed class SqliteDurabilityTests : IDisposable
 	[Fact]
 	public async Task APetsRelaxedDurability_CannotRideThePoolIntoAnotherRequest()
 	{
-		await AsDeployed(async () =>
+		var factory = new DataDbFactory(Path.Combine(_dir, "denylist"));
+		await factory.CreateAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount);
+
+		// A pet's request: allowed to run this, because it is its own database.
+		await using (var pet = await factory.OpenAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount))
 		{
-			var factory = new DataDbFactory(Path.Combine(_dir, "denylist"));
-			await factory.CreateAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount);
+			await using var cmd = pet.CreateCommand();
+			cmd.CommandText = "PRAGMA synchronous = OFF;";
+			await cmd.ExecuteNonQueryAsync();
+			Synchronous(pet).Should().Be(Off, "the pet's own connection took the setting");
+		}
 
-			// A pet's request: allowed to run this, because it is its own database.
-			await using (var pet = await factory.OpenAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount))
-			{
-				await using var cmd = pet.CreateCommand();
-				cmd.CommandText = "PRAGMA synchronous = OFF;";
-				await cmd.ExecuteNonQueryAsync();
-				Synchronous(pet).Should().Be(Off, "the pet's own connection took the setting");
-			}
+		// Positive control: reopen the SAME connection string WITHOUT going through the
+		// factory, i.e. the way a caller that forgot to re-assert would.
+		var cs = factory.GetConnectionString("proj", "pet");
+		await using (var leaked = new SqliteConnection(cs))
+		{
+			await leaked.OpenAsync();
+			Synchronous(leaked).Should().Be(Off,
+				"POSITIVE CONTROL — the pooled handle comes back still carrying the pet's OFF. If this " +
+				"ever reports FULL the leak channel closed for some unrelated reason and the assertion " +
+				"below stops proving anything");
+		}
 
-			// Positive control: reopen the SAME connection string WITHOUT going through the
-			// factory, i.e. the way a caller that forgot to re-assert would.
-			var cs = factory.GetConnectionString("proj", "pet");
-			await using (var leaked = new SqliteConnection(cs))
-			{
-				await leaked.OpenAsync();
-				Synchronous(leaked).Should().Be(Off,
-					"POSITIVE CONTROL — the pooled handle comes back still carrying the pet's OFF. If this " +
-					"ever reports FULL the leak channel closed for some unrelated reason and the assertion " +
-					"below stops proving anything");
-			}
-
-			// The production door: re-asserts the tier at the top of every open.
-			await using (var next = await factory.OpenAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount))
-			{
-				Synchronous(next).Should().Be(Full,
-					"IDataDbFactory.OpenAsync re-asserts SqliteTier.Durable on every open, so a pet's PRAGMA " +
-					"expires with its own request instead of riding the pool into the next one — that, and " +
-					"not a deny-list entry, is what makes leaving `synchronous` allowed safe");
-			}
-		});
+		// The production door: re-asserts the tier at the top of every open.
+		await using (var next = await factory.OpenAsync("proj", "pet", DataDbFactory.DefaultMaxPageCount))
+		{
+			Synchronous(next).Should().Be(Full,
+				"IDataDbFactory.OpenAsync re-asserts SqliteTier.Durable on every open, so a pet's PRAGMA " +
+				"expires with its own request instead of riding the pool into the next one — that, and " +
+				"not a deny-list entry, is what makes leaving `synchronous` allowed safe");
+		}
 	}
 
+	// The statement each tier emits. No configuration, no process state, no host override — this is
+	// now a pure function of the tier, which is why it can be asserted flat like this.
 	[Fact]
-	public void TheTestHost_RelaxesEveryTierItOpens()
+	public void EachTier_EmitsItsOwnStatement()
 	{
-		// No AsDeployed here: this is the suite's own configuration, exactly as TestDurability.cs
-		// leaves it.
-		var tasks = SqliteConnectionStrings.ForFile(Path_("test-tasks"));
-		TestSchema.Tasks(tasks);
-		using (var db = new TasksDb(TasksDb.CreateOptions(tasks)))
-			Synchronous(db).Should().Be(Off, "tasks tier");
-
-		var memory = SqliteConnectionStrings.ForFile(Path_("test-memory"));
-		TestSchema.Memory(memory);
-		using (var db = new MemoryDb(MemoryDb.CreateOptions(memory)))
-			Synchronous(db).Should().Be(Off, "memory tier");
-
-		// The relaxation overrides the TIER, not merely SQLite's default — the log tier would be
-		// NORMAL in production and is OFF here like everything else.
-		var logs = SqliteConnectionStrings.ForFile(Path_("test-logs"));
-		TestSchema.Log(logs);
-		using (var db = new LogDb(LogDb.CreateOptions(logs)))
-			Synchronous(db).Should().Be(Off, "log tier, whose production value is NORMAL rather than FULL");
-	}
-
-	[Fact]
-	public void TheChoiceIsAlwaysEmitted_AndTheTestOverrideOutranksEveryTier()
-	{
-		var saved = SqliteDurability.Relaxed;
-		SqliteDurability.Relaxed = null;
-		try
-		{
-			SqliteDurability.Statement(SqliteTier.Durable).Should().Be("PRAGMA synchronous = FULL;",
-				"the durable tiers now ASSERT their value rather than relying on SQLite's default — " +
-				"a pooled handle carries whatever the previous user left on it");
-			SqliteDurability.Statement(SqliteTier.Telemetry).Should().Be("PRAGMA synchronous = NORMAL;");
-
-			SqliteDurability.Relaxed = "OFF";
-			SqliteDurability.Statement(SqliteTier.Durable).Should().Be("PRAGMA synchronous = OFF;",
-				"a host that sets Relaxed is declaring its whole database disposable, so it outranks " +
-				"every tier — which is why nothing under src/ may assign it (SqliteDurabilityGuardTests)");
-			SqliteDurability.Statement(SqliteTier.Telemetry).Should().Be("PRAGMA synchronous = OFF;");
-		}
-		finally
-		{
-			SqliteDurability.Relaxed = saved;
-		}
+		SqliteDurability.Statement(SqliteTier.Durable).Should().Be("PRAGMA synchronous = FULL;",
+			"the durable tiers ASSERT their value rather than relying on SQLite's default — " +
+			"a pooled handle carries whatever the previous user left on it");
+		SqliteDurability.Statement(SqliteTier.Telemetry).Should().Be("PRAGMA synchronous = NORMAL;");
+		SqliteDurability.Statement(SqliteTier.Derived).Should().Be("PRAGMA synchronous = NORMAL;");
 	}
 }

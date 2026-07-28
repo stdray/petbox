@@ -53,19 +53,21 @@ public enum SqliteTier
 // by construction rather than true by coincidence, and it is what makes that pooled leak a
 // non-issue instead of a hole. Cost is a flag assignment in SQLite's memory — no I/O.
 //
-// WHY THE TELEMETRY TIER CHOOSES `NORMAL`, AND WHAT IS NOT BEING CLAIMED.
-// Under journal_mode=WAL — which LogSchema.Ensure applies, and which is load-bearing here —
-// synchronous=NORMAL cannot corrupt the file. The exposure is narrower and specific: a power loss
-// or kernel panic can roll back transactions committed since the last WAL checkpoint. A crash of
-// the petbox PROCESS loses nothing at all, because the WAL pages are already in the OS page cache.
-// So the whole cost of this choice is: some log lines and spans written shortly before a hard
-// machine failure may be missing.
-// The choice rests on that cost being ~zero, NOT on a measured speedup. THERE ARE NO PRODUCTION
-// MEASUREMENTS of what fsync-per-commit costs this tier, and none are claimed here. The test suite
-// is known to be fsync-bound (6 % CPU, ~40 average disk queue), but a test host is not a
-// production host and that number must not be spent as if it were one. The honest statement is:
-// FULL buys the telemetry tier a guarantee nobody would ever use, so it is not worth any price at
-// all, measured or not.
+// WHY THE NON-DURABLE TIERS CHOOSE `NORMAL`, AND WHAT IS NOT BEING CLAIMED.
+// Under journal_mode=WAL — which every tier's *Schema.Ensure applies, and which is load-bearing
+// here — synchronous=NORMAL cannot corrupt the file. The exposure is narrower and specific: a power
+// loss or kernel panic can roll back transactions committed since the last WAL checkpoint. A crash
+// of the petbox PROCESS loses nothing at all, because the WAL pages are already in the OS page
+// cache. So the whole cost of this choice is: some log lines, spans and cache entries written
+// shortly before a hard machine failure may be missing.
+// The choice rests on that cost being ~zero, NOT on a speedup. THERE ARE NO PRODUCTION MEASUREMENTS
+// of what fsync-per-commit costs these tiers, and none are claimed here. Nor is the test suite
+// evidence for it, in either direction: the "fsync-bound test suite" figures this comment used to
+// cite (6 % CPU, ~40 average disk queue) were SUPERSEDED by the measurement on work
+// test-dbs-in-memory — ~0.1 disk queue at 15–30 % CPU, and synchronous=OFF made the suite 13 %
+// SLOWER rather than faster. Do not reintroduce them as live context, and do not reach for a test-
+// host number to justify a production setting. The honest statement stands on its own: FULL buys
+// these tiers a guarantee nobody would ever use, so it is not worth any price, measured or not.
 // THIS IS ALSO WHY `NORMAL` MUST NOT BE COPIED TO ANOTHER TIER WITHOUT CHECKING ITS JOURNAL MODE.
 // Everything above depends on WAL: under journal_mode=DELETE, synchronous=NORMAL risks actual
 // CORRUPTION on power loss, not merely lost commits. Every internal tier applies
@@ -88,18 +90,22 @@ public static class SqliteDurability
 	const string TelemetrySynchronous = "NORMAL";
 	const string DerivedSynchronous = "NORMAL";
 
-	// TEST-HOST OVERRIDE, null in every deployed process. Not a tier and not a policy: when set it
-	// replaces EVERY tier's value at once, which is only ever appropriate for a host whose data
-	// dies with it. The single assignment in the repository is tests/TestDurability.cs, compiled
-	// into the test assemblies alone; SqliteDurabilityGuardTests fails the build if one appears
-	// under src/, because SqliteDurabilityTests structurally cannot catch that (it nulls this
-	// property itself to model a deployed process).
-	public static string? Relaxed { get; set; }
-
-	// The value this tier's connections must carry. Total by construction: a tier with no decision
-	// throws at the switch rather than falling through to something plausible.
+	// The value this tier's connections must carry — a PURE FUNCTION OF THE TIER, with no
+	// process-wide state behind it. Total by construction: a tier with no decision throws at the
+	// switch rather than falling through to something plausible.
+	//
+	// There used to be a settable `Relaxed` here: a blanket override that replaced every tier's
+	// value at once, assigned only by a test-host module initializer to run the suite on
+	// synchronous=OFF. It is gone, and both halves of that are deliberate. The suite never needed
+	// it to be CORRECT, only (supposedly) to be fast — and the measurement recorded on work
+	// test-dbs-in-memory found OFF made the suite 13 % SLOWER, not faster (three runs against two,
+	// non-overlapping ranges), because the suite is bound by latency rather than write throughput.
+	// With its one writer gone the property had no users at all, and a mutable public static that
+	// can silently outrank every durability decision in the product is not worth keeping for a
+	// hypothetical one. Its guard test (SqliteDurabilityGuardTests, a source scan forbidding any
+	// assignment under src/) went with it: a back door that does not exist needs no guard.
 	public static string Synchronous(SqliteTier tier) =>
-		Relaxed ?? tier switch
+		tier switch
 		{
 			SqliteTier.Durable => DurableSynchronous,
 			SqliteTier.Telemetry => TelemetrySynchronous,
