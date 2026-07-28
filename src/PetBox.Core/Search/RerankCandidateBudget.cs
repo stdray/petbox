@@ -69,6 +69,22 @@ public sealed record RerankCandidateBudget
 		HeadroomFraction = settings.HeadroomFraction,
 	};
 
+	// THE production door: every SearchService call site resolves its budget through here instead of
+	// constructing RerankCandidateBudget directly, so "переопределяемы" (settings-uniform-override)
+	// is true in prod, not just in a settings-layer test. `settingsResolver` is nullable for the same
+	// reason every other optional collaborator in these services is (ILlmClient?, ILogger?, ...): a
+	// hand-constructed test/adapter instance with no DI graph still gets an honest, unwired budget
+	// rather than a null-ref. Settings are resolved at Scope.Project — the cascade still reaches
+	// Workspace and System for a project with no override of its own (settings-uniform-override,
+	// deeper wins) — so a Project-scope override on the search's own project is what actually lands.
+	public static async Task<RerankCandidateBudget> ResolveAsync(
+		ISettingsResolver? settingsResolver, string projectKey, CancellationToken ct = default)
+	{
+		if (settingsResolver is null) return new RerankCandidateBudget();
+		var settings = await settingsResolver.GetAsync<RerankBudgetSettings>(Scope.Project, projectKey, ct);
+		return FromSettings(settings);
+	}
+
 	// The derived budget: how many candidates fit under the latency bar, with headroom. Never a
 	// stored constant — recompute it whenever the route or the bar changes and re-measure PerDocMs.
 	public int Candidates()

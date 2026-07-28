@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
+using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
@@ -44,12 +45,15 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
 	readonly SessionStore _store;
-	// NOT an ILlmClient field. This class is a SINGLETON (it IS the hydration cache), while
-	// ILlmClient is SCOPED (CapabilityRouter → ILlmRegistryLevelResolver → PetBoxDb). Holding one
-	// would be a captive dependency: a single PetBoxDb resolved from the root provider, shared by
-	// every concurrent session_search and never disposed. So the client is RENTED per search and
-	// returned — the same shape the background jobs already use (SearchEnrichmentService:50).
-	readonly Func<LlmRental> _rentLlm;
+	// NOT ILlmClient/ISettingsResolver fields. This class is a SINGLETON (it IS the hydration
+	// cache), while both of those are SCOPED (ILlmClient: CapabilityRouter → ILlmRegistryLevelResolver
+	// → PetBoxDb; ISettingsResolver: ISettingsStore → ICoreDbFactory). Holding either would be a
+	// captive dependency: a single PetBoxDb resolved from the root provider, shared by every
+	// concurrent session_search and never disposed. So BOTH are RENTED from the SAME per-search DI
+	// scope and returned together — the same shape the background jobs already use
+	// (SearchEnrichmentService:50), now covering the rerank candidate budget's settings resolve too
+	// (rerank-budget-params-to-settings) instead of opening a second scope for it.
+	readonly Func<SearchScopeRental> _rentScope;
 	readonly ILogger<DuckDbSessionEpisodicIndex>? _logger;
 	readonly TimeSpan _ttl;
 	readonly int _maxHydrated;
@@ -61,9 +65,9 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	// and queries are ~17ms — contention is cheaper than per-entry locking.
 	readonly SemaphoreSlim _gate = new(1, 1);
 
-	// PRODUCTION wiring. The LLM client is resolved from a FRESH DI scope on each search and the
-	// scope is disposed with it, so the scoped graph behind it (PetBoxDb) is never shared across
-	// concurrent searches and never leaks.
+	// PRODUCTION wiring. The LLM client AND the settings resolver are resolved from ONE FRESH DI
+	// scope on each search and the scope is disposed with them, so the scoped graph behind either
+	// (PetBoxDb) is never shared across concurrent searches and never leaks.
 	public DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, IServiceScopeFactory scopes,
 		ILogger<DuckDbSessionEpisodicIndex>? logger = null, TimeSpan? ttl = null,
 		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null,
@@ -73,29 +77,37 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			var scope = scopes.CreateScope();
 			// GetService, not GetRequiredService: the LlmRouter feature may be off, and the
 			// semantic leg is designed to be skipped silently when no embedder exists.
-			return new LlmRental(scope.ServiceProvider.GetService<ILlmClient>(), scope);
+			// ISettingsResolver IS always registered (core infrastructure), but GetService here too
+			// so a caller-owned scope missing it (unexpected DI graph) degrades to the compiled-in
+			// budget default rather than throwing mid-search.
+			return new SearchScopeRental(
+				scope.ServiceProvider.GetService<ILlmClient>(),
+				scope.ServiceProvider.GetService<ISettingsResolver>(),
+				scope);
 		}, logger, ttl, maxHydrated, time, options)
 	{
 	}
 
 	// Caller-owned client (tests, and any caller whose ILlmClient is genuinely singleton-lived).
 	// NEVER pass a SCOPED service here from a singleton registration — that is the captive this
-	// class was built to avoid; CaptiveDependencyTests fails the build if anyone tries.
+	// class was built to avoid; CaptiveDependencyTests fails the build if anyone tries. No settings
+	// resolver either in this path — a caller here gets the compiled-in RerankCandidateBudget default,
+	// same as any other unwired construction (rerank-budget-params-to-settings).
 	public DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, ILlmClient? llm = null,
 		ILogger<DuckDbSessionEpisodicIndex>? logger = null, TimeSpan? ttl = null,
 		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null,
 		SessionEpisodicOptions? options = null)
-		: this(factory, () => new LlmRental(llm, null), logger, ttl, maxHydrated, time, options)
+		: this(factory, () => new SearchScopeRental(llm, null, null), logger, ttl, maxHydrated, time, options)
 	{
 	}
 
-	DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, Func<LlmRental> rentLlm,
+	DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, Func<SearchScopeRental> rentScope,
 		ILogger<DuckDbSessionEpisodicIndex>? logger, TimeSpan? ttl, int maxHydrated,
 		TimeProvider? time, SessionEpisodicOptions? options)
 	{
 		_factory = factory;
 		_store = new SessionStore(factory);
-		_rentLlm = rentLlm;
+		_rentScope = rentScope;
 		_logger = logger;
 		_ttl = ttl ?? DefaultTtl;
 		_maxHydrated = maxHydrated;
@@ -103,9 +115,11 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		_options = options ?? new SessionEpisodicOptions();
 	}
 
-	// One search's lease on an ILlmClient: the client plus the DI scope it came from (null when the
-	// caller owns the client). Disposing it disposes the scope — and with it the scoped PetBoxDb.
-	readonly record struct LlmRental(ILlmClient? Client, IServiceScope? Scope) : IDisposable
+	// One search's lease on its per-scope collaborators: the LLM client, the settings resolver (used
+	// to resolve the rerank candidate budget, rerank-budget-params-to-settings), and the DI scope
+	// both came from (null when the caller owns them directly). Disposing it disposes the scope —
+	// and with it whatever scoped graph (PetBoxDb) backs either collaborator.
+	readonly record struct SearchScopeRental(ILlmClient? Client, ISettingsResolver? Settings, IServiceScope? Scope) : IDisposable
 	{
 		public void Dispose() => Scope?.Dispose();
 	}
@@ -247,7 +261,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		// The rental spans the whole query: the semantic leg's embed calls run INSIDE the
 		// SearchService.SearchAsync await below (VectorLeg.SearchAsync → EnsureVectors…), so the
 		// scope must outlive fusion — and is torn down the moment this method returns.
-		using var rental = _rentLlm();
+		using var rental = _rentScope();
 		var llm = rental.Client;
 
 		var indexes = new List<ISearchIndex>();
@@ -282,7 +296,10 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 				.ToList();
 			return Task.FromResult(texts);
 		};
-		var resp = await new SearchService(indexes, _logger, reranker)
+		// Budget resolved from settings (rerank-budget-params-to-settings) at THIS project's scope,
+		// from the SAME rental as the LLM client above — no second scope opened for it.
+		var budget = await RerankCandidateBudget.ResolveAsync(rental.Settings, projectKey, ct);
+		var resp = await new SearchService(indexes, _logger, reranker, budget)
 			.SearchAsync(projectKey, query, new SearchFilter(null), pool, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)

@@ -7,6 +7,7 @@ using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
 using PetBox.Core.Search;
+using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
@@ -56,15 +57,21 @@ public sealed class MemoryService : IMemoryService
 	// (tests, direct construction) the fallback is a private instance — the feature stays CORRECT (every
 	// page re-materializes the pool deterministically) and only loses the latency win.
 	readonly SearchPoolCache _poolCache;
+	// Rerank candidate budget inputs (rerank-budget-params-to-settings), read per query at
+	// Scope.Project via RerankCandidateBudget.ResolveAsync — null (DI absent, direct/test
+	// construction) falls back to the compiled-in RerankCandidateBudget() default, same posture as
+	// _llm/_log above.
+	readonly ISettingsResolver? _settings;
 
 	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchOrderingPolicies? rerank = null,
-		ILogger<MemoryService>? log = null, SearchPoolCache? poolCache = null)
+		ILogger<MemoryService>? log = null, SearchPoolCache? poolCache = null, ISettingsResolver? settings = null)
 	{
 		_stores = stores;
 		_llm = llm;
 		_ordering = rerank ?? new SearchOrderingPolicies();
 		_log = log;
 		_poolCache = poolCache ?? new SearchPoolCache();
+		_settings = settings;
 	}
 
 	// ---- store lifecycle ----
@@ -581,7 +588,10 @@ public sealed class MemoryService : IMemoryService
 		// SearchPoolAsync, not SearchAsync (spec: result-set-pageable): the WHOLE ranked pool rather than
 		// its first k rows. `k` still bounds the per-leg top-K (what the vector leg needs); the pool's own
 		// ceiling is the rerank candidate budget the facade reports back as PoolLimit.
-		var pool = await new SearchService(indexes, _log, reranker)
+		// Budget resolved from settings (rerank-budget-params-to-settings) at THIS project's scope, so
+		// a Project-level override actually lands here rather than the compiled-in default only.
+		var budget = await RerankCandidateBudget.ResolveAsync(_settings, projectKey, ct);
+		var pool = await new SearchService(indexes, _log, reranker, budget)
 			.SearchPoolAsync(projectKey, query, filter, k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
 
