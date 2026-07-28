@@ -1,5 +1,6 @@
 @page "/ui/{workspaceKey}/{projectKey}/sessions"
 @model PetBox.Web.Pages.ProjectHome.SessionsModel
+@using PetBox.Web.Pages.Shared
 @{
 	ViewData["Title"] = $"Sessions — {Model.Project?.Name ?? Model.ProjectKey}";
 
@@ -48,8 +49,7 @@
    — на сервере"). Non-empty `q` routes through SessionSearchService (the same engine
    session_search/MCP uses); empty `q` stays the deterministic listing. *@
 <form method="get" class="mb-4 flex flex-wrap items-center gap-2" data-testid="sessions-search-form">
-	<input type="search" name="q" value="@Model.Query" placeholder="Search the conversation, id or agent…"
-		class="input input-bordered input-sm flex-1 min-w-[16rem] max-w-md" data-testid="sessions-search-input" />
+	<partial name="_SearchQueryBox" model='new SearchQueryBoxModel(Model.Query, "Search the conversation, id or agent…", "sessions-search-input")' />
 
 	<select name="agent" class="select select-bordered select-sm" data-testid="sessions-agent-filter">
 		<option value="">All agents</option>
@@ -74,12 +74,7 @@
 	   walk over (see MemoryStore.cshtml's identical control). Search mode's real ceiling is
 	   SessionSearchService.MaxSessions (30, a hydration-cost cap) — picking 100 here still shows
 	   the honest "rows 1-30" rather than pretending to serve 100. *@
-	<select name="size" class="select select-bordered select-sm" data-testid="sessions-search-size">
-		@foreach (var s in PetBox.Web.Search.PageSizeOptions.Allowed)
-		{
-			<option value="@s" selected="@(Model.EffectiveSize == s)">@s / page</option>
-		}
-	</select>
+	<partial name="_SearchPageSizeSelect" model='new SearchPageSizeSelectModel(Model.EffectiveSize, "sessions-search-size")' />
 
 	<button type="submit" class="btn btn-sm btn-primary" data-testid="sessions-search-submit">Apply</button>
 	@if (!string.IsNullOrWhiteSpace(Model.Query) || !string.IsNullOrWhiteSpace(Model.Agent))
@@ -93,20 +88,17 @@
 	@* Shared by both modes now (spec result-set-pageable): the incoming `cursor` didn't match the
 	   current filter/sort/query, or (search mode) the session or discovery order it named moved —
 	   caught rather than spliced into a wrong page, and restarted from the top instead of a raw error. *@
-	<div class="alert alert-warning mb-3 text-sm" data-testid="sessions-cursor-reset">
-		@(Model.IsSearchMode
+	<partial name="_SearchNotice" model='new SearchNoticeModel("sessions-cursor-reset",
+		Model.IsSearchMode
 			? "Search restarted from the top — the query changed, or the ranked order moved, since this page link was made."
-			: "Listing restarted from the top — the filter or sort changed since this page link was made.")
-	</div>
+			: "Listing restarted from the top — the filter or sort changed since this page link was made.")' />
 }
 
 @if (Model.IsSearchMode && Model.Stop == "pool-boundary" && Model.PoolBoundaryHint is { } poolHint)
 {
 	@* card requirement 2: pool-boundary MUST read as "ranking depth reached, narrow the query" —
 	   never as a quiet end of the list. *@
-	<div class="alert alert-warning mb-3 text-sm" data-testid="sessions-search-pool-boundary">
-		@poolHint
-	</div>
+	<partial name="_SearchNotice" model='new SearchNoticeModel("sessions-search-pool-boundary", poolHint)' />
 }
 
 @if (Model.IsSearchMode && !Model.Distilled)
@@ -115,9 +107,8 @@
 	   distillation runs a few minutes after a session settles) — an honest "still warming up",
 	   never presented as "nothing matched". The verbatim term leg is the declared recall floor
 	   and already ran, so results below are real, just digest-leg-blind for now. *@
-	<div class="alert alert-info mb-3 text-sm" data-testid="sessions-not-distilled">
-		Semantic index for this project is still warming up — showing verbatim matches only.
-	</div>
+	<partial name="_SearchNotice" model='new SearchNoticeModel("sessions-not-distilled",
+		"Semantic index for this project is still warming up — showing verbatim matches only.", Severity: "info")' />
 }
 
 @if (Model.IsSearchMode)

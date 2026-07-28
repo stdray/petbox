@@ -1,5 +1,6 @@
 @page "/ui/{workspaceKey}/{projectKey}/memory/{store}"
 @using PetBox.Web.Memory
+@using PetBox.Web.Pages.Shared
 @model PetBox.Web.Pages.ProjectHome.MemoryStoreModel
 @{
 	ViewData["Title"] = $"{Model.Store} — Memory";
@@ -86,8 +87,7 @@
 }
 
 <form method="get" class="mb-4 flex flex-wrap items-center gap-2" data-testid="store-search-form">
-	<input type="search" name="q" value="@Model.Query" placeholder="Search key, description, body or tags — hybrid (lexical + semantic)…"
-		class="input input-bordered input-sm flex-1 max-w-md" data-testid="store-search-input" />
+	<partial name="_SearchQueryBox" model='new SearchQueryBoxModel(Model.Query, "Search key, description, body or tags — hybrid (lexical + semantic)…", "store-search-input", CssClass: "input input-bordered input-sm flex-1 max-w-md")' />
 	<select name="type" class="select select-bordered select-sm" data-testid="store-search-type">
 		<option value="" selected="@(string.IsNullOrEmpty(Model.Type))">Any type</option>
 		@foreach (var t in new[] { "User", "Feedback", "Project", "Reference" })
@@ -111,12 +111,7 @@
 	@* ui-search-page-position-and-size: page size lives in the FILTER form on purpose (a plain GET
 	   with no cursor/pos hidden field) — changing it always starts the walk over rather than trying
 	   to reconcile a keyset position against a different page shape. *@
-	<select name="size" class="select select-bordered select-sm" data-testid="store-search-size">
-		@foreach (var s in PetBox.Web.Search.PageSizeOptions.Allowed)
-		{
-			<option value="@s" selected="@(Model.EffectiveSize == s)">@s / page</option>
-		}
-	</select>
+	<partial name="_SearchPageSizeSelect" model='new SearchPageSizeSelectModel(Model.EffectiveSize, "store-search-size")' />
 	<button type="submit" class="btn btn-sm btn-primary" data-testid="store-search-submit">Search</button>
 	@if (!string.IsNullOrWhiteSpace(Model.Query))
 	{
@@ -129,18 +124,14 @@
 	@* Shared by both modes now (spec result-set-pageable): a stale/foreign cursor is a LOUD refusal
 	   (KeysetCursor's own contract), never a silent restart — this restarts the walk from the top
 	   instead of surfacing that as a raw error, in listing OR query mode. *@
-	<div class="alert alert-warning mb-2" data-testid="store-cursor-error">
-		@cursorError
-	</div>
+	<partial name="_SearchNotice" model='new SearchNoticeModel("store-cursor-error", cursorError, CssClass: "mb-2")' />
 }
 
 @if (Model.IsSearch && Model.Stop == "pool-boundary" && Model.PoolBoundaryHint is { } poolHint)
 {
 	@* card requirement 2: pool-boundary MUST read as "ranking depth reached, narrow the query" — never
 	   as a quiet end of the list. This is the human-readable twin of memory_search's own hint. *@
-	<div class="alert alert-warning mb-2" data-testid="store-search-pool-boundary">
-		@poolHint
-	</div>
+	<partial name="_SearchNotice" model='new SearchNoticeModel("store-search-pool-boundary", poolHint, CssClass: "mb-2")' />
 }
 
 @if (Model.IsSearch && Model.Retrievers is { } retr)
