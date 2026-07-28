@@ -177,6 +177,35 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		_db.Workspaces.Count().Should().Be(before, "rejected create must not insert a new workspace row");
 	}
 
+	// admin-sys-workspaces-sees-orphans: the live installation showed a workspace (`infra`, holding
+	// the `petbox` project itself) with live projects but no Workspaces catalog row, and the "All
+	// workspaces" page silently dropped it — no truncation warning, because its own counter is
+	// exactly Model.Workspaces.Count, i.e. it counts the same (wrong) set it renders. The reporter's
+	// hypothesis was a MEMBERSHIP filter; there is none anywhere in this call chain (WorkspacesModel
+	// -> IWorkspaceAdminService.ListAsync is a plain, unfiltered `db.Workspaces` read) — the sysadmin
+	// making this request is not a member of "acme" either (no WorkspaceMembers row is seeded for
+	// it below), which is exactly the state the reporter described, and it changes nothing: a
+	// membership-only fix would leave this test red. The real gap is that the row can go missing
+	// while the workspace's projects do not (WorkspaceAdminService.ListForSysAdminAsync's doc).
+	[Fact]
+	public async Task All_workspaces_page_shows_a_workspace_whose_catalog_row_is_gone_but_its_project_remains()
+	{
+		var uid = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "u5", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
+		(await Provisioning().CreateAsync("acme", "Acme", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
+		_db.Insert(new Project { Key = "web", WorkspaceKey = "acme", Name = "Web", Description = "" });
+		// The row vanishes through a door other than DeleteAsync — proven elsewhere to refuse while
+		// `web` (a user project) still lives here.
+		await _db.Workspaces.Where(w => w.Key == "acme").DeleteAsync();
+
+		var page = Page();
+		await page.OnGetAsync();
+
+		page.Workspaces.Select(w => w.Key).Should().Contain("acme", "its project proves the workspace still exists");
+		page.Workspaces.Count.Should().Be(page.Workspaces.Select(w => w.Key).Distinct().Count(),
+			"the page's own counter must count exactly the set it renders, same as the report described");
+	}
+
 	[Fact]
 	public async Task Create_accepts_allowlisted_key_and_provisions_memory_container()
 	{

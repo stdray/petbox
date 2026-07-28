@@ -134,4 +134,62 @@ public sealed class WorkspaceAdminServiceTests : IDisposable
 		(await svc.ListAsync()).Select(w => w.Key).Should().Equal("$system", "alpha", "beta");
 		(await svc.GetOverviewAsync("nosuch")).Should().BeNull();
 	}
+
+	// The live installation's actual state (workspace `infra`, holding the `petbox` project itself,
+	// has no Workspaces row) reproduced directly: a workspace created through the production path,
+	// then its catalog row removed through a door OTHER than DeleteAsync (direct SQL — an incident
+	// recovery, a pre-catalog migration; DeleteAsync itself is not exercised here on purpose, since
+	// it refuses while the workspace still holds a user project). Its project and lazily-created
+	// `$ws-<key>` container survive. ListAsync (the catalog's own word) drops it; the sysadmin page's
+	// read must not.
+	[Fact]
+	public async Task ListForSysAdmin_includes_a_workspace_whose_catalog_row_is_gone_but_its_projects_remain()
+	{
+		var (svc, _, dbf) = New();
+		var uid = SeedUser(dbf, "alice", quota: 1);
+		(await svc.CreateAsync("infra", "Infra", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
+		using (var db = dbf.Open())
+		{
+			db.Insert(new Project { Key = "petbox", WorkspaceKey = "infra", Name = "PetBox", Description = "" });
+			// Simulate the row vanishing through a door other than IWorkspaceAdminService.DeleteAsync —
+			// that path is proven elsewhere to refuse while `petbox` (a user project) still lives here.
+			await db.Workspaces.Where(w => w.Key == "infra").DeleteAsync();
+		}
+
+		(await svc.GetAsync("infra")).Should().BeNull("the catalog row is really gone");
+		(await svc.ListAsync()).Select(w => w.Key).Should().NotContain("infra", "ListAsync is the catalog's own word");
+
+		var forSysAdmin = await svc.ListForSysAdminAsync();
+		forSysAdmin.Select(w => w.Key).Should().Contain("infra", "its projects prove it still exists");
+		forSysAdmin.Select(w => w.Key).Should().Equal(["$system", "infra"],
+			"a page counter counting THIS set must see it too");
+	}
+
+	// The defect the coordinator caught in review: a synthesized (row-less) workspace whose only
+	// project is its own `$ws-<key>` container passes the "no user projects" gate, so the cascade
+	// deletes the container and drops the memberships FOR REAL — but the verdict used to be read
+	// off `db.Workspaces...DeleteAsync()`'s own affected-row count, which is 0 for a key that had
+	// no row to begin with, so it reported NotFound AFTER doing irreversible work. That is worse
+	// than a refusal: the caller is told nothing happened, and there is nothing left to retry.
+	// Changed must mean "something was actually removed"; NotFound must mean nothing was.
+	[Fact]
+	public async Task Delete_of_a_rowless_workspace_that_only_owns_its_container_reports_Changed_not_NotFound()
+	{
+		var (svc, members, dbf) = New();
+		var uid = SeedUser(dbf, "alice", quota: 1);
+		(await svc.CreateAsync("infra", "Infra", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
+		using (var db = dbf.Open())
+			await db.Workspaces.Where(w => w.Key == "infra").DeleteAsync();
+
+		(await svc.GetAsync("infra")).Should().BeNull("the catalog row is gone, same as the live installation");
+
+		var result = await svc.DeleteAsync("infra");
+
+		result.Should().BeOfType<WorkspaceChangeResult.Changed>(
+			"the container and memberships were actually removed — NotFound here would claim nothing happened");
+		(await members.CountMembersAsync("infra")).Should().Be(0, "memberships were dropped");
+		(await members.CountOwnedWorkspacesAsync(uid)).Should().Be(0, "the quota slot comes back");
+		using var check = dbf.Open();
+		check.Projects.Count(p => p.WorkspaceKey == "infra").Should().Be(0, "the $ws-infra container is gone too");
+	}
 }
