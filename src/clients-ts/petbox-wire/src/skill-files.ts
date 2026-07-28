@@ -212,13 +212,38 @@ export function buildSkillReports(
 
 export type WorkspaceProbeResult =
   | { readonly ok: true; readonly workspace: string }
-  | { readonly ok: false; readonly reason: "network" | "forbidden" | "no-workspace-field" };
+  | { readonly ok: false; readonly reason: "network" }
+  | { readonly ok: false; readonly reason: "forbidden" }
+  // The server DID answer — a live fact, never "unreachable" (bug:
+  // probe-collapses-http-errors-into-network). `status` is always carried so a caller can name
+  // the code; `retryAfterSeconds` is populated best-effort when the error body carries one (this
+  // is exactly PetBox's own 503 deploy_in_progress shape — see the module doc comment below —
+  // but the field is read generically, not gated on status === 503, in case another endpoint ever
+  // reuses the same convention).
+  | { readonly ok: false; readonly reason: "http-error"; readonly status: number; readonly retryAfterSeconds?: number }
+  | { readonly ok: false; readonly reason: "parse-error" }
+  | { readonly ok: false; readonly reason: "no-workspace-field" };
 
 /**
  * Resolve the live workspace for a project. Distinguishes WHY it failed
- * (wire-silent-failures-invisible): "forbidden" (401/403 — the key lacks a scope, worth its own
- * trace) is not the same as "network" (offline/timeout, ordinary) or "no-workspace-field" (an
- * older server that never reports one). A caller that only needs a yes/no can check `.ok`.
+ * (wire-silent-failures-invisible / probe-collapses-http-errors-into-network) instead of folding
+ * every non-2xx response into "network": that used to claim the server was unreachable even when
+ * it had just answered with e.g. a 500 or a 503 — a direct lie the caller then repeated verbatim
+ * ("could not reach ... (network/timeout)"). The taxonomy now separates:
+ *   - "network"  — fetch itself threw (offline/timeout/abort) — the only case "could not reach"
+ *                  is honest;
+ *   - "forbidden" — 401/403, a scope problem, not connectivity;
+ *   - "http-error" — any OTHER non-2xx status; the server responded, full stop. Carries `status`
+ *                  so the caller can name it, and best-effort `retryAfterSeconds` for a body like
+ *                  PetBox's own 503 deploy-in-progress shape
+ *                  (`{"error":"service_unavailable","reason":"deploy_in_progress","retryAfterSeconds":60}`,
+ *                  with a matching `Retry-After` header) — that state is self-recovering during a
+ *                  redeploy, not a defect to chase, and callers should say so rather than send the
+ *                  operator off to debug their network;
+ *   - "parse-error" — 2xx but the body did not parse as JSON;
+ *   - "no-workspace-field" — 2xx, parsed, but no usable `workspace`/`Workspace` string (older
+ *                  server).
+ * A caller that only needs a yes/no can still check `.ok`.
  */
 export async function probeWorkspace(baseUrl: string, apiKey: string, timeoutMs = 8000): Promise<WorkspaceProbeResult> {
   const ctrl = new AbortController();
@@ -245,17 +270,61 @@ export async function probeWorkspace(baseUrl: string, apiKey: string, timeoutMs 
     if (resp.status === 401 || resp.status === 403) {
       return { ok: false, reason: "forbidden" };
     }
-    if (!resp.ok) return { ok: false, reason: "network" };
+    if (!resp.ok) {
+      // The server answered with an error status — never "network". Best-effort peek at the body
+      // for a retryAfterSeconds field (PetBox's 503 deploy_in_progress shape); an unparseable or
+      // absent body still carries a meaningful status code, so this never turns into a "network"
+      // classification either.
+      let retryAfterSeconds: number | undefined;
+      try {
+        const errBody: any = await resp.json();
+        if (typeof errBody?.retryAfterSeconds === "number") retryAfterSeconds = errBody.retryAfterSeconds;
+      } catch {
+        // best effort only
+      }
+      return {
+        ok: false,
+        reason: "http-error",
+        status: resp.status,
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      };
+    }
     let body: any;
     try {
       body = await resp.json();
     } catch {
-      return { ok: false, reason: "network" };
+      return { ok: false, reason: "parse-error" };
     }
     const ws = body?.workspace ?? body?.Workspace;
     if (typeof ws === "string" && ws.trim().length > 0) return { ok: true, workspace: ws.trim() };
     return { ok: false, reason: "no-workspace-field" };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Shared human text for a failed probe — every caller (doctor's skill-drift check, apply's skill
+ * refresh) renders this SAME wording so the reason taxonomy above and its prose never drift apart
+ * (previously wire.ts carried two near-identical ternary chains). An HTTP error is never described
+ * as unreachable; 503 gets its own retry-after phrasing since PetBox's own redeploy window answers
+ * 503 by design (self-recovering, not a defect to chase — see probeWorkspace's doc comment).
+ */
+export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResult, { readonly ok: false }>): string {
+  switch (probe.reason) {
+    case "forbidden":
+      return "the API key was rejected (401/403 — check its scopes), not merely offline";
+    case "no-workspace-field":
+      return "the server responded but did not report a workspace (older server?)";
+    case "parse-error":
+      return "the server responded 200 but the body did not parse as JSON";
+    case "network":
+      return "could not reach /api/auth/validate (network/timeout)";
+    case "http-error":
+      if (probe.status === 503) {
+        const retry = probe.retryAfterSeconds !== undefined ? ` — retry in ~${probe.retryAfterSeconds}s` : "";
+        return `the server is deploying (HTTP 503, service_unavailable) — this is self-recovering, not a network problem${retry}`;
+      }
+      return `the server responded with HTTP ${probe.status} (reachable — not a transport/connectivity failure)`;
   }
 }
