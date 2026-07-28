@@ -196,12 +196,9 @@ static class ModuleMcp
 	// number — per tool. Deliberately carries NO byte figure (see the comments above for why);
 	// SizeGuidanceTests pins that absence.
 	public const string SizeGuidanceText =
-		"Cyrillic bodies: send raw UTF-8, not \\uXXXX escapes (~2.8x the byte size, measured 2.74-2.88x). A " +
-		"large JSON body can still be silently truncated by the calling client before this server ever sees " +
-		"it — a client-side limit PetBox cannot prevent or name an exact number for. What PetBox DOES do: " +
-		"measure escape-inflation on an applied write's wire bytes and return a `warning` naming the " +
-		"multiplier when it crosses the threshold. Silence isn't proof of raw UTF-8 — a compressed or " +
-		"repacked body also measures ~1.0 — only the warning is evidence. Split large batches into multiple calls.";
+		"A large JSON body risks being silently truncated by the calling client before this server ever " +
+		"sees it — a client-side limit PetBox does not prevent and cannot name an exact number for. Split " +
+		"large batches into multiple calls.";
 
 	// Point 4 of the card mcp-write-degrades-silently-fix: a write the server DID accept and apply
 	// can still have paid the \uXXXX-escaping tax silently — it only fails once a slightly bigger
