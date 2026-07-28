@@ -225,14 +225,25 @@ public sealed class MethodologyGuideGateStrictnessTests
 	[Fact]
 	public void PresetKinds_StayEnforced_BitForBitReproduction()
 	{
-		// The quartet/classic presets are untouched by this leaf: `ideas` still renders its
+		// The quartet/classic presets are untouched by this leaf: `ideas` still resolves its
 		// exploring->review artifact:spec_plan gate as ENFORCED, `intake`'s reason gates the
 		// same — never the new "_convention" rule name, whatever this project's OWN StrictMode
 		// says (a definition's strictMode never reaches back into the presets it doesn't declare).
-		var guide = MethodologyGuide.Render("presets", new MethodologyRuntime(GuideDefinition(strictMode: true)), "mixed", 1);
+		//
+		// Read off the RUNTIME and off the builtin-catalog guide, not off this definition's guide:
+		// since guide-declared-kinds a project's guide renders only the kinds it declares, so an
+		// undeclared preset kind has no rendering here to inspect — but it is still what a board
+		// of that kind RESOLVES against, which is the promise that actually needed guarding.
+		var runtime = new MethodologyRuntime(GuideDefinition(strictMode: true));
+		runtime.StrictMode("support").Should().BeTrue("the definition declares this kind");
+		runtime.StrictMode("ideas").Should().BeFalse("a preset kind this definition doesn't declare is never strict");
+		runtime.For("ideas", "idea").Should().BeEquivalentTo(MethodologyPresets.For(BoardKind.Ideas, "idea"));
+		runtime.For("work", "feature").Should().BeEquivalentTo(MethodologyPresets.For(BoardKind.Work, "feature"));
+
+		var guide = MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
 		guide.Invariants.Should().Contain(new MethodologyInvariant("ideas", "precondition_artifact", "exploring -> review requires artifact:spec_plan"));
 		guide.Invariants.Should().Contain(new MethodologyInvariant("intake", "reason_required", "triage -> wontfix"));
 		guide.Invariants.Should().Contain(new MethodologyInvariant("work", "approval_gate", "Review -> Done"));
-		guide.Invariants.Should().NotContain(i => i.Rule.EndsWith("_convention") && i.Kind != "support");
+		guide.Invariants.Should().NotContain(i => i.Rule.EndsWith("_convention"));
 	}
 }

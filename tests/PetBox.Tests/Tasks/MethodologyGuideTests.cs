@@ -15,7 +15,8 @@ namespace PetBox.Tests.Tasks;
 //       process invariants (never self-set Done/accepted, spec_plan gate, feature→specRef)
 //       appear as DATA-BORN text, and simple's all-pairs block collapses to "free";
 //   (b) a project with a custom `support` kind renders that kind's gates/constraints/axes
-//       from its definition (source reflects it) alongside the preset fallback;
+//       from its definition (source reflects it) and ONLY that kind's — the preset kinds it
+//       does not declare are named, not ruled (guide-declared-kinds);
 //   (c) the rendering is deterministic — two calls, identical text.
 public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixture>, IAsyncLifetime
 {
@@ -214,7 +215,14 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().Contain("Every incident names a related outage.", "a link constraint's Description renders alongside its cadence sentence");
 		md.Should().Contain("severity, channel");
 		md.Should().Contain("escalates (support escalation edge)");
-		md.Should().Contain("## Kind: work", "an undeclared preset kind still serves the project");
+		// guide-declared-kinds: a preset kind the instance does NOT declare is named, not
+		// rendered — its gates and link requirements are not this project's rules (it has no
+		// board of that kind), while the name keeps "a board of this kind would still resolve"
+		// answerable.
+		md.Should().NotContain("## Kind: work");
+		md.Should().NotContain("must carry a `task_spec` link");
+		md.Should().Contain("## Other kinds this server knows");
+		md.Should().Contain("intake, ideas, spec, work, classic, simple");
 
 		var inv = Invariants(guide);
 		inv.Should().Contain(("support", "approval_gate", "Open -> Resolved"));
@@ -222,7 +230,8 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		inv.Should().Contain(("support", "precondition_artifact", "New -> Open requires artifact:triage-note"));
 		inv.Should().Contain(("support", "link_constraint", "incident requires blocks (links.blocks)"));
 		inv.Should().Contain(("support", "tag_axes", "severity|channel"));
-		inv.Should().Contain(("work", "approval_gate", "Review -> Done"), "preset invariants stay alongside the definition's");
+		inv.Should().OnlyContain(i => i.Kind == "support",
+			"only the declared kind is this project's process — MethodologyInvariant has no channel to mark a rule as somebody else's");
 	}
 
 	// (c) deterministic rendering: two calls, identical text (tests and downstream

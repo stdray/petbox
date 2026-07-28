@@ -370,14 +370,18 @@ public sealed class MethodologyGuideSchemaV2Tests
 	[Fact]
 	public void PresetKinds_KeepTheirV1Rendering_ConventionRuleNameUnchanged()
 	{
-		var guide = Render();
-
 		// The preset gates carry NO enforceApproval (presets unchanged in this wave) — they
 		// render as convention gates under the ORIGINAL rule name, so existing consumers of
-		// `approval_gate` keep working.
+		// `approval_gate` keep working. Read off the BUILTIN CATALOG guide: since
+		// guide-declared-kinds a definition's guide renders only the kinds it declares, so the
+		// preset rendering needs its own subject instead of riding along on `schema-v2`.
+		var guide = MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
 		guide.Invariants.Should().Contain(new MethodologyInvariant("work", "approval_gate", "Review -> Done"));
-		guide.Invariants.Should().NotContain(i => i.Rule == "approval_gate_enforced" && i.Kind != "support");
+		guide.Invariants.Should().NotContain(i => i.Rule == "approval_gate_enforced");
 		// Simple's all-pairs block still collapses to "free" (checklist-free transitions).
 		guide.Markdown.Should().Contain("Transitions: free — any status may move to any other");
+
+		// …and the schema-v2 definition's own guide carries none of those preset rules.
+		Render().Invariants.Should().OnlyContain(i => i.Kind == "support");
 	}
 }

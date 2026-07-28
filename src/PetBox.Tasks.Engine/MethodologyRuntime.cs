@@ -242,10 +242,22 @@ public sealed class MethodologyRuntime
 	// kinds (`classic`, `simple` last).
 	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Classic, BoardKind.Simple];
 
-	// The project's EFFECTIVE kind set — what the process guide renders: every definition-
-	// declared kind (declaration order) followed by every preset kind the definition does
-	// NOT override (pipeline order intake→ideas→spec→work, then simple). This is the same
-	// per-kind merge every resolver here applies, materialized as one list of definitions.
+	// The kinds this methodology DECLARES, in declaration order — nothing merged in. The
+	// project's OWN process: the set every "what are this project's rules" surface must read
+	// (MethodologyGuide.Render), as opposed to the RESOLUTION set below. Empty for
+	// PresetsOnly and for a stored document that declares no kind at all.
+	public IReadOnlyList<MethodologyKindDef> DeclaredKinds => _declared;
+
+	// The project's RESOLUTION kind set — every definition-declared kind (declaration order)
+	// followed by every preset kind the definition does NOT override (pipeline order
+	// intake→ideas→spec→work, then classic, simple). This is the same per-kind merge every
+	// resolver here applies, materialized as one list of definitions: a board of ANY kind
+	// must resolve, declared or not.
+	//
+	// NOT the guide's kind set. The guide renders DeclaredKinds (guide-declared-kinds): a
+	// project on the `classic` preset declares exactly one kind, and rendering this merge
+	// handed its agent the quartet's gates and links.idea_spec/links.task_spec requirements
+	// as if they were rules of a project that has no ideas/spec board at all.
 	public IReadOnlyList<MethodologyKindDef> EffectiveKinds() =>
 		_declared
 			.Concat(PipelineOrder
