@@ -1,12 +1,31 @@
 @page "/ui/{workspaceKey}/{projectKey}/tasks"
 @model PetBox.Web.Pages.ProjectHome.TasksModel
+@using PetBox.Web.Pages.Shared
 @{
 	ViewData["Title"] = $"Tasks — {Model.Project?.Name ?? Model.ProjectKey}";
+
+	// ui-project-task-search: the keyset "load more" — carries the CURRENT query/sort/size plus
+	// the opaque NextCursor this response just issued, never a page number. Mirrors
+	// Sessions.cshtml/MemoryStore.cshtml's own NextHref exactly.
+	string NextHref(string cursor)
+	{
+		var href = $"{Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)}?q={Uri.EscapeDataString(Model.Query!)}&cursor={Uri.EscapeDataString(cursor)}";
+		href += $"&sortBy={Model.EffectiveSortBy}&sortDesc={Model.EffectiveSortDesc}";
+		href += $"&size={Model.EffectiveSize}&pos={Model.RangeTo}";
+		return href;
+	}
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<h1 class="text-2xl font-semibold" data-testid="tasks-title">@(Model.Project?.Name ?? Model.ProjectKey) · tasks</h1>
-	<span class="badge badge-ghost">@Model.Boards.Count</span>
+	@if (!Model.IsSearchMode)
+	{
+		<span class="badge badge-ghost">@Model.Boards.Count</span>
+	}
+	else
+	{
+		<span class="badge badge-ghost" data-testid="tasks-search-total">@Model.Total</span>
+	}
 </div>
 
 @if (Model.Project is null)
@@ -21,7 +40,75 @@
 	return;
 }
 
-@if (Model.Boards.Count == 0)
+@* ui-project-task-search (spec in-project-task-search-exists): ONE form, `q` submit switches this
+   SAME route into project-wide search mode — mirrors Sessions.cshtml/MemoryStore.cshtml's own
+   single-form-drives-both-modes shape exactly. *@
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2" data-testid="tasks-search-form">
+	<partial name="_SearchQueryBox" model='new SearchQueryBoxModel(Model.Query, "Search tasks across every board in this project…", "tasks-search-input")' />
+
+	<select name="sortBy" class="select select-bordered select-sm" data-testid="tasks-search-sort-by">
+		<option value="@PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Relevance" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Relevance)">relevance</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Priority" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Priority)">priority</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Updated" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Updated)">updated</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Created" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Created)">created</option>
+		<option value="@PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Title" selected="@(Model.EffectiveSortBy == PetBox.Web.Pages.ProjectHome.TaskSearchSortKeys.Title)">title</option>
+	</select>
+
+	<select name="sortDesc" class="select select-bordered select-sm" data-testid="tasks-search-sort-dir">
+		<option value="true" selected="@(Model.EffectiveSortDesc)">↓ desc</option>
+		<option value="false" selected="@(!Model.EffectiveSortDesc)">↑ asc</option>
+	</select>
+
+	<partial name="_SearchPageSizeSelect" model='new SearchPageSizeSelectModel(Model.EffectiveSize, "tasks-search-size")' />
+
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="tasks-search-submit">Search</button>
+	@if (Model.IsSearchMode)
+	{
+		<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-sm btn-ghost" data-testid="tasks-search-clear">Clear</a>
+	}
+</form>
+
+@if (Model.IsSearchMode)
+{
+	@if (Model.CursorWasReset)
+	{
+		<partial name="_SearchNotice" model='new SearchNoticeModel("tasks-search-cursor-reset",
+			"Search restarted from the top — the query, sort, or ranked order changed since this page link was made.")' />
+	}
+
+	@if (Model.Stop == "pool-boundary" && Model.PoolBoundaryHint is { } poolHint)
+	{
+		<partial name="_SearchNotice" model='new SearchNoticeModel("tasks-search-pool-boundary", poolHint)' />
+	}
+
+	@if (Model.SearchRows.Count == 0)
+	{
+		<div class="alert" data-testid="tasks-search-empty">No tasks match this search.</div>
+	}
+	else
+	{
+		@* board-view-mode-framework: reuse of the SAME table component the cross-scope locator uses
+		   (_TaskTable.cshtml) — no fourth copy of task-row markup, a direct decision of this card. *@
+		<partial name="_TaskTable" model="new TaskTableModel(Model.SearchRows, ShowScopeColumns: true)" />
+
+		<div class="flex items-center justify-between mt-4 text-sm">
+			<span class="opacity-60" data-testid="tasks-search-page-info">
+				rows @Model.RangeFrom-@Model.RangeTo
+				@(Model.Stop switch
+				{
+					"exhausted" => "— end of the match set.",
+					"pool-boundary" => "— ranking depth reached, see above.",
+					_ => "",
+				})
+			</span>
+			@if (Model.NextCursor is { } nextCursor)
+			{
+				<a href="@NextHref(nextCursor)" class="btn btn-sm" data-testid="tasks-search-next">Next ›</a>
+			}
+		</div>
+	}
+}
+else if (Model.Boards.Count == 0)
 {
 	<div class="alert" data-testid="tasks-empty">No boards yet. Agents create them via the tasks MCP tools.</div>
 }

@@ -44,8 +44,17 @@ public sealed record TaskTableRow(
 // controls are session-only now, not persisted; see _BoardViewTable.cshtml's own comment for why
 // that's an accepted, deliberately out-of-scope-here degradation), so its table renders exactly the
 // same default appearance a first-time board visitor gets.
+// ui-search-group-by-project: ShowFilterBar lets a page render several _TaskTable instances (one
+// per collapsible project section) while showing the shared filter+sort bar (_BoardFilterSort)
+// only ONCE — ts/board.ts's initBoardPage() already looks up each filter control via a single
+// document.querySelector, so more than one bar in the DOM would leave every copy but the first
+// dead. Each table still renders its OWN `[data-sort-scope]` tbody, so the ONE shared sort control
+// reorders every section independently — the same shape kanban's per-column tbodies already prove
+// board.ts supports unmodified. Defaults true: every existing single-table caller (TaskBoard's own
+// table view, and Search's un-grouped exact-match table) is unaffected.
 public sealed record TaskTableModel(
 	IReadOnlyList<TaskTableRow> Rows, bool ShowScopeColumns,
 	PetBox.Web.Rendering.BoardFieldConfig? Fields = null,
 	string? WorkspaceKey = null, string? ProjectKey = null,
-	bool ActiveOnly = true, string SortBy = "priority", bool SortDesc = false);
+	bool ActiveOnly = true, string SortBy = "priority", bool SortDesc = false,
+	bool ShowFilterBar = true);

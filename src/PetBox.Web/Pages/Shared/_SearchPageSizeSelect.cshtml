@@ -1,0 +1,9 @@
+@model PetBox.Web.Pages.Shared.SearchPageSizeSelectModel
+@* ui-search-page-position-and-size: in the FILTER form on purpose — a size change starts the
+   walk over (see MemoryStoreModel.NextHref / SessionsModel's identical rationale). *@
+<select name="size" class="select select-bordered select-sm" data-testid="@Model.TestId">
+	@foreach (var s in PetBox.Web.Search.PageSizeOptions.Allowed)
+	{
+		<option value="@s" selected="@(Model.CurrentSize == s)">@s / page</option>
+	}
+</select>
