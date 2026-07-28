@@ -38,6 +38,22 @@ public interface IWorkspaceAdminService
 {
 	Task<IReadOnlyList<Workspace>> ListAsync(CancellationToken ct = default);
 
+	// The sysadmin "All workspaces" page's OWN read — NOT a replacement for ListAsync, which the
+	// nav sidebar (NavigationContext.AvailableWorkspaces) and the create/delete flows keep using.
+	// The Workspaces row is the catalog's memory of a workspace, not the fact of its existence: a
+	// project's own WorkspaceKey is (ProjectDirectory.CreateAsync requires the row to exist AT
+	// CREATE TIME, but nothing revalidates it afterwards, and the row's only writers are this
+	// service's own CreateAsync/DeleteAsync). A row removed through any OTHER door — direct SQL,
+	// a pre-catalog migration, hand recovery after an incident — leaves its projects and their
+	// lazily-created `$ws-<key>` memory container in place, and ListAsync would silently drop it:
+	// the live installation demonstrates exactly this (workspace `infra`, holding the `petbox`
+	// project itself, has no Workspaces row). This page is the ONE place a stray workspace can be
+	// seen — and, through the ordinary Delete gate, dealt with — at all, so it must not defer to a
+	// catalog that can lag reality. Synthesized entries carry Name = Key and a Description that
+	// says so; DeleteAsync already derives its "any user projects?" gate from Projects, not from
+	// this row, so Delete on a synthesized entry behaves exactly as it would on a real one.
+	Task<IReadOnlyList<Workspace>> ListForSysAdminAsync(CancellationToken ct = default);
+
 	Task<Workspace?> GetAsync(string workspaceKey, CancellationToken ct = default);
 
 	// The workspace plus its project list and member count in one call. `includeContainers` admits the
@@ -78,6 +94,32 @@ public sealed class WorkspaceAdminService(
 	{
 		using var db = dbf.Open();
 		return await db.Workspaces.OrderBy(w => w.Key).ToListAsync(ct);
+	}
+
+	// See the interface doc: union of the catalog AND every distinct Projects.WorkspaceKey the
+	// catalog does not know about, so a workspace that lost its row (but not its projects) is
+	// still seen — and the page's own count is taken over the SAME set that gets rendered.
+	public async Task<IReadOnlyList<Workspace>> ListForSysAdminAsync(CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		var real = await db.Workspaces.ToListAsync(ct);
+		var knownKeys = real.Select(w => w.Key).ToHashSet(StringComparer.Ordinal);
+
+		var projectWorkspaceKeys = await db.Projects
+			.Select(p => p.WorkspaceKey)
+			.Distinct()
+			.ToListAsync(ct);
+
+		var orphans = projectWorkspaceKeys
+			.Where(k => !knownKeys.Contains(k))
+			.Select(k => new Workspace
+			{
+				Key = k,
+				Name = k,
+				Description = "(no workspace record on file — inferred from its projects)",
+			});
+
+		return [.. real.Concat(orphans).OrderBy(w => w.Key, StringComparer.Ordinal)];
 	}
 
 	public async Task<Workspace?> GetAsync(string workspaceKey, CancellationToken ct = default)

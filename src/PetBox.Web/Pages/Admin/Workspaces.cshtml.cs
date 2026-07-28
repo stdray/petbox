@@ -27,8 +27,12 @@ public sealed class WorkspacesModel : PageModel
 	public IReadOnlyList<Workspace> Workspaces { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
+	// ListForSysAdminAsync, NOT ListAsync: this page is "All workspaces" — the one sysadmin-only
+	// place where a workspace that lost its catalog row but kept its projects must still show up
+	// (see IWorkspaceAdminService.ListForSysAdminAsync). The nav sidebar keeps reading ListAsync;
+	// widening what IT shows was not this fix's job.
 	public async Task OnGetAsync() =>
-		Workspaces = await _workspaces.ListAsync(HttpContext.RequestAborted);
+		Workspaces = await _workspaces.ListForSysAdminAsync(HttpContext.RequestAborted);
 
 	// The create act itself lives in WorkspaceProvisioning, reached through IWorkspaceAdminService —
 	// this page and the self-service page are two doors into the same room. bypassQuota: true because
