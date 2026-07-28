@@ -9,7 +9,7 @@ public static class DeploySchema
 {
 	public static void Ensure(string connectionString)
 	{
-		SqlitePragmas.ApplyWal(connectionString);
-		MigrationRunner.Run(connectionString, typeof(Migrations.M001_Deploy).Assembly);
+		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Durable);
+		MigrationRunner.Run(connectionString, typeof(Migrations.M001_Deploy).Assembly, SqliteTier.Durable);
 	}
 }

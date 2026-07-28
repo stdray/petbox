@@ -49,7 +49,10 @@ public sealed class LogSchemaWalTests
 	{
 		var cs = TestSchema.NewTempConnectionString("petbox-log-wal-existing");
 
-		MigrationRunner.Run(cs, typeof(M001_LogBaseline).Assembly);
+		// The tier argument is not part of what this test simulates — it only ever governed
+		// `synchronous`, never journal_mode — but Run now requires one. Telemetry is what the log
+		// tier passes in production.
+		MigrationRunner.Run(cs, typeof(M001_LogBaseline).Assembly, SqliteTier.Telemetry);
 		ReadJournalMode(cs).Should().Be("delete",
 			"sanity check: without the pragma, a fresh file defaults to journal_mode=DELETE, matching "
 			+ "every log db that predates this fix");

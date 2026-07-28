@@ -17,12 +17,20 @@ public static class CacheSchema
 	public static void Ensure(string connectionString)
 	{
 		SqlitePragmas.ApplyAutoVacuumIncremental(connectionString);
-		SqlitePragmas.ApplyWal(connectionString);
+		// SqliteTier.Derived — synchronous=NORMAL. Everything in this file is reconstructible from
+		// the source it was computed from, so a power cut that rolls back the last commits costs a
+		// cache MISS, not data. NORMAL is safe here for the same reason it is safe for the log tier
+		// and no other: the ApplyWal on the very next line. Under journal_mode=DELETE it would risk
+		// corruption rather than a lost tail — and a corrupt cache file is not self-healing just
+		// because its contents are disposable, since a reader hits the corruption before it ever
+		// gets to decide the entry is a miss.
+		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Derived);
 		// Namespace-scoped: the cache set and the core.db set share the PetBox.Core assembly, so an
 		// assembly-wide scan would build every core.db table inside the cache file.
 		MigrationRunner.Run(
 			connectionString,
 			typeof(CacheMigrations.M1001_CacheEntries).Assembly,
+			SqliteTier.Derived,
 			typeof(CacheMigrations.M1001_CacheEntries).Namespace);
 	}
 

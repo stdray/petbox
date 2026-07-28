@@ -12,7 +12,7 @@ public static class MemorySchema
 {
 	public static void Ensure(string connectionString)
 	{
-		SqlitePragmas.ApplyWal(connectionString);
-		MigrationRunner.Run(connectionString, typeof(Migrations.M001_MemoryEntries).Assembly);
+		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Durable);
+		MigrationRunner.Run(connectionString, typeof(Migrations.M001_MemoryEntries).Assembly, SqliteTier.Durable);
 	}
 }

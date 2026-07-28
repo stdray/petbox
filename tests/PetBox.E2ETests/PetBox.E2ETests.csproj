@@ -37,7 +37,6 @@
 	<ItemGroup>
 		<!-- Shared with PetBox.Tests: the module initializer that relaxes SQLite durability for a
 		     test host. See the file's own comment. -->
-		<Compile Include="..\TestDurability.cs" Link="TestDurability.cs" />
 	</ItemGroup>
 
 	<ItemGroup>

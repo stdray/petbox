@@ -24,7 +24,7 @@ public static class LogSchema
 {
 	public static void Ensure(string connectionString)
 	{
-		SqlitePragmas.ApplyWal(connectionString);
-		MigrationRunner.Run(connectionString, typeof(Migrations.M001_LogBaseline).Assembly);
+		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Telemetry);
+		MigrationRunner.Run(connectionString, typeof(Migrations.M001_LogBaseline).Assembly, SqliteTier.Telemetry);
 	}
 }

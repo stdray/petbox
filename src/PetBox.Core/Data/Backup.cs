@@ -74,6 +74,12 @@ public static class Backup
 
 		using var conn = new SqliteConnection($"Data Source={srcDbPath}");
 		conn.Open();
+		// Durable, and it matters more here than almost anywhere else: VACUUM INTO writes the
+		// BACKUP through this connection's durability setting, and a backup that reported success
+		// while its tail sat unflushed is worse than no backup — you find out when you restore it.
+		// This connection string is also the bare `Data Source=` spelling that the tier factories
+		// pool, so without this line a backup could inherit a handle another writer left relaxed.
+		SqliteDurability.ApplyTo(conn, SqliteTier.Durable);
 		using var cmd = conn.CreateCommand();
 		// VACUUM INTO takes a string literal target, not a bound parameter; escape
 		// any single quotes in the path (backslashes are literal in SQLite strings).

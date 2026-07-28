@@ -93,8 +93,12 @@ public sealed class DataDbFactory : IDataDbFactory
 		try
 		{
 			await conn.OpenAsync(ct);
-			// Same per-connection rule as the quota below; no-op in production.
-			SqliteDurability.ApplyTo(conn);
+			// Same per-connection rule as the quota below, and the same reason it has to be HERE:
+			// this connection may have been handed back by the pool carrying whatever the previous
+			// request left on it, and on these files the previous request is a pet running its own
+			// SQL. `synchronous` is deliberately NOT deny-listed (see DataSqlService) precisely
+			// because re-asserting it on every open confines a pet's PRAGMA to its own request.
+			SqliteDurability.ApplyTo(conn, SqliteTier.Durable);
 			// Per-connection, not persisted in the file: re-apply on every open or the
 			// quota silently does not exist for this connection.
 			await using var pragma = conn.CreateCommand();
@@ -121,7 +125,9 @@ public sealed class DataDbFactory : IDataDbFactory
 		var cs = SqliteConnectionStrings.ForFile(path);
 		await using var raw = new SqliteConnection(cs);
 		await raw.OpenAsync(ct);
-		SqliteDurability.ApplyTo(raw);
+		// A pet's data is the pet's data: Durable, like every other user-data tier. Covers this
+		// create-time connection only — OpenAsync re-asserts it for every later one.
+		SqliteDurability.ApplyTo(raw, SqliteTier.Durable);
 
 		await using (var pragma = raw.CreateCommand())
 		{

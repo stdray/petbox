@@ -18,6 +18,22 @@ public sealed class DataSqlService : IDataSqlService
 	// keeping the raw-SQL pass-through promise (cheaper to maintain than an allow-list).
 	// max_page_count is here because it IS the disk quota: it's per-connection state we
 	// re-apply on every open, so a pet raising it mid-request would lift its own quota.
+	//
+	// `synchronous` IS DELIBERATELY ABSENT, and the reasoning is worth keeping because the two
+	// pragmas look alike and are not. Both are per-connection, and connections are POOLED, so both
+	// carry the same structural hazard: a value one request sets rides the handle into somebody
+	// else's request. That hazard is real and it is CLOSED — not by this list, but by
+	// DataDbFactory.OpenAsync re-asserting SqliteTier.Durable at the top of every open, which is
+	// the same mechanism that makes the quota work. What remains after the leak is closed is a pet
+	// weakening durability for the rest of its OWN request, against its OWN file.
+	// max_page_count is denied because it is petbox's rule ABOUT the pet — a disk shared with
+	// every other project — and a rule a pet can lift is not a rule. Durability is the opposite:
+	// the pet is the only party who loses, and how hard its own writes fsync is exactly the kind
+	// of call the raw-SQL pass-through exists to leave with it. Denying it would buy petbox
+	// nothing and cost the pass-through promise.
+	// If that ever needs revisiting, note what the guarantee actually is: NOT "a pet cannot run
+	// this PRAGMA" but "a pet cannot make it outlive its own request". SqliteDurabilityTests pins
+	// that boundary with a positive control on the pooled handle.
 	static readonly HashSet<string> PragmaDenyList = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"writable_schema", "temp_store_directory", "data_store_directory", "trusted_schema",

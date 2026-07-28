@@ -23,6 +23,6 @@ public sealed class TasksDb : DataConnection
 	public static DataOptions<TasksDb> CreateOptions(string connectionString)
 	{
 		connectionString = SqliteConnectionStrings.WithForeignKeys(connectionString);
-		return new(new DataOptions().UseSQLite(connectionString).WithDurability());
+		return new(new DataOptions().UseSQLite(connectionString).WithDurability(SqliteTier.Durable));
 	}
 }
