@@ -555,24 +555,71 @@ test("claude-code declares mcp_subagent (verified live 2026-07-12)", () => {
   assert.equal(hasCapability("claude-code", "mcp_subagent"), true);
 });
 
-test("DEFAULT reserve notes: offline fallback does not invert the live semantics (bug @80 item 5)", () => {
-  // The offline fallback once taught the OPPOSITE rule: "Heavy reasoning / architecture
-  // review / stuck points only" reads as "call reserve when the work is heavy" — the live
-  // server definition says the exact reverse (hard work is a model escalation on a worker;
-  // reserve is for being STUCK, never merely for difficulty). Guard both directions so a
-  // hand-copied fallback cannot silently drift back into the inverted phrasing.
+test("DEFAULT reserve notes: no inverted call-when-hard framing (bug @80 item 5)", () => {
+  // History. The offline fallback once taught the OPPOSITE rule: "Heavy reasoning / architecture
+  // review / stuck points only" reads as "call reserve when the work is heavy" — while the real
+  // rule is the reverse: hard-but-moving work goes to a worker; reserve is for a line of attack
+  // that stopped paying. Originally this test also demanded the literal word STUCK in these
+  // notes. That assertion was retired deliberately (2026-07 notes rewrite): "stuck" names a felt
+  // STATE the orchestrator cannot recognize from inside — which was itself a defect — so the
+  // trigger is now defined as concrete EVENTS and lives in the ORCHESTRATOR notes (the role that
+  // makes the spawn decision), guarded by the companion test below. What must survive in
+  // reserve's OWN notes, permanently, is the anti-inversion pair:
+  //   negative — the call-when-hard framing must never come back;
+  //   positive — the difficulty-exclusion stated here too, so a hand-copied fallback that ships
+  //   only this one role still cannot teach the inverted rule.
+  // These regexes are a second, independently written copy of the intent — that is what makes
+  // this a guard and not a tautology. Live-server-vs-built-in drift is NOT this test's job: that
+  // is doctor's online drift check (bug: builtin-definition-drifts-no-catchup).
   const reserve = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "reserve")!;
   const notes = reserve.notes ?? "";
-  assert.match(notes, /STUCK/, "reserve notes must state the stuck-trigger explicitly");
   assert.ok(
     !/heavy reasoning/i.test(notes),
     "must not reintroduce 'heavy reasoning ... only' framing (the inverted rule)",
   );
-  assert.ok(
-    /not merely when the work is hard/i.test(notes),
-    "must explicitly rule out 'hard work' as a trigger for reserve",
+  assert.match(
+    notes,
+    /hard-but-moving work still goes to a worker/i,
+    "reserve notes must themselves exclude difficulty as a trigger (exact-phrase anchor on purpose: if rewording, keep an explicit exclusion and update this anchor consciously)",
+  );
+  assert.match(
+    notes,
+    /current line stopped paying/i,
+    "reserve notes must state what reserve IS for — fresh analysis when the current line stopped paying",
   );
   // requiredCapabilities must target the subagent surface, not mcp_main_session — reserve
   // exists only as a subagent (finding 4 of the same node, closed alongside this fallback).
   assert.deepEqual([...reserve.requiredCapabilities], ["mcp_subagent"]);
+});
+
+test("DEFAULT orchestrator notes: reserve trigger is EVENTS, difficulty excluded (bug @80 item 5, positive direction relocated)", () => {
+  // The reserve-call trigger moved from reserve's notes into the orchestrator's (2026-07
+  // rewrite): the orchestrator is the role that decides to spawn, so the decision rule must live
+  // where the decision is made. This is the POSITIVE direction of the guard above, relocated —
+  // the trigger is defined by events (facts killed the hypothesis / about to re-try a failed
+  // approach / two defensible designs with expensive rollback), explicitly NOT by felt
+  // stuck-ness and NOT by difficulty. If a rewrite drops the event framing or the
+  // difficulty-exclusion from these notes, the fallback regresses to "call reserve when it
+  // feels bad" — the same defect wearing new words.
+  const orchestrator = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")!;
+  const notes = orchestrator.notes ?? "";
+  assert.match(
+    notes,
+    /Reserve triggers on EVENTS, not on feeling stuck/,
+    "trigger must stay event-based and defined in the orchestrator notes",
+  );
+  assert.match(
+    notes,
+    /spawn reserve BEFORE your next attempt/i,
+    "must keep the fire-before-retry rule — the point of event triggers is acting before the re-try",
+  );
+  assert.match(
+    notes,
+    /hard-but-moving work still goes to a worker/i,
+    "must explicitly rule out difficulty as a trigger for reserve",
+  );
+  assert.ok(
+    !/heavy reasoning/i.test(notes),
+    "must not reintroduce the inverted 'heavy reasoning' framing on the caller side either",
+  );
 });
