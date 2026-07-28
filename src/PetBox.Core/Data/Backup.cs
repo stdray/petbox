@@ -24,6 +24,13 @@ public static class Backup
 	// db/** (user schemas / data_schema_apply), memory/**, tasks/**, sessions/**, config/**.
 	public const string ExcludedLogsDirName = "logs";
 
+	// The disk cache (data/cache/cache.db — SqliteDistributedCache). Excluded for a STRONGER reason
+	// than logs: a log db at least holds history somebody might miss, whereas every row here is a
+	// derived value that its owner can recompute from data that IS in the set. Backing it up copies
+	// tens of megabytes to restore something the first request would rebuild anyway — and restoring
+	// it would reinstate entries whose keys encode a data version the restored data no longer has.
+	public const string ExcludedCacheDirName = "cache";
+
 	// Snapshots every *.db under dataDir (except the backups dir itself and the
 	// excluded logs subtree) into a new set folder, then prunes old sets. Returns the
 	// relative paths copied.
@@ -53,9 +60,11 @@ public static class Backup
 		// Trailing separator so the prefix match can't swallow a sibling like
 		// `logs-archive/` — only the `logs/` directory itself is excluded.
 		var logsRoot = Path.Combine(dataDir, ExcludedLogsDirName) + Path.DirectorySeparatorChar;
+		var cacheRoot = Path.Combine(dataDir, ExcludedCacheDirName) + Path.DirectorySeparatorChar;
 		return Directory.EnumerateFiles(dataDir, "*.db", SearchOption.AllDirectories)
 			.Where(p => !p.StartsWith(backupsRoot, StringComparison.OrdinalIgnoreCase)
-				&& !p.StartsWith(logsRoot, StringComparison.OrdinalIgnoreCase));
+				&& !p.StartsWith(logsRoot, StringComparison.OrdinalIgnoreCase)
+				&& !p.StartsWith(cacheRoot, StringComparison.OrdinalIgnoreCase));
 	}
 
 	static void VacuumInto(string srcDbPath, string destDbPath)

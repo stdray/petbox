@@ -52,10 +52,11 @@ public sealed class MemoryService : IMemoryService
 	readonly ILogger<MemoryService>? _log;
 
 	// The ordered relevance POOL cache (spec: result-set-pageable) — what keeps page 2 from paying for
-	// the cross-encoder a second time. MUST be a SINGLETON to do its job: MemoryService is scoped per
-	// request, so an instance-local cache would be born empty on every page. When DI supplies nothing
-	// (tests, direct construction) the fallback is a private instance — the feature stays CORRECT (every
-	// page re-materializes the pool deterministically) and only loses the latency win.
+	// the cross-encoder a second time. When DI supplies nothing (tests, direct construction) the
+	// fallback is SearchPoolCache.Disabled, which stores nothing and says so: the feature stays CORRECT
+	// (every page re-materializes the pool deterministically) and loses only the latency win. It used
+	// to be a private per-instance cache instead, which — on a service that is SCOPED per request —
+	// could never be read back by anyone and was therefore quiet slowness dressed as a cache.
 	readonly SearchPoolCache _poolCache;
 	// Rerank candidate budget inputs (rerank-budget-params-to-settings), read per query at
 	// Scope.Project via RerankCandidateBudget.ResolveAsync — null (DI absent, direct/test
@@ -70,7 +71,7 @@ public sealed class MemoryService : IMemoryService
 		_llm = llm;
 		_ordering = rerank ?? new SearchOrderingPolicies();
 		_log = log;
-		_poolCache = poolCache ?? new SearchPoolCache();
+		_poolCache = poolCache ?? SearchPoolCache.Disabled;
 		_settings = settings;
 	}
 
@@ -312,8 +313,41 @@ public sealed class MemoryService : IMemoryService
 				typeFilter?.ToString(), legK.ToString(System.Globalization.CultureInfo.InvariantCulture),
 				request.RankingMode.ToString(), dataVersion);
 
+			// The FRESH computation's by-product, kept only when THIS caller ran it. On a cache hit —
+			// and equally when a concurrent caller's in-flight computation was joined instead of run
+			// twice — this stays null and the stored ADDRESSES are hydrated instead.
+			List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)>? freshHits = null;
+			string? freshOrderHash = null;
+
+			var lookup = await _poolCache.GetOrComputeAsync(poolKey, async innerCt =>
+			{
+				var (fresh, r, freshLimit, freshBounded, orderHash) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
+					legK, lexical: null, semantic: null, innerCt, mode: request.RankingMode);
+				freshHits = fresh;
+				freshOrderHash = orderHash;
+				// A DEGRADED pool is never KEPT: cheap to recompute (the reranker did not run anyway) and
+				// expensive to keep, since storing it pins a half-answer plus its stale provenance for the
+				// whole TTL — every repeat of the query then keeps hitting an outage that has already
+				// healed. Only ADDRESSES are stored, never rendered rows, so a cached pool can go stale in
+				// ORDER — refused by the fingerprint — but never in CONTENT.
+				var cacheable = !r.Degraded && r.Ranking != SearchRankingOutcome.DegradedRrf;
+				return new SearchPoolCache.PoolComputation(
+					new SearchPool(
+						[.. fresh.Select(h => new Hit(h.Entry.Store, h.Entry.Key, h.Score, h.LexicalConfirmed ? "lexical" : "semantic"))],
+						freshLimit, freshBounded, r),
+					cacheable);
+			}, ct);
+
 			List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> hits;
-			if (_poolCache.TryGet(poolKey, out var cachedPool))
+			if (freshHits is not null)
+			{
+				hits = freshHits;
+				retrievers = lookup.Pool.Retrievers;
+				poolLimit = lookup.Pool.PoolLimit;
+				poolBounded = lookup.Pool.PoolBounded;
+				poolOrderHash = freshOrderHash;
+			}
+			else
 			{
 				// PAGE 2+ ON A LIVE POOL — HYDRATE THE STORED ADDRESSES, never re-run the search and
 				// re-sort. An unchanged stamp means the DATA did not move; it does NOT mean the world did
@@ -322,32 +356,13 @@ public sealed class MemoryService : IMemoryService
 				// cached row missing from it silently evaporates — and if the rest of the walk was
 				// semantic-only rows, the page comes back empty and says `stop:"exhausted"`. Storing
 				// addresses is exactly what lets this path not have that bug.
-				hits = HydratePool(projectKey, cachedPool, typeFilter);
+				hits = HydratePool(projectKey, lookup.Pool, typeFilter);
 				// Provenance describes the pass that DECIDED this order — the cached one, which is never a
-				// degraded pool (see the Put guard below).
-				retrievers = cachedPool.Retrievers;
-				poolLimit = cachedPool.PoolLimit;
-				poolBounded = cachedPool.PoolBounded;
-				poolOrderHash = cachedPool.OrderHash;
-			}
-			else
-			{
-				var (fresh, r, freshLimit, freshBounded, freshOrderHash) = await SearchStoresAsync(projectKey, stores, query, typeFilter,
-					legK, lexical: null, semantic: null, ct, mode: request.RankingMode);
-				hits = fresh;
-				retrievers = r;
-				poolLimit = freshLimit;
-				poolBounded = freshBounded;
-				poolOrderHash = freshOrderHash;
-				// A DEGRADED pool is never stored: cheap to recompute (the reranker did not run anyway) and
-				// expensive to keep, since caching it pins a half-answer plus its stale provenance for the
-				// whole TTL — every repeat of the query then keeps hitting an outage that has already
-				// healed. Only ADDRESSES are stored, never rendered rows, so a cached pool can go stale in
-				// ORDER — refused by the fingerprint — but never in CONTENT.
-				if (!r.Degraded && r.Ranking != SearchRankingOutcome.DegradedRrf)
-					_poolCache.Put(poolKey, new SearchPool(
-						[.. hits.Select(h => new Hit(h.Entry.Store, h.Entry.Key, h.Score, h.LexicalConfirmed ? "lexical" : "semantic"))],
-						freshLimit, freshBounded, r));
+				// degraded pool (see the cacheable guard above).
+				retrievers = lookup.Pool.Retrievers;
+				poolLimit = lookup.Pool.PoolLimit;
+				poolBounded = lookup.Pool.PoolBounded;
+				poolOrderHash = lookup.Pool.OrderHash;
 			}
 			var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
 			selected.AddRange(hits.Select(h => new Candidate(h.Entry.Store, h.Entry, h.Score,

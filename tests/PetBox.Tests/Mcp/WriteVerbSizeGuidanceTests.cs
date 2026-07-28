@@ -55,9 +55,15 @@ public sealed class WriteVerbSizeGuidanceTests
 
 	// The public sentence must not carry a byte-count figure (a thousands-grouped number like
 	// "8,000" or "12,000") — see the comments above ModuleMcp.SizeGuidanceText for why
-	// publishing one in every write tool's description backfired. This does NOT forbid every
-	// digit — the Cyrillic escape-inflation ratio ("~2.8x", "2.74-2.88x") is a different,
-	// non-threshold number the sentence still legitimately states.
+	// publishing one in every write tool's description backfired.
+	//
+	// The sentence used to also carry a raw-UTF-8 instruction plus a measured escape-inflation
+	// ratio ("~2.8x", "2.74-2.88x"). Dropped: prod's own ToolCalls log (ReqChars/ReqBytes) showed
+	// Claude Code already sends Cyrillic as raw UTF-8 (ratio 1.45-1.58, nowhere near the 3.5-6x an
+	// escaped body would measure) — the instruction described a problem this client does not have,
+	// and the ratio number paid context on every write-verb call for it. Nothing in the sentence
+	// names any ratio or byte figure now; this test only guards against a THRESHOLD number sneaking
+	// back in.
 	[Fact]
 	public void SizeGuidanceText_CarriesNoByteCountNumber()
 	{

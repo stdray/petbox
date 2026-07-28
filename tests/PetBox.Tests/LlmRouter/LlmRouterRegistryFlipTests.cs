@@ -140,7 +140,8 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
 		ex.NoRoute.Should().BeTrue();      // → degradedReason "embed-no-route", not a retry loop
 		ex.Transient.Should().BeFalse();
-		ex.Message.Should().Contain("no route for Embed").And.Contain(Ws)
+		ex.Capability.Should().Be(LlmCapability.Embed, "the exception already carries this typed — no need to grep the message for it");
+		ex.Message.Should().Contain(Ws)
 			.And.Contain("the system registry is not inherited here");
 		_upstream.Calls.Should().BeEmpty(); // nothing was called with somebody else's key
 
@@ -179,8 +180,8 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 
 		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
 		ex.NoRoute.Should().BeTrue();
-		ex.Message.Should().Contain("no route for Embed")
-			.And.Contain("the system registry has no route for it either");
+		ex.Capability.Should().Be(LlmCapability.Embed, "the exception already carries this typed — no need to grep the message for it");
+		ex.Message.Should().Contain("the system registry has no route for it either");
 		ex.Message.Should().NotContain("not inherited");
 	}
 

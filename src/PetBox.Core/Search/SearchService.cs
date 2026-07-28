@@ -26,9 +26,10 @@ public sealed partial class SearchService
 	// Reranked=true. Null → the facade stays pure RRF (DegradedRrf), Reranked=false — an honest
 	// degradation, and the seam a test uses to force RRF ordering (pass no reranker).
 	readonly IReranker? _reranker;
-	// The candidate pool the reranker is allowed to carry, DERIVED from the latency bar (≈500 warm)
-	// — the cap that keeps the enumerable lexical leg's full matched set from flooding the
-	// cross-encoder past the 5s bar. Only the top `budget` of the fused pool reaches the reranker.
+	// The candidate pool the reranker is allowed to carry — a DECLARED number (default 160, spec:
+	// search-rerank-candidate-budget), not derived from latency — the cap that keeps the enumerable
+	// lexical leg's full matched set from flooding the cross-encoder. Only the top `budget` of the
+	// fused pool reaches the reranker.
 	readonly RerankCandidateBudget _budget;
 
 	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null, IReranker? reranker = null, RerankCandidateBudget? budget = null)
@@ -84,7 +85,9 @@ public sealed partial class SearchService
 
 		// A RELEVANCE selection is now expressed as "rank the pool, then take the first k". The top-k a
 		// non-paging caller sees is byte-for-byte what it was before (the pool is ordered by exactly the
-		// same rules, and the pool cap only bites past ~495 — deeper than any k this codebase asks for);
+		// same rules, and the pool cap only bites past ~160 — still deeper than any k this codebase asks
+		// for, but the margin is now thin: PageSizeOptions.Allowed tops out at 100, so a caller asking
+		// for the largest page sits inside the same order of magnitude as the cap rather than far below it);
 		// the difference is that the REST of the order now survives the call instead of being discarded.
 		var pool = await RankPoolAsync(scope, query, mode, resolveCandidateText, legs, fused, ct);
 		return new SearchResponse([.. pool.Ordered.Take(k)], pool.Retrievers);
@@ -161,11 +164,13 @@ public sealed partial class SearchService
 	// stays comparable across separate SearchService calls — a consumer can still merge several
 	// per-container pools by it.
 	//
-	// THE POOL'S CEILING is the latency-derived rerank candidate budget (~495), and it now applies to
-	// BOTH ranking paths rather than only the rerank one. That is deliberate: the boundary a caller is
-	// told about must be ONE number, or a query that quietly degraded from Reranked to DegradedRrf
-	// would also quietly change how deep the result goes. `PoolBounded` records whether the candidate
-	// union actually exceeded it — the fact that separates "нет больше" from "дальше не смотрели".
+	// THE POOL'S CEILING is the declared rerank candidate budget (default 160, spec:
+	// search-rerank-candidate-budget — an assumption, not a value derived from latency), and it now
+	// applies to BOTH ranking paths rather than only the rerank one. That is deliberate: the boundary
+	// a caller is told about must be ONE number, or a query that quietly degraded from Reranked to
+	// DegradedRrf would also quietly change how deep the result goes. `PoolBounded` records whether
+	// the candidate union actually exceeded it — the fact that separates "нет больше" from "дальше не
+	// смотрели".
 	async Task<SearchPool> RankPoolAsync(string scope, string query, SearchRankingMode mode,
 		CandidateTextResolver? resolveCandidateText, LegResults legs,
 		IReadOnlyList<(string Key, double Score)> fused, CancellationToken ct)
@@ -176,7 +181,7 @@ public sealed partial class SearchService
 
 		// PRECISION mode (spec: search-rerank-in-loop) — the штатный path when a reranker is wired. The
 		// deduped candidate UNION (byId, everything the legs surfaced) is ordered by RRF, capped to the
-		// latency-derived candidate budget (so the enumerable «лексическая нога»'s full set can't flood
+		// declared candidate budget (so the enumerable «лексическая нога»'s full set can't flood
 		// the cross-encoder), then rescored by the cross-encoder on ONE model. Reranked=true is the
 		// honest provenance. Anything that goes wrong here — no rerank route, an outage, a resolver
 		// failure — falls THROUGH to the RRF path below with Reranked=false: RRF is honest degradation
@@ -189,9 +194,9 @@ public sealed partial class SearchService
 				var texts = await resolveCandidateText(pool, ct);
 				if (texts.Count != pool.Count)
 					throw new InvalidOperationException($"candidate-text resolver returned {texts.Count} texts for {pool.Count} candidates");
-				// topN is the WHOLE pool, not some page size. The measured cost of a rerank is in SCORING
-				// the candidates (~6.1 ms/doc — RerankCandidateBudget), which happens for every candidate
-				// regardless; topN only truncates what comes BACK. So asking for the complete ordering
+				// topN is the WHOLE pool, not some page size. The cost of a rerank is in SCORING
+				// the candidates, which happens for every candidate regardless; topN only truncates what
+				// comes BACK. So asking for the complete ordering
 				// costs essentially nothing extra here and is precisely what makes page 2 free: the order
 				// is computed once, at this line, and every later page is a slice of it.
 				var reranked = await _reranker.RerankAsync(query, texts, pool.Count, ct);

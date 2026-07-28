@@ -65,15 +65,23 @@ public sealed class SqliteConnectionStringSpellingTests
 	}
 
 	[Fact]
-	public void TheDerivationIsTheFourSpellingsTeardownUsedToListByHand()
+	public void TheDerivationIsEverySpellingProductionCanOpenAFileWith()
 	{
 		// Pinned literally ON PURPOSE: this is the one place a change to the wire format has to be
-		// looked at rather than propagated silently. Everywhere else the spellings are derived.
+		// looked at rather than propagated silently. Everywhere else the spellings are derived — and
+		// this test going red on a new decoration is the mechanism working, not a nuisance.
+		//
+		// The fifth entry arrived with the disk cache (work/cache-backend-decision), the only file
+		// production opens with a `Default Timeout`. It is NOT crossed with the other two decorations,
+		// because production never crosses it: the cache file is deliberately never shared-cache and
+		// has no foreign keys. Listing the four unreachable combinations would make this list a
+		// superset of what production does instead of a description of it.
 		SqliteConnectionStrings.Spellings(Path_).Should().Equal(
 			$"Data Source={Path_}",
 			$"Data Source={Path_};Foreign Keys=True",
 			$"Data Source={Path_};Cache=Shared",
-			$"Data Source={Path_};Cache=Shared;Foreign Keys=True");
+			$"Data Source={Path_};Cache=Shared;Foreign Keys=True",
+			$"Data Source={Path_};Default Timeout={SqliteConnectionStrings.DefaultTimeoutSeconds}");
 	}
 
 	[Fact]

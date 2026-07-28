@@ -248,6 +248,51 @@ test("doctor (online) names built-in-vs-live drift by substance — role and rul
   }
 });
 
+test("doctor (online) does not raise alarm when the live definition is richer than the built-in default", async () => {
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  // Live has every built-in role UNCHANGED plus one extra role the built-in doesn't know about —
+  // this is the "kit is poorer than the server" case (bug:
+  // doctor-drift-conflates-degradation-and-divergence), which is NORM (an offline compile just
+  // ships without the extra role), not drift, and must never hit console.error / "drifted".
+  const liveDefinition: AgentDefinition = {
+    name: DEFAULT_AGENT_DEFINITION.name,
+    roles: [
+      ...DEFAULT_AGENT_DEFINITION.roles,
+      {
+        slug: "worker-highstakes",
+        tier: "worker",
+        requiredCapabilities: [],
+        notes: "1. one",
+      },
+    ],
+  };
+  const fake = await startFakeAgentDefServer(liveDefinition);
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "doctor-degradation-proj", fake.baseUrl);
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(out, /using server definition/, `doctor must report a live server fetch. Full output:\n${out}`);
+    assert.doesNotMatch(
+      stderr,
+      /drifted/i,
+      `a live-only role is a degradation, not drift — must never hit console.error. Full stderr:\n${stderr}`,
+    );
+    assert.match(
+      out,
+      /missing 1 role\(s\) present in the live server definition — normal/,
+      `doctor must name the degradation at info level. Full output:\n${out}`,
+    );
+    assert.match(out, /worker-highstakes/);
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("doctor (online) reports no drift when the live definition matches the built-in default", async () => {
   const homeDir = freshDir("petbox-doctor-home-");
   const projectDir = freshDir("petbox-doctor-proj-");

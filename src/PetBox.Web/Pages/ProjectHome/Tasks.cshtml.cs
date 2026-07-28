@@ -156,6 +156,14 @@ public sealed class TasksModel : PageModel
 		// ui-search-ranking-mode-preference: same override every other UI search surface honours.
 		var rankingMode = _uiState is not null ? (await _uiState.GetAsync(ct)).SearchRankingMode : SearchRankingMode.Speed;
 
+		// project-task-search-rows-have-dead-links: SearchNodesAsync fills Node.Url ONLY when
+		// given urlPrefix — omitting it (as this call used to) leaves every row's Url null, which
+		// ToRow below then rendered as href="" (a link that resolves back to this same page). Built
+		// exactly like CrossScopeTaskSearchService.SearchOneProjectAsync's own urlPrefix (scheme/host
+		// off THIS request, Routes.ProjectTasks for the ws/project pair) — Request is a Page's own
+		// property, always present for a page handler invocation, so this is never null here.
+		var urlPrefix = $"{Request.Scheme}://{Request.Host}{Routes.ProjectTasks(WorkspaceKey, ProjectKey)}/";
+
 		// Project-WIDE (Board: null) — the spec's own wording: "задачи ПРОЕКТА... в границах этого
 		// проекта", every board, each row naming its own. PAGES the WHOLE ranked pool (spec
 		// result-set-pageable), exactly as TasksTools.SearchAsync's own query mode does.
@@ -168,7 +176,7 @@ public sealed class TasksModel : PageModel
 			WholePool = true,
 			BodyLen = 0,
 			RankingMode = rankingMode,
-		}, ct: ct);
+		}, urlPrefix, ct: ct);
 		Retrievers = result.Retrievers;
 
 		var fingerprint = SearchFingerprint(q, axis, desc, result.DataVersion);
@@ -212,8 +220,20 @@ public sealed class TasksModel : PageModel
 		if (SearchRows.Count > 0) { RangeFrom = EffectivePos + 1; RangeTo = EffectivePos + SearchRows.Count; }
 	}
 
+	// project-task-search-rows-have-dead-links: `h.Node.Url ?? ""` used to turn "no URL" into an
+	// empty href — the worst outcome (a link that LOOKS wired up and silently reloads this same
+	// search page). RunSearchAsync above now ALWAYS supplies urlPrefix, so Url is never null on
+	// the path that reaches here; if it ever is, that's this invariant breaking, not a normal
+	// "no link" case (unlike MemoryLinks.Entry, which returns null ON PURPOSE for a sensitive
+	// store and whose callers render plain text instead of a link) — fail loudly rather than
+	// hand back another dead-but-innocent-looking href for the next Playwright pass to miss.
 	static TaskTableRow ToRow(string ws, string projectKey, TaskSearchHit h, StatusKind? statusKind) => new(
-		NodeId: h.Node.NodeId, Key: h.Node.Key, Title: h.Node.Title, Url: h.Node.Url ?? "", Type: h.Node.Type,
+		NodeId: h.Node.NodeId, Key: h.Node.Key, Title: h.Node.Title,
+		Url: h.Node.Url ?? throw new InvalidOperationException(
+			$"project-tasks-search: node '{h.Node.Key}' on board '{h.Board}' has no Url even though " +
+			"RunSearchAsync always passes urlPrefix to SearchNodesAsync — rendering href=\"\" here is " +
+			"exactly the dead-link defect this guard exists to catch."),
+		Type: h.Node.Type,
 		StatusSlug: h.Node.Status, StatusDisplay: h.Node.Status, StatusCssClass: "badge-outline", StatusShow: true,
 		Closed: statusKind is StatusKind.TerminalOk or StatusKind.TerminalCancel,
 		Priority: h.Node.Priority, Tags: h.Node.Tags, CreatedAt: null, UpdatedAt: h.Node.UpdatedAt,

@@ -14,6 +14,7 @@ Every configurable thing in PetBox today, grouped by the entity it belongs to.
 | Master key | secret | env `PETBOX_MASTER_KEY` | — | env owner |
 | Connection string, OTel endpoint, Seq self-log | various | `appsettings.json` | — | env owner |
 | Feature gates (`Features:Config / Logging / Data / Dashboard`) | bool | `appsettings.json` | — | env owner |
+| Disk-cache sweep interval (`Cache:CleanupInterval`) | TimeSpan | `appsettings.json` | — | env owner |
 
 ### Workspace
 

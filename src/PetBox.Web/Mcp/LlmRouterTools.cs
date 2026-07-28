@@ -176,11 +176,15 @@ public static class LlmRouterTools
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
 		Optional `topN`, `tier`. Returns { hits:[{index,score}], model, servedBy }. Requires llm:invoke.
 		No server-side document-count cap — the binding constraint is latency, set by the
-		provider/router, not this endpoint. Measured on qwen3-rerank-0.6b, one warm production
-		route (2026-07-18): n=100 ~0.95s, n=500 3.4-4.0s, n=750 4.9-5.5s, n=1000 6.4-7.1s, n=5000
-		~43s, n=8000 ~68s (~6.1ms/doc + ~0.33s base). A 5s budget breaks around n~700-720; a safe
-		p95 target is ~500 candidates. This is one route only, not a guarantee — the openrouter
-		fallback is unmeasured and may differ.
+		provider/router, not this endpoint. A large batch just takes longer; it is not rejected
+		or truncated. Size the call to your own latency tolerance.
+		NO LATENCY NUMBERS ARE QUOTED HERE, AND NONE SHOULD BE ADDED. This is a ROUTER: the cost
+		of a call is a property of whichever route serves it, and routes are configuration — a
+		figure that is true today becomes a lie the moment the registry points elsewhere, while
+		still reading as authority. An earlier revision did quote a measured table here; the
+		per-document/base pair in it was later found wrong six-fold, and its "safe target"
+		outlived the budget it was written for. Ask the route what it can do, do not ask this
+		description.
 		""")]
 	public static async Task<RerankResult> RerankAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,

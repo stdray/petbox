@@ -19,6 +19,17 @@ public enum SqliteTier
 	// authority for anything — the audit trail that matters lives in the Durable tiers. The tail of
 	// this stream is worth less than the guarantee that would protect it.
 	Telemetry,
+
+	// Derived: the disk cache. Every byte is reconstructible from the source it was computed from,
+	// so losing the tail on a power cut costs a cache MISS, not data — and the file's correct
+	// repair has always been to delete it (see CacheDb on why it is not part of core.db).
+	//
+	// Same VALUE as Telemetry, its own NAME on purpose. This enum's job is to record WHY a database
+	// got its durability, and "a cache is telemetry" is simply untrue — a future reader who sees
+	// SqliteTier.Telemetry on a cache learns something false and stops trusting the labels. Two
+	// reasons landing on one value is the normal case for a reason-carrying enum, not a redundancy
+	// to collapse.
+	Derived,
 }
 
 // PRAGMA synchronous — how hard SQLite fsyncs before it calls a commit done.
@@ -75,6 +86,7 @@ public static class SqliteDurability
 	// deployed PetBox promises about acknowledged writes — read the two blocks above first.
 	const string DurableSynchronous = "FULL";
 	const string TelemetrySynchronous = "NORMAL";
+	const string DerivedSynchronous = "NORMAL";
 
 	// TEST-HOST OVERRIDE, null in every deployed process. Not a tier and not a policy: when set it
 	// replaces EVERY tier's value at once, which is only ever appropriate for a host whose data
@@ -91,6 +103,7 @@ public static class SqliteDurability
 		{
 			SqliteTier.Durable => DurableSynchronous,
 			SqliteTier.Telemetry => TelemetrySynchronous,
+			SqliteTier.Derived => DerivedSynchronous,
 			_ => throw new ArgumentOutOfRangeException(
 				nameof(tier), tier, "No synchronous value has been chosen for this SQLite tier."),
 		};
@@ -109,12 +122,28 @@ public static class SqliteDurability
 	// Cached per tier so the hook does not allocate a closure on every connection open, and so the
 	// options object CoreDbFactory builds ONCE (see the note there — it is load-bearing for memory,
 	// not just speed) keeps holding a single shared delegate.
+	//
+	// Selected by an EXHAUSTIVE switch, never a ternary. This started life as
+	// `tier is Telemetry ? ApplyTelemetry : ApplyDurable`, which was correct for exactly two members
+	// and silently wrong the moment a third arrived: the cache tier would have been handed
+	// ApplyDurable and fsynced on every commit while the enum said otherwise. A switch expression
+	// makes that a compile-time hole instead of a quiet one.
 	static readonly Action<DbConnection> ApplyDurable = c => ApplyTo(c, SqliteTier.Durable);
 	static readonly Action<DbConnection> ApplyTelemetry = c => ApplyTo(c, SqliteTier.Telemetry);
+	static readonly Action<DbConnection> ApplyDerived = c => ApplyTo(c, SqliteTier.Derived);
+
+	static Action<DbConnection> HookFor(SqliteTier tier) => tier switch
+	{
+		SqliteTier.Durable => ApplyDurable,
+		SqliteTier.Telemetry => ApplyTelemetry,
+		SqliteTier.Derived => ApplyDerived,
+		_ => throw new ArgumentOutOfRangeException(
+			nameof(tier), tier, "No durability hook has been chosen for this SQLite tier."),
+	};
 
 	// Every linq2db context in the repo builds its DataOptions through this, so the hook reaches
 	// every connection linq2db opens — including the ones the pool hands back, which carry whatever
 	// pragma state their previous user left.
 	public static DataOptions WithDurability(this DataOptions options, SqliteTier tier) =>
-		options.UseAfterConnectionOpened(tier is SqliteTier.Telemetry ? ApplyTelemetry : ApplyDurable);
+		options.UseAfterConnectionOpened(HookFor(tier));
 }

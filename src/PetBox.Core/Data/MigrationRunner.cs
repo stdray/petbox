@@ -38,7 +38,14 @@ public static class MigrationRunner
 	public static void Run(string connectionString)
 	{
 		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Durable);
-		Run(connectionString, typeof(Migrations.M001_Initial).Assembly, SqliteTier.Durable);
+		// NAMESPACE-SCOPED, not assembly-wide. PetBox.Core hosts a SECOND, unrelated migration set —
+		// the disk cache's (PetBox.Core.Data.CacheMigrations) — and an unfiltered scan would run both
+		// sets against both files: core.db would grow a cache_entries table it has no use for, and
+		// (far worse) the cache file would be built with the entire Core schema. Neither would fail a
+		// build or a startup. Every Core migration lives in exactly one namespace, so the filter is
+		// precise rather than approximate.
+		Run(connectionString, typeof(Migrations.M001_Initial).Assembly, SqliteTier.Durable,
+			typeof(Migrations.M001_Initial).Namespace);
 	}
 
 	// Runs the migration set found in `migrationsAssembly` against `connectionString`.
@@ -47,7 +54,20 @@ public static class MigrationRunner
 	// `.db` files (Core migrations never leak into a tasks/memory/sessions file).
 	// Each `.db` file keeps its own VersionInfo table, so version numbers are
 	// per-tier-independent.
-	public static void Run(string connectionString, Assembly migrationsAssembly, SqliteTier tier)
+	//
+	// THE TWO TRAILING PARAMETERS ARE DELIBERATELY ASYMMETRIC, and the asymmetry is the point.
+	// `tier` is REQUIRED: a default would let a new tier quietly inherit a durability nobody chose,
+	// which is the exact state SqliteTier exists to end, and the safe direction is not obvious
+	// enough to pick for the caller. `migrationsNamespace` is OPTIONAL and defaults to null —
+	// null means the assembly-wide scan, which is what every per-tier assembly wants because each
+	// of those owns exactly one migration set; only PetBox.Core holds two (Core and the disk
+	// cache's CacheMigrations) and has to narrow the scan. Forgetting the namespace on a
+	// single-set assembly is harmless; forgetting the tier would not be.
+	public static void Run(
+		string connectionString,
+		Assembly migrationsAssembly,
+		SqliteTier tier,
+		string? migrationsNamespace = null)
 	{
 		lock (Locks.GetOrAdd(connectionString, _ => new object()))
 		{
@@ -57,6 +77,11 @@ public static class MigrationRunner
 					.AddSQLite()
 					.WithGlobalConnectionString(connectionString)
 					.ScanIn(migrationsAssembly).For.Migrations())
+				.Configure<FluentMigrator.Runner.Initialization.TypeFilterOptions>(opt =>
+				{
+					opt.Namespace = migrationsNamespace;
+					opt.NestedNamespaces = migrationsNamespace is not null;
+				})
 				.BuildServiceProvider();
 
 			using var scope = services.CreateScope();
