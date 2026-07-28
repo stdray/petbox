@@ -392,12 +392,26 @@ async function runDoctor(argv: string[]): Promise<void> {
         `"${DEFAULT_AGENT_DEFINITION.name}" — nothing to compare the built-in default against).`,
     );
   } else {
-    const drift = diffAgentDefinitions(DEFAULT_AGENT_DEFINITION, definition);
-    if (drift.length === 0) {
+    const { degradations, divergences } = diffAgentDefinitions(DEFAULT_AGENT_DEFINITION, definition);
+    if (degradations.length === 0 && divergences.length === 0) {
       log("doctor: built-in default definition matches the live server definition — no drift.");
     } else {
-      console.error(`doctor: built-in default definition has drifted from the live server definition (${drift.length}):`);
-      for (const line of drift) console.error(`  - ${line}`);
+      if (degradations.length > 0) {
+        // Info-level, never console.error: the built-in is an offline bootstrap minimum, not a
+        // mirror of the live document — a role added server-side is expected to be missing here
+        // until the kit's next release, not a defect to chase.
+        log(
+          `doctor: built-in default is missing ${degradations.length} role(s) present in the live server ` +
+            `definition — normal (offline bootstrap minimum, not a mirror):`,
+        );
+        for (const line of degradations) log(`  - ${line}`);
+      }
+      if (divergences.length > 0) {
+        console.error(
+          `doctor: built-in default definition has drifted from the live server definition (${divergences.length}):`,
+        );
+        for (const line of divergences) console.error(`  - ${line}`);
+      }
     }
   }
 

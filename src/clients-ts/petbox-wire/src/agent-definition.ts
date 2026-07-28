@@ -218,28 +218,47 @@ function countRules(notes: string | undefined): number {
 
 /**
  * By-SUBSTANCE diff between the built-in offline default (DEFAULT_AGENT_DEFINITION) and a live
- * server definition — used by `doctor` (bug: builtin-definition-drifts-no-catchup) to name what
- * changed in terms an operator can act on (which role, what disagrees) rather than dumping a raw
- * text/byte diff. Deliberately coarse: rule COUNT and exact notes-text equality, not a line-level
- * diff — good enough to say "the orchestrator has 7 rules vs 8 live" without becoming its own
- * maintenance burden every time prose is reworded without changing meaning.
+ * server definition — used by `doctor` (bug: builtin-definition-drifts-no-catchup /
+ * doctor-drift-conflates-degradation-and-divergence) to name what changed in terms an operator can
+ * act on (which role, what disagrees) rather than dumping a raw text/byte diff. Deliberately
+ * coarse: rule COUNT and exact notes-text equality, not a line-level diff — good enough to say
+ * "the orchestrator has 7 rules vs 8 live" without becoming its own maintenance burden every time
+ * prose is reworded without changing meaning.
+ *
+ * Two diagnoses, split HERE (in the data) so no caller can flatten them back into one shout:
+ *   - degradations: a role exists live but not in the built-in default. This is NORM — the
+ *     built-in is an emergency bootstrap minimum for offline compile, not a mirror of the live
+ *     document; a role added server-side is expected to be missing from the kit until its next
+ *     release, and an offline compile will simply ship without that role.
+ *   - divergences: a role exists in BOTH but disagrees (tier / rule count / notes text), or a role
+ *     exists in the built-in but not live (the kit promises a role the project doesn't have). Both
+ *     are real drift and worth shouting about.
  */
-export function diffAgentDefinitions(
-  builtin: AgentDefinition,
-  live: AgentDefinition,
-): ReadonlyArray<string> {
-  const diffs: string[] = [];
+export type AgentDefinitionDiff = {
+  /** Role present live, absent from built-in — expected; not drift. */
+  readonly degradations: ReadonlyArray<string>;
+  /** Built-in and live disagree on a shared role, or built-in promises a role live doesn't have. */
+  readonly divergences: ReadonlyArray<string>;
+};
+
+export function diffAgentDefinitions(builtin: AgentDefinition, live: AgentDefinition): AgentDefinitionDiff {
+  const degradations: string[] = [];
+  const divergences: string[] = [];
   const builtinBySlug = new Map(builtin.roles.map((r) => [r.slug, r] as const));
   const liveBySlug = new Map(live.roles.map((r) => [r.slug, r] as const));
 
   for (const slug of liveBySlug.keys()) {
     if (!builtinBySlug.has(slug)) {
-      diffs.push(`role '${slug}' exists in the live definition but not in the built-in default`);
+      degradations.push(
+        `role '${slug}' exists in the live definition but not in the built-in default — expected: the ` +
+          `built-in is an offline bootstrap minimum, not a mirror of the server; an offline compile will ` +
+          `simply ship without this role`,
+      );
     }
   }
   for (const slug of builtinBySlug.keys()) {
     if (!liveBySlug.has(slug)) {
-      diffs.push(`role '${slug}' exists in the built-in default but not in the live definition`);
+      divergences.push(`role '${slug}' exists in the built-in default but not in the live definition`);
     }
   }
 
@@ -247,20 +266,20 @@ export function diffAgentDefinitions(
     const liveRole = liveBySlug.get(slug);
     if (!liveRole) continue;
     if (builtinRole.tier !== liveRole.tier) {
-      diffs.push(`role '${slug}': tier "${builtinRole.tier}" (built-in) vs "${liveRole.tier}" (live)`);
+      divergences.push(`role '${slug}': tier "${builtinRole.tier}" (built-in) vs "${liveRole.tier}" (live)`);
     }
     const builtinRuleCount = countRules(builtinRole.notes);
     const liveRuleCount = countRules(liveRole.notes);
     if (builtinRuleCount !== liveRuleCount) {
-      diffs.push(
+      divergences.push(
         `role '${slug}': built-in default has ${builtinRuleCount} rule(s), live definition has ${liveRuleCount}`,
       );
     } else if ((builtinRole.notes ?? "") !== (liveRole.notes ?? "")) {
-      diffs.push(
+      divergences.push(
         `role '${slug}': notes text differs from the live definition (same rule count: ${builtinRuleCount})`,
       );
     }
   }
 
-  return diffs;
+  return { degradations, divergences };
 }
