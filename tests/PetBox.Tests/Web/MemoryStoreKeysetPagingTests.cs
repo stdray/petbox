@@ -17,21 +17,25 @@ namespace PetBox.Tests.Web;
 // SQLite-backed IMemoryService and exercises the adapter-level cursor logic in
 // MemoryStoreModel — the part a service-level test (MemoryStorePagingTests) cannot reach, since
 // the seek/slice/fingerprint machinery lives in the page model, not the service.
-public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
+// Shared per-class host (work share-fixtures-across-per-test-classes): xUnit news the test
+// class per test, so without this fixture each of the 5 tests boots its own WebApplicationFactory.
+// No table-wipe reset needed — instead each TEST INSTANCE gets its own store name (`_store`,
+// Guid-suffixed) and creates it itself before seeding, so no two tests ever share a store to
+// collide on (the ModuleViewsFixture pattern: non-colliding entity names, not a data wipe).
+public sealed class MemoryStoreKeysetPagingFixture : IAsyncLifetime
 {
-	const string Ws = "ws";
-	const string Proj = "proj";
-	const string Store = "notes";
+	public const string Ws = "ws";
+	public const string Proj = "proj";
 
 	string _baseDir = "";
-	WebApplicationFactory<Program> _factory = null!;
-	HttpClient _client = null!;
+	public WebApplicationFactory<Program> Factory { get; private set; } = null!;
+	public HttpClient Client { get; private set; } = null!;
 
-	public async ValueTask InitializeAsync()
+	public ValueTask InitializeAsync()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-memkeyset-" + Guid.NewGuid().ToString("N"));
-		_factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+		Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
 		{
 			b.UseEnvironment("Testing");
 			b.ConfigureAppConfiguration((_, cfg) =>
@@ -55,23 +59,38 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 			});
 		});
 
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 		using (var db = new PetBoxDb(PetBoxDb.CreateOptions(cs)))
 			db.Insert(new PetBox.Core.Models.Project { Key = Proj, WorkspaceKey = Ws, Name = "P", Description = "" });
 
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-
-		using var scope = _factory.Services.CreateScope();
-		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
-		await memory.CreateStoreAsync(Proj, Store, "keyset paging smoke");
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		return ValueTask.CompletedTask;
 	}
 
 	public async ValueTask DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+public sealed class MemoryStoreKeysetPagingTests : IClassFixture<MemoryStoreKeysetPagingFixture>
+{
+	const string Ws = MemoryStoreKeysetPagingFixture.Ws;
+	const string Proj = MemoryStoreKeysetPagingFixture.Proj;
+
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+	// Own store per TEST INSTANCE (xUnit news one per test) — no two tests ever address the same
+	// store, so nothing needs wiping between them under the shared host.
+	readonly string _store = "ks" + Guid.NewGuid().ToString("N")[..12];
+
+	public MemoryStoreKeysetPagingTests(MemoryStoreKeysetPagingFixture fx)
+	{
+		_factory = fx.Factory;
+		_client = fx.Client;
 	}
 
 	// Zero-padded keys upserted in ONE call share the same Updated timestamp (the listing default
@@ -84,7 +103,8 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 	{
 		using var scope = _factory.Services.CreateScope();
 		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
-		await memory.UpsertAsync(Proj, Store,
+		await memory.CreateStoreAsync(Proj, _store, "keyset paging smoke");
+		await memory.UpsertAsync(Proj, _store,
 			Enumerable.Range(1, count).Select(i => new MemoryEntryInput
 			{
 				Key = Key(i),
@@ -153,7 +173,7 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 		var pages = 0;
 		do
 		{
-			var url = $"/ui/{Ws}/{Proj}/memory/{Store}" + (cursor is null ? "" : $"?cursor={Uri.EscapeDataString(cursor)}");
+			var url = $"/ui/{Ws}/{Proj}/memory/{_store}" + (cursor is null ? "" : $"?cursor={Uri.EscapeDataString(cursor)}");
 			using var resp = await GetAuthedAsync(url);
 			resp.StatusCode.Should().Be(HttpStatusCode.OK);
 			var html = await resp.Content.ReadAsStringAsync();
@@ -179,12 +199,12 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 	{
 		await SeedAsync(95);
 
-		using var page0 = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{Store}");
+		using var page0 = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{_store}");
 		var cursor = ExtractNextCursor(await page0.Content.ReadAsStringAsync());
 		cursor.Should().NotBeNull();
 
 		using var resp = await GetAuthedAsync(
-			$"/ui/{Ws}/{Proj}/memory/{Store}?cursor={Uri.EscapeDataString(cursor!)}&type=Feedback");
+			$"/ui/{Ws}/{Proj}/memory/{_store}?cursor={Uri.EscapeDataString(cursor!)}&type=Feedback");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK, "a stale cursor must never 500");
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"store-cursor-error\"");
@@ -198,7 +218,7 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 	{
 		await SeedAsync(5);
 
-		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{Store}?cursor=not-a-real-token");
+		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{_store}?cursor=not-a-real-token");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"store-cursor-error\"");
@@ -214,7 +234,7 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 		await SeedAsync(95);
 		var target = Key(80); // well past the first 40-row window
 
-		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{Store}?key={target}");
+		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{_store}?key={target}");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 
@@ -233,11 +253,11 @@ public sealed class MemoryStoreKeysetPagingTests : IAsyncLifetime
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
-			await memory.UpsertAsync(Proj, Store,
+			await memory.UpsertAsync(Proj, _store,
 				[new MemoryEntryInput { Key = "fb001", Version = 0, Type = "Feedback", Description = "fb", Body = "b" }], []);
 		}
 
-		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{Store}?type=Feedback");
+		using var resp = await GetAuthedAsync($"/ui/{Ws}/{Proj}/memory/{_store}?type=Feedback");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		ExtractEntryKeys(html).Should().BeEquivalentTo(["fb001"]);

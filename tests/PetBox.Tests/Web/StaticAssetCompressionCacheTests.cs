@@ -14,14 +14,19 @@ namespace PetBox.Tests.Web;
 // a StaticFileOptions.OnPrepareResponse that sets Cache-Control. favicon.svg is the one static
 // asset actually checked into wwwroot (app.css/site.js are bun build output, not present in a test
 // run) — small enough to hand-verify, and image/svg+xml is on the compression MIME list.
-public sealed class StaticAssetCompressionCacheTests : IAsyncLifetime
+// Shared per-class host (work share-fixtures-across-per-test-classes): xUnit news the test
+// class per test, so without this fixture each of the 4 tests boots its own WebApplicationFactory.
+// No per-test reset needed — every test only ever GETs the same static asset; nothing here
+// mutates state a later test could observe, so sharing the host carries zero data-leak risk
+// (the ModuleViewsFixture pattern: safe because there is nothing TO collide on).
+public sealed class StaticAssetCompressionCacheFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public StaticAssetCompressionCacheTests()
+	public StaticAssetCompressionCacheFixture()
 	{
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -41,7 +46,7 @@ public sealed class StaticAssetCompressionCacheTests : IAsyncLifetime
 		// HttpClientHandler.AutomaticDecompression defaults to None, so a Content-Encoding the
 		// server sent survives on the response for the assertions below to see — an
 		// auto-decompressing handler would strip exactly the header this test exists to check.
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,
 		});
@@ -50,8 +55,18 @@ public sealed class StaticAssetCompressionCacheTests : IAsyncLifetime
 
 	public async ValueTask DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+public sealed class StaticAssetCompressionCacheTests : IClassFixture<StaticAssetCompressionCacheFixture>
+{
+	readonly HttpClient _client;
+
+	public StaticAssetCompressionCacheTests(StaticAssetCompressionCacheFixture fx)
+	{
+		_client = fx.Client;
 	}
 
 	[Fact]

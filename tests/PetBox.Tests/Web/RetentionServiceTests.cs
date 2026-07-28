@@ -18,13 +18,19 @@ namespace PetBox.Tests.Web;
 //   - a log WITH RetentionDays is swept by ITS OWN window, regardless of what the cascade says.
 //   - a log WITHOUT one (RetentionDays NULL — the default for every log, old and new) is swept by
 //     the cascade exactly as before this column existed: a regression guard on current behavior.
-public sealed class RetentionServiceTests : IAsyncLifetime
+// Shared per-class host (work share-fixtures-across-per-test-classes): xUnit news the test
+// class per test, so without this fixture each of the 5 tests boots its own WebApplicationFactory.
+// No per-test reset needed — every test names its OWN log ("short"/"plain"/"patched"/"cleared"/
+// "defaulted") and only ever asserts on entries/metadata scoped to that name, so leftover rows
+// from an earlier test in a different log are invisible (the ModuleViewsFixture pattern: safe by
+// non-colliding entity names, not by wiping state).
+public sealed class RetentionServiceFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "retention-proj";
+	public const string TestProjectKey = "retention-proj";
 
-	readonly WebApplicationFactory<Program> _factory;
+	public WebApplicationFactory<Program> Factory { get; }
 
-	public RetentionServiceTests()
+	public RetentionServiceFixture()
 	{
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		// See TestSchema.NewTempConnectionString: WebApplication.CreateBuilder reads
@@ -32,7 +38,7 @@ public sealed class RetentionServiceTests : IAsyncLifetime
 		// without this, Features:Logging can read false on Linux CI and ILogStore never registers.
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -52,16 +58,28 @@ public sealed class RetentionServiceTests : IAsyncLifetime
 
 	public async ValueTask InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Workspace { Key = "ws-retention", Name = "WS", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "ws-retention", Name = "Retention" });
 	}
 
-	public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
+	public async ValueTask DisposeAsync() => await Factory.DisposeAsync();
+}
+
+public sealed class RetentionServiceTests : IClassFixture<RetentionServiceFixture>
+{
+	const string TestProjectKey = RetentionServiceFixture.TestProjectKey;
+
+	readonly WebApplicationFactory<Program> _factory;
+
+	public RetentionServiceTests(RetentionServiceFixture fx)
+	{
+		_factory = fx.Factory;
+	}
 
 	static LogEntryRecord Entry(DateTime ts) => new()
 	{
