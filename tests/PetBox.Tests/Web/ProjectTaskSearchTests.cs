@@ -138,6 +138,21 @@ public sealed class ProjectTaskSearchTests(ProjectTaskSearchFixture fx) : IClass
 	static List<string> ExtractNodeKeys(string html) =>
 		[.. Regex.Matches(html, "data-node-key=\"(?<k>[^\"]+)\"").Select(m => m.Groups["k"].Value)];
 
+	// project-task-search-rows-have-dead-links: the six pre-existing tests in this class (including
+	// TheLocatorsBridgeLink_NowLandsOnMatchingResults, which claims the locator's link "lands on
+	// matching results") all asserted data-node-key presence — never the row's actual href — and
+	// stayed green while every one of those hrefs was "". This pulls the (key, board, href) triple
+	// out of each _TaskTable row so a test can assert the LINK itself, not just that a row rendered.
+	static List<(string Key, string Board, string Href)> ExtractRowLinks(string html) =>
+		[.. Regex.Matches(html, "<tr\\b[^>]*data-node-key=\"(?<key>[^\"]+)\"[^>]*>(?<row>.*?)</tr>", RegexOptions.Singleline)
+			.Select(m =>
+			{
+				var row = m.Groups["row"].Value;
+				var board = Regex.Match(row, "data-testid=\"row-board\">(?<b>[^<]*)<").Groups["b"].Value;
+				var href = Regex.Match(row, "<a href=\"(?<h>[^\"]*)\"[^>]*data-testid=\"node-name\"").Groups["h"].Value;
+				return (m.Groups["key"].Value, board, WebUtility.HtmlDecode(href));
+			})];
+
 	static string? ExtractNextCursor(string html)
 	{
 		var m = Regex.Match(html, "<a href=\"(?<h>[^\"]*)\"[^>]*data-testid=\"tasks-search-next\"");
@@ -206,6 +221,35 @@ public sealed class ProjectTaskSearchTests(ProjectTaskSearchFixture fx) : IClass
 		} while (cursor is not null);
 
 		seen.Distinct(StringComparer.Ordinal).Should().HaveCount(25, "every seeded match must be reachable exactly once");
+	}
+
+	// project-task-search-rows-have-dead-links (the bug THIS test exists to catch): a search-result
+	// row's href must be a REAL pointer to its own node — board and key included — never "" (which
+	// resolves back to this same search page, so a click looks like a no-op reload). Before the
+	// urlPrefix fix in Tasks.cshtml.cs, SearchNodesAsync was called with no urlPrefix, Node.Url
+	// stayed null for every hit, and ToRow's `?? ""` turned that into href="" for all 40+ rows on
+	// the live page — none of the six pre-existing tests here looked at href, so 3844/3844 green
+	// shipped a fully unclickable results screen.
+	[Fact]
+	public async Task SearchHits_CarryARealHrefToTheirOwnNodeOnItsOwnBoard_NotAnEmptyDeadLink()
+	{
+		using var resp = await GetAuthedAsync($"/ui/{ProjectTaskSearchFixture.Ws}/{ProjectTaskSearchFixture.Proj}/tasks?q={ProjectTaskSearchFixture.GroupedTerm}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		var links = ExtractRowLinks(html);
+		links.Should().HaveCount(3, "the three seeded matches (ptsearch-w1/w2 on 'work', ptsearch-n1 on 'notes') must each render a row");
+
+		foreach (var (key, board, href) in links)
+		{
+			href.Should().NotBeNullOrEmpty($"row '{key}' must have a real href, not the empty string that silently reloads this search page");
+			// Absolute (scheme://host + Routes.ProjectTasks + board/key), exactly the shape
+			// CrossScopeTaskSearchService already builds — proves the SAME urlPrefix mechanism now
+			// runs on this page, not just that SOME string landed in href.
+			var expectedSuffix = $"/ui/{ProjectTaskSearchFixture.Ws}/{ProjectTaskSearchFixture.Proj}/tasks/{board}/{key}";
+			href.Should().EndWith(expectedSuffix, $"row '{key}' must link to its OWN board+key, not a generic or wrong URL");
+			href.Should().MatchRegex("^https?://", $"row '{key}' href must be absolute, matching every other search surface's link shape");
+		}
 	}
 
 	// The bridge this card promises: the cross-scope locator's "Search in this project" link
