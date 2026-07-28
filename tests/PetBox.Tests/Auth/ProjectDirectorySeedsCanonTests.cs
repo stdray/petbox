@@ -84,6 +84,34 @@ public sealed class ProjectDirectorySeedsCanonTests : IDisposable
 			.And.Contain("memory_upsert");
 	}
 
+	// fix/canon-stub-and-me-route: the skeleton used to teach a top-level `key:` parameter (not
+	// in memory_upsert's schema — it lives inside `entries[]`) and claim "0 only for a fresh
+	// entry" for THIS key, when the seeder itself creates the entry at Version 0 (so it is
+	// immediately version 1 — 0 can never be a valid baseline for `canon/index` again). Both
+	// claims sent a newcomer following the text literally into three straight rejections on a
+	// live server. Pin the corrected text instead of just re-asserting the old (wrong) promises.
+	[Fact]
+	public async Task CreateAsync_CanonSkeleton_TeachesAWorkingUpsertCall_NotTheBrokenOne()
+	{
+		var svc = NewDirectory();
+		(await svc.CreateAsync("alpha", "app2", "App2", null)).Should().BeOfType<ProjectChangeResult.Created>();
+
+		var entry = await _memory.GetAsync("app2", "canon", "index");
+		entry.Should().NotBeNull();
+		var body = entry!.Body;
+
+		body.Should().Contain("entries:[{key:", "the key lives inside entries[], not as a top-level parameter")
+			.And.Contain("version from")
+			.And.Contain("version:0", "must still be discussed, but only to say it does NOT apply here")
+			.And.Contain("will always conflict", "version:0 must not be presented as valid for this already-seeded key")
+			.And.Contain("type", "type is real (required on a NEW entry) but must not be oversold as always-required");
+
+		body.Should().NotContain("`key: \"index\"`",
+			"the old text taught a top-level `key` param that memory_upsert's schema does not accept");
+		body.Should().NotMatch("*0 only for a fresh entry*",
+			"the old text claimed version:0 is valid for this key, contradicting the seeder's own Version=0 create above it");
+	}
+
 	[Fact]
 	public async Task SecondSeedNeverClobbersACuratedCanon()
 	{

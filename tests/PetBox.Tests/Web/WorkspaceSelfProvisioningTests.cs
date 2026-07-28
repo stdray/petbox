@@ -494,6 +494,41 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		}
 	}
 
+	// ---- "me" is the reserved account zone, not a workspace key (fix/canon-stub-and-me-route) ----
+
+	// A plausible typo of CreatePage ("/ui/me/workspaces/new"). Before the fix this matched the
+	// generic /ui/{workspaceKey}/{projectKey} catch-all (ProjectHome/Index) with
+	// workspaceKey="me", projectKey="new-workspace", and 403'd through /AccessDenied with "this
+	// page belongs to a workspace you are not a member of" — misleading, since "me" was never a
+	// workspace to begin with. The route now excludes "me" from {workspaceKey} by constraint, so
+	// this simply does not match any endpoint and 404s.
+	[Fact]
+	public async Task Unknown_path_under_me_404s_instead_of_claiming_a_missing_membership()
+	{
+		var auth = await LoginAsync("founder");
+
+		using var resp = await GetAsync("/ui/me/new-workspace", auth);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound,
+			"'me' is the reserved account-zone segment, not a workspace key — an unknown path "
+			+ "under it must 404, not read as a membership denial for a workspace named 'me'");
+	}
+
+	// The control: a real (if unknown) workspace key must still 403 through AccessDenied exactly
+	// as before — the fix is scoped to the literal string "me" only, not a general change to the
+	// 403-before-404 anti-enumeration order of checks.
+	[Fact]
+	public async Task An_unrelated_unknown_workspace_key_still_403s_as_before()
+	{
+		var auth = await LoginAsync("founder");
+
+		using var resp = await GetAsync("/ui/totally-unknown-ws/some-project", auth);
+
+		ShouldBeDenied(resp,
+			"a genuine (if unknown/non-member) workspace key is unaffected by the 'me' route "
+			+ "constraint and must still answer through the ordinary membership check");
+	}
+
 	// ---- the account with no allowance is told what to do instead ----
 
 	[Fact]
