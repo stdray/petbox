@@ -99,6 +99,39 @@ public sealed class UpsertEchoScopeTests : IDisposable
 		echoed.Should().Contain(Enumerable.Range(0, 5).Select(i => $"foreign-{i}")); // full delta
 	}
 
+	// Regression for tasks-upsert-edit-reported-as-added: a PATCH that touches ONLY a relation
+	// (BlockedBy here — Links exercises the same PlanNode.SamePayload blind spot but needs a
+	// declared methodology link kind + a spec-board target to set up; BlockedBy is the builtin,
+	// direction-less structural edge and reproduces the identical no-op-at-the-row-level shape
+	// with zero extra fixtures) is a genuine Inserted:0 no-op at the temporal layer — Board="b"
+	// is `simple`-kind, which declares no BlocksGate (stage2/simple-narrow), so setting BlockedBy
+	// does not also flip Status and create a real payload change. Before the fix this landed in
+	// `added` (Created==Updated, since the node was still on its untouched v1 revision) despite
+	// Inserted:0 and Version staying 1 — exactly the three-signals-disagree symptom from the
+	// card. The fix must report it in `updated`, never `added`, and leave Version alone (links
+	// live outside the versioned row by design — this is a report-shape fix, not a
+	// version-semantics change).
+	[Fact]
+	public async Task LinksOnlyEdit_NoPayloadChange_ReportsAsUpdated_NotAdded()
+	{
+		var created = await _tasks.UpsertAsync(Proj, "b", new[] { Node("blocker"), Node("n") });
+		created.Result.Applied.Should().BeTrue();
+		var blockerId = (await _tasks.GetAsync(Proj, "b")).Nodes.Single(k => k.Key == "blocker").NodeId;
+		var nVersionBefore = created.Result.Added.Single(x => x.Key == "n").Version;
+
+		// Same title/body/status/type/priority as the original "n" (Node() is deterministic by
+		// key) — only BlockedBy is new, so PlanNode.SamePayload is true and TemporalStore takes
+		// the no-op branch: nothing inserted, nothing closed.
+		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", blockedBy: blockerId, version: 1) });
+
+		r.Result.Applied.Should().BeTrue();
+		r.Result.Inserted.Should().Be(0); // the row-level payload never changed — a true no-op
+		r.Result.Added.Should().BeEmpty();
+		var updated = r.Result.Updated.Should().ContainSingle().Subject;
+		updated.Key.Should().Be("n");
+		updated.Version.Should().Be(nVersionBefore); // version is a row-payload watermark, untouched by a links-only edit
+	}
+
 	[Fact]
 	public async Task Conflicts_ReportedOnTheAck()
 	{
