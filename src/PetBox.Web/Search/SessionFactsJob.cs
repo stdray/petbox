@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
@@ -45,10 +46,11 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	const string ExtractPrompt =
 		"""
 		You extract DURABLE facts from a fragment of an AI-agent work-session transcript.
-		Output STRICT JSON only. Your response MUST START with the array's opening `[` as its
-		very first character — no preamble, no explanation, no <reasoning>/<thinking> block, no
-		markdown fence. Stop the instant the closing `]` is written; nothing follows it, not even
-		a newline of commentary. The array (possibly empty) holds objects:
+		Output STRICT JSON only: one object `{"facts":[...]}`. Your response MUST START with
+		the object's opening `{` as its very first character — no preamble, no explanation, no
+		<reasoning>/<thinking> block, no markdown fence. Stop the instant the closing `}` is
+		written; nothing follows it, not even a newline of commentary. The "facts" array
+		(possibly empty) holds objects:
 		  {"type":"User|Feedback|Project|Reference","description":"<one line>","body":"<2-5 lines of detail>","tags":"<csv, optional>"}
 		Qualifying facts ONLY: a decision plus its why; a fixed bug's root cause; a discovered
 		convention or gotcha; a stated user preference; a durable project fact or constraint;
@@ -71,7 +73,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		already holds it.
 
 		Emit at most 1–3 candidates for this fragment; most fragments yield zero. WHEN IN
-		DOUBT, output []. When nothing qualifies, output [].
+		DOUBT, output {"facts":[]}. When nothing qualifies, output {"facts":[]}.
 		""";
 
 	const string JudgePrompt =
@@ -100,7 +102,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 
 	// The corrective retry turn (ChatParseWithRetryAsync): replayed as a user message after the
 	// model's own unparseable answer, so the correction reads as feedback on THAT answer.
-	const string ExtractCorrection = "верни ТОЛЬКО JSON-массив, ничего кроме";
+	const string ExtractCorrection = """верни ТОЛЬКО JSON-объект {"facts":[...]}, ничего кроме""";
 	const string JudgeCorrection = "верни ТОЛЬКО JSON-объект, ничего кроме";
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
@@ -205,8 +207,9 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		{
 			ct.ThrowIfCancellationRequested();
 			var (batch, lastVersion) = TakeBatch(remaining);
-			var (candidates, recovered, raw) = await ChatParseWithRetryAsync<List<FactCandidate>>(
+			var (envelope, recovered, raw) = await ChatParseWithRetryAsync<FactsEnvelope>(
 				project, ExtractPrompt, RenderTranscript(batch), ExtractCorrection, ct);
+			var candidates = envelope?.Facts;
 			if (candidates is null)
 			{
 				// Genuinely unparseable after a corrective retry: advancing past the batch is
@@ -419,10 +422,17 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	{
 		List<ChatMessage> messages = [new("system", system), new("user", user)];
 		if (extra is { Count: > 0 }) messages.AddRange(extra);
+		// Both callers (extraction, judge) target a JSON OBJECT at the top level now (facts:
+		// {"facts":[...]}, judge: {"action":...}), so the SAME response_format applies to both —
+		// the wire-level counterpart to the prompt's "output STRICT JSON only" that used to be
+		// words only (facts-extraction-unparseable-batches). json_object is the loosest OpenAI
+		// dialect every upstream in this fleet understands; a provider that rejects the field
+		// outright is handled by OpenAiCompatibleClient's own strip-and-retry, not here.
 		var res = await _llm!.ChatAsync(project, new ChatRequest(
 			messages,
 			Temperature: 0.1,
-			MaxTokens: ChatMaxTokens), ct);
+			MaxTokens: ChatMaxTokens,
+			ResponseFormat: LlmResponseFormat.JsonObject.Instance), ct);
 		return res.Text;
 	}
 
@@ -488,6 +498,44 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
 	internal sealed record FactCandidate(string? Type, string? Description, string? Body, string? Tags);
+
+	// The extraction response envelope: json_object response_format forbids a bare array at the
+	// top level on some upstreams, so the CANONICAL shape going forward is `{"facts":[...]}`
+	// (facts-extraction-unparseable-batches). A bare `[...]` is still ACCEPTED — old logged
+	// responses, and any model that ignores the wrapper instruction — via FactsEnvelopeConverter,
+	// so ResilientJson's existing tolerant-parse stages (reasoning-strip, fenced-anywhere,
+	// first-value-scan) keep working UNMODIFIED for either shape; the converter only decides how
+	// to build the list once a wrapper-or-bare top-level value has surfaced.
+	[JsonConverter(typeof(FactsEnvelopeConverter))]
+	internal sealed record FactsEnvelope(IReadOnlyList<FactCandidate> Facts);
+
+	sealed class FactsEnvelopeConverter : JsonConverter<FactsEnvelope>
+	{
+		public override FactsEnvelope? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+		{
+			if (reader.TokenType == JsonTokenType.StartArray)
+			{
+				var list = JsonSerializer.Deserialize<List<FactCandidate>>(ref reader, options);
+				return list is null ? null : new FactsEnvelope(list);
+			}
+			if (reader.TokenType == JsonTokenType.StartObject)
+			{
+				using var doc = JsonDocument.ParseValue(ref reader);
+				foreach (var prop in doc.RootElement.EnumerateObject())
+				{
+					if (!string.Equals(prop.Name, "facts", StringComparison.OrdinalIgnoreCase)) continue;
+					if (prop.Value.ValueKind != JsonValueKind.Array) return null;
+					var list = JsonSerializer.Deserialize<List<FactCandidate>>(prop.Value.GetRawText(), options);
+					return list is null ? null : new FactsEnvelope(list);
+				}
+				return null; // object with no "facts" array — not our shape, let the caller treat it as a miss
+			}
+			throw new JsonException("expected a JSON array or an object with a 'facts' array");
+		}
+
+		public override void Write(Utf8JsonWriter writer, FactsEnvelope value, JsonSerializerOptions options) =>
+			throw new NotSupportedException("FactsEnvelope is read-only — it only parses LLM responses");
+	}
 
 	sealed record Neighbor(string Store, string Key, string Description, string Body);
 

@@ -307,6 +307,37 @@ public sealed class CapabilityRouterTests
 	}
 
 	[Fact]
+	public async Task Chat_passes_request_response_format_to_upstream()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("ds", "https://d")],
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10)]));
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")],
+			ResponseFormat: LlmResponseFormat.JsonObject.Instance));
+
+		upstream.ChatResponseFormats.Should().Equal(LlmResponseFormat.JsonObject.Instance);
+	}
+
+	[Fact]
+	public async Task Chat_without_response_format_passes_null()
+	{
+		var reg = Level(
+			new LlmRegistry(
+				[new LlmEndpoint("ds", "https://d")],
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10)]));
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		upstream.ChatResponseFormats.Should().Equal((LlmResponseFormat?)null);
+	}
+
+	[Fact]
 	public async Task No_route_for_capability_throws_non_transient()
 	{
 		var resolved = new ResolvedRegistryLevel(null, LlmRegistry.Empty,
@@ -336,6 +367,7 @@ public sealed class CapabilityRouterTests
 		public List<string> EmbedCalls { get; } = [];
 		public string ChatReply { get; init; } = "";
 		public List<LlmThinking?> ChatThinking { get; } = [];
+		public List<LlmResponseFormat?> ChatResponseFormats { get; } = [];
 		public IReadOnlyList<RerankHit> RerankReply { get; init; } = [];
 		// Per-endpoint rerank behaviour (keyed by baseUrl) — a func of the chunk's documents so a
 		// fake can score by content or THROW; when absent, RerankReply is the default. RerankCalls
@@ -355,9 +387,10 @@ public sealed class CapabilityRouterTests
 			return Task.FromResult(RerankBehaviour.TryGetValue(baseUrl, out var f) ? f(documents) : RerankReply);
 		}
 
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct)
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct)
 		{
 			ChatThinking.Add(thinking);
+			ChatResponseFormats.Add(responseFormat);
 			return Task.FromResult(ChatReply);
 		}
 	}

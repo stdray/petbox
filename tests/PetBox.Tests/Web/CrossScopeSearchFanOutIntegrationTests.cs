@@ -176,7 +176,8 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 			throw new NotSupportedException();
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model,
-			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct) =>
+			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking,
+			LlmResponseFormat? responseFormat, CancellationToken ct) =>
 			throw new NotSupportedException();
 	}
 

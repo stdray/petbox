@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using PetBox.LlmRouter.Contract;
 
 namespace PetBox.LlmRouter.Http;
@@ -8,9 +9,19 @@ namespace PetBox.LlmRouter.Http;
 // Raw OpenAI-compatible HTTP client for embed/rerank/chat. No SDK dependency (Microsoft.
 // Extensions.AI is not in the dependency set; all three upstreams speak the OpenAI dialect,
 // so one raw client covers them and keeps the one-box lean). Stateless -> singleton.
-public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
+public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 {
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+	readonly ILogger<OpenAiCompatibleClient>? _log;
+
+	// Logger is OPTIONAL (default null) so every existing `new OpenAiCompatibleClient()` call —
+	// tests included — keeps compiling; DI (AddLlmRouter's TryAddSingleton) resolves the real
+	// ILogger<OpenAiCompatibleClient> automatically, no registration change needed.
+	public OpenAiCompatibleClient(ILogger<OpenAiCompatibleClient>? log = null)
+	{
+		_log = log;
+	}
 
 	public async Task<IReadOnlyList<float[]>> EmbedAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
@@ -64,7 +75,7 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	public async Task<string> ChatAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
 		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
-		LlmThinking? thinking, CancellationToken ct)
+		LlmThinking? thinking, LlmResponseFormat? responseFormat, CancellationToken ct)
 	{
 		var payload = new Dictionary<string, object>
 		{
@@ -76,13 +87,52 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		// DeepSeek-dialect reasoning switch; absent = provider default (llm-route-reasoning-mode).
 		if (thinking is { } th)
 			payload["thinking"] = new { type = th == LlmThinking.Enabled ? "enabled" : "disabled" };
+		if (responseFormat is not null) payload["response_format"] = ToWireFormat(responseFormat);
 
-		using var doc = await PostAsync(http, Url(baseUrl, "/v1/chat/completions"), apiKey, payload, ct);
-		var choices = doc.RootElement.GetProperty("choices");
-		if (choices.GetArrayLength() == 0)
-			throw new LlmUpstreamException(false, "chat response had no choices");
-		return choices[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
+		var url = Url(baseUrl, "/v1/chat/completions");
+		JsonDocument doc;
+		try
+		{
+			doc = await PostAsync(http, url, apiKey, payload, ct);
+		}
+		catch (LlmUpstreamException ex) when (!ex.Transient && responseFormat is not null
+			&& ex.Message.Contains("response_format", StringComparison.OrdinalIgnoreCase))
+		{
+			// CapabilityRouter.RunChainAsync treats a non-transient (4xx) failure as DEFINITIVE —
+			// it rethrows immediately and never falls through to the next provider in the chain
+			// (see the `catch (LlmUpstreamException ux) when (!ux.Transient)` there). So an
+			// endpoint that rejects an unsupported response_format with a fatal 400 would turn
+			// "sometimes lose a batch" into "Chat is dead on this route entirely". One bare retry
+			// with the field stripped restores exactly today's unconstrained call for THIS
+			// endpoint only — every other endpoint in the chain still gets the field.
+			//
+			// That retry must NOT be silent: an endpoint that rejects response_format and falls
+			// back to unconstrained output is EXACTLY the transport disease the caller is trying
+			// to route around (facts-extraction-unparseable-batches) — if this degrades quietly,
+			// nobody can ever tell which endpoint stopped enforcing structure. Warning, not
+			// Debug/Information: this is a standing config problem on THIS endpoint, not routine
+			// traffic.
+			if (_log is not null) LogResponseFormatRejected(_log, baseUrl, model, ex.Message);
+			payload.Remove("response_format");
+			doc = await PostAsync(http, url, apiKey, payload, ct);
+		}
+		using (doc)
+		{
+			var choices = doc.RootElement.GetProperty("choices");
+			if (choices.GetArrayLength() == 0)
+				throw new LlmUpstreamException(false, "chat response had no choices");
+			return choices[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
+		}
 	}
+
+	// The two OpenAI-dialect response_format shapes (llm-structured-output). The caller picks
+	// which one to send; this only renders it onto the wire.
+	static object ToWireFormat(LlmResponseFormat format) => format switch
+	{
+		LlmResponseFormat.JsonObject => new { type = "json_object" },
+		LlmResponseFormat.JsonSchema js => new { type = "json_schema", json_schema = new { name = js.Name, schema = js.Schema } },
+		_ => throw new NotSupportedException($"unknown LlmResponseFormat: {format.GetType()}"),
+	};
 
 	// POST JSON, mapping transport faults + HTTP status to transient/fatal LlmUpstreamException.
 	static async Task<JsonDocument> PostAsync(HttpClient http, string url, string? apiKey, object payload, CancellationToken ct)
@@ -124,4 +174,14 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	static string Url(string baseUrl, string path) => baseUrl.TrimEnd('/') + path;
 
 	static string Truncate(string s) => s.Length <= 300 ? s : s[..300] + "…";
+
+	// The one queryable signal for a silently-degrading endpoint (facts-extraction-unparseable-
+	// batches): fires exactly when a response_format-bearing chat call got a fatal 400 mentioning
+	// response_format and was retried WITHOUT it. Distinct wording from every autocapture log line
+	// ("facts extraction ...", "facts judge ...") — this is a transport/config fact about the
+	// ENDPOINT, not a per-batch extraction outcome. `log_query` target for the post-deploy check:
+	// `events | where Message contains "response_format REJECTED"`.
+	[LoggerMessage(EventId = 307, Level = LogLevel.Warning,
+		Message = "llm chat response_format REJECTED by endpoint '{BaseUrl}' model '{Model}': {Detail} — retried once WITHOUT response_format; this endpoint now silently degrades to UNCONSTRAINED output until its config is fixed")]
+	static partial void LogResponseFormatRejected(ILogger logger, string baseUrl, string model, string detail);
 }

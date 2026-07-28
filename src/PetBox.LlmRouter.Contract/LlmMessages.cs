@@ -32,9 +32,33 @@ public sealed record RerankQueryRequest(
 
 // ---- chat / summary ----
 public sealed record ChatMessage(string Role, string Content);
+
+// The OpenAI-compatible `response_format` request knob (spec: memory-autocapture, bug
+// facts-extraction-unparseable-batches): the distiller asks for JSON only in prose today, and
+// nothing on the wire holds the model to it — one of the ways a batch comes back as free-form
+// reasoning instead of parseable output. Null (the default) sends nothing, so an unset
+// ResponseFormat is byte-for-byte today's payload. JsonObject asks for "syntactically valid
+// JSON, shape unconstrained" (`{"type":"json_object"}`) — the loosest structural constraint
+// every OpenAI-compatible upstream in this fleet understands. JsonSchema additionally pins the
+// exact top-level shape via a JSON Schema document (`{"type":"json_schema","json_schema":
+// {"name":...,"schema":...}}`). The caller picks the dialect per call; this contract does not.
+public abstract record LlmResponseFormat
+{
+	public sealed record JsonObject : LlmResponseFormat
+	{
+		public static readonly JsonObject Instance = new();
+	}
+
+	public sealed record JsonSchema(string Name, object Schema) : LlmResponseFormat;
+}
+
+// ResponseFormat is LAST on purpose (same precedent as LlmRoute.EmbedSpaceId, see
+// LlmRegistry.cs) — keeps every existing positional-tail `ChatRequest(...)` call
+// source-compatible; null means "no response_format in the payload", i.e. unchanged behavior.
 public sealed record ChatRequest(
 	IReadOnlyList<ChatMessage> Messages,
 	string? Tier = null,
 	double? Temperature = null,
-	int? MaxTokens = null);
+	int? MaxTokens = null,
+	LlmResponseFormat? ResponseFormat = null);
 public sealed record ChatResult(string Text, ModelIdentity Model, ServedBy ServedBy);

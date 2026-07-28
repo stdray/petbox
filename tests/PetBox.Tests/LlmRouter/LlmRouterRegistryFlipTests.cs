@@ -205,7 +205,7 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 
 		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model,
 			IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking,
-			CancellationToken ct) => throw new NotSupportedException();
+			LlmResponseFormat? responseFormat, CancellationToken ct) => throw new NotSupportedException();
 	}
 
 	sealed record LogEntry(MsLogLevel Level, int EventId, string Message);

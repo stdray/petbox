@@ -140,6 +140,29 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	}
 
 	[Fact]
+	public async Task Extracts_AcceptsWrappedFactsObject_TheNewCanonicalShape()
+	{
+		// json_object response_format forbids a bare top-level array on some upstreams, so the
+		// canonical extraction shape going forward is {"facts":[...]} (facts-extraction-
+		// unparseable-batches). This must parse exactly like the bare-array shape above.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("обсуждение", "итог: чинили парсер"));
+		const string wrapped = """
+			{"facts":[
+			 {"type":"Feedback","description":"гоняй тесты с записью в лог","body":"повторный прогон ради скролла — расточительство","tags":"testing"},
+			 {"type":"Project","description":"крокодиловый парсер падал на токене БУРУНДУК-42","body":"переполнение хвостового буфера; увеличен до 8 КБ"}
+			]}
+			""";
+		var chat = new ScriptedChat(wrapped, """{"action":"add"}""");
+
+		var captured = await Job(chat).DrainAllAsync(CancellationToken.None);
+
+		captured.Should().Be(2);
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().HaveCount(2);
+		entries.Single(e => e.Type == "Project").Description.Should().Contain("БУРУНДУК-42");
+	}
+
+	[Fact]
 	public async Task SecondPass_NoNewMessages_NoChatSpent()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
