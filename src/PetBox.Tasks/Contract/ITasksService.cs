@@ -341,7 +341,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// generated key, the kind's initial status/type, and a stable NodeId.
 	Task QuickAddAsync(string projectKey, string board, string name, string? body, long priority, CancellationToken ct = default);
 
-	// --- system surface (report_issue: report-to-maintainer, not project-scoped) ---
+	// --- system surface (petbox_report_issue: report-to-maintainer, not project-scoped) ---
 
 	// File an issue node onto a triage board (auto-created), returning its key.
 	Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default);

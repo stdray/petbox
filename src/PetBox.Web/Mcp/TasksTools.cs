@@ -1372,7 +1372,7 @@ public static class TasksTools
 	// name. No reserved-name allowlist: unlike memory stores there is no board that comes into
 	// being merely by typing it through this verb. The gate lives at the MCP tool layer ONLY — the
 	// service door (TasksService.UpsertAsync) still auto-vivifies for its internal callers
-	// (report_issue's triage board, etc.).
+	// (petbox_report_issue's triage board, etc.).
 	static async Task AssertBoardKnownAsync(ITasksService tasks, string projectKey, string board, CancellationToken ct)
 	{
 		var name = board?.Trim() ?? "";

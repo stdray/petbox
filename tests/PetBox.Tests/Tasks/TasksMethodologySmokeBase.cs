@@ -178,7 +178,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 //   tasks_workflow(projectKey, board) → { kind, workflows:[{ types:[...], initial, statuses, transitions }] }
 //   relations_create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
 //   relations_list(projectKey, node, direction?)                direction ∈ from|to|both (default both)
-//   report_issue(title, detail) → lands on an intake-kind board, status `reported`
+//   petbox_report_issue(title, detail) → lands on an intake-kind board, status `reported`
 //
 // The scenarios live in four sibling classes, grouped by theme — TasksMethodologyBoardsTests,
 // TasksMethodologySpecTests, TasksMethodologyWorkFsmTests, TasksMethodologyRefsTests. Each takes
