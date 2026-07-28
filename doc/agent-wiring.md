@@ -164,6 +164,11 @@ version, then imports `wire.ts`) plus the `src/` kit.
      stable copy's `file:///` URL (single source of truth; overwritten each run).
 9. `--cleanup-legacy` (see §3).
 10. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
+11. Seed `~/.petbox/roles.json` with the default profile **only when that file does not exist yet**
+    (an operator's own bindings are never touched), then run `apply` in-process (§2d) so the roster
+    this run just wired is actually usable (`fresh-wire-roster-unusable`). Logged as `[11/10]` — it
+    is deliberately outside the "of 10" count because it compiles artifacts rather than wiring the
+    machine. It never aborts the run; its exit code nonetheless counts toward the run's own (§2b).
 
 ## 2a. Subcommands (no `<dir> <project>`)
 
@@ -181,9 +186,9 @@ none at all. They are dispatched **before** arg parsing, so they never require a
 
 ## 2b. Exit codes
 
-`src/wire-exit.ts` is the single definition (`WIRE_EXIT` + the pure `classifyApplyExit`, so the
-classification is unit-testable without spawning a process). It also owns the only two sanctioned
-ways a run may end — see §2b-2.
+`src/wire-exit.ts` is the single definition (`WIRE_EXIT`, the pure `classifyApplyExit`, and
+`strongestExitCode`, so the classification is unit-testable without spawning a process). It also
+owns the only two sanctioned ways a run may end — see §2b-2.
 
 | Code | Meaning |
 | --- | --- |
@@ -193,13 +198,54 @@ ways a run may end — see §2b-2.
 | `3` | Truthfulness policy block — some roles/harnesses were refused. **A partial write is possible.** |
 | `4` | **Incomplete** — a requested step did not run for a reason the user did not ask for. |
 
-**Be honest about the scope:** only `apply` and `doctor` use the full taxonomy (and `doctor` never
-reports `4` — it skips no step of its own). The **full-wire path** exits `2` only through `usage()`
-(bad/absent args, and the no-workspace-resolvable case) and `1` on *any* other failure — missing key,
-validation abort, telemetry-log failure. Do not script against `3` or `4` outside `apply`.
-
 `3` is a *policy* outcome, not a crash: the definition asked a harness for a capability it does not
 declare. Fix the definition (or accept the skip) — retrying changes nothing.
+
+`doctor` never reports `4` — it skips no step of its own.
+
+### The **full `wire`** contract: which steps raise the run's exit code
+
+The table above says what each code *means*; this says what actually produces one in a full wiring
+run, which the table alone left to guesswork (`full-wire-exit-ignores-step-11`). Read off `wire.ts`'s
+`main()`, not inferred — every entry is a real call site.
+
+| Step | Raises | Aborts the run? |
+| --- | --- | --- |
+| argv parsing → `usage()` | `2` | yes |
+| pre-flight: `<dir>` does not exist | `1` | yes |
+| 2 — no API key found anywhere | `1` | yes |
+| 3 — `validateKey`: unreachable, `401`, or key scoped to another project | `1` | yes (`abortRun`) |
+| 3b — no workspace resolvable (no `--workspace`, server reports none) | `2` | yes |
+| 4 — Windows user-scope env persistence fails | `1` | yes |
+| 7b — `--telemetry` only: the log-ensure call fails | `1` | yes (`abortRun`) |
+| 10 — self-smoke fails | `1` | **no** — the run continues to the end |
+| 11 — `apply` (seed bindings + compile artifacts) | `1`, `3` or `4` | **no** — the run continues to the end |
+| anywhere — an unexpected throw reaches `main().catch` | `1` | yes |
+
+Steps **1, 5, 6, 7, 8, 9** (envVar derivation, kit copy, registry, project files, global hooks,
+`--cleanup-legacy`) have no exit code of their own: they either succeed or throw, and a throw lands
+in `main().catch` ⇒ `1`. Nothing on that list swallows a failure (the single `catch` inside them is a
+best-effort `chmod 0600` on the key store).
+
+Consequences worth scripting against:
+
+- **A full `wire` really can exit `3` or `4`** — through step 11, which runs `apply` in-process. The
+  older advice ("do not script against `3`/`4` outside `apply`") is obsolete; `2` on the other hand
+  still only comes from argv parsing and step 3b.
+- **Non-aborting is not code-free.** Steps 10 and 11 both keep going *and* raise the code. Step 11 in
+  particular must not abort: the key is validated and every other file is written by then, and
+  throwing that away over a compile hiccup is the bug `fresh-wire-roster-unusable` fixed. Reporting
+  `0` for it was a *different* decision that got fused into the same comment, and it is what
+  `full-wire-exit-ignores-step-11` undid.
+- **When both fail, the strongest code wins**, by the same `1` > `3` > `4` > `0` priority —
+  `strongestExitCode` in `wire-exit.ts`, not "whichever step assigned last" (step 11 assigns last, so
+  a bare assignment would report its `4` over step 10's `1`).
+- **The final line never contradicts the code.** A non-zero step 10 *or* step 11 suppresses `done.`
+  and makes the failure the last line, on stderr (`selfsmoke-failure-prints-done`, `finishWireRun`).
+
+Pinned end-to-end by `wire-full-exit-step11.test.ts` (every step-11 code out of a real process, the
+both-failed priority case, and the proof that the run is still not interrupted) and
+`wire-full-exit-races.test.ts` (the aborting sites above).
 
 ### `4` (incomplete) — added 2026-07-28, **breaking**
 
@@ -219,6 +265,9 @@ the one reader that matters here, a CI step branching on the exit code
   the run *refused* to do; "a step did not get to run" is the weaker claim and yields to both. It is
   never lost — it stays in the `summary` JSON under `skillsSkipped`. Pinned by `wire-exit.test.ts`
   (pure classifier) and `apply-skills-skip.test.ts` (end-to-end, both orderings).
+  The same ladder decides between codes raised by *different* steps of one run —
+  `classifyApplyExit` ranks conditions inside one `apply` pass, `strongestExitCode` ranks the
+  finished codes of the steps that each kept going (full `wire`: steps 10 and 11).
 
 ## 2b-2. How a run ends (never `process.exit`)
 

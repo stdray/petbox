@@ -112,7 +112,14 @@ import {
   runStatus,
 } from "./status.ts";
 import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
-import { abortRun, classifyApplyExit, exitWith, RunAbort, WIRE_EXIT } from "./wire-exit.ts";
+import {
+  abortRun,
+  classifyApplyExit,
+  exitWith,
+  RunAbort,
+  strongestExitCode,
+  WIRE_EXIT,
+} from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { resolveProject } from "./registry.ts";
 import {
@@ -2076,11 +2083,18 @@ async function main(): Promise<void> {
   const smokeOk = await selfSmoke(baseUrl, project, key);
 
   // 11. seed a default role→model binding (fresh machine only) + apply — compile per-harness
-  // startup artifacts NOW, so the freshly-wired roster is actually usable. Never aborts the run:
+  // startup artifacts NOW, so the freshly-wired roster is actually usable. NEVER ABORTS THE RUN:
   // the key is already validated and every other file is already written by this point, so a
   // compile hiccup here (e.g. a transient agent-defs fetch failure — resolveApplyDefinition
-  // still falls back to LKG/DEFAULT) is reported loudly but does not flip wire's own exit code;
+  // still falls back to LKG/DEFAULT) must not throw away work that already succeeded;
   // re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
+  //
+  // "Does not abort" is NOT "does not count" (full-wire-exit-ignores-step-11). Those two were
+  // fused in this comment and the code only implemented the first: step 11 could return 1
+  // (a clobber refusal), 3 or 4 and the run still ended 0, which made the exit-code table's
+  // "0 — every requested step ran" false for the full-wire path and re-opened the very bug this
+  // step exists to close — a machine whose agent artifacts were never written is then
+  // indistinguishable, to a script, from a fully wired one.
   seedDefaultRoleBindingsIfMissing("[11/10]");
   const applyResult = await performApply({
     definitionKey: DEFAULT_DEFINITION_KEY,
@@ -2091,10 +2105,31 @@ async function main(): Promise<void> {
     console.error(`[11/10] next: petbox-wire apply`);
   }
 
-  // Terminal message set depends on the smoke outcome — a failure must be the LAST line, in
-  // red, never followed by "done." (selfsmoke-failure-prints-done).
+  // Fold step 11's outcome into the run's own code, the same way step 10 does it: set
+  // process.exitCode and KEEP GOING (selfSmoke, above) — never exitWith/abortRun, which would
+  // cut the run off and break the decision this step deliberately made.
+  //
+  // strongestExitCode, not a bare assignment: step 10 may already have set 1, and
+  // `process.exitCode = applyResult.code` would DOWNGRADE that to 3/4 for no better reason than
+  // step 11 assigning last. The winner is the taxonomy's declared priority (1 > 3 > 4 > 0).
+  // The current process.exitCode is folded in as well, so any earlier non-aborting step (today:
+  // only self-smoke) is carried rather than re-derived here; `smokeOk` is passed too so a future
+  // refactor of selfSmoke's side effect cannot silently drop it. The result is never weaker than
+  // what was already set, which is why assigning it unconditionally is safe.
+  const runCodeSoFar = typeof process.exitCode === "number" ? process.exitCode : WIRE_EXIT.ok;
+  process.exitCode = strongestExitCode(
+    runCodeSoFar,
+    smokeOk ? WIRE_EXIT.ok : WIRE_EXIT.hard,
+    applyResult.code,
+  );
+
+  // Terminal message set depends on the smoke outcome AND on step 11 — a failure must be the LAST
+  // line, in red, never followed by "done." (selfsmoke-failure-prints-done). A non-zero step 11 is
+  // a failure by exactly that standard: the run now exits non-zero, so its last line must not read
+  // like a full success either.
   const finish = finishWireRun({
     smokeOk,
+    applyCode: applyResult.code,
     envVar,
     envVarPresentInProcess: !!process.env[envVar],
     platform: process.platform,
