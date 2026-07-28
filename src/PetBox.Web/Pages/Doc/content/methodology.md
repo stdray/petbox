@@ -47,7 +47,7 @@ Edges bind to the stable `nodeId` (in every upsert/read response), so they survi
 
 ## Approve gate (convention)
 
-Where a project's methodology declares an approval gate, an agent's ceiling is the status right before it — check `tasks_workflow`/`tasks_methodology_guide` for the live rule, not memory: a project can place the gate elsewhere, or not declare one at all. Today both built-in presets place it the same way: `quartet`'s `work` board and the `classic` board both cap the agent at **`Review`** — mark a finished item `Review`, never `Done`. Only the project owner confirms `Done`. The gate is a soft convention, not a server block — nothing stops an agent from setting `Done` itself, so it holds only because the agent honors it.
+An agent never sets `Done` itself — default-deny, no exception the agent grants itself. Its ceiling is the status right before the approval gate — check `tasks_workflow`/`tasks_methodology_guide` for the live rule, not memory: a project can place the gate elsewhere, or not declare one at all. Today both built-in presets place it the same way: `quartet`'s `work` board and the `classic` board both cap the agent at **`Review`** — mark a finished item `Review`, never `Done`. Exactly two things can move that ceiling, and both come from outside the agent's own reading of the rules: the guide states explicitly that this kind has no approval gate (then the executor sets `Done` themselves), or the project owner explicitly authorizes it, by direct instruction or a standing directive. Otherwise only the owner confirms `Done`. The gate is a soft convention, not a server block — nothing stops an agent from setting `Done` itself, so it holds only because the agent honors it.
 
 ## What goes where
 

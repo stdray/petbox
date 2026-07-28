@@ -47,9 +47,13 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
 `backlog → (selected into an iteration) → InProgress → Review (agent finished) →
 tests → APPROVE (maintainer) → Done`; reject → back with a reason.
 
-**An agent never sets the final `Done` itself — its ceiling is the status right before
-the approval gate (`Review` here); check `tasks_methodology_guide` for the live rule, not
-memory, since a different preset can place the gate elsewhere or skip it.** The maintainer
+**An agent never sets the final `Done` itself — default-deny, no exception the agent grants
+itself.** Its ceiling is the status right before the approval gate (`Review` here); check
+`tasks_methodology_guide` for the live rule, not memory, since a different preset can place the
+gate elsewhere or skip it. Exactly two things can move that ceiling, and both come from outside
+the agent's own reading of the rules: (1) the guide states explicitly that this kind has no
+approval gate — then the executor sets the terminal status themselves; (2) the maintainer
+explicitly authorizes it, by direct instruction or a standing directive. Otherwise the maintainer
 confirms `Done`, and (see below) the gate is a soft convention, not a server block.
 
 **Hand over a link, not a slug.** Whenever the agent creates a node the maintainer should
