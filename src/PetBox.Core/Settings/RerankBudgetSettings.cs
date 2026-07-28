@@ -33,13 +33,31 @@ public sealed record RerankBudgetSettings
 	// lines later against `pool`). A length-based function would need to know candidate length to
 	// decide how many candidates to keep, but the pipeline does not have that length until AFTER the
 	// budget already gated which candidates get resolved — a chicken-and-egg the current architecture
-	// does not support without an extra, currently-nonexistent pre-fetch. So: a single scalar, taken at
-	// the UPPER end of the measured 80-1700 byte range (6.3 / 8.4 / 16.8 ms/doc) rather than the middle
-	// or the old 6.1 constant — the budget is knowingly PESSIMISTIC (fewer candidates than a
-	// length-aware estimate might allow), which fails safe against the 5s bar rather than failing open.
+	// does not support without an extra, currently-nonexistent pre-fetch. So: a single scalar.
+	//
+	// WHY 11.6 — AND WHY YOU SHOULD NOT READ IT AS A MEASUREMENT (owner's decision 2026-07-28).
+	//
+	// THE BUDGET IS 160 BY DECISION. 160 = four pages at PageSizeOptions.Default (40). With the bar
+	// (5000), BaseMs (2130) and HeadroomFraction (0.65) held fixed, landing on 160 pins PerDocMs at
+	// ~11.66 — so the TARGET CHOSE THE INPUT, not the other way round. This value is a back-solved
+	// knob, not a per-document cost anyone measured.
+	//
+	// That inversion is the whole problem, and the owner has called it: the four-input formula gives
+	// the APPEARANCE of a model derived from data while the data underneath (synthetic documents,
+	// seven-fold run-to-run spread, one machine, one day) cannot carry it. The measured numbers are
+	// NOT load-bearing and must not be treated as such — the old 350/6.1 pair was wrong six-fold on
+	// BaseMs and survived for months precisely because "derived from a measurement" sounds like a
+	// guarantee.
+	//
+	// THIS SHAPE IS ON ITS WAY OUT. Idea rerank-budget-is-a-declared-assumption (in review) replaces
+	// the four inputs with ONE declared number, and rewrites spec search-rerank-candidate-budget,
+	// which currently REQUIRES the latency derivation and is the only reason this formula still
+	// exists. Latency belongs to the provider: a slow home is a reason to accept it or switch
+	// providers, not to recompute search depth. If you are here to change the budget, change it
+	// through settings and do not add a fifth input.
 	[Setting(TopLevel = Scope.System, Key = "search.rerank.budget.perDocMs",
-		Description = "Per-document marginal rerank cost (ms), taken at the upper end of the measured range on purpose (pessimistic scalar, not a length function — see code comment for why).")]
-	public double PerDocMs { get; init; } = 16.8;
+		Description = "Per-document marginal rerank cost (ms). Mid-range of the measured 6.3-16.8 span; derives a 160-candidate budget (four default pages). Raise it to narrow the budget, lower it to widen.")]
+	public double PerDocMs { get; init; } = 11.6;
 
 	[Setting(TopLevel = Scope.System, Key = "search.rerank.budget.baseMs",
 		Description = "Fixed per-call base cost of the rerank route (ms) — a rough, high-variance measured estimate, not measured truth.")]

@@ -397,7 +397,7 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 
 		var defaults = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
 		defaults.LatencyBarMs.Should().Be(5000);
-		defaults.PerDocMs.Should().Be(16.8);
+		defaults.PerDocMs.Should().Be(11.6);
 		defaults.BaseMs.Should().Be(2130);
 		defaults.HeadroomFraction.Should().Be(0.65);
 

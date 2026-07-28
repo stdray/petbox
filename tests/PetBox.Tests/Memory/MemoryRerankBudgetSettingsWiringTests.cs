@@ -66,23 +66,25 @@ public sealed class MemoryRerankBudgetSettingsWiringTests : IDisposable
 	public async Task ProjectScopeOverride_ChangesTheRealSearchsPoolLimit_NotJustARecordInATest()
 	{
 		await _memory.CreateStoreAsync(Proj, "notes", null);
-		// 5 lexically-matching entries — comfortably under even the pessimistic compiled-in default
-		// budget (111), so the FIRST call proves the default reaches production untouched; the SECOND
-		// call proves an override does too.
+		// 5 lexically-matching entries — comfortably under the compiled-in default budget (160), so
+		// the FIRST call proves the default reaches production untouched; the SECOND call proves an
+		// override does too.
 		await _memory.UpsertAsync(Proj, "notes",
 			[Entry("a"), Entry("b"), Entry("c"), Entry("d"), Entry("e")], []);
 
 		var before = await _memory.SearchEntriesAsync(Proj,
 			new SearchRequest<MemoryEntryFilter, MemorySortBy> { Query = "alpha", WholePool = true });
 
-		before.PoolLimit.Should().Be(new RerankCandidateBudget().Candidates()); // 111, the compiled-in default, reached with NO override
+		before.PoolLimit.Should().Be(new RerankCandidateBudget().Candidates()); // 160, the compiled-in default, reached with NO override
 		before.PoolBounded.Should().BeFalse("5 matches is far under the budget");
 		before.Hits.Should().HaveCount(5);
 
 		// A Project-scope override (settings-uniform-override: deeper wins) that pins the budget to
-		// exactly 2 candidates: rawCeiling = (2190 - 2130) / 16.8 ≈ 3.57; × 0.65 headroom → floor 2.
+		// exactly 2 candidates: rawCeiling = (2175 - 2130) / 11.6 ≈ 3.88; × 0.65 headroom → floor 2.
+		// The bar is chosen mid-band (2 candidates hold for a bar of 2166-2183), so this does not sit
+		// on a rounding edge that a small PerDocMs change would tip.
 		await _settings.SetAsync(Scope.Project, Proj,
-			new RerankBudgetSettings { LatencyBarMs = 2190 }, new RerankBudgetSettings(), updatedBy: null);
+			new RerankBudgetSettings { LatencyBarMs = 2175 }, new RerankBudgetSettings(), updatedBy: null);
 
 		var after = await _memory.SearchEntriesAsync(Proj,
 			new SearchRequest<MemoryEntryFilter, MemorySortBy> { Query = "alpha", WholePool = true });

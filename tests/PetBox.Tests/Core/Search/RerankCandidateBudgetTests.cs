@@ -10,10 +10,12 @@ public sealed class RerankCandidateBudgetTests
 	public void Candidates_AreDerivedFromLatencyBar_NotAConstant()
 	{
 		var budget = new RerankCandidateBudget();
-		// raw ceiling = (5000 − 2130) / 16.8 ≈ 170.8 docs at the hard bar; × 0.65 headroom ⌊111.04⌋ = 111
-		// (rerank-budget-params-to-settings: BaseMs/PerDocMs re-measured, defaults now the pessimistic
-		// end of the honest 111-222 range instead of the old, six-fold-too-low 350/6.1 pair).
-		budget.Candidates().Should().Be(111);
+		// raw ceiling = (5000 − 2130) / 11.6 ≈ 247.4 docs at the hard bar; × 0.65 headroom ⌊160.8⌋ = 160
+		// — four pages at PageSizeOptions.Default (40), the budget the owner decided on 2026-07-28.
+		// PerDocMs was back-solved to land here; see RerankBudgetSettings.PerDocMs. This test pins the
+		// NUMBER the app runs with, and outlives the formula: idea rerank-budget-is-a-declared-assumption
+		// replaces the four inputs with one declared value, and 160 must survive that change unchanged.
+		budget.Candidates().Should().Be(160);
 	}
 
 	[Fact]

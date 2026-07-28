@@ -51,7 +51,12 @@ public sealed record RerankCandidateBudget
 	// Per-document marginal cost and fixed per-call base of the real rerank route (warm).
 	// MEASURED ESTIMATE WITH KNOWN ERROR, not measured truth — see the type-level comment above
 	// before treating these as more precise than "roughly right, safe direction".
-	public double PerDocMs { get; init; } = 16.8;
+	// 11.6 is BACK-SOLVED so this formula yields 160 — four pages at PageSizeOptions.Default — which
+	// is the budget the owner decided on (2026-07-28). It is a knob, not a measured per-document cost.
+	// RerankBudgetSettings.PerDocMs carries the full reasoning, including why the measured numbers
+	// here are not load-bearing and why this four-input shape is being replaced by ONE declared
+	// number (idea rerank-budget-is-a-declared-assumption).
+	public double PerDocMs { get; init; } = 11.6;
 	public double BaseMs { get; init; } = 2130;
 
 	// Fraction of the raw latency ceiling kept as budget, so warm p95 (not just the min) stays

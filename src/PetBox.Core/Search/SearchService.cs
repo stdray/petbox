@@ -84,7 +84,9 @@ public sealed partial class SearchService
 
 		// A RELEVANCE selection is now expressed as "rank the pool, then take the first k". The top-k a
 		// non-paging caller sees is byte-for-byte what it was before (the pool is ordered by exactly the
-		// same rules, and the pool cap only bites past ~495 — deeper than any k this codebase asks for);
+		// same rules, and the pool cap only bites past ~160 — still deeper than any k this codebase asks
+		// for, but the margin is now thin: PageSizeOptions.Allowed tops out at 100, so a caller asking
+		// for the largest page sits inside the same order of magnitude as the cap rather than far below it);
 		// the difference is that the REST of the order now survives the call instead of being discarded.
 		var pool = await RankPoolAsync(scope, query, mode, resolveCandidateText, legs, fused, ct);
 		return new SearchResponse([.. pool.Ordered.Take(k)], pool.Retrievers);
@@ -161,7 +163,7 @@ public sealed partial class SearchService
 	// stays comparable across separate SearchService calls — a consumer can still merge several
 	// per-container pools by it.
 	//
-	// THE POOL'S CEILING is the latency-derived rerank candidate budget (~495), and it now applies to
+	// THE POOL'S CEILING is the latency-derived rerank candidate budget (~160), and it now applies to
 	// BOTH ranking paths rather than only the rerank one. That is deliberate: the boundary a caller is
 	// told about must be ONE number, or a query that quietly degraded from Reranked to DegradedRrf
 	// would also quietly change how deep the result goes. `PoolBounded` records whether the candidate

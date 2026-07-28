@@ -11,7 +11,7 @@ namespace PetBox.Core.Search;
 // WHY THIS TYPE AND NOT JUST A LIST. Two facts have to travel together with the rows, and a bare
 // list carries neither:
 //   1. POOLLIMIT — how deep ranking was ever allowed to look (the latency-derived rerank candidate
-//      budget, ~495). Past it nothing was RANKED, so nothing can be served.
+//      budget, ~160). Past it nothing was RANKED, so nothing can be served.
 //   2. POOLBOUNDED — whether the candidate union actually HIT that limit. This is the difference
 //      between "we ranked everything that matched" and "there are more matches we never looked at",
 //      and it is the single most load-bearing bit in this feature: without it a consumer reports a
@@ -57,7 +57,7 @@ public sealed record SearchPool(
 // mislead (card requirement 2: «граница ВИДИМА и не выглядит как исчерпание»).
 //
 // The obvious design — "no nextCursor means the end" — is exactly the trap. It makes the honest
-// answer ("we ranked the top 495 of some larger match set; the rest was never looked at") and the
+// answer ("we ranked the top 160 of some larger match set; the rest was never looked at") and the
 // terminal answer ("that was all of it") the SAME wire shape, so a consumer that simply stops when
 // the cursor goes missing reports a truncated pool as an exhausted search. Nobody has to be careless
 // for that to happen; the shape invites it.
@@ -104,7 +104,7 @@ public enum SearchPoolStop
 //
 // THE PRICE, stated plainly (all three are real, none is hidden):
 //   * MEMORY — bounded, not free: Capacity pools × up to PoolLimit addresses each. At the defaults
-//     (64 × 495 × a (type,id,score) triple) this is single-digit megabytes worst case, and entries
+//     (64 × 160 × a (type,id,score) triple) this is well under a megabyte at the current budget, and entries
 //     are evicted oldest-first, so the ceiling is a ceiling and not a hope.
 //   * INVALIDATION IS COARSE — the data version is per CONTAINER, not per row. Any write to the
 //     searched board/store, even one that cannot affect this query's rows, changes the fingerprint
