@@ -20,29 +20,60 @@ namespace PetBox.Tests.Tasks;
 // param) with an "ambiguous slug … boards: […]" error when a slug lives on 2+ boards;
 // comments_upsert/search resolve a slug on their `board` param. 32-hex values are always NodeIds
 // (passthrough — the pre-existing NodeId paths are the regression baseline).
-public sealed class UniformNodeRefTests : IDisposable
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// tasks DB files are the expensive part of the constructor — the fixture owns the files, the test
+// class rebuilds the (cheap) service graph per test. Per-test DATA isolation is
+// TestDataReset.WipeAllTables over the tasks file plus a TaskBoards wipe in core (the board catalog
+// lives there — TaskBoardStore) — not TestDirs.ResetDbFile, which costs more than a fresh templated
+// copy (see TestDataReset).
+public sealed class UniformNodeRefFixture : IDisposable
 {
-	const string Proj = "proj";
-	readonly string _dir;
-	readonly PetBoxDb _db;
-	readonly ScopedDbFactory<TasksDb> _factory;
-	readonly RelationStore _relations;
-	readonly CommentService _comments;
-	readonly TasksService _tasks;
+	public const string Proj = "proj";
 
-	public UniformNodeRefTests()
+	readonly string _dir;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<TasksDb> Factory { get; }
+
+	public UniformNodeRefFixture()
 	{
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-noderef-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		Factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
-		_relations = new RelationStore(_factory);
-		_comments = new CommentService(_factory);
-		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), _relations, new TagStore(_factory), _comments);
+	}
+
+	public void Reset()
+	{
+		Db.TaskBoards.Where(b => b.ProjectKey == Proj).Delete();
+		using var tasks = Factory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(tasks);
+	}
+
+	public void Dispose()
+	{
+		Db.Dispose();
+		Factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
+{
+	const string Proj = UniformNodeRefFixture.Proj;
+	readonly RelationStore _relations;
+	readonly CommentService _comments;
+	readonly TasksService _tasks;
+
+	public UniformNodeRefTests(UniformNodeRefFixture fx)
+	{
+		fx.Reset();
+		_relations = new RelationStore(fx.Factory);
+		_comments = new CommentService(fx.Factory);
+		_tasks = new TasksService(new TaskBoardStore(fx.Db.Factory(), fx.Factory), _relations, new TagStore(fx.Factory), _comments);
 		// The tool layer no longer auto-vivifies a board (namespace-creation gate). "b" is the
 		// default board these tests write to directly (incl. the reject-path tests that never seed);
 		// create it up front so those tool calls reach their own validation, not the board gate.
@@ -54,13 +85,6 @@ public sealed class UniformNodeRefTests : IDisposable
 	{
 		if (!await _tasks.BoardExistsAsync(Proj, board))
 			await _tasks.CreateBoardAsync(Proj, board, null, null, null);
-	}
-
-	public void Dispose()
-	{
-		_db.Dispose();
-		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http(string scopes = "tasks:read,tasks:write")
