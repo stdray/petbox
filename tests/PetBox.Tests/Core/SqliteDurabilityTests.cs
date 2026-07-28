@@ -68,17 +68,24 @@ public sealed class SqliteDurabilityTests : IDisposable
 		finally { SqliteDurability.Relaxed = saved; }
 	}
 
-	// (tier, expected pragma value, why that tier gets it). One row per SQLite tier PetBox opens.
-	public static TheoryData<string, long, string> EveryTier => new()
+	// (tier key, the SqliteTier it is assigned, the pragma value that implies, why it got it).
+	// One row per SQLite tier PetBox opens.
+	//
+	// The assigned tier is CARRIED rather than inferred from the expected value. It used to be
+	// derived with `expected == Full ? "Durable" : "Telemetry"`, which was fine while exactly two
+	// tiers existed and started printing a lie the moment two of them shared NORMAL — the cache
+	// would have been reported as Telemetry in every failure message it ever produced.
+	public static TheoryData<string, SqliteTier, long, string> EveryTier => new()
 	{
-		{ "core", Full, "core.db holds projects, users, api keys and the workspace ledger" },
-		{ "config", Full, "config is workspace configuration a write acknowledged" },
-		{ "tasks", Full, "task boards are user data" },
-		{ "memory", Full, "memory entries are user data" },
-		{ "sessions", Full, "session rows are agent-authored content, not telemetry" },
-		{ "deploy", Full, "deploy state must survive the machine it describes" },
-		{ "data", Full, "a pet's own database — petbox acknowledged the write on its behalf" },
-		{ "logs", Normal, "telemetry: the only tier whose tail is worth less than the fsync guarding it" },
+		{ "core", SqliteTier.Durable, Full, "core.db holds projects, users, api keys and the workspace ledger" },
+		{ "config", SqliteTier.Durable, Full, "config is workspace configuration a write acknowledged" },
+		{ "tasks", SqliteTier.Durable, Full, "task boards are user data" },
+		{ "memory", SqliteTier.Durable, Full, "memory entries are user data" },
+		{ "sessions", SqliteTier.Durable, Full, "session rows are agent-authored content, not telemetry" },
+		{ "deploy", SqliteTier.Durable, Full, "deploy state must survive the machine it describes" },
+		{ "data", SqliteTier.Durable, Full, "a pet's own database — petbox acknowledged the write on its behalf" },
+		{ "logs", SqliteTier.Telemetry, Normal, "telemetry: already lossy and never read back as an authority" },
+		{ "cache", SqliteTier.Derived, Normal, "derived: every byte is reconstructible, so a lost tail is a cache miss" },
 	};
 
 	// Opens a connection to `tier` THROUGH ITS PRODUCTION FACTORY and returns what SQLite reports.
@@ -137,6 +144,17 @@ public sealed class SqliteDurabilityTests : IDisposable
 					using var db = new LogDb(LogDb.CreateOptions(cs));
 					return Synchronous(db);
 				}
+			case "cache":
+				{
+					// The disk cache is a single fleet-wide file like deploy.db: CacheSchema builds it up
+					// front and ICacheDbFactory hands out the connections. Goes through
+					// CacheSchema.ConnectionString rather than ForFile because that spelling also carries
+					// the Default Timeout — it is the string production actually pools.
+					var cs = CacheSchema.ConnectionString(Path.Combine(_dir, "cache.db"));
+					CacheSchema.Ensure(cs);
+					using var db = new CacheDbFactory(cs).Open();
+					return Synchronous(db);
+				}
 			case "data":
 				{
 					// The user-data tier has no linq2db context: its production door is
@@ -155,14 +173,15 @@ public sealed class SqliteDurabilityTests : IDisposable
 	// working connections actually carry.
 	[Theory]
 	[MemberData(nameof(EveryTier))]
-	public async Task EveryTier_CarriesItsChosenDurabilityOnAWorkingConnection(string tier, long expected, string why)
+	public async Task EveryTier_CarriesItsChosenDurabilityOnAWorkingConnection(
+		string tier, SqliteTier assigned, long expected, string why)
 	{
 		await AsDeployed(async () =>
 		{
 			var actual = await ReadThroughProductionFactory(tier);
 
 			actual.Should().Be(expected,
-				$"the {tier} tier is assigned {(expected == Full ? "SqliteTier.Durable" : "SqliteTier.Telemetry")} " +
+				$"the {tier} tier is assigned SqliteTier.{assigned} " +
 				$"({why}), and PRAGMA synchronous is per-connection — a value that does not show up HERE, on a " +
 				"connection opened through the production factory, is a value that does not exist at runtime no " +
 				"matter what the factory source says");
@@ -175,11 +194,50 @@ public sealed class SqliteDurabilityTests : IDisposable
 	[Fact]
 	public void TheTiers_DoNotAllExpectTheSameValue()
 	{
-		var expected = EveryTier.Select(row => row.Data.Item2).Distinct().ToList();
+		var expected = EveryTier.Select(row => row.Data.Item3).Distinct().ToList();
 
 		expected.Should().HaveCount(2,
 			"the whole point of the sweep is that the tiers were decided SEPARATELY — if every row " +
 			"expected one value, the theory above would pass against a factory that ignored its tier argument");
+	}
+
+	// Every SqliteTier member must be exercised on a real connection by the theory above. Without
+	// this, adding a tier to the enum and forgetting to open one of its databases here would leave a
+	// whole durability class unproven while the suite stayed green — which is the same shape of gap
+	// (a decision that exists only in source) that this entire work exists to close.
+	[Fact]
+	public void EveryDeclaredTier_IsCoveredByTheWorkingConnectionTheory()
+	{
+		var covered = EveryTier.Select(row => row.Data.Item2).Distinct().ToList();
+
+		covered.Should().BeEquivalentTo(Enum.GetValues<SqliteTier>(),
+			"a SqliteTier member with no row here is a durability nobody ever reads back off a " +
+			"working connection");
+	}
+
+	// The rows must agree with PRODUCTION about what each tier means. A row that paired
+	// SqliteTier.Derived with FULL would otherwise just be a wrong expectation the theory then
+	// dutifully fails on, pointing at the factory instead of at itself.
+	[Fact]
+	public void TheExpectedValues_MatchWhatProductionSaysEachTierMeans()
+	{
+		var saved = SqliteDurability.Relaxed;
+		SqliteDurability.Relaxed = null;
+		try
+		{
+			foreach (var row in EveryTier)
+			{
+				var (tier, assigned, expected, _) = row.Data;
+				var word = expected switch { Full => "FULL", Normal => "NORMAL", _ => "OFF" };
+
+				SqliteDurability.Synchronous(assigned).Should().Be(word,
+					$"the '{tier}' row claims SqliteTier.{assigned} means {word}");
+			}
+		}
+		finally
+		{
+			SqliteDurability.Relaxed = saved;
+		}
 	}
 
 	// The pragma is per-CONNECTION and is NOT written into the file header, so a hook that fired
