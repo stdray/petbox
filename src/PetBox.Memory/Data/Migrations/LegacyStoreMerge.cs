@@ -37,6 +37,10 @@ public static class LegacyStoreMerge
 		using var db = new SqliteConnection($"Data Source={projectDbPath}");
 		db.Open();
 		Exec(db, $"PRAGMA busy_timeout = {Core.Data.SqlitePragmas.DefaultBusyTimeoutMs};");
+		// This connection copies a user's memory entries out of the legacy per-store files and is
+		// the only writer that will ever move them — a one-shot migration whose loss is not
+		// retried, so it takes the Memory tier's Durable setting like any other write to it.
+		Core.Data.SqliteDurability.ApplyTo(db, Core.Data.SqliteTier.Durable);
 
 		var done = MergedStores(db);
 		foreach (var file in legacyFiles.OrderBy(f => f, StringComparer.Ordinal))

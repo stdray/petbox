@@ -51,7 +51,7 @@ public sealed class PetBoxDb : DataConnection
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString)
 	{
 		connectionString = SqliteConnectionStrings.WithForeignKeys(connectionString);
-		return new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema).WithDurability());
+		return new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema).WithDurability(SqliteTier.Durable));
 	}
 
 	// Fluent mapping is built ONCE into this shared schema and handed to every

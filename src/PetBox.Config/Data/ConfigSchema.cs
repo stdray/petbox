@@ -14,5 +14,5 @@ namespace PetBox.Config.Data;
 public static class ConfigSchema
 {
 	public static void Ensure(string connectionString) =>
-		MigrationRunner.Run(connectionString, typeof(Migrations.M001_ConfigBaseline).Assembly);
+		MigrationRunner.Run(connectionString, typeof(Migrations.M001_ConfigBaseline).Assembly, SqliteTier.Durable);
 }

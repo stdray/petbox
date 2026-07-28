@@ -24,7 +24,7 @@ public sealed class LogDb : DataConnection
 			// available: the KQL translator maps `matches regex`/`extract`/`has`/`has_cs` and the well-formedness
 			// gates of the typed conversions (tolong/todouble) to native SQL over them.
 			.UseInterceptor(LoadSqleanRegexpInterceptor.Instance)
-			.WithDurability());
+			.WithDurability(SqliteTier.Telemetry));
 
 	// The DuckDb backend options. DuckDB's regexp_*/TRY_CAST/json_* are native (no per-connection extension
 	// load like sqlean), so the interceptor only pins `SET TimeZone='UTC'` — required so todatetime
