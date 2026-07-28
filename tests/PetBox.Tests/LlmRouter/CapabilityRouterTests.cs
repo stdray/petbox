@@ -318,8 +318,9 @@ public sealed class CapabilityRouterTests
 		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
 		ex.Transient.Should().BeFalse();
 		ex.NoRoute.Should().BeTrue();
+		ex.Capability.Should().Be(LlmCapability.Embed, "the exception already carries this typed — no need to grep the message for it");
 		// The message is the resolver's honest one, not a generic "no route configured".
-		ex.Message.Should().Contain("no route for Embed").And.Contain("ws");
+		ex.Message.Should().Contain("ws");
 	}
 
 	// ---- fakes ----
