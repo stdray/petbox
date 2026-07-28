@@ -31,10 +31,14 @@ public static class MigrationRunner
 	// file with no -wal/-shm sidecar and is explicitly WAL-safe, and it globs "*.db" so the
 	// sidecars are never picked up as sources. Safe for the test template: TestSchema
 	// checkpoint(TRUNCATE)s and releases the pooled handle before copying the file.
+	//
+	// No tier parameter: this overload IS core.db (it hardcodes the Core migration assembly), and
+	// core.db holds projects, users, api keys, the workspace ledger and the DataDbs catalog — the
+	// Durable tier by definition, not by choice of the caller.
 	public static void Run(string connectionString)
 	{
-		SqlitePragmas.ApplyWal(connectionString);
-		Run(connectionString, typeof(Migrations.M001_Initial).Assembly);
+		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Durable);
+		Run(connectionString, typeof(Migrations.M001_Initial).Assembly, SqliteTier.Durable);
 	}
 
 	// Runs the migration set found in `migrationsAssembly` against `connectionString`.
@@ -43,7 +47,7 @@ public static class MigrationRunner
 	// `.db` files (Core migrations never leak into a tasks/memory/sessions file).
 	// Each `.db` file keeps its own VersionInfo table, so version numbers are
 	// per-tier-independent.
-	public static void Run(string connectionString, Assembly migrationsAssembly)
+	public static void Run(string connectionString, Assembly migrationsAssembly, SqliteTier tier)
 	{
 		lock (Locks.GetOrAdd(connectionString, _ => new object()))
 		{
@@ -60,10 +64,9 @@ public static class MigrationRunner
 			// FluentMigrator opens its OWN connection and keeps it for the whole session, so the
 			// linq2db hook in SqliteDurability never sees it. Executing the pragma through the
 			// processor first opens that connection and configures it for every migration that
-			// follows. Statement() returns null in production, so production runs nothing extra.
-			var durability = SqliteDurability.Statement(SqliteDurability.Relaxed);
-			if (durability is not null)
-				runner.Processor.Execute(durability);
+			// follows — a schema build is a long run of DDL commits, so it is exactly the kind of
+			// connection the per-open hook must not miss.
+			runner.Processor.Execute(SqliteDurability.Statement(tier));
 			runner.MigrateUp();
 		}
 	}
