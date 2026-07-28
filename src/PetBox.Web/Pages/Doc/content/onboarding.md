@@ -1,10 +1,20 @@
 # Agent onboarding
 
-This is the short path for bringing a coding agent onto a PetBox project — from minting a key to the agent planning real work. There are five steps; do them in order and check each one worked before moving on, because a silent failure early (wrong key, stale connection, half-read model) is expensive to debug later.
+This is the short path for bringing a coding agent onto a PetBox project — from a login to the agent planning real work. There are five steps; do them in order and check each one worked before moving on, because a silent failure early (wrong key, stale connection, half-read model) is expensive to debug later.
 
-The **maintainer** (you) does step 1 in the UI. The **agent** does the rest, from a terminal in the project directory. The deeper material lives on other pages, linked inline — this page is just the sequence.
+**Step 0 (if it applies to you) and step 1 happen in the UI** — either as a maintainer minting a key for an agent onto a project that already exists, or as a new self-serve user setting up your own workspace and project first. From step 2 on, the **agent** does the rest, from a terminal in the project directory. The deeper material lives on other pages, linked inline — this page is just the sequence.
 
 > **Keep this in mind throughout.** After any server deploy, an MCP client's tool list goes stale: a tool you expect can return *"unknown tool"*, or a write can quietly do nothing. Whenever that happens, re-establish the MCP connection and retry before assuming the key or the request is wrong. This is the most common confusing failure here.
+
+## 0. New here? Create your workspace and project first
+
+Skip straight to step 1 if a maintainer already handed you a project. Otherwise — you have a login and nothing else yet — there's a short prelude:
+
+1. **Sign in.** With no workspace membership, you land on **"No workspaces yet"**. If your account's quota allows it, that page shows a **Create workspace** button — granting that quota is the one part of this whole flow that needs an administrator; everything from here on is yours to drive. If the button isn't there, ask an administrator to create a workspace and add you to it, then pick up at step 2 below inside it.
+2. **Create the workspace** — the button lands on `/ui/me/workspaces/new` (not `/ui/me/new-workspace`; that route doesn't exist). You become its administrator.
+3. **Create a project** inside the workspace, from its admin **Projects** page → **New project**. Pick the project key now — it drives the `PETBOX_<PROJECT>_API_KEY` env var name used in step 1 below.
+
+From here the rest of this page applies to you exactly as written, starting at step 1.
 
 ## 1. Mint a key and wire the project
 
@@ -74,17 +84,25 @@ The skill deliberately doesn't say what the status ceiling is — that depends o
 
 ## 5. Do one real piece of work end-to-end
 
-First, **right-size the rails to the work** (see the [methodology](/doc/methodology) for the tiers): a throwaway spike → one `simple` board; a small build → a short idea → a thin `spec` → `work`; a long-lived project → the full rails. The flow **starts in `ideas`** — the spec falls out of an accepted idea, you don't invent it from nothing. The walk-through below is the small-build tier.
+First, **right-size the rails to the work** (see the [methodology](/doc/methodology) for the tiers): a throwaway spike → one `simple` board; a small, single-board project → **`classic`**; a long-lived, multi-session project that wants a durable spec → **`quartet`** (idea → spec → work). For most small projects `classic` is the natural default — it's one board, no `links.idea_spec`/`links.task_spec` to wire, and the path to shipping one task is shorter.
 
-Provision the standard boards (named for their kind: `ideas`, `spec`, `work`, `intake`) with **one click**: on the project's `.../projects/{proj}/tasks` page, the **Methodology** panel at the top already has the **"Methodology quartet"** preset selected — press **Enable methodology** and all four boards are created with the right kinds in one shot, plus `work → spec` auto-wire. It's idempotent (only adds what's missing), so it's also safe to press again later.
-
-The preset dropdown also offers **`classic`** — one flat board (`task`/`feature`/`bug`) with free movement among open statuses but `Done` reachable only from `Review`, and no spec/idea linkage at all. This walk-through uses `quartet` for the small-build tier below; pick `classic` instead when the project doesn't want the full rails — see the [methodology](/doc/methodology) page for the trade-off.
+Provision either with **one click**: on the project's `.../projects/{proj}/tasks` page, the **Methodology** panel at the top has a preset dropdown (`quartet` selected by default) — pick the preset you want and press **Enable methodology**. `quartet` creates all four boards (`ideas`, `spec`, `work`, `intake`) with `work → spec` auto-wire; `classic` creates one board, named `classic` (type `task`/`feature`/`bug`), with free movement among open statuses but `Done` reachable only from `Review`, and no spec/idea linkage. It's idempotent (only adds what's missing), so it's also safe to press again later.
 
 Creating the boards explicitly, one at a time, with the right kind is the fallback — reach for it only if you need something the preset doesn't give you (e.g. a subset of the boards, or a non-default methodology). Whichever way you provision them, get the kind right **at creation**: not by a bare write (a cold write makes a plain `simple` board and the kind can't change).
 
-Capture the work as a short idea on `ideas` and accept it; record the requirement(s) it settles into on `spec` and note each `nodeId`; then create a `work` feature that links one by passing it as `links:{task_spec: <nodeId>}`. Move the feature `Pending → InProgress → Review` as you go, and stop at `Review`. The [methodology](/doc/methodology) spells out the contract if anything is unfamiliar.
+The fifth step itself differs by preset — follow whichever one you enabled:
+
+### On `quartet`
+
+The flow **starts in `ideas`** — the spec falls out of an accepted idea, you don't invent it from nothing. Capture the work as a short idea on `ideas` and accept it; record the requirement(s) it settles into on `spec` and note each `nodeId`; then create a `work` feature that links one by passing it as `links:{task_spec: <nodeId>}`. Move the feature `Pending → InProgress → Review` as you go, and stop at `Review`. The [methodology](/doc/methodology) spells out the contract if anything is unfamiliar.
 
 **Check:** the work node shows a live link to the spec node, and the spec leaf's computed delivery reads `in_progress`. If delivery still says `not_started`, the link didn't take (recheck the `links.task_spec` id) or the feature never left `Pending`. The agent should **not** have set `Done` — the maintainer reviews and sets it from the UI, which closes the loop.
+
+### On `classic`
+
+No idea or spec step first — just quick-add a task on the `classic` board (it starts in `Backlog`). Move it forward through `InProgress` to `Review` as you work it, and **stop at `Review`** — same ceiling as `quartet`: `Done` is reachable only from `Review`, and the agent doesn't set it.
+
+**Check:** the task sits in `Review`, not `Done`. The project owner (the maintainer, or you yourself if this is your own self-serve project) reviews and sets `Done` from the UI, which closes the loop.
 
 ## From here
 
