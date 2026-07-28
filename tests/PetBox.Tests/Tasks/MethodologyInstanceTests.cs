@@ -16,32 +16,59 @@ namespace PetBox.Tests.Tasks;
 
 // methodology-instance-core: named instance entity + board membership + create/list/get/close
 // + adopt/move. Acceptance plays from the work card.
-public sealed class MethodologyInstanceTests : IDisposable
+// Shared per-class host (work share-fixtures-across-per-test-classes, wave 2): the migrated core +
+// tasks DB files are the expensive part of the constructor — the fixture owns the files, the test
+// class rebuilds the (cheap) service graph per test. Per-test DATA isolation is
+// TestDataReset.WipeAllTables over the tasks file (covers methodology_instances,
+// methodology_active_instance, plan_nodes, …) plus a TaskBoards wipe in core (the board catalog
+// lives there — TaskBoardStore) — not TestDirs.ResetDbFile, which costs more than a fresh templated
+// copy (see TestDataReset).
+public sealed class MethodologyInstanceFixture : IDisposable
 {
-	const string Proj = "proj";
-	readonly string _dir;
-	readonly PetBoxDb _db;
-	readonly ScopedDbFactory<TasksDb> _factory;
-	readonly TasksService _tasks;
+	public const string Proj = "proj";
 
-	public MethodologyInstanceTests()
+	readonly string _dir;
+	public PetBoxDb Db { get; }
+	public ScopedDbFactory<TasksDb> Factory { get; }
+
+	public MethodologyInstanceFixture()
 	{
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-minst-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
-		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+		Db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		Db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		Factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
-		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
+	}
+
+	public void Reset()
+	{
+		Db.TaskBoards.Where(b => b.ProjectKey == Proj).Delete();
+		using var tasks = Factory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(tasks);
 	}
 
 	public void Dispose()
 	{
-		_db.Dispose();
-		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		Db.Dispose();
+		Factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
+	}
+}
+
+public sealed class MethodologyInstanceTests : IClassFixture<MethodologyInstanceFixture>
+{
+	const string Proj = MethodologyInstanceFixture.Proj;
+	readonly ScopedDbFactory<TasksDb> _factory;
+	readonly TasksService _tasks;
+
+	public MethodologyInstanceTests(MethodologyInstanceFixture fx)
+	{
+		fx.Reset();
+		_factory = fx.Factory;
+		_tasks = new TasksService(new TaskBoardStore(fx.Db.Factory(), _factory), new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
 	}
 
 	static IHttpContextAccessor Http(string scopes)
