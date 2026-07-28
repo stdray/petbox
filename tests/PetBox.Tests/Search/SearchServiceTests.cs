@@ -240,7 +240,11 @@ public sealed class SearchServiceTests : IDisposable
 		// enumerable lexical leg's full set can't flood it past the 5s bar): a budget of 2 lets only the
 		// top 2 fused candidates through, even with 3 matches.
 		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList());
-		var budget = new RerankCandidateBudget { LatencyBarMs = 369 };
+		// BaseMs/PerDocMs pinned explicitly (not left at the record default) so this test's capping
+		// behavior stays independent of whatever the default calibration happens to be
+		// (rerank-budget-params-to-settings moved the defaults to a settings-backed, re-measured
+		// pessimistic estimate — a caller-supplied budget like this one is unaffected by that).
+		var budget = new RerankCandidateBudget { LatencyBarMs = 369, BaseMs = 350, PerDocMs = 6.1 };
 		budget.Candidates().Should().Be(2);
 		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker, budget: budget);
 		await IndexAsync(svc, commit: true,

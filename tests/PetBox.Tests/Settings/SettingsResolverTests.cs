@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Settings;
@@ -382,5 +383,42 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 
 		var resolved = await resolver.GetAsync<RepoSettings>(Scope.Project, "proj-repo");
 		resolved.CommitUrlTemplate.Should().Be("https://github.com/user/repo/commit/{sha}");
+	}
+
+	[Fact]
+	public async Task RerankBudgetSettings_DefaultsMatchTheRecord_AndProjectOverrideBeatsSystem()
+	{
+		// rerank-budget-params-to-settings: the rerank candidate budget's four inputs (bug:
+		// SearchService used to hardcode `new RerankCandidateBudget()` with no override path at all)
+		// now resolve through the SAME System -> Workspace -> Project cascade (spec:
+		// settings-uniform-override, deeper wins) as everything else in this file, and double-typed
+		// properties round-trip through the resolver's json fallback encoding just like any other type.
+		var (resolver, _) = await GetResolverAsync(projectKey: "proj-rerank-budget", workspaceKey: "ws-rerank-budget");
+
+		var defaults = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		defaults.LatencyBarMs.Should().Be(5000);
+		defaults.PerDocMs.Should().Be(16.8);
+		defaults.BaseMs.Should().Be(2130);
+		defaults.HeadroomFraction.Should().Be(0.65);
+
+		// A System-scope override cascades down to a project that has none of its own.
+		await resolver.SetAsync(Scope.System, "$",
+			new RerankBudgetSettings { LatencyBarMs = 2500 }, new RerankBudgetSettings(), updatedBy: null);
+		var systemOverridden = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		systemOverridden.LatencyBarMs.Should().Be(2500);
+
+		// The project overriding it locally wins over the System row it just inherited — deeper wins,
+		// exactly the override settings-uniform-override requires down to Project.
+		await resolver.SetAsync(Scope.Project, "proj-rerank-budget",
+			new RerankBudgetSettings { LatencyBarMs = 1000 }, new RerankBudgetSettings(), updatedBy: null);
+		var projectOverridden = await resolver.GetAsync<RerankBudgetSettings>(Scope.Project, "proj-rerank-budget");
+		projectOverridden.LatencyBarMs.Should().Be(1000);
+
+		// And the override actually reaches the DERIVED budget, not just the settings record — the
+		// task card's readiness bullet: "on a changed bar, the budget changes". A lower bar can only
+		// ever produce an equal-or-smaller candidate budget.
+		var defaultBudget = RerankCandidateBudget.FromSettings(defaults).Candidates();
+		var overriddenBudget = RerankCandidateBudget.FromSettings(projectOverridden).Candidates();
+		overriddenBudget.Should().BeLessThan(defaultBudget);
 	}
 }

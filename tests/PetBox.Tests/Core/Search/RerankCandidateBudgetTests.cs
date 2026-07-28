@@ -10,8 +10,10 @@ public sealed class RerankCandidateBudgetTests
 	public void Candidates_AreDerivedFromLatencyBar_NotAConstant()
 	{
 		var budget = new RerankCandidateBudget();
-		// raw ceiling = (5000 − 350) / 6.1 ≈ 762 docs at the hard bar; × 0.65 headroom ≈ 495.
-		budget.Candidates().Should().BeInRange(450, 550);
+		// raw ceiling = (5000 − 2130) / 16.8 ≈ 170.8 docs at the hard bar; × 0.65 headroom ⌊111.04⌋ = 111
+		// (rerank-budget-params-to-settings: BaseMs/PerDocMs re-measured, defaults now the pessimistic
+		// end of the honest 111-222 range instead of the old, six-fold-too-low 350/6.1 pair).
+		budget.Candidates().Should().Be(111);
 	}
 
 	[Fact]
