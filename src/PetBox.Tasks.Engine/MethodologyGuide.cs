@@ -16,14 +16,23 @@ namespace PetBox.Tasks.Workflow;
 // "required:feature; defects:bug").
 public sealed record MethodologyInvariant(string Kind, string Rule, string Detail);
 
-// Renders a project's EFFECTIVE methodology — definition-declared kinds + preset kinds
-// the definition does not override (MethodologyRuntime.EffectiveKinds) — as the
+// Renders a methodology's DECLARED kinds (MethodologyRuntime.DeclaredKinds) as the
 // agent-facing process guide: markdown prose plus the structured invariants behind it.
-// Pure and deterministic (stable ordering: kinds in effective order, blocks/statuses/
+// Pure and deterministic (stable ordering: kinds in declaration order, blocks/statuses/
 // transitions in declaration order), and NOTHING here is specific to a particular kind:
 // the built-in quartet and a user-defined `support` kind go through the same derivation.
 // This is how the hardcoded "agent never self-sets Done/accepted" invariant becomes
 // data-born: a RequiresApproval transition renders it, whatever the kind.
+//
+// Deliberately NOT MethodologyRuntime.EffectiveKinds (guide-declared-kinds). That merge is
+// correct for RESOLUTION — a board of an undeclared kind must still resolve, so every
+// resolver falls back to the presets — but the guide is not a resolver. Rendering the merge
+// told a project running the one-kind `classic` preset that its agent must carry
+// `links.idea_spec`/`links.task_spec` onto nodes of `spec`/`work` boards it does not have,
+// signed "source: instance" under the heading "How to work this project's boards". A
+// methodology that declares NO kind at all (MethodologyRuntime.PresetsOnly — the project has
+// no open instance) is the one case where the built-in catalog IS the effective process, and
+// there the full merge renders, honestly labelled as defaults nobody chose.
 public static class MethodologyGuide
 {
 	public static MethodologyGuideView Render(string name, MethodologyRuntime runtime, string source, long? definitionVersion)
@@ -31,14 +40,27 @@ public static class MethodologyGuide
 		var md = new StringBuilder();
 		var invariants = new List<MethodologyInvariant>();
 
+		// No declared kind = nothing of this project's own to render; the built-in catalog is
+		// what its boards actually resolve against, so it renders in full. Derived from the
+		// runtime rather than from `source` on purpose: the two callers cannot drift apart, and
+		// a stored document that declares no kinds gets the honest answer either way.
+		var declared = runtime.DeclaredKinds;
+		var builtinCatalog = declared.Count == 0;
+		var rendered = builtinCatalog ? runtime.EffectiveKinds() : declared;
+
 		md.AppendLine($"# Process guide: {name}");
 		md.AppendLine();
-		md.AppendLine($"How to work this project's boards — derived at runtime from the project's methodology data (source: {source}). "
+		md.AppendLine((builtinCatalog
+				? $"NO methodology is chosen for this project — it has no open methodology instance, so what follows is the server's BUILT-IN default catalog (source: {source}), not rules this project has adopted. "
+				: $"How to work this project's boards — derived at runtime from the project's methodology data (source: {source}). ")
 			+ "This guide describes the data, it adds no rules of its own. Types, statuses, transitions and gates are ENFORCED by the server "
 			+ "unless a rule is explicitly marked as a convention (a convention gate or a checklist is binding process, but the server does not block it).");
 
-		foreach (var kind in runtime.EffectiveKinds())
+		foreach (var kind in rendered)
 			AppendKind(md, runtime, kind, invariants);
+
+		if (!builtinCatalog)
+			AppendUndeclaredKinds(md, runtime, rendered);
 
 		AppendRelationKinds(md, runtime);
 		AppendBodyConventions(md);
@@ -312,6 +334,25 @@ public static class MethodologyGuide
 			? $"  - defect types ({defects}): any still open while requireds are done → done_with_defects"
 			: "  - no defect types declared — done has no defect variant");
 		invariants.Add(new(kind, "delivery", $"required:{required}; defects:{defects}"));
+	}
+
+	// The preset kinds this methodology does NOT declare, BY NAME ONLY — never their gates,
+	// links, effects or delivery, and never an invariant. Names only because MethodologyInvariant
+	// is (Kind, Rule, Detail) with no channel to mark a rule "not yours": any undeclared kind
+	// whose rules render at all reaches a machine consumer stripped of whatever disclaimer the
+	// markdown carried, and reads as binding. The names still earn their place — they are the
+	// honest answer to "may I open a board of kind X here" (yes: it resolves from the preset,
+	// MethodologyRuntime.EffectiveKinds), which silence would leave the agent guessing.
+	static void AppendUndeclaredKinds(StringBuilder md, MethodologyRuntime runtime, IReadOnlyList<MethodologyKindDef> rendered)
+	{
+		var declared = rendered.Select(k => k.Kind).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var others = runtime.EffectiveKinds().Select(k => k.Kind).Where(k => !declared.Contains(k)).ToList();
+		if (others.Count == 0) return;
+
+		md.AppendLine();
+		md.AppendLine("## Other kinds this server knows");
+		md.AppendLine();
+		md.AppendLine($"- {string.Join(", ", others)} — built-in preset kinds this project's methodology does NOT declare. NONE of their rules apply here and this project has no board of these kinds; nothing above and nothing in `invariants` comes from them. Listed by name only because a board of one of these kinds would still resolve (it falls back to the server preset). To read a preset's actual rules, call tasks_methodology_template_get with a builtin key (quartet|classic|simple).");
 	}
 
 	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime)
