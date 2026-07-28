@@ -4,17 +4,25 @@ namespace PetBox.Tests.Architecture;
 
 // PRODUCTION DURABILITY GUARD — the one thing SqliteDurabilityTests structurally cannot check.
 //
-// SqliteDurability.Relaxed is a settable process-wide property. Production keeps SQLite's own
-// synchronous=FULL for exactly one reason: nothing under src/ ever assigns it. That claim is load-
-// bearing — it is the whole argument that relaxing fsync for the test suite did not quietly relax
-// it for a deployed PetBox too.
+// SqliteDurability.Relaxed is a settable process-wide property, and it is a BLANKET override: when
+// it is set it replaces every tier's chosen value at once. Production gets the durability each tier
+// picked for itself (SqliteTier.Durable → FULL, SqliteTier.Telemetry → NORMAL) for exactly one
+// reason — nothing under src/ ever assigns this property. That claim is load-bearing: it is the
+// whole argument that relaxing fsync for the test suite did not quietly relax it for a deployed
+// PetBox too, and it is the reason the per-tier decision means anything at all. A single assignment
+// under src/ would collapse all eight tiers onto one value and no tier's choice would survive.
 //
 // SqliteDurabilityTests reads `PRAGMA synchronous` back through the production factories and
-// asserts FULL, but to model "a deployed process" it must first set `Relaxed = null` ITSELF. So the
-// day somebody adds `SqliteDurability.Relaxed = "OFF"` to a startup path in src/ — chasing a
-// benchmark, say — those tests keep passing: they null the property before they look. The
+// asserts each tier's value, but to model "a deployed process" it must first set `Relaxed = null`
+// ITSELF. So the day somebody adds `SqliteDurability.Relaxed = "OFF"` to a startup path in src/ —
+// chasing a benchmark, say — those tests keep passing: they null the property before they look. The
 // regression would reach production silently, and the only thing standing in its way today is a
 // comment. This guard is what makes the claim fail out loud instead.
+//
+// Note what this does NOT guard, so nobody mistakes it for more than it is: the tier CONSTANTS in
+// SqliteDurability (DurableSynchronous/TelemetrySynchronous) are ordinary source, and editing one
+// is a deliberate, reviewable change to what PetBox promises — SqliteDurabilityTests fails loudly
+// on it. This guard exists only for the back door that would silently outrank all of them.
 //
 // Naive by design (a text scan, same tradeoff as DbLayerGuardTests and the other guards here): it
 // is a guardrail against an honest future edit, not a lexer defending against someone determined to
@@ -62,13 +70,14 @@ public sealed class SqliteDurabilityGuardTests
 
 		offenders.Should().BeEmpty(
 			"production durability rests entirely on SqliteDurability.Relaxed staying null in a deployed "
-			+ "process — null means no PRAGMA is emitted at all and every connection keeps SQLite's FULL "
-			+ "(an fsync per commit). The suite relaxes it to OFF from tests/TestDurability.cs, which is "
-			+ "compiled into the test assemblies alone. An assignment under src/ would push that relaxation "
-			+ "into the deployed product, and SqliteDurabilityTests CANNOT catch it: those tests set "
-			+ "Relaxed = null themselves to model a deployed process, so they would stay green while "
-			+ "production stopped fsyncing. If a deployment genuinely needs a different durability, make it "
-			+ "configuration with its own test, do not assign this property. Offenders:\n  "
+			+ "process — null means each tier gets the value it chose (Durable → FULL, an fsync per commit; "
+			+ "Telemetry → NORMAL), while a set value overrides ALL of them at once. The suite relaxes it to "
+			+ "OFF from tests/TestDurability.cs, which is compiled into the test assemblies alone. An "
+			+ "assignment under src/ would push that blanket relaxation into the deployed product, and "
+			+ "SqliteDurabilityTests CANNOT catch it: those tests set Relaxed = null themselves to model a "
+			+ "deployed process, so they would stay green while production stopped fsyncing user data. If a "
+			+ "deployment genuinely needs different durability, change the tier a database is assigned to, or "
+			+ "make it configuration with its own test — do not assign this property. Offenders:\n  "
 			+ string.Join("\n  ", offenders));
 	}
 
