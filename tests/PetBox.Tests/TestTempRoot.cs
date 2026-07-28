@@ -14,7 +14,12 @@ namespace PetBox.Tests;
 // UNCHANGED, see NewTempConnectionString's comment in TestSchema.cs on why a shared physical
 // directory would reintroduce the DDL-race flake / suspected Linux SIGABRT) now nests one level
 // down, under Root, instead of landing directly in the OS temp folder. That turns "clean up ~20k
-// scattered dirs" into "delete one directory," and gives Defender exactly one path to exclude.
+// scattered dirs" into "delete one directory."
+//
+// Root itself nests one level under Container — a FIXED, name-stable directory (Container never
+// changes across runs or process identity) — so an antivirus exclusion can target one permanent
+// path (see Container's own doc comment) instead of a mask over pid+guid names, which Defender
+// matches less predictably when the wildcard sits mid-path rather than at a fixed prefix.
 //
 // [ModuleInitializer], not an xunit AssemblyFixture (TempDirReaper's sweep is the latter — see
 // its own comment on why v3 made that sufficient for A sweep): this redirect has to win the race
@@ -29,17 +34,40 @@ public static class TestTempRoot
 	// with Root — to find and sweep SIBLING roots abandoned by killed prior runs.
 	public static string RealTempPath { get; private set; } = "";
 
-	// This process's single temp root. Unique per PROCESS (pid + guid), not shared across the
-	// machine: two concurrent test hosts (a local run alongside CI, two IDE sessions) must never
-	// resolve to the same root, since Cleanup() below deletes it WHOLESALE at process exit — if
-	// two hosts shared one, one host's exit would delete the other's still-live temp files.
+	// Fixed container directory, one level under RealTempPath: %TEMP%\petbox-tests. Its name
+	// never varies (no pid, no guid) — THIS is the exact path to hand Defender as a folder
+	// exclusion. Shared by every concurrent test host on the machine, so creation below must be
+	// idempotent: two hosts can call Directory.CreateDirectory(Container) at the same instant,
+	// and neither may fail the run over it (Directory.CreateDirectory already tolerates a
+	// pre-existing directory at the target path; the try/catch is belt-and-braces against any
+	// transient race during that check-and-create).
+	public static string Container { get; private set; } = "";
+
+	// This process's single temp root, nested under Container: %TEMP%\petbox-tests\{pid}-{guid}.
+	// Unique per PROCESS (pid + guid), not shared across the machine: two concurrent test hosts
+	// (a local run alongside CI, two IDE sessions) must never resolve to the same root, since
+	// Cleanup() below deletes it WHOLESALE at process exit — if two hosts shared one, one host's
+	// exit would delete the other's still-live temp files. Container is shared; Root never is.
 	public static string Root { get; private set; } = "";
 
 	[ModuleInitializer]
 	internal static void Init()
 	{
 		RealTempPath = Path.GetTempPath();
-		Root = Path.Combine(RealTempPath, $"petbox-tests-{Environment.ProcessId}-{Guid.NewGuid():N}");
+		Container = Path.Combine(RealTempPath, "petbox-tests");
+		Root = Path.Combine(Container, $"{Environment.ProcessId}-{Guid.NewGuid():N}");
+
+		try
+		{
+			Directory.CreateDirectory(Container);
+		}
+		catch
+		{
+			// Another concurrent test host is creating (or just created) the same shared
+			// container at the same instant. Directory.CreateDirectory(Root) below still
+			// creates any missing parent directories on its own, so this is not load-bearing —
+			// it just keeps a transient race here from ever surfacing as a failure.
+		}
 		Directory.CreateDirectory(Root);
 
 		// GetTempPath() on Windows reads TMP then TEMP; on Unix (where this suite also runs —
