@@ -78,6 +78,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AGENT_DEF_OFFLINE_STALE_MARKER,
   DEFAULT_DEFINITION_KEY,
   resolveAgentDefinitionWithLkg,
   type ResolvedAgentDefinition,
@@ -977,7 +978,14 @@ async function resolveApplyDefinition(opts: {
   if (got.source === "server") {
     log(`${label}: using server definition ${got.key} v${got.version}`);
   } else if (got.source === "lkg") {
-    if (got.forbidden) {
+    if (got.offline) {
+      // A deliberate --offline run never attempted a fetch — checked FIRST, never folded into
+      // the "unreachable" wording below (bug: doctor-reports-answering-server-unreachable, round
+      // 2 — reported live: `doctor --offline` printed this exact line's OLD text, "PetBox
+      // unreachable", against a server it had reached moments earlier in the SAME run without
+      // the flag; only --offline explains the skip, not connectivity).
+      log(`${label}: ${got.staleMarker ?? AGENT_DEF_OFFLINE_STALE_MARKER}`);
+    } else if (got.forbidden) {
       // Server was reachable and refused the request — a scope problem, not offline
       // (wire-silent-failures-invisible, evidence 2026-07-26). Say so before the generic stale
       // marker so the operator does not go debug the network for a permissions issue.
@@ -994,6 +1002,10 @@ async function resolveApplyDefinition(opts: {
       log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
     }
     log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
+  } else if (got.offline) {
+    // Deliberate --offline, no cache to fall back to — never "no server"/"unreachable", the
+    // caller simply asked to skip the network (same reasoning as the lkg branch above).
+    log(`${label}: --offline — using kit default baseline (no LKG cache exists)`);
   } else if (got.notFoundOnServer) {
     // Server was reachable; it just has no definition of its own for this project yet
     // (normal for a fresh project) — not an offline/unreachable condition.

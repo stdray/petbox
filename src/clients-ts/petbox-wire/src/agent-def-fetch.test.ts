@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  AGENT_DEF_OFFLINE_STALE_MARKER,
   AGENT_DEF_STALE_MARKER,
   agentDefCacheDir,
   agentDefCachePath,
@@ -554,4 +555,98 @@ test("agentDefinitionBannerNote: source default + forbidden → names the scope 
   };
   const note = agentDefinitionBannerNote(resolved);
   assert.match(note, /401\/403/);
+});
+
+// ---- round 2 of doctor-reports-answering-server-unreachable: agentDefinitionBannerNote must
+// know about --offline too, not just notFoundOnServer/forbidden/httpError. Reported live: the
+// LKG banner said "PetBox unreachable" for a run that had just reached the same server with
+// --offline omitted moments earlier — only the CALLER's --offline choice explains the skip.
+
+test("agentDefinitionBannerNote: source lkg + offline → names --offline, never 'unreachable'", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "lkg",
+    stale: true,
+    staleMarker: AGENT_DEF_OFFLINE_STALE_MARKER,
+    offline: true,
+  };
+  const note = agentDefinitionBannerNote(resolved);
+  assert.match(note, /--offline/);
+  assert.doesNotMatch(note, /unreachable/i);
+});
+
+test("agentDefinitionBannerNote: source lkg + offline with NO staleMarker set → still falls back to the offline-aware default, not the generic 'unreachable' one", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "lkg",
+    stale: true,
+    offline: true,
+  };
+  assert.equal(agentDefinitionBannerNote(resolved), AGENT_DEF_OFFLINE_STALE_MARKER);
+});
+
+test("agentDefinitionBannerNote: source default + offline (no cache at all) → names --offline, never 'unavailable'/'unreachable'", () => {
+  const resolved: ResolvedAgentDefinition = {
+    ...RESOLVED_BASE,
+    source: "default",
+    stale: false,
+    offline: true,
+  };
+  const note = agentDefinitionBannerNote(resolved);
+  assert.match(note, /--offline/);
+  assert.doesNotMatch(note, /unreachable/i);
+  assert.doesNotMatch(note, /unavailable/i);
+});
+
+test("resolveAgentDefinitionWithLkg: --offline with LKG cache present sets offline:true and the offline-aware staleMarker (not AGENT_DEF_STALE_MARKER)", async () => {
+  const home = freshHome();
+  try {
+    const fetched = parseAgentDefinitionResponse(VALID_BODY)!;
+    writeAgentDefCache("proj", fetched, home);
+
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: true,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => {
+        throw new Error("should not be called");
+      },
+    });
+
+    assert.equal(got.source, "lkg");
+    assert.equal(got.offline, true);
+    assert.equal(got.staleMarker, AGENT_DEF_OFFLINE_STALE_MARKER);
+    assert.doesNotMatch(got.staleMarker!, /unreachable/i);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolveAgentDefinitionWithLkg: a genuine (non-offline) network failure with LKG cache present still sets the OLD unreachable-worded marker, and offline stays unset", async () => {
+  const home = freshHome();
+  try {
+    const fetched = parseAgentDefinitionResponse(VALID_BODY)!;
+    writeAgentDefCache("proj", fetched, home);
+
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: false,
+      definitionKey: "default",
+      projectKey: "proj",
+      baseUrl: "https://petbox.example",
+      apiKey: "k",
+      homeDir: home,
+      fetchImpl: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+
+    assert.equal(got.source, "lkg");
+    assert.equal(got.offline, undefined);
+    assert.equal(got.staleMarker, AGENT_DEF_STALE_MARKER);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

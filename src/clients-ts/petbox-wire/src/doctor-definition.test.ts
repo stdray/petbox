@@ -145,6 +145,22 @@ test("doctor --offline gates the LKG-cached definition, not the hard-coded built
       /drift check skipped \(--offline\)/,
       "an intentional --offline run must never be reported the same way as an unreachable server",
     );
+    // Round 2 of the same bug: the VERY FIRST line (the LKG stale-marker banner, printed by
+    // resolveApplyDefinition before doctor's own drift-check block even runs) used to say
+    // "PetBox unreachable" unconditionally for source:"lkg", never checking --offline. Sweep the
+    // WHOLE output, not just the drift-check line — a fix that only touches one line while an
+    // earlier line still lies is not a fix.
+    assert.match(out, /--offline/, `the LKG banner itself must name --offline. Full output:\n${out}`);
+    assert.doesNotMatch(
+      out,
+      /unreachable/i,
+      `an intentional --offline run must never print "unreachable" anywhere in its output. Full output:\n${out}`,
+    );
+    assert.doesNotMatch(
+      out,
+      /could not reach/i,
+      `an intentional --offline run must never print "could not reach" anywhere. Full output:\n${out}`,
+    );
     // The custom def's single worker role has no requiredCapabilities, so every known harness
     // passes trivially — doctor should exit clean.
     assert.equal(status, 0);
@@ -154,7 +170,46 @@ test("doctor --offline gates the LKG-cached definition, not the hard-coded built
   }
 });
 
-test("doctor --offline with NO registry entry / NO LKG cache falls back to the built-in default (unchanged behavior)", () => {
+test("doctor --offline, right after a run that JUST reached the live server (same LKG cache, same home): never says 'unreachable'/'could not reach' anywhere", async () => {
+  // The exact live regression report: `doctor` (no flag) reaches the server, writes the LKG
+  // cache; `doctor --offline` moments later, in the SAME home/registry, still described the
+  // cache as "PetBox unreachable" — a lie, since the very same run history proves otherwise.
+  const homeDir = freshDir("petbox-doctor-home-");
+  const projectDir = freshDir("petbox-doctor-proj-");
+  const fake = await startFakeAgentDefServer(DEFAULT_AGENT_DEFINITION);
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "doctor-offline-after-online-proj", fake.baseUrl);
+
+    // 1. Reach the live (fake) server for real — this writes the LKG cache.
+    const online = await runDoctorOnline(projectDir, homeDir);
+    assert.match(
+      online.stdout + online.stderr,
+      /using server definition/,
+      "setup: the first run must actually reach the server and write the LKG cache",
+    );
+
+    // 2. Same home, same registry, --offline this time — no live fetch is attempted, but the
+    // cache from step 1 exists, so this takes the "lkg" + offline path.
+    const { stdout, stderr, status } = runDoctor(projectDir, homeDir, ["--offline"]);
+    const out = stdout + stderr;
+
+    assert.match(out, /using LKG definition/, `Full output:\n${out}`);
+    assert.match(out, /--offline/, `the LKG banner must name --offline, not connectivity. Full output:\n${out}`);
+    assert.doesNotMatch(
+      out,
+      /unreachable/i,
+      `a server reached moments earlier in this SAME home must never be called unreachable just because this run passed --offline. Full output:\n${out}`,
+    );
+    assert.doesNotMatch(out, /could not reach/i, `Full output:\n${out}`);
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("doctor --offline with NO registry entry / NO LKG cache falls back to the built-in default, named as --offline (not 'no server'/'unreachable')", () => {
   const homeDir = freshDir("petbox-doctor-home-");
   const projectDir = freshDir("petbox-doctor-proj-");
   try {
@@ -162,10 +217,12 @@ test("doctor --offline with NO registry entry / NO LKG cache falls back to the b
     const { stdout, stderr, status } = runDoctor(projectDir, homeDir, ["--offline"]);
     const out = stdout + stderr;
     assert.match(out, /definition="default"/, `expected the built-in default when nothing is registered. Full output:\n${out}`);
-    assert.match(out, /offline default definition/);
+    assert.match(out, /--offline — using kit default baseline/, `Full output:\n${out}`);
     // --offline: a deliberate skip, never the "unreachable" wording (bug:
-    // doctor-reports-answering-server-unreachable).
+    // doctor-reports-answering-server-unreachable, both rounds).
     assert.match(out, /drift check skipped \(--offline\)/);
+    assert.doesNotMatch(out, /unreachable/i, `Full output:\n${out}`);
+    assert.doesNotMatch(out, /could not reach/i, `Full output:\n${out}`);
     assert.equal(status, 0);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });

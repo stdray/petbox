@@ -87,6 +87,14 @@ export function formatDefinitionSource(resolved: ResolvedAgentDefinition): strin
     // An answered server (401/403, or any other HTTP error) is never "unreachable" (bug:
     // doctor-reports-answering-server-unreachable, same class as
     // probe-collapses-http-errors-into-network) — only a genuine network/timeout miss is.
+    // A deliberate --offline run never attempted a fetch at all — checked FIRST, round 2 of the
+    // same bug: this branch used to say "server unreachable" for --offline too.
+    if (resolved.offline) {
+      return (
+        `LKG CACHE — --offline (no live fetch attempted) — key=${resolved.key} v${resolved.version}, ` +
+        `stale`
+      );
+    }
     if (resolved.forbidden) {
       return (
         `LKG CACHE — DEGRADED (server reachable but refused the request, 401/403) — ` +
@@ -105,6 +113,9 @@ export function formatDefinitionSource(resolved: ResolvedAgentDefinition): strin
     );
   }
   // source === "default"
+  if (resolved.offline) {
+    return "built-in copy — --offline, no LKG cache on disk (no live fetch attempted)";
+  }
   if (resolved.notFoundOnServer) {
     return "built-in copy — server reachable, no definition for this project yet (normal for a fresh project)";
   }
