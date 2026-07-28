@@ -363,7 +363,8 @@
 				<h3 class="font-semibold">Legend</h3>
 				<ul class="list-disc pl-5 space-y-1 mt-1">
 					<li><span class="font-semibold">Nodes:</span> a neutral box is an OPEN status; a green box is a delivered terminal (the node closes as done); a red box is a cancelled terminal. The <span class="font-mono">▶</span> marker flags the INITIAL status a new node starts in.</li>
-					<li><span class="font-mono">approve</span> — the transition is an approval gate: it belongs to the owner/maintainer (server-blocked when the definition sets <span class="font-mono">enforceApproval</span>, otherwise a binding convention).</li>
+					<li><span class="font-mono">approve (enforced)</span> — the transition is an approval gate the SERVER blocks: only an actor who can approve (the owner in the UI, <span class="font-mono">tasks:approve</span> over MCP) gets through. This is what the definition's <span class="font-mono">enforceApproval</span> turns on.</li>
+					<li><span class="font-mono">approve (not enforced)</span> — the same gate declared as a CONVENTION: it belongs to the owner, but nothing blocks it — an agent can push the transition through. The builtin presets declare their approval gates this way.</li>
 					<li><span class="font-mono">reason</span> — the transition must carry a non-empty reason.</li>
 					<li><span class="font-mono">artifact:&lt;slug&gt;</span> — the node must carry an <span class="font-mono">artifact:&lt;slug&gt;</span> comment before the transition fires (e.g. <span class="font-mono">artifact:spec_plan</span> = a written plan comment gates the move). Enforced.</li>
 					<li><span class="font-mono">checklist</span> — the transition declares free-text conditions to confirm first (a convention, not server-enforced; the process guide lists the items).</li>

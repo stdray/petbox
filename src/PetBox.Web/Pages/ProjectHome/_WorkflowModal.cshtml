@@ -17,7 +17,12 @@
 			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-neutral"></span> open</span>
 			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-success"></span> done</span>
 			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-error"></span> cancelled</span>
-			<span class="opacity-80">▶ initial · edge labels = gates (approve / reason / artifact:&lt;slug&gt;)</span>
+			<span class="opacity-80">▶ initial · edge labels = gates (approve / reason / artifact:&lt;slug&gt; / checklist)</span>
+			@* approval-gate-enforced-visible: the two approval markers say different things — one is
+			   blocked by the server, the other is owner-only on the honour system (an agent can still
+			   make the move). Spelled out here as well as in the label, because "who can actually do
+			   this" is the question the graph is opened to answer. *@
+			<span class="opacity-80"><span class="font-mono">approve (enforced)</span> = the server blocks it unless you can approve · <span class="font-mono">approve (not enforced)</span> = owner-only by convention, an agent can push it too</span>
 		</div>
 	</div>
 	<div class="modal-backdrop" data-testid="workflow-modal-backdrop"></div>

@@ -19,6 +19,9 @@ public sealed class WorkflowVizTests(WebAppFixture app, ITestOutputHelper output
 	const string Ws = "wfviz-ws";
 	const string Proj = "wfviz-proj";
 	const string Board = "intake";
+	// A second board on the `classic` preset: its Review -> Done edge is the live example of an
+	// approval gate the server does NOT enforce, which is what the label split has to show.
+	const string ClassicBoard = "classic";
 
 	IBrowserContext? _ctx;
 	IPage? _page;
@@ -38,6 +41,8 @@ public sealed class WorkflowVizTests(WebAppFixture app, ITestOutputHelper output
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
 		if (!await tasks.BoardExistsAsync(Proj, Board))
 			await tasks.CreateBoardAsync(Proj, Board, "intake", "workflow viz fixture", null);
+		if (!await tasks.BoardExistsAsync(Proj, ClassicBoard))
+			await tasks.CreateBoardAsync(Proj, ClassicBoard, "classic", "soft-gate fixture", null);
 
 		_ctx = await app.NewContextAsync(authenticated: true);
 		_page = await _ctx.NewPageAsync();
@@ -78,5 +83,22 @@ public sealed class WorkflowVizTests(WebAppFixture app, ITestOutputHelper output
 		// Closing the modal tears down the graph.
 		await _page.GetByTestId("workflow-modal-close").ClickAsync();
 		await Expect(svg).ToHaveCountAsync(0);
+	}
+
+	// approval-gate-enforced-visible: end-to-end proof that the enforcement flag survives the whole
+	// chain — WorkflowTransition.EnforceApproval → the JSON island (WorkflowGraphJson) → the edge
+	// label. `classic`'s Review -> Done is owner-only by CONVENTION, so the graph must say "not
+	// enforced" rather than the bare "approve" that read like a server-blocked gate.
+	[Fact]
+	public async Task ClassicBoard_UnenforcedApprovalGate_LabelsTheEdgeAsNotEnforced()
+	{
+		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{ClassicBoard}");
+		await _page.GetByTestId("workflow-open").First.ClickAsync();
+
+		var modal = _page.GetByTestId("workflow-modal");
+		await Expect(_page.GetByTestId("workflow-svg")).ToBeVisibleAsync();
+		await Expect(modal).ToContainTextAsync("approve (not enforced)");
+		// The legend distinguishes the two, so the label is decodable even on first contact.
+		await Expect(_page.GetByTestId("workflow-legend")).ToContainTextAsync("an agent can push it too");
 	}
 }

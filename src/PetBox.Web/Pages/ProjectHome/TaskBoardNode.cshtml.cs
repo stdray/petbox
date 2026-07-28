@@ -81,6 +81,13 @@ public sealed class TaskBoardNodeModel : PageModel
 	// Legal next statuses from the node's current status (edit-status). The status form offers
 	// only these; an empty list means no transition is available (e.g. a terminal status).
 	public IReadOnlyList<string> NextStatuses { get; private set; } = [];
+	// The same legal next statuses, each carrying the approval gate DECLARED on the transition that
+	// reaches it (approval-gate-enforced-visible). The select used to render a gated target exactly
+	// like an ungated one — classic's `Done` (owner-only, unenforced) looked like `Todo` — so the one
+	// question a gate exists to answer ("is this mine alone, or can an agent push it too?") was
+	// invisible at the only place the move is made. Marking only: the option stays selectable, the
+	// owner is an approving actor either way (ApplyAsync passes TasksActor.Approver).
+	public IReadOnlyList<NextStatusOption> NextStatusOptions { get; private set; } = [];
 	// Set when a write was rejected (a guard violation or an optimistic-concurrency conflict):
 	// the edit is re-rendered with the message inline rather than silently dropped.
 	public string? Error { get; private set; }
@@ -264,7 +271,16 @@ public sealed class TaskBoardNodeModel : PageModel
 		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
 
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
-		NextStatuses = Runtime.For(detail.Kind, type)?.NextFrom(detail.Node.Status) ?? [];
+		var workflow = Runtime.For(detail.Kind, type);
+		NextStatuses = workflow?.NextFrom(detail.Node.Status) ?? [];
+		// Same list, plus the gate declared on the edge that reaches each target (the UI marks it;
+		// nothing here blocks — the service re-validates the move on POST either way).
+		NextStatusOptions = [.. NextStatuses.Select(s =>
+		{
+			var t = workflow?.Transition(detail.Node.Status, s);
+			return new NextStatusOption(
+				s, Runtime.StatusName(detail.Kind, s), t?.RequiresApproval ?? false, t?.EnforceApproval ?? false);
+		})];
 
 		// The board's FSM surface for the "View workflow" modal (a few KB — no extra endpoint).
 		WorkflowJson = WorkflowGraphJson.Serialize(await _tasks.GetBoardWorkflowAsync(ProjectKey, detail.Board, ct));
@@ -288,4 +304,31 @@ public sealed class TaskBoardNodeModel : PageModel
 			: MemoryRefs;
 		return Page();
 	}
+}
+
+// One legal next status for the node page's status select, with the approval gate declared on the
+// transition that reaches it. The wording lives here rather than in the Razor so the modal's edge
+// labels (ts/workflow-viz.ts gateLabel/gateTooltip) and this select stay phrased the same way — one
+// vocabulary for one concept, whichever surface the user meets first.
+public sealed record NextStatusOption(string Slug, string Name, bool RequiresApproval, bool EnforceApproval)
+{
+	// "" (no gate) | "enforced" | "convention" — also the option's data attribute, so a test can
+	// assert the marker without matching prose.
+	public string GateMode => !RequiresApproval ? string.Empty : EnforceApproval ? "enforced" : "convention";
+
+	// Suffix appended to the option text. Visible in the closed select too, which is the point:
+	// the gate must be readable before the move, not only in the dropdown.
+	public string GateMarker => GateMode switch
+	{
+		"enforced" => " · approve (enforced)",
+		"convention" => " · approve (not enforced)",
+		_ => string.Empty,
+	};
+
+	public string GateTitle => GateMode switch
+	{
+		"enforced" => "Approval gate: owner-only AND enforced — the server blocks this move for anyone who cannot approve.",
+		"convention" => "Approval gate by convention: owner-only, but the server does NOT block it — an agent can push this move too.",
+		_ => string.Empty,
+	};
 }

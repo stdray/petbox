@@ -95,7 +95,24 @@
 			}
 			else
 			{
-				<p class="text-sm opacity-80">Provision the four linked boards — <span class="font-mono">intake</span>, <span class="font-mono">ideas</span>, <span class="font-mono">spec</span>, <span class="font-mono">work</span> — as a single unit and auto-wire work → spec. Idempotent (adds only what's missing). The four kinds are one-per-project; pick this <strong>or</strong> simple boards.</p>
+				@* ui-preset-lead-vs-select: this lead used to state the QUARTET's outcome
+				   unconditionally — four linked boards, work auto-wired to spec — directly above a
+				   select that also offers `classic`. Nothing connected the two, so a first-timer who
+				   picked Classic read a promise of four boards and got one. The lead is now one
+				   paragraph PER preset, rendered from the preset registry itself (a third preset
+				   needs no markup change), all but the selected one hidden; ts/methodology-preset.ts
+				   swaps them on `change`. The first preset is the select's initial value, so the
+				   server-rendered state is already correct with JS off. *@
+				<div class="text-sm opacity-80" data-testid="methodology-preset-lead">
+					@{ var leadFirst = true; }
+					@foreach (var p in Model.Presets)
+					{
+						<p data-preset-lead="@p.Slug" hidden="@(leadFirst ? null : "hidden")">
+							Provision <strong>@p.DisplayName</strong> — @(p.Kinds.Count == 1 ? "one board" : $"{p.Kinds.Count} linked boards"): <span class="font-mono">@string.Join(" · ", p.Kinds.Select(k => k.ToString().ToLowerInvariant()))</span>. @p.Description Idempotent (adds only what's missing); these kinds are one-per-project — pick a methodology preset <strong>or</strong> simple boards.
+						</p>
+						leadFirst = false;
+					}
+				</div>
 				<form method="post" asp-page-handler="EnableMethodology" class="card-actions mt-3 items-end gap-2" data-testid="methodology-enable-form">
 					@Html.AntiForgeryToken()
 					<label class="form-control">

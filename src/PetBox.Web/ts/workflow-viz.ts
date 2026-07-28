@@ -17,6 +17,10 @@ export interface WorkflowEdge {
 	readonly from: string;
 	readonly to: string;
 	readonly requiresApproval?: boolean;
+	// Whether the SERVER blocks the approval gate (schema v2 `enforceApproval`). Meaningful only
+	// with requiresApproval: true = nobody without approve rights gets through, false = the edge is
+	// owner-only by CONVENTION and an agent can still push it. The two render as different labels.
+	readonly enforceApproval?: boolean;
 	readonly requiresReason?: boolean;
 	readonly preconditionArtifact?: string | null;
 	// True when the transition declares a pre-transition checklist (convention gate).
@@ -91,13 +95,26 @@ const norm = (s: string): string => s.toLowerCase();
 
 const isTerminal = (s: WorkflowStatusNode): boolean => s.kind === "TerminalOk" || s.kind === "TerminalCancel";
 
-function gateLabel(t: WorkflowEdge): string {
+// The compact edge label. An approval gate is NOT one thing: `requiresApproval` declares the edge
+// owner-only, `enforceApproval` says whether the server blocks it — a plain "approve" hid that
+// difference and read as a hard gate on edges nothing enforces (classic's Review→Done). Both halves
+// now spell themselves out, so the marker carries its meaning without the legend.
+export function gateLabel(t: WorkflowEdge): string {
 	const parts: string[] = [];
-	if (t.requiresApproval) parts.push("approve");
+	if (t.requiresApproval) parts.push(t.enforceApproval ? "approve (enforced)" : "approve (not enforced)");
 	if (t.requiresReason) parts.push("reason");
 	if (t.preconditionArtifact) parts.push(`artifact:${t.preconditionArtifact}`);
 	if (t.checklist) parts.push("checklist");
 	return parts.join(" ");
+}
+
+// Hover text for the label — the sentence version of the approval half, which is the one whose
+// consequence ("an agent can still make this move") does not fit in an edge label.
+export function gateTooltip(t: WorkflowEdge): string {
+	if (!t.requiresApproval) return "";
+	return t.enforceApproval
+		? "Approval gate: owner-only AND enforced — the server blocks this move for anyone who cannot approve."
+		: "Approval gate by convention: owner-only, but the server does NOT block it — an agent can push this move too.";
 }
 
 interface Placed {
@@ -340,6 +357,14 @@ export function renderWorkflow(container: HTMLElement, graph: WorkflowGraph): vo
 			);
 			const text = el("text", { x: spot.x, y: spot.y + 3.5, "text-anchor": "middle", "font-size": 10, fill: LABEL_FG });
 			text.textContent = label;
+			const tip = gateTooltip(t);
+			if (tip) {
+				// Native SVG tooltip — no library, no positioning code; carries the consequence the
+				// compact label can only hint at.
+				const title = el("title", {});
+				title.textContent = tip;
+				text.appendChild(title);
+			}
 			labelLayer.appendChild(text);
 		}
 	}
