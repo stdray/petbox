@@ -129,9 +129,14 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 
 // GET /api/memory/{projectKey}/canon (spec agent-wiring, memory-canon-storage): the wiring-hook
 // read surface for the curated memory canon. Returns the project's canon index and the shared
-// workspace canon index; an EMPTY queried scope carries the empty-canon nudge (still 200), not a
-// bare null — null is reserved for a leg never asked (no workspace) or withheld (sandbox
+// workspace canon index; an EMPTY queried scope carries an empty Body at Version 0 (still 200),
+// not a bare null — null is reserved for a leg never asked (no workspace) or withheld (sandbox
 // containment); no key is 401.
+//
+// Card canon-banner-empty-notice-unlabelled: the empty leg's Body used to carry a fixed
+// human-readable nudge string. It is now "" — Version 0 alone is the discriminator; the
+// human-readable text is synthesized client-side (canon.ts's EMPTY_CANON_TEXT), attributed to
+// the specific leg under its own heading, never taken from this wire response.
 public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, IAsyncLifetime
 {
 	const string TestProjectKey = MemoryCanonApiFixture.TestProjectKey;
@@ -272,25 +277,28 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 
 	// canon-invisible-and-unfed: an empty scope used to answer with a bare null part — 200,
 	// carrying nothing, no hint that a `canon` store even exists. Both legs are QUERIED here
-	// (an ordinary key, workspace container reachable) and both come back with the curation
-	// nudge instead of vanishing silently; the store/key/budget knowledge it carries used to
-	// live ONLY in MemoryService.cs's comments.
+	// (an ordinary key, workspace container reachable) and both come back at Version 0 instead
+	// of vanishing silently — that discriminator is what the store/key/budget knowledge used
+	// to live ONLY in MemoryService.cs's comments now rides on.
+	//
+	// canon-banner-empty-notice-unlabelled: Body is "" here, not a curation-nudge string — the
+	// nudge PROSE is the kit's job (canon.ts), attributed to the specific leg under its own
+	// heading; this endpoint only signals emptiness (Version 0), never renders it as text.
 	[Fact]
-	public async Task Canon_NoEntries_ReturnsEmptyMarkerOnBothLegs_Still200()
+	public async Task Canon_NoEntries_ReturnsEmptyBodyVersion0OnBothLegs_Still200()
 	{
-		const string EmptyMarker = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
-
 		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		var body = await resp.Content.ReadFromJsonAsync<CanonResponse>();
 		body.Should().NotBeNull();
-		body!.Project.Should().NotBeNull("a queried scope is never a bare null — empty gets the curation nudge");
-		body.Project!.Body.Should().Be(EmptyMarker);
+		body!.Project.Should().NotBeNull("a queried scope is never a bare null — empty gets Version 0, not silence");
+		body.Project!.Body.Should().Be("");
 		body.Project.Version.Should().Be(0);
 		body.Workspace.Should().NotBeNull("the workspace container IS reachable for this ordinary key — it is just empty");
-		body.Workspace!.Body.Should().Be(EmptyMarker);
+		body.Workspace!.Body.Should().Be("");
+		body.Workspace.Version.Should().Be(0);
 	}
 
 	[Fact]

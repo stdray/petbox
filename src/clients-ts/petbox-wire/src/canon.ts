@@ -6,10 +6,18 @@
 //   GET {baseUrl}/api/memory/{project}/canon   (header X-Api-Key)
 //   → 200 { "project": {body,updatedAt,version}|null, "workspace": {...}|null }
 // A LEG that was queried and has nothing curated yet is NOT null — MemoryApi.CanonAsync (card
-// canon-invisible-and-unfed) answers it with a fixed nudge body and Version 0 instead, so the
-// empty state is visible rather than silent. null stays reserved for a leg this caller cannot
-// see at all (no workspace, or hidden by sandbox containment). See legStatus()/EMPTY_CANON_VERSION
-// below for how this kit tells that nudge apart from real curated text.
+// canon-invisible-and-unfed) answers it with Version 0 instead, so the empty state is visible
+// rather than silent. null stays reserved for a leg this caller cannot see at all (no workspace,
+// or hidden by sandbox containment). See legStatus()/EMPTY_CANON_VERSION below for how this kit
+// tells "queried, empty" apart from real curated text.
+//
+// Card canon-banner-empty-notice-unlabelled: the empty leg's Body is NOT a human-readable nudge
+// (it used to be — a fixed prose string baked into the wire response) — classification is by
+// Version alone, and the human-readable text ("canon is empty — curate with...") is synthesized
+// HERE (EMPTY_CANON_TEXT below), attributed to the specific leg (Project/Workspace) under its
+// own heading. The previous shape glued that nudge onto the end of the block with no heading at
+// all, so a populated project section followed by an unheaded "canon is empty" line read as a
+// claim about the WHOLE canon rather than just the empty workspace leg.
 // We turn that into a markdown block appended to the session context. On any failure we fall
 // back to a local cache (~/.petbox/cache/{project}.canon.md) written on the last good fetch,
 // marked stale. This is best-effort and TOTAL: every path returns string | null, never throws.
@@ -35,10 +43,17 @@ type CanonResponse = { project?: CanonPart | null; workspace?: CanonPart | null 
 
 // The server's discriminator for "this leg was queried but nothing is curated yet" (card
 // canon-invisible-and-unfed): MemoryApi.CanonAsync answers an empty/absent store with a
-// CanonPart carrying a fixed nudge string AND Version 0. Version 0 is never assigned to a real
-// entry (TemporalStore's version cursor starts at 1 on first insert), so it is a safe, wording-
-// independent signal — this kit does not need to string-match the marker text to recognize it.
+// CanonPart at Version 0 (Body is "" — see card canon-banner-empty-notice-unlabelled; an older
+// server may still send prose in Body at Version 0, which is fine, since classification below
+// never reads Body for this check). Version 0 is never assigned to a real entry (TemporalStore's
+// version cursor starts at 1 on first insert), so it is a safe, wording-independent signal.
 const EMPTY_CANON_VERSION = 0;
+
+// The kit's OWN prose for a curated-empty leg — NEVER sourced from the server's Body. The server
+// only signals emptiness (Version 0); turning that into a human-readable instruction, and
+// attributing it to the SPECIFIC leg it describes, is this renderer's job (card
+// canon-banner-empty-notice-unlabelled item 3).
+const EMPTY_CANON_TEXT = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
 
 function cacheDir(): string {
   return join(homedir(), ".petbox", "cache");
@@ -49,18 +64,21 @@ function cachePath(project: string): string {
 }
 
 type LegStatus =
-  | { kind: "absent" } // leg was null, or body missing/blank — pre-fix server, or a leg never asked
-  | { kind: "empty"; marker: string } // leg was queried and is curated-empty (Version 0 nudge)
+  | { kind: "absent" } // leg was null, or never queried — pre-fix server, or a leg this caller cannot see
+  | { kind: "empty" } // leg was queried and is curated-empty (Version 0) — no body text carried, see EMPTY_CANON_TEXT
   | { kind: "content"; body: string }; // leg carries real curated text
 
-// Classify one canon leg. A part with a non-blank body and Version 0 is the server's
-// empty-canon nudge, not real project/workspace knowledge — it must never be presented (or
-// cached) as though it were curated content.
+// Classify one canon leg. Version is checked BEFORE body content: Version 0 means "queried,
+// curated-empty" regardless of what Body holds (a fixed-up server sends "", an older server may
+// still send prose — either way it is never real project/workspace knowledge and must never be
+// presented, or cached, as though it were curated content). Checking body-blankness FIRST (the
+// previous order) misclassified a Version-0/Body-"" leg as "absent", losing the "queried but
+// empty" distinction the whole endpoint exists to carry (canon-invisible-and-unfed).
 function legStatus(part: CanonPart | null | undefined): LegStatus {
   if (!part || typeof part.body !== "string") return { kind: "absent" };
+  if (part.version === EMPTY_CANON_VERSION) return { kind: "empty" };
   const body = part.body.trim();
   if (body.length === 0) return { kind: "absent" };
-  if (part.version === EMPTY_CANON_VERSION) return { kind: "empty", marker: body };
   return { kind: "content", body };
 }
 
@@ -68,8 +86,16 @@ function legStatus(part: CanonPart | null | undefined): LegStatus {
 // (pre-fix server, or neither leg has ever been queried/curated).
 //
 // `hasContent` tells the caller whether the block carries REAL curated text — the empty-canon
-// nudge alone does NOT count, so fetchCanonBlock below knows not to let it displace a
+// notice alone does NOT count, so fetchCanonBlock below knows not to let it displace a
 // previously cached real canon (see that function's comment on cache stickiness).
+//
+// Card canon-banner-empty-notice-unlabelled (acceptance criteria): (1) an empty leg is always
+// attributed to the SPECIFIC part it describes — via its OWN heading, never bare prose glued to
+// the end of the block; (2) a non-empty leg is never left adjacent to an empty-notice without a
+// separating heading between them. Both legs get a heading unconditionally when rendered
+// (content or empty) — the heading text itself ("... — empty") is what tells the two states
+// apart, so there is never a populated section immediately followed by an unheaded instruction
+// that could be misread as a claim about the whole canon.
 function buildBlock(project: string, resp: CanonResponse | null): { text: string; hasContent: boolean } | null {
   if (!resp) return null;
   const projectLeg = legStatus(resp.project);
@@ -78,30 +104,19 @@ function buildBlock(project: string, resp: CanonResponse | null): { text: string
 
   const hasContent = projectLeg.kind === "content" || workspaceLeg.kind === "content";
 
-  // Both legs share the SAME fixed marker text when both are empty — collecting into a Set
-  // dedups that case down to the one line the card's acceptance criterion asks for, instead of
-  // printing the identical nudge twice (which would read as two facts, not one instruction).
-  const markers = new Set<string>();
-  if (projectLeg.kind === "empty") markers.add(projectLeg.marker);
-  if (workspaceLeg.kind === "empty") markers.add(workspaceLeg.marker);
-
   let out = `## PetBox memory canon`;
   if (hasContent) {
     out += `\n\nThe curated memory index (canon) for this project — pointers to durable facts; pull full bodies via memory_get/memory_search.`;
   }
-  // Real content is attributed to its leg with a heading — it IS a fact about the
-  // project/workspace. The empty-canon nudge is deliberately NOT put under a "### Project
-  // (name)" heading: that framing would make an instruction ("curate with memory_upsert") read
-  // as though it were a fact ABOUT the named project, which is exactly what the card's
-  // acceptance criterion rules out.
   if (projectLeg.kind === "content") {
     out += `\n\n### Project (${project})\n\n${projectLeg.body}`;
+  } else if (projectLeg.kind === "empty") {
+    out += `\n\n### Project (${project}) — empty\n\n${EMPTY_CANON_TEXT}`;
   }
   if (workspaceLeg.kind === "content") {
     out += `\n\n### Workspace\n\n${workspaceLeg.body}`;
-  }
-  for (const marker of markers) {
-    out += `\n\n${marker}`;
+  } else if (workspaceLeg.kind === "empty") {
+    out += `\n\n### Workspace — empty\n\n${EMPTY_CANON_TEXT}`;
   }
   return { text: out, hasContent };
 }
