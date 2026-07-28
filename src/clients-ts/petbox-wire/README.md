@@ -94,13 +94,30 @@ stale; only with no cache at all does it fall back to the built-in default defin
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. |
-| `1` | Hard failure — invalid definition, unexpected throw. |
+| `0` | Success — every requested step ran. |
+| `1` | Hard failure — invalid definition, unexpected throw, a refused clobbering write, a rejected or unreachable API key. |
 | `2` | Usage / bad arguments. |
 | `3` | Truthfulness policy block — some roles/harnesses were refused. **A partial write is possible.** |
+| `4` | **Incomplete** — a requested step did not run for a reason you did not ask for. |
 
 Only `apply` and `doctor` use the full taxonomy. The **full wire** exits `2` for usage errors and `1`
-for *any* other failure — do not script against `3` there.
+for *any* other failure — do not script against `3` or `4` there.
+
+### `4` is new, and it is a breaking change
+
+A run that skipped a step used to exit `0`, so `if petbox-wire apply; then …` could not tell a
+partial run from a complete one — the honesty lived only in stdout, where no script reads it. Today
+`apply` exits `4` when it had to skip a step for a reason outside your control (the workspace probe
+that gates the skills refresh failed). **If you script against these codes, treat `4` as "retry
+later", not as success.**
+
+An **intentional** skip still exits `0`: `--offline` and running in a directory that is not a
+registered project are things you asked for, and alarming on them would only teach you to ignore the
+alarm.
+
+When several conditions hold at once the stronger one owns the code — `1` and `3` both outrank `4`.
+The skipped step is never lost: it stays in the `summary` JSON those failures print, under
+`skillsSkipped`.
 
 ## Where things live
 

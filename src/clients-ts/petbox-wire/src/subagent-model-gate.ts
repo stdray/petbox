@@ -143,6 +143,17 @@ const invokedDirectly =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
+  // DECIDED (wire-six-remaining-exit-races, package-wide sweep), not overlooked: these two stay
+  // a hard `process.exit()` with status 0, and the reasoning is written down here and in
+  // wire-process-exit-whitelist.test.ts rather than left to be re-derived.
+  //
+  // The defect being closed elsewhere is "hard exit while libuv is still closing a socket left by
+  // a just-completed fetch". This file makes NO network call at all (no `fetch` anywhere in it —
+  // it reads stdin, decides, writes stdout), so there is no socket to race. What it does have is
+  // the opposite risk: it is a PreToolUse hook on the hot path of EVERY tool call, and a process
+  // that lingers wedges the session (this file's header records the ~2h wedge that taught that).
+  // A guaranteed-immediate exit is the safer end here, and truncation is already excluded because
+  // writeStdout awaits the write callback before main() resolves.
   main()
     .then(() => process.exit(0))
     .catch(() => process.exit(0)); // the invariant applies to main() itself, not just its try/catch

@@ -5,11 +5,15 @@
 // (selfsmoke-failure-prints-done): a partial run reads as a complete one because the LAST line a
 // human sees never says otherwise.
 //
-// Scope per the card: WIRE_EXIT must NOT change on this path (owner-reserved contract — see
-// wire-exit.ts) — only the trailing message and the structured `summary` JSON must stop lying.
+// UPDATED by wire-exit-incomplete-is-invisible-to-automation. The original card deliberately
+// froze the exit code and fixed only the TEXT; the owner then lifted that boundary, because a
+// truthful message no automation reads is still invisible ("частичный apply неотличим от полного
+// по коду возврата"). So an UNINTENTIONAL skip now also exits WIRE_EXIT.incomplete (4) — a
+// BREAKING change to a published contract, asserted here rather than discovered in someone's CI.
+//
+// Unchanged, and re-asserted below because it is what keeps code 4 worth listening to:
 // `--offline` and "directory not registered" are INTENTIONAL skips (the user asked for them) and
-// must keep behaving exactly as before (full "done —" line, exit 0); only a probe FAILURE is
-// unintentional and must be visible.
+// still exit 0 with the full "done —" line. Only a probe FAILURE is unintentional.
 //
 // wire.ts runs main() at module top level (see its own file header), so `apply` can only be
 // exercised as a real subprocess — same spawn-based technique as apply-exit-race-libuv.test.ts /
@@ -47,7 +51,25 @@ const DEF_RECORD = {
   },
 };
 
-function startFakeServer(validateHandler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void): Promise<{
+// A definition whose second role requires a capability opencode does NOT declare
+// (dynamic_model_at_spawn — see harness-capabilities.ts), so the truthfulness gate blocks that
+// harness while claude-code/droid still write. Used by the priority test below.
+const DEF_RECORD_TRUTHFULNESS_BLOCK = {
+  key: "default",
+  version: 1,
+  definition: {
+    name: "apply-skills-skip-truthfulness-def",
+    roles: [
+      { slug: "worker", tier: "worker", requiredCapabilities: [] },
+      { slug: "orchestrator", tier: "orchestrator", requiredCapabilities: ["dynamic_model_at_spawn"] },
+    ],
+  },
+};
+
+function startFakeServer(
+  validateHandler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void,
+  defRecord: unknown = DEF_RECORD,
+): Promise<{
   baseUrl: string;
   close: () => Promise<void>;
 }> {
@@ -56,7 +78,7 @@ function startFakeServer(validateHandler: (req: import("node:http").IncomingMess
       const url = req.url ?? "";
       if (url.includes("/agent-defs/")) {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(DEF_RECORD));
+        res.end(JSON.stringify(defRecord));
         return;
       }
       if (url.includes("/api/auth/validate")) {
@@ -124,7 +146,7 @@ function runApplyOffline(cwd: string, homeDir: string): { stdout: string; stderr
   return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", status: res.status };
 }
 
-test("apply (online, workspace probe hits HTTP 500): UNINTENTIONAL skills skip — exit code UNCHANGED (0), but the trailing line names the skip and summary carries it", async () => {
+test("apply (online, workspace probe hits HTTP 500): UNINTENTIONAL skills skip — exits 4 (incomplete), names the skip, and summary carries it", async () => {
   const homeDir = freshDir("petbox-apply-skip-home-");
   const projectDir = freshDir("petbox-apply-skip-proj-");
   const fake = await startFakeServer((_req, res) => {
@@ -137,8 +159,13 @@ test("apply (online, workspace probe hits HTTP 500): UNINTENTIONAL skills skip �
     const { stdout, stderr, status } = await runApplyOnline(projectDir, homeDir);
     const out = stdout + stderr;
 
-    // The card's explicit boundary: WIRE_EXIT must not change on this path.
-    assert.equal(status, WIRE_EXIT.ok, `exit code must stay 0 (visibility fix, not a new exit code). Full output:\n${out}`);
+    // THE breaking change: this used to be 0, which is why a CI step could not see a partial run.
+    assert.equal(
+      status,
+      WIRE_EXIT.incomplete,
+      `an unintentional skip must now be visible in the exit code, not only in stdout. Full output:\n${out}`,
+    );
+    assert.notEqual(status, 127, `must never surface as 127 (the libuv-race symptom). Full output:\n${out}`);
 
     // The old lie: this exact bare line must NOT be the trailing message when the skip was
     // unintentional.
@@ -188,6 +215,92 @@ test("apply --offline: skills skip is INTENTIONAL — unchanged behavior, still 
     // guard against this fix's `unintendedSkillsSkip` branch over-firing on an intentional skip.
     assert.doesNotMatch(out, /"skillsSkipped"/, `an intentional --offline skip must not flip the run onto the incomplete/summary-printing path. Full output:\n${out}`);
   } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+// ---- priority when several conditions hold at once -------------------------
+//
+// wire-exit.test.ts pins the ORDER in the pure classifier; these two prove the wiring end-to-end,
+// which is what the card asked for ("реши явно, что важнее, и ЗАКРЕПИ ТЕСТОМ", not "leave it to
+// the order of the if-statements"). Both scenarios have an unintentional skills skip AND a
+// stronger condition; the stronger one must own the exit code, and the skip must still be
+// reported inside the summary rather than disappearing.
+
+test("PRIORITY: clobber refusal (1) outranks incomplete (4) — and the skip is still named in summary", async () => {
+  const homeDir = freshDir("petbox-apply-prio-home-");
+  const projectDir = freshDir("petbox-apply-prio-proj-");
+  const fake = await startFakeServer((_req, res) => {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "internal" }));
+  });
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "apply-prio-clobber-proj", fake.baseUrl);
+
+    // A real, non-PetBox file exactly where the sole role's claude-code artifact must go →
+    // writeArtifact refuses → clobberBlocked. The 500 above independently causes the
+    // unintentional skills skip, so BOTH conditions hold on this one run.
+    mkdirSync(join(projectDir, ".claude", "agents"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".claude", "agents", "petbox-worker.md"),
+      "# not a petbox file\nsome real content the owner wrote by hand\n",
+      "utf8",
+    );
+
+    const { stdout, stderr, status } = await runApplyOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.equal(
+      status,
+      WIRE_EXIT.hard,
+      `a refused write must outrank an incomplete run (expected ${WIRE_EXIT.hard}, not ` +
+        `${WIRE_EXIT.incomplete}). Full output:\n${out}`,
+    );
+    assert.match(out, /hard failure/, `Full output:\n${out}`);
+    // The weaker fact must not vanish just because it lost the exit code.
+    assert.match(
+      out,
+      /"skillsSkipped":\{"intentional":false,/,
+      `the losing condition must still be reported in the summary. Full output:\n${out}`,
+    );
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("PRIORITY: truthfulness block (3) outranks incomplete (4) — and the skip is still named in summary", async () => {
+  const homeDir = freshDir("petbox-apply-prio-home-");
+  const projectDir = freshDir("petbox-apply-prio-proj-");
+  const fake = await startFakeServer(
+    (_req, res) => {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "internal" }));
+    },
+    DEF_RECORD_TRUTHFULNESS_BLOCK,
+  );
+  try {
+    writeOnlineRegistry(homeDir, projectDir, "apply-prio-truth-proj", fake.baseUrl);
+
+    const { stdout, stderr, status } = await runApplyOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.equal(
+      status,
+      WIRE_EXIT.truthfulness,
+      `a policy block must outrank an incomplete run (expected ${WIRE_EXIT.truthfulness}, not ` +
+        `${WIRE_EXIT.incomplete}). Full output:\n${out}`,
+    );
+    assert.match(out, /truthfulness partial/, `Full output:\n${out}`);
+    assert.match(
+      out,
+      /"skillsSkipped":\{"intentional":false,/,
+      `the losing condition must still be reported in the summary. Full output:\n${out}`,
+    );
+  } finally {
+    await fake.close();
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
   }
