@@ -125,7 +125,9 @@ WORK rules: a new feature/bug MUST link a spec node — pass links:{task_spec: <
 slug or nodeId>}; pin the spec board via board_create(wiredBoard) or board_set_wire.
 Type `chore` (internal engineering hygiene: tests, flakes, refactoring, infra) is the
 one exception — same FSM, no task_spec link required. Statuses Pending->InProgress->Review->Done;
-your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
+the approval gate (check tasks_methodology_guide, not memory) caps you at the status before it —
+Review here — never set Done yourself; it's a soft convention the maintainer relies on. Blocked
+needs blockedBy.
 
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one
 board, omit for the project), with q a hybrid relevance search; both modes take status[],

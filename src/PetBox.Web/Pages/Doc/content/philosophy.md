@@ -26,7 +26,7 @@ State used to smear across many places (a plan file, a board, parking, sessions,
 
 ## Task lifecycle + the approve gate
 
-`backlog → (selected into an iteration) → InProgress → Review (agent finished) → tests → APPROVE (maintainer) → Done`; reject → back with a reason. **An agent never sets the final `Done` — its ceiling is `Review`.** The maintainer confirms.
+`backlog → (selected into an iteration) → InProgress → Review (agent finished) → tests → APPROVE (maintainer) → Done`; reject → back with a reason. **Where a project declares this approval gate, an agent never sets the final `Done` itself — its ceiling is the status right before the gate (`Review` here); check `tasks_methodology_guide` for the live rule rather than assuming it.** The maintainer confirms, and the gate holds by convention, not a server block.
 
 ## Computed spec status — bottom-up, type-aware
 

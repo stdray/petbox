@@ -47,8 +47,10 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
 `backlog → (selected into an iteration) → InProgress → Review (agent finished) →
 tests → APPROVE (maintainer) → Done`; reject → back with a reason.
 
-**An agent never sets the final `Done` itself — its ceiling is `Review`.** The
-maintainer confirms.
+**An agent never sets the final `Done` itself — its ceiling is the status right before
+the approval gate (`Review` here); check `tasks_methodology_guide` for the live rule, not
+memory, since a different preset can place the gate elsewhere or skip it.** The maintainer
+confirms `Done`, and (see below) the gate is a soft convention, not a server block.
 
 **Hand over a link, not a slug.** Whenever the agent creates a node the maintainer should
 see, or needs a decision from them on one (drive a task to `Review` / an idea to `Review`,
@@ -64,7 +66,9 @@ Symmetric to the task gate: an Idea (deliberation) flows
 thinking.
 
 - The agent's ceiling is **`Review`**, not `accepted` — exactly as its ceiling on a task
-  is `Review`, not `Done`. The agent works the idea, puts it in `Review`, and stops.
+  is `Review`, not `Done` (this project's own declared gate, per `tasks_methodology_guide`;
+  not a universal rule to assume elsewhere). The agent works the idea, puts it in `Review`,
+  and stops.
 - **An idea may not enter `Review` without a `spec_plan` artifact** — an
   `artifact:spec_plan`-tagged comment on the idea stating the concrete spec changes. No
   plan, no review.

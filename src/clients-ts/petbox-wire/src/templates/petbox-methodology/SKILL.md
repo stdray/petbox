@@ -40,10 +40,14 @@ Each entry is `{ kind, rule, detail }`. `kind` is the board/type the rule applie
 idea-kind invariant doesn't gate a work-kind transition, and vice versa). `rule` tells you what
 to check for — don't assume any of these are absent just because you haven't seen them fire yet:
 
-- `approval_gate` / `approval_gate_enforced` — a transition (e.g. into an accepted/Done-like
-  status) is owner-only; the agent's ceiling is one step below it. The `_enforced` variant means
-  the server rejects the agent's own attempt; the plain form is convention only — respect it
-  anyway, the maintainer is relying on it.
+- `approval_gate` / `approval_gate_enforced` — **conditional, not universal:** only where this
+  project's live rules declare one on a `kind` does the agent have a ceiling at all; where
+  declared, the ceiling is the status immediately before the gated one (e.g. `Review` before a
+  `Done`-like status). Never assume `Review` — or any status — is the ceiling from memory or
+  from another project; read it off this guide's `invariants` every session. The `_enforced`
+  variant means the server itself rejects the agent's own attempt at the gated transition; the
+  plain form is a SOFT gate — the server does not block it, it holds only because the agent
+  honors it — respect it anyway, the maintainer is relying on that honesty.
 - `precondition_artifact` — a transition requires a tagged comment (an "artifact") to already
   exist on the node; `detail` names the tag.
 - `reason_required` — the transition call must carry a reason string.
