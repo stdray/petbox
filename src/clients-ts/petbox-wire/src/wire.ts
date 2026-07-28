@@ -832,7 +832,15 @@ async function runApply(argv: string[]): Promise<void> {
   // seedDefaultRoleBindingsIfMissing's doc comment). No-op when roles.json already exists.
   seedDefaultRoleBindingsIfMissing("apply");
   const result = await performApply({ definitionKey, offline, label: "apply" });
-  process.exit(result.code);
+  // Same libuv race doctor/status hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+  // src\win\async.c): performApply's definition resolve + workspace probe are live network
+  // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
+  // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
+  // own message just printed. Set exitCode + return, letting Node drain the event loop naturally,
+  // after unref'ing whatever handle is still mid-close (see doctor's two exit points above /
+  // status.ts's identical fix / hook-drain.ts).
+  process.exitCode = result.code;
+  unrefLingeringHandles();
 }
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
