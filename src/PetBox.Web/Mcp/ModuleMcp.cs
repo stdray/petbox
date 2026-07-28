@@ -195,10 +195,26 @@ static class ModuleMcp
 	// sentence, so the guidance cannot drift to a different number — or a differently-worded
 	// number — per tool. Deliberately carries NO byte figure (see the comments above for why);
 	// SizeGuidanceTests pins that absence.
+	//
+	// 863bd587 dropped the raw-UTF-8 instruction on the strength of a prod ReqBytes/ReqChars
+	// measurement (1.45-1.58x) that "proved" Claude Code already sends Cyrillic raw. That measurement
+	// is survivorship bias: PetBox.Mcp.ToolCalls only logs calls that reached the server, and an
+	// escaped call can die BEFORE it does. The backslash-u escape for one Cyrillic letter prints six
+	// characters, so a long \uXXXX-escaped tool_use can exhaust the MODEL's own output budget and cut
+	// off mid-generation — the caller never gets a complete JSON document to send, and what lands here
+	// is a parse error, not a short body. This has nothing to do with wire bytes: a call that DOES
+	// finish generating gets re-serialized by the client as raw UTF-8 before it hits the wire, which
+	// is exactly why a byte-ratio measured at this server can never see the escaped calls that
+	// mattered — they never arrived. (Direct observation: memory fact
+	// m-c755648d70db4ef1a36a570a9f4e84bd — an escaped write cut off at 9242 B with
+	// InputValidationError, the same text raw UTF-8 went through.) Restoring the instruction with
+	// this corrected mechanism; the ~2.8x wire-byte multiplier 863bd587 also removed stays removed —
+	// it described bytes on a wire this scenario never reaches.
 	public const string SizeGuidanceText =
-		"A large JSON body risks being silently truncated by the calling client before this server ever " +
-		"sees it — a client-side limit PetBox does not prevent and cannot name an exact number for. Split " +
-		"large batches into multiple calls.";
+		"Send Cyrillic as raw UTF-8, not \\uXXXX escapes: each escape prints six characters, so a long call " +
+		"can exhaust the model's output budget and cut off mid-generation, arriving as a parse error — not " +
+		"a wire-byte issue. A body can also be truncated client-side; PetBox cannot prevent or name a " +
+		"number for it. Split large batches into multiple calls.";
 
 	// Point 4 of the card mcp-write-degrades-silently-fix: a write the server DID accept and apply
 	// can still have paid the \uXXXX-escaping tax silently — it only fails once a slightly bigger

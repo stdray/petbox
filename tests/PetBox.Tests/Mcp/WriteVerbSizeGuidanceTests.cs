@@ -57,13 +57,15 @@ public sealed class WriteVerbSizeGuidanceTests
 	// "8,000" or "12,000") — see the comments above ModuleMcp.SizeGuidanceText for why
 	// publishing one in every write tool's description backfired.
 	//
-	// The sentence used to also carry a raw-UTF-8 instruction plus a measured escape-inflation
-	// ratio ("~2.8x", "2.74-2.88x"). Dropped: prod's own ToolCalls log (ReqChars/ReqBytes) showed
-	// Claude Code already sends Cyrillic as raw UTF-8 (ratio 1.45-1.58, nowhere near the 3.5-6x an
-	// escaped body would measure) — the instruction described a problem this client does not have,
-	// and the ratio number paid context on every write-verb call for it. Nothing in the sentence
-	// names any ratio or byte figure now; this test only guards against a THRESHOLD number sneaking
-	// back in.
+	// The sentence used to also carry a measured escape-inflation ratio ("~2.8x", "2.74-2.88x").
+	// That number described bytes on the WIRE, and was briefly dropped on the strength of a prod
+	// ToolCalls measurement (ReqChars/ReqBytes ~1.45-1.58) that looked like proof the ratio no longer
+	// applied — survivorship bias, since that log only sees calls that reached the server, and a
+	// \uXXXX-escaped tool_use can die in MODEL OUTPUT before it ever gets there (see the comment
+	// above ModuleMcp.SizeGuidanceText). The raw-UTF-8 instruction itself is back for that reason;
+	// the wire-byte ratio stays out — it never described the failure that matters. Nothing in the
+	// sentence names any ratio or byte figure now; this test only guards against a THRESHOLD number
+	// sneaking back in.
 	[Fact]
 	public void SizeGuidanceText_CarriesNoByteCountNumber()
 	{
