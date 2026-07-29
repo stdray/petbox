@@ -132,6 +132,22 @@ public sealed class SqliteDdlTests
 			Descriptions.Add(description);
 		}
 
+		// FluentMigrator 8 widened the interface with parameterized-SQL overloads. SqliteDdl never
+		// reaches for them; they capture exactly like their unparameterized siblings so that a future
+		// call site is recorded rather than silently dropped.
+		void IExecuteExpressionRoot.Sql(string sqlStatement, IDictionary<string, string> parameters)
+		{
+			Calls.Add("sql");
+			Sql.Add(sqlStatement);
+		}
+
+		void IExecuteExpressionRoot.Sql(string sqlStatement, string description, IDictionary<string, string> parameters)
+		{
+			Calls.Add("sql");
+			Sql.Add(sqlStatement);
+			Descriptions.Add(description);
+		}
+
 		void IExecuteExpressionRoot.Script(string pathToSqlScript) => Calls.Add("script");
 		void IExecuteExpressionRoot.Script(string pathToSqlScript, IDictionary<string, string> parameters) => Calls.Add("script");
 		void IExecuteExpressionRoot.EmbeddedScript(string embeddedSqlScriptName) => Calls.Add("script");
@@ -141,6 +157,14 @@ public sealed class SqliteDdlTests
 		{
 			Calls.Add("guard");
 			Guards.Add(operation);
+		}
+
+		// Same story: the described overload arrived in FluentMigrator 8.
+		void IExecuteExpressionRoot.WithConnection(Action<IDbConnection, IDbTransaction> operation, string description)
+		{
+			Calls.Add("guard");
+			Guards.Add(operation);
+			Descriptions.Add(description);
 		}
 	}
 
