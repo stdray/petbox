@@ -1,3 +1,5 @@
+using JetBrains.Annotations;
+
 namespace PetBox.Core.Contract;
 
 // Canonical catalog of harness capability ids a role's requiredCapabilities may name.
@@ -12,6 +14,15 @@ namespace PetBox.Core.Contract;
 // admin-UI form renders this catalog as a checkbox group like ApiKeyScopes.All does for
 // scopes — the same source the checkbox group offers, not a second hardcoded copy — and
 // preserves any pre-existing value outside it rather than silently dropping it.
+//
+// [PublicAPI]: every consumer (ProjectAgentDefs.cshtml.cs, AgentDefinitionCapabilitiesSyncTests)
+// reads through `All`/`Set`, never an individual constant by C# symbol — so ReSharper sees each
+// named constant (RoleFiles, Hooks, …) as reachable only from this file and suggests narrowing
+// them to private (MemberCanBePrivate.Global, confirmed empirically, not assumed). That would
+// defeat the point of naming each one: the catalog is deliberately a public, per-capability id
+// list mirroring the .ts source, kept public for discoverability and any future direct reference
+// — not dead code.
+[PublicAPI]
 public static class AgentDefinitionCapabilities
 {
 	public const string McpMainSession = "mcp_main_session";

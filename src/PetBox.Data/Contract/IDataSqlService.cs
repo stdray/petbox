@@ -58,9 +58,8 @@ public sealed record SqlArg(string Name, object? Value)
 public sealed class DataDbNotFoundException(string projectKey, string dbName)
 	: Exception($"DataDb '{dbName}' not found in project '{projectKey}'");
 
-// A denied PRAGMA was submitted to exec. Adapters map it (REST -> 400 with the name).
+// A denied PRAGMA was submitted to exec. Adapters map it (REST -> 400 with the name, read off
+// Message — nothing reads a structured PragmaName, so that accessor was removed as dead code
+// rather than kept as a second, unused way to get the same string).
 public sealed class DeniedPragmaException(string pragmaName)
-	: Exception($"PRAGMA {pragmaName} is not allowed")
-{
-	public string PragmaName { get; } = pragmaName;
-}
+	: Exception($"PRAGMA {pragmaName} is not allowed");

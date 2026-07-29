@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using LinqToDB.Mapping;
 
 namespace PetBox.Core.Models;
@@ -18,6 +19,6 @@ public sealed record DataTable
 	// mapping would break INSERT ("no such column"), so it is opted out explicitly — the alternative
 	// (leaving it undeclared and unmarked) is indistinguishable from the Fluent-mapping trap
 	// FluentMappingCompletenessTests exists to catch.
-	[NotColumn]
+	[NotColumn, UsedImplicitly]
 	public bool Created { get; init; }
 }

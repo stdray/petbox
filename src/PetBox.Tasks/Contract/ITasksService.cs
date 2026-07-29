@@ -84,16 +84,6 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// revisions (a system write — no FSM guards; the mapping IS the sanctioned transition);
 	// Migrated counts them.
 	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
-	// Delete the project's stored methodology definition — revert every kind to the built-in
-	// presets. Same optimistic-concurrency posture as DefineMethodologyAsync (`version` is
-	// the watermark baseline; a moved baseline throws naming the current version). Validated
-	// against LIVE NODES before anything is written: every active node on a board whose kind
-	// the definition declares must fit the preset resolution it falls back to (a declared
-	// quartet kind → its preset, a custom kind → `simple`) — an incompatible node rejects
-	// the whole call with a clear message (there is no `migration` on delete). Deleting when
-	// no definition exists is an idempotent no-op (Changed=false). Ack.Version is the
-	// definition cursor after the delete (the baseline should the caller re-create one).
-	Task<MethodologyDefAck> DeleteMethodologyAsync(string projectKey, long version, CancellationToken ct = default);
 	// The project's active methodology definition + its revision metadata, or null when
 	// the project has none (it is then on the built-in MethodologyPresets).
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
@@ -311,10 +301,6 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// only hits whose StatusKind (from search_meta) is in it (a no-meta hit kept). The exact leg no
 	// longer force-surfaces terminal nodes past the facet (supersedes exact-identifier-search-surfacing).
 	Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, IReadOnlyList<string>? statusKindFacet = null, CancellationToken ct = default);
-	// Ensure the board exists and return its PRESET kind (a definition-declared kind reads
-	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
-	// the FSM-aware surface is GetBoardWorkflowAsync.
-	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
 	// The board's workflow surface, DATA-DRIVEN: a kind the project's methodology definition
 	// declares resolves from the definition (blocks as declared, transitions carrying
 	// preconditionArtifact); any other kind falls back to the built-in presets exactly as

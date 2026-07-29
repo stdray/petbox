@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Deploy.Contract;
@@ -77,7 +78,18 @@ public static class DeployApi
 		return TypedResults.Ok(new OkResponse(true));
 	}
 
+	// Constructed by ASP.NET Core JSON model binding on EnrollNodeAsync below, not by a `new` call
+	// this analyzer's static graph can see (confirmed doctrine gotcha, resharper-clt-step5-dead
+	// -public-code). [PublicAPI]: this and NodeEnrollResponse below are the wire contract of
+	// /api/deploy/nodes, kept public rather than narrowed — the analyzer's ClassNeverInstantiated
+	// and MemberCanBePrivate suggestions are both about this same invisible-to-it construction path.
+	[PublicAPI]
 	public sealed record NodeEnrollRequest(string Id, string? DisplayName, string? Tags, bool Ephemeral, bool MintKey);
+
+	// Serialized back to the caller by the minimal-API JSON writer — Node/Key are read by that
+	// writer via reflection, not by any C# call site, so NotAccessedPositionalProperty.Global fires
+	// on both the same way it does on the MCP contract records (see root .editorconfig).
+	[PublicAPI]
 	public sealed record NodeEnrollResponse(NodeView Node, string? Key);
 
 	[TenantExempt(TenantExemption.FleetWide, FleetWideReason)]

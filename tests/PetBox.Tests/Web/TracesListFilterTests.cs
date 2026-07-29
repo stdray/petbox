@@ -58,11 +58,12 @@ public sealed class TracesListFilterTests : IDisposable
 	}
 
 	// The page now takes ILogService, not the store. The real LogService wraps the real store, so
-	// this still exercises actual span queries; ILogQueryService is never reached (the traces page
-	// runs no KQL), hence the null.
+	// this still exercises actual span queries; the traces page runs no KQL, and LogService no
+	// longer takes an ILogQueryService at all (its QueryAsync wrapper was dead code, removed in
+	// resharper-clt-step5b-dto-contract-and-minimal-api).
 	TracesModel NewModel() => new(
 		new ProjectDirectory(_db.Factory()),
-		new PetBox.Log.Core.Services.LogService(_store, queries: null!))
+		new PetBox.Log.Core.Services.LogService(_store))
 	{
 		WorkspaceKey = "ws",
 		ProjectKey = Proj,

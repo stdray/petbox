@@ -56,3 +56,30 @@ resharper_unused_auto_property_accessor_global_highlighting = none
 # (resharper-clt-step5c-tests-project-narrowing), not swept in by this glob.
 [tests/**.cs]
 resharper_class_never_instantiated_global_highlighting = none
+
+# resharper-clt-step5b-dto-contract-and-minimal-api: wire DTOs/records under */Contract/*.cs across
+# every assembly (PetBox.Core, PetBox.Tasks, PetBox.Log.Core, PetBox.Memory, PetBox.Sessions,
+# PetBox.Data, PetBox.Deploy, PetBox.Web, ...) are populated by JSON deserialization / linq2db
+# mapping / a remote REST-adjacent client reading a positional property back, never by a `new` call
+# this analyzer's static graph can see — the same blindness as the MCP-contract glob above, at a
+# wider scope. PetBox.Core/Models/*.cs joins the same section for the same reason one layer down:
+# these are the linq2db FluentMappingBuilder entities themselves (AGENTS.md "A Core entity column
+# must be declared in PetBoxDb's Fluent mapping") — populated by a SELECT hydrating the mapped
+# properties, never by a `new` + property-set the analyzer's graph can trace either. Restricted to
+# the two PROPERTY-shaped rules only: NotAccessedPositionalProperty and UnusedAutoPropertyAccessor
+# can only ever fire on a record/auto-property member, never on an interface method or a helper
+# class, so this glob is safe even in the several Contract/*.cs files that also hold a service
+# interface (ITasksService.cs, ILogService.cs, ISessionService.cs, ...) or a small companion
+# exception/factory type alongside their DTOs, and in the Models/*.cs files that hold a small static
+# helper (HealthTags.cs, TaskBoardMeta.cs) alongside their entities — verified file-by-file before
+# adding this section. MemberCanBePrivate.Global / UnusedMember.Global / ClassNeverInstantiated.Global
+# are deliberately NOT included here: those three rule shapes did catch genuinely dead members living
+# in these same Contract files — ITasksService.ResolveKindAsync/DeleteMethodologyAsync (both:
+# declared + implemented, zero callers anywhere), ILogService.QueryAsync (a delegating wrapper
+# nobody called — every real caller injects ILogQueryService directly), DeniedPragmaException
+# .PragmaName (adapters read .Message, never .PragmaName), and two of three LogSchemaMissingException
+# constructors (only the 2-arg ctor is ever thrown) — all REMOVED as dead code, not suppressed. A
+# blanket glob on those three rules would have hidden every one of them.
+[{src/**/Contract/*.cs,src/PetBox.Core/Models/*.cs}]
+resharper_not_accessed_positional_property_global_highlighting = none
+resharper_unused_auto_property_accessor_global_highlighting = none
