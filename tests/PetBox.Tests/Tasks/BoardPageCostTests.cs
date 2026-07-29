@@ -177,6 +177,8 @@ public sealed class BoardPageCostTests : IDisposable
 
 		var view = await _tasks.GetAsync(Proj, "b", includeClosed: true, includeBody: false);
 
-		view.Nodes.Should().OnlyContain(n => n.Body != null && !n.Body.Contains(marker));
+		// TaskNodeView.Body is non-nullable (empty string is the "no body" sentinel), so only the
+		// leak check itself is meaningful here.
+		view.Nodes.Should().OnlyContain(n => !n.Body.Contains(marker));
 	}
 }

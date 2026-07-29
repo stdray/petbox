@@ -154,4 +154,54 @@
 		real bug this override will hide from the gate; Rider still surfaces it locally at WARNING.
 	-->
 	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=AccessToDisposedClosure/@EntryIndexedValue">WARNING</s:String>
+
+	<!--
+		NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract /
+		ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract — DELIBERATELY NOT RAISED to ERROR.
+		Written the same way the CS8602/AccessToDisposedClosure entries above are: a considered
+		decision, not an omission.
+
+		resharper-clt-step4-dead-nullable-contract raised both to ERROR first and read every one of
+		the 101 findings (79 + 22, on main 17ac944a) they produced. The large majority — traced to
+		their actual value source, not judged by expression shape — turned out to be the SAME
+		structural mismatch: a C# non-nullable annotation the wire genuinely does not enforce.
+
+		This codebase's MCP tool methods (`[McpServerTool]`), its ASP.NET Core minimal-API JSON body
+		DTOs, and its Razor Pages form-bound properties all get their values from the
+		ModelContextProtocol SDK's / System.Text.Json's / MVC's own deserializer — none of which
+		consults C# nullable-reference annotations at bind time. A required, non-nullable `string`
+		parameter/property can still arrive `null` at runtime: an explicit JSON `null` (a malformed or
+		adversarial MCP/HTTP client), a JSON array element (`IReadOnlyList&lt;string&gt;` says every
+		element is non-null; nothing stops `["a", null]`), or an `init` property whose C# default
+		(`= []` / `= string.Empty`) is silently overwritten the moment the JSON names the field
+		explicitly as null. Verified two ways, not asserted: (1) traced representative findings to
+		their actual origin — MethodologyDefinitionValidator.cs (17 findings) validates a
+		user-submitted MethodologyDefinition document BEFORE any of these invariants are established,
+		which is the validator's entire job; TasksService/RelationStore/NodeRefResolver/GuardEngine/
+		MethodologyRuntime/CommentService/MethodologyInstanceService/TaskSearchFilter/TasksSearchDocs/
+		LinkKindsDeclaredMigrator (own MCP-argument boundary); MethodologyWire.ParseDefinition (the
+		wire-DTO→domain conversion, sanitizing exactly the array-element-null case); RunSpec.cs
+		(deploy JSON persisted to `deploy_deployment.RunSpec`); a dozen HTTP JSON body DTOs
+		(ConfigBindingDto, CreateDbRequest, CreateLogRequest, HealthPushRequest, HeartbeatReport, …).
+		(2) found existing TEST CODE that proves the gap directly: LogPipelineTests.JsonEnvelope was
+		called with a literal `null!` for a declared-non-nullable `serviceKey` (fixed here to `string?`
+		— the honest annotation, not a suppression), and MemoryTools.cs's already-documented CS8602
+		entry above is the SAME family's compiler-diagnostic sibling.
+
+		A MINORITY were genuinely dead and were fixed at the source instead (removed, not suppressed):
+		TsvExporter.RenderCell (raw is provably non-null via its own OR-fallback), LogApi.HasScope(string,string)
+		(its one caller already coalesces), LlmRouterApi.ChatCompletionsAsync (a `!` null-forgiving
+		operator was manufacturing its own "always true" reading — annotation fixed to `?`, not the
+		check removed), plus four test-file simplifications (BoardPageCostTests, MethodologyPresetsTests,
+		DefaultHomePreferenceRemovedTests) where the value in THAT specific test is provably non-null
+		by construction (a hardcoded preset, a single non-null call site) — none of these touch the
+		MCP/HTTP/JSON boundary the two rules mostly misfire on.
+
+		Raising either rule to ERROR would mean growing scripts/inspect-gate.cs's `suppressions` array
+		by several dozen file rows for a single shared root cause — exactly the "suppressing a whole
+		rule while pretending otherwise" trap the AccessToDisposedClosure entry above already declined.
+		Left at the ReSharper default (below the gate's ERROR floor) instead; Rider still surfaces both
+		locally. A FUTURE finding under either rule is not pre-judged by this entry — the source of the
+		specific value it's arguing about still decides, the same way it did here.
+	-->
 </wpf:ResourceDictionary>

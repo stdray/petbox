@@ -89,12 +89,13 @@ public static class LlmRouterApi
 		if (projectKey is null)
 			return TypedResults.Forbid();
 
-		// Parse the request body.
-		ChatCompletionRequest req;
+		// Parse the request body. ReadFromJsonAsync genuinely returns null on a literal JSON `null`
+		// body — req stays nullable here (no `!`) so the check below is real, not decoration.
+		ChatCompletionRequest? req;
 		try
 		{
-			req = (await ctx.Request.ReadFromJsonAsync<ChatCompletionRequest>(
-				new JsonSerializerOptions(JsonSerializerDefaults.Web), ct))!;
+			req = await ctx.Request.ReadFromJsonAsync<ChatCompletionRequest>(
+				new JsonSerializerOptions(JsonSerializerDefaults.Web), ct);
 			if (req is null)
 				return TypedResults.BadRequest(new { error = "Invalid JSON body" });
 		}

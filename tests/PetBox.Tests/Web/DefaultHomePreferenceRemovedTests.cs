@@ -77,13 +77,15 @@ public sealed class DefaultHomePreferenceRemovedTests
 			throw new InvalidOperationException("the landing page must not evaluate a policy when the user already has a workspace");
 	}
 
-	// IndexModel only reads CurrentWorkspaceKey; the rest is inert.
+	// IndexModel only reads CurrentWorkspaceKey; the rest is inert. The one caller always passes a
+	// non-null ws literal ("acme"), so HasWorkspace is unconditionally true here — not a stand-in
+	// for a real no-workspace fake (there is none in this file).
 	sealed class FakeNav(string ws) : INavigationContext
 	{
 		public bool IsAuthenticated => true;
 		public string? Username => null;
 		public string? CurrentWorkspaceKey => ws;
-		public bool HasWorkspace => ws is not null;
+		public bool HasWorkspace => true;
 		public string? CurrentProjectKey => null;
 		public IReadOnlyList<WorkspaceOption> AvailableWorkspaces => [];
 		public IReadOnlyList<Project> ProjectsInCurrentWorkspace => [];

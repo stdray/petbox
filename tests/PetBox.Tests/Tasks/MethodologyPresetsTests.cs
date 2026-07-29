@@ -308,8 +308,10 @@ public sealed class MethodologyPresetsTests
 		// task and bug renderings are identical by construction.
 		var kind = MethodologyPresets.KindDef(BoardKind.Classic);
 		kind.QuickAddAllowed.Should().BeTrue("classic must allow quick-add like every other non-Spec/Work kind");
+		// Checklist can never be null here: presets are hardcoded C# (MethodologyPresets), never
+		// JSON-deserialized, so the property's own non-nullable default ([]) always holds.
 		kind.Workflows.Should().ContainSingle().Which.Transitions
-			.Should().OnlyContain(t => t.Checklist == null || t.Checklist.Count == 0);
+			.Should().OnlyContain(t => t.Checklist.Count == 0);
 	}
 
 	[Fact]
