@@ -1,6 +1,8 @@
+using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Tests.Tasks;
+using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
 
@@ -35,8 +37,31 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	static async Task<McpClientTool> Tool(McpClient mcp, string name) =>
 		(await mcp.ListToolsAsync()).First(t => t.Name == name);
 
-	static string Text(CallToolResult result) =>
-		string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text));
+	// The raw envelope is unusable for pinning a SENTENCE, for two independent reasons:
+	//   * PetBoxJsonEncoder.Relaxed keeps HTML-sensitive characters escaped even in the relaxed
+	//     profile, so ' arrives as ' and > as >. The older tests here dodged that by
+	//     asserting on bare WORDS — fine while the message was one sentence, useless now that the
+	//     interesting part IS the punctuation ("'l1' -> use 'key'").
+	//   * McpErrorEnvelopeFilter emits `message` AND a `detail` carrying the stack trace, which
+	//     repeats the message verbatim. Counting occurrences over the whole envelope therefore
+	//     double-counts every name — the trap that made a "named exactly once" assertion read 2.
+	// Parsing the envelope fixes both at once: JSON decoding undoes the escapes, and taking
+	// error.message alone gives the one string a caller actually reads. Falls back to the raw text
+	// for a non-envelope body (a successful call passed in for diagnostics).
+	static string Text(CallToolResult result)
+	{
+		var raw = string.Concat(result.Content.OfType<TextContentBlock>().Select(c => c.Text));
+		try
+		{
+			using var doc = JsonDocument.Parse(raw);
+			if (doc.RootElement.TryGetProperty("error", out var error)
+				&& error.TryGetProperty("message", out var message)
+				&& message.GetString() is { } text)
+				return text;
+		}
+		catch (JsonException) { /* not an envelope — fall through */ }
+		return raw;
+	}
 
 	// The exact shape of the live incident: a garbage top-level key alongside otherwise-valid
 	// arguments is REJECTED — never silently dropped into an unfiltered success.
@@ -207,63 +232,7 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	// precise failure McpUnknownParameterFilter was built for, re-created by the very change meant
 	// to clean the surface up. So each retired name is pinned here by name, on the real wire.
 
-	// `includeClosed` (tasks_search) — a TOP-LEVEL alias for statusKind. The dangerous one: silently
-	// ignored it would not error at all, it would narrow the result to the mode default and look
-	// like a correct answer, exactly like the `under` incident above.
-	[Fact]
-	public async Task RetiredAlias_IncludeClosed_IsRejected_AndPointsAtStatusKind()
-	{
-		var tool = await Tool(_fx.Mcp, "tasks_search");
-		var result = await tool.CallAsync(new Dictionary<string, object?>
-		{
-			["projectKey"] = _fx.ProjectKey,
-			["board"] = "work",
-			["includeClosed"] = true,
-		});
 
-		result.IsError.Should().Be(true);
-		var text = Text(result);
-		text.Should().Contain("Unknown parameter").And.Contain("includeClosed").And.Contain("tasks_search");
-		// The replacement has to be reachable from the error itself — a caller whose schema snapshot
-		// still shows the alias cannot look the retirement up.
-		text.Should().Contain("Accepted parameters").And.Contain("statusKind");
-	}
-
-	// `l1` (tasks_upsert nodes[]) — an ITEM-level alias for `key`, and the reason the filter learned
-	// to walk one level down. Without that walk this call would have failed on the generic "each node
-	// needs a 'key'" instead of naming the field the caller actually sent.
-	[Fact]
-	public async Task RetiredAlias_L1_InBatchItem_IsRejected_AndNamesIt()
-	{
-		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
-		{
-			["projectKey"] = _fx.ProjectKey,
-			["board"] = "work",
-			["kind"] = "work",
-		});
-
-		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
-		{
-			["projectKey"] = _fx.ProjectKey,
-			["board"] = "work",
-			["nodes"] = new[]
-			{
-				new Dictionary<string, object?>
-				{
-					["l1"] = "unkp-retired-l1",
-					["title"] = "Retired alias",
-					["version"] = 0,
-				},
-			},
-		});
-
-		result.IsError.Should().Be(true);
-		var text = Text(result);
-		text.Should().Contain("Unknown parameter").And.Contain("l1").And.Contain("tasks_upsert");
-		// The suggestion is scored against the ITEM's own field names, so `key` — the field that
-		// replaced this alias — is what comes back, not a top-level parameter that merely looks close.
-		text.Should().Contain("key");
-	}
 
 	// `prevL1` (tasks_upsert nodes[]) — the rename-source half of the same pair. Pinned separately
 	// because its replacement `prevKey` is NOT itself an alias (it names a different node state),
@@ -375,6 +344,164 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 		fields.Should().Contain("from").And.Contain("to");
 		fields.Should().NotContain("fromNodeId").And.NotContain("toNodeId");
+	}
+
+	// ── the refusal has to LEAD THE CALLER, not just say no ───────────────────────────────────
+	//
+	// Owner follow-up to the batch-item walk: strictness is right, but the cost lands on the most
+	// natural agent loop there is — read a row, change one field, send it back. The fields that then
+	// get refused are ones the SERVER handed the caller, so a bare "Unknown parameter 'nodeId'" reads
+	// as "you are broken" and sends the agent guessing. These three tests pin the three answers.
+
+	// (a) READ-MODIFY-WRITE: a tasks_search row pasted whole into tasks_upsert.nodes[]. Every stray
+	// field must be named in ONE refusal (fixing them one per round-trip is the failure mode), and the
+	// refusal must say they are response-only rather than unknown.
+	[Fact]
+	public async Task ReadModifyWrite_PastedResponseRow_NamesEveryStrayField_AndExplainsTheyAreReadOnly()
+	{
+		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["kind"] = "work",
+		});
+
+		// Exactly the shape tasks_search returns, edited the way an agent would edit it.
+		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["nodes"] = new[]
+			{
+				new Dictionary<string, object?>
+				{
+					["key"] = "unkp-rmw",
+					["nodeId"] = "0123456789abcdef0123456789abcdef",
+					["board"] = "work",
+					["depth"] = 0,
+					["score"] = 0.97,
+					["retriever"] = "lexical",
+					["title"] = "edited title",
+					["version"] = 0,
+				},
+			},
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		// ALL of them, in one answer — fixing them one per round-trip is the failure this prevents.
+		foreach (var stray in new[] { "nodeId", "board", "depth", "score", "retriever" })
+			text.Should().Contain($"nodes[].{stray}", $"every stray field must be named at once, missing {stray}");
+		text.Should().Contain("READ-ONLY response field");
+		text.Should().Contain("not a write payload");
+		// The instruction has to be complete: drop these, keep the identity. `key` is DERIVED from the
+		// item schema's `required` — the same marker Task 2 put there — so it cannot drift out of sync.
+		text.Should().Contain("keeping 'key'");
+		// And it must NOT be dressed up as a typo — there is nothing to correct here, only to drop.
+		text.Should().NotContain("Did you mean").And.NotContain("Unrecognized");
+		// Each offending name is printed ONCE. Five strays repeated across an opener and a clause was
+		// the first draft and read as noise; the count guards the regression.
+		System.Text.RegularExpressions.Regex.Count(text, "nodes\\[\\]\\.nodeId")
+			.Should().Be(1, "an offending name must be named exactly once");
+	}
+
+	// (b) A RETIRED name is the first branch: named, with its successor, not merely "unknown".
+	[Fact]
+	public async Task RetiredAlias_IsReportedAsRemoved_WithItsReplacement()
+	{
+		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["kind"] = "work",
+		});
+
+		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["nodes"] = new[]
+			{
+				new Dictionary<string, object?> { ["l1"] = "unkp-retired", ["title"] = "T", ["version"] = 0 },
+			},
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("REMOVED: 'nodes[].l1' -> use 'key'");
+		// A retired name is NOT reported as a response field, even though `key` is in the read output
+		// too — the retired branch is checked first because "use 'key'" is the more specific fix.
+		text.Should().NotContain("READ-ONLY response field").And.NotContain("Unrecognized");
+	}
+
+	// The same first branch for the top-level retired boolean.
+	[Fact]
+	public async Task RetiredAlias_IncludeClosed_IsReportedAsRemoved_WithStatusKind()
+	{
+		var result = await (await Tool(_fx.Mcp, "tasks_search")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["includeClosed"] = true,
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("REMOVED: 'includeClosed' -> use 'statusKind'");
+	}
+
+	// (c) A genuine typo keeps the ORIGINAL treatment — nearest match plus the accepted list — and
+	// must not be mislabelled as a response field just because the other branches exist now.
+	[Fact]
+	public async Task GenuineTypo_KeepsTheNearestMatchTreatment_AndIsNotCalledReadOnly()
+	{
+		var result = await (await Tool(_fx.Mcp, "tasks_search")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["boad"] = "work",
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("Unrecognized: 'boad'").And.Contain("Did you mean 'board'?");
+		text.Should().Contain("Accepted parameters");
+		// Neither of the two new branches may swallow an ordinary typo.
+		text.Should().NotContain("READ-ONLY response field").And.NotContain("REMOVED");
+	}
+
+	// The classification's honesty check. McpRetiredParameters is a hand-written migration aid, so it
+	// is the one part of this that CAN drift: every name it claims is retired must really be gone from
+	// the live schema, and every replacement it points at must really be there. Without this the table
+	// could keep advertising a successor that has itself since been renamed.
+	[Fact]
+	public async Task RetiredParameterTable_MatchesTheLiveSchemas()
+	{
+		foreach (var tool in McpRetiredParameters.Tools)
+		{
+			var schema = (await Tool(_fx.Mcp, tool)).ProtocolTool.InputSchema.GetProperty("properties");
+			// Union of top-level names and every batch item's field names — the two scopes the filter checks.
+			var live = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var prop in schema.EnumerateObject())
+			{
+				live.Add(prop.Name);
+				if (prop.Value.ValueKind == JsonValueKind.Object
+					&& prop.Value.TryGetProperty("items", out var items)
+					&& items.ValueKind == JsonValueKind.Object
+					&& items.TryGetProperty("properties", out var itemProps))
+					foreach (var f in itemProps.EnumerateObject()) live.Add(f.Name);
+			}
+
+			foreach (KeyValuePair<string, string> pair in McpRetiredParameters.ForTool(tool))
+			{
+				var (retiredName, replacement) = (pair.Key, pair.Value);
+				live.Should().Contain(replacement,
+					$"{tool} advertises '{replacement}' as the successor of '{retiredName}' — it must exist");
+				// `fromNodeId` is retired as an ITEM field while staying a valid top-level parameter, so
+				// the assertion is about the item scope, not blanket absence.
+				if (tool != "relations_create")
+					live.Should().NotContain(retiredName,
+						$"{tool} still declares '{retiredName}' — the table says it was removed");
+			}
+		}
 	}
 
 	// tasks_search's schema must not carry the retired boolean either — the filter's rejection above
