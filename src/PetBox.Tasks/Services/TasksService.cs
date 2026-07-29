@@ -385,12 +385,6 @@ public sealed partial class TasksService : ITasksService
 	public Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_boards.ExistsAsync(projectKey, board, ct);
 
-	public async Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default)
-	{
-		await EnsureBoard(projectKey, board, ct);
-		return MethodologyPresets.ParseKind((await _boards.FindAsync(projectKey, board, ct))!.Kind);
-	}
-
 	public async Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
@@ -575,9 +569,6 @@ public sealed partial class TasksService : ITasksService
 		string projectKey, MethodologyDefinition def, long version,
 		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default) =>
 		_methodologyDefs.DefineAsync(projectKey, def, version, migration, ct);
-
-	public Task<MethodologyDefAck> DeleteMethodologyAsync(string projectKey, long version, CancellationToken ct = default) =>
-		_methodologyDefs.DeleteAsync(projectKey, version, ct);
 
 	public Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default) =>
 		_methodologyDefs.GetAsync(projectKey, ct);

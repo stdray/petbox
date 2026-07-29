@@ -13,7 +13,7 @@ namespace PetBox.Log.Core.Services;
 // `using` is deliberately inside each method rather than around a shared field — a LogDb is a live
 // SQLite connection, and holding one for the lifetime of a scoped service is the exact thing
 // conn-safety forbids.
-public sealed class LogService(ILogStore store, ILogQueryService queries) : ILogService
+public sealed class LogService(ILogStore store) : ILogService
 {
 	// SQLite's "no such table" — the young-log case, not a failure. Translated at this boundary
 	// so no caller above it needs to know the provider or the code.
@@ -30,10 +30,6 @@ public sealed class LogService(ILogStore store, ILogQueryService queries) : ILog
 
 	public Task<bool> DeleteAsync(string projectKey, string logName, CancellationToken ct = default) =>
 		store.DeleteAsync(projectKey, logName, ct);
-
-	public Task<LogQueryResult> QueryAsync(
-		string projectKey, string logName, string kql, CancellationToken ct = default) =>
-		queries.QueryAsync(projectKey, logName, kql, ct);
 
 	public async Task<LogEntryRecord?> GetEventAsync(
 		string projectKey, string logName, long id, CancellationToken ct = default)

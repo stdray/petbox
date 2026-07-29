@@ -24,7 +24,11 @@ namespace PetBox.Log.Core.Contract;
 // diagnostics. What moves here is only the part that touches a file.
 //
 // ILogQueryService (the shared KQL execution path behind the log_query MCP tool and the REST
-// endpoint) is NOT replaced — QueryAsync below delegates to it, so the KQL semantics have one body.
+// endpoint) is NOT replaced by this interface — callers that want the raw KQL path (log_query,
+// the REST log endpoint) inject ILogQueryService directly instead of going through here. This
+// interface used to also expose a QueryAsync wrapper delegating to it, but nothing ever called
+// the wrapper (every caller already injected ILogQueryService directly) — removed as dead code
+// (resharper-clt-step5b-dto-contract-and-minimal-api), not suppressed.
 public interface ILogService
 {
 	// --- Catalog (core.db Logs table) -----------------------------------------
@@ -59,10 +63,6 @@ public interface ILogService
 
 	// Distinct ServiceKey values across the log's events, ordered — the log page's service filter.
 	Task<IReadOnlyList<string>> ListServiceKeysAsync(string projectKey, string logName, CancellationToken ct = default);
-
-	// The shared KQL path (ILogQueryService), for callers that want its root-dispatch and limit
-	// policy rather than driving KqlTransformer themselves.
-	Task<LogQueryResult> QueryAsync(string projectKey, string logName, string kql, CancellationToken ct = default);
 
 	// --- Tracing --------------------------------------------------------------
 
@@ -106,10 +106,6 @@ public sealed record TraceGroupPage(IReadOnlyList<TraceGroupRow> Rows, bool HasN
 // and test `SqliteErrorCode == 1` — a provider detail that has no business in a page.
 public sealed class LogSchemaMissingException : Exception
 {
-	public LogSchemaMissingException() { }
-
-	public LogSchemaMissingException(string message) : base(message) { }
-
 	public LogSchemaMissingException(string message, Exception innerException)
 		: base(message, innerException) { }
 }

@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using PetBox.Core.Search;
 
 namespace PetBox.Core.Contract;
@@ -66,6 +67,13 @@ public sealed record SearchEnvelope<TEntity>(
 // alongside — this is the common denominator, not a straitjacket.
 public interface ISearchService<TEntity, TFilter, TSort>
 {
+	// A deliberate SHAPE constraint, not a call path: per the file header, this is "not a DI
+	// seam" — modules implement it via EXPLICIT interface implementation and nothing anywhere
+	// casts to ISearchService<...> to invoke it (confirmed empirically: no caller repo-wide).
+	// It exists so TasksService/MemoryService's real search methods are compiler-checked against
+	// one common signature, not to be dispatched through. [UsedImplicitly] rather than removing
+	// the two explicit implementations and this documented conformance check.
+	[UsedImplicitly]
 	Task<SearchEnvelope<TEntity>> SearchAsync(string projectKey, SearchRequest<TFilter, TSort> request, CancellationToken ct = default);
 }
 

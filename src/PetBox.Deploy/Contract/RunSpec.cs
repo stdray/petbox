@@ -66,7 +66,7 @@ public static class RunSpecJson
 	// Trim/lowercase/drop-empties and validate every field; throws ArgumentException with a
 	// field-specific message on bad input. Returns a spec whose empty collections are null,
 	// so an effectively-empty spec equals `new RunSpec()` and canonicalizes to "{}".
-	public static RunSpec Normalize(RunSpec? spec)
+	static RunSpec Normalize(RunSpec? spec)
 	{
 		if (spec is null) return new RunSpec();
 

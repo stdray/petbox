@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Health;
@@ -17,6 +18,11 @@ public static class HealthApi
 			.RequireAuthorization("ApiKey");
 	}
 
+	// Constructed by ASP.NET Core JSON model binding on PushAsync below, not by a `new` call this
+	// analyzer's static graph can see (confirmed doctrine gotcha, resharper-clt-step5-dead-public
+	// -code) — [PublicAPI] rather than narrowing: this record IS the wire contract of POST
+	// /api/health.
+	[PublicAPI]
 	public sealed record HealthPushRequest(
 		string Svc,
 		string? Name,

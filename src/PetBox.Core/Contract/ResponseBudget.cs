@@ -17,7 +17,7 @@ public sealed class ResponseBudget
 {
 	// Default budget: ~30k serialized chars keeps a tool result well inside an agent's
 	// context window while leaving room for the response envelope.
-	public const int DefaultChars = 30_000;
+	const int DefaultChars = 30_000;
 
 	// NOT PetBoxJsonEncoder.SharedOptions wholesale — tried that first and it broke two tests
 	// (TasksGetBudgetTests + MemoryRowWeightTests) by measuring 12-100+ chars/row too HIGH, on

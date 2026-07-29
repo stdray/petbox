@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using JetBrains.Annotations;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -10,6 +11,11 @@ using PetBox.Core.Models;
 
 namespace PetBox.Config;
 
+// Constructed by ASP.NET Core JSON model binding on the Create handler below, not by a `new` call
+// this analyzer's static graph can see — same shape as NodeEnrollRequest/HealthPushRequest
+// (resharper-clt-step5-dead-public-code doctrine). [PublicAPI] rather than plain [UsedImplicitly]:
+// it is a genuine wire contract for this endpoint, not merely framework-constructed.
+[PublicAPI]
 public sealed record ConfigBindingDto(string Path, string Value, string Tags, BindingKind Kind = BindingKind.Plain);
 
 // THE TENANT OF THE BINDING ROUTES IS A WORKSPACE, AND IT IS DECLARED AS ONE — read this before

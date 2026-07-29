@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using JetBrains.Annotations;
 using PetBox.Core.Observability;
 
 namespace PetBox.Web.Search;
@@ -12,9 +13,17 @@ namespace PetBox.Web.Search;
 // logged and retried next tick (the worker holds the cursor so nothing is lost). The 30s
 // initial delay also keeps it inert during build-time OpenAPI generation, where the host is
 // started through StartAsync and stopped before the first tick (m-d3b39b66).
+// Registered as a hosted BackgroundService and constructed by the DI container, not by a `new`
+// call this analyzer's static graph can see (same shape as the other *OrphanCleanupService
+// BackgroundServices in this repo) — [UsedImplicitly] rather than narrowing anything about the
+// type itself.
+[UsedImplicitly]
 public sealed partial class SearchEnrichmentService : BackgroundService
 {
-	public static readonly TimeSpan Interval = TimeSpan.FromSeconds(60);
+	// No caller outside this class references either member (confirmed empirically, unlike the
+	// sibling OrphanCleanupService/WalCheckpointService classes whose RunOncePassAsync IS called
+	// directly from tests and so stays `internal`) — narrowed to private rather than suppressed.
+	static readonly TimeSpan Interval = TimeSpan.FromSeconds(60);
 	static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(30);
 
 	readonly IServiceProvider _services;
@@ -42,7 +51,7 @@ public sealed partial class SearchEnrichmentService : BackgroundService
 		}
 	}
 
-	internal async Task RunOncePassAsync(CancellationToken ct)
+	async Task RunOncePassAsync(CancellationToken ct)
 	{
 		using var scope = _services.CreateScope();
 		foreach (var job in scope.ServiceProvider.GetServices<IBackgroundIndexJob>())
