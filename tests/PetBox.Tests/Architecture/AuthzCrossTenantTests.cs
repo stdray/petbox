@@ -3,8 +3,9 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 215 surfaces: 55 REST, 65 Razor, 95 MCP; was 217/97 MCP before
-// batch3 (read-surface-shape-batch-and-dead-delta) removed session_delta and config_binding_delta).
+// ratchet guards (AuthzSurfaces — 217 surfaces: 57 REST, 65 Razor, 95 MCP; was 215/55 REST before
+// doc-surface-undiscoverable-from-ui added the /docs and /help redirects, and 217/97 MCP before that
+// when batch3 (read-surface-shape-batch-and-dead-delta) removed session_delta and config_binding_delta).
 // One test source, one inventory: a second enumeration would drift from the ratchet's and the two
 // would quietly stop talking about the same system.
 //
@@ -13,7 +14,7 @@ namespace PetBox.Tests.Architecture;
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 215 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 217 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
 //   * REFUSED               — 143 addressed surfaces that already deny a foreign tenant today.
@@ -22,12 +23,12 @@ namespace PetBox.Tests.Architecture;
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
 //                              papered over.
-//   * NotAddressable        —  63 surfaces with nowhere to write a foreign tenant: no
+//   * NotAddressable        —  65 surfaces with nowhere to write a foreign tenant: no
 //                              {projectKey}/{workspaceKey} in the route, none in the tool schema.
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 143 + 9 + 63 = 215, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 143 + 9 + 65 = 217, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -168,6 +169,8 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"rest:GET /openapi/{documentName}.json",
 			"rest:GET|HEAD /health",
 			"rest:GET|HEAD /version",
+			"rest:GET /docs",
+			"rest:GET /help",
 			"page:/Error",
 			"page:/Login",
 			"page:/Doc/Agent",
@@ -403,9 +406,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(215,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 55 REST + 65 Razor + 95 MCP "
-			+ "(was 97 MCP / 217 before batch3 removed session_delta and config_binding_delta). "
+		_host.Surfaces.Should().HaveCount(217,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 57 REST + 65 Razor + 95 MCP "
+			+ "(was 55 REST / 215 before doc-surface-undiscoverable-from-ui added /docs and /help; "
+			+ "97 MCP / 217 before that when batch3 removed session_delta and config_binding_delta). "
 			+ "If that number moved, a surface was added or removed and this test must be re-read, not "
 			+ "re-baselined");
 

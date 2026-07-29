@@ -5,6 +5,12 @@
 <footer class="p-3 text-center text-xs opacity-60 border-t border-base-300" data-testid="footer-version">
 	v@(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev")
 	· @(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local")
+	@* doc-surface-undiscoverable-from-ui: signed-in only — the owner does not want an outward
+	   link to the docs surface, so this must never render for an anonymous visitor. *@
+	@if (User.Identity?.IsAuthenticated == true)
+	{
+		<text> · </text><a href="@Routes.Doc()" class="link link-hover" data-testid="footer-doc-link">Docs</a>
+	}
 	· <span data-testid="footer-features">
 		@foreach (var f in Enum.GetValues<Feature>())
 		{

@@ -77,6 +77,30 @@
         }
       }
     },
+    "/docs": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/help": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/.well-known/oauth-protected-resource": {
       "get": {
         "tags": [

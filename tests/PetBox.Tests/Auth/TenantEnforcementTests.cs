@@ -85,7 +85,7 @@ public sealed class TenantEnforcementTests
 				k.StartsWith(AuthzSurfaceKey.RestPrefix, StringComparison.Ordinal)
 				|| k.StartsWith(AuthzSurfaceKey.PagePrefix, StringComparison.Ordinal))
 			.Should().BeEmpty(
-				"all 55 REST endpoints and all 65 Razor pages declare a tenant source or an exemption class "
+				"all 57 REST endpoints and all 65 Razor pages declare a tenant source or an exemption class "
 				+ "and are enforced by TenantEnforcementMiddleware. An entry here would be a surface exempted "
 				+ "from the rule by a list instead of by a declaration — which is the opt-in hole this work "
 				+ "item removed");
