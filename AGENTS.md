@@ -47,9 +47,11 @@ happens to run one open instance, `quartet` — so "the `$system` boards" and "t
 instance's boards" are the same four boards today, and only today.
 
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
-[doc/methodology-engine.md](doc/methodology-engine.md) for the engine). The markdown
-files under `doc/` (`plan.md`, `spec.md`, `decision-log.md`, …) are **historical
-records**, not the working plan — do not treat them as current state.
+[doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a
+**MAINTAINED reader surface**, not an archive — onboarding reads it, so a change that
+outdates it fixes it in the same commit. What lives there is *explanation*, never live
+plan or status: the record files (`plan.md`, `spec.md`, `decision-log.md`, …) say how
+things came to be decided, while the current plan and status are the boards above.
 
 ## Process contract (binding for ALL agents)
 
