@@ -244,7 +244,9 @@ public static class MemoryTools
 		on a NEW entry is ACCEPTED but WARNED on (returned as `warning`, naming the affected
 		key(s)): description is the primary surface memory_search ranks and shows, so a
 		factless description is a quietly-degraded write — findable by luck, not by design.
-		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
+		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? };
+		it must be non-empty — an empty array is REJECTED ("'entries': empty batch — nothing to
+		write"), never a silent no-op.
 		`type` (required on a NEW entry) is the CLOSED taxonomy: User (about the user) | Feedback
 		(a correction/preference on how to work) | Project (durable project fact/constraint) |
 		Reference (pointer to an external resource). Pick one — an unrecognized value is REJECTED,
@@ -292,6 +294,11 @@ public static class MemoryTools
 		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
+		// An empty batch is almost always a client bug (a filter emptied the list, the call still
+		// went out) — reject it instead of silently no-opping. `entries` maps 1:1 into upserts/deletes
+		// (ParseEntries drops nothing), so the raw array length IS the effective batch size.
+		if (entries.Length == 0)
+			throw new ArgumentException("'entries': empty batch — nothing to write");
 		await AssertStoreCreatableOrKnownAsync(memory, projectKey, store, ct);
 		var (upserts, deletes) = ParseEntries(entries);
 		var outcome = await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct);

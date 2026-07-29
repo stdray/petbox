@@ -1261,7 +1261,8 @@ public static class TasksTools
 		Declarative temporal PATCH-upsert of plan nodes. On an EDIT (version > 0) an omitted field
 		stays unchanged, tags:[] clears; on a NEW node (version 0) an omitted field starts empty —
 		there is no prior value to inherit. Delete via {key, deleted:true}. Each node has a FLAT slug
-		`key` and nests via `partOf`.
+		`key` and nests via `partOf`. `nodes` must be non-empty — an empty array is REJECTED
+		("'nodes': empty batch — nothing to write"), never a silent no-op.
 		`key` is REQUIRED on EVERY node, including a brand-new one — there is no quick-add that
 		invents a slug for you, and a node without one is rejected with "each node needs a 'key'
 		(a flat slug)". The JSON schema says so honestly: `key` IS listed in the node object's
@@ -1355,6 +1356,12 @@ public static class TasksTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// An empty batch is almost always a client bug (a filter emptied the list, the call still
+		// went out) — reject it instead of silently no-opping. `nodes` maps 1:1 into patches (no
+		// per-item filtering happens in ParseNodePatches), so the raw array length IS the effective
+		// batch size.
+		if (nodes.Length == 0)
+			throw new ArgumentException("'nodes': empty batch — nothing to write");
 		await AssertBoardKnownAsync(tasks, projectKey, board, ct);
 		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
 		// write past methodology-ENFORCED approval gates (enforceApproval transitions).
