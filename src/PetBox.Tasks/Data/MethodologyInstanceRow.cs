@@ -4,7 +4,7 @@ using PetBox.Core.Data.Temporal;
 namespace PetBox.Tasks.Data;
 
 // A NAMED methodology INSTANCE — the live process automaton (boards + rules + open/closed).
-// Multi-key temporal (SCD type-2) in the per-project tasks file: Key is the instance name
+// Multi-key temporal (SCD type-2) in the per-project tasks file: Key is the instance key
 // (slug), Json is the MethodologyDefinition rules (camelCase, enums as strings — same wire
 // as def/template), ClosedAt null = open. Board membership is on TaskBoards.MethodologyInstance
 // (Core catalog); this row owns identity + rules + status only.

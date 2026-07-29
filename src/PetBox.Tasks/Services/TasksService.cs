@@ -94,8 +94,8 @@ public sealed partial class TasksService : ITasksService
 		// instance service needs template source resolution + optional counts for list/get.
 		_methodologyInstances = new MethodologyInstanceService(boards, _methodologyTemplates, CountActiveStatusesAsync);
 		// Wire instance snapshot source into templates after both exist (circular-safe via delegate).
-		_methodologyTemplates.BindInstanceRules(async (projectKey, instanceName, ct) =>
-			await _methodologyInstances.GetDefinitionAsync(projectKey, instanceName, allowClosed: true, ct));
+		_methodologyTemplates.BindInstanceRules(async (projectKey, instanceKey, ct) =>
+			await _methodologyInstances.GetDefinitionAsync(projectKey, instanceKey, allowClosed: true, ct));
 	}
 
 	// Status histogram for one board's active nodes (instance list/get summary).
@@ -115,27 +115,27 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
-		// World: a real instance name, the reserved UtilityWorld sentinel (spec methodology-
+		// World: a real instance key, the reserved UtilityWorld sentinel (spec methodology-
 		// utility-kinds — always legal, first-class regardless of how many instances exist),
 		// or null (legacy: legal ONLY before the project has entered the instance world —
 		// MethodologyInstanceBackfill sweeps that bootstrap state into a real membership at
 		// startup, so it is never a steady state once any instance exists).
-		var instanceName = string.IsNullOrWhiteSpace(methodologyInstance)
+		var instanceKey = string.IsNullOrWhiteSpace(methodologyInstance)
 			? null
 			: methodologyInstance.Trim().ToLowerInvariant();
-		var isUtilitySentinel = instanceName == TaskBoardMeta.UtilityWorld;
-		if (instanceName is null || isUtilitySentinel)
+		var isUtilitySentinel = instanceKey == TaskBoardMeta.UtilityWorld;
+		if (instanceKey is null || isUtilitySentinel)
 		{
-			if (instanceName is null && await _methodologyInstances.AnyAsync(projectKey, ct))
+			if (instanceKey is null && await _methodologyInstances.AnyAsync(projectKey, ct))
 				throw new ArgumentException(
 					$"methodology instance is required — pass methodologyInstance (an instance key — its slug address, or '{TaskBoardMeta.UtilityWorld}' for the project's utility layer); board_create without one is rejected once the project has any methodology instance");
 		}
 		else
 		{
-			var inst = await _methodologyInstances.GetAsync(projectKey, instanceName, ct)
-				?? throw new ArgumentException($"methodology instance '{instanceName}' not found in project '{projectKey}'");
+			var inst = await _methodologyInstances.GetAsync(projectKey, instanceKey, ct)
+				?? throw new ArgumentException($"methodology instance '{instanceKey}' not found in project '{projectKey}'");
 			if (inst.Closed)
-				throw new ArgumentException($"methodology instance '{instanceName}' is closed — cannot create boards on a closed instance");
+				throw new ArgumentException($"methodology instance '{instanceKey}' is closed — cannot create boards on a closed instance");
 		}
 
 		var kindSlug = (kind ?? "simple").Trim().ToLowerInvariant();
@@ -148,8 +148,8 @@ public sealed partial class TasksService : ITasksService
 		// the transient bootstrap state.
 		var runtime = isUtilitySentinel
 			? await UtilityRuntimeAsync(projectKey, ct)
-			: instanceName is not null
-				? await RuntimeForInstanceAsync(projectKey, instanceName, ct)
+			: instanceKey is not null
+				? await RuntimeForInstanceAsync(projectKey, instanceKey, ct)
 				: await RuntimeAsync(projectKey, ct);
 		string canonical;
 		if (runtime.IsDefinedKind(kindSlug))
@@ -158,12 +158,12 @@ public sealed partial class TasksService : ITasksService
 			// the kind (MethodologyKindDef.Singleton, spec methodology-kind-singleton) — a
 			// custom-declared kind can opt in too, not just the four quartet enum names.
 			canonical = kindSlug;
-			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, runtime, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceKey, runtime, ct: ct);
 		}
 		else if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var k))
 		{
 			canonical = k.ToString().ToLowerInvariant();
-			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, runtime, ct: ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceKey, runtime, ct: ct);
 		}
 		else
 		{
@@ -174,7 +174,7 @@ public sealed partial class TasksService : ITasksService
 				" the project's utility layer via tasks_methodology_utility_upsert for a project-homed one)");
 		}
 		await ValidateWiredBoardAsync(projectKey, canonical, wiredBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceName, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
@@ -249,7 +249,7 @@ public sealed partial class TasksService : ITasksService
 	// different one after the next switch).
 	async Task<MethodologyRuntime> RuntimeAsync(string projectKey, CancellationToken ct)
 	{
-		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		var active = await _methodologyInstances.ResolveActiveKeyAsync(projectKey, ct);
 		if (active is not null)
 			return await RuntimeForInstanceAsync(projectKey, active, ct);
 
@@ -261,7 +261,7 @@ public sealed partial class TasksService : ITasksService
 
 	// Board-scoped runtime — THREE ways, not two: the explicit UtilityWorld sentinel (spec
 	// methodology-utility-kinds) resolves against the project's utility layer, stable across
-	// a methodology switch by construction; a real instance name resolves that instance's
+	// a methodology switch by construction; a real instance key resolves that instance's
 	// rules; a bare null (the legacy pre-backfill bootstrap state — never a board reaches it
 	// deliberately) keeps the OLD RuntimeAsync active-instance/presets heuristic UNCHANGED
 	// (methodology-instance-core's "drop dual-read" — see
@@ -275,14 +275,14 @@ public sealed partial class TasksService : ITasksService
 		return await RuntimeAsync(projectKey, ct);
 	}
 
-	async Task<MethodologyRuntime> RuntimeForInstanceAsync(string projectKey, string instanceName, CancellationToken ct)
+	async Task<MethodologyRuntime> RuntimeForInstanceAsync(string projectKey, string instanceKey, CancellationToken ct)
 	{
-		var def = await _methodologyInstances.GetDefinitionAsync(projectKey, instanceName, allowClosed: true, ct);
+		var def = await _methodologyInstances.GetDefinitionAsync(projectKey, instanceKey, allowClosed: true, ct);
 		// Missing rules → presets only. Never fall back to methodology_defs.
 		return def is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(def);
 	}
 
-	// Open instances ordered by name (deterministic listing — the "ambiguous" guide and any
+	// Open instances ordered by key (deterministic listing — the "ambiguous" guide and any
 	// other multi-instance enumeration read them in this order). Empty when none open.
 	async Task<IReadOnlyList<MethodologyInstanceView>> ListOpenInstancesAsync(string projectKey, CancellationToken ct)
 	{
@@ -424,12 +424,12 @@ public sealed partial class TasksService : ITasksService
 		// The preset selects WHICH board kinds to provision; an unknown slug is rejected
 		// before any board is created.
 		var provisioning = MethodologyPresets.ResolveProvisioningPreset(preset);
-		var instanceName = provisioning.Slug; // "quartet" | "classic"
-		if (!await _methodologyInstances.ExistsAsync(projectKey, instanceName, ct))
+		var instanceKey = provisioning.Slug; // "quartet" | "classic"
+		if (!await _methodologyInstances.ExistsAsync(projectKey, instanceKey, ct))
 		{
 			// One-act create: rules + boards for the preset kinds.
-			var ack = await _methodologyInstances.CreateAsync(projectKey, instanceName, MethodologyInstanceService.SourceBuiltin, provisioning.Slug, ct);
-			var runtimeNew = await RuntimeForInstanceAsync(projectKey, instanceName, ct);
+			var ack = await _methodologyInstances.CreateAsync(projectKey, instanceKey, MethodologyInstanceService.SourceBuiltin, provisioning.Slug, ct);
+			var runtimeNew = await RuntimeForInstanceAsync(projectKey, instanceKey, ct);
 			var reportNew = new List<MethodologyEnableBoard>(provisioning.Kinds.Count);
 			foreach (var kind in provisioning.Kinds)
 			{
@@ -454,18 +454,18 @@ public sealed partial class TasksService : ITasksService
 		{
 			if (boards.Any(b => b.ClosedAt == null
 				&& MethodologyPresets.ParseKind(b.Kind) == kind
-				&& string.Equals(b.MethodologyInstance, instanceName, StringComparison.OrdinalIgnoreCase)))
+				&& string.Equals(b.MethodologyInstance, instanceKey, StringComparison.OrdinalIgnoreCase)))
 				continue;
 			var name = kind.ToString().ToLowerInvariant();
 			if (await _boards.ExistsAsync(projectKey, name, ct))
-				name = $"{instanceName}-{name}";
+				name = $"{instanceKey}-{name}";
 			if (await _boards.ExistsAsync(projectKey, name, ct)) continue;
-			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceName, ct);
+			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceKey, ct);
 			createdKinds.Add(kind);
 		}
 		await AutoWireSpecAsync(projectKey, ct);
 
-		var runtime = await RuntimeForInstanceAsync(projectKey, instanceName, ct);
+		var runtime = await RuntimeForInstanceAsync(projectKey, instanceKey, ct);
 		var after = await _boards.ListAsync(projectKey, ct);
 		var report = new List<MethodologyEnableBoard>(provisioning.Kinds.Count);
 		foreach (var kind in provisioning.Kinds)
@@ -473,7 +473,7 @@ public sealed partial class TasksService : ITasksService
 			var kindSlug = kind.ToString().ToLowerInvariant();
 			var board = after.FirstOrDefault(b => b.ClosedAt == null
 				&& MethodologyPresets.ParseKind(b.Kind) == kind
-				&& string.Equals(b.MethodologyInstance, instanceName, StringComparison.OrdinalIgnoreCase));
+				&& string.Equals(b.MethodologyInstance, instanceKey, StringComparison.OrdinalIgnoreCase));
 			var counts = EmptyCounts;
 			if (board is not null)
 			{
@@ -609,44 +609,44 @@ public sealed partial class TasksService : ITasksService
 	// ---- methodology instances (named live process automata) ----
 
 	public Task<MethodologyInstanceAck> CreateMethodologyInstanceAsync(
-		string projectKey, string name, string source, string sourceKey, CancellationToken ct = default) =>
-		_methodologyInstances.CreateAsync(projectKey, name, source, sourceKey, ct);
+		string projectKey, string key, string source, string sourceKey, CancellationToken ct = default) =>
+		_methodologyInstances.CreateAsync(projectKey, key, source, sourceKey, ct);
 
 	public Task<IReadOnlyList<MethodologyInstanceView>> ListMethodologyInstancesAsync(
 		string projectKey, CancellationToken ct = default) =>
 		_methodologyInstances.ListAsync(projectKey, ct);
 
 	public Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(
-		string projectKey, string name, CancellationToken ct = default) =>
-		_methodologyInstances.GetAsync(projectKey, name, ct);
+		string projectKey, string key, CancellationToken ct = default) =>
+		_methodologyInstances.GetAsync(projectKey, key, ct);
 
 	public Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(
-		string projectKey, string name, CancellationToken ct = default) =>
-		_methodologyInstances.CloseAsync(projectKey, name, ct);
+		string projectKey, string key, CancellationToken ct = default) =>
+		_methodologyInstances.CloseAsync(projectKey, key, ct);
 
 	public Task<MethodologyInstanceRulesView?> GetMethodologyInstanceRulesAsync(
-		string projectKey, string name, CancellationToken ct = default) =>
-		_methodologyInstances.GetRulesAsync(projectKey, name, ct);
+		string projectKey, string key, CancellationToken ct = default) =>
+		_methodologyInstances.GetRulesAsync(projectKey, key, ct);
 
 	public Task<MethodologyInstanceRulesAck> DefineMethodologyInstanceRulesAsync(
-		string projectKey, string name, MethodologyDefinition def, long version,
+		string projectKey, string key, MethodologyDefinition def, long version,
 		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default) =>
-		_methodologyInstances.DefineRulesAsync(projectKey, name, def, version, migration, ct);
+		_methodologyInstances.DefineRulesAsync(projectKey, key, def, version, migration, ct);
 
 	public Task<MethodologyActiveInstanceView> GetActiveMethodologyInstanceAsync(
 		string projectKey, CancellationToken ct = default) =>
 		_methodologyInstances.GetActiveAsync(projectKey, ct);
 
 	public Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(
-		string projectKey, string? name, long version, CancellationToken ct = default) =>
-		_methodologyInstances.SetActiveAsync(projectKey, name, version, ct);
+		string projectKey, string? key, long version, CancellationToken ct = default) =>
+		_methodologyInstances.SetActiveAsync(projectKey, key, version, ct);
 
 	// Same resolution as RuntimeAsync (spec methodology-active-instance), returning just the
-	// winning instance's name instead of its whole runtime — the "is this board's instance the
+	// winning instance's key instead of its whole runtime — the "is this board's instance the
 	// project's current default" question (methodology-inactive-visibility) needs only identity.
 	public async Task<string?> ResolveDefaultMethodologyInstanceAsync(string projectKey, CancellationToken ct = default)
 	{
-		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		var active = await _methodologyInstances.ResolveActiveKeyAsync(projectKey, ct);
 		if (active is not null) return active;
 
 		var open = await ListOpenInstancesAsync(projectKey, ct);
@@ -654,25 +654,25 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Product surface over open methodology instance rules (guide is derived presentation).
-	// Optional `name` selects one instance explicitly; when null, resolution mirrors
+	// Optional `key` selects one instance explicitly; when null, resolution mirrors
 	// RuntimeAsync (spec methodology-active-instance) — active pointer, else the single open
 	// instance, else an explicit "ambiguous" guide naming every open instance (never a silent
 	// kind merge). Source: "instance" | "active" | "ambiguous" | "presets".
-	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? name = null, CancellationToken ct = default)
+	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? key = null, CancellationToken ct = default)
 	{
-		if (!string.IsNullOrWhiteSpace(name))
+		if (!string.IsNullOrWhiteSpace(key))
 		{
-			var rules = await GetMethodologyInstanceRulesAsync(projectKey, name, ct);
+			var rules = await GetMethodologyInstanceRulesAsync(projectKey, key, ct);
 			return rules is null
 				? PresetsGuide()
 				: MethodologyGuide.Render(rules.Definition.Name, new MethodologyRuntime(rules.Definition), "instance", rules.Version);
 		}
 
-		var active = await _methodologyInstances.ResolveActiveNameAsync(projectKey, ct);
+		var active = await _methodologyInstances.ResolveActiveKeyAsync(projectKey, ct);
 		if (active is not null)
 		{
 			var rules = await GetMethodologyInstanceRulesAsync(projectKey, active, ct);
-			// ResolveActiveNameAsync already checked existence + open state, so a miss here
+			// ResolveActiveKeyAsync already checked existence + open state, so a miss here
 			// would mean a race (the instance closed/vanished between the two reads) —
 			// defensive fallback to presets rather than surfacing a null-ref.
 			return rules is null

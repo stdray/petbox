@@ -52,7 +52,7 @@ public sealed class ProjectTasksModel : PageModel
 	// differently (or one and not the other) — a project-level merge would have to guess.
 	public Dictionary<string, MethodologyRuntime> BoardRuntimes { get; } = new(StringComparer.Ordinal);
 
-	// First open instance by name (used when creating a free board once instances exist).
+	// First open instance by key (used when creating a free board once instances exist).
 	public string? FirstOpenInstance { get; private set; }
 
 	// spec methodology-inactive-visibility: the project's current effective default instance
@@ -98,7 +98,7 @@ public sealed class ProjectTasksModel : PageModel
 	// Add a FREE board (scratch / ad-hoc). Methodology-kind boards are not created here —
 	// they come as a unit via Enable / tasks_methodology_create.
 	// Once the project has any open methodology instance, the board must join one (service
-	// rule); put it on the first open instance by name.
+	// rule); put it on the first open instance by key.
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();

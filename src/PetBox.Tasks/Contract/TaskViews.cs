@@ -349,7 +349,8 @@ public sealed record MethodologyActiveInstanceView(string? Name, long Version);
 // this call changed the stored value, and the new CAS version.
 public sealed record MethodologyActiveInstanceAck(string? Name, bool Changed, long Version);
 
-// Ack of instance create/close: the instance name, whether this call changed state, and
+// Ack of instance create/close: the instance key (field kept spelled Name — storage-side
+// alignment, see MethodologyActiveInstanceView above), whether this call changed state, and
 // the boards that were provisioned (create) or closed (close).
 public sealed record MethodologyInstanceAck(
 	string Name,

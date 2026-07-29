@@ -22,13 +22,13 @@ namespace PetBox.Tasks.Data;
 //   2. Rules source: active methodology_defs singleton when present; else a builtin
 //      template chosen from unassigned board kinds (any process-role → quartet; else any
 //      classic → classic; else simple).
-//   3. Primary instance name: "main" when a project def exists; else the builtin slug
+//   3. Primary instance key: "main" when a project def exists; else the builtin slug
 //      (quartet|classic|simple). Prefer adopting into an existing OPEN instance of that
-//      name (or any open instance with free process-role slots) before creating.
+//      key (or any open instance with free process-role slots) before creating.
 //   4. Process-role boards (intake|ideas|spec|work): pack open boards with ≤1 open board
 //      per kind per instance. First coherent group → primary instance (so a $system-like
 //      quartet shares ONE instance). Extra open duplicates of a kind open a new instance
-//      (`{name}-2`, …) with the SAME rules. Closed process-role boards join the primary.
+//      (`{key}-2`, …) with the SAME rules. Closed process-role boards join the primary.
 //   5. Loose boards (classic|simple|custom): share ONE instance with the primary group when
 //      it exists; when the project has only loose boards, one shared instance for all of
 //      them (classic|simple unlimited within an instance — not one instance per board).
@@ -110,7 +110,7 @@ public sealed class MethodologyInstanceBackfill
 		var existingInstances = ctx.GetTable<MethodologyInstanceRow>()
 			.Where(r => r.ActiveTo == null)
 			.ToList();
-		// Pre-existing keys (already on disk) — distinct from names we allocate this run.
+		// Pre-existing keys (already on disk) — distinct from keys we allocate this run.
 		var preexistingKeys = existingInstances
 			.Select(r => r.Key)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -118,8 +118,8 @@ public sealed class MethodologyInstanceBackfill
 			.Where(r => r.ClosedAt is null)
 			.Select(r => r.Key)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		// All names claimed this run (pre-existing + newly allocated) — for unique naming.
-		var claimedNames = new HashSet<string>(preexistingKeys, StringComparer.OrdinalIgnoreCase);
+		// All keys claimed this run (pre-existing + newly allocated) — for unique keying.
+		var claimedKeys = new HashSet<string>(preexistingKeys, StringComparer.OrdinalIgnoreCase);
 
 		// Open process-role kinds already claimed by existing membership (incl. boards we
 		// will not reassign). Closed member boards do not claim a process-role slot.
@@ -138,7 +138,7 @@ public sealed class MethodologyInstanceBackfill
 		var defJson = ctx.GetTable<MethodologyDefRow>()
 			.FirstOrDefault(r => r.Key == MethodologyDefRow.SingletonKey && r.ActiveTo == null)
 			?.Json;
-		var (preferredName, rulesJson) = ResolvePrimaryRules(defJson, unassigned);
+		var (preferredKey, rulesJson) = ResolvePrimaryRules(defJson, unassigned);
 
 		// plan: board name → instance key
 		var plan = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -163,13 +163,13 @@ public sealed class MethodologyInstanceBackfill
 			if (board.ClosedAt is not null)
 			{
 				// Closed: no slot claim — park on primary (create later if needed).
-				primaryKey ??= PickOrAllocatePrimary(preferredName, openInstanceKeys, claimedNames, ensure, rulesJson, occupied);
+				primaryKey ??= PickOrAllocatePrimary(preferredKey, openInstanceKeys, claimedKeys, ensure, rulesJson, occupied);
 				target = primaryKey;
 			}
 			else
 			{
 				// Open: find an open instance with a free slot for this kind, else allocate.
-				target = FindOpenSlot(kind, preferredName, openInstanceKeys, claimedNames, occupied, ensure, rulesJson, ref primaryKey);
+				target = FindOpenSlot(kind, preferredKey, openInstanceKeys, claimedKeys, occupied, ensure, rulesJson, ref primaryKey);
 			}
 			plan[board.Name] = target;
 		}
@@ -181,7 +181,7 @@ public sealed class MethodologyInstanceBackfill
 			.ToList();
 		if (loose.Count > 0)
 		{
-			primaryKey ??= PickOrAllocatePrimary(preferredName, openInstanceKeys, claimedNames, ensure, rulesJson, occupied);
+			primaryKey ??= PickOrAllocatePrimary(preferredKey, openInstanceKeys, claimedKeys, ensure, rulesJson, occupied);
 			foreach (var b in loose)
 				plan[b.Name] = primaryKey;
 		}
@@ -251,9 +251,9 @@ public sealed class MethodologyInstanceBackfill
 
 	static string FindOpenSlot(
 		BoardKind kind,
-		string preferredName,
+		string preferredKey,
 		HashSet<string> openInstanceKeys,
-		HashSet<string> claimedNames,
+		HashSet<string> claimedKeys,
 		Dictionary<string, HashSet<BoardKind>> occupied,
 		Dictionary<string, string> ensure,
 		string rulesJson,
@@ -266,12 +266,12 @@ public sealed class MethodologyInstanceBackfill
 			return primaryKey;
 		}
 
-		// Prefer existing open instance named preferredName.
-		if (openInstanceKeys.Contains(preferredName) && SlotFree(preferredName, kind, occupied))
+		// Prefer existing open instance keyed preferredKey.
+		if (openInstanceKeys.Contains(preferredKey) && SlotFree(preferredKey, kind, occupied))
 		{
-			primaryKey ??= preferredName;
-			Claim(preferredName, kind, occupied);
-			return preferredName;
+			primaryKey ??= preferredKey;
+			Claim(preferredKey, kind, occupied);
+			return preferredKey;
 		}
 
 		// Any existing open instance with a free slot (stable order).
@@ -283,10 +283,10 @@ public sealed class MethodologyInstanceBackfill
 			return key;
 		}
 
-		// Allocate a new instance (primary name, then -2, -3, …).
-		var allocated = AllocateName(preferredName, claimedNames);
+		// Allocate a new instance (primary key, then -2, -3, …).
+		var allocated = AllocateKey(preferredKey, claimedKeys);
 		ensure[allocated] = rulesJson;
-		claimedNames.Add(allocated);
+		claimedKeys.Add(allocated);
 		openInstanceKeys.Add(allocated);
 		primaryKey ??= allocated;
 		Claim(allocated, kind, occupied);
@@ -294,22 +294,22 @@ public sealed class MethodologyInstanceBackfill
 	}
 
 	static string PickOrAllocatePrimary(
-		string preferredName,
+		string preferredKey,
 		HashSet<string> openInstanceKeys,
-		HashSet<string> claimedNames,
+		HashSet<string> claimedKeys,
 		Dictionary<string, string> ensure,
 		string rulesJson,
 		Dictionary<string, HashSet<BoardKind>> occupied)
 	{
-		if (openInstanceKeys.Contains(preferredName))
-			return preferredName;
-		// Prefer any existing open instance before minting a new name.
+		if (openInstanceKeys.Contains(preferredKey))
+			return preferredKey;
+		// Prefer any existing open instance before minting a new key.
 		var existing = openInstanceKeys.OrderBy(k => k, StringComparer.Ordinal).FirstOrDefault();
 		if (existing is not null) return existing;
 
-		var allocated = AllocateName(preferredName, claimedNames);
+		var allocated = AllocateKey(preferredKey, claimedKeys);
 		ensure[allocated] = rulesJson;
-		claimedNames.Add(allocated);
+		claimedKeys.Add(allocated);
 		openInstanceKeys.Add(allocated);
 		if (!occupied.ContainsKey(allocated)) occupied[allocated] = [];
 		return allocated;
@@ -325,15 +325,15 @@ public sealed class MethodologyInstanceBackfill
 		set.Add(kind);
 	}
 
-	static string AllocateName(string preferred, HashSet<string> claimedNames)
+	static string AllocateKey(string preferred, HashSet<string> claimedKeys)
 	{
-		if (!claimedNames.Contains(preferred)) return preferred;
+		if (!claimedKeys.Contains(preferred)) return preferred;
 		var n = 2;
-		while (claimedNames.Contains($"{preferred}-{n}")) n++;
+		while (claimedKeys.Contains($"{preferred}-{n}")) n++;
 		return $"{preferred}-{n}";
 	}
 
-	static (string Name, string RulesJson) ResolvePrimaryRules(string? defJson, IReadOnlyList<TaskBoardMeta> unassigned)
+	static (string Key, string RulesJson) ResolvePrimaryRules(string? defJson, IReadOnlyList<TaskBoardMeta> unassigned)
 	{
 		if (!string.IsNullOrWhiteSpace(defJson))
 			return ("main", defJson);

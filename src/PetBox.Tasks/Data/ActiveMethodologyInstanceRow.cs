@@ -9,10 +9,10 @@ namespace PetBox.Tasks.Data;
 // rules, which always resolve through TaskBoards.MethodologyInstance regardless of what is
 // active here. Multi-key temporal (SCD type-2) SINGLETON row in the per-project tasks file,
 // same one-key shape as MethodologyDefRow: Key is the fixed SingletonKey, InstanceName is
-// the pointed-at instance's name. The pointer MUST reference an OPEN instance — enforced at
+// the pointed-at instance's key. The pointer MUST reference an OPEN instance — enforced at
 // write time (MethodologyInstanceService.SetActiveAsync); a stale pointer (the pointed
 // instance closed after being set) is treated as absent by the read-side resolver
-// (ResolveActiveNameAsync), not blindly followed. Absence of an active row (never set, or
+// (ResolveActiveKeyAsync), not blindly followed. Absence of an active row (never set, or
 // cleared) is a legal, common state — resolution then falls back to the single-open-instance
 // case (unambiguous without a pointer) or an explicit "no default" state (never a silent
 // merge across several open instances).
