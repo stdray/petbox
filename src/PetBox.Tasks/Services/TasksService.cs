@@ -850,8 +850,14 @@ public sealed partial class TasksService : ITasksService
 		var nodes = new List<TaskNodeView>();
 		foreach (var n in visible)
 		{
-			var fromEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)fromByNode[n.NodeId] : [];
-			var toEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)toByNode[n.NodeId] : [];
+			// resharper-clt-step3-defect-shaped (PossibleMultipleEnumeration): each is read 2-3 times
+			// below (spec/blockedBy/blocks/linkedTasks/supersedes). The ILookup indexer already
+			// returns a materialized, array-backed grouping — re-enumeration was never actually
+			// costly — but a concrete List<T> says so to the reader AND the analyzer instead of
+			// an IEnumerable<Relation> cast that looks exactly like the lazy-requery shape this
+			// rule exists to catch.
+			var fromEdges = n.NodeId.Length > 0 ? fromByNode[n.NodeId].ToList() : [];
+			var toEdges = n.NodeId.Length > 0 ? toByNode[n.NodeId].ToList() : [];
 			var spec = fromEdges.Where(e => specLinkKinds.Contains(e.Kind)).Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
 			// Symmetric counterpart (kanban-blocked-signal review finding): this node's OWN

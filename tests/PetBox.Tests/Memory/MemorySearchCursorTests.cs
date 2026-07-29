@@ -272,8 +272,10 @@ public sealed class MemorySearchCursorTests : IDisposable
 		(await Search(limit: 5)).Stop.Should().BeNull("a listing has no ranked pool, so it declares no pool stop");
 	}
 
+	// resharper-clt-step3-defect-shaped (AsyncMethodWithoutAwait): no await anywhere — pure
+	// in-memory string-mapping assertions — so `async Task` was pure ceremony.
 	[Fact]
-	public async Task StopVocabulary_MatchesTasksSearch_Exactly()
+	public void StopVocabulary_MatchesTasksSearch_Exactly()
 	{
 		// Not a tautology: the two adapters build the string through the SAME mapping on purpose, and a
 		// future edit that "improves" one surface's wording in isolation is exactly what this catches.

@@ -61,7 +61,7 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 		res.Items.Select(h => h.Scope).Should().Contain("project").And.Contain("workspace");
 		// The project leg really is the DEFAULT project's container (not "*", which is never a
 		// storage path).
-		_db.MemoryStores.Select(s => s.ProjectKey).Should().Contain(Proj).And.NotContain(ProjectScope.AllProjects);
+		_db.MemoryStores.Select(s => s.ProjectKey).ToList().Should().Contain(Proj).And.NotContain(ProjectScope.AllProjects);
 	}
 
 	// The explicit arg still wins over the default — same key, another project.

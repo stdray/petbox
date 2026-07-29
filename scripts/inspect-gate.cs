@@ -44,6 +44,16 @@ using System.Text.Json.Nodes;
 //     still wanting it to fail if a NEW instance of the same rule shows up elsewhere.
 // Add a row here only when you've looked at that specific call site and decided it's fine, not
 // as a way to silence a whole rule (that belongs in the .DotSettings file instead).
+//
+// resharper-clt-step3-defect-shaped (2026-07-29, main c8b918ff) raised PossibleMultipleEnumeration
+// and PossibleUnintendedQueryableAsEnumerable to ERROR in PetBox.slnx.DotSettings and individually
+// read every finding each produced (5 + 3). Both were confirmed false positives (a pre-materialized
+// ILookup grouping re-enumerated 2-3 times in TasksService; a linq2db ITable<T>.Select(...) handed
+// straight to a FluentAssertions terminal .Should() in two test files) — but a suppression row was
+// NOT the right fix for either: both shapes have a trivial, equally-correct rewrite that satisfies
+// the analyzer instead of arguing with it (`.ToList()` once, either on the lookup read or before
+// `.Should()`), so the code was changed rather than the baseline grown. Keep reaching for a rewrite
+// first; a suppression here is for cases where no such rewrite exists, not a first resort.
 var suppressions = Array.Empty<Suppression>();
 
 // ---- args -------------------------------------------------------------------------------------

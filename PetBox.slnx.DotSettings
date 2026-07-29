@@ -96,4 +96,62 @@
 		dead using.
 	-->
 	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=RedundantUsingDirective/@EntryIndexedValue">ERROR</s:String>
+
+	<!--
+		resharper-clt-step3-defect-shaped: three "possible defect" families raised from their
+		ReSharper defaults (PossibleMultipleEnumeration/AccessToDisposedClosure default to WARNING,
+		AsyncMethodWithoutAwait/PossibleUnintendedQueryableAsEnumerable default to SUGGESTION/NOTE —
+		all below the gate's ERROR threshold) to ERROR, same narrowing shape as RedundantUsingDirective
+		above. Every finding these three families produced on 2026-07-29 (5 + 5 + 3) was individually
+		read and FIXED at the source (a real async/cancellation bug in MemoryService, plus a handful
+		of one-line rewrites — `.ToList()` once, either materializing an ILookup read or before a
+		FluentAssertions `.Should()` — that satisfy the analyzer instead of arguing with it). None of
+		the three needed a scripts/inspect-gate.cs `suppressions` row: that array is for a finding with
+		no such rewrite, not a first resort.
+
+		AccessToDisposedClosure (37 findings, the fourth family in scope) is DELIBERATELY NOT raised
+		here — see the standalone note below for why, right after this block.
+	-->
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=PossibleMultipleEnumeration/@EntryIndexedValue">ERROR</s:String>
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=AsyncMethodWithoutAwait/@EntryIndexedValue">ERROR</s:String>
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=PossibleUnintendedQueryableAsEnumerable/@EntryIndexedValue">ERROR</s:String>
+
+	<!--
+		AccessToDisposedClosure — SEVERITY OVERRIDE reasserting its own ReSharper default (WARNING),
+		not a silent no-op. Written the same way the CS8602 entry above is: a loud, deliberate
+		decision, not an omission a future reader should mistake for "didn't get to it".
+
+		resharper-clt-step3-defect-shaped raised this family to ERROR first and read every one of its
+		37 findings (2026-07-29, on main c8b918ff) before writing this entry. All 37 turned out to be
+		the SAME false-positive shape, in one of two flavors, and NONE was a real defect:
+
+		(a) Production code (20 findings — WorkspaceMembershipService, SqliteFtsIndex,
+		    VectorSearchIndex, MemoryService, CommentService, TasksService,
+		    CrossScopeTaskSearchService): a lambda captures a `using`-scoped DataConnection/factory
+		    delegate to build a nested linq2db query or a short-lived helper (`new SqliteFtsIndex(()
+		    => ctx)`), and that lambda is invoked and its result awaited SYNCHRONOUSLY, entirely
+		    within the same `using` block, before the connection is disposed. This is not an
+		    incidental pattern here — it is the ONLY way AGENTS.md's hard invariant ("No
+		    DataConnection is injectable. Ever." / `using var db = factory.Open()`) permits touching
+		    the database, and DbInjectionGuardTests fails the build if a connection is ever smuggled
+		    out to a longer-lived scope instead. The rule cannot see that the closure never outlives
+		    its `using` block; the codebase's own architecture already guarantees it can't.
+		(b) Test code (17 findings): the FluentAssertions idiom `var act = () => x.Throw();
+		    act.Should().Throw&lt;T&gt;()` (or a `Task.Run`/`Task.WhenAll` branch inside a
+		    `using`-scoped harness/semaphore, always awaited before the method returns) — same shape,
+		    the closure is invoked and completes before the disposal it supposedly threatens.
+
+		Raising this rule to ERROR under those two shapes would mean suppressing 37 file-level entries
+		in scripts/inspect-gate.cs's baseline (that suppression mechanism has no line granularity — see
+		the Suppression record there), covering effectively every service in the module and every test
+		using the standard assertion idiom, and it would keep re-suppressing the identical shape on any
+		future service written per AGENTS.md's own mandated pattern. That is indistinguishable from
+		disabling the rule while pretending otherwise, so this codebase treats the rule itself, not any
+		one finding, as the wrong unit: severity override, not a suppressions-array entry. If a FUTURE
+		AccessToDisposedClosure instance is NOT one of the two shapes above (e.g. a closure genuinely
+		escapes its scope via an un-awaited `Task.Run`/fire-and-forget, or a connection is smuggled into
+		a longer-lived field — the latter already caught separately by DbInjectionGuardTests), that is a
+		real bug this override will hide from the gate; Rider still surfaces it locally at WARNING.
+	-->
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=AccessToDisposedClosure/@EntryIndexedValue">WARNING</s:String>
 </wpf:ResourceDictionary>

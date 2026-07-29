@@ -76,6 +76,35 @@ public sealed class MemoryStoreTests : IDisposable
 	public async Task Create_InvalidName_Throws() =>
 		await Assert.ThrowsAsync<ArgumentException>(() => _store.CreateAsync("proj", "Bad Name", null));
 
+	// resharper-clt-step3-defect-shaped (AsyncMethodWithoutAwait): ListActiveEntriesAsync used to be a
+	// synchronous `.ToList()` dressed up as async — it never actually awaited anything and silently
+	// ignored whatever CancellationToken it was handed. A pre-cancelled token now throws, which is the
+	// cheapest proof that the read genuinely runs async and the token really reaches linq2db.
+	[Fact]
+	public async Task ListActiveEntriesAsync_HonorsCancellation()
+	{
+		var memory = new MemoryService(_store);
+		await memory.UpsertAsync("proj", "notes", [new MemoryEntryInput { Key = "n1", Type = "Project", Body = "x" }], []);
+
+		using var cts = new CancellationTokenSource();
+		cts.Cancel();
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(
+			() => memory.ListActiveEntriesAsync("proj", "notes", cts.Token));
+	}
+
+	[Fact]
+	public async Task ListActiveEntriesAsync_ReturnsActiveRows_OrderedByKey()
+	{
+		var memory = new MemoryService(_store);
+		await memory.UpsertAsync("proj", "notes", [
+			new MemoryEntryInput { Key = "b", Type = "Project", Body = "second" },
+			new MemoryEntryInput { Key = "a", Type = "Project", Body = "first" },
+		], []);
+
+		var entries = await memory.ListActiveEntriesAsync("proj", "notes");
+		entries.Select(e => e.Key).Should().Equal("a", "b");
+	}
+
 	// Store taxonomy (spec: memoverhaul): a well-known system store name is tagged IsSystem
 	// at creation; an ordinary store is not.
 	[Fact]
