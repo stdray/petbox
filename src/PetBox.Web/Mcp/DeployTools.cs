@@ -56,7 +56,7 @@ public static class DeployTools
 		[Description("Display name. Omit on update to keep the current one; on create, omitted defaults to id.")] string? displayName = null,
 		[Description("Capability tags CSV, e.g. 'net.x,disk=nvme'. Omit on update to keep the current CSV; pass \"\" to clear it. On create, omitted = \"\".")] string? tags = null,
 		[Description("Comes and goes (laptop/WSL2) — failover treats it as relocatable target carefully. Omit on update to keep the current flag; there is no separate clear sentinel, send true/false explicitly to change it. On create, omitted = false.")] bool? ephemeral = null,
-		[Description("Mint (or rotate) the node agent key and return it once.")] bool mintKey = false,
+		[Description("Mint (or rotate) the node agent key and return it once. Default false.")] bool mintKey = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
@@ -110,7 +110,7 @@ public static class DeployTools
 		[Description("Target node id (the deploy-fleet host, not a plan node).")] string hostId,
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
-		[Description("Desired running (true) or stopped (false).")] bool running = true,
+		[Description("Desired running (true) or stopped (false). Default true.")] bool running = true,
 		[Description("Auto-relocate on node failure. Omit on update to keep the current flag; there is no separate clear sentinel, send true/false explicitly to change it. On create, omitted = false.")] bool? relocatable = null,
 		[Description("Tags a node must cover to host this (CSV). Omit on update to keep the current CSV; pass \"\" to clear it. On create, omitted = \"\".")] string? requiredTags = null,
 		[Description("Config tag-vector for env resolution (CSV). Omit on update to keep the current CSV; pass \"\" to clear it. On create, omitted = \"\".")] string? configTags = null,

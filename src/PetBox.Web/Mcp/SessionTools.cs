@@ -93,7 +93,7 @@ public static class SessionTools
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent,
 		[Description("Ordinal (1-based) of the first message in this batch.")] long fromOrdinal,
-		[Description("Array of {role, content} messages, in transcript order — the same shape session_get returns.")] SessionMessageDto[] messages,
+		[Description("Array of {role, content} messages, in transcript order. session_get does NOT return this array shape — it returns the transcript joined into ONE string (`content`), not a per-message list. The bridge between the two verbs is the ORDINAL, not the wire shape: this call's `fromOrdinal` and session_get's/session_search's `lastOrdinal` share the same 1-based, dense message-count cursor.")] SessionMessageDto[] messages,
 		[Description("Optional observed client metadata as a JSON object string (e.g. roleBinding stamp). Last-write-wins when set; omit to keep existing; not written on a gap reject.")] string? meta = null,
 		CancellationToken ct = default)
 	{
