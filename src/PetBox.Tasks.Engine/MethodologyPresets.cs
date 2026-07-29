@@ -2,26 +2,35 @@ namespace PetBox.Tasks.Workflow;
 
 // The built-in processes — the methodology quartet (intake|ideas|spec|work) and the
 // standalone `simple` and `classic` kinds — expressed as PRESET METHODOLOGY DEFINITIONS: the same
-// MethodologyDefinition shapes a project can store, constructed in code (spec
-// primitives-preset-quartet). This replaces the hardcoded WorkflowCatalog 1:1, and the
-// wave-2 primitives that used to be imperative service code are now preset DATA:
+// MethodologyDefinition shapes an instance, a template or the project's utility layer can
+// store, constructed in code (spec primitives-preset-quartet). This replaces the hardcoded
+// WorkflowCatalog 1:1, and the wave-2 primitives that used to be imperative service code are
+// now preset DATA:
 //   - work linkConstraints: feature/bug must carry task_spec (specRef) at creation;
 //     chore has NO constraint — that IS the chore exemption, as data;
 //   - ideas: exploring→review carries preconditionArtifact "spec_plan" (the idea-review
 //     gate, enforced by RequirePreconditionArtifactsAsync like any definition gate);
 //   - tag axes: the quartet kinds run on the builtin area/concern axes; simple declares
 //     none — axes-emptiness = free-form tags is the ONE rule for every kind.
-// MethodologyRuntime falls back here for any kind slug the project's definition does not
-// declare, so preset boards behave exactly as before while a definition overrides per kind.
+// MethodologyRuntime falls back here for any kind slug the BOARD'S WORLD document (an
+// instance's rules, or the project's `$utility` layer) does not declare, so preset boards
+// behave exactly as before while a document overrides per kind. Presets are the BASELINE, not
+// a methodology anything installs silently: a live instance is born only from an EXPLICIT
+// tasks_methodology_create (source `builtin`|`template`|`instance` + sourceKey).
 public static class MethodologyPresets
 {
-	// The `preset` name a definition-less project reports (tasks_methodology_def_get).
+	// The document `name` the presets-only guide reports when no open instance applies
+	// (tasks_methodology_guide, source "presets" — TasksService.PresetsGuide).
 	public const string Name = "builtin-presets";
 
-	// Kind slug → process-role enum. The enum is the key for semantics that are NOT yet
-	// primitives (quartet singleton rule, ideaRef/specRef board-kind checks, UI kind
-	// rendering). Auto-wire and delivery type roles are DATA on KindDef. Unknown slugs —
-	// including the legacy `free` (pre-M029 rows) — read as Simple, exactly as they always did.
+	// Kind slug → process-role enum. The enum survives as the key for what is NOT expressed as
+	// document data: which preset KindDef answers for a kind no document declares, the
+	// quartet compat surface (EnableMethodologyAsync/GetMethodologyAsync behind the admin
+	// enable UI), and UI kind rendering. The per-kind semantics that used to need it are DATA
+	// on KindDef: auto-wire (AutoWireFrom — it also drives the wiredBoard check), delivery
+	// type roles (Delivery), the one-open-board-per-world rule (Singleton), the blocker gate
+	// (BlocksGate) and the ideaRef/specRef target checks (LinkConstraints.TargetKind). Unknown
+	// slugs — including the legacy `free` (pre-M029 rows) — read as Simple, as they always did.
 	public static BoardKind ParseKind(string? kind) =>
 		Enum.TryParse<BoardKind>(kind, ignoreCase: true, out var k) ? k : BoardKind.Simple;
 
@@ -124,9 +133,10 @@ public static class MethodologyPresets
 	// No `Deferred` status (work-preset-drop-deferred, 2026-07): the maintainer decided a
 	// kanban column for "parked, come back later" wasn't worth the extra status — Pending
 	// already covers "not started yet" and a card that stalls stays Pending or moves to
-	// Blocked. Dropping it from THIS preset does not, by itself, remove it from a
-	// definition already materialized into a project's stored methodology document before
-	// this change (RenderBuiltinTemplate copies a preset kind verbatim at creation time) —
+	// Blocked. Dropping it from THIS preset does not, by itself, remove it from a document
+	// already materialized into an instance's stored RULES (or the project's utility-layer
+	// document) before this change (RenderBuiltinTemplate copies a preset kind verbatim at
+	// creation time) —
 	// WorkDeferredStatusMigrator (PetBox.Tasks.Data) is the one-time startup migration that
 	// strips it (status + referencing transitions) from any such stored document.
 	// The quartet's ONE blocking gate (spec methodology-blocks-gate-data): the single source of
@@ -432,16 +442,22 @@ public static class MethodologyPresets
 		return null;
 	}
 
-	// ---- provisioning presets (methodology enable + copy-as-definition) ----
+	// ---- provisioning presets (instance provisioning + copy-as-document) ----
 
-	// A named PROVISIONING PRESET: the board kinds `tasks_methodology_enable` creates as one
-	// unit, plus human-facing metadata for the enable UI. The point of the registry is that a
-	// new preset (e.g. a leaner "classic" pipeline) is added here as PURE DATA — no surface
-	// (service / MCP tool / admin UI) changes, they all read this list.
+	// A named PROVISIONING PRESET: the board kinds ONE provisioning act creates as a unit —
+	// `tasks_methodology_create` with source `builtin` and this slug as `sourceKey`, or the
+	// admin enable UI on the same path (it prefers that door and falls back to the
+	// EnableMethodologyAsync compat layer for an existing instance) — plus the human-facing
+	// metadata that UI renders. The point of the registry is that a new preset (e.g. a leaner
+	// "classic" pipeline) is added here as PURE DATA — no surface (service / MCP tool / admin
+	// UI) changes, they all read this list.
 	public sealed record MethodologyProvisioningPreset(
 		string Slug, string DisplayName, string Description, IReadOnlyList<BoardKind> Kinds);
 
-	// The slug enable defaults to (and the historical, only preset today).
+	// The slug the callers that MAY omit one fall back to: the admin enable UI's empty
+	// <select> and EnableMethodologyAsync's default argument. It is NOT a default for
+	// tasks_methodology_create — an instance is born from an EXPLICIT source, there is no
+	// silent quartet — and it is no longer the only preset: `classic` is registered right below.
 	public const string DefaultProvisioningPreset = "quartet";
 
 	// The provisioning preset registry: the quartet (intake→ideas→spec→work, enabled since
@@ -469,14 +485,19 @@ public static class MethodologyPresets
 
 	// Render a provisioning preset as a MethodologyDefinition DOCUMENT — the same shapes the
 	// presets already build (one KindDef per board kind + the builtin tag axes) — so a user can
-	// copy it as a starting point and edit it through tasks_methodology_def_upsert. The document
-	// passes MethodologyDefinitionValidator (the preset slug is the definition name; every kind
-	// slug, status and transition come straight from the preset data). Read-only: the returned
-	// definition is a template, NOT an installed methodology. The data-born semantics (link
+	// copy it as a starting point and edit it through tasks_methodology_rules_upsert (a live
+	// instance's rules) or tasks_methodology_template_upsert (an inert template). The document
+	// passes MethodologyDefinitionValidator (the preset slug becomes the document's `name` — a
+	// nickname, NOT an address: an instance is addressed by its `key`; every kind slug, status
+	// and transition comes straight from the preset data). Read-only: the returned
+	// definition is a document, NOT a live instance — nothing is provisioned until
+	// tasks_methodology_create names it as a source. The data-born semantics (link
 	// constraints incl. targets — the ideaRef/specRef guards — transition effects — intake
-	// auto-close, blocks auto-unblock — auto-wire work→spec, and delivery type roles) DO
-	// travel with the copy; only the enum-keyed extras (quartet singleton rule) stay
-	// preset-only.
+	// auto-close, blocks auto-unblock — auto-wire work→spec, delivery type roles, the
+	// one-open-board `singleton` flag, the blocker gate and the default view) all DO travel
+	// with the copy: they are fields on the copied KindDef. What stays outside the document is
+	// only what the BoardKind enum still keys (see ParseKind above) — the preset fallback for
+	// an undeclared kind and the quartet compat surface.
 	public static MethodologyDefinition RenderPresetDefinition(string? slug)
 	{
 		var preset = ResolveProvisioningPreset(slug);
@@ -496,7 +517,7 @@ public static class MethodologyPresets
 	// Builtin TEMPLATE keys (methodology-template-storage): the documents readable through
 	// tasks_methodology_template_get/list with source="builtin". Superset of provisioning
 	// presets — adds `simple` (a single-kind free-lifecycle board; not a provisioning unit
-	// because enable already defaults empty boards to simple via board_create).
+	// because a bare `tasks_board_create` already gives an empty board the `simple` kind).
 	public static readonly IReadOnlyList<string> BuiltinTemplateKeys = ["quartet", "classic", "simple"];
 
 	// Render a builtin template key as a MethodologyDefinition. quartet|classic go through
