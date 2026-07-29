@@ -29,7 +29,6 @@ public static class Routes
 
 	// Workspace level
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";
-	public static string WorkspaceTasks(string ws) => $"{UiPrefix}/{ws}/tasks";
 
 	// Shared cross-project memory for a workspace: "$workspace" under "$system" (M028/M031),
 	// or "$ws-{wsKey}" under any other workspace. See WorkspaceMemory.ContainerKeyFor.
@@ -62,7 +61,6 @@ public static class Routes
 	public static string ProjectDatabase(string ws, string key, string db) => $"{Project(ws, key)}/databases/{db}";
 	public static string ProjectTable(string ws, string key, string db, string table) => $"{Project(ws, key)}/databases/{db}/{table}";
 	public static string ProjectTraces(string ws, string key) => $"{Project(ws, key)}/traces";
-	public static string ProjectTrace(string ws, string key, string traceId) => $"{Project(ws, key)}/traces/{traceId}";
 
 	// Tasks / Memory / Sessions — read-only views over the per-container temporal
 	// stores. A project has many named boards/stores; the bare URL lists them and
@@ -105,7 +103,6 @@ public static class Routes
 	// create/list/revoke/edit-scopes now lives here; ProjectConnect (/connect) stays the separate
 	// onboarding-flavored "issue one key + show wiring instructions" flow.
 	public static string ProjectKeys(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/keys";
-	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 	// Generic Project-scope settings page (mirrors SysDefaults/WorkspaceDefaults, at Scope.Project) —
 	// distinct from ProjectSettings() above, which is the bespoke project Info/detail page (route
 	// segment /info) and stays the owner of RepoSettings.CommitUrlTemplate + health endpoints + the
@@ -131,9 +128,5 @@ public static class Routes
 	public static string DocWire() => "/doc/wire";
 
 	// Auth & misc — not under /ui prefix
-	public static string Login() => "/Login";
-	public static string Login(string returnUrl) => $"/Login?returnUrl={Uri.EscapeDataString(returnUrl)}";
 	public static string Logout() => "/api/auth/logout";
-	public static string Error() => "/Error";
-	public static string Share(string token) => $"/ui/share/{token}";
 }

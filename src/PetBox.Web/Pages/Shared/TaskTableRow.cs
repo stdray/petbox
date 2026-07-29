@@ -18,10 +18,9 @@ public sealed record TaskTableRow(
 	// specifically StatusKind.TerminalCancel, the strikethrough invariant's trigger. Closed still
 	// drives active-only filtering; TerminalCancel drives ONLY the title's line-through.
 	bool TerminalCancel = false,
-	// board-view-fields: populated only when Model.Fields opts them in — the caller (_BoardViewTable
-	// for a board, Search for cross-scope) decides whether to resolve/pass these at all.
+	// board-view-fields: populated only when Model.Fields opts it in — the caller (_BoardViewTable
+	// for a board, Search for cross-scope) decides whether to resolve/pass it at all.
 	IReadOnlyList<LinkDto>? BlockedBy = null,
-	string? Body = null,
 	// Populated only when ShowScopeColumns is true (cross-scope search) — a board-scoped table
 	// leaves these null; the board itself already says where every row lives.
 	string? Workspace = null, string? ProjectKey = null, string? Board = null,
