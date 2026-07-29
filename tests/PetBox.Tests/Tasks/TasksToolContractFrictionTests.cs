@@ -227,8 +227,15 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 	public void ReferenceParameters_ShareOneFormulation()
 	{
 		foreach (var tool in new[] { "tasks_search", "tasks_node_get", "tasks_upsert", "relations_create", "relations_list", "comments_search", "comments_upsert" })
-			Flat(McpToolDescriptions.Full(RegisteredDescription(tool)))
-				.Should().Contain("both accepted", $"{tool} must use the shared node-reference formulation");
+		{
+			var text = Flat(McpToolDescriptions.Full(RegisteredDescription(tool)));
+			// The CANONICAL TERM, not just the tail of the sentence. "both accepted" alone would pass on
+			// any phrasing that happened to end the same way; pinning the term is what keeps
+			// "node reference" the one name for the concept (uniform-node-ref-naming) instead of letting
+			// "node ref" / "node pointer" / "slug-or-NodeId" drift back in tool by tool.
+			text.Should().Contain("a node reference — ", $"{tool} must name the concept 'node reference'");
+			text.Should().Contain("both accepted", $"{tool} must use the shared node-reference formulation");
+		}
 
 		// And the exception stays explicit rather than inferable.
 		Flat(McpToolDescriptions.Full(RegisteredDescription("tasks_upsert")))

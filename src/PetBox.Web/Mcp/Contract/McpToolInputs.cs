@@ -409,8 +409,10 @@ public sealed record CommentItemInput
 // One item of a relations_create batch. `from`/`to` are each a node REFERENCE — a slug key or a
 // 32-hex NodeId (both accepted). The `fromNodeId`/`toNodeId` item aliases were REMOVED
 // (drop-legacy-aliases); they are now unknown members and are REJECTED, not silently dropped.
-// The tool's SINGLE form still takes `fromNodeId`/`toNodeId` as its own parameters — those are
-// not aliases (there is no `from`/`to` tool parameter for them to duplicate).
+// The tool's SINGLE form was renamed to match (`fromNodeId`/`toNodeId` -> `from`/`to`), so the two
+// forms now share ONE vocabulary: a node-reference parameter never carries an Id/Key/Slug suffix,
+// because it accepts either spelling. `FromNodeId`/`ToNodeId` survive only on the RESPONSE, where
+// the value really is always a NodeId and the suffix is therefore honest.
 public sealed record RelationCreateItemInput
 {
 	public string? Kind { get; init; }

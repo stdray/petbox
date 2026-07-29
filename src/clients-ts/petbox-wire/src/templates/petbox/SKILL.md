@@ -27,10 +27,14 @@ with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both mo
 `terminalok` | `terminalcancel` — omit for the mode default, name all three to see everything;
 there is no `includeClosed`); `sort{by,desc}`
 reorders; `bodyLen` snippets bodies. One node in full: `tasks_node_get`.
-Every node-REFERENCE parameter (`nodes[]`, `underNode`, `node`, `partOf`, `blockedBy`,
-`supersedes`, relations' `from`/`to`) takes a slug key **or** a 32-hex NodeId — both accepted.
-`tasks_upsert`'s `key` is the exception: it is the slug FIELD being written, so it takes the
-slug only, and it is REQUIRED on every node.
+Every **node reference** (`nodes[]`, `underNode`, `node`, `partOf`, `blockedBy`,
+`supersedes`, and relations' `from`/`to` in BOTH the single and the batch form) takes a slug
+key **or** a 32-hex NodeId — both accepted. The NAME tells you: a node reference never ends in
+`Id`/`Key`/`Slug`, exactly because it accepts either spelling (there is no `fromNodeId`
+any more). A type suffix means it is NOT a reference: `tasks_upsert`'s `key` is the slug FIELD
+being written — slug only, and REQUIRED on every node — `parentId` is a comment id, and
+relations' `id`/`ids` are edge ids. `NodeId`-suffixed names appear only in RESPONSES, where the
+value really is always a NodeId.
 
 **Memory entries are typed** (`User` | `Feedback` | `Project` | `Reference`) — `type` is
 required only when `memory_upsert` creates a NEW entry (version 0), not on an edit;

@@ -350,8 +350,8 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		{
 			projectKey = ProjectKey,
 			kind = "relates_to",
-			fromNodeId = citesId,
-			toNodeId = peerId,
+			from = citesId,
+			to = peerId,
 		});
 		IsErr(viaRelations).Should().BeFalse(Text(viaRelations));
 

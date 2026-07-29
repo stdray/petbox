@@ -267,9 +267,8 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	}
 
 	// `fromNodeId`/`toNodeId` inside relations_create `items[]` — item-level aliases for `from`/`to`.
-	// NOTE the asymmetry this pins: the SINGLE form's `fromNodeId`/`toNodeId` TOOL parameters are NOT
-	// aliases (nothing named `from`/`to` exists at the top level for them to duplicate) and stay —
-	// see RelationsCreate_SingleForm_FromNodeId_StillAccepted for the other side of that line.
+	// The single form now carries the SAME two names (uniform-node-ref-naming), so this name is
+	// retired in both scopes — see RelationsCreate_SingleForm_FromNodeId_IsRejected_AndPointsAtFrom.
 	[Fact]
 	public async Task RetiredAlias_FromNodeIdInBatchItem_IsRejected_AndNamesIt()
 	{
@@ -291,11 +290,14 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 		Text(result).Should().Contain("Unknown parameter").And.Contain("fromNodeId").And.Contain("relations_create");
 	}
 
-	// The line the retirement must NOT cross. `fromNodeId` is a legitimate TOP-LEVEL parameter of
-	// relations_create's single form; only the item-level duplicate was retired. If a later sweep
-	// deletes the tool parameter too, this fails.
+	// INVERTED by uniform-node-ref-naming (was RelationsCreate_SingleForm_FromNodeId_StillAccepted).
+	// That test defended `fromNodeId` as a legitimate top-level parameter, on the reasoning that it
+	// duplicated nothing. True at the time, but it missed the stronger objection: the value goes
+	// through ResolveNodeRefAsync and resolves a SLUG or a NodeId, so a name ending in NodeId
+	// promises half of what it takes — and the batch form already called the same thing `from`.
+	// The single form now carries the same two names, so the old spelling is retired here too.
 	[Fact]
-	public async Task RelationsCreate_SingleForm_FromNodeId_StillAccepted()
+	public async Task RelationsCreate_SingleForm_FromNodeId_IsRejected_AndPointsAtFrom()
 	{
 		var result = await (await Tool(_fx.Mcp, "relations_create")).CallAsync(new Dictionary<string, object?>
 		{
@@ -305,9 +307,27 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 			["toNodeId"] = "unkp-no-such-node-either",
 		});
 
-		// It fails on RESOLUTION (no such node), which is proof the parameter itself bound: an
-		// unknown-parameter refusal would have happened in the filter, before any resolution ran.
-		Text(result).Should().NotContain("Unknown parameter");
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("REMOVED: 'fromNodeId' -> use 'from'");
+		text.Should().Contain("'toNodeId' -> use 'to'");
+	}
+
+	// The other side of that line, and the point of the whole rename: `from`/`to` DO bind, and a
+	// slug (not just a NodeId) is what they take. Failing on RESOLUTION rather than on the parameter
+	// name is the proof — an unknown-parameter refusal happens in the filter, before resolution runs.
+	[Fact]
+	public async Task RelationsCreate_SingleForm_FromTo_Bind_AndTakeASlug()
+	{
+		var result = await (await Tool(_fx.Mcp, "relations_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["kind"] = "relates_to",
+			["from"] = "unkp-no-such-node",
+			["to"] = "unkp-no-such-node-either",
+		});
+
+		Text(result).Should().NotContain("Unknown parameter").And.NotContain("REMOVED");
 	}
 
 	// Task 2: `key` is now REQUIRED in the published schema, not merely in the prose. While the `l1`
@@ -495,11 +515,11 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 				var (retiredName, replacement) = (pair.Key, pair.Value);
 				live.Should().Contain(replacement,
 					$"{tool} advertises '{replacement}' as the successor of '{retiredName}' — it must exist");
-				// `fromNodeId` is retired as an ITEM field while staying a valid top-level parameter, so
-				// the assertion is about the item scope, not blanket absence.
-				if (tool != "relations_create")
-					live.Should().NotContain(retiredName,
-						$"{tool} still declares '{retiredName}' — the table says it was removed");
+				// No exceptions any more: `fromNodeId` used to be exempt here because it was retired as
+				// an ITEM field while still live as relations_create's single-form parameter. The single
+				// form now uses `from`/`to` too, so every retired name is absent from EVERY scope.
+				live.Should().NotContain(retiredName,
+					$"{tool} still declares '{retiredName}' — the table says it was removed");
 			}
 		}
 	}

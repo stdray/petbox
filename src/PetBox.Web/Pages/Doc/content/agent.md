@@ -140,10 +140,15 @@ see every kind (the old includeClosed=true was removed and is now a rejected par
 One full node: tasks_node_get. Partial update: send only what changes — a status change
 needs just key + version + status.
 
-REFERENCES vs KEYS: every parameter that POINTS AT a node — node, nodes[], underNode,
-partOf, blockedBy, supersedes, relations' from/to — takes a slug key OR a 32-hex NodeId,
-both accepted. tasks_upsert's `key` is the one exception: it is the slug FIELD you write,
-so it takes the slug only, and it is REQUIRED on every node.
+NODE REFERENCES vs KEYS: a "node reference" is any parameter that POINTS AT a node — node,
+nodes[], underNode, partOf, blockedBy, supersedes, and relations' from/to (in BOTH the
+single and the batch form; the old fromNodeId/toNodeId are gone). Every one of them takes
+a slug key OR a 32-hex NodeId, both accepted. You can tell by the NAME: a node reference
+never ends in Id/Key/Slug, precisely because it accepts either spelling. Names that DO
+carry a type suffix are not references — tasks_upsert's `key` is the slug FIELD you write
+(slug only, and REQUIRED on every node), comments' `parentId` is a comment id, relations'
+`id`/`ids` are edge ids. The NodeId suffix survives only in RESPONSES (nodeId,
+parentNodeId, fromNodeId, toNodeId), where the value really is always a NodeId.
 
 STORE by lifetime: durable fact -> memory (type User|Feedback|Project|Reference); current
 thinking -> session; a unit of work with a status -> task.

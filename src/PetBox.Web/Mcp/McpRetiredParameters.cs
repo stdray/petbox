@@ -7,11 +7,12 @@ namespace PetBox.Web.Mcp;
 // wrong and leaves it to guess which of fourteen accepted names is the one it wanted. This table is
 // what turns the refusal into an instruction — the alias is named, and so is its successor.
 //
-// Keyed by TOOL because the same name can be retired in one scope and live in another:
-// `fromNodeId` is a retired ITEM field of relations_create AND a legitimate top-level parameter of
-// its single form. That is safe here for a structural reason, not a lucky one — this table is
-// consulted ONLY for names the schema already rejected in the scope they appeared in, so a valid
-// top-level `fromNodeId` never reaches the lookup at all.
+// Keyed by TOOL. The lookup is consulted ONLY for names the schema already rejected in the scope
+// they appeared in, so an entry here can never shadow a name that is still live somewhere: a valid
+// parameter never reaches this table at all. (`fromNodeId` relied on that while it was retired as a
+// relations_create ITEM field but still live as its single-form parameter — the single form has
+// since been renamed to `from`/`to` too, so the name is now retired in BOTH scopes and one entry
+// covers both.)
 //
 // This is a MIGRATION AID with a shelf life, not a permanent second contract surface. It carries no
 // behaviour: every name in it is already gone from the schema, and the entry only improves the
@@ -34,7 +35,9 @@ static class McpRetiredParameters
 		{
 			["includeClosed"] = "statusKind",
 		},
-		// relations_create items[]: the item shape's own duplicates of `from`/`to`.
+		// relations_create: the item shape's duplicates of `from`/`to`, AND the single form's own
+		// parameters, which were renamed to the same two names (uniform-node-ref-naming: a node
+		// reference resolves a slug OR a NodeId, so its name must not end in NodeId and promise half).
 		["relations_create"] = new(StringComparer.Ordinal)
 		{
 			["fromNodeId"] = "from",

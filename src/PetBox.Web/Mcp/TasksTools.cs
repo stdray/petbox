@@ -714,7 +714,7 @@ public static class TasksTools
 		Return one or more nodes of a board in FULL. `node` reads ONE; `nodes` reads a
 		BATCH in one call — the same split as memory_get `key`/`keys`: combine them or use either
 		alone. Always returns { nodes: [...] }, one shape for both arities.
-		Each is a node REFERENCE — its slug key or its 32-hex NodeId (both accepted) — the same
+		Each is a node reference — its slug key or its 32-hex NodeId (both accepted) — the same
 		two-form reference partOf/blockedBy/supersedes/underNode and relations_* take.
 		The parameter is `node`, NOT `key` — passing `key` is rejected as an unknown parameter,
 		and no `key` alias will be added. This is a deliberate difference from tasks_upsert, not
