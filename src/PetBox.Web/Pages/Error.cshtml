@@ -17,9 +17,13 @@
 	}
 	else
 	{
-		@if (Model.ErrorCode is int code)
+		@* `statusCode`, not `code`: `@code` is the Blazor code-block directive, so `@code` here
+		   parses as a directive missing its body rather than as this variable. The Razor compiler
+		   lets it through, ReSharper reports it as an error, and both are reading the same
+		   ambiguity — renaming removes it instead of suppressing the report. *@
+		@if (Model.ErrorCode is int statusCode)
 		{
-			<p class="text-5xl font-bold text-error mb-2" data-testid="error-status">@code</p>
+			<p class="text-5xl font-bold text-error mb-2" data-testid="error-status">@statusCode</p>
 		}
 		<h1 class="text-xl font-semibold text-error mb-2" data-testid="error-title">Something went wrong</h1>
 		<p class="opacity-70 mb-4" data-testid="error-message">

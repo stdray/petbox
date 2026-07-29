@@ -1,15 +1,3 @@
-#!/usr/bin/env bash
-# Pre-commit hook — format verify, build, test.
-# Activate: git config core.hooksPath .githooks
-# Bypass:  git commit --no-verify
-
-set -e
-
-echo "==> dotnet format --verify-no-changes"
-dotnet format PetBox.slnx --verify-no-changes --no-restore 2>&1
-
-echo "==> dotnet build"
-dotnet build PetBox.slnx --no-restore 2>&1
-
-echo "==> dotnet test"
-dotnet test PetBox.slnx --no-build 2>&1
+#!/bin/sh
+# See scripts/pre-commit.cs for what this does, why, and how to bypass.
+exec dotnet run scripts/pre-commit.cs
