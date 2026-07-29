@@ -232,7 +232,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		var result = Importer().Import();
 
 		result.Outcome.Should().Be(LlmRegistryImporter.Outcome.AlreadyDone);
-		_db.LlmEndpoints.Select(e => e.Name).ToList().Should().Equal("hand-made"); // untouched
+		_db.LlmEndpoints.Select(e => e.Name).ToList().Should().Equal(["hand-made"]); // untouched
 		_db.LlmRoutes.Count().Should().Be(1);
 		_db.Settings.Any(s => s.Path == LlmRegistryImporter.MarkerPath).Should().BeFalse();
 	}
@@ -324,7 +324,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 
 		result.Outcome.Should().Be(LlmRegistryImporter.Outcome.Imported);
 		(result.Endpoints, result.Routes, result.DroppedRoutes).Should().Be((1, 1, 1));
-		_db.LlmRoutes.Select(r => r.Endpoint).ToList().Should().Equal("live");
+		_db.LlmRoutes.Select(r => r.Endpoint).ToList().Should().Equal(["live"]);
 		_log.Entries.Should().Contain(e => e.Level == MsLogLevel.Warning && e.Message.Contains("DROPPED", StringComparison.Ordinal));
 	}
 
