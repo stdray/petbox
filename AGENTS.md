@@ -31,19 +31,27 @@ Razor Pages, frontend assets, MCP endpoint). Client SDKs live under `src/clients
 
 ## Where the living truth lives
 
-**The live plan, status, and specification are NOT in this repo.** They live in the
-PetBox `$system` project's methodology boards, reached over the `petbox` MCP server
-(see "MCP access" below):
+**The live plan, status, and specification are NOT in this repo.** They live on the boards
+of the `quartet` methodology instance on the PetBox `$system` project, reached over the
+`petbox` MCP server (see "MCP access" below):
 
 - **ideas** — deliberations (raw → exploring → review → accepted; or rejected).
 - **spec** — the defined requirements tree.
 - **work** — technical tasks with a status lifecycle.
 - **intake** — the inbox (raw requests → triage).
 
+A methodology is a named **instance**, not a per-project singleton: a project may hold
+several at once, each addressed by its slug `key` (`tasks_methodology_list`), and every
+board belongs to exactly one of them (or to the project's `$utility` layer). `$system`
+happens to run one open instance, `quartet` — so "the `$system` boards" and "the quartet
+instance's boards" are the same four boards today, and only today.
+
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
-[doc/methodology-engine.md](doc/methodology-engine.md) for the engine). The markdown
-files under `doc/` (`plan.md`, `spec.md`, `decision-log.md`, …) are **historical
-records**, not the working plan — do not treat them as current state.
+[doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a
+**MAINTAINED reader surface**, not an archive — onboarding reads it, so a change that
+outdates it fixes it in the same commit. What lives there is *explanation*, never live
+plan or status: the record files (`plan.md`, `spec.md`, `decision-log.md`, …) say how
+things came to be decided, while the current plan and status are the boards above.
 
 ## Process contract (binding for ALL agents)
 
@@ -248,7 +256,7 @@ records**, not the working plan — do not treat them as current state.
             "headers": { "X-Api-Key": "${PETBOX_API_KEY}" } }
 ```
 
-It exposes the **full PetBox tool surface** (~72 tools, underscore-named):
+It exposes the **full PetBox tool surface** (~95 tools, underscore-named):
 `tasks_*`, `memory_*`, `session_*`, `comments_*`, `relations_*`, `config_*`,
 `log_*` / `log_query`, `data_*` / `db_*`, `llm_*`, `deploy_*`, `apikey_*`,
 `project_*`, `health_search`, `petbox_report_issue`, `whoami`. Each tool's visibility is
@@ -287,7 +295,8 @@ entries should include the *why* and *how to apply*. Search before writing, upda
 over duplicating, delete when wrong (temporal history makes deletes safe). A cold
 `tasks_upsert` / `memory_upsert` to an **unknown** board/store is now **rejected**
 (with a "did you mean X?" suggestion) — the agent MCP layer requires explicit creation
-(`tasks_board_create` / `memory_store_create`, or a methodology). The reserved system
+(`tasks_board_create` / `memory_store_create`, or a board provisioned by
+`tasks_methodology_create`). The reserved system
 stores (`canon`, `notes`, `autocaptured`, `session-digests`, `ops`) always exist; the
 admin UI and background jobs are unchanged.
 
