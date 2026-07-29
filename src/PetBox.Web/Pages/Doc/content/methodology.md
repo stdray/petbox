@@ -6,7 +6,7 @@ How to drive the spec / work / idea rails. This is the **operational contract**;
 
 Set `kind` on `tasks_board_create` (it can't be changed later). The kind drives which task types, statuses, transitions and invariants apply. Default is `simple`.
 
-- **`spec`** — the requirement tree (only DEFINED requirements). Node status `draft|defined|deprecated`. Each node also carries a COMPUTED `delivery` (see below).
+- **`spec`** — the requirement tree (only DEFINED requirements). Node status `defined|deprecated`. Each node also carries a COMPUTED `delivery` (see below).
 - **`work`** — technical tasks, type `feature|bug|chore`. Status `Pending→InProgress→Review→Done` (+ `Blocked|Cancelled`). A feature/bug MUST link a spec node (see spec-link); `chore` — internal engineering hygiene (tests, flakes, refactoring, infra) — shares the FSM but needs no spec link.
 - **`ideas`** — deliberation, type `idea`. Status `raw→exploring→{rejected|deferred|accepted}`.
 - **`intake`** — raw issues, type `issue`. Status `reported→triage→{confirmed|duplicate|wontfix}→done`.
