@@ -53,6 +53,47 @@
 	-->
 
 	<!--
+		resharper-clt-line-width (2026-07-29): adding a bare &lt;CSReformatCode&gt;True&lt;/CSReformatCode&gt;
+		to this profile was TRIED and REJECTED — recorded here so the next reader does not redo the
+		same experiment blind, the same way the CS8602/AccessToDisposedClosure entries above record
+		their own negative results.
+
+		The goal was narrow: wrap the ~536 lines over max_line_length (see .editorconfig) that are
+		genuinely reformattable code (as opposed to the ~500-600 lines whose length comes from a
+		single string literal, which no reformatter touches — see resharper-clt-line-width on the
+		work board). CSReformatCode does NOT do that narrowly:
+
+		1. Run through the sanctioned `./build.ps1 -Target CleanupCode` (whole-solution, no file
+		   scoping), it rewrote 647 of ~800 tracked .cs files (+13286/-8211 lines) to fix long lines
+		   in only ~254 of them — roughly 60% of touched files had ZERO line-width violations and
+		   were reformatted anyway (blank-line and brace-placement drift toward R#'s own formatting
+		   opinion, not toward this repo's).
+		2. That reformatted tree immediately fails FormatVerify's `dotnet format whitespace` with its
+		   verify-no-changes option set (the required gate) — R#'s whitespace conventions and
+		   dotnet-format's disagree on indentation shape, requiring a SECOND whole-solution
+		   `dotnet format whitespace` pass to reconcile, on top of the first oversized diff.
+		3. Even scoped down with `jb cleanupcode`'s include option (a hand invocation, NOT
+		   `./build.ps1 -Target CleanupCode`, which has no such scoping today), pointed only at the
+		   219 files that actually have a code-driven overflow, the tool still rewrites unrelated
+		   style in the very files it has a good reason to touch — worked example,
+		   src/PetBox.Core/Data/Temporal/TemporalStore.cs: a 41-character
+		   `if (named.Contains(key)) rejected.Add(key);` (nowhere
+		   near 140 chars) got split onto two lines, and several unrelated blank lines were inserted/
+		   removed. Confirmed NOT a regression on the two risks this card's parent flagged by name —
+		   target-typed `new(...)` and expression-bodied members both survive reformatting intact in
+		   every occurrence checked — but "does not break those two specific things" and "produces a
+		   diff a reviewer can actually read" are different bars, and this fails the second one.
+
+		Net: even the single most conservative reformat cleanup item, at either scope, mixes wanted
+		fixes (the actual long lines) with unwanted, unrelated stylistic churn in the same commit, and
+		the whole-solution scope multiplies that ~2.5x beyond the actual problem. A future attempt at
+		the ~536-line code-reformat half of resharper-clt-line-width needs either a different mechanism
+		entirely (hand-wrapping, or a smaller/more targeted R# "Arrange" cleanup item that wraps
+		argument/parameter lists without also touching brace/blank-line placement — not yet found) or
+		build.cs's `CleanupCode` target growing real file-scoping before this is retried solution-wide.
+	-->
+
+	<!--
 		CS8602 (possible null dereference of `last` in MemoryTools.cs, around the nextCursor
 		construction) — SEVERITY OVERRIDE, not a suppression of a single finding.
 		`InspectionSeverities/=<rule>` is solution-wide: it changes how ReSharper (Rider included)
