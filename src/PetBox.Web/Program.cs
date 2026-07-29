@@ -66,6 +66,11 @@ public partial class Program
 			o.ValidateOnBuild = true;
 		});
 
+		// Set explicitly even though it equals the framework default: the number has to EXIST in
+		// the repo for deploy/compose.yaml's stop_grace_period to be checked against it
+		// (ComposeStopGraceTests). See ShutdownBudget for the phase order this budgets.
+		builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = ShutdownBudget.HostShutdownTimeout);
+
 		// Build-time OpenAPI generation (GetDocument.Insider) hosts this entry-point all the way
 		// through app.Run() — it lets StartAsync run (migrations + hosted services fire) and only
 		// then aborts before serving requests. Left alone it would migrate ./data/petbox.db and
