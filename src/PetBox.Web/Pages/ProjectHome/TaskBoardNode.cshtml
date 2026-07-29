@@ -101,6 +101,21 @@
 			</div>
 		}
 
+		@* Created/updated timestamps (task-card-timestamps): TaskNodeView already carries both off
+		   the active revision (board-sort-impl) — no new fetch needed. Same `time.local-time`
+		   convention as the board card (_TaskNodeCard.cshtml) — server renders UTC in `datetime`
+		   (round-trip "o"), ts/logs.ts's renderLocalTimes pass localizes the visible text on load. *@
+		<div class="text-xs opacity-50 mt-1 flex flex-wrap gap-x-3" data-testid="node-timestamps">
+			@if (node.CreatedAt is not null)
+			{
+				<span>created <time class="local-time" datetime="@node.CreatedAt.Value.ToString("o")" data-testid="node-created">@node.CreatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time></span>
+			}
+			@if (node.UpdatedAt is not null)
+			{
+				<span>updated <time class="local-time" datetime="@node.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@node.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time></span>
+			}
+		</div>
+
 		@* Edit form (title + body, markdown write/preview). Hidden until ts/nodeEdit.ts shows it.
 		   The textarea is the source for both the POST body and the client-side preview render. *@
 		<form method="post" asp-page-handler="Edit" class="flex flex-col gap-2 mt-3" data-testid="node-edit-form" style="display:none">
