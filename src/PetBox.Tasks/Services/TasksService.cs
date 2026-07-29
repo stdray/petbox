@@ -707,7 +707,8 @@ public sealed partial class TasksService : ITasksService
 	// This prose is a PRODUCT SURFACE, not a comment: it is the markdown an agent reads when the
 	// project is in this state, and it names a live parameter. When `name` became `key` across the
 	// tasks_methodology_* family (mcp-surface-naming-cleanup wave 5) this sentence had to move with
-	// it — a guide that teaches a retired parameter sends the reader into a REMOVED refusal.
+	// it — a guide that teaches a parameter the surface no longer accepts sends the reader into an
+	// unknown-parameter refusal.
 	static MethodologyGuideView AmbiguousInstancesGuide(IReadOnlyList<MethodologyInstanceView> open)
 	{
 		var keys = string.Join(", ", open.Select(o => o.Name));
