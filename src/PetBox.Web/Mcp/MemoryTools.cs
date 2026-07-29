@@ -571,7 +571,7 @@ public static class MemoryTools
 		available here: it routinely spends a third of the response budget on text you will not read.
 		[[full]]
 		THE memory read verb — one tool for both LISTING and SEARCH (list = search without
-		`q`; replaces the former memory.list + memory.recall).
+		`q`).
 
 		MODES. Without `q`: a DETERMINISTIC listing of the active entries in scope; default
 		order `updated` desc (the freshest fact first — keys are opaque generated ids).

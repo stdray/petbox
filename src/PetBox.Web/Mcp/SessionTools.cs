@@ -229,7 +229,7 @@ public static class SessionTools
 		routinely spends a third of the response budget on text you will not read.
 		[[full]]
 		THE session read verb — one tool for both LISTING and SEARCH (list = search without
-		`q`; replaces the former session.list).
+		`q`).
 
 		Without `q`: a deterministic LISTING of the project's active sessions — compact rows
 		{ sessionId, agent, version }. Requires tasks:read.
