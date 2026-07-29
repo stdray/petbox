@@ -6,75 +6,93 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.7" />
+		<PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.10" />
 		<!-- The cache facade over SqliteDistributedCache: single-flights concurrent misses (so fifty
 		     cold pages run one cross-encoder pass, not fifty) and owns the serialization boundary.
 		     Its L1 is switched OFF at every call site — see SearchPoolCache. -->
 		<PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
 		<PackageVersion Include="linq2db" Version="6.3.0" />
-		<PackageVersion Include="FluentValidation" Version="11.11.0" />
+		<PackageVersion Include="FluentValidation" Version="12.1.1" />
 		
-		<PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.8" />
+		<PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.10" />
 		<!-- Lift SQLitePCLRaw off the vulnerable 2.1.11 (GHSA-2m69-gcr7-jv3q has no patched 2.x): the 3.x bundle ships patched SQLite via SourceGear.sqlite3. Referenced directly next to every Microsoft.Data.Sqlite. -->
-		<PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
-		<PackageVersion Include="FluentMigrator" Version="5.2.0" />
-		<PackageVersion Include="FluentMigrator.Runner.SQLite" Version="5.2.0" />
-		<PackageVersion Include="Microsoft.Azure.Kusto.Language" Version="12.3.2" />
-		<PackageVersion Include="KustoLoco.Core" Version="1.4.2" />
-		<PackageVersion Include="Google.Protobuf" Version="3.30.0" />
-		<PackageVersion Include="Grpc.Tools" Version="2.72.0" />
+		<PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+		<PackageVersion Include="FluentMigrator" Version="8.0.1" />
+		<PackageVersion Include="FluentMigrator.Runner.SQLite" Version="8.0.1" />
+		<PackageVersion Include="Microsoft.Azure.Kusto.Language" Version="12.4.1" />
+		<PackageVersion Include="KustoLoco.Core" Version="1.4.6" />
+		<PackageVersion Include="Google.Protobuf" Version="3.35.1" />
+		<PackageVersion Include="Grpc.Tools" Version="2.83.0" />
 		<PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
-		<PackageVersion Include="dbup-core" Version="6.0.15" />
+		<PackageVersion Include="dbup-core" Version="6.1.1" />
+		<!-- Not a stray prerelease: upstream publishes every release as `X.Y.Z-release0000` first and
+		     the bare `X.Y.Z` follows later, so 0.6.6-release0000 is the NEWEST version that exists.
+		     "Bump to latest stable" would mean going back to 0.6.5. Move to 0.6.6 when it lands. -->
 		<PackageVersion Include="SqlParserCS" Version="0.6.6-release0000" />
-		<PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
+		<PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.0.0" />
 		<PackageVersion Include="dbup-sqlite" Version="6.0.4" />
-		<PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
-		<!-- Direct lift of the transitive Microsoft.OpenApi above GHSA-v5pm-xwqc-g5wc (patched 2.7.5). -->
-		<PackageVersion Include="Microsoft.OpenApi" Version="2.7.5" />
-		<PackageVersion Include="Microsoft.Extensions.ApiDescription.Server" Version="10.0.8" />
-		<PackageVersion Include="DuckDB.NET.Data.Full" Version="1.5.3" />
-		<PackageVersion Include="System.Numerics.Tensors" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+		<!-- Direct lift of the transitive Microsoft.OpenApi above GHSA-v5pm-xwqc-g5wc (patched 2.7.5):
+		     2.11.0 is the head of the 2.x line, so the advisory floor holds with room to spare.
+		     HELD BACK from 3.x on purpose: Microsoft.AspNetCore.OpenApi 10.0.10 depends on
+		     Microsoft.OpenApi >= 2.0.0 (an open lower bound, so 3.x restores happily) but its
+		     XmlCommentGenerator emits `mediaType.Example = ...`, and 3.x made IOpenApiMediaType.Example
+		     read-only — the build then dies with CS0200 inside Microsoft's own GENERATED code, which we
+		     cannot patch. Revisit when an AspNetCore.OpenApi targeting OpenApi 3.x ships. -->
+		<PackageVersion Include="Microsoft.OpenApi" Version="2.11.0" />
+		<PackageVersion Include="Microsoft.Extensions.ApiDescription.Server" Version="10.0.10" />
+		<PackageVersion Include="DuckDB.NET.Data.Full" Version="1.5.5" />
+		<PackageVersion Include="System.Numerics.Tensors" Version="10.0.10" />
 		<PackageVersion Include="libstemmer.net" Version="2.2.3" />
 		<!-- Server-side markdown rendering for read surfaces (reader-view detectability). Markdig
 		     parses markdown → HTML; HtmlSanitizer (Ganss.Xss) sanitizes the output (parity with the
 		     client DOMPurify path) — strips <script>/event handlers, restricts URL schemes. -->
-		<PackageVersion Include="Markdig" Version="0.42.0" />
-		<!-- Prerelease chosen deliberately: the stable line (9.0.892, latest) transitively hard-pins
-		     AngleSharp [0.17.1], which carries the mXSS advisory GHSA-pgww-w46g-26qg (patched 1.5.0).
-		     9.1.949-beta is the first HtmlSanitizer to move onto the AngleSharp 1.x line — it drags in
-		     AngleSharp 1.5.1 (patched) + AngleSharp.Css 1.0.0-beta.216, closing the bypass at the
-		     upstream level instead of suppressing NU1902. No bespoke AngleSharp pin needed. -->
-		<PackageVersion Include="HtmlSanitizer" Version="9.1.949-beta" />
+		<PackageVersion Include="Markdig" Version="1.3.2" />
+		<!-- Kept on the AngleSharp 1.x line, which is what closes the mXSS advisory
+		     GHSA-pgww-w46g-26qg (patched 1.5.0) at the upstream level instead of suppressing NU1902.
+		     The old 9.0.x line hard-pinned the vulnerable AngleSharp [0.17.1], so this pin must never
+		     drop back to it. 9.1.973 is the stable successor to the 9.1.949-beta we used to need: it
+		     brings AngleSharp 1.6.0 and — unlike the beta, which dragged in AngleSharp.Css
+		     1.0.0-beta.216 — a stable AngleSharp.Css 1.0.0, so no prerelease is left in the graph.
+		     No bespoke AngleSharp pin needed. -->
+		<PackageVersion Include="HtmlSanitizer" Version="9.1.973" />
 		<!-- RS0030: bans a SYMBOL outright, so "this table has one owning service" is a compile
 		     error rather than a convention. Wired for every project in Directory.Build.props; the
 		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->
-		<PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
+		<PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageVersion Include="OpenTelemetry" Version="1.15.3" />
-		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
-		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
-		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
-		<PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
+		<PackageVersion Include="OpenTelemetry" Version="1.17.0" />
+		<PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+		<PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+		<PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.7" />
-		<PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.5.0" />
+		<PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+		<PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.8.0" />
 		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
-		<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+		<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
 		<PackageVersion Include="xunit.v3" Version="3.2.2" />
-		<PackageVersion Include="AwesomeAssertions" Version="9.4.0" />
+		<PackageVersion Include="AwesomeAssertions" Version="9.5.0" />
+		<!-- HELD at 1.59.0 — 1.61.0 is the latest but reproducibly reds the E2E suite. Its newer
+		     bundled Chromium leaves something animating forever, so Playwright's actionability
+		     "stable" check (bounding box unchanged across two animation frames) never settles and
+		     every click times out at 30s: 15-18/95 failed, run wall-clock 1m20s -> 11m+. Measured
+		     with a clean tests/PetBox.E2ETests/bin (the .playwright driver dir is copied
+		     incrementally and a stale one fails ALL 95 in ~40ms — not the same fault). Every other
+		     bump in this file is on 1.59.0 and green at 95/95, so the cause is this package alone. -->
 		<PackageVersion Include="Microsoft.Playwright" Version="1.59.0" />
 		<PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
-		<PackageVersion Include="JsonSchema.Net" Version="9.2.2" />
+		<PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
 	</ItemGroup>
 
 	<ItemGroup>
