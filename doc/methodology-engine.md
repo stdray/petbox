@@ -156,12 +156,13 @@ core-БД): либо ключ инстанса, либо зарезервиро�
 до построения запросов.
 
 Enum `BoardKind` (Intake|Ideas|Spec|Work|Classic|Simple) остался, но только как **process-role**
-для семантик, которые пока не примитивы, — в частности валидация `wiredBoard` и выбор пресета
-для необъявленного вида. Часть бывших process-role семантик уже стала данными вида: правило
-синглтона — `singleton`, авто-wire — `autoWireFrom`, roll-up доставки — `delivery`, гейт
-accepted-идеи и требование specRef — `linkConstraints` с `targetKind`/`targetStatuses`,
-авто-закрытие интейка и разблокировка `blocks` — `effects`. Кастомный вид может объявить их
-все.
+для семантик, которые пока не примитивы, — сейчас это выбор пресета для необъявленного вида.
+Часть бывших process-role семантик уже стала данными вида: правило синглтона — `singleton`,
+авто-wire и валидация `wiredBoard` — `autoWireFrom` (`TasksService.ValidateWiredBoardAsync`:
+источник — работа, чей вид объявляет `autoWireFrom`, а цель обязана быть ровно того вида, что
+он называет — не enum-проверка), roll-up доставки — `delivery`, гейт accepted-идеи и требование
+specRef — `linkConstraints` с `targetKind`/`targetStatuses`, авто-закрытие интейка и
+разблокировка `blocks` — `effects`. Кастомный вид может объявить их все.
 
 ## Пресеты: MethodologyPresets
 
