@@ -48,4 +48,17 @@
 		<AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
 	</ItemGroup>
 
+	<!--
+		JetBrains.Annotations for point-scoped ReSharper CLT suppressions ([UsedImplicitly],
+		[PublicAPI], ...) — see resharper-clt-suppression-via-annotations. PrivateAssets="all"
+		keeps it off every project's own published dependency graph (it is a build/analysis-time
+		aid, not something a consumer of PetBox's client SDKs should ever restore transitively).
+		Wired solution-wide, same reasoning as BannedApiAnalyzers above: a false positive needing a
+		point annotation can turn up in any project, so every project needs the package available
+		rather than adding it piecemeal per csproj as each new call site appears.
+	-->
+	<ItemGroup Condition="'$(ManagePackageVersionsCentrally)' == 'true'">
+		<PackageReference Include="JetBrains.Annotations" PrivateAssets="all" />
+	</ItemGroup>
+
 </Project>

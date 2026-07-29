@@ -1,7 +1,7 @@
-// inspect-gate — the gate `jb inspectcode` does not have on its own: a pass/fail threshold plus
-// an explicit, version-controlled suppression list (a baseline). inspectcode has neither
-// --fail-on-issues nor a baseline file; this script runs it, parses the SARIF report, subtracts
-// the known-accepted findings below, and exits non-zero if anything else survives.
+// inspect-gate — the gate `jb inspectcode` does not have on its own: a pass/fail threshold.
+// inspectcode has no --fail-on-issues; this script runs it, parses the SARIF report, and exits
+// non-zero if anything survives at the given severity. See the doctrine comment below for how a
+// confirmed false positive gets out of the survivor set — it is never done in THIS file.
 //
 // This is the pre-push gate (.githooks/pre-push -> this script). Cost: ~45-110s wall-clock
 // (measured on this repo; depends on warm/cold JetBrains caches), and nothing else may build in
@@ -17,7 +17,7 @@
 //   dotnet run scripts/inspect-gate.cs -- --solution Other.slnx
 //   dotnet run scripts/inspect-gate.cs -- --report path/to/existing.sarif    # skip the jb run, just re-judge a report
 //
-// Exit 0: nothing survived the suppression list (prints how many findings were suppressed).
+// Exit 0: nothing survived at the given severity.
 // Exit 1: at least one finding survived (printed as `file:line  ruleId  message`), jb was not
 //         found, the report is missing, or the SARIF failed to parse.
 
@@ -27,34 +27,68 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
-// ---- known suppressions (the baseline) -----------------------------------------------------
-// One row per accepted false positive. Every row carries a reason in its own comment — this
-// list is a liability, not a convenience, and each entry should be re-examined when the code
-// it points at changes.
+// ---- suppression doctrine: THREE mechanisms, all visible in Rider, none of them THIS file ----
+// A ReSharper/CLT finding that is a confirmed false positive gets out of the survivor set one of
+// three ways. Reaching for the wrong one is how a stale-cache bug or a silent gate-weakening
+// happens — pick by SCOPE, not by whichever file you happen to have open:
 //
-// This is deliberately EMPTY right now. It is a different tool from PetBox.slnx.DotSettings and
-// the two are not interchangeable:
-//   - PetBox.slnx.DotSettings (InspectionSeverities) turns a rule off (or down) EVERYWHERE, for
-//     inspectcode AND Rider alike, because the rule itself is judged wrong for this codebase
-//     (see the CS8602 entry there for a worked example, and why it lives there and not here).
-//   - This array accepts SPECIFIC EXISTING findings — file+rule pairs already in the code today
-//     — while leaving the rule at full severity for everything else, including new code. It is
-//     the baseline: what to reach for when a rule is right in general but a handful of current
-//     call sites are known-acceptable and you don't want the gate to fail on them today while
-//     still wanting it to fail if a NEW instance of the same rule shows up elsewhere.
-// Add a row here only when you've looked at that specific call site and decided it's fine, not
-// as a way to silence a whole rule (that belongs in the .DotSettings file instead).
+//   1. `severity` in `PetBox.slnx.DotSettings` (InspectionSeverities) — rule x WHOLE SOLUTION. The
+//      rule itself is judged wrong for this codebase, for inspectcode AND Rider alike (see the
+//      CS8602 entry there for a worked example).
+//   2. `resharper_<inspection_id>_highlighting = none` in a glob-scoped section of the ROOT
+//      `.editorconfig` (repo root, NOT a nested tests/.editorconfig or a per-project one) — rule x
+//      SUBTREE. For when the analyzer is structurally BLIND across a whole zone (a reflection-only
+//      call path, a DTO the analyzer can't see a remote consumer of) — not "noisy", blind: no
+//      rewrite would satisfy it. Worked examples: the MCP-contract and tests/** sections in this
+//      same .editorconfig file. An `ExternalAnnotations/**/*.xml` file (solution-adjacent,
+//      auto-discovered by `jb inspectcode`) is the same tier at a finer grain — rule-family x
+//      THIRD-PARTY TYPE — for when a glob would ALSO catch genuinely dead code colocated in the
+//      same file/subtree (worked example: ModelContextProtocol.Core.xml marks every third-party
+//      [McpServerTool]-attributed member implicitly-used without also blinding
+//      ModuleExtensions.cs/ModuleMcp.OptLong/ReqStr, which sit in the same files and ARE real
+//      dead-code candidates).
+//   3. A point `[UsedImplicitly]`/`[PublicAPI]`/etc. annotation (`JetBrains.Annotations`,
+//      `PrivateAssets="all"`, see Directory.Build.props) or a `// ReSharper disable <Rule>` file
+//      header, at the declaration itself — ONE symbol or ONE file. For a false positive that is
+//      neither solution-wide (1) nor zone-wide (2).
+//
+// All three are visible to a human in Rider, not just to `jb` on this gate — that visibility is
+// exactly the property the next mechanism lacked.
+//
+// A FOURTH mechanism — a home-grown `suppressions` array/baseline in THIS file, matched by
+// rule-id + file-path-suffix — used to live here and is deliberately GONE, not merely unused:
+// don't add it back. Its only claimed justification was "these specific EXISTING findings are
+// accepted, a NEW one of the same shape still fails the gate" — but the match was `s.RuleId ==
+// ruleId && file.EndsWith(s.PathSuffix)`, with no line number and no occurrence count, so it could
+// not actually tell an accepted finding from a new one of the same rule in the same file: a fresh
+// instance would have matched and been silently swallowed exactly like the original. That was its
+// one reason to exist over mechanisms 1-3, and it didn't hold. It was also invisible in Rider
+// (JetBrains tooling has no idea this array exists), while 1-3 all are. If a real
+// occurrence-pinned baseline is ever needed — one that actually distinguishes "this exact finding"
+// from "a new finding of the same shape" — that is NEW work (real fingerprinting: line, snippet
+// hash, or similar), not a reason to resurrect this array as-is.
 //
 // resharper-clt-step3-defect-shaped (2026-07-29, main c8b918ff) raised PossibleMultipleEnumeration
 // and PossibleUnintendedQueryableAsEnumerable to ERROR in PetBox.slnx.DotSettings and individually
 // read every finding each produced (5 + 3). Both were confirmed false positives (a pre-materialized
 // ILookup grouping re-enumerated 2-3 times in TasksService; a linq2db ITable<T>.Select(...) handed
-// straight to a FluentAssertions terminal .Should() in two test files) — but a suppression row was
-// NOT the right fix for either: both shapes have a trivial, equally-correct rewrite that satisfies
-// the analyzer instead of arguing with it (`.ToList()` once, either on the lookup read or before
-// `.Should()`), so the code was changed rather than the baseline grown. Keep reaching for a rewrite
-// first; a suppression here is for cases where no such rewrite exists, not a first resort.
-var suppressions = Array.Empty<Suppression>();
+// straight to a FluentAssertions terminal .Should() in two test files) — but neither got a
+// suppression: both shapes have a trivial, equally-correct rewrite that satisfies the analyzer
+// instead of arguing with it (`.ToList()` once, either on the lookup read or before `.Should()`),
+// so the code was changed instead. Keep reaching for a rewrite first, mechanisms 1-3 second; there
+// is no baseline of last resort here any more.
+//
+// POLICY: every resharper-severity KEY (mechanism 2 above) lives ONLY in the ROOT .editorconfig,
+// never in a nested one and never duplicated into PetBox.slnx.DotSettings. Two reasons, both
+// load-bearing:
+//   - The root .editorconfig is already in the gate's cache-home hash (`settingsFiles` below); a
+//     nested tests/.editorconfig would NOT be, and jb would silently serve a stale cache on a
+//     change there — the exact bug this file's --caches-home section exists to prevent.
+//   - `.editorconfig` severity has HIGHER priority than `.DotSettings` — a stray severity line
+//     dropped into .DotSettings for an unrelated reason can silently defeat a gate raise the
+//     .editorconfig layer didn't anticipate (e.g. a rule bumped to ERROR there stops firing if a
+//     later .editorconfig edit, made for a different rule, happens to widen a glob over it). One
+//     surface for this class of setting means one place a reviewer has to check.
 
 // ---- args -------------------------------------------------------------------------------------
 var solution = "PetBox.slnx";
@@ -95,22 +129,34 @@ else
 	// ---- caches-home, keyed to the settings that actually drive analysis --------------------
 	// `jb inspectcode` keeps its own persistent solution cache under
 	// %LOCALAPPDATA%\JetBrains\Transient\InspectCode\v262\SolutionCaches\_<solution>.* by default,
-	// and that cache is keyed by solution identity — NOT by the content of .editorconfig or the
-	// PetBox.slnx.DotSettings layer. Edit either file and rerun with the default cache, and jb
-	// happily hands back yesterday's findings: the settings change looks like a no-op, which is
-	// exactly the bug that cost a full debugging session before it was traced to the cache (see
-	// PetBox.slnx.DotSettings for the writeup). The fix is to give jb a --caches-home whose PATH
-	// changes exactly when the settings that matter change, and stays put otherwise:
-	//   - edit .editorconfig or PetBox.slnx.DotSettings -> hash changes -> new, empty cache dir
-	//     -> this run pays full solution-wide analysis, but sees the edit.
+	// and that cache is keyed by solution identity — NOT by the content of .editorconfig, the
+	// PetBox.slnx.DotSettings layer, or an ExternalAnnotations/ directory. Edit any of those and
+	// rerun with the default cache, and jb happily hands back yesterday's findings: the settings
+	// change looks like a no-op, which is exactly the bug that cost a full debugging session
+	// before it was traced to the cache (see PetBox.slnx.DotSettings for the writeup). The fix is
+	// to give jb a --caches-home whose PATH changes exactly when the settings that matter change,
+	// and stays put otherwise:
+	//   - edit .editorconfig, PetBox.slnx.DotSettings, or any file under ExternalAnnotations/ ->
+	//     hash changes -> new, empty cache dir -> this run pays full solution-wide analysis, but
+	//     sees the edit.
 	//   - unchanged settings -> same hash -> same dir -> jb reuses its warm cache -> much faster.
 	// The directory lives under the OS temp folder (not %LOCALAPPDATA%) so it is disposable and
 	// never mistaken for the thing that needs to be committed.
+	//
+	// ExternalAnnotations/ was NOT fingerprinted at all until
+	// resharper-clt-suppression-via-annotations added it to the list below: a directory's worth of
+	// files is enumerated fresh on every run (not baked into a static array) so an added, removed,
+	// or edited file under it changes the hash exactly like an edit to .editorconfig does — a
+	// missing directory contributes zero paths rather than throwing.
+	var externalAnnotationsDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(solution)) ?? ".", "ExternalAnnotations");
 	var settingsFiles = new[]
 	{
 		Path.Combine(Path.GetDirectoryName(Path.GetFullPath(solution)) ?? ".", ".editorconfig"),
 		Path.GetFullPath(solution) + ".DotSettings",
-	};
+	}.Concat(Directory.Exists(externalAnnotationsDir)
+		? Directory.EnumerateFiles(externalAnnotationsDir, "*", SearchOption.AllDirectories)
+		: [])
+	.ToArray();
 	var cachesHome = Path.Combine(Path.GetTempPath(), $"petbox-inspectcode-cache-{HashOf(settingsFiles)}");
 
 	// ---- version pin --------------------------------------------------------------------------
@@ -187,7 +233,6 @@ try
 		.ToList();
 
 	var survivors = new List<(string File, int Line, string RuleId, string Message)>();
-	var suppressed = new List<(string File, int Line, Suppression Rule)>();
 
 	foreach (var resultNode in results)
 	{
@@ -198,27 +243,18 @@ try
 		var file = NormalizeUri((string?)loc?["artifactLocation"]?["uri"] ?? "?");
 		var line = (int?)loc?["region"]?["startLine"] ?? 0;
 
-		var suppression = suppressions.FirstOrDefault(s =>
-			s.RuleId == ruleId && (s.PathSuffix is null || file.EndsWith(s.PathSuffix, StringComparison.Ordinal)));
-
-		if (suppression is not null) { suppressed.Add((file, line, suppression)); continue; }
 		survivors.Add((file, line, ruleId, message));
 	}
-
-	// The baseline is printed on EVERY run, green ones included. A suppression list nobody ever
-	// sees is how a baseline rots into a list of forgotten bugs.
-	foreach (var s in suppressed.OrderBy(s => s.File).ThenBy(s => s.Line))
-		Console.WriteLine($"suppressed: {s.File}:{s.Line}  {s.Rule.RuleId} — {s.Rule.Reason}");
 
 	if (survivors.Count > 0)
 	{
 		foreach (var s in survivors.OrderBy(s => s.File).ThenBy(s => s.Line))
 			Console.WriteLine($"{s.File}:{s.Line}  {s.RuleId}  {s.Message}");
-		Console.Error.WriteLine($"inspect-gate: {survivors.Count} finding(s) survived ({suppressed.Count} suppressed of {results.Count} total).");
+		Console.Error.WriteLine($"inspect-gate: {survivors.Count} finding(s) survived ({results.Count} total).");
 		return 1;
 	}
 
-	Console.WriteLine($"inspect-gate: clean — 0 findings survived ({suppressed.Count} suppressed of {results.Count} total).");
+	Console.WriteLine($"inspect-gate: clean — 0 findings survived ({results.Count} total).");
 	return 0;
 }
 finally
@@ -287,5 +323,3 @@ static string HashOf(IEnumerable<string> paths)
 	sha.TransformFinalBlock([], 0, 0);
 	return Convert.ToHexString(sha.Hash!)[..16].ToLowerInvariant();
 }
-
-sealed record Suppression(string RuleId, string? PathSuffix, string Reason);
