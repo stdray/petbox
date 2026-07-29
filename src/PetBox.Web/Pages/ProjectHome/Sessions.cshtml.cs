@@ -329,7 +329,7 @@ public static class SessionSortKeys
 	public const string Created = "created";
 	public const string Length = "length";
 
-	public static readonly IReadOnlyList<string> All = [Updated, Created, Length];
+	static readonly IReadOnlyList<string> All = [Updated, Created, Length];
 
 	public static bool IsKnown(string? key) => key is not null && All.Contains(key, StringComparer.OrdinalIgnoreCase);
 }
