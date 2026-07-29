@@ -6,7 +6,6 @@ using PetBox.Core.Features;
 using PetBox.Data.Contract;
 using PetBox.Log.Core.Contract;
 using PetBox.Web.Auth;
-using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Pages.Nav;
 

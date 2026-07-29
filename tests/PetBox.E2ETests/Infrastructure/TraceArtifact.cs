@@ -1,5 +1,3 @@
-using Microsoft.Playwright;
-
 namespace PetBox.E2ETests.Infrastructure;
 
 public static class TraceArtifact

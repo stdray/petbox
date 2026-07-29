@@ -1,5 +1,3 @@
-using System.Linq;
-
 namespace PetBox.Sessions.Contract;
 
 // The latest snapshot of a session: every message, newest state (no per-revision history).

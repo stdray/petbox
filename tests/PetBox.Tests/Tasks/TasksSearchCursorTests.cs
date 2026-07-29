@@ -5,15 +5,14 @@ using Microsoft.Extensions.Configuration;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Search;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
+using PetBox.Tests.Search;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
-
-using PetBox.Tests.Search;
 
 namespace PetBox.Tests.Tasks;
 

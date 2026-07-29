@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using PetBox.E2ETests.Infrastructure;
 
 namespace PetBox.E2ETests;
 

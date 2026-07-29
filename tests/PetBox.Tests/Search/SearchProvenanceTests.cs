@@ -1,7 +1,6 @@
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Extensions.Logging;
-using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 using Microsoft.Extensions.Time.Testing;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -14,7 +13,10 @@ using PetBox.LlmRouter.Routing;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
-using PetBox.Tests.Memory; // FakeLlmClient — the deterministic embedder the memory search suites share
+using PetBox.Tests.Memory;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
+
+// FakeLlmClient — the deterministic embedder the memory search suites share
 
 namespace PetBox.Tests.Search;
 

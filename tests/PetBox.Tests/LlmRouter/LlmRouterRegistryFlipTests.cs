@@ -1,7 +1,6 @@
 using LinqToDB;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using PetBox.Config;
@@ -13,6 +12,7 @@ using PetBox.LlmRouter.Http;
 using PetBox.LlmRouter.Registry;
 using PetBox.LlmRouter.Routing;
 using PetBox.Web.Settings;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.LlmRouter;
 

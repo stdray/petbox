@@ -1,9 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Models;
 using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 using PetBox.Web.Mcp.Contract;

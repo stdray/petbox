@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
-using PetBox.E2ETests.Infrastructure;
 using PetBox.Tasks.Contract;
 using PetBox.Web.Rendering;
 using PetBox.Web.Settings;

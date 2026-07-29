@@ -2,11 +2,11 @@ using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
 using PetBox.Web.Navigation;
 using PetBox.Web.Search;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.Web;
 

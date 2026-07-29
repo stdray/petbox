@@ -1,6 +1,3 @@
-using System.Collections.Immutable;
-using System.Text.Json;
-
 namespace PetBox.Log.Core.Models;
 
 public sealed record LogEntryCandidate

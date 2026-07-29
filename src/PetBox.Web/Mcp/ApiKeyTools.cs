@@ -1,7 +1,4 @@
 using System.ComponentModel;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Web.Auth;

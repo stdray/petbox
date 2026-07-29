@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -7,8 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
-using PetBox.Log.Core.Ingestion;
 
 namespace PetBox.Tests.Data;
 

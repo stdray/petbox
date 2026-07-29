@@ -6,7 +6,6 @@ using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
-using PetBox.Web.Search;
 
 namespace PetBox.Tests.Web;
 

@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
-using PetBox.Log.Core;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Web.Auth;

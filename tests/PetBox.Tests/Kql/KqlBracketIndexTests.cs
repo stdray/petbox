@@ -1,5 +1,4 @@
 using Kusto.Language;
-using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Kql;

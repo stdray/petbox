@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using PetBox.Web;
 
 namespace PetBox.E2ETests.Infrastructure;
 

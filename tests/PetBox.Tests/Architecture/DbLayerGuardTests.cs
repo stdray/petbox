@@ -9,7 +9,6 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Data;
 using PetBox.Deploy.Data;
-using PetBox.Web;
 
 namespace PetBox.Tests.Architecture;
 

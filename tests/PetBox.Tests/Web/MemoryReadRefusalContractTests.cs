@@ -10,8 +10,6 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Memory.Contract;
-using PetBox.Web;
-using Xunit;
 
 namespace PetBox.Tests.Web;
 

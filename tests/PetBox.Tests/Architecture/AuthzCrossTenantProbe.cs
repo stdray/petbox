@@ -18,7 +18,6 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
-using PetBox.Web;
 
 namespace PetBox.Tests.Architecture;
 

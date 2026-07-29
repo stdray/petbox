@@ -1,5 +1,4 @@
 using PetBox.Core.Auth;
-using Xunit;
 
 namespace PetBox.Tests.Architecture;
 

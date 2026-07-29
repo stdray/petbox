@@ -2,7 +2,6 @@ using System.Collections.Frozen;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;

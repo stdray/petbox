@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Http;
 using PetBox.Core.Settings;
 using PetBox.Web.Navigation;
 

@@ -1,7 +1,6 @@
 using System.Net;
 using LinqToDB;
 using Microsoft.Extensions.DependencyInjection;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 

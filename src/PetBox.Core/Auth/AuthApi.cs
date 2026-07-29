@@ -1,10 +1,8 @@
 using System.Security.Claims;
-using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
 
 namespace PetBox.Core.Auth;
 

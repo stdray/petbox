@@ -1,5 +1,4 @@
 using System.Text.Json;
-using PetBox.Client.Config;
 
 namespace PetBox.Client.Config.Tests;
 

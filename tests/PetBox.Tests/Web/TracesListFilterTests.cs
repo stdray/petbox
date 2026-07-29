@@ -2,7 +2,6 @@ using LinqToDB;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
-using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
 using PetBox.Web.Auth;
 using PetBox.Web.Pages.Logs;

@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using PetBox.Client;
 
 namespace PetBox.Client.Tests;
 

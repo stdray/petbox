@@ -8,7 +8,6 @@ using OpenTelemetry.Proto.Collector.Metrics.V1;
 using OpenTelemetry.Proto.Collector.Trace.V1;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 

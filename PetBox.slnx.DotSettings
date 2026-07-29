@@ -84,4 +84,16 @@
 		instead of widening a rule's severity here.
 	-->
 	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=CSharpWarnings_003A_003ACS8602/@EntryIndexedValue">DO_NOT_SHOW</s:String>
+
+	<!--
+		RedundantUsingDirective raised from its ReSharper default (WARNING) to ERROR, narrowing the
+		gate (threshold stays ERROR, per scripts/inspect-gate.cs) onto exactly this family instead of
+		lowering the gate's own severity floor to WARNING, which would light up thousands of findings
+		across unrelated rules. This is `resharper-clt-step2-redundant-usings` on the work board: the
+		Roslyn/dotnet format stack does not see this class of finding at all (IDE0005 at
+		AnalysisMode=All plus TreatWarningsAsErrors=true still reports zero on the same tree where
+		inspectcode reports hundreds), so ReSharper is the only tool in this pipeline that catches a
+		dead using.
+	-->
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=RedundantUsingDirective/@EntryIndexedValue">ERROR</s:String>
 </wpf:ResourceDictionary>

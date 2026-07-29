@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Core.Settings;
 
 namespace PetBox.Core.Data;

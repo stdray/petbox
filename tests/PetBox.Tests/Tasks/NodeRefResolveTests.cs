@@ -1,6 +1,4 @@
 using LinqToDB;
-using LinqToDB.Data;
-using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;

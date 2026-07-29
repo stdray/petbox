@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Kusto.Language;
 using Kusto.Language.Symbols;
 

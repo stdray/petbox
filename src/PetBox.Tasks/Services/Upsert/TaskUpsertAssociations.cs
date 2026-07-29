@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services.Search;

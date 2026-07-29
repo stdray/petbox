@@ -1,5 +1,3 @@
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Contract;
 using PetBox.Core.Models;
 using PetBox.Core.Search;

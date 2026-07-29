@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace PetBox.Tests.Architecture;
 
 // Guard for work `onboarding-first-workspace`, defect #3: on /ui/admin/ws/{ws}/projects, the project

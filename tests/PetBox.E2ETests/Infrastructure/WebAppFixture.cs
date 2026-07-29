@@ -1,6 +1,3 @@
-using Microsoft.Playwright;
-using PetBox.Core.Auth;
-
 namespace PetBox.E2ETests.Infrastructure;
 
 public sealed class WebAppFixture : IAsyncLifetime

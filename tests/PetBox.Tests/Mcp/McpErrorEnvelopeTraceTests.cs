@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
-using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -11,8 +10,6 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;

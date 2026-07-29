@@ -1,7 +1,6 @@
 using LinqToDB;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;

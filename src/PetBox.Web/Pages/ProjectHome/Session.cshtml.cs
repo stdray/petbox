@@ -1,9 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;

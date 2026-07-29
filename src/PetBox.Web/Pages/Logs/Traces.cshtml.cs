@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
-using PetBox.Log.Core.Tracing;
 using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Logs;

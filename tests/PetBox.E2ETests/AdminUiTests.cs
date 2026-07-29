@@ -2,7 +2,6 @@ using LinqToDB;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.E2ETests.Infrastructure;
 
 namespace PetBox.E2ETests;
 

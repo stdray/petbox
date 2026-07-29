@@ -1,5 +1,3 @@
-using Microsoft.Playwright;
-
 namespace PetBox.E2ETests.Infrastructure;
 
 // Shared helper: ensure a non-$system workspace exists, since $system rejects user-created

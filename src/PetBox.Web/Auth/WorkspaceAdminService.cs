@@ -1,4 +1,3 @@
-using LinqToDB;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;

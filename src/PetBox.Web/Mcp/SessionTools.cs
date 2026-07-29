@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;

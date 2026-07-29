@@ -1,5 +1,3 @@
-using PetBox.E2ETests.Infrastructure;
-
 namespace PetBox.E2ETests;
 
 // Focus coverage for the sidebar project selector (_ZoneSelectors.cshtml):

@@ -9,10 +9,9 @@ using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
+using PetBox.Tests.Search;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
-
-using PetBox.Tests.Search;
 
 namespace PetBox.Tests.Memory;
 

@@ -1,5 +1,3 @@
-using Microsoft.AspNetCore.Http;
-
 namespace PetBox.Web.Mcp;
 
 // ── \uXXXX-escape inflation, measured on the RAW WIRE BODY ────────────────────────────────────

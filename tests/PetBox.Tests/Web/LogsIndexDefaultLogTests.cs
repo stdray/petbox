@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
-using PetBox.Log.Core.Data;
 using PetBox.Web.Pages.Logs;
 
 namespace PetBox.Tests.Web;

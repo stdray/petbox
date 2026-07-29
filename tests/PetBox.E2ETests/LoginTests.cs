@@ -1,6 +1,3 @@
-using PetBox.E2ETests.Infrastructure;
-using PetBox.E2ETests.Pages;
-
 namespace PetBox.E2ETests;
 
 [Collection(nameof(UiCollection))]

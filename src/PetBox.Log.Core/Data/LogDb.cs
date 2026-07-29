@@ -1,7 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using LinqToDB.DataProvider.DuckDB;
-using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Data;
 using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Query;

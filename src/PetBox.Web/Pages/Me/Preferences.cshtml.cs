@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
 using PetBox.Core.Settings;
-using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.Me;
 

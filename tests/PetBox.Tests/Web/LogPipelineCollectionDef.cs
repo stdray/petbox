@@ -1,5 +1,3 @@
-using Xunit;
-
 namespace PetBox.Tests.Web;
 
 // ONE host for every LogPipelineFixture consumer. IClassFixture<T> instantiates T once PER

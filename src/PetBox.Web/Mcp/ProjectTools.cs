@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Web.Auth;

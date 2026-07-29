@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Core.Models;
 
 namespace PetBox.Core.Data;

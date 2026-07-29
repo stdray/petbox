@@ -1,11 +1,5 @@
-using LinqToDB.Data;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.Configuration;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;

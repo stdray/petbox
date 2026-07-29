@@ -1,7 +1,5 @@
 using System.Security.Claims;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;

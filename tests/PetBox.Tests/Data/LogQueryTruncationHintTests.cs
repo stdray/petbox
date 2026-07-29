@@ -1,7 +1,5 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
-using PetBox.Log.Core.Models;
-using PetBox.Log.Core.Query;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Data;

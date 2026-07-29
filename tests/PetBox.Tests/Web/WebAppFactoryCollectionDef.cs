@@ -1,5 +1,3 @@
-using Xunit;
-
 namespace PetBox.Tests.Web;
 
 [CollectionDefinition("WebAppFactory", DisableParallelization = true)]

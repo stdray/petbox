@@ -1,5 +1,4 @@
 using PetBox.Core.Data;
-using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 
 namespace PetBox.LlmRouter.Registry;

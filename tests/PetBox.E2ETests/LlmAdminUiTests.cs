@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using PetBox.E2ETests.Infrastructure;
 using PetBox.LlmRouter.Registry;
 
 namespace PetBox.E2ETests;

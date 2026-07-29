@@ -1,5 +1,4 @@
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 

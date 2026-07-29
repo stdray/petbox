@@ -1,8 +1,5 @@
-using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
-using Microsoft.Extensions.Configuration;
-using PetBox.Client.Config;
 
 namespace PetBox.Client.Config.Tests;
 
