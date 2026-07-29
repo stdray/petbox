@@ -683,6 +683,70 @@ Task("FormatVerify")
 				$"dotnet format whitespace --verify-no-changes failed with exit code {formatExit} — run `dotnet format whitespace` and commit the result");
 	});
 
+// A hash of the settings files that drive analysis, keyed the same way as
+// scripts/inspect-gate.cs's HashOf/cachesHome — see CleanupCode below for why cleanupcode needs
+// its own copy of that trick rather than sharing inspect-gate.cs's cache dir.
+string CleanupCodeCachesHome(IEnumerable<string> settingsFiles)
+{
+	using var sha = System.Security.Cryptography.SHA256.Create();
+	foreach (var path in settingsFiles.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+	{
+		var bytes = System.IO.File.Exists(path)
+			? System.IO.File.ReadAllBytes(path)
+			: System.Text.Encoding.UTF8.GetBytes($"<absent:{path}>");
+		sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+	}
+	sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+	var hash = Convert.ToHexString(sha.Hash!)[..16].ToLowerInvariant();
+	return System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"petbox-cleanupcode-cache-{hash}");
+}
+
+// `CleanupCode` is a MANUAL fixer — deliberately wired into NEITHER a git hook NOR the
+// Test/Verify dependency chain (see work item resharper-clt-in-pipeline for the full case):
+// on pre-push it would rewrite files AFTER the commits being pushed were already made, so
+// origin would receive an unreviewed post-hoc diff; pre-commit can't afford it either — 43s
+// for a single file, because `--include` narrows which files get REWRITTEN, not the analysis
+// scope, so it still loads and inspects the whole solution every time. Run it by hand — e.g.
+// when scripts/inspect-gate.cs reports something mechanically fixable — then review `git diff`
+// before committing, same as any other auto-formatter.
+//
+// --profile=PetBoxSafe is REQUIRED, never omitted: without it jb defaults to the built-in "Full
+// Cleanup" profile, which reformats/reorders far more than this repo's conventions want (see
+// PetBox.slnx.DotSettings for what PetBoxSafe currently does and why it's one XML-blob key, not
+// a tree of booleans).
+//
+// cleanupcode keeps its OWN persistent per-solution cache, sibling to but separate from
+// inspectcode's (%LOCALAPPDATA%\JetBrains\Transient\CleanupCode vs \Transient\InspectCode), and
+// it is exactly as blind to .editorconfig/.DotSettings edits as inspectcode's is — same root
+// cause scripts/inspect-gate.cs's HashOf/cachesHome comment documents. The two tools' caches are
+// independent, so the fix has to be applied here too, not borrowed by pointing at inspect-gate's
+// cache dir: CleanupCodeCachesHome hashes the same settings files and gets its own
+// petbox-cleanupcode-cache-* directory, invalidated exactly when .editorconfig or the
+// .DotSettings layer changes, warm otherwise.
+Task("CleanupCode")
+	.Description("MANUAL fixer — jb cleanupcode --profile=PetBoxSafe. Rewrites files; never a Test/Verify dependency or a hook.")
+	.Does(() =>
+	{
+		var settingsFiles = new[] { "./.editorconfig", solution + ".DotSettings" };
+		var cachesHome = CleanupCodeCachesHome(settingsFiles);
+
+		Information("==> jb cleanupcode {0} --profile=PetBoxSafe --caches-home={1}", solution, cachesHome);
+
+		var exit = StartProcess("jb", new ProcessSettings
+		{
+			Arguments = new ProcessArgumentBuilder()
+				.Append("cleanupcode")
+				.Append(solution)
+				.Append("--profile=PetBoxSafe")
+				.Append($"--caches-home={cachesHome}")
+		});
+		if (exit != 0)
+			throw new CakeException(
+				$"jb cleanupcode exited {exit} (a concurrent `dotnet build` in this checkout is the usual cause — nothing else may build here while this runs).");
+
+		Information("cleanupcode finished — review `git diff` before committing any resulting changes.");
+	});
+
 // biome against the browser-shipped frontend (src/PetBox.Web/ts) — previously biome only ever
 // ran against src/clients-ts (the published TS SDK), so this tree accumulated lint debt
 // (noForEach, noExplicitAny, noUnusedVariables, formatting drift) with nothing to catch it,
