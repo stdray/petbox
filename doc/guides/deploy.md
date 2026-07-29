@@ -221,6 +221,51 @@ ApiKey тот же — auto-seeded. Подходит если хочешь spans
 
 `PETBOX_OTEL_ENABLED` должен быть **literal** `true` (не `1`, не `True`).
 
+## Остановка контейнера: что происходит и сколько это длится
+
+Каждый deploy — это recreate контейнера `petbox` (имя фиксировано, порт занят, blue-green нет),
+то есть каждый deploy проходит через остановку. Порядок фаз:
+
+1. **SIGTERM → PID1.** ENTRYPOINT — exec-form `./PetBox.Web` (self-contained apphost, без
+   shell-обёрток), поэтому сигнал приходит прямо .NET-хосту, а `ConsoleLifetime` превращает его в
+   graceful stop. `STOPSIGNAL` не переопределён.
+2. **`ApplicationStopping`.** Kestrel перестаёт принимать соединения и доигрывает in-flight
+   запросы.
+3. **`StopAsync` хостед-сервисов**, в порядке, ОБРАТНОМ регистрации, с одним общим токеном,
+   отменяемым через `ShutdownTimeout`. Здесь происходят настоящие дренажи:
+   `ChannelIngestionPipeline` (лог-канал → SQLite) и `KeyStatFlusher` (марки
+   `ApiKey.LastUsedAt`). Периодические сервисы (WAL checkpoint, retention, orphan cleanup, health
+   poller, search enrichment) просто отменяются: состояние курсорное, доработают после старта.
+   **Обратный порядок здесь нагружен смыслом:** `SystemLogFlusher` зарегистрирован в `Program.cs`
+   ПОЗЖЕ, чем `ChannelIngestionPipeline`, поэтому останавливается РАНЬШЕ — и успевает слить
+   self-log в канал до того, как канал закроется. Переставишь эти две регистрации — потеряешь
+   собственные логи выключения, молча.
+4. **`host.Dispose()` → контейнер DI освобождает синглтоны.** Эта фаза `ShutdownTimeout` НЕ
+   покрыта. Сюда попадает `MemoryUsageRecorder.DisposeAsync` — до 5 с на дренаж канала
+   usage-телеметрии; он обычный `IAsyncDisposable`-синглтон, а не хостед-сервис, поэтому идёт
+   последним, уже после всех `StopAsync`.
+
+Два бюджета, и решает МЕНЬШИЙ:
+
+| Бюджет | Где задан | Значение |
+|---|---|---|
+| `ShutdownTimeout` (фазы 2-3) | `ShutdownBudget.HostShutdownTimeout` → `Configure<HostOptions>` в `Program.cs` | 30 s |
+| `stop_grace_period` (весь стоп) | `deploy/compose.yaml`, сервис `petbox` | 40 s |
+
+Второе обязано покрывать первое плюс хвост фазы 4; это проверяет `ComposeStopGraceTests`.
+Дефолты (30 s против докеровских 10 s) были рассогласованы: docker слал SIGKILL посреди дренажа.
+Поднимаешь `ShutdownTimeout` — поднимай и `stop_grace_period`, иначе исход снова решает docker.
+
+Длинный grace period не удлиняет обычный деплой: docker ждёт ВЫХОДА процесса и убивает только по
+дедлайну, а чистая остановка укладывается в доли секунды.
+
+**Что теряется, если процесс всё-таки убит SIGKILL:** забуференные лог-кандидаты, usage-счётчики
+памяти, марки `LastUsedAt` (до окна в 5 минут). Данные — нет: SQLite в WAL crash-safe,
+незакоммиченная транзакция откатывается, не-чекпойнченный WAL подберётся следующим стартом.
+
+Окно недоступности для клиента закрыто заглушкой Caddy — 503 + `Retry-After: 60` вместо сырого
+502 (см. «Step 3 — обновить Caddy config»), замер после починки порядка pull/recreate: ~22-25 s.
+
 ## Rollback
 
 Если deploy сломал prod — раскат предыдущим commit'ом:
