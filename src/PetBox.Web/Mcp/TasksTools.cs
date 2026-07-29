@@ -486,7 +486,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Instance name (slug) whose rules the primitive lives on.")] string name,
-		[Description("kind | status | transition | effect | constraint | linkKind | tagAxis.")] string primitive,
+		[Description("kind | status | transition | effect | constraint | linkKind | tagAxis. Matched case-insensitively.")] string primitive,
 		[Description("The new prose. Pass \"\" to clear an existing description.")] string description,
 		[Description("Kind slug — required for every primitive except linkKind/tagAxis.")] string? kind = null,
 		[Description("Any one type slug of the owning workflow block — required for status/transition/constraint.")] string? type = null,
@@ -785,7 +785,8 @@ public static class TasksTools
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
 		output budget — overflow rows are prefix-cut + flagged, and a page that was cut also
-		returns `nextCursor`: pass it back as `cursor` (everything else identical) to continue
+		returns `nextCursor`: pass it back as `cursor` (q/board/underNode/status/nodes/commit/
+		statusKind/sort identical; bodyLen/includeUrl/limit are free to change) to continue
 		after the last row. `q` mode PAGES TOO: the ranked pool is materialized once and walked,
 		so `limit:10` + `cursor` iterates the relevance order. With `q` the response always says
 		WHY it stopped — `stop`: "more" | "exhausted" | "pool-boundary" — and "pool-boundary"
@@ -942,11 +943,11 @@ public static class TasksTools
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[LogArg][Description("Max rows returned — one PAGE in both modes. Default: unbounded listing / 20 with q (0 = no cap). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (50), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 50) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
+		[LogArg][Description("Max rows returned — one PAGE in both modes. Default: unbounded listing / 20 with q (0 = no cap). Not part of the q-mode cursor fingerprint (see `cursor`), so it can be varied freely between pages. With `q` it no longer sizes the per-leg candidate depth either: every paged call queries each search leg to a FIXED depth of 50 regardless of `limit`, so changing `limit` between pages cannot reshape which entities are candidates. That per-leg 50 is a DIFFERENT number from the `poolLimit` the response reports: `poolLimit` is the ceiling on the FUSED pool after all legs are merged (a configured rerank-candidate budget, 160 by default) — it is what `stop:\"pool-boundary\"` refers to, not this 50. A single deep query (limit > 50) therefore sees slightly less vector-leg recall than it did when depth followed `limit`.")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = the mode default (query: open+terminalok; listing: open) — a default read still finds accepted/Done. Pass all three values for the widest read (this replaces the removed includeClosed:true); an unknown value is an error.")] string[]? statusKind = null,
-		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different sort/filter is an ERROR, not a silent restart. With `q` it is additionally bound to the board state the ranked pool was built over, so an edit mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);

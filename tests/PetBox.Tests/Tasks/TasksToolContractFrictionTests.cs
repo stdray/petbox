@@ -74,12 +74,14 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 	const string Sha = "65e9c51b52df4a1c9f0b3d7e8a2c4f6b1d0e9a83";
 
 	readonly TasksService _tasks;
+	readonly CommentService _comments;
 
 	public TasksToolContractFrictionTests(TasksToolContractFrictionFixture fx)
 	{
 		fx.Reset();
+		_comments = new CommentService(fx.Factory);
 		_tasks = new TasksService(new TaskBoardStore(fx.Db.Factory(), fx.Factory),
-			new RelationStore(fx.Factory), new TagStore(fx.Factory), new CommentService(fx.Factory));
+			new RelationStore(fx.Factory), new TagStore(fx.Factory), _comments);
 	}
 
 	static IHttpContextAccessor Http()
@@ -195,6 +197,63 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 			McpInputs.NodesJson("""[{"l1":"via-alias","status":"Todo","title":"Via alias","body":"x"}]"""));
 
 		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*each node needs a 'key'*");
+	}
+
+	// ── reason: persists on EVERY applied write, not only a RequiresReason transition ────────
+	// work/mcp-surface-naming-cleanup wave 3, defect class 4 ("accepted but silently ignored").
+	// PersistReasonCommentsAsync used to gate on `from is not null` (skip birth) AND on the
+	// applied transition's own RequiresReason flag — a `reason` sent anywhere else vanished
+	// with no error and no comment. The reserve's fix: persist on every APPLIED write of the
+	// node (birth, any transition, or a plain edit), with the RequiresReason gate on the
+	// TRANSITION ITSELF (WorkflowEngine.Validate/hasReason) left untouched.
+
+	[Fact]
+	public async Task Reason_PersistsOnBirth_EvenThoughBirthNeverRequiresReason()
+	{
+		await Seed("b", """[{"key":"seed","status":"Todo","title":"Seed","body":"x"}]""");
+		await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"key":"born","status":"Todo","title":"Born","body":"x","reason":"filed at birth"}]"""));
+
+		var detail = await _tasks.GetNodeOnBoardAsync(Proj, "b", "born");
+		var reasons = (await _comments.ListForNodeAsync(Proj, "b", detail.Node.NodeId))
+			.Where(c => c.Tags.Contains("artifact:reason")).ToList();
+
+		reasons.Should().ContainSingle(c => c.Body == "filed at birth",
+			"birth used to be excluded by `if (from is null) continue;` — the reserve decision lifted that gate");
+	}
+
+	[Fact]
+	public async Task Reason_PersistsOnTransition_EvenWithoutRequiresReason()
+	{
+		await Seed("b", """[{"key":"moved","status":"Todo","title":"Moved","body":"x"}]""");
+		await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"key":"moved","status":"InProgress","title":"Moved","body":"x","reason":"picked up","version":1}]"""));
+
+		var detail = await _tasks.GetNodeOnBoardAsync(Proj, "b", "moved");
+		var reasons = (await _comments.ListForNodeAsync(Proj, "b", detail.Node.NodeId))
+			.Where(c => c.Tags.Contains("artifact:reason")).ToList();
+
+		reasons.Should().ContainSingle(c => c.Body == "picked up",
+			"Todo->InProgress on the default 'simple' kind carries no RequiresReason gate (MethodologyPresets), "
+			+ "yet a caller-supplied reason must still land");
+	}
+
+	[Fact]
+	public async Task Reason_IdenticalResend_DoesNotDuplicateTheComment()
+	{
+		const string json = """[{"key":"retried","status":"Todo","title":"Retried","body":"x","reason":"same reason twice"}]""";
+		await Seed("b", json);
+		// A network retry resubmits the byte-identical payload (same version baseline too): TemporalStore's
+		// Classify hits its SamePayload branch (no-op on the entity row), yet the patch still reaches
+		// PersistReasonCommentsAsync — without dedup this would fork a second identical comment.
+		await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, "b", McpInputs.NodesJson(json));
+
+		var detail = await _tasks.GetNodeOnBoardAsync(Proj, "b", "retried");
+		var reasons = (await _comments.ListForNodeAsync(Proj, "b", detail.Node.NodeId))
+			.Where(c => c.Tags.Contains("artifact:reason")).ToList();
+
+		reasons.Should().ContainSingle(
+			"an idempotent retry with identical reason text must not fork a second artifact:reason comment");
 	}
 
 	// ── prose gates: the description is what an agent reads INSTEAD of documentation ─────────
