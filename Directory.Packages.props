@@ -66,6 +66,17 @@
 		     error rather than a convention. Wired for every project in Directory.Build.props; the
 		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->
 		<PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
+		<!-- [UsedImplicitly]/[PublicAPI]/etc. for point suppressions of ReSharper CLT dead-code
+		     inspections where a glob (.editorconfig) or an ExternalAnnotations file would be too
+		     coarse (a false positive colocated with genuinely dead code in the same file/subtree).
+		     Wired for every project in Directory.Build.props with PrivateAssets="all". The
+		     JETBRAINS_ANNOTATIONS conditional-compilation symbol is deliberately left undefined:
+		     every [MeansImplicitUse]-family attribute in the package is [Conditional
+		     ("JETBRAINS_ANNOTATIONS")], so with the symbol undefined an application of, say,
+		     [UsedImplicitly] compiles to zero IL — verified by reflection during the
+		     resharper-clt-suppression-via-annotations probe. Design-time signal to ReSharper/jb
+		     only, no runtime footprint. -->
+		<PackageVersion Include="JetBrains.Annotations" Version="2026.2.0" />
 	</ItemGroup>
 
 	<ItemGroup>

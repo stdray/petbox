@@ -21,3 +21,29 @@ trim_trailing_whitespace = false
 [*.{yml,yaml}]
 indent_style = space
 indent_size = 2
+
+# resharper-clt-suppression-via-annotations: these MCP wire-contract DTOs are constructed by
+# System.Text.Json deserialization / the MCP SDK's reflection-based tool-result marshalling, not
+# by any call ReSharper's static graph can see — the analyzer is BLIND here, not merely told to
+# stay quiet. NotAccessedPositionalProperty.Global fires on every positional-record property that
+# no local code reads back (the wire consumer is a remote MCP client), and
+# UnusedAutoPropertyAccessor.Global fires the same way on ordinary auto-properties. Confirmed live
+# with `jb inspectcode 2026.2`: 330 + 70 = 400 findings under this glob, 0 elsewhere in the
+# solution touched. rule x subtree granularity, honored by both jb and Rider, higher priority than
+# PetBox.slnx.DotSettings — see the doctrine note atop scripts/inspect-gate.cs for why every
+# resharper-severity key lives HERE and never in a nested/per-project editorconfig or DotSettings.
+[src/PetBox.Web/Mcp/Contract/*.cs]
+resharper_not_accessed_positional_property_global_highlighting = none
+resharper_unused_auto_property_accessor_global_highlighting = none
+
+# resharper-clt-step5c-tests-project-narrowing: xUnit constructs IClassFixture<T>/
+# ICollectionFixture<T> fixture classes via reflection at test-run time — no call site in source
+# ever names the type directly, so ClassNeverInstantiated.Global is structurally blind to this
+# whole category, not just noisy about it (worked example:
+# tests/PetBox.Tests/Web/AdminProjectDetailAuthzTests.cs — AdminProjectDetailAuthzFixture flagged
+# unused at its declaration on line 17 while IClassFixture<AdminProjectDetailAuthzFixture> uses it
+# on line 69 of the same file). Confirmed: 79 of the 101 ClassNeverInstantiated.Global findings
+# under tests/** are exactly this shape; the remaining ~22 were triaged and handled elsewhere
+# (resharper-clt-step5c-tests-project-narrowing), not swept in by this glob.
+[tests/**.cs]
+resharper_class_never_instantiated_global_highlighting = none

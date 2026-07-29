@@ -1,0 +1,19 @@
+<assembly name="ModelContextProtocol.Core">
+  <!-- resharper-clt-suppression-via-annotations: [McpServerTool] methods are invoked by the MCP
+       SDK via reflection over the tool registry, never by a direct call ReSharper's static graph
+       can follow — UnusedMember.Global / UnusedType.Global / UnusedMethodReturnValue.Global are
+       BLIND to this call path, not merely noisy about it. This file is the only mechanism precise
+       enough for the zone: an .editorconfig glob is rule x subtree and cannot separate a real
+       [McpServerTool] method from the ModuleMcp.OptLong/ReqStr helpers that sit in the SAME files
+       and ARE genuine dead-code candidates (along with ModuleExtensions.cs) — this annotation,
+       scoped to the third-party attribute type itself, leaves both correctly visible. Confirmed
+       live with `jb inspectcode 2026.2`, auto-discovered from this solution-adjacent
+       ExternalAnnotations/ directory with no other wiring: 34 findings on genuine [McpServerTool]
+       members gone, while ModuleExtensions.cs and ModuleMcp.OptLong/ReqStr stayed flagged. This
+       directory is fingerprinted into the gate's cache-home hash (scripts/inspect-gate.cs
+       settingsFiles) so an edit here invalidates the jb cache same as an .editorconfig/
+       .DotSettings edit does — it is NOT re-read from a stale cache. -->
+  <member name="T:ModelContextProtocol.Server.McpServerToolAttribute">
+    <attribute ctor="M:JetBrains.Annotations.MeansImplicitUseAttribute.#ctor" />
+  </member>
+</assembly>
