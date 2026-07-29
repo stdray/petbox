@@ -153,7 +153,7 @@ static class McpProjectExistsFilter
 		return string.IsNullOrWhiteSpace(project) ? null : project;
 	}
 
-	internal static string WildcardMessage(string? tool) =>
+	static string WildcardMessage(string? tool) =>
 		$"'{ProjectScope.AllProjects}' is not a project. It is the cross-project API-key CLAIM, valid in a "
 		+ $"projectKey argument only on the apikey_* tools that address keys by claim — not on '{tool}', which "
 		+ "routes per-project storage. Name one real project (project_list), or omit projectKey to use the "
@@ -162,7 +162,7 @@ static class McpProjectExistsFilter
 	// A $workspace / $ws-<key> reference that names no workspace. Deliberately does NOT say
 	// "create it with project_create" — that tool's key regex forbids `$`; the container appears by
 	// itself once the WORKSPACE exists.
-	internal static string ContainerMessage(string container, string workspace, IReadOnlyList<string> known)
+	static string ContainerMessage(string container, string workspace, IReadOnlyList<string> known)
 	{
 		var near = Suggest(workspace, known);
 		var hint = near.Count == 0
@@ -176,7 +176,7 @@ static class McpProjectExistsFilter
 	// The dominant real cause of an unknown project is a TYPO (or a model-hallucinated key), so the
 	// rejection names the near misses — an agent that reads "did you mean 'kpvotes'?" self-corrects on
 	// the next call instead of retrying the same misroute.
-	internal static string Message(string project, IReadOnlyList<string> known)
+	static string Message(string project, IReadOnlyList<string> known)
 	{
 		var near = Suggest(project, known);
 		var hint = near.Count == 0

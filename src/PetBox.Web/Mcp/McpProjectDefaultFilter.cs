@@ -178,7 +178,7 @@ static class McpProjectDefaultFilter
 	// project as a CLONE whose projectKey is optional and says so; every other tool is served as-is
 	// (reference-equal — the canonical ToolCollection is never mutated, and a key with no default
 	// still sees the honest "projectKey is required").
-	public static Tool Advertise(Tool tool, string project)
+	static Tool Advertise(Tool tool, string project)
 	{
 		if (!RequiresProjectKey(tool.InputSchema)) return tool;
 		if (JsonNode.Parse(tool.InputSchema.GetRawText()) is not JsonObject schema) return tool;

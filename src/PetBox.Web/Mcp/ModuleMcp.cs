@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -98,24 +97,6 @@ static class ModuleMcp
 	// any deeper error), and McpErrorEnvelopeFilter converts the exception into the structured
 	// { error: { type, message, traceId|detail } } result centrally for every tool. Tools keep concrete
 	// Task<T> return types; the success schema is advertised via [McpServerTool(OutputSchemaType)].
-
-	public static string? OptStr(JsonElement o, string name) =>
-		o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String
-			? e.GetString()
-			: null;
-
-	public static string ReqStr(JsonElement o, string name)
-	{
-		var v = OptStr(o, name);
-		if (string.IsNullOrWhiteSpace(v)) throw new ArgumentException($"{name} is required");
-		return v!;
-	}
-
-	public static long OptLong(JsonElement o, string name, long dflt) =>
-		o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var e)
-			&& e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var v)
-			? v
-			: dflt;
 
 	// ── uniform body-length contract (spec bodylen-uniform-contract) ──────────────────
 	// ONE meaning for `bodyLen` on every body-carrying MCP surface (search, echoes, node_get,

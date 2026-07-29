@@ -14,7 +14,7 @@ namespace PetBox.Web.Mcp;
 // adds/removes/reorders a kind, block, status, transition, effect or constraint.
 static class MethodologySetDescription
 {
-	public static readonly IReadOnlyList<string> Primitives =
+	static readonly IReadOnlyList<string> Primitives =
 		["kind", "status", "transition", "effect", "constraint", "linkKind", "tagAxis"];
 
 	// Returns the definition with the ONE matching primitive's Description replaced, and

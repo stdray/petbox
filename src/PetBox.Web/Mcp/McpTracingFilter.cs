@@ -153,7 +153,7 @@ static partial class McpTracingFilter
 
 	// The self-log mirror of McpProjectDefaultFilter's span tag: projectKey was NOT on the wire but IS
 	// on the arguments after the inner filters ran ⇒ the server injected the key's default project.
-	internal static bool Injected(bool hadProjectKey, RequestContext<CallToolRequestParams> request) =>
+	static bool Injected(bool hadProjectKey, RequestContext<CallToolRequestParams> request) =>
 		!hadProjectKey && HasProjectKey(request.Params?.Arguments);
 
 	static bool HasProjectKey(IDictionary<string, JsonElement>? args) =>

@@ -52,7 +52,7 @@ static partial class McpErrorEnvelopeFilter
 	// Category MUST start with the SystemLogger prefix ("PetBox") so the self-log captures it —
 	// see SystemLoggerOptions.CategoryPrefix. Its own category, not McpTracingFilter's
 	// "PetBox.Mcp.ToolCalls": the failure stream is queried (and could be routed) on its own.
-	internal const string ErrorLogCategory = "PetBox.Mcp.ToolErrors";
+	const string ErrorLogCategory = "PetBox.Mcp.ToolErrors";
 
 	// Deliberately NOT containing the literal "mcp tool" — that string is the KQL anchor every
 	// economy query uses for the per-call metric event (McpTracingFilter, EventId 600). A

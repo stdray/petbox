@@ -384,7 +384,7 @@ public static class MemoryTools
 	// a factless description is a quietly-degraded write on EITHER verb — findable by luck, not
 	// by design. Each call site appends its own actionable suffix (remember points at upsert to
 	// fix it up; upsert names the affected key(s) directly, since it IS the fix-up verb).
-	internal const string EmptyDescriptionWarningCore =
+	const string EmptyDescriptionWarningCore =
 		"description is empty — memory_search ranks and displays entries by description, so this fact will surface poorly.";
 
 	// Authorize a KEY-ADDRESSED memory projectKey. Workspace containers ($workspace / $ws-*)
