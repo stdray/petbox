@@ -238,7 +238,7 @@ public sealed class TenantExemptAttribute : TenantDeclarationAttribute
 
 	// Why this surface is in that class. Read by humans, and by whatever renders the surface's own
 	// description; never load-bearing for a decision.
-	public string Reason { get; }
+	private string Reason { get; }
 
 	public override string Describe() => $"exempt: {Exemption} — {Reason}";
 }

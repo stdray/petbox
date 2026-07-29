@@ -48,7 +48,7 @@ public static class DataDbsApi
 			.RequireAuthorization("DataSchema");
 	}
 
-	public sealed record CreateDbRequest(string Name, string? Description, long? MaxPageCount);
+	private sealed record CreateDbRequest(string Name, string? Description, long? MaxPageCount);
 	public sealed record DbInfo(string Name, string? Description, long MaxPageCount, DateTime CreatedAt, DateTime UpdatedAt);
 
 	[TenantFrom(TenantSource.Route, "projectKey")]

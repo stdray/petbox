@@ -22,7 +22,7 @@ public static class ProjectDeletion
 {
 	// Reserved built-in projects that must never be deleted. "$system" is the built-in
 	// project; "$workspace" / "$ws-*" are per-workspace memory containers (see WorkspaceMemory).
-	public static readonly IReadOnlySet<string> ReservedProjects =
+	private static readonly HashSet<string> ReservedProjects =
 		new HashSet<string>(StringComparer.Ordinal) { "$system", WorkspaceMemory.SystemContainer };
 
 	public static bool IsReserved(string projectKey) =>

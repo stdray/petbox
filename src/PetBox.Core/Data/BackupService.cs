@@ -8,7 +8,7 @@ namespace PetBox.Core.Data;
 // snapshot is taken inline in Program.cs before MigrationRunner runs.
 public sealed partial class BackupService(string dataDir, ILogger<BackupService> logger) : BackgroundService
 {
-	public static readonly TimeSpan Interval = TimeSpan.FromHours(12);
+	private static readonly TimeSpan Interval = TimeSpan.FromHours(12);
 	public const int RetainSets = 14;
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -31,7 +31,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	public const string Tag = "session-digest";
 
 	// Dead-letter identity: one row per session in the sessions file's search_deadletter.
-	internal const string DeadLetterType = "session-digest";
+	private const string DeadLetterType = "session-digest";
 
 	// Refusals a session burns before it is dead-lettered — same budget as
 	// AsyncVectorizationWorker's poison-doc allowance.
@@ -40,14 +40,14 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	// An actively-pushed session grows every turn; distilling on each 60s tick would burn
 	// a chat call per turn. Only sessions quiet for this long get distilled — the cursor
 	// keeps the delta intact until then.
-	public static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
+	private static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
 
 	// A transcript can be megabytes; the chat context is not. Each message is capped and
 	// the delta is distilled in sequential merge batches until it is EMPTY or the pass
 	// budget runs out (DrainClock) — the cursor parks at the last distilled ordinal, so
 	// a partial drain resumes next pass.
-	internal const int MessageCharCap = 4000;
-	internal const int BatchCharCap = 48_000;
+	private const int MessageCharCap = 4000;
+	private const int BatchCharCap = 48_000;
 
 	// A CONSERVATIVE pre-filter: a settled session whose new delta carries less than this much
 	// meaningful (trimmed) text is almost certainly empty (a heartbeat, "ok", tool-call noise)
@@ -56,14 +56,14 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	// past the trivial tail so it is not re-examined. Kept low on purpose — the reliable
 	// content judge is the LLM, whose refusal the post-call guard catches; this floor only
 	// spares the obvious empties (spec: session-search discovery hygiene).
-	internal const int MinDistillChars = 20;
+	private const int MinDistillChars = 20;
 
 	// A merged answer this short (after trim) is empty/degenerate, not a digest — a real
 	// digest is a title line plus fact lines. Kept low so it only catches near-empty output;
 	// phrased refusals ("no content to digest") are caught by RefusalMarkers regardless of
 	// length, and the MinDistillChars input floor is the primary empty-session defense. Same
 	// test detects the junk digests older passes minted, so a pass self-cleans them.
-	internal const int MinDigestChars = 12;
+	private const int MinDigestChars = 12;
 
 	// Stock "there is nothing here to digest" phrasings a model emits for an empty session.
 	// Matched only inside a SHORT answer (a long legit digest may mention such words in a fact).

@@ -20,7 +20,7 @@ public sealed partial class OrphanCleanupService(
 	IDataDbFactory factory,
 	ILogger<OrphanCleanupService> logger) : BackgroundService
 {
-	public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
+	private static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{

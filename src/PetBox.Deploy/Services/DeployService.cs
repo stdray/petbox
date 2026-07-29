@@ -399,7 +399,7 @@ public sealed class DeployService : IDeployService
 	// get, but a per-field nested patch has no natural "keep the rest, but I'm not
 	// resending Cmd" reading, so this class did not force it and DeployTools' prose
 	// says so explicitly.
-	internal static RunSpec MergeRunSpec(RunSpec? incoming, RunSpec? existing)
+	private static RunSpec MergeRunSpec(RunSpec? incoming, RunSpec? existing)
 	{
 		if (incoming is null) return existing ?? new RunSpec();
 		var prev = existing ?? new RunSpec();

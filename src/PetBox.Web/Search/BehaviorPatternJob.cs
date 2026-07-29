@@ -23,7 +23,7 @@ namespace PetBox.Web.Search;
 // disciplines (chat down → no-op, cursor holds, backfills on recovery).
 public sealed class BehaviorPatternJob : IBackgroundIndexJob
 {
-	public const string PatternTag = "behavior:pattern";
+	private const string PatternTag = "behavior:pattern";
 	const string QuarantineStore = SessionFactsJob.Store;
 	const string CuratedStore = "notes";
 	const string CursorIndex = "behavior-mining";
@@ -42,10 +42,10 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 	// Feedback burns a chat call that can only answer [] (one observation can't repeat),
 	// unless that entry already carries ≥2 accumulated sources (seenIn) — but then it is
 	// not "fresh" in isolation either. Wait for ≥2 fresh observations before firing.
-	internal const int MinNewFeedback = 2;
-	internal const int MaxInputEntries = 60;
-	internal const int MaxPatternsPerPass = 5;
-	internal const int BodyClip = 300;
+	private const int MinNewFeedback = 2;
+	private const int MaxInputEntries = 60;
+	private const int MaxPatternsPerPass = 5;
+	private const int BodyClip = 300;
 
 	const string MinePrompt =
 		"""
@@ -268,7 +268,7 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 		catch (JsonException) { return []; }
 	}
 
-	internal static IReadOnlyList<PatternCandidate>? Parse(string raw)
+	private static List<PatternCandidate>? Parse(string raw)
 	{
 		try
 		{
@@ -284,5 +284,5 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 
 	static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-	internal sealed record PatternCandidate(string? Key, string? Description, string? Body, string[]? Sources);
+	private sealed record PatternCandidate(string? Key, string? Description, string? Body, string[]? Sources);
 }

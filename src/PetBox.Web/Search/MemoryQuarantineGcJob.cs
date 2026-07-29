@@ -46,26 +46,26 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	// SessionFactsJob.Store). notes/ops/system stores are curated and never swept here.
 	public const string Store = SessionFactsJob.Store;
 
-	public static readonly TimeSpan DefaultMinAge = TimeSpan.FromDays(30);
-	public static readonly TimeSpan DefaultScanInterval = TimeSpan.FromHours(6);
+	private static readonly TimeSpan DefaultMinAge = TimeSpan.FromDays(30);
+	private static readonly TimeSpan DefaultScanInterval = TimeSpan.FromHours(6);
 
 	// The window the cost/fit verdict is measured over: RECENT behaviour, not the entry's whole
 	// life — an entry that was useful a year ago and is pure ballast today must be retirable.
 	// 30d matches MinAge (an entry is judged over roughly the span that made it eligible).
-	public static readonly TimeSpan DefaultUsageWindow = TimeSpan.FromDays(30);
+	private static readonly TimeSpan DefaultUsageWindow = TimeSpan.FromDays(30);
 
 	// "Expensive": body chars this entry poured into callers' context within the window. 10k
 	// chars ≈ 2.5k tokens of somebody's context spent on ONE entry — for a machine-distilled
 	// quarantine fact that is a real bill, and it takes several deliveries to run up, so a
 	// one-off unlucky hit can never trip it.
-	public const long DefaultMinDeliveredChars = 10_000;
+	private const long DefaultMinDeliveredChars = 10_000;
 
 	// "Off-target": the mean kRel of those deliveries. kRel is the row's fused score over the
 	// request's TOP-1 score, so 1.0 = it was the best answer, and a value below 0.5 means the
 	// row was, on average, less than half as good as whatever actually answered the query — it
 	// rode along as filler. Deliberately conservative: the cost leg (10k chars) must ALSO fire,
 	// so retiring takes a sustained pattern of expensive filler, not one bad query.
-	public const double DefaultMaxAvgKRel = 0.5;
+	private const double DefaultMaxAvgKRel = 0.5;
 
 	readonly IProjectCatalog _catalog;
 	readonly IMemoryService _memory;

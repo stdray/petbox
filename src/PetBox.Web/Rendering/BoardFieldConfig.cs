@@ -32,7 +32,7 @@ public sealed record BoardFieldConfig(
 	// round-trips through, so a saved preference and a freshly resolved config serialize
 	// identically when they carry the same set (board.ts's reconcile compares these as sets, not
 	// strings, but a stable order keeps the wire value readable/diffable regardless).
-	public IEnumerable<string> Keys() => BoardFieldNames.Options.Select(o => o.Key).Where(Has);
+	private IEnumerable<string> Keys() => BoardFieldNames.Options.Select(o => o.Key).Where(Has);
 
 	public string ToCsv() => string.Join(",", Keys());
 

@@ -10,7 +10,7 @@ public sealed class InMemoryTailBroadcaster : ITailBroadcaster
 {
 	readonly ConcurrentDictionary<string, ImmutableList<ChannelWriter<LogEntryRecord>>> _subscribers = new();
 
-	public int WindowSize { get; init; } = 200;
+	private int WindowSize { get; init; } = 200;
 
 	public async IAsyncEnumerable<LogEntryRecord> Subscribe(
 		string projectKey,

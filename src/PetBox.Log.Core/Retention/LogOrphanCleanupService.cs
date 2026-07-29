@@ -15,7 +15,7 @@ public sealed partial class LogOrphanCleanupService(
 	IScopedDbFactory<LogDb> factory,
 	ILogger<LogOrphanCleanupService> logger) : BackgroundService
 {
-	public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
+	private static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
@@ -39,7 +39,7 @@ public sealed partial class LogOrphanCleanupService(
 		}
 	}
 
-	internal async Task RunOncePassAsync(CancellationToken ct)
+	private async Task RunOncePassAsync(CancellationToken ct)
 	{
 		using var db = coreDb.Open();
 

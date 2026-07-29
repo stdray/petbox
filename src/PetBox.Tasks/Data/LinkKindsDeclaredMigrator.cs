@@ -62,7 +62,7 @@ public sealed class LinkKindsDeclaredMigrator
 	// touched/failed projects, and the aggregate line already logged from it — see
 	// StartupMigrationRun. Read this after Migrate() for the counts NIT 1 asks for; Migrate()'s
 	// own return value stays the pre-existing "documents rewritten" count for source compat.
-	public StartupMigrationRun.Result LastRun { get; private set; }
+	private StartupMigrationRun.Result LastRun { get; set; }
 
 	// Returns the number of stored documents (definition + instance + template rows, summed)
 	// rewritten. See LastRun for touched/malformed/failed project counts.
@@ -76,7 +76,7 @@ public sealed class LinkKindsDeclaredMigrator
 
 	// Exposed for tests: run a single project, return the number of documents rewritten plus the
 	// number of stored documents that could not even be parsed (malformed — left for a human).
-	internal StartupMigrationRun.ProjectOutcome MigrateProject(string projectKey)
+	private StartupMigrationRun.ProjectOutcome MigrateProject(string projectKey)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		var rewritten = 0;

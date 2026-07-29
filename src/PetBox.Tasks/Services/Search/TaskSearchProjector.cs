@@ -30,7 +30,7 @@ public static class TaskSearchProjector
 	// had to re-read every hit with tasks_node_get just to see what it had matched on. Callers
 	// that genuinely have no commit map (or want the cheapest possible row) pass null and get
 	// the historic `[]`.
-	public static TaskNodeView Lean(
+	private static TaskNodeView Lean(
 		TaskNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null,
 		IReadOnlyDictionary<string, List<string>>? commitsByNode = null) =>
 		new(

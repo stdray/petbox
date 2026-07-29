@@ -21,7 +21,7 @@ public sealed partial class WalCheckpointService(
 	IDataDbFactory factory,
 	ILogger<WalCheckpointService> logger) : BackgroundService
 {
-	public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(5);
+	private static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(5);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{

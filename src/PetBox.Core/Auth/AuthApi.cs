@@ -12,8 +12,8 @@ public static class AuthApi
 	// `workspace` is additive and LAST: the workspace the key's project lives in, so a client
 	// (the CLI) can stop guessing a personal workspace. Null when it cannot be resolved — a
 	// valid key must still validate.
-	public sealed record AuthValidResponse(string Project, string Scopes, string? Workspace);
-	public sealed record AuthInvalidResponse(bool Valid);
+	private sealed record AuthValidResponse(string Project, string Scopes, string? Workspace);
+	private sealed record AuthInvalidResponse(bool Valid);
 
 	public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
 	{

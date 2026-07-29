@@ -23,7 +23,7 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// and nothing else.
 	public const string ApiKeyHeader = "X-Api-Key";
 	public const string LegacyApiKeyHeader = "X-YobaConf-ApiKey";
-	public const string SeqApiKeyHeader = "X-Seq-ApiKey";
+	private const string SeqApiKeyHeader = "X-Seq-ApiKey";
 
 	// WHICH HEADER CARRIES THE KEY IS A PARAMETER OF AUTHENTICATION, NOT A PROPERTY OF A ROUTE.
 	//
@@ -40,7 +40,7 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// no such thing as a "Seq key", only a PetBox api key presented in a Seq-shaped header.
 	//
 	// Order is precedence, and it only decides which header wins when a caller sends several.
-	public static readonly IReadOnlyList<string> KeyHeaders = [ApiKeyHeader, LegacyApiKeyHeader, SeqApiKeyHeader];
+	private static readonly IReadOnlyList<string> KeyHeaders = [ApiKeyHeader, LegacyApiKeyHeader, SeqApiKeyHeader];
 
 	// The claim carrying ApiKey.ProjectKey — the tenant this key is scoped to, or the cross-project
 	// wildcard ProjectScope.AllProjects. Always emitted. Named here because this handler is what

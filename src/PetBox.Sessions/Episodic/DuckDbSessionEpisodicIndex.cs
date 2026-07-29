@@ -35,13 +35,13 @@ namespace PetBox.Sessions.Episodic;
 // swapped embedder model) re-embed.
 public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposable
 {
-	public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
-	public const int DefaultMaxHydrated = 8;
+	private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
+	private const int DefaultMaxHydrated = 8;
 
-	internal const int VectorDim = 1024;
-	internal const int EmbedCharCap = 2000;
-	internal const int EmbedBatchSize = 64;
-	internal const int SnippetLength = 240;
+	private const int VectorDim = 1024;
+	private const int EmbedCharCap = 2000;
+	private const int EmbedBatchSize = 64;
+	private const int SnippetLength = 240;
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
 	readonly SessionStore _store;

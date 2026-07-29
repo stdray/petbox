@@ -44,7 +44,7 @@ public static class SandboxContainment
 {
 	// True when the principal is a sandboxOnly api key. Presence, not value — exactly how
 	// ProjectScope and ApiKeyAuthenticationHandler read this claim.
-	public static bool AppliesTo(ClaimsPrincipal? user) =>
+	private static bool AppliesTo(ClaimsPrincipal? user) =>
 		user?.HasClaim(c => c.Type == ApiKeyAuthenticationHandler.SandboxOnlyClaim) ?? false;
 
 	// May this principal reach `storageKey`? `storageKey` is whatever actually gets read or written —
@@ -57,7 +57,7 @@ public static class SandboxContainment
 
 	// The string-shaped overload, for the decision point, which reads the flag off an identity rather
 	// than a whole principal.
-	public static async Task<bool> PermitsAsync(
+	private static async Task<bool> PermitsAsync(
 		bool sandboxOnly, string storageKey, IProjectCatalog catalog, CancellationToken ct = default) =>
 		!sandboxOnly || await catalog.IsSandboxAsync(storageKey, ct);
 

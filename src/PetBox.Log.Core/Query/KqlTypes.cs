@@ -11,9 +11,9 @@ public sealed class UnsupportedKqlException(string message) : Exception(message)
 
 public static class KqlSchema
 {
-	public const string DatabaseName = "yoba";
+	private const string DatabaseName = "yoba";
 
-	public static readonly TableSymbol Events = new(
+	private static readonly TableSymbol Events = new(
 		KqlTransformer.EventsTable,
 		new ColumnSymbol("Id", ScalarTypes.Long),
 		new ColumnSymbol("ServiceKey", ScalarTypes.String),
@@ -30,7 +30,7 @@ public static class KqlSchema
 	// Start/End are wall-clock instants (datetime), Duration a timespan, Kind/Status carry both the numeric
 	// code and a computed name form (KindName/StatusName — the span analog of Level/LevelName). Attributes
 	// are addressed via the Properties dynamic bag (the AttributesJson analog of PropertiesJson).
-	public static readonly TableSymbol Spans = new(
+	private static readonly TableSymbol Spans = new(
 		KqlTransformer.SpansTable,
 		new ColumnSymbol("SpanId", ScalarTypes.String),
 		new ColumnSymbol("TraceId", ScalarTypes.String),
@@ -53,7 +53,7 @@ public static class KqlSchema
 	// name form (TypeName — the metric analog of Kind/KindName). Value is the unified numeric value; the
 	// wide optional scalars (Count/Sum/Min/Max/…) are nullable. Attributes are addressed via the
 	// Properties dynamic bag (the AttributesJson analog of PropertiesJson).
-	public static readonly TableSymbol Metrics = new(
+	private static readonly TableSymbol Metrics = new(
 		KqlTransformer.MetricsTable,
 		new ColumnSymbol("MetricName", ScalarTypes.String),
 		new ColumnSymbol("MetricType", ScalarTypes.Int),

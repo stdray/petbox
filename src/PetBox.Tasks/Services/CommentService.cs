@@ -413,7 +413,7 @@ public sealed class CommentService : ICommentService
 			await ctx.InsertAsync(new CommentTag { CommentId = commentId, Board = board, Tag = tag, ValidFrom = now }, token: ct);
 	}
 
-	public static IReadOnlySet<string> NormalizeTags(IReadOnlyList<string>? tags)
+	private static HashSet<string> NormalizeTags(IReadOnlyList<string>? tags)
 	{
 		var set = new HashSet<string>(StringComparer.Ordinal);
 		if (tags is null) return set;

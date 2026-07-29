@@ -37,7 +37,7 @@ public interface IAccountSelfService
 
 public sealed class AccountSelfService(ICoreDbFactory dbf) : IAccountSelfService
 {
-	public const int MinPasswordLength = 8;
+	private const int MinPasswordLength = 8;
 
 	public async Task<PasswordChangeResult> ChangeOwnPasswordAsync(
 		ClaimsPrincipal principal, string? currentPassword, string? newPassword, CancellationToken ct = default)

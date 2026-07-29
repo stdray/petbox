@@ -25,7 +25,7 @@ public sealed class DeployDbFactory : IDeployDbFactory
 		: this(DeployDb.CreateOptions(connectionString)) { }
 
 	// Clones the supplied options — preserves the provider, the connection string and the mapping.
-	public DeployDbFactory(DataOptions<DeployDb> options) =>
+	private DeployDbFactory(DataOptions<DeployDb> options) =>
 		_options = new DataOptions<DeployDb>(options.Options);
 
 	public DeployDb Open() => new(_options);

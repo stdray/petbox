@@ -26,17 +26,17 @@ public sealed partial class MethodologyTemplateService
 {
 	// Builtin template keys — readable via the same get/list contract as stored templates;
 	// never written into methodology_templates and rejected on upsert/delete.
-	public static readonly IReadOnlyList<string> BuiltinKeys = ["quartet", "classic", "simple"];
+	private static readonly IReadOnlyList<string> BuiltinKeys = ["quartet", "classic", "simple"];
 
 	// Compat dual-read key: the project's utility-layer singleton definition (MethodologyDefRow)
 	// surfaces under this key with source="definition" when present and no STORED template
 	// owns it. Same string as MethodologyDefRow.SingletonKey so the dual-read is obvious.
-	public const string LegacyDefinitionKey = MethodologyDefRow.SingletonKey;
+	private const string LegacyDefinitionKey = MethodologyDefRow.SingletonKey;
 
 	// Source tags on MethodologyTemplateView / ListItem.
-	public const string SourceStored = "stored";
-	public const string SourceBuiltin = "builtin";
-	public const string SourceDefinition = "definition";
+	private const string SourceStored = "stored";
+	private const string SourceBuiltin = "builtin";
+	private const string SourceDefinition = "definition";
 
 	readonly ITaskBoardStore _boards;
 	readonly MethodologyDefinitionService _defs;

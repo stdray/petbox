@@ -32,10 +32,10 @@ namespace PetBox.Data;
 // authorization decision, and by the time the handler runs the tenant has already been authorized.
 public static class QueryExecApi
 {
-	public const int DefaultTimeoutSeconds = 30;
-	public const int MaxTimeoutSeconds = 300;
-	public const long QueryBodyLimitBytes = 1L * 1024 * 1024;   // 1 MB — SQL strings are small
-	public const long ExecBodyLimitBytes = 10L * 1024 * 1024;   // 10 MB — covers reasonable BLOB params
+	private const int DefaultTimeoutSeconds = 30;
+	private const int MaxTimeoutSeconds = 300;
+	private const long QueryBodyLimitBytes = 1L * 1024 * 1024;   // 1 MB — SQL strings are small
+	private const long ExecBodyLimitBytes = 10L * 1024 * 1024;   // 10 MB — covers reasonable BLOB params
 
 	public static void MapQueryExecEndpoints(this IEndpointRouteBuilder app)
 	{
@@ -67,8 +67,8 @@ public static class QueryExecApi
 		return null;
 	}
 
-	public sealed record SqlParam(string Name, JsonElement? Value, string? DbType);
-	public sealed record QueryRequest(string Sql, SqlParam[]? Params);
+	private sealed record SqlParam(string Name, JsonElement? Value, string? DbType);
+	private sealed record QueryRequest(string Sql, SqlParam[]? Params);
 	public sealed record ExecResponse(int Affected);
 
 	[TenantFrom(TenantSource.Route, "projectKey")]

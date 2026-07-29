@@ -27,7 +27,7 @@ public static class SqlNormalizer
 {
 	static readonly Dialect Dialect = new SQLiteDialect();
 
-	public static string Normalize(string sql)
+	private static string Normalize(string sql)
 	{
 		ArgumentNullException.ThrowIfNull(sql);
 

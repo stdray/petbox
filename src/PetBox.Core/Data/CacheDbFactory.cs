@@ -30,7 +30,7 @@ public sealed class CacheDbFactory : ICacheDbFactory
 
 	// Clones the supplied options, which preserves the provider, the connection string AND the
 	// mapping — the same contract CoreDbFactory documents.
-	public CacheDbFactory(DataOptions<CacheDb> options) =>
+	private CacheDbFactory(DataOptions<CacheDb> options) =>
 		_options = new DataOptions<CacheDb>(options.Options);
 
 	public CacheDb Open() => new(_options);

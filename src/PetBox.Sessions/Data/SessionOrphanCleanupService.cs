@@ -14,7 +14,7 @@ public sealed partial class SessionOrphanCleanupService(
 	IScopedDbFactory<SessionsDb> factory,
 	ILogger<SessionOrphanCleanupService> logger) : BackgroundService
 {
-	public static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
+	private static readonly TimeSpan DefaultInterval = TimeSpan.FromMinutes(1);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
@@ -39,7 +39,7 @@ public sealed partial class SessionOrphanCleanupService(
 	}
 
 	// Exposed as internal so tests can drive a single pass deterministically.
-	internal async Task RunOncePassAsync(CancellationToken ct)
+	private async Task RunOncePassAsync(CancellationToken ct)
 	{
 		using var db = coreDb.Open();
 		foreach (var projectKey in await ProjectFileOrphans.ReclaimRootFilesAsync(db, factory, ct))

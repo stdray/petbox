@@ -61,7 +61,7 @@ public sealed class SqliteDistributedCacheOptions
 public sealed class SqliteDistributedCache : IDistributedCache, IDisposable
 {
 	// The "no expiry" sentinel stored in CacheEntry.ExpiresAtTicks.
-	internal const long NeverTicks = long.MaxValue;
+	private const long NeverTicks = long.MaxValue;
 
 	readonly ICacheDbFactory _factory;
 	readonly ILogger<SqliteDistributedCache>? _log;

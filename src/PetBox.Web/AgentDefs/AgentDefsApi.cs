@@ -45,7 +45,7 @@ public static class AgentDefsApi
 	// PUT body: version watermark + the portable definition document.
 	public sealed record AgentDefinitionPutBody(long Version, JsonElement Definition);
 
-	public sealed record AgentDefinitionListResponse(IReadOnlyList<AgentDefinitionListItem> Items);
+	private sealed record AgentDefinitionListResponse(IReadOnlyList<AgentDefinitionListItem> Items);
 
 	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> ListAsync(

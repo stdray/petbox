@@ -63,7 +63,7 @@ public static class TaskSearchFilter
 
 	// Soft status-filter against a known slug set: unknown slugs dropped; provided-but-all-
 	// unknown → empty set (empty result); none provided → null (no filter).
-	public static HashSet<string>? ResolveStatusSlugs(IReadOnlyList<string>? status, IEnumerable<string> knownSlugs)
+	private static HashSet<string>? ResolveStatusSlugs(IReadOnlyList<string>? status, IEnumerable<string> knownSlugs)
 	{
 		if (status is null || status.Count == 0) return null;
 		var known = knownSlugs as HashSet<string>

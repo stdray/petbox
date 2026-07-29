@@ -76,7 +76,7 @@ public sealed class SearchPoolCache
 	// Correctness does not depend on this number in either direction: the data version in the key
 	// refuses a stale ordering however long the entry lives, and a cold page re-materializes
 	// deterministically. It trades disk for latency and nothing else.
-	public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(15);
+	private static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(15);
 
 	// How long a pool stays valid absent any data change. This is a SPACE bound, not a correctness
 	// one — the data version in the key already handles staleness. Expiry only decides when an
@@ -87,7 +87,7 @@ public sealed class SearchPoolCache
 	// body — so `new SearchPoolCache(h) { Ttl = ... }` would have silently kept the default while
 	// reading back the value the caller asked for. A property that lies about what took effect is
 	// worse than one that cannot be set.
-	public TimeSpan Ttl { get; }
+	private TimeSpan Ttl { get; }
 
 	// Null ONLY in the Disabled instance below.
 	readonly HybridCache? _cache;
