@@ -15,6 +15,15 @@ trim_trailing_whitespace = true
 # narrow `#pragma warning disable RS0030` carrying the reason it is the exception.
 dotnet_diagnostic.RS0030.severity = error
 
+# resharper-clt-line-width: the owner's original complaint ("line width over 140 chars"). This is
+# a WHITESPACE setting (indent/eol's sibling, standard .editorconfig key, not a resharper_* key —
+# it does not belong in the mechanism-2 doctrine above), consumed by `jb cleanupcode`'s reformat
+# step as its wrap width. It does NOT make `dotnet format`/FormatVerify wrap anything — that tool
+# has no line-wrapping pass at all (see resharper-clt-line-width on the work board) — so this key
+# is inert for the lines whose length comes from a single string literal (an MCP tool's
+# `[Description("...")]`, mostly); those need a storage-form change, not a wrap point.
+max_line_length = 140
+
 [*.md]
 trim_trailing_whitespace = false
 
