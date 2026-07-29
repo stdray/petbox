@@ -221,19 +221,30 @@
 	case EditorMode.Edit:
 		@* Wizard step 2 (also the direct editor for an existing definition). *@
 		@* Template loader: fills the textarea with a builtin preset rendered as a definition
-		   document (server round-trip; replaces the current textarea contents). *@
-		<form method="post" asp-page-handler="LoadPreset" class="mb-3 flex items-end gap-2" data-testid="methodology-template-form">
+		   document (server round-trip; replaces the current textarea contents). The select
+		   defaults to whatever document is actually loaded (Model.SelectedPreset, tracked by
+		   TrackLoadedDocument) — never the registry's first entry regardless of what's open —
+		   and the destructive act it drives (methodology-ui-footgun-after-cho-2c69c7) is named
+		   in the warning line AND confirmed at submit time, naming both the document about to be
+		   lost and the preset it's about to become (data-confirm-field reads the select's LIVE
+		   value at submit, since the user may change it after this markup rendered). *@
+		<form method="post" asp-page-handler="LoadPreset" class="mb-3 flex flex-col gap-1" data-testid="methodology-template-form"
+			data-confirm-template="Replace @Model.CurrentDraftLabel below with the '{preset}' preset? This cannot be undone here."
+			data-confirm-field="preset">
 			@Html.AntiForgeryToken()
-			<label class="form-control">
-				<span class="label-text text-xs">Preset template</span>
-				<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
-					@foreach (var p in Model.Presets)
-					{
-						<option value="@p.Slug" title="@p.Description" selected="@(p.Slug == Model.SelectedPreset)">@p.Slug</option>
-					}
-				</select>
-			</label>
-			<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
+			<div class="flex items-end gap-2">
+				<label class="form-control">
+					<span class="label-text text-xs">Preset template</span>
+					<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
+						@foreach (var p in Model.Presets)
+						{
+							<option value="@p.Slug" title="@p.Description" selected="@(p.Slug == Model.SelectedPreset)">@p.Slug</option>
+						}
+					</select>
+				</label>
+				<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
+			</div>
+			<p class="text-xs opacity-60" data-testid="methodology-template-warning">Replaces @Model.CurrentDraftLabel below with the selected preset — this cannot be undone here.</p>
 		</form>
 
 		@* The document editor: same JSON shape as tasks_methodology_template_get / rules_upsert. *@

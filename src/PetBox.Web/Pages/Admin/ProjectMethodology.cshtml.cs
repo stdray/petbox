@@ -123,9 +123,27 @@ public sealed class ProjectMethodologyModel : PageModel
 	// were the name. Null when no default is resolved.
 	public string? EffectiveActiveInstanceDisplay { get; private set; }
 
-	// The preset the "Load preset as template" control last loaded — echoed back so the
-	// select keeps the user's choice instead of snapping to the first option.
+	// The preset the "Load preset as template" select shows chosen. MUST track whatever
+	// document is actually sitting in the editor (the stored instance just opened, the base
+	// just picked, or the last-loaded preset) — never left null, which makes an unrelated
+	// <option> (the registry's first entry) render browser-default-selected even though
+	// nothing chose it (methodology-ui-footgun-after-cho-2c69c7: classic loaded via the base
+	// picker, select silently showed quartet, "Load preset as template" then clobbered classic).
 	public string? SelectedPreset { get; private set; }
+
+	// Human-readable name of whatever document TrackLoadedDocument last saw — what "Load
+	// preset as template" is actually about to overwrite. Surfaced next to the button and in
+	// the destructive-replace confirm text so the loss is named, not implied by the dropdown.
+	public string CurrentDraftLabel { get; private set; } = "the current (empty) draft";
+
+	// Sync both of the above to a definition that just became the editor's content — called
+	// everywhere a document lands in the textarea (stored-instance prefill, base picked,
+	// preset loaded, preview re-parsed) so the select and the warning text stay honest.
+	void TrackLoadedDocument(MethodologyDefinition def)
+	{
+		SelectedPreset = def.Name;
+		CurrentDraftLabel = $"the current '{def.Name}' document";
+	}
 
 	// Textarea contents: the stored rules rendered as the template document (prefill), a
 	// preset template, or the user's own JSON echoed back after a rejected save/preview.
@@ -210,6 +228,7 @@ public sealed class ProjectMethodologyModel : PageModel
 			DefinitionJson = MethodologyWire.ToJson(
 				MethodologyWire.ProjectDefinition(def, version: 0, created: null, updated: null));
 			PreviewJson = PreviewOf(def);
+			TrackLoadedDocument(def);
 		}
 		catch (ArgumentException ex)
 		{
@@ -231,10 +250,10 @@ public sealed class ProjectMethodologyModel : PageModel
 		try
 		{
 			var def = MethodologyPresets.RenderPresetDefinition(preset);
-			SelectedPreset = def.Name; // the resolved slug, so the select tracks what actually loaded
 			DefinitionJson = MethodologyWire.ToJson(
 				MethodologyWire.ProjectDefinition(def, version: 0, created: null, updated: null));
 			PreviewJson = PreviewOf(def);
+			TrackLoadedDocument(def); // the resolved slug, so the select tracks what actually loaded
 		}
 		catch (ArgumentException ex)
 		{
@@ -254,7 +273,9 @@ public sealed class ProjectMethodologyModel : PageModel
 
 		try
 		{
-			PreviewJson = PreviewOf(MethodologyWire.ParseDocument(definitionJson));
+			var def = MethodologyWire.ParseDocument(definitionJson);
+			PreviewJson = PreviewOf(def);
+			TrackLoadedDocument(def); // re-parsed content may have a different name than what loaded it
 		}
 		catch (ArgumentException ex)
 		{
@@ -451,6 +472,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		DefinitionJson = MethodologyWire.ToJson(
 			MethodologyWire.ProjectDefinition(Stored.Definition, Stored.Version, Stored.Created, Stored.Updated));
 		PreviewJson = PreviewOf(Stored.Definition);
+		TrackLoadedDocument(Stored.Definition);
 	}
 
 	// Echo the user's input back after a rejected save / a preview (the posted version wins

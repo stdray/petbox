@@ -302,6 +302,76 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().NotMatchRegex("value=\"quartet\"[^>]*selected", "the first option must not steal the selection");
 	}
 
+	// methodology-ui-footgun-after-cho-2c69c7: a project already running a LIVE 'classic'
+	// instance must show 'classic' selected in the "Preset template" combobox — not 'quartet',
+	// the registry's first entry, which is what rendered before TrackLoadedDocument existed
+	// (nothing set SelectedPreset on the PrefillStored path, so the select's `selected`
+	// attribute matched no option and the browser defaulted to the first one regardless of
+	// what was actually open). Reproduces the reported repro: choose Classic as the base,
+	// then open the editor — the dropdown must not silently point at quartet.
+	[Fact]
+	public async Task Get_StepEdit_LiveClassicInstance_TemplateSelectDefaultsToClassic_NotQuartet()
+	{
+		const string project = "medclassicselect";
+		await EnsureProjectAsync(project);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+			if (await tasks.GetMethodologyInstanceAsync(project, "classic") is null)
+				await tasks.CreateMethodologyInstanceAsync(project, "classic", "builtin", "classic");
+		}
+
+		var url = $"/ui/admin/ws/$system/projects/{project}/methodology";
+		using var resp = await GetAuthedAsync($"{url}?step=edit&instance=classic");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().MatchRegex("value=\"classic\"[^>]*selected",
+			"the live classic instance must drive the select's default");
+		html.Should().NotMatchRegex("value=\"quartet\"[^>]*selected",
+			"the registry's first entry must not steal the selection from the live instance");
+		// Razor HTML-encodes the apostrophes in Model.CurrentDraftLabel (&#x27;), so match that
+		// encoded form, not the raw C# string.
+		html.Should().Contain("the current &#x27;classic&#x27; document",
+			"the warning/confirm text must name the document actually being replaced, not stay generic");
+	}
+
+	// Same footgun, the other reported entry point: picking Classic on the base picker (wizard
+	// step 1 -> 2) must also leave the template select on 'classic', not the registry default.
+	[Fact]
+	public async Task PostStartEdit_ClassicBase_TemplateSelectDefaultsToClassic_NotQuartet()
+	{
+		using var resp = await PostAuthedAsync(SystemUrl, "StartEdit", new() { ["baseRef"] = "preset:classic" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().MatchRegex("value=\"classic\"[^>]*selected",
+			"the base the user just picked must drive the select's default");
+		html.Should().NotMatchRegex("value=\"quartet\"[^>]*selected",
+			"the registry's first entry must not steal the selection from the just-picked base");
+	}
+
+	// methodology-ui-footgun-after-cho-2c69c7, requirements 2+3: the destructive nature of
+	// "Load preset as template" must be stated in text next to the button (not just implied),
+	// and the actual replace must be gated behind a confirm that names BOTH what's being
+	// replaced and what it becomes (ts/confirm.ts resolveConfirmMessage fills `{preset}` from
+	// the select's live value at submit time — covered directly in confirm.test.ts).
+	[Fact]
+	public async Task Get_StepEdit_TemplateLoadControl_CarriesDestructiveWarningAndConfirm()
+	{
+		using var resp = await GetAuthedAsync($"{SystemUrl}?step=edit");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-template-warning\"",
+			"the destructive nature of Load preset as template must be stated in text");
+		html.Should().Contain("cannot be undone", "the warning text must say the replace is not reversible");
+		html.Should().Contain("data-confirm-template=", "the load must be gated behind a confirm dialog");
+		html.Should().Contain("data-confirm-field=\"preset\"",
+			"the confirm text must read the select's LIVE value, not a stale render-time one");
+		html.Should().Contain("{preset}", "the confirm text names what the document becomes");
+	}
+
 	// Finding 4: rules are not deleted independently — delete rejects with a close-instance CTA.
 	[Fact]
 	public async Task DeleteDefinition_RejectsWithCloseInstanceGuidance()
