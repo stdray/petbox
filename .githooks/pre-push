@@ -1,0 +1,3 @@
+#!/bin/sh
+# See scripts/inspect-gate.cs for what this does, why, and how to bypass.
+exec dotnet run scripts/inspect-gate.cs

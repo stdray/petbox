@@ -1,0 +1,87 @@
+<wpf:ResourceDictionary xml:space="preserve" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:s="clr-namespace:System;assembly=mscorlib" xmlns:ss="urn:shemas-jetbrains-com:settings-storage-xaml" xmlns:wpf="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+	<!--
+		Solution-shared ReSharper/CLT settings layer. This file sits next to PetBox.slnx and is
+		picked up automatically by name (PetBox.slnx.DotSettings) — both `jb inspectcode` /
+		`jb cleanupcode` and Rider mount it as a layer, no project reference or config flag needed.
+
+		TWO THINGS THAT COST US A FULL DEBUGGING SESSION, recorded here so nobody re-derives them:
+
+		1. A cleanup PROFILE IS NOT A TREE OF BOOLEAN KEYS. It looks like it should be
+		   `/Default/CodeStyle/CodeCleanup/Profiles/=PetBoxSafe/CSOptimizeUsings/OptimizeUsings` with
+		   a bool value next to it — that is how most other ReSharper settings are shaped, and it is
+		   the wrong shape here. A profile is ONE key, `.../Profiles/=<name>/@EntryIndexedValue`, and
+		   its value is an s:String holding an entire escaped XML document (`<Profile>...</Profile>`,
+		   HTML-entity-escaped: `<` becomes `&lt;` etc.). Anything written as a nested-key tree is
+		   silently ignored — no error, no warning, the profile just behaves as if the setting were
+		   never made. The `name="..."` inside the embedded XML and the `=<name>` in the outer key
+		   must match byte-for-byte (spaces in a profile name would encode as `_0020` in the key, but
+		   "PetBoxSafe" has none).
+
+		2. INSPECTCODE/CLEANUPCODE CACHE SOLUTIONS AND DO NOT INVALIDATE ON SETTINGS CHANGES.
+		   CLT keeps a persistent per-solution cache under
+		   `%LOCALAPPDATA%\JetBrains\Transient\InspectCode\v262\SolutionCaches\_PetBox.*` (cleanupcode
+		   uses the sibling `Transient\CleanupCode` folder). Editing THIS file, or .editorconfig, does
+		   NOT bust that cache: a run against a stale cache returns the same findings as before the
+		   edit, which looks exactly like "my setting had no effect" even when it did. The only fixes
+		   are a `caches-home` option pointed at a folder scoped to the current settings, or deleting
+		   the cache folder outright. scripts/inspect-gate.cs derives its `caches-home` value from a
+		   hash of this file plus .editorconfig for exactly this reason — see the comment there.
+
+		Both of the above were confirmed with a negative control (profile absent/wrong shape found
+		nothing; identical settings behind a freshly scoped cache folder changed the result). Treat
+		them as facts, not folklore.
+
+		(NOTE for anyone editing THIS comment block: a literal double hyphen anywhere inside an XML
+		comment is illegal and breaks the parse of the WHOLE file silently for these tools — the
+		settings loader does not surface an error, it just behaves as if none of the keys below were
+		ever set. Spell CLI flag names out in prose without their two leading hyphens together, the
+		way this comment block does throughout.)
+	-->
+	<s:String x:Key="/Default/CodeStyle/CodeCleanup/Profiles/=PetBoxSafe/@EntryIndexedValue">&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;Profile name="PetBoxSafe"&gt;&lt;CSOptimizeUsings&gt;&lt;OptimizeUsings&gt;True&lt;/OptimizeUsings&gt;&lt;EmbraceInRegion&gt;False&lt;/EmbraceInRegion&gt;&lt;RegionName&gt;&lt;/RegionName&gt;&lt;/CSOptimizeUsings&gt;&lt;/Profile&gt;</s:String>
+	<!--
+		Use it explicitly, never as the implicit default profile (Rider/CLT default to "Full
+		Cleanup", which reformats and reorders far more than we want in a gate):
+
+		  jb cleanupcode PetBox.slnx, with the profile option set to PetBoxSafe (see
+		  scripts/inspect-gate.cs usage header, or this file's own comments above, for why this
+		  comment spells CLI flags out in prose instead of typing their leading hyphens directly)
+
+		Right now this profile does exactly one thing — remove unused usings — on purpose. It is
+		the smallest cleanup that is safe to run unattended across the whole solution; anything
+		riskier (reformatting, member reordering, "make readonly", etc.) belongs in a reviewed,
+		file-scoped pass, not in a profile anyone can invoke solution-wide.
+	-->
+
+	<!--
+		CS8602 (possible null dereference of `last` in MemoryTools.cs, around the nextCursor
+		construction) — SEVERITY OVERRIDE, not a suppression of a single finding.
+		`InspectionSeverities/=<rule>` is solution-wide: it changes how ReSharper (Rider included)
+		and inspectcode both treat this rule everywhere, which is exactly what we want here, because
+		this is not a one-off false positive but a structural disagreement between two analyzers.
+
+		CS-prefixed codes are COMPILER diagnostics, not ReSharper inspections. Directory.Build.props
+		sets TreatWarningsAsErrors=true, and inspectcode honors that by reporting CS-codes at ERROR
+		severity too — so this same finding is also something `dotnet build` would report, and would
+		report first, and more precisely, if it were real.
+
+		Concretely, at MemoryTools.cs (`nextCursor` construction): `last` is read only inside
+		`kept.Count > 0 ? ordered[kept.Count - 1] : default`, i.e. exactly the branch where `last`
+		was just assigned from `ordered[kept.Count - 1]` rather than left at `default`. Roslyn's
+		nullable-flow analysis threads that guard through to the read on the next line; ReSharper's
+		solution-wide analysis does not carry the same guard across the two expressions and reports
+		a possible-null-dereference that the compiler itself considers proven safe. If this were a
+		real bug, `dotnet build` — which actually gates merges — would already be red on it.
+
+		Setting this to DO_NOT_SHOW mutes CS8602 for the ENTIRE solution, not just this call site.
+		That is a deliberate, solution-wide trade — accepting that inspectcode will never again be
+		the tool that catches a genuine CS8602 — made because the compiler already owns that
+		diagnostic end to end. It is not an oversight and not a narrow suppression; if a future
+		finding under this rule turns out to be real, `dotnet build` is expected to have already
+		failed on it. Do not read this as "we didn't get around to fixing it."
+
+		For a narrower case — accepting N specific existing occurrences of a rule while still
+		failing on NEW ones — use the `suppressions` baseline array in scripts/inspect-gate.cs
+		instead of widening a rule's severity here.
+	-->
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=CSharpWarnings_003A_003ACS8602/@EntryIndexedValue">DO_NOT_SHOW</s:String>
+</wpf:ResourceDictionary>
