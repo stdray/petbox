@@ -2046,17 +2046,17 @@ public sealed partial class TasksService : ITasksService
 			// was asked for.
 			// The statusKind facet is a predicate in BOTH modes (spec tasks-search-statuskind-facet).
 			// An EXPLICIT statusKind widens the pool to every terminal node, then selects by the facet;
-			// otherwise the deprecated includeClosed alias decides (includeClosed:false + listing → the
-			// [open] set, which the existing FilterVisible already yields — so the default path is
+			// otherwise the listing MODE DEFAULT applies (the [open] set, which the existing
+			// FilterVisible already yields — so the default path is
 			// unchanged). PARITY (spec tasks-listing-search-predicate-parity): an explicit statusKind is
 			// evaluated against the ОПОРНЫЙ СЛОЙ (search_meta) — the SAME authority the query leg's facet
 			// pushdown joins — NOT a live classifier recompute on read (one fact, one authority). The
 			// listing still HYDRATES + ORDERS entity-side (default priority/key is an entity
 			// specialization); only the facet SELECTION moved onto the reference layer.
-			var listingFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: false);
+			var listingFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, hasQuery: false);
 			effectiveStatusKind = listingFacet;
 			var explicitStatusKind = f.StatusKind is { Count: > 0 };
-			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null || explicitStatusKind;
+			var widen = statusFilter is not null || keyIds is not null || explicitStatusKind;
 			Dictionary<string, Dictionary<string, string>>? statusKindByBoard = null;
 			if (explicitStatusKind)
 			{
@@ -2096,8 +2096,8 @@ public sealed partial class TasksService : ITasksService
 			// of that pollution and needs no compensating multiplier. The 50 floor stays for its own
 			// reason — recall at small limits — not to cover the visibility filter. terminal-OK
 			// (accepted/Done) is never excluded — it is a success state, not "closed", so a default
-			// query reaches it; includeClosed widens the ask by passing no facet filter at all.
-			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, f.IncludeClosed, hasQuery: true);
+			// query reaches it; an explicit statusKind naming all three facets widens the ask further.
+			var queryFacet = TasksSearchDocs.ResolveStatusKindFacet(f.StatusKind, hasQuery: true);
 			effectiveStatusKind = queryFacet;
 			// CANDIDATE DEPTH, and why paging pins it. `Limit` normally sizes the per-leg top-K, which is
 			// fine when a call is a one-shot answer. It is NOT fine while paging: the depth decides WHICH

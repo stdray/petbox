@@ -25,14 +25,14 @@ namespace PetBox.Web.Mcp;
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationsCreatedResult))]
-	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases). SINGLE form: omit items and pass kind + fromNodeId + toNodeId. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). `applied` is the SINGLE source of truth: TRUE (default, atomic:true) = ATOMIC — a bad item throws and aborts the WHOLE call, naming its index, nothing is written. atomic:false = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a relation item has no id yet, so it is keyed by its batch POSITION (\"#0\", \"#1\", …), same convention as a comments_upsert CREATE. Every item resolves its own from/to independently (no item references another item of the same batch), so nothing cascades. Returns {applied, relations:[{id,kind,fromNodeId,toNodeId},…], conflicts:[{key,reason},…]}. Requires tasks:write.")]
+	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: items:[{kind, from, to}, …]. SINGLE form: omit items and pass kind + fromNodeId + toNodeId. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). Every endpoint (batch `from`/`to`, single-form `fromNodeId`/`toNodeId`) is a node REFERENCE — its slug key or its 32-hex NodeId (both accepted): the 32-hex form is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); the slug form resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). `applied` is the SINGLE source of truth: TRUE (default, atomic:true) = ATOMIC — a bad item throws and aborts the WHOLE call, naming its index, nothing is written. atomic:false = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a relation item has no id yet, so it is keyed by its batch POSITION (\"#0\", \"#1\", …), same convention as a comments_upsert CREATE. Every item resolves its own from/to independently (no item references another item of the same batch), so nothing cascades. Returns {applied, relations:[{id,kind,fromNodeId,toNodeId},…], conflicts:[{key,reason},…]}. Requires tasks:write.")]
 	public static async Task<RelationsCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
 		[Description("Single-form kind (when items is omitted).")] string? kind = null,
-		[Description("Single-form source node: slug or NodeId (when items is omitted).")] string? fromNodeId = null,
-		[Description("Single-form target node: slug or NodeId (when items is omitted).")] string? toNodeId = null,
-		[Description("Batch items: [{kind, from, to}] (fromNodeId/toNodeId accepted as aliases). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
+		[Description("Single-form SOURCE node (when items is omitted): a node reference — its slug key or its 32-hex NodeId (both accepted).")] string? fromNodeId = null,
+		[Description("Single-form TARGET node (when items is omitted): a node reference — its slug key or its 32-hex NodeId (both accepted).")] string? toNodeId = null,
+		[Description("Batch items: [{kind, from, to}], where `from`/`to` are each a node reference — a slug key or a 32-hex NodeId (both accepted). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item throws and aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason instead of throwing. Every item is independent (from/to are already-resolved external node refs, never another item of this batch), so nothing cascades. A rejected item has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
 	{
@@ -57,12 +57,12 @@ public static class RelationTools
 					throw new ArgumentException("item is null");
 				if (string.IsNullOrWhiteSpace(item.Kind))
 					throw new ArgumentException("kind is required");
-				var fromRef = ItemFrom(item);
-				var toRef = ItemTo(item);
+				var fromRef = item.From;
+				var toRef = item.To;
 				if (string.IsNullOrWhiteSpace(fromRef))
-					throw new ArgumentException("from (or fromNodeId) is required");
+					throw new ArgumentException("from is required");
 				if (string.IsNullOrWhiteSpace(toRef))
-					throw new ArgumentException("to (or toNodeId) is required");
+					throw new ArgumentException("to is required");
 				// Resolve endpoints first so the kind vocabulary can be scoped to the FROM node's
 				// board → methodology instance (methodology-instance-scoped-axes). The store itself
 				// only checks structure.
@@ -109,11 +109,11 @@ public static class RelationTools
 	}
 
 	[McpServerTool(Name = "relations_list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
-	[Description("List relations touching a node. node takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug resolves across ALL the project's boards). A node ref that matches no node → an empty list (not an error); an ambiguous cross-board slug still needs a NodeId. direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
+	[Description("List relations touching a node. `node` is a node reference — its slug key or its 32-hex NodeId (both accepted): the 32-hex form is the stable PlanNode.NodeId, the slug form resolves across ALL the project's boards. A node ref that matches no node → an empty list (not an error); an ambiguous cross-board slug still needs a NodeId. direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
 	public static async Task<RelationsListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
-		[Description("The node: slug or NodeId (a slug resolves project-wide and must be unambiguous).")] string node,
+		[Description("The node: a node reference — its slug key or its 32-hex NodeId (both accepted); a slug resolves project-wide and must be unambiguous.")] string node,
 		string? direction = null, bool includeHistory = false,
 		CancellationToken ct = default)
 	{
@@ -167,8 +167,8 @@ public static class RelationTools
 					new RelationCreateItemInput
 					{
 						Kind = kind,
-						FromNodeId = fromNodeId,
-						ToNodeId = toNodeId,
+						From = fromNodeId,
+						To = toNodeId,
 					},
 				],
 				true
@@ -184,9 +184,4 @@ public static class RelationTools
 		throw new ArgumentException("relations_delete requires ids:[…] or single-form id");
 	}
 
-	static string? ItemFrom(RelationCreateItemInput item) =>
-		!string.IsNullOrWhiteSpace(item.From) ? item.From : item.FromNodeId;
-
-	static string? ItemTo(RelationCreateItemInput item) =>
-		!string.IsNullOrWhiteSpace(item.To) ? item.To : item.ToNodeId;
 }

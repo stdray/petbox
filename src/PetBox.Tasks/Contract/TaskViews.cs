@@ -168,27 +168,27 @@ public enum TaskSortBy
 // pool in both modes (listing and query). `Board` scopes to one board (null = the whole
 // project, each row then carries its board). `Under` restricts to a part_of subtree (a
 // slug or NodeId; resolved cross-board when Board is null). `Status` keeps only the named
-// slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without
-// IncludeClosed. `Keys` addresses specific nodes (slug|NodeId mixed, resolved like
-// tasks_node_get; terminal nodes included — explicit addressing). `StatusKind` is the first-class
-// visibility facet (spec tasks-search-statuskind-facet): a SET over {open, terminalok,
-// terminalcancel} evaluated against the опорный слой (search_meta) in BOTH modes; absence = NEUTRAL
-// (everything), never a restricting default. `IncludeClosed` is a DEPRECATED ALIAS onto StatusKind
-// (TasksSearchDocs.ResolveStatusKindFacet): includeClosed:true → omit the facet (all);
-// includeClosed:false + query → [open, terminalok]; includeClosed:false + listing → [open]. An
-// explicit StatusKind WINS over the alias.
+// slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without any
+// statusKind widening. `Keys` addresses specific nodes (a slug key or a 32-hex NodeId, both
+// accepted, mixed; resolved like tasks_node_get; terminal nodes included — explicit addressing).
+// `StatusKind` is the ONLY visibility axis (spec tasks-search-statuskind-facet): a SET over
+// {open, terminalok, terminalcancel} evaluated against the опорный слой (search_meta) in BOTH
+// modes. Absence = the MODE DEFAULT (query → [open, terminalok]; listing → [open]); to select
+// every kind, name all three explicitly.
+// The `IncludeClosed` boolean that used to sit here was a DEPRECATED ALIAS onto StatusKind and
+// was REMOVED (drop-legacy-aliases) together with the `includeClosed` MCP parameter that was its
+// only caller. There is no boolean visibility axis any more — one fact, one spelling.
 public sealed record TaskNodeFilter(
 	string? Board = null,
 	string? Under = null,
 	IReadOnlyList<string>? Status = null,
 	IReadOnlyList<string>? Keys = null,
-	bool IncludeClosed = false,
 	// Reverse commit lookup (node-commits-impl): keep only nodes carrying this commit. An
 	// EXACT match on a stored sha, or — when the query is >=7 hex chars — a PREFIX match on a
 	// stored full sha (a short query finds the long commit). null/empty = no filter.
 	string? Commit = null,
-	// The statusKind visibility facet (see the doc above). null = the deprecated IncludeClosed
-	// alias decides; a non-empty set is the first-class ask and overrides the alias.
+	// The statusKind visibility facet (see the doc above). null/empty = the mode default; a
+	// non-empty set is the caller's explicit ask.
 	IReadOnlyList<string>? StatusKind = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their

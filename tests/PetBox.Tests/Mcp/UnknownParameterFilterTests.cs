@@ -107,7 +107,10 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 	// The boundary the card demands the other way: a batch verb whose nested array-item objects
 	// (`nodes[]`, here `key`/`title`/`body`/`type`) have their OWN field names must not be mistaken
-	// for unknown TOP-LEVEL parameters — the filter only ever looks at the top-level argument keys.
+	// for unknown TOP-LEVEL parameters. Since drop-legacy-aliases the filter also walks ONE level
+	// into item shapes, so this test now pins both halves at once: the item field names are checked
+	// against the ITEM schema (not the top-level one) and every one of these is valid, so the call
+	// passes through untouched.
 	[Fact]
 	public async Task BatchVerbWithNestedObjects_IsNotBroken()
 	{
@@ -194,5 +197,196 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 		var text = Text(result);
 		text.Should().Contain("Accepted parameters").And.Contain("board");
 		text.Should().NotContain("Did you mean");
+	}
+
+	// ── drop-legacy-aliases: every retired alias must ERROR, never be quietly ignored ──────────
+	//
+	// This is the acceptance the retirement stands on. Deleting an alias from the schema is only
+	// half a retirement: if the name then lands in the framework's per-parameter lookup and is
+	// dropped, a caller still on the old spelling gets a SUCCESS with its argument missing — the
+	// precise failure McpUnknownParameterFilter was built for, re-created by the very change meant
+	// to clean the surface up. So each retired name is pinned here by name, on the real wire.
+
+	// `includeClosed` (tasks_search) — a TOP-LEVEL alias for statusKind. The dangerous one: silently
+	// ignored it would not error at all, it would narrow the result to the mode default and look
+	// like a correct answer, exactly like the `under` incident above.
+	[Fact]
+	public async Task RetiredAlias_IncludeClosed_IsRejected_AndPointsAtStatusKind()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_search");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["includeClosed"] = true,
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("Unknown parameter").And.Contain("includeClosed").And.Contain("tasks_search");
+		// The replacement has to be reachable from the error itself — a caller whose schema snapshot
+		// still shows the alias cannot look the retirement up.
+		text.Should().Contain("Accepted parameters").And.Contain("statusKind");
+	}
+
+	// `l1` (tasks_upsert nodes[]) — an ITEM-level alias for `key`, and the reason the filter learned
+	// to walk one level down. Without that walk this call would have failed on the generic "each node
+	// needs a 'key'" instead of naming the field the caller actually sent.
+	[Fact]
+	public async Task RetiredAlias_L1_InBatchItem_IsRejected_AndNamesIt()
+	{
+		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["kind"] = "work",
+		});
+
+		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["nodes"] = new[]
+			{
+				new Dictionary<string, object?>
+				{
+					["l1"] = "unkp-retired-l1",
+					["title"] = "Retired alias",
+					["version"] = 0,
+				},
+			},
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("Unknown parameter").And.Contain("l1").And.Contain("tasks_upsert");
+		// The suggestion is scored against the ITEM's own field names, so `key` — the field that
+		// replaced this alias — is what comes back, not a top-level parameter that merely looks close.
+		text.Should().Contain("key");
+	}
+
+	// `prevL1` (tasks_upsert nodes[]) — the rename-source half of the same pair. Pinned separately
+	// because its replacement `prevKey` is NOT itself an alias (it names a different node state),
+	// so a future cleanup must not sweep it away along with this one.
+	[Fact]
+	public async Task RetiredAlias_PrevL1_InBatchItem_IsRejected_AndNamesIt()
+	{
+		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["kind"] = "work",
+		});
+
+		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["nodes"] = new[]
+			{
+				new Dictionary<string, object?>
+				{
+					["key"] = "unkp-retired-prevl1",
+					["prevL1"] = "something-old",
+					["version"] = 0,
+				},
+			},
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("Unknown parameter").And.Contain("prevL1").And.Contain("prevKey");
+	}
+
+	// `fromNodeId`/`toNodeId` inside relations_create `items[]` — item-level aliases for `from`/`to`.
+	// NOTE the asymmetry this pins: the SINGLE form's `fromNodeId`/`toNodeId` TOOL parameters are NOT
+	// aliases (nothing named `from`/`to` exists at the top level for them to duplicate) and stay —
+	// see RelationsCreate_SingleForm_FromNodeId_StillAccepted for the other side of that line.
+	[Fact]
+	public async Task RetiredAlias_FromNodeIdInBatchItem_IsRejected_AndNamesIt()
+	{
+		var result = await (await Tool(_fx.Mcp, "relations_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["items"] = new[]
+			{
+				new Dictionary<string, object?>
+				{
+					["kind"] = "relates_to",
+					["fromNodeId"] = "a",
+					["toNodeId"] = "b",
+				},
+			},
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("Unknown parameter").And.Contain("fromNodeId").And.Contain("relations_create");
+	}
+
+	// The line the retirement must NOT cross. `fromNodeId` is a legitimate TOP-LEVEL parameter of
+	// relations_create's single form; only the item-level duplicate was retired. If a later sweep
+	// deletes the tool parameter too, this fails.
+	[Fact]
+	public async Task RelationsCreate_SingleForm_FromNodeId_StillAccepted()
+	{
+		var result = await (await Tool(_fx.Mcp, "relations_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["kind"] = "relates_to",
+			["fromNodeId"] = "unkp-no-such-node",
+			["toNodeId"] = "unkp-no-such-node-either",
+		});
+
+		// It fails on RESOLUTION (no such node), which is proof the parameter itself bound: an
+		// unknown-parameter refusal would have happened in the filter, before any resolution ran.
+		Text(result).Should().NotContain("Unknown parameter");
+	}
+
+	// Task 2: `key` is now REQUIRED in the published schema, not merely in the prose. While the `l1`
+	// alias was live no single property could carry the marker — "exactly one of key or l1" is not
+	// expressible in JSON Schema `required` — so the description had to apologise for a schema that
+	// typed `key` as ["string","null"] and left it optional. Retiring `l1` is what makes this
+	// assertable, and this test is the reason the retirement cannot be quietly reversed.
+	[Fact]
+	public async Task TasksUpsert_NodeKey_IsHonestlyRequiredInTheSchema()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_upsert");
+		var item = tool.ProtocolTool.InputSchema
+			.GetProperty("properties").GetProperty("nodes").GetProperty("items");
+
+		item.GetProperty("required").EnumerateArray().Select(v => v.GetString())
+			.Should().Contain("key", "the schema must state the requirement the tool body enforces");
+		// And the type union must no longer offer the `null` the tool body rejects.
+		item.GetProperty("properties").GetProperty("key").GetProperty("type").GetString()
+			.Should().Be("string");
+		// The retired aliases are GONE from the schema — this is what makes the filter reject them.
+		var fields = item.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+		fields.Should().NotContain("l1").And.NotContain("prevL1");
+		fields.Should().Contain("key").And.Contain("prevKey");
+	}
+
+	// The same schema honesty for relations_create's item shape: `from`/`to` stand alone.
+	[Fact]
+	public async Task RelationsCreate_ItemSchema_HasNoNodeIdAliases()
+	{
+		var tool = await Tool(_fx.Mcp, "relations_create");
+		var fields = tool.ProtocolTool.InputSchema
+			.GetProperty("properties").GetProperty("items").GetProperty("items")
+			.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+
+		fields.Should().Contain("from").And.Contain("to");
+		fields.Should().NotContain("fromNodeId").And.NotContain("toNodeId");
+	}
+
+	// tasks_search's schema must not carry the retired boolean either — the filter's rejection above
+	// is DERIVED from the schema, so a stray property would silently re-legalise the alias.
+	[Fact]
+	public async Task TasksSearch_Schema_HasNoIncludeClosed()
+	{
+		var tool = await Tool(_fx.Mcp, "tasks_search");
+		var fields = tool.ProtocolTool.InputSchema
+			.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+
+		fields.Should().NotContain("includeClosed");
+		fields.Should().Contain("statusKind");
 	}
 }

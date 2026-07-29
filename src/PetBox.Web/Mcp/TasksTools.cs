@@ -711,15 +711,15 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_node_get", Title = "Get one or more nodes in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeGetResultView))]
 	[Description("""
-		Return one or more nodes of a board in FULL, addressed by slug key OR 32-hex NodeId (the
-		same slug-or-NodeId convention as blockedBy/partOf). `node` reads ONE; `nodes` reads a
+		Return one or more nodes of a board in FULL. `node` reads ONE; `nodes` reads a
 		BATCH in one call — the same split as memory_get `key`/`keys`: combine them or use either
 		alone. Always returns { nodes: [...] }, one shape for both arities.
-		The parameter is `node`, NOT `key` — passing `key` is rejected as an unknown parameter.
-		This is a deliberate difference from tasks_upsert, not an inconsistency: `key` there is
-		the node's slug FIELD, the thing a write sets, and only a slug is valid. `node` here is a
-		REFERENCE, and it resolves EITHER a slug OR a 32-hex NodeId — the same two-form reference
-		blockedBy/partOf/`underNode` take. Naming it `key` would promise slug-only addressing and
+		Each is a node REFERENCE — its slug key or its 32-hex NodeId (both accepted) — the same
+		two-form reference partOf/blockedBy/supersedes/underNode and relations_* take.
+		The parameter is `node`, NOT `key` — passing `key` is rejected as an unknown parameter,
+		and no `key` alias will be added. This is a deliberate difference from tasks_upsert, not
+		an inconsistency: `key` there is the node's slug FIELD, the thing a write sets, and only a
+		slug is valid there. Naming this one `key` would promise slug-only addressing and
 		lie about half of what it accepts. Rule of thumb: you WRITE a `key`, you READ BY a `node`.
 		In a BATCH a node that doesn't resolve on `board` (miss, or a hit that lives on a
 		DIFFERENT board) is silently dropped (soft filter) and an empty result is not an error;
@@ -734,14 +734,14 @@ public static class TasksTools
 		relation panel — one labelled group per non-empty kind×direction (children, blocks/blocked
 		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by), each target
 		carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated
-		node is returned like any other (no includeClosed needed). Use this instead of re-fetching a
+		node is returned like any other (no statusKind widening needed). Use this instead of re-fetching a
 		whole board when you need one or a few nodes' full bodies. Requires tasks:read.
 		""")]
 	public static async Task<NodeGetResultView> NodeGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("One node's slug key on the board, or its 32-hex NodeId. Named `node`, not `key`, because it is a REFERENCE that takes either form — tasks_upsert's `key` is the slug field itself. Combine with `nodes` or use either alone.")] string? node = null,
-		[Description("Batch of nodes (slug key or 32-hex NodeId) read in ONE call; a node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
+		[Description("One node: a node reference — its slug key on the board or its 32-hex NodeId (both accepted). Named `node`, not `key`, because it is a REFERENCE that takes either form — tasks_upsert's `key` is the slug field itself and takes the slug only. Combine with `nodes` or use either alone.")] string? node = null,
+		[Description("Batch of nodes read in ONE call: each entry is a node reference — a slug key or a 32-hex NodeId (both accepted, mixed in one list). A node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -833,22 +833,24 @@ public static class TasksTools
 		"closed": `statusKind` is a SET over open | terminalok | terminalcancel (open = not
 		finished; terminalok = accepted/Done; terminalcancel = rejected/cancelled). Omitting it
 		is NEUTRAL — a default query returns open+terminalok (so accepted/Done are always
-		findable), a default listing returns open. `includeClosed` is a DEPRECATED alias:
-		true → the facet is omitted (every kind); false + q → [open, terminalok]; false without
-		q → [open]. An explicit `statusKind` OVERRIDES `includeClosed`. The response echoes
+		findable), a default listing returns open. To see EVERY kind (the old `includeClosed:true`)
+		pass the full set explicitly: statusKind:["open","terminalok","terminalcancel"]. The
+		`includeClosed` boolean was REMOVED (drop-legacy-aliases) — sending it is now a rejected
+		unknown parameter, not a silently-ignored one. The response echoes
 		`effectiveStatusKind`: the facet that ACTUALLY applied, including when defaulted — a
-		default query surfaces `["open","terminalok"]`, a default listing `["open"]`, an explicit
-		`statusKind` is echoed back resolved (normalized/deduped), and `includeClosed:true` with
-		no explicit `statusKind` echoes `null` (NEUTRAL — no facet applied, every kind). Defaulted
+		default query surfaces `["open","terminalok"]`, a default listing `["open"]`, and an
+		explicit `statusKind` is echoed back resolved (normalized/deduped). Defaulted
 		visibility is never silent.
 
 		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
-		empty result, never an error): `underNode` = a part_of subtree root (slug or NodeId; a slug
+		empty result, never an error): `underNode` = a part_of subtree root, given as a node
+		reference — its slug key or its 32-hex NodeId (both accepted); a slug
 		resolves on `board`, or project-wide when board is omitted; a root that matches nothing →
 		an empty result, an ambiguous slug → the union of its subtrees); `status` = keep only
 		these slugs (case-insensitive; naming a TERMINAL status returns its nodes even without
 		widening the statusKind facet — an explicit ask; an unknown slug is silently dropped, and
-		an all-unknown set → an empty result); `nodes` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
+		an all-unknown set → an empty result); `nodes` = a SOFT node filter, each entry a node
+		reference — a slug key or a 32-hex NodeId (both accepted, mixed in one list) — a ref that matches nothing
 		is silently dropped (NOT an error), an ambiguous cross-board slug contributes ALL its
 		matches, terminal nodes are included, and an all-missing nodes set yields an empty result;
 		`commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
@@ -934,17 +936,16 @@ public static class TasksTools
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board (listing then carries kind/wiredBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
-		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? underNode = null,
-		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
-		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? nodes = null,
-		[LogArg][Description("DEPRECATED alias for statusKind — prefer statusKind. Maps onto the facet: includeClosed:true → omit the facet (every kind); includeClosed:false + q → statusKind:[open,terminalok]; includeClosed:false without q → statusKind:[open]. Ignored when statusKind is set. (A default query already reaches terminal-OK — accepted/Done — regardless of this flag.)")] bool includeClosed = false,
+		[Description("Restrict to the part_of subtree under this node: a node reference — its slug key or its 32-hex NodeId (both accepted). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? underNode = null,
+		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned without widening the statusKind facet — an explicit ask. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
+		[Description("Soft node filter: each entry is a node reference — a slug key or a 32-hex NodeId (both accepted, mixed in one list). A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? nodes = null,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned — one PAGE in both modes. Default: unbounded listing / 20 with q (0 = no cap). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (50), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 50) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
-		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = NEUTRAL (every kind; a default read still finds accepted/Done). This is the first-class replacement for the deprecated includeClosed and OVERRIDES it when set; an unknown value is an error.")] string[]? statusKind = null,
+		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = the mode default (query: open+terminalok; listing: open) — a default read still finds accepted/Done. Pass all three values for the widest read (this replaces the removed includeClosed:true); an unknown value is an error.")] string[]? statusKind = null,
 		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different sort/filter is an ERROR, not a silent restart. With `q` it is additionally bound to the board state the ranked pool was built over, so an edit mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
@@ -978,7 +979,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, underNode, status, nodes, includeClosed, commit, statusKind),
+			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind),
 			Sort = parsedSort,
 			// LISTING: ask for the whole ordered set and apply `limit` HERE (below), after the
 			// cursor skip. The service's own Limit is a plain prefix Take over that same ordered
@@ -1008,7 +1009,7 @@ public static class TasksTools
 		// the next page is REFUSED with an instructive error, never quietly restarted against a new
 		// ordering — the failure mode the whole keyset design exists to avoid.
 		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
-			nodes, includeClosed, commit, statusKind, axis, desc, res.DataVersion);
+			nodes, commit, statusKind, axis, desc, res.DataVersion);
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
 		{
@@ -1151,11 +1152,11 @@ public static class TasksTools
 	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
 		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
-		bool includeClosed, string? commit, string[]? statusKind, TaskSortBy axis, bool desc,
+		string? commit, string[]? statusKind, TaskSortBy axis, bool desc,
 		string? dataVersion = null) =>
 		KeysetCursor.FingerprintOf(
 			"tasks_search", projectKey, query, board, underNode,
-			CursorFilterSet(status), CursorFilterSet(nodes), includeClosed ? "1" : "0",
+			CursorFilterSet(status), CursorFilterSet(nodes),
 			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0", dataVersion);
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
@@ -1250,10 +1251,11 @@ public static class TasksTools
 		`key` and nests via `partOf`.
 		`key` is REQUIRED on EVERY node, including a brand-new one — there is no quick-add that
 		invents a slug for you, and a node without one is rejected with "each node needs a 'key'
-		(a flat slug)". The JSON schema types it `["string","null"]` and does NOT list it in
-		`required`: that is a back-compat artifact, not optionality — the legacy alias `l1` is
-		still accepted in its place, so no single property can carry the `required` marker. Read
-		it as "exactly one of `key` (use this) or `l1` (legacy) must be present".
+		(a flat slug)". The JSON schema says so honestly: `key` IS listed in the node object's
+		`required`. `key` is the slug FIELD this write sets — it never takes a NodeId. That is why
+		it is not called `node`: the read tools' `node`/`nodes`/`underNode`/`partOf` are node
+		REFERENCES and each accepts a slug key OR a 32-hex NodeId, while `key` accepts the slug
+		only.
 		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
 		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
 		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
@@ -1266,8 +1268,10 @@ public static class TasksTools
 		same on-create convention as memory_upsert. Requires tasks:write.
 
 		Each node has a FLAT `key` — a single slug [a-z][a-z0-9_-]{0,99} (no '/'; the old
-		l1/l2/l3 path is gone). Nesting is the `partOf` field: a parent slug (on this board)
-		or a NodeId — null omits it, "" detaches to a root. A node may carry multiple parents'
+		l1/l2/l3 path is gone, and so is the `l1` alias for `key` itself: sending `l1` is now a
+		rejected unknown member, not a silently-dropped field). Nesting is the `partOf` field: a
+		node reference — the parent's slug key (on this board) or its 32-hex NodeId (both
+		accepted) — null omits it, "" detaches to a root. A node may carry multiple parents'
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (GFM markdown —
 		renders as formatted text: use ## headings, real newlines (not \\n literals, not
@@ -1277,13 +1281,15 @@ public static class TasksTools
 		chore = spec-less engineering hygiene), links (a dict {relationKind: ref | ref[]}
 		expressing the active methodology's DECLARED/process relations — there are NO
 		methodology-named sugar fields. On the quartet: {"task_spec":"spec-leaf"} on a work
-		feature/bug, {"idea_spec":"<accepted idea NodeId>"} on a spec node; a ref is a slug on
-		the target kind's board or a NodeId, and a value may be a LIST for several targets of one
+		feature/bug, {"idea_spec":"<accepted idea NodeId>"} on a spec node; each ref is a node
+		reference — a slug key on the target kind's board or a 32-hex NodeId (both accepted) —
+		and a value may be a LIST for several targets of one
 		kind. Which relation kinds exist, their direction, and which are REQUIRED come from
 		tasks_methodology_guide and are enforced with data-generated errors), blockedBy (the
-		blocking node as its slug on THIS board or a NodeId — the same slug-or-NodeId convention
-		as partOf; may also be written as links.blocks, add-only), supersedes
-		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
+		blocking node as a node reference — its slug key on THIS board or its 32-hex NodeId, both
+		accepted, the same convention as partOf; may also be written as links.blocks, add-only),
+		supersedes (a node reference — the slug key or 32-hex NodeId, both accepted, of the node
+		this one replaces; the old one is moved to its terminal-cancel),
 		commits? (an ARRAY of commit SHAs — hex, 7..40 chars; null omits, [] clears, a list
 		REPLACES the node's full commit set, same PATCH semantics as tags), priority? (sparse
 		int, lower first), version (WATERMARK baseline: pass the
@@ -1328,7 +1334,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board,
-		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node — it is typed nullable and left out of `required` only because the legacy alias `l1` is still accepted in its place; omitting both is an error, not a quick-add. Then: optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node and is listed in the node object's `required` — omitting it is an error, not a quick-add. `key` is the slug FIELD being written and takes the slug ONLY (never a NodeId); the reference parameters below take either form. Then: optional `partOf` (the parent: a node reference — its slug key or its 32-hex NodeId, both accepted), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds, each ref a node reference — a slug key or a 32-hex NodeId, both accepted — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (the blocker: a node reference — its slug key or its 32-hex NodeId, both accepted), `supersedes` (the replaced node: a node reference — its slug key or its 32-hex NodeId, both accepted), status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename (the node's PREVIOUS slug key — a rename source, not an alias of `key`).")] PlanNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
@@ -1498,19 +1504,17 @@ public static class TasksTools
 		return list;
 	}
 
-	// A node's address is a flat board-unique slug in `key` (`l1` accepted as an alias).
+	// A node's address is a flat board-unique slug in `key` — the ONLY spelling since
+	// drop-legacy-aliases retired the `l1` alias (an `l1` property is now an unknown member and is
+	// REJECTED by McpUnknownParameterFilter, so a stale caller gets an error, not a lost write).
 	// Nesting is the `partOf` parent, not the key. Validated/normalized via TaskSlug.
 	static string ResolveKey(PlanNodeInput n)
 	{
-		var key = !string.IsNullOrEmpty(n.Key) ? n.Key : n.L1;
-		if (!string.IsNullOrEmpty(key))
-			return TaskSlug.Validate(key);
+		if (!string.IsNullOrEmpty(n.Key))
+			return TaskSlug.Validate(n.Key);
 		throw new ArgumentException("each node needs a 'key' (a flat slug)");
 	}
 
-	static string? ResolvePrevKey(PlanNodeInput n)
-	{
-		var prevKey = !string.IsNullOrEmpty(n.PrevKey) ? n.PrevKey : n.PrevL1;
-		return !string.IsNullOrEmpty(prevKey) ? TaskSlug.Validate(prevKey) : null;
-	}
+	static string? ResolvePrevKey(PlanNodeInput n) =>
+		!string.IsNullOrEmpty(n.PrevKey) ? TaskSlug.Validate(n.PrevKey) : null;
 }

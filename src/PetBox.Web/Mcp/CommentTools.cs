@@ -47,8 +47,9 @@ public static class CommentTools
 		Batch declarative upsert of node comments (a discussion thread separate from the plan) —
 		the uniform write verb that replaced comments_create + comments_edit. `items` is a JSON
 		array; each item is one of:
-		  • CREATE — `id` absent/null. Requires `node` (the owner node: its slug key on `board`,
-		    or its 32-hex NodeId) and `author`. `parentId` (a COMMENT id, NOT a node ref) makes it a
+		  • CREATE — `id` absent/null. Requires `node` (the owner node, given as a node reference —
+		    its slug key on `board` or its 32-hex NodeId, both accepted) and `author`. `parentId`
+		    is a COMMENT id, NOT a node reference: it makes the item a
 		    REPLY — it must be an active comment under the SAME node, else the batch is rejected.
 		  • PATCH — `id` present (an existing comment id). Updates `body` and, when `tags` is given,
 		    replaces the tag set (omitted `tags` leaves it as-is). You cannot re-parent in v1.
@@ -73,7 +74,7 @@ public static class CommentTools
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of comment items: { id? (omit to CREATE), node? (owner slug|NodeId, required to create), parentId? (a COMMENT id = reply), author? (required to create), body, tags? (array of strings), version? (watermark for a PATCH; 0 = new) }.")] CommentItemInput[] items,
+		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, tags? (array of strings), version? (watermark for a PATCH; 0 = new) }.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
@@ -111,13 +112,13 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
-	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (slug|NodeId). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
+	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic chronological listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board. Omit = the whole project.")] string? board = null,
-		[Description("Scope to one owner node: its slug key on `board`, or its 32-hex NodeId. A node that matches nothing → an empty result (not an error).")] string? node = null,
+		[Description("Scope to one owner node: a node reference — its slug key on `board` or its 32-hex NodeId (both accepted). A node that matches nothing → an empty result (not an error).")] string? node = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet, in a listing or with q alike; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		CancellationToken ct = default)

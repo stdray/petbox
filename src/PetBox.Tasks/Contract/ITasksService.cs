@@ -288,10 +288,10 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	//     relevance, an explicit Sort reorders WITHIN the selected set. Retrievers provenance
 	//     is filled. search-hides-terminal-nodes: a default query already reaches terminal-OK
 	//     (accepted/Done — a success state); terminal-CANCEL (rejected/cancelled) needs
-	//     IncludeClosed, same as listing.
-	// Filter fields (board/under/status/keys/includeClosed) narrow the pool in both modes;
+	//     StatusKind naming it, same as listing.
+	// Filter fields (board/under/status/keys/statusKind) narrow the pool in both modes;
 	// a terminal status named in Status — and any node addressed via Keys — returns without
-	// IncludeClosed (an explicit ask). BodyLen slices row bodies (0 = full); Limit caps rows
+	// any StatusKind widening (an explicit ask). BodyLen slices row bodies (0 = full); Limit caps rows
 	// (0 = unbounded listing / the adapter's query default). Board context (kind/wiredBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);

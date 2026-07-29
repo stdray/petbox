@@ -82,7 +82,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		});
 		IsErr(done).Should().BeFalse();
 
-		var intake = await Agent("tasks_search", new { projectKey = ProjectKey, board = "intake", includeClosed = true });
+		var intake = await Agent("tasks_search", new { projectKey = ProjectKey, board = "intake", statusKind = TestFacets.All });
 		Text(intake).Should().Contain("done");
 	}
 

@@ -252,7 +252,9 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var created = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
 		[
 			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
-			new RelationCreateItemInput { Kind = "relates_to", FromNodeId = ids["c"], ToNodeId = ids["d"] },
+			// `from`/`to` are node REFERENCES: the slug form above, the 32-hex NodeId form here.
+			// (The item-level fromNodeId/toNodeId aliases were retired by drop-legacy-aliases.)
+			new RelationCreateItemInput { Kind = "relates_to", From = ids["c"], To = ids["d"] },
 		]);
 
 		created.Relations.Should().HaveCount(2);

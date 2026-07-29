@@ -133,11 +133,17 @@ needs blockedBy.
 
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one
 board, omit for the project), with q a hybrid relevance search; both modes take status[],
-nodes[] (slug|nodeId), underNode=<slug> (subtree) and sort{by,desc}. A board listing carries
+nodes[], underNode (subtree), statusKind[] and sort{by,desc}. A board listing carries
 kind, wiredBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
-HIDES terminal nodes by default — includeClosed=true to include. One full node:
-tasks_node_get. Partial update: send only what changes — a status change needs just
-key + version + status.
+HIDES terminal nodes by default — pass statusKind:["open","terminalok","terminalcancel"] to
+see every kind (the old includeClosed=true was removed and is now a rejected parameter).
+One full node: tasks_node_get. Partial update: send only what changes — a status change
+needs just key + version + status.
+
+REFERENCES vs KEYS: every parameter that POINTS AT a node — node, nodes[], underNode,
+partOf, blockedBy, supersedes, relations' from/to — takes a slug key OR a 32-hex NodeId,
+both accepted. tasks_upsert's `key` is the one exception: it is the slug FIELD you write,
+so it takes the slug only, and it is REQUIRED on every node.
 
 STORE by lifetime: durable fact -> memory (type User|Feedback|Project|Reference); current
 thinking -> session; a unit of work with a status -> task.

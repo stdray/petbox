@@ -230,8 +230,8 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	}
 
 	// 5. the definition's terminal statuses drive the closed-node predicate: Resolved /
-	// Rejected nodes vanish from the default listing and come back with includeClosed or an
-	// explicit status filter.
+	// Rejected nodes vanish from the default listing and come back with an explicit statusKind
+	// (all three facets) or an explicit status filter.
 	[Fact]
 	public async Task DefinedKind_TerminalStatuses_HiddenByDefault()
 	{
@@ -255,12 +255,12 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		Text(def).Should().NotContain("\"key\":\"fixed\"", "Resolved is terminalok in the definition");
 		Text(def).Should().NotContain("\"key\":\"dup\"", "Rejected is terminalcancel in the definition");
 
-		var all = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk", includeClosed = true });
+		var all = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk", statusKind = TestFacets.All });
 		Text(all).Should().Contain("\"key\":\"fixed\"");
 		Text(all).Should().Contain("\"key\":\"dup\"");
 
 		var filtered = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk", status = new[] { "Resolved" } });
-		Text(filtered).Should().Contain("\"key\":\"fixed\"", "an explicitly named terminal status is returned without includeClosed");
+		Text(filtered).Should().Contain("\"key\":\"fixed\"", "an explicitly named terminal status is returned without any statusKind widening");
 		Text(filtered).Should().NotContain("\"key\":\"stays\"");
 	}
 

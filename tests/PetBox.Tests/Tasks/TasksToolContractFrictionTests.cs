@@ -109,7 +109,7 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 
 	Task<TaskSearchResultView> Search(string? q = null, string? board = null, string? commit = null, int? bodyLen = null) =>
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, null, null, null,
-			false, null, null, bodyLen, null, false, commit, null, null);
+			null, null, bodyLen, null, false, commit, null, null);
 
 	// A node that carries commits plus one that does not — the production shape the reporter saw
 	// (some rows `[]`, some populated).
@@ -182,26 +182,57 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*each node needs a 'key'*");
 	}
 
-	// The legacy alias is the REASON the schema cannot mark `key` required — so it has to keep
-	// working, otherwise the honest fix would have been a schema change after all.
+	// INVERTED by drop-legacy-aliases (was Upsert_WithLegacyL1Alias_StillLandsAsTheKey). This test
+	// used to defend the alias precisely because it was the REASON `key` could not be marked
+	// required. The owner took the breaking change instead, so the schema change IS the fix now and
+	// the alias must NOT land: `l1` no longer binds, the node has no key, the write is refused.
 	[Fact]
-	public async Task Upsert_WithLegacyL1Alias_StillLandsAsTheKey()
+	public async Task Upsert_WithLegacyL1Alias_NoLongerLands()
 	{
-		await Seed("b", """[{"l1":"via-alias","status":"Todo","title":"Via alias","body":"x"}]""");
+		await Seed("b", """[{"key":"seed","status":"Todo","title":"Seed","body":"x"}]""");
 
-		(await Search(board: "b", bodyLen: 0)).Nodes.Select(n => n.Key).Should().Contain("via-alias");
+		var act = async () => await TasksTools.UpsertAsync(Http(), Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"l1":"via-alias","status":"Todo","title":"Via alias","body":"x"}]"""));
+
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*each node needs a 'key'*");
 	}
 
 	// ── prose gates: the description is what an agent reads INSTEAD of documentation ─────────
 
+	// The prose half of the same inversion. 69e09e00 fixed the key contract as WORDS because the live
+	// `l1` alias blocked the schema fix; drop-legacy-aliases removed the alias, so the apology
+	// ("back-compat artifact, not optionality") became false and had to go. What the description must
+	// say now is that the schema itself carries the requirement — and it must NOT re-acquire an
+	// excuse, which is what the negative assertion guards.
+	// Tool descriptions are hard-wrapped, so any assertion long enough to be meaningful will cross a
+	// line break. Collapse runs of whitespace first and match on the sentence, not on the wrapping.
+	static string Flat(string? text) => System.Text.RegularExpressions.Regex.Replace(text ?? "", @"\s+", " ");
+
 	[Fact]
-	public void UpsertDescription_SaysKeyIsRequired_AndExplainsTheNullableSchema()
+	public void UpsertDescription_SaysKeyIsRequired_AndClaimsTheSchemaSaysSo()
 	{
-		var full = McpToolDescriptions.Full(RegisteredDescription("tasks_upsert"))!;
+		var full = Flat(McpToolDescriptions.Full(RegisteredDescription("tasks_upsert")));
 
 		full.Should().Contain("`key` is REQUIRED on EVERY node");
-		full.Should().Contain("back-compat artifact, not optionality");
-		full.Should().Contain("`l1`", "the alias must be named — it is why `required` cannot carry the marker");
+		full.Should().Contain("`key` IS listed in the node object's `required`");
+		full.Should().NotContain("back-compat artifact, not optionality",
+			"the alias that forced that caveat is gone — the schema now carries the marker honestly");
+	}
+
+	// The node-vs-key distinction 69e09e00 established as prose, now stated in the SAME words on both
+	// sides: a reference takes either form, `key` takes the slug only. Task 3 of drop-legacy-aliases
+	// made this phrasing uniform across every reference parameter, so it is pinned rather than left
+	// to drift back into three spellings ("slug|NodeId", "slug key … or its 32-hex NodeId", silence).
+	[Fact]
+	public void ReferenceParameters_ShareOneFormulation()
+	{
+		foreach (var tool in new[] { "tasks_search", "tasks_node_get", "tasks_upsert", "relations_create", "relations_list", "comments_search", "comments_upsert" })
+			Flat(McpToolDescriptions.Full(RegisteredDescription(tool)))
+				.Should().Contain("both accepted", $"{tool} must use the shared node-reference formulation");
+
+		// And the exception stays explicit rather than inferable.
+		Flat(McpToolDescriptions.Full(RegisteredDescription("tasks_upsert")))
+			.Should().Contain("it never takes a NodeId");
 	}
 
 	[Fact]
