@@ -45,38 +45,16 @@ using System.Text.Json.Nodes;
 // Add a row here only when you've looked at that specific call site and decided it's fine, not
 // as a way to silence a whole rule (that belongs in the .DotSettings file instead).
 //
-// resharper-clt-step3-defect-shaped (2026-07-29, main c8b918ff) added the two rows below after
-// raising PossibleMultipleEnumeration and PossibleUnintendedQueryableAsEnumerable to ERROR in
-// PetBox.slnx.DotSettings and individually reading every finding each produced. Both rows are
-// file-scoped, not global: this array has no LINE granularity (see the Suppression record below),
-// so a NEW finding of the same rule anywhere else in the solution — or even elsewhere in the SAME
-// file — still fails the gate; only the specific shape already reviewed here is accepted.
-var suppressions = new[]
-{
-	// TasksService.HybridCandidatesAsync/ListAsync (lines 855-861 as of this commit): `fromEdges`/
-	// `toEdges` are `ILookup<string, Relation>` groupings returned by an indexer
-	// (`fromByNode[n.NodeId]`) built once via `.ToLookup(...)` a few lines above — a fully
-	// materialized, array-backed collection, not a lazy/expensive query. Each is enumerated 2-3
-	// times (`.Where(...)` for spec/blockedBy/blocks/linkedTasks/supersedes) with no re-computation,
-	// no side effects and no risk of a changed result between passes — the exact opposite of the
-	// deferred-IQueryable-recomputation hazard this rule exists to catch. Confirmed by reading
-	// ToLookup's use just above (line ~835) and every read site below it.
-	new Suppression("PossibleMultipleEnumeration", "PetBox.Tasks/Services/TasksService.cs",
-		"fromEdges/toEdges are ILookup groupings (pre-materialized by ToLookup above), not lazy queries — re-enumeration is O(1) per pass, not recomputation."),
-
-	// LlmRegistryImportTests.cs / MemoryWildcardDefaultCascadeTests.cs: the shape in both files is
-	// `_db.<Table>.Select(x => x.Prop).Should().Contain/Equal(...)` — a linq2db `ITable<T>`
-	// (IQueryable) projected once, then handed straight to a FluentAssertions terminal consumer.
-	// `Select` on an IQueryable resolves to `Queryable.Select` (Expression-typed lambda beats
-	// `Enumerable.Select`'s Func overload here because IQueryable<T> is the more specific receiver
-	// type), so the projection DOES push down to SQL; `.Should()` is the one and only enumeration,
-	// with no further query composition after it to silently lose. This is the rule's cautionary
-	// pattern's exact opposite: nothing is discarded, nothing falls back to client-side filtering.
-	new Suppression("PossibleUnintendedQueryableAsEnumerable", "LlmRegistryImportTests.cs",
-		"ITable<T>.Select(...).Should()... — Select still translates via Queryable, and Should() is the sole, terminal enumeration; no query composition is lost."),
-	new Suppression("PossibleUnintendedQueryableAsEnumerable", "MemoryWildcardDefaultCascadeTests.cs",
-		"Same shape as LlmRegistryImportTests.cs: ITable<T>.Select(...).Should()... with Should() as the sole terminal enumeration."),
-};
+// resharper-clt-step3-defect-shaped (2026-07-29, main c8b918ff) raised PossibleMultipleEnumeration
+// and PossibleUnintendedQueryableAsEnumerable to ERROR in PetBox.slnx.DotSettings and individually
+// read every finding each produced (5 + 3). Both were confirmed false positives (a pre-materialized
+// ILookup grouping re-enumerated 2-3 times in TasksService; a linq2db ITable<T>.Select(...) handed
+// straight to a FluentAssertions terminal .Should() in two test files) — but a suppression row was
+// NOT the right fix for either: both shapes have a trivial, equally-correct rewrite that satisfies
+// the analyzer instead of arguing with it (`.ToList()` once, either on the lookup read or before
+// `.Should()`), so the code was changed rather than the baseline grown. Keep reaching for a rewrite
+// first; a suppression here is for cases where no such rewrite exists, not a first resort.
+var suppressions = Array.Empty<Suppression>();
 
 // ---- args -------------------------------------------------------------------------------------
 var solution = "PetBox.slnx";

@@ -103,8 +103,11 @@
 		AsyncMethodWithoutAwait/PossibleUnintendedQueryableAsEnumerable default to SUGGESTION/NOTE —
 		all below the gate's ERROR threshold) to ERROR, same narrowing shape as RedundantUsingDirective
 		above. Every finding these three families produced on 2026-07-29 (5 + 5 + 3) was individually
-		read and either fixed or suppressed with a per-file reason in scripts/inspect-gate.cs's
-		`suppressions` array — see that file for which.
+		read and FIXED at the source (a real async/cancellation bug in MemoryService, plus a handful
+		of one-line rewrites — `.ToList()` once, either materializing an ILookup read or before a
+		FluentAssertions `.Should()` — that satisfy the analyzer instead of arguing with it). None of
+		the three needed a scripts/inspect-gate.cs `suppressions` row: that array is for a finding with
+		no such rewrite, not a first resort.
 
 		AccessToDisposedClosure (37 findings, the fourth family in scope) is DELIBERATELY NOT raised
 		here — see the standalone note below for why, right after this block.
