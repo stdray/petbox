@@ -62,6 +62,7 @@ public static class ReportTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
+		if (string.IsNullOrWhiteSpace(detail)) throw new ArgumentException("detail is required");
 
 		var reporter = http.HttpContext?.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		var now = DateTime.UtcNow;

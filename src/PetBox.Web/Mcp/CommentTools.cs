@@ -74,7 +74,7 @@ public static class CommentTools
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, tags? (array of strings), version? (watermark for a PATCH; 0 = new) }.")] CommentItemInput[] items,
+		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, tags? (array of strings), version? (watermark for a PATCH; 0 = new) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
@@ -118,7 +118,7 @@ public static class CommentTools
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic chronological listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board. Omit = the whole project.")] string? board = null,
-		[Description("Scope to one owner node: a node reference — its slug key on `board` or its 32-hex NodeId (both accepted). A node that matches nothing → an empty result (not an error).")] string? node = null,
+		[Description("Scope to one owner node: a node reference — its slug key or its 32-hex NodeId (both accepted). The slug resolves on `board` when `board` is given; when `board` is omitted it resolves PROJECT-WIDE and must be unambiguous (2+ boards sharing the slug is an error naming them — pass the NodeId then). A node that matches nothing → an empty result (not an error). A response row's `nodeId` is a valid `node` here — reading and writing address the same owner node.")] string? node = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet, in a listing or with q alike; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		CancellationToken ct = default)

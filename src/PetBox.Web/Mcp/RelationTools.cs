@@ -29,10 +29,10 @@ public static class RelationTools
 	public static async Task<RelationsCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
-		[Description("Single-form kind (when items is omitted).")] string? kind = null,
+		[Description("Single-form kind (when items is omitted). Closed set: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards); NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges, no FSM effects); plus any kind the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance.")] string? kind = null,
 		[Description("Single-form SOURCE node (when items is omitted): a node reference — its slug key or its 32-hex NodeId (both accepted). Named `from`, not `fromNodeId`: it resolves EITHER form, and a name ending in NodeId would promise only half of that.")] string? from = null,
 		[Description("Single-form TARGET node (when items is omitted): a node reference — its slug key or its 32-hex NodeId (both accepted). Named `to`, not `toNodeId`: it resolves EITHER form, and a name ending in NodeId would promise only half of that.")] string? to = null,
-		[Description("Batch items: [{kind, from, to}], where `from`/`to` are each a node reference — a slug key or a 32-hex NodeId (both accepted). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
+		[Description("Batch items: [{kind, from, to}], where `from`/`to` are each a node reference — a slug key or a 32-hex NodeId (both accepted), and each item's `kind` is the SAME closed set as single-form `kind`: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes, NEUTRAL kinds relates_to|depends_on|mirrors, plus any kind the FROM node's methodology instance declares (linkKinds). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item throws and aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason instead of throwing. Every item is independent (from/to are already-resolved external node refs, never another item of this batch), so nothing cascades. A rejected item has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
 	{
@@ -117,7 +117,8 @@ public static class RelationTools
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
 		[Description("The node: a node reference — its slug key or its 32-hex NodeId (both accepted); a slug resolves project-wide and must be unambiguous.")] string node,
-		string? direction = null, bool includeHistory = false,
+		[Description("Traversal direction, one of: from|to|both. Default both. from = edges where this node is the SOURCE; to = edges where this node is the TARGET (reverse traversal, e.g. which tasks implement a spec node); both = either direction.")] string? direction = null,
+		[Description("Also return soft-closed edges, each carrying `closedAt`. Default false (open edges only).")] bool includeHistory = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
