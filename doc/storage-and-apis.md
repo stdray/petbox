@@ -4,9 +4,10 @@ A map of *what goes where and through which door*. Unlike most of `doc/`, this f
 **maintained reference, not a historical record** — it is meant to be true now, so a claim
 here that has gone stale is a defect rather than a dated note.
 
-Last reconciled against the code at `2ea9c11c` (2026-07-26). The body of the map was
-originally verified against prod (`petbox.3po.su`) on 2026-06-03; sections that changed
-later say so and carry their own dates.
+Last reconciled against the code at `2ea9c11c` (2026-07-26); §2 (storage map) and §6
+(tasks/methodology) re-verified table-by-table against `ea2a1213` (2026-07-29). The body of
+the map was originally verified against prod (`petbox.3po.su`) on 2026-06-03; sections that
+changed later say so and carry their own dates.
 
 ## 1. Hierarchy & reserved keys
 
@@ -25,19 +26,31 @@ Workspace (Key)               e.g. $system, infra, stdray
 
 ```
 petbox.db            ← CENTRAL relational DB (one file). Holds the METADATA/registries:
-                       Workspaces, Projects, ApiKeys, TaskBoards (board meta: kind/wiredBoard/closed),
-                       Relation (task graph edges), MemoryStores (store registry), ConfigBindings meta,
-                       Users, ShareLinks, Settings, Health, SavedQueries, …
+                       Workspaces, Projects, WorkspaceMembers, ApiKeys, TaskBoards (board meta:
+                       kind/wiredBoard/closed/methodologyInstance), MemoryStores (store registry),
+                       Logs (LogMeta), AgentDefinitions, the LLM registry, Users, ShareLinks,
+                       Settings, Health, SavedQueries, SavedConfigFilters, …
 memory/{project}/{store}.db   ← per-project, per-store memory (FTS5 + SCD-2 temporal). e.g.
                                 $system/{dogfooding,notes,ops,stdray}, $workspace/notes, petbox/dogfooding
-sessions/{project}.db ← per-project raw agent-session archive (append-only). e.g. $system.db, $workspace.db
-tasks/{project}.db    ← per-project plan_nodes (all boards, partitioned by Board) + node_tag/tag_vocab.
+sessions/{project}.db ← per-project agent-session archive: ONE flat latest-snapshot row per session
+                        (no temporal history — see §5). e.g. $system.db, $workspace.db
+tasks/{project}.db    ← per-project task content, ALL of it: plan_nodes (all boards, partitioned by
+                        Board) + the plan_node_ids identity registry + plan_node_commits,
+                        node_tag/tag_vocab, comments/comment_tag, relations (the task graph),
+                        and the methodology documents (methodology_instances,
+                        methodology_active_instance, methodology_templates, methodology_defs).
                         ({project}/ subdirs are the LEGACY one-file-per-board layout, now *.migrated)
-config/               ← per-workspace config DBs (bindings + tag vocab)
-logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
+config/               ← per-workspace config DBs (config/{workspace}.db: bindings + history + tag vocab)
+db/{project}/{name}.db  ← per-project USER-data SQLite files (the `db_*`/`data_*` surface); their
+                          registry rows are DataDbs in petbox.db
+logs/, keys/, backups/  ← log storage, DataProtection keys, pre-migration snapshots
 ```
 
-**Rule of thumb:** the *registry/metadata* lives in `petbox.db`; the *content* (memory entries, session lines, task nodes) lives in per-project scoped files. Relations & tags are the exception worth knowing: **relations** (the task graph) are in `petbox.db` (project-scoped, bind to stable NodeId, cross-board); **node tags** are in the per-project `tasks.db` (they need a same-file FK to `tag_vocab`).
+**Rule of thumb:** the *registry/metadata* lives in `petbox.db`; the *content* (memory entries, session lines, task nodes) lives in per-project scoped files. What decides the borderline cases is the **foreign key** — a table that must FK into content has to sit in the same file as that content:
+
+- **relations** (the task graph) follow the rule rather than break it: they live in the per-project `tasks/{project}.db`, because an endpoint is a REAL FK into `plan_node_ids` (the node-identity registry), which a central table could not have. They still bind to the stable NodeId and still span boards — edges were always strictly intra-project, so the file IS the project identity and the `ProjectKey` column went away with the move (`relations-in-project-db`, 2026-07).
+- **Careful:** `petbox.db` still physically CONTAINS a `Relation` table. It is a legacy shell, deliberately not dropped yet — only `RelationsToTasksDbMigrator` (the backfill) and project deletion read it, no live read/write path touches it, and the DROP ships as a separate release. Seeing it in the central DB is not evidence that edges live there.
+- The genuine exception is the **tag vocabulary**: `tag_vocab` is a registry by nature, yet it lives per-project — because `node_tag` needs a same-file FK to it. Same FK argument, opposite direction.
 
 ## 3. Three doors (URL prefixes)
 
@@ -45,7 +58,7 @@ logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
 |---|---|---|---|
 | `/ui/{ws}/{project}/…` | humans (Razor pages) | cookie login | `/ui/$system/$system/tasks/ideas`, `/ui/{ws}/{project}/sessions/{id}`, `/ui/{ws}/{project}/memory/{store}` |
 | `/api/…` | programmatic REST | `X-Api-Key` / `Authorization: Token\|Bearer` | `/api/sessions/{project}/{sessionId}`, `/api/health`, `/v1/logs/{project}/{logName}` |
-| `/mcp` | agents (MCP, streamable HTTP) | `X-Api-Key` | the whole `tasks.*`/`memory.*`/`session.*`/`relations.*`/`config.*`/`data.*`/`log.*` tool surface |
+| `/mcp` | agents (MCP, streamable HTTP) | `X-Api-Key` | the whole `tasks_*`/`memory_*`/`session_*`/`relations_*`/`config_binding_*`/`data_*`/`log_*` tool surface (tool names are underscore-separated — the dotted `tasks.*` spelling is retired) |
 
 **Navigation into a project (UI):** log in → land on a workspace → pick a project → its module pages (`tasks`, `sessions`, `memory`, `config`, `logs`). The workspace is switched via `POST /api/ui/workspace`; routes are built in `Routes.cs` (`Project(ws,key)`, `ProjectSession(...)`, …).
 
@@ -93,12 +106,14 @@ Storage: `sessions/{projectKey}.db` — a **flat latest-snapshot** per session (
 
 ## 6. Tasks — MCP + Razor UI
 
-Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag`/`tag_vocab`) + `TaskBoards` meta and `Relation` edges in `petbox.db`.
+Storage: `tasks/{projectKey}.db` holds ALL of it — nodes, tags, comments, `relations` edges and the methodology documents (the full table set is in the §2 map) — and `petbox.db` holds only the `TaskBoards` meta row per board (kind, wiredBoard, closed, methodologyInstance).
 
 - **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks_search` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
-- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks_methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks_methodology_get(project)` returns the quartet as one **compact index** (per-board status `counts` + header rows, no node bodies by default; pass `bodyLen` for a body snippet, `includeBoards` to pick boards; full bodies via `tasks_search` / `tasks_node_get`). The admin board page (`/ui/.../tasks`) offers EITHER **Enable methodology** (provisions the quartet as one unit) OR a **Free board** form — never per-kind creation by hand.
-- **MCP tools:** `tasks_board_create|list|delete|close|reopen|set_wire`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_enable|get`, `relations_create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks_search|node_get|methodology_get|upsert|delta` accept `includeUrl=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
-- **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
+- **Methodology = a named INSTANCE, not a project singleton:** an instance is a live process automaton addressed by a slug `key`, and a project may hold several at once, open and closed side by side (`tasks_methodology_list` is the index; `tasks_methodology_get` reads ONE by `key` — identity, member boards, status histogram, no node bodies; full bodies via `tasks_search` / `tasks_node_get`). `tasks_methodology_create` mints one from an EXPLICIT source (`source` = `builtin` with `sourceKey` `quartet|classic|simple`, `template`, or another `instance`) — there is no silent quartet default — writing its rules and provisioning one board per kind the source declares. The rules belong to the instance (`tasks_methodology_rules_get` / `tasks_methodology_rules_upsert`: whole-document replace against a `version` baseline, with declarative migration of live nodes); `tasks_methodology_close` retires the instance and its boards together.
+- **Every board belongs to exactly one world:** the instance named by `tasks_board_create`'s `methodologyInstance`, or the project's utility layer (the reserved `$utility` sentinel, whose kinds live in `tasks_methodology_utility_get` / `tasks_methodology_utility_upsert` and survive a methodology switch by construction). `tasks_board_adopt` moves an existing board between worlds. A board always resolves ITS OWN world's rules, and the one-open-board-per-process-role rule (`spec`, `work`, …) is enforced INSIDE a world — two instances may each own a `work` board.
+- **What a call with no board in hand resolves to:** the project's explicit ACTIVE INSTANCE pointer (`tasks_methodology_active_get` / `tasks_methodology_set_active`) when it is set and open; else the single open instance when there is exactly one; else nothing is merged — with several open and none active, `tasks_methodology_guide` answers an explicit "N open, none active" guide naming them (`source:"ambiguous"`, and `key` selects one). With no open instance the baseline is the builtin templates (`source:"presets"`). The pointer governs DEFAULTS only; board membership always wins over it.
+- **MCP tools:** `tasks_board_create|adopt|list|delete|close|reopen|set_wire`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_create|list|get|close|active_get|set_active|rules_get|rules_upsert|utility_get|utility_upsert|set_description|guide`, `tasks_methodology_template_upsert|delete|get|list|snapshot`, `relations_create|list|delete`. Relation kinds: the structural builtins `blocks|part_of|supersedes`, the neutral builtins `relates_to|depends_on|mirrors`, plus whatever the FROM-node's instance declares — the quartet declares `task_spec|issue_task|idea_spec`, addressed on an upsert as `links:{kind:ref}`. `tasks_search|node_get|upsert|delta` accept `includeUrl=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
+- **UI:** `/ui/{ws}/{project}/tasks` (board list + admin: a preset picker that provisions an instance, or a standalone simple board — never per-kind creation by hand) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
 
 ## 7. Shared containers: one per workspace
 
@@ -108,7 +123,7 @@ Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag
 
 **Containment note.** Because the container is DERIVED from a project's workspace rather than named by the caller, every surface that makes that hop must re-ask the authorization question — the named target being authorized does not authorize the derived container. `SandboxContainment` is where that question lives, and the call sites are enumerated mechanically by `SandboxContainmentCallSiteGuardTests`, never by a hand-maintained list.
 
-The methodology quartet is **per-project** (enable it on `$system` or a real project); there is no workspace-level quartet.
+Methodology instances are **per-project** (create them on `$system` or a real project); the workspace container holds no boards, so there is no workspace-level methodology.
 
 ### History of this section
 
