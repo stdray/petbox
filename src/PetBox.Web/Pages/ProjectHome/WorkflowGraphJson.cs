@@ -25,9 +25,6 @@ public static class WorkflowGraphJson
 	public static string SerializeMany(IEnumerable<(BoardWorkflowView View, IReadOnlyList<string> EffectNotes)> views) =>
 		JsonSerializer.Serialize(views.Select(v => ToDoc(v.View, v.EffectNotes)).ToList(), Options);
 
-	public static string SerializeMany(IEnumerable<BoardWorkflowView> views) =>
-		SerializeMany(views.Select(v => (v, (IReadOnlyList<string>)[])));
-
 	// The creation wizard's base picker: ONE island carrying every base option's graph docs
 	// — [{ref, docs:[GraphDoc…]}] — so each base card renders its own SVG preview
 	// (ts/methodology-preview.ts renderBasePreviews). `Ref` is the base selector the picker

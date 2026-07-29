@@ -324,7 +324,7 @@ public static class TaskSearchSortKeys
 	public const string Updated = "updated";
 	public const string Title = "title";
 
-	public static readonly IReadOnlyList<string> All = [Relevance, Priority, Created, Updated, Title];
+	static readonly IReadOnlyList<string> All = [Relevance, Priority, Created, Updated, Title];
 
 	public static bool IsKnown(string? key) => key is not null && All.Contains(key, StringComparer.OrdinalIgnoreCase);
 }
