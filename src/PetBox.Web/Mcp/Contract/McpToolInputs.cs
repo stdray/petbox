@@ -96,9 +96,13 @@ public sealed record PlanNodeInput
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
-	// First-class reason for a RequiresReason status transition on THIS call (not the node
-	// body). Omitted/null/whitespace fails a gated transition; a non-empty value is accepted
-	// and persisted as an `artifact:reason` comment.
+	// Free-form reason for THIS write (not the node body). Two independent effects: (1) a status
+	// transition the methodology marks RequiresReason still fails outright when this is
+	// omitted/null/whitespace — that gate is unchanged. (2) whenever this write is APPLIED and
+	// the value is non-empty, it is persisted as an `artifact:reason` comment on the node —
+	// birth, any transition (gated or not), or a plain field edit alike, not only the gated
+	// transition that demanded one. A resubmit whose text matches the node's most recent
+	// artifact:reason comment is deduped (no second comment).
 	public string? Reason { get; init; }
 
 	// Attached commit SHAs (node-commits-impl). null = omit (don't touch); a non-null list

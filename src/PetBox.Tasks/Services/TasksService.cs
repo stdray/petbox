@@ -1803,9 +1803,10 @@ public sealed partial class TasksService : ITasksService
 				await TaskUpsertAssociations.SetCommitsAsync(ctx, board, landedPatches, landed, ct);
 				await _associations.SetPartOfAsync(projectKey, board, landedPatches, landed, ct);
 				await _associations.SetSupersedesAsync(projectKey, board, landedPatches, landed, runtime, ct);
-				// RequiresReason reasons land as comments after the node write (same post-tx
-				// style as tags/partOf — not inside the temporal node transaction).
-				await PersistReasonCommentsAsync(projectKey, board, runtime, kindSlug, landedPatches, landed, prior, ct);
+				// A supplied `reason` lands as a comment after the node write (same post-tx
+				// style as tags/partOf — not inside the temporal node transaction), on EVERY
+				// applied write of the node, not only a RequiresReason transition.
+				await PersistReasonCommentsAsync(projectKey, board, landedPatches, landed, ct);
 			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
@@ -2635,12 +2636,15 @@ public sealed partial class TasksService : ITasksService
 		return n;
 	}
 
-	// Persist a RequiresReason transition's `reason` field as an `artifact:reason` comment on
-	// the node. Best-effort post-write (same style as tags/partOf associations): only fires
-	// when the applied transition actually required a reason and the patch carried one.
+	// Persist the call-scoped `reason` field as an `artifact:reason` comment on EVERY applied
+	// write of this node — birth, any transition (gated or not), or a plain field edit alike
+	// (mcp-surface-naming-cleanup wave 3, defect class 4: a `reason` the caller sends must
+	// either land or be refused, never vanish in silence). RequiresReason is untouched by this:
+	// it still gates whether a GATED TRANSITION is allowed at all (WorkflowEngine.Validate /
+	// hasReason, in ApplyWorkflow above) — it no longer gates whether a supplied reason gets
+	// recorded. Best-effort post-write (same style as tags/partOf associations).
 	async Task PersistReasonCommentsAsync(
-		string projectKey, string board, MethodologyRuntime runtime, string? kindSlug,
-		IReadOnlyList<NodePatch> patches, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+		string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
 	{
 		foreach (var p in patches)
 		{
@@ -2648,18 +2652,21 @@ public sealed partial class TasksService : ITasksService
 			var d = desired.FirstOrDefault(n => string.Equals(n.Key, p.Key, StringComparison.Ordinal));
 			if (d is null || d.NodeId.Length == 0) continue;
 
-			var cur = prior.GetValueOrDefault(d.Key)
-				?? (d.PrevKey is not null ? prior.GetValueOrDefault(d.PrevKey) : null);
-			var from = cur?.Status;
-			if (from is null) continue; // birth — RequiresReason only applies to transitions
-			if (string.Equals(from, d.Status, StringComparison.OrdinalIgnoreCase)) continue;
-
-			var wf = runtime.For(kindSlug, d.Type.Length == 0 ? null : d.Type);
-			var tr = wf?.Transition(from, d.Status);
-			if (tr is null || !tr.RequiresReason) continue;
+			var body = p.Reason.Trim();
+			// Dedup: an idempotent retry of the identical write (or any resubmit that happens to
+			// carry the same reason text back-to-back) must not fork a second identical comment.
+			// Guard only against the MOST RECENT artifact:reason — a later write that genuinely
+			// repeats the same text after other history in between (e.g. re-blocked twice for the
+			// same cause) still lands, which is the honest read of "this write's reason".
+			var existing = await _comments.ListForNodeAsync(projectKey, board, d.NodeId, ct);
+			var lastReason = existing
+				.Where(c => c.Tags.Contains("artifact:reason"))
+				.OrderByDescending(c => c.Created)
+				.FirstOrDefault();
+			if (lastReason is not null && string.Equals(lastReason.Body, body, StringComparison.Ordinal)) continue;
 
 			await _comments.AddAsync(projectKey, board, d.NodeId, parentId: null, author: "system",
-				body: p.Reason.Trim(), tags: ["artifact:reason"], ct);
+				body: body, tags: ["artifact:reason"], ct);
 		}
 	}
 

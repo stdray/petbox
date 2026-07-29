@@ -115,4 +115,49 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 	// keeps governing comments_search/comments_upsert/relations_* essay text; nothing here should
 	// have touched the shared "a node reference — … both accepted" formulation, only ADDED
 	// sentences, so that test is left to its own file rather than duplicated here.
+
+	// ── work/mcp-surface-naming-cleanup wave 3, part 2.1: tasks_search `cursor` vs `limit` ────
+	// `cursor` used to say "Keep every other argument identical while paging" while `limit` said
+	// it "can be varied freely between pages without changing the pool" — both cannot be true at
+	// once. TasksTools.SearchFingerprint (~1153) and KeysetCursor.Decode settle it: the token is
+	// fingerprinted on q/board/underNode/status/nodes/commit/statusKind/sort (+ dataVersion in q
+	// mode) and explicitly EXCLUDES bodyLen/includeUrl/limit. Both descriptions must now name that
+	// same split instead of contradicting each other.
+
+	[Fact]
+	public void TasksSearchDescription_Cursor_NamesExactlyWhatTheFingerprintBinds()
+	{
+		var full = Flat(RegisteredParamDescription("tasks_search", "cursor"));
+
+		full.Should().Contain("`q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, and `sort`",
+			"the fingerprint ingredients (SearchFingerprint) must be named, not just asserted");
+		full.Should().Contain("`bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint",
+			"this is the exact claim `limit`'s own description makes — the two must agree");
+	}
+
+	[Fact]
+	public void TasksSearchDescription_Limit_AgreesWithCursor_AndDistinguishesTheTwoDepths()
+	{
+		var full = Flat(RegisteredParamDescription("tasks_search", "limit"));
+
+		full.Should().Contain("Not part of the q-mode cursor fingerprint",
+			"must no longer imply the token is bound to it, matching `cursor`'s own description");
+		full.Should().Contain("FIXED depth of 50", "TasksService.PagedCandidateDepth (per-leg candidate depth)");
+		full.Should().Contain("`poolLimit`", "the response field this constant is easily confused with");
+		full.Should().Contain("160", "RerankBudgetSettings.Candidates default — the OTHER number, not 50");
+		full.Should().NotContain("a paged read uses a fixed depth (50), so `limit` can be varied freely",
+			"the old sentence never explained that poolLimit (seen as 160 live) is a DIFFERENT number");
+	}
+
+	// ── work/mcp-surface-naming-cleanup wave 3, part 2.4: set_description `primitive` case ─────
+	// MethodologySetDescription.Apply matches on primitive.Trim().ToLowerInvariant() — the
+	// parameter description showed only the camelCase spellings with no word on case-sensitivity.
+
+	[Fact]
+	public void MethodologySetDescriptionDescription_Primitive_DocumentsCaseInsensitivity()
+	{
+		var full = Flat(RegisteredParamDescription("tasks_methodology_set_description", "primitive"));
+
+		full.Should().Contain("case-insensit", "MethodologySetDescription.Apply lowercases before matching (line 35)");
+	}
 }

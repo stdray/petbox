@@ -29,9 +29,12 @@ public sealed record NodePatch
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
-	// First-class reason for a RequiresReason status transition on THIS call. Not merged
-	// into the node body — when the transition demands a reason the service requires a
-	// non-empty value here and persists it as an `artifact:reason` comment.
+	// Free-form reason for THIS call. Not merged into the node body. Two independent effects
+	// (TasksService.ApplyWorkflow / PersistReasonCommentsAsync): a RequiresReason transition
+	// still demands a non-empty value here or the write is refused; separately, whenever this
+	// write is APPLIED and the value is non-empty it is persisted as an `artifact:reason`
+	// comment — birth, any transition (gated or not), or a plain field edit alike, deduped
+	// against the node's most recent artifact:reason comment.
 	public string? Reason { get; init; }
 	public long? Priority { get; init; }
 
