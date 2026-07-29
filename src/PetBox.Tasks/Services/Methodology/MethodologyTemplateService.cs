@@ -239,7 +239,7 @@ public sealed partial class MethodologyTemplateService
 		{
 			var instKey = raw["instance:".Length..].Trim();
 			if (instKey.Length == 0)
-				throw new ArgumentException("snapshot from=instance:<key> requires a non-empty instance name");
+				throw new ArgumentException("snapshot from=instance:<key> requires a non-empty instance key");
 			if (_instanceRules is null)
 				throw new InvalidOperationException("instance rules resolver is not bound");
 			var def = await _instanceRules(projectKey, instKey, ct)

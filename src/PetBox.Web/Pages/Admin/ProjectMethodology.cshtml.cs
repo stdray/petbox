@@ -21,7 +21,7 @@ namespace PetBox.Web.Pages.Admin;
 // The page is a small state machine (Mode), NOT a SPA — plain Razor handlers + a `step`
 // query param for deep links:
 //   - open instance rules → VIEW mode (summary + preview; explicit Edit), ?step=edit opens
-//     the editor prefilled; pick instance via ?instance=<name> (default: first open by name);
+//     the editor prefilled; pick instance via ?instance=<key> (default: first open by key);
 //   - no open instance → a "Create methodology" call-to-action, ?step=base the base picker
 //     (builtin presets + templates / open instance rules from other projects), then the
 //     editor, then a confirm summary → save creates an instance from a template;
@@ -73,7 +73,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public string? Step { get; set; }
 
-	// Selected methodology instance name (?instance=); default = first open by name.
+	// Selected methodology instance key (?instance=); default = first open by key.
 	[BindProperty(SupportsGet = true)]
 	public string? Instance { get; set; }
 
@@ -87,7 +87,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	// The selected open instance's rules + revision metadata; null = no open instance.
 	public MethodologyInstanceRulesView? Stored { get; private set; }
 
-	// Open instances for the instance switcher (name + definition display name).
+	// Open instances for the instance switcher (key + definition display name).
 	public IReadOnlyList<MethodologyInstanceView> OpenInstances { get; private set; } = [];
 
 	// Definition display names shared by more than one OPEN instance (spec
@@ -109,7 +109,7 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// ── active-instance pointer (spec methodology-switch: select/create → activate, ONE
 	// guided act) ──────────────────────────────────────────────────────────────
-	// The raw stored pointer name (may be null/never set) + its CAS version — the baseline
+	// The raw stored pointer key (may be null/never set) + its CAS version — the baseline
 	// OnPostActivateAsync must post back. EffectiveActiveInstance is the VALIDATED resolution
 	// (pointer when open, else the single open instance, else null when 0/ambiguous) — what
 	// ResolveDefaultMethodologyInstanceAsync returns, used to mark which open instance the
@@ -161,7 +161,7 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// One base the creation wizard offers: a builtin provisioning preset (`preset:<slug>`),
 	// another project's stored template (`template:<project>:<key>`), or another project's
-	// open instance rules (`instance:<project>:<name>`).
+	// open instance rules (`instance:<project>:<key>`).
 	public sealed record BaseOption(string Ref, string Title, string Description);
 
 	public IReadOnlyList<BaseOption> Bases { get; private set; } = [];
@@ -323,41 +323,41 @@ public sealed class ProjectMethodologyModel : PageModel
 		{
 			var def = MethodologyWire.ParseDocument(definitionJson);
 			var migration = MethodologyWire.ParseMigrationDocument(migrationJson);
-			var instanceName = string.IsNullOrWhiteSpace(instance)
+			var instanceKey = string.IsNullOrWhiteSpace(instance)
 				? null
 				: instance.Trim().ToLowerInvariant();
 
 			// Prefer the explicitly posted instance, else the loaded selection.
-			if (instanceName is null)
+			if (instanceKey is null)
 			{
 				var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
 					.Where(i => !i.Closed)
 					.OrderBy(i => i.Name, StringComparer.Ordinal)
 					.ToList();
 				if (open.Count > 0)
-					instanceName = open[0].Name;
+					instanceKey = open[0].Name;
 			}
 
-			if (instanceName is not null
-				&& await _tasks.GetMethodologyInstanceAsync(ProjectKey, instanceName, ct) is { Closed: false })
+			if (instanceKey is not null
+				&& await _tasks.GetMethodologyInstanceAsync(ProjectKey, instanceKey, ct) is { Closed: false })
 			{
-				await _tasks.DefineMethodologyInstanceRulesAsync(ProjectKey, instanceName, def, version, migration, ct);
-				savedInstance = instanceName;
+				await _tasks.DefineMethodologyInstanceRulesAsync(ProjectKey, instanceKey, def, version, migration, ct);
+				savedInstance = instanceKey;
 			}
 			else
 			{
 				// Create path: snapshot the document as a template, then create an instance.
-				var name = InstanceSlug(def.Name);
-				var tmplKey = $"editor-{name}";
+				var key = InstanceSlug(def.Name);
+				var tmplKey = $"editor-{key}";
 				var existingTmpl = await _tasks.GetMethodologyTemplateAsync(ProjectKey, tmplKey, ct);
 				// Builtin dual-read returns version 0 — only use stored/definition baseline.
 				var tmplVersion = existingTmpl is { Source: "stored" } ? existingTmpl.Version : 0;
 				await _tasks.UpsertMethodologyTemplateAsync(ProjectKey, tmplKey, def, tmplVersion, ct);
-				if (await _tasks.GetMethodologyInstanceAsync(ProjectKey, name, ct) is not null)
+				if (await _tasks.GetMethodologyInstanceAsync(ProjectKey, key, ct) is not null)
 					throw new InvalidOperationException(
-						$"methodology instance '{name}' already exists — open it with ?instance={name} and edit its rules, or close it first");
-				await _tasks.CreateMethodologyInstanceAsync(ProjectKey, name, "template", tmplKey, ct);
-				savedInstance = name;
+						$"methodology instance '{key}' already exists — open it with ?instance={key} and edit its rules, or close it first");
+				await _tasks.CreateMethodologyInstanceAsync(ProjectKey, key, "template", tmplKey, ct);
+				savedInstance = key;
 			}
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -584,12 +584,12 @@ public sealed class ProjectMethodologyModel : PageModel
 		{
 			var rest = slug["instance:".Length..];
 			var sep = rest.IndexOf(':');
-			if (sep <= 0) throw new ArgumentException("instance base ref must be instance:<project>:<name>");
+			if (sep <= 0) throw new ArgumentException("instance base ref must be instance:<project>:<key>");
 			var projectKey = rest[..sep];
-			var name = rest[(sep + 1)..];
-			var rules = await _tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
+			var key = rest[(sep + 1)..];
+			var rules = await _tasks.GetMethodologyInstanceRulesAsync(projectKey, key, ct);
 			return rules?.Definition
-				?? throw new ArgumentException($"project '{projectKey}' has no methodology instance '{name}'");
+				?? throw new ArgumentException($"project '{projectKey}' has no methodology instance '{key}'");
 		}
 		// Legacy def: refs still accepted by resolving open instance / template of that project.
 		if (slug.StartsWith("def:", StringComparison.Ordinal))
@@ -650,7 +650,7 @@ public sealed class ProjectMethodologyModel : PageModel
 			yield return $"{t.From} → {t.To}: {string.Join(", ", gates)}";
 	}
 
-	// Instance name from a definition document name (slug rules match methodology instances).
+	// Instance key from a definition document name (slug rules match methodology instances).
 	static string InstanceSlug(string name)
 	{
 		var s = Regex.Replace((name ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9_-]+", "-").Trim('-');

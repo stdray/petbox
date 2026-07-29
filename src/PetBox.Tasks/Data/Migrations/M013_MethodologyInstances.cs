@@ -5,7 +5,7 @@ namespace PetBox.Tasks.Data.Migrations;
 
 // Named methodology INSTANCES (methodology-instance-core): multi-key temporal (SCD-2) documents
 // that ARE the live process automaton (rules + open/closed). Distinct from methodology_defs (legacy
-// project-singleton) and methodology_templates (inert documents). Key = instance name (slug);
+// project-singleton) and methodology_templates (inert documents). Key = instance key (slug);
 // Json = MethodologyDefinition rules; ClosedAt null = open. Board membership lives on
 // TaskBoards.MethodologyInstance (Core DB). Forward-only.
 //

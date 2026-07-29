@@ -22,7 +22,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// Create a board, validating the spec link first. Returns the new metadata row.
 	// `methodologyInstance` selects the board's WORLD (spec methodology-utility-kinds: a
-	// board is a member of exactly one) — a real instance name, or the reserved
+	// board is a member of exactly one) — a real instance key, or the reserved
 	// `TaskBoardMeta.UtilityWorld` ("$utility") for the project's utility layer, always
 	// legal regardless of how many instances exist. Omitted/null is legacy: legal only
 	// for a project with no methodology instance yet (pre-backfill bootstrap); once any
@@ -99,7 +99,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
 	// The agent-facing PROCESS GUIDE derived at runtime from OPEN methodology instances
 	// (instance rules + preset kinds not overridden): markdown prose + structured invariants.
-	// Optional `name` selects one instance explicitly. When null, resolution is the SAME
+	// Optional `key` selects one instance explicitly. When null, resolution is the SAME
 	// seam GetRuntimeAsync uses (spec methodology-active-instance): the active pointer when
 	// set and pointing at an open instance, else the single open instance when there is
 	// exactly one, else an explicit "N open, none active" guide — NEVER a silent
@@ -107,7 +107,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// replaced). Source is "instance" (named, or the single unambiguous open one) | "active"
 	// (resolved via the pointer) | "ambiguous" (N open, no valid pointer) | "presets" (0
 	// open). Deterministic and bounded — no truncation.
-	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? name = null, CancellationToken ct = default);
+	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? key = null, CancellationToken ct = default);
 
 	// --- named methodology templates (independent of live process / instances) ---
 	// Templates are reusable MethodologyDefinition documents. Write NEVER provisions
@@ -139,37 +139,37 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// list/get = compact index (identity, boards, status, summary; no node bodies).
 	// close = close instance + all member boards (history readable, no new work).
 
-	Task<MethodologyInstanceAck> CreateMethodologyInstanceAsync(string projectKey, string name, string source, string sourceKey, CancellationToken ct = default);
+	Task<MethodologyInstanceAck> CreateMethodologyInstanceAsync(string projectKey, string key, string source, string sourceKey, CancellationToken ct = default);
 	Task<IReadOnlyList<MethodologyInstanceView>> ListMethodologyInstancesAsync(string projectKey, CancellationToken ct = default);
-	Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
-	Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
+	Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(string projectKey, string key, CancellationToken ct = default);
+	Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(string projectKey, string key, CancellationToken ct = default);
 	// Full rules document of one instance (baseline for rules_upsert), or null when missing.
-	Task<MethodologyInstanceRulesView?> GetMethodologyInstanceRulesAsync(string projectKey, string name, CancellationToken ct = default);
+	Task<MethodologyInstanceRulesView?> GetMethodologyInstanceRulesAsync(string projectKey, string key, CancellationToken ct = default);
 	// Replace a LIVE instance's rules with optimistic concurrency + declarative live-node
 	// migration (same `migration` map as DefineMethodologyAsync). Scoped to this instance's
 	// member boards only. Closed instances reject the write. Unmapped stranded values reject
 	// the whole call naming the offenders — nothing is written. Template edits never call this.
 	Task<MethodologyInstanceRulesAck> DefineMethodologyInstanceRulesAsync(
-		string projectKey, string name, MethodologyDefinition def, long version,
+		string projectKey, string key, MethodologyDefinition def, long version,
 		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
 
 	// --- active instance pointer (spec methodology-active-instance) ---
 	// The project's explicit "which instance is active" default: controls DEFAULT
 	// surfaces (UI, MCP verbs without an explicit instance, tasks_methodology_guide with no
-	// `name`) — NEVER board membership rules, which always resolve through a board's own
+	// `key`) — NEVER board membership rules, which always resolve through a board's own
 	// TaskBoards.MethodologyInstance regardless of what is active here.
 
 	// The raw stored pointer (Name null when never set / cleared) + its CAS version.
 	Task<MethodologyActiveInstanceView> GetActiveMethodologyInstanceAsync(string projectKey, CancellationToken ct = default);
-	// Set (name not null) or clear (name null) the pointer. `name` MUST reference an OPEN
+	// Set (key not null) or clear (key null) the pointer. `key` MUST reference an OPEN
 	// instance — a missing or closed instance is rejected, nothing is written. `version` is
 	// the watermark baseline from GetActiveMethodologyInstanceAsync (0 = no prior read).
-	Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(string projectKey, string? name, long version, CancellationToken ct = default);
+	Task<MethodologyActiveInstanceAck> SetActiveMethodologyInstanceAsync(string projectKey, string? key, long version, CancellationToken ct = default);
 
-	// The EFFECTIVE default instance NAME — same resolution seam GetRuntimeAsync/
+	// The EFFECTIVE default instance KEY — same resolution seam GetRuntimeAsync/
 	// GetMethodologyGuideAsync use internally (the active pointer when set and open, else the
 	// single open instance when there is exactly one, else null for 0-or-ambiguous), exposed as
-	// a bare name for surfaces that need to ask "is board X's own instance the project's current
+	// a bare key for surfaces that need to ask "is board X's own instance the project's current
 	// default?" (spec methodology-inactive-visibility) without re-deriving a whole
 	// MethodologyRuntime just to compare identity. Never touches board membership.
 	Task<string?> ResolveDefaultMethodologyInstanceAsync(string projectKey, CancellationToken ct = default);
