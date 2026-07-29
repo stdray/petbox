@@ -11,8 +11,10 @@
 		"node": ">=23.6.0"
 	},
 	"scripts": {
-		"test": "node --test src/*.test.ts",
-		"typecheck": "tsc --noEmit"
+		"sync-default-agents": "node scripts/sync-default-agents.mjs",
+		"prepack": "node scripts/sync-default-agents.mjs",
+		"test": "node scripts/sync-default-agents.mjs && node --test src/*.test.ts",
+		"typecheck": "node scripts/sync-default-agents.mjs && tsc --noEmit"
 	},
 	"devDependencies": {
 		"@opencode-ai/plugin": "^1.17.20",

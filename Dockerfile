@@ -29,6 +29,11 @@ COPY src/PetBox.LlmRouter.Contract/PetBox.LlmRouter.Contract.csproj ./src/PetBox
 COPY src/PetBox.LlmRouter/PetBox.LlmRouter.csproj ./src/PetBox.LlmRouter/
 COPY src/PetBox.Web/PetBox.Web.csproj ./src/PetBox.Web/
 COPY src/PetBox.Web/package.json src/PetBox.Web/bun.lock ./src/PetBox.Web/
+# src/common holds cross-language canonical data (default-agents.json), which PetBox.Core.csproj
+# <EmbeddedResource>s from OUTSIDE its own directory. Same trap as BannedSymbols.txt above: leave it
+# out and only the image build dies (at CSC, "could not be found"), while every local gate stays
+# green because they build the whole tree.
+COPY src/common/ ./src/common/
 RUN dotnet restore src/PetBox.Web/PetBox.Web.csproj -r linux-x64
 
 COPY src/PetBox.Core/ ./src/PetBox.Core/

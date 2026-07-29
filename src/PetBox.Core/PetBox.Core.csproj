@@ -11,6 +11,16 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- THE canonical portable agent roster (src/common/default-agents.json), read at run time
+		     by PetBox.Core.Contract.DefaultAgentDefinition and seeded into every new project. The
+		     wiring kit reads the SAME file (its build step copies it into the npm package), so
+		     there is exactly one copy and nothing to keep in sync — see src/common/README.md.
+		     LogicalName is explicit because the file lives OUTSIDE this project directory, and the
+		     default resource name would otherwise encode that relative path. -->
+		<EmbeddedResource Include="../common/default-agents.json" LogicalName="PetBox.Core.default-agents.json" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />

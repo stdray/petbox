@@ -747,6 +747,12 @@ public partial class Program
 		// branch with an IMemoryService/MemoryDb door in the same file (see
 		// SandboxContainmentCallSiteGuardTests).
 		builder.Services.AddScoped<PetBox.Web.Memory.IProjectCanonSeeder, PetBox.Web.Memory.ProjectCanonSeeder>();
+		// The agent-roster twin of the canon seed (work seed-agent-def-on-project-create):
+		// ProjectDirectory.CreateAsync rents this per project creation to write the `default`
+		// definition, so a new project's AUTHORITATIVE store is populated instead of empty.
+		// Scoped like the IAgentDefinitionService it wraps — never a direct dependency of the
+		// Singleton ProjectDirectory (CaptiveDependencyTests).
+		builder.Services.AddScoped<PetBox.Web.AgentDefs.IProjectAgentDefSeeder, PetBox.Web.AgentDefs.ProjectAgentDefSeeder>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
