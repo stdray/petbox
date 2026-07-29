@@ -66,10 +66,6 @@
 		     error rather than a convention. Wired for every project in Directory.Build.props; the
 		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->
 		<PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0" />
-		<!-- PROBE (resharper-clt-suppression-via-annotations): hypothesis-check only, not a real
-		     adoption. Conditional[JETBRAINS_ANNOTATIONS]-gated attributes; JETBRAINS_ANNOTATIONS is
-		     deliberately left undefined so no attribute application reaches IL. -->
-		<PackageVersion Include="JetBrains.Annotations" Version="2026.2.0" />
 	</ItemGroup>
 
 	<ItemGroup>

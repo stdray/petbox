@@ -20,9 +20,6 @@ namespace PetBox.Web.Mcp.Contract;
 
 // `DefaultProject` is the key's fallback project for tools whose projectKey is optional — set
 // only on a cross-project ("*") key that carries one (omitted from the wire when null).
-// PROBE (resharper-clt-suppression-via-annotations, hypothesis 1): [WireContract] applied here only
-// to measure jb's before/after finding count on this type. Not a real rollout.
-[WireContract]
 public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null);
 
 // ---- comments_* ----------------------------------------------------------------------
@@ -65,9 +62,6 @@ public sealed record CommentDeleteResult(bool Deleted);
 
 // ---- config_* ------------------------------------------------------------------------
 
-// PROBE (resharper-clt-suppression-via-annotations, hypothesis 1): same measurement as WhoAmIResult
-// above.
-[WireContract]
 public sealed record ConfigBindingRow(long Id, string Path, string Tags, string Kind);
 
 // config_binding_upsert echo — the uniform-entity-verbs batch envelope, adapted to the config

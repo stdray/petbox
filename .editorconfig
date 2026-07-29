@@ -21,3 +21,10 @@ trim_trailing_whitespace = false
 [*.{yml,yaml}]
 indent_style = space
 indent_size = 2
+
+# PROBE ONLY (resharper-clt-suppression-via-annotations, hypothesis 3) — checking the EXACT
+# resharper_<inspection_id>_highlighting key name jb inspectcode 2026.2 honors from a
+# glob-scoped .editorconfig section, before any real rollout. Not a real suppression policy.
+[src/PetBox.Web/Mcp/Contract/*.cs]
+resharper_not_accessed_positional_property_global_highlighting = none
+resharper_unused_auto_property_accessor_global_highlighting = none
