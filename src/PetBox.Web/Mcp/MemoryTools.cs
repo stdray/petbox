@@ -637,7 +637,7 @@ public static class MemoryTools
 		[LogArg][Description("Max rows returned — one PAGE (default 20; 0 = no cap — the output budget still applies). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (60), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 16, where 3×limit used to exceed 60) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
-		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
+		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
@@ -660,9 +660,20 @@ public static class MemoryTools
 		// is a prefix of the merged match set.
 		int? poolLimit = null;
 		var poolBounded = false;
+		// usageSource is telemetry, not free text: it separates the honest deliberate-search signal
+		// GC trusts from a machine pull's softer surfaced-only count. Left unvalidated, any typo used
+		// to fall through to "deliberate" silently and forever — a defect nobody could see on the
+		// wire. null | "deliberate" | "machine" (case-insensitive, trimmed) are the only legal values;
+		// anything else is a caller mistake, rejected the same way memory_upsert's `type` taxonomy is
+		// (name both valid values, never a silent typo).
+		var usageSourceTrimmed = usageSource?.Trim();
+		if (usageSourceTrimmed is not null
+			&& !string.Equals(usageSourceTrimmed, DeliberateSource, StringComparison.OrdinalIgnoreCase)
+			&& !string.Equals(usageSourceTrimmed, MachineSource, StringComparison.OrdinalIgnoreCase))
+			throw new ArgumentException($"invalid usageSource '{usageSource}' ({DeliberateSource}|{MachineSource})");
 		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
-		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
+		var deliberate = !string.Equals(usageSourceTrimmed, MachineSource, StringComparison.OrdinalIgnoreCase);
 
 		// Each collected row carries its scope RANK (cascade order — project first), the fused
 		// relevance Score (so we can HONESTLY merge across scopes below) and the delivery FACTS

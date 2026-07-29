@@ -337,6 +337,91 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'migrationName'");
 	}
 
+	// ── work/mcp-surface-naming-cleanup wave 3b: data_schema_apply's Failed/Conflict stop riding
+	// home as fields of a successful response and throw through the central error envelope
+	// (McpErrorEnvelopeFilter) instead. AlreadyApplied is the one soft-success kind left untouched.
+
+	[Fact]
+	public async Task DataSchemaApply_Failed_ThrowsThroughErrorEnvelope()
+	{
+		Text(await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemafail",
+		})).Should().NotContain("\"error\"");
+
+		var apply = await ToolAsync("data_schema_apply");
+		var result = await apply.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemafail",
+			["migrationName"] = "M001",
+			["sql"] = "THIS IS NOT VALID SQL AT ALL (((",
+		});
+		result.IsError.Should().Be(true, "a bad migration script must refuse via isError, not a kind:'Failed' field on a successful response");
+		ErrorText(result).Should().Contain("M001");
+	}
+
+	[Fact]
+	public async Task DataSchemaApply_Conflict_ThrowsThroughErrorEnvelope_AndNamesBothHashes()
+	{
+		Text(await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemaconflict",
+		})).Should().NotContain("\"error\"");
+
+		var apply = await ToolAsync("data_schema_apply");
+		(await apply.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemaconflict",
+			["migrationName"] = "M001",
+			["sql"] = "CREATE TABLE a (id INTEGER)",
+		})).IsError.Should().NotBe(true);
+
+		// Same migrationName, different sql -> a 409-style conflict, refused via isError.
+		var result = await apply.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemaconflict",
+			["migrationName"] = "M001",
+			["sql"] = "CREATE TABLE b (id INTEGER)",
+		});
+		result.IsError.Should().Be(true, "a same-name/different-sql re-apply must refuse via isError, not a kind:'Conflict' field on a successful response");
+		var text = ErrorText(result);
+		// Error text is a product surface: the conflict must name BOTH the hash on file and the
+		// one this call provided, not just one side of the collision.
+		text.Should().Contain("existingHash");
+		text.Should().Contain("providedHash");
+		text.Should().Contain("M001");
+	}
+
+	[Fact]
+	public async Task DataSchemaApply_AlreadyApplied_StaysSoftSuccess()
+	{
+		Text(await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemaok",
+		})).Should().NotContain("\"error\"");
+
+		var apply = await ToolAsync("data_schema_apply");
+		var args = new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "schemaok",
+			["migrationName"] = "M001",
+			["sql"] = "CREATE TABLE c (id INTEGER)",
+		};
+		(await apply.CallAsync(args)).IsError.Should().NotBe(true);
+
+		// Same name + same sql, again -> AlreadyApplied, still a soft success (not a refusal).
+		var second = await apply.CallAsync(args);
+		second.IsError.Should().NotBe(true);
+		Text(second).Should().Contain("AlreadyApplied");
+	}
+
 	[Fact]
 	public async Task ConfigTools_TypedBinding_RoundTrips_AndSecretEncrypted()
 	{
