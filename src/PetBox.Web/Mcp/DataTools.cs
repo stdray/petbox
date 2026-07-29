@@ -36,13 +36,13 @@ public static class DataTools
 		IDataSqlService dataSql,
 		string projectKey,
 		string dbName,
-		[Description("Migration script name. Used as journal key — same name = same migration.")] string name,
+		[Description("Migration script name. Used as journal key — same name = same migration.")] string migrationName,
 		[Description("SQL to apply. Multi-statement OK; PRAGMA statements may not parse with the SQLite dialect parser.")] string sql,
 		CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.DataSchema);
 
-		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, name, sql, ct);
+		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, migrationName, sql, ct);
 		return new DataSchemaApplyResult(result.Kind.ToString(), result.Hash, result.ExistingHash, result.Error);
 	}
 

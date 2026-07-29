@@ -43,6 +43,40 @@ static class McpRetiredParameters
 			["fromNodeId"] = "from",
 			["toNodeId"] = "to",
 		},
+		// db_create / db_delete: the bare `name` was the odd one out — db_describe and every data_*
+		// tool already called this same concept `dbName`. One concept, one qualified name across the
+		// db_*/data_* family (mcp-surface-naming-cleanup wave 2).
+		["db_create"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "dbName",
+		},
+		["db_delete"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "dbName",
+		},
+		// log_create / log_update / log_delete: `name` here numerically outnumbered `logName`
+		// (log_query's own parameter), but headcount is not the tiebreaker — one concept must carry
+		// one name across the family, and `logName` is the one already load-bearing on the read side.
+		["log_create"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "logName",
+		},
+		["log_update"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "logName",
+		},
+		["log_delete"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "logName",
+		},
+		// data_schema_apply: the bare `name` here was never the DataDb's name (that's `dbName`,
+		// right next to it) — it is the migration's journal key, a different concept that happened to
+		// share the db family's most generic word. Renaming it to `migrationName` stops it reading as
+		// a second, competing spelling of `dbName` in the same parameter list.
+		["data_schema_apply"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "migrationName",
+		},
 	};
 
 	// The replacement for a retired name on this tool, or null when the name was never ours.

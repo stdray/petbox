@@ -10,6 +10,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data;
 using PetBox.Log.Core.Data;
+using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Data;
 
@@ -161,7 +162,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		var r1 = await create.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
-			["name"] = "audit",
+			["logName"] = "audit",
 			["description"] = "audit trail",
 		});
 		Text(r1).Should().NotContain("\"error\"");
@@ -171,11 +172,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(r2).Should().Contain("audit");
 
 		var del = await ToolAsync("log_delete");
-		var r3 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["name"] = "audit" });
+		var r3 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["logName"] = "audit" });
 		Text(r3).Should().NotContain("\"error\"");
 
 		// Deleting a missing log surfaces a structured error (GuardAsync), not an opaque failure.
-		var r4 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["name"] = "nope" });
+		var r4 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["logName"] = "nope" });
 		Text(r4).Should().Contain("not found");
 	}
 
@@ -186,7 +187,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
-			["name"] = "appdb",
+			["dbName"] = "appdb",
 		})).Should().NotContain("\"error\"");
 
 		var apply = await ToolAsync("data_schema_apply");
@@ -194,7 +195,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		{
 			["projectKey"] = ProjectKey,
 			["dbName"] = "appdb",
-			["name"] = "M001",
+			["migrationName"] = "M001",
 			["sql"] = "CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
 		})).IsError.Should().NotBe(true);
 
@@ -215,7 +216,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
-			["name"] = "listdb",
+			["dbName"] = "listdb",
 		})).Should().NotContain("\"error\"");
 
 		var listed = Text(await (await ToolAsync("db_list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey }));
@@ -231,6 +232,109 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["dbName"] = "ghost",
 		});
 		Text(r).Should().Contain("not found");
+	}
+
+	// ── mcp-surface-naming-cleanup wave 2: db_*/log_*/data_schema_apply's bare `name` retired ──
+	//
+	// UnknownParameterFilterTests carries the general drift guard and the REMOVED-text pattern
+	// this mirrors, but its fixture's host never turns on Features:Data/Features:Logging, so
+	// db_*/log_*/data_schema_apply are not registered there at all. This fixture (EntityToolsFixture)
+	// does enable both, so the same two checks — the retired name gone / the replacement present in
+	// the live schema, and a call using the retired name refused with `REMOVED: 'x' -> use 'y'` —
+	// live here instead for exactly these six.
+
+	[Fact]
+	public async Task RetiredParameterTable_MatchesTheLiveSchemas_ForDataAndLogTools()
+	{
+		string[] tools = ["db_create", "db_delete", "log_create", "log_update", "log_delete", "data_schema_apply"];
+		foreach (var tool in tools)
+		{
+			var schema = (await ToolAsync(tool)).ProtocolTool.InputSchema.GetProperty("properties");
+			var live = schema.EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+
+			foreach (var (retiredName, replacement) in McpRetiredParameters.ForTool(tool))
+			{
+				live.Should().Contain(replacement,
+					$"{tool} advertises '{replacement}' as the successor of '{retiredName}' — it must exist");
+				live.Should().NotContain(retiredName,
+					$"{tool} still declares '{retiredName}' — the table says it was removed");
+			}
+		}
+	}
+
+	[Fact]
+	public async Task DbCreate_OldNameParameter_IsRejected_AndPointsAtDbName()
+	{
+		var result = await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["name"] = "shouldnotcreate",
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'dbName'");
+	}
+
+	[Fact]
+	public async Task DbDelete_OldNameParameter_IsRejected_AndPointsAtDbName()
+	{
+		var result = await (await ToolAsync("db_delete")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["name"] = "whatever",
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'dbName'");
+	}
+
+	[Fact]
+	public async Task LogCreate_OldNameParameter_IsRejected_AndPointsAtLogName()
+	{
+		var result = await (await ToolAsync("log_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["name"] = "shouldnotcreate",
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+	}
+
+	[Fact]
+	public async Task LogUpdate_OldNameParameter_IsRejected_AndPointsAtLogName()
+	{
+		var result = await (await ToolAsync("log_update")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["name"] = "whatever",
+			["retentionDays"] = 7,
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+	}
+
+	[Fact]
+	public async Task LogDelete_OldNameParameter_IsRejected_AndPointsAtLogName()
+	{
+		var result = await (await ToolAsync("log_delete")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["name"] = "whatever",
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+	}
+
+	[Fact]
+	public async Task DataSchemaApply_OldNameParameter_IsRejected_AndPointsAtMigrationName()
+	{
+		var result = await (await ToolAsync("data_schema_apply")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = ProjectKey,
+			["dbName"] = "whatever",
+			["name"] = "M001",
+			["sql"] = "SELECT 1",
+		});
+		result.IsError.Should().Be(true);
+		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'migrationName'");
 	}
 
 	[Fact]
@@ -365,4 +469,22 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 
 	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+
+	// Same reasoning as UnknownParameterFilterTests.Text: PetBoxJsonEncoder.Relaxed keeps the
+	// apostrophes in "REMOVED: 'name' -> use 'dbName'" wire-escaped ('), so pinning that exact
+	// punctuation needs the decoded error.message, not the raw envelope text.
+	static string ErrorText(ModelContextProtocol.Protocol.CallToolResult r)
+	{
+		var raw = Text(r);
+		try
+		{
+			using var doc = JsonDocument.Parse(raw);
+			if (doc.RootElement.TryGetProperty("error", out var error)
+				&& error.TryGetProperty("message", out var message)
+				&& message.GetString() is { } text)
+				return text;
+		}
+		catch (JsonException) { /* not an envelope */ }
+		return raw;
+	}
 }
