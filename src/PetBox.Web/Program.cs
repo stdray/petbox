@@ -1213,18 +1213,19 @@ public partial class Program
 
 		// /docs and /help -> /doc (bug doc-surface-undiscoverable-from-ui): a reader's first guess at
 		// the docs URL is the plural, or "help" — both 404'd, and an onboarding run recorded the agent
-		// concluding "there is no separate documentation" without ever trying the singular. Permanent
-		// (301): the mapping is a stable alias, not a temporary detour, so a browser or crawler caching
-		// it is the outcome we want. Anonymous, matching /doc's own AllowAnonymous — this redirect
-		// reveals nothing beyond "docs live one segment over."
+		// concluding "there is no separate documentation" without ever trying the singular. TEMPORARY
+		// (302) on purpose: a 301 is the one thing here a user's browser cache makes irreversible, and
+		// this repo renames its surfaces often enough that "stable alias" is not a safe bet. The caching
+		// win is worth nothing on a redirect nobody hits twice. Anonymous, matching /doc's own
+		// AllowAnonymous — this redirect reveals nothing beyond "docs live one segment over."
 		// `/api` is deliberately NOT aliased here: it is a live namespace (/api/auth/logout, /api/health,
 		// /api/memory/...), and redirecting the bare path would mislead whoever is probing the API, not
 		// looking for docs — see the card's "РЕШЕНИЕ ВЛАДЕЛЬЦА" for why that call is already made.
-		app.MapGet("/docs", () => Results.Redirect(Routes.Doc(), permanent: true))
+		app.MapGet("/docs", () => Results.Redirect(Routes.Doc(), permanent: false))
 			.AllowAnonymous()
 			.DeclaresTenantExempt(TenantExemption.Public,
 				"a fixed redirect to the public doc index; no tenant in the route, the query, or the response");
-		app.MapGet("/help", () => Results.Redirect(Routes.Doc(), permanent: true))
+		app.MapGet("/help", () => Results.Redirect(Routes.Doc(), permanent: false))
 			.AllowAnonymous()
 			.DeclaresTenantExempt(TenantExemption.Public,
 				"a fixed redirect to the public doc index; no tenant in the route, the query, or the response");
