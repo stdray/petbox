@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Caching.Memory;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.AgentDefs;
 using PetBox.Web.Memory;
 
 namespace PetBox.Web.Auth;
@@ -125,15 +126,16 @@ public interface IProjectDirectory
 // out-of-band insert would make a cached answer wrong), and none of them is on the per-request
 // hot path.
 // `scopes` (IServiceScopeFactory, optional — DI supplies the real one; a hand-built instance
-// gets null and simply skips the seed) is how a SINGLETON reaches the SCOPED IProjectCanonSeeder
-// safely: capturing a Scoped service in the primary constructor would be the captive dependency
-// CaptiveDependencyTests exists to catch (one memory DataConnection resolved once from the root
-// provider and shared by every request, forever). A scope is rented per call instead — see
-// CreateAsync's canon seed. The seed's OWN memory-store logic lives in ProjectCanonSeeder
-// (PetBox.Web/Memory/ProjectCanonSeeder.cs), deliberately NOT here: this file already branches on
-// IsWorkspaceContainer( for its key-reservation guard below, and a file that both derives a
-// workspace-memory container key AND holds an IMemoryService/MemoryDb door is exactly the shape
-// SandboxContainmentCallSiteGuardTests flags as a site — see that file's header comment.
+// gets null and simply skips the seeds) is how a SINGLETON reaches the SCOPED seeders
+// (IProjectCanonSeeder, IProjectAgentDefSeeder) safely: capturing a Scoped service in the primary
+// constructor would be the captive dependency CaptiveDependencyTests exists to catch (one memory
+// DataConnection resolved once from the root provider and shared by every request, forever). A
+// scope is rented per call instead — see CreateAsync's two seeds. Each seed's OWN storage logic
+// lives in its seeder class (PetBox.Web/Memory/ProjectCanonSeeder.cs,
+// PetBox.Web/AgentDefs/ProjectAgentDefSeeder.cs), deliberately NOT here: this file already
+// branches on IsWorkspaceContainer( for its key-reservation guard below, and a file that both
+// derives a workspace-memory container key AND holds an IMemoryService/MemoryDb door is exactly
+// the shape SandboxContainmentCallSiteGuardTests flags as a site — see that file's header comment.
 public sealed class ProjectDirectory(
 	ICoreDbFactory dbf, IMemoryCache cache, TimeSpan? ttl = null,
 	IServiceScopeFactory? scopes = null, ILogger<ProjectDirectory>? log = null)
@@ -161,6 +163,29 @@ public sealed class ProjectDirectory(
 		catch (Exception ex)
 		{
 			log?.LogWarning(ex, "canon skeleton seed failed for project {ProjectKey} (project creation still succeeds)", projectKey);
+		}
+	}
+
+	// The agent-roster twin of SeedCanonAsync (work seed-agent-def-on-project-create): a fresh
+	// project gets the `default` definition in its OWN authoritative store, so the kit's offline
+	// baseline stops being the normal path for every new project. Same shape and the same reasons
+	// — a rented scope because IAgentDefinitionService is Scoped and this class is a Singleton,
+	// the document and the never-overwrite rule in ProjectAgentDefSeeder (PetBox.Web/AgentDefs/)
+	// rather than here, and `internal` so a test can call the seed a SECOND time directly (the
+	// risk is a repeat SEED, not a repeat CreateAsync — see
+	// ProjectDirectorySeedsAgentDefTests.SecondSeedNeverClobbersAnEditedDefinition).
+	internal async Task SeedAgentDefinitionAsync(string projectKey, CancellationToken ct)
+	{
+		if (scopes is null) return;
+		try
+		{
+			using var scope = scopes.CreateScope();
+			var seeder = scope.ServiceProvider.GetRequiredService<IProjectAgentDefSeeder>();
+			await seeder.SeedAsync(projectKey, ct);
+		}
+		catch (Exception ex)
+		{
+			log?.LogWarning(ex, "default agent definition seed failed for project {ProjectKey} (project creation still succeeds)", projectKey);
 		}
 	}
 
@@ -375,6 +400,11 @@ public sealed class ProjectDirectory(
 		// OWN canon is a normal, readable leg — see MemoryCanonApiTests.Canon_SandboxOnlyKey_*,
 		// only the DERIVED workspace leg is contained).
 		await SeedCanonAsync(key, ct);
+
+		// Best-effort agent-roster seed, same placement and the same never-blocks-creation
+		// contract — see SeedAgentDefinitionAsync. Sandbox projects get one too: a throwaway
+		// project is exactly where a newcomer wires the kit up first.
+		await SeedAgentDefinitionAsync(key, ct);
 
 		// Invalidate the workspace's cached list so the created project is visible IMMEDIATELY (the
 		// row cache needs nothing: negatives are never cached, so the next lookup asks the db). This
