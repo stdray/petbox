@@ -32,9 +32,11 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
    0..N tasks. **Separate from the plan.**
 3. **Spec / Feature** — a temporal tree. **Invariant: only DEFINED requirements live
    in the tree.** Undefined/in-flux = an Idea, not a tree node; changing a requirement
-   = a new Idea (same lifecycle) → a new spec version. Branches are functional AND
-   non-functional (`perf/`, `security/`…) with requirement leaves; features/tasks
-   cross-reference NFR leaves via M:N links.
+   = a new Idea (same lifecycle) → a new spec version. Requirements are functional
+   (`area:*` tag) or non-functional/invariant (`concern:*` tag, see "Writing
+   requirements" below) — there is no separate branch type or dedicated NFR-leaf link
+   kind; features/tasks cross-reference any spec leaf, functional or not, via the same
+   M:N `task_spec` link.
 4. **Task** — technical unit; lives in a backlog; carries `type`
    (`feature|bug|chore|…`, `auto` = the agent classifies); M:N-linked to spec leaves;
    provenance (originating issue + spec item); `commits[]`.
@@ -195,7 +197,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
   altitude they are few: this is honest M:N, not link explosion). A requirement only
   partially delivered stays `in_progress` because one of its linked tasks isn't Done yet
   (e.g. a read-only UI delivered now + an interactive-UI task still Pending). Note the two
-  signals: `status` (draft/defined) = is the requirement agreed; `delivery` (computed) =
+  signals: `status` (`defined`) = is the requirement agreed; `delivery` (computed) =
   is it built.
 - **Process:** before editing the spec, write the **plan to update it** as the
   deliberation artifact — an `artifact:spec_plan`-tagged comment on the originating idea
