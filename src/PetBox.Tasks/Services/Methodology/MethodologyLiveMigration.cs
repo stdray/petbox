@@ -1,10 +1,8 @@
 using LinqToDB;
-using LinqToDB.Async;
 using LinqToDB.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Search;
-using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
 

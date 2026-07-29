@@ -6,7 +6,6 @@ using OpenTelemetry.Proto.Collector.Metrics.V1;
 using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Metrics.V1;
 using OpenTelemetry.Proto.Resource.V1;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 

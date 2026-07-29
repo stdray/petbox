@@ -1,5 +1,3 @@
-using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;

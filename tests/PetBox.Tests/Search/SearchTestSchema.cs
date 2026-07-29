@@ -1,5 +1,3 @@
-using PetBox.Memory.Data;
-
 namespace PetBox.Tests.Search;
 
 // Schema for the contract-level search tests (SearchService / SqliteFtsIndex / VectorSearchIndex),

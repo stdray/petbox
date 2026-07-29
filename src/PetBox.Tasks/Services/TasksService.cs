@@ -1,9 +1,7 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using LinqToDB;
-using Microsoft.Extensions.Logging;
 using LinqToDB.Data;
-using LinqToDB.DataProvider.SQLite;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;

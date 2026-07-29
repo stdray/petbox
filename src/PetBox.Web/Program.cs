@@ -1,15 +1,16 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using Seq.Extensions.Logging;
 using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
+using PetBox.Core.Models;
 using PetBox.Data;
 using PetBox.LlmRouter;
 using PetBox.Log.Core;
@@ -17,14 +18,9 @@ using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Web;
 using PetBox.Web.Contract;
-using PetBox.Web.Mcp;
 using PetBox.Web.Health;
-using PetBox.Web.Ingestion;
+using PetBox.Web.Mcp;
 using PetBox.Web.Navigation;
-using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using PetBox.Core.Models;
 
 if (args.Length >= 2 && args[0] == "--hash-password")
 {

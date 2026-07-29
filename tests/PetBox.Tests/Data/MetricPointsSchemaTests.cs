@@ -1,7 +1,5 @@
-using LinqToDB;
 using LinqToDB.Async;
 using LinqToDB.Data;
-using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Metrics;
 
 namespace PetBox.Tests.Data;

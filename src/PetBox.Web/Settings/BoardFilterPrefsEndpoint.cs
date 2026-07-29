@@ -1,8 +1,5 @@
 using System.Globalization;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Settings;
 using PetBox.Web.Rendering;

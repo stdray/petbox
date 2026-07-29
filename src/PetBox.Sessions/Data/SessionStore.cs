@@ -1,6 +1,5 @@
 using System.Globalization;
 using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Sessions.Contract;

@@ -9,7 +9,6 @@ using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 

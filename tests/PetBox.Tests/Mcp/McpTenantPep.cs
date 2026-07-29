@@ -2,7 +2,6 @@ using System.Security.Claims;
 using System.Text.Json;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
-using PetBox.Web;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;

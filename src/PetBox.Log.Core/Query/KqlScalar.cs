@@ -2,7 +2,6 @@ using System.Reflection;
 using Kusto.Language.Syntax;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Metrics;
-using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Tracing;
 using Expr = System.Linq.Expressions.Expression;
 using ParamExpr = System.Linq.Expressions.ParameterExpression;

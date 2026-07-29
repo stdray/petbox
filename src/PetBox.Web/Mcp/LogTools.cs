@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Log.Core.Query;

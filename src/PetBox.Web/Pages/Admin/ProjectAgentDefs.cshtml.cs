@@ -1,8 +1,8 @@
-using PetBox.Core.Auth;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Services;
 using PetBox.Web.Auth;

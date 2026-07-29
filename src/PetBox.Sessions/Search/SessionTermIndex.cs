@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
 using Microsoft.Extensions.Logging;

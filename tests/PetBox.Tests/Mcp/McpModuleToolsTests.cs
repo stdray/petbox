@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using LinqToDB;
-using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Auth;
@@ -9,10 +8,9 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
-using PetBox.Sessions.Data;
 using PetBox.Memory.Services;
+using PetBox.Sessions.Data;
 using PetBox.Sessions.Services;
-using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;

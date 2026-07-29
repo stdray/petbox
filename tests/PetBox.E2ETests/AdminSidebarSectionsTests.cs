@@ -1,5 +1,3 @@
-using PetBox.E2ETests.Infrastructure;
-
 namespace PetBox.E2ETests;
 
 // Regression guard for work `admin-sidebar-sections`: the admin sidebar's three named

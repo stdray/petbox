@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using PetBox.Memory.Contract;
 
 namespace PetBox.Web.Memory;

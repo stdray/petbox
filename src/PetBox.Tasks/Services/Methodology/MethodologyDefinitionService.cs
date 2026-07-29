@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LinqToDB;
-using LinqToDB.Async;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;

@@ -8,9 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Web;
 using PetBox.Web.Mcp;
-using Xunit;
 
 namespace PetBox.Tests.Architecture;
 

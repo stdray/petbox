@@ -1,7 +1,5 @@
 using DbUp;
-using DbUp.Builder;
 using DbUp.Engine;
-using DbUp.Engine.Output;
 using DbUp.Sqlite.Helpers;
 using Microsoft.Data.Sqlite;
 

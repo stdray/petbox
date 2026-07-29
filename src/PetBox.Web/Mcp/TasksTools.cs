@@ -1,13 +1,11 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
-using PetBox.Tasks.Workflow;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;

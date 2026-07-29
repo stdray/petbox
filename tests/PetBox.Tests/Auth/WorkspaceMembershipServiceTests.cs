@@ -1,4 +1,3 @@
-using System.Threading;
 using LinqToDB;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Auth;

@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Globalization;
-using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Health;

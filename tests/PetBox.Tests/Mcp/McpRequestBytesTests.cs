@@ -6,8 +6,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using PetBox.Core.Data;
-using PetBox.Log.Core.Data;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;

@@ -1,5 +1,3 @@
-using PetBox.E2ETests.Infrastructure;
-
 namespace PetBox.E2ETests;
 
 // live-tail-row-details-unexpandable: LogApi.RenderEvent streams a bare <tr class="event-live"> with

@@ -1,5 +1,3 @@
-using PetBox.Log.Core.Query;
-
 namespace PetBox.Tests.Kql;
 
 public sealed class KqlCompletionServiceTests

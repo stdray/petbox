@@ -1,6 +1,4 @@
-using LinqToDB;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
 
 namespace PetBox.Tests.Data;
 

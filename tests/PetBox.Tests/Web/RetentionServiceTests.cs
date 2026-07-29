@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Retention;
 
 namespace PetBox.Tests.Web;

@@ -1,5 +1,3 @@
-using Xunit;
-
 namespace PetBox.Tests.Architecture;
 
 // THE RAZOR BLIND SPOT, ASSERTED — the half of the page plane nobody had ever aimed at another tenant.

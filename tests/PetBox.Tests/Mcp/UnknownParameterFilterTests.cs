@@ -2,7 +2,6 @@ using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Tests.Tasks;
-using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
 

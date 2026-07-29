@@ -1,9 +1,9 @@
-using PetBox.Core.Auth;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Data;
 using PetBox.Data.Contract;

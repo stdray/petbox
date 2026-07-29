@@ -1,6 +1,5 @@
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
-using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Data.Migrations;
 
 namespace PetBox.Tests.Data;

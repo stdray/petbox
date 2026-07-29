@@ -3,7 +3,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Migrations;
-using PetBox.Core.Models;
 
 namespace PetBox.Tests.Migrations;
 

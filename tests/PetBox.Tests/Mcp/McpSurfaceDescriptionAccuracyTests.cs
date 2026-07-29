@@ -1,15 +1,6 @@
 using System.ComponentModel;
 using System.Reflection;
-using System.Security.Claims;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Configuration;
 using ModelContextProtocol.Server;
-using PetBox.Core.Data;
-using PetBox.Core.Features;
-using PetBox.Core.Models;
-using PetBox.Core.Settings;
-using PetBox.Tasks.Data;
-using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;

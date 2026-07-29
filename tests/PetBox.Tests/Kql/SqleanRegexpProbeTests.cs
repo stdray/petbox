@@ -1,6 +1,5 @@
 using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Kql;
 

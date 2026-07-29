@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
 using PetBox.Core.Data;
 using PetBox.Core.Models;

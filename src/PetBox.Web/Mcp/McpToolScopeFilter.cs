@@ -1,6 +1,4 @@
 using System.Security.Claims;
-using Microsoft.Extensions.DependencyInjection;
-using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 
 namespace PetBox.Web.Mcp;

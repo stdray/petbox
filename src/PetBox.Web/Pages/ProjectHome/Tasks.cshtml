@@ -1,6 +1,5 @@
 @page "/ui/{workspaceKey}/{projectKey}/tasks"
 @model PetBox.Web.Pages.ProjectHome.TasksModel
-@using PetBox.Web.Pages.Shared
 @{
 	ViewData["Title"] = $"Tasks — {Model.Project?.Name ?? Model.ProjectKey}";
 

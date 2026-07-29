@@ -1,4 +1,3 @@
-using PetBox.Log.Core.Data;
 using PetBox.Web.Pages.Logs;
 
 namespace PetBox.Tests.Web;

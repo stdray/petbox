@@ -1,5 +1,3 @@
-using System.Threading;
-using LinqToDB;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;

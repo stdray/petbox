@@ -1,5 +1,4 @@
 using Kusto.Language;
-using LinqToDB;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;

@@ -4,7 +4,6 @@ using PetBox.Config.Data;
 using PetBox.Core.Data;
 using PetBox.Data;
 using PetBox.Deploy.Data;
-using PetBox.Log.Core.Data;
 using PetBox.Memory.Data;
 using PetBox.Sessions.Data;
 using PetBox.Tasks.Data;

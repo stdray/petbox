@@ -1,10 +1,6 @@
 using Kusto.Language;
-using LinqToDB;
 using LinqToDB.Data;
 using PetBox.Core.Models;
-using PetBox.Log.Core.Data;
-using PetBox.Log.Core.Models;
-using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Kql;

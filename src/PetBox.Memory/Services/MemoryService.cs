@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Async;
 using LinqToDB.Data;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Contract;

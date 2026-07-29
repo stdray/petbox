@@ -5,7 +5,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Deploy.Data;
-using PetBox.Web;
 
 namespace PetBox.Tests.Architecture;
 

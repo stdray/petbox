@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Contract;
 using PetBox.Core.Json;
-using PetBox.Web;
 
 namespace PetBox.Tests.Architecture;
 

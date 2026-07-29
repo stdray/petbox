@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using PetBox.Config;
 
 namespace PetBox.Tests.Web;

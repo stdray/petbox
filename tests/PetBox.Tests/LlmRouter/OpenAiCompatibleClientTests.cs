@@ -2,9 +2,9 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 using PetBox.LlmRouter.Contract;
 using PetBox.LlmRouter.Http;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.LlmRouter;
 

@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Config;
-using PetBox.Config.Data;
 using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Config;

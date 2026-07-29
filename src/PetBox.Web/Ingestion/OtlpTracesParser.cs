@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Collections.Immutable;
-using System.Globalization;
 using System.Text.Json;
 using Google.Protobuf;
 using OpenTelemetry.Proto.Collector.Trace.V1;

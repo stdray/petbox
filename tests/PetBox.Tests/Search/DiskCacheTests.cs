@@ -1,7 +1,7 @@
 using LinqToDB;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 

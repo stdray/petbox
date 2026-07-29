@@ -1,7 +1,5 @@
 using Kusto.Language;
 using Kusto.Language.Syntax;
-using PetBox.Log.Core.Query;
-using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Kql;
 

@@ -1,10 +1,9 @@
 using System.Text.Json;
+using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using LinqToDB;
-using LinqToDB.Async;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Core.Data;

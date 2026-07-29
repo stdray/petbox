@@ -1,8 +1,6 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Kusto.Language;
 using Kusto.Language.Syntax;
-using LinqToDB;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;

@@ -4,7 +4,6 @@ using OpenTelemetry.Proto.Collector.Logs.V1;
 using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Logs.V1;
 using OpenTelemetry.Proto.Resource.V1;
-using PetBox.Log.Core.Ingestion;
 using PetBox.Web.Ingestion;
 
 namespace PetBox.Tests.Web;

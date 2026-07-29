@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using LinqToDB;
-using LinqToDB.SqlQuery;
 using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Tracing;

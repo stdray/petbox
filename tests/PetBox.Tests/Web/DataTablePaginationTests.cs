@@ -1,6 +1,5 @@
 using System.Net;
 using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
@@ -9,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data;
+
 // PetBoxDb lives in PetBox.Core.Data; DataDbFactory/IDataDbFactory in PetBox.Data.
 
 namespace PetBox.Tests.Web;

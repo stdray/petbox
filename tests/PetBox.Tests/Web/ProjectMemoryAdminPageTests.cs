@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
