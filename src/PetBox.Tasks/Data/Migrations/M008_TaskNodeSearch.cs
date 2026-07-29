@@ -19,7 +19,7 @@ namespace PetBox.Tasks.Data.Migrations;
 // The FTS5 virtual table is the one thing here with no typed form (and it is SQLite-specific), so
 // it goes through the named, guarded SqliteDdl.Fts5Table; plan_node_vec is ordinary typed DDL.
 [Migration(8, "Create plan_nodes_fts + plan_node_vec for hybrid board search")]
-public sealed class M008_PlanNodeSearch : SqliteMigration
+public sealed class M008_TaskNodeSearch : SqliteMigration
 {
 	public override void Up()
 	{

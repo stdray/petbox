@@ -23,7 +23,7 @@ namespace PetBox.Tests.Mcp;
 // `.Tags` are plain non-nullable `string`, `.Ephemeral` is plain `bool` — DeployTools.NodeUpsertAsync
 // is forced to write `tags ?? ""` / `displayName ?? id` at the call site because the target TYPE has
 // nowhere else to put "leave it alone", and an update without an explicit `ephemeral:true` silently
-// resets the flag to false. The fix is the same pattern PlanNodeInput.Priority / CommentItemInput.Tags
+// resets the flag to false. The fix is the same pattern TaskNodeInput.Priority / CommentItemInput.Tags
 // / MemoryEntryInputDto.Tags / AgentKeyPatch already use throughout the surface: nullable, with null
 // meaning "keep".
 //
@@ -51,10 +51,10 @@ public sealed class WriteVerbFieldOmissionShapeTests
 		// version = CAS watermark baseline (0 = create) — a sentinel, not a mergeable field.
 		// deleted = one-way soft-delete trigger; omitted and explicit-false are the same normal
 		// upsert, so there is no "keep vs clear" distinction to lose.
-		{ "tasks_upsert", typeof(PlanNodeInput), ["Version", "Deleted"] },
+		{ "tasks_upsert", typeof(TaskNodeInput), ["Version", "Deleted"] },
 		// version = CAS watermark baseline, same sentinel as above.
 		{ "comments_upsert", typeof(CommentItemInput), ["Version"] },
-		// deleted = one-way soft-delete trigger, same non-issue as PlanNodeInput.Deleted above.
+		// deleted = one-way soft-delete trigger, same non-issue as TaskNodeInput.Deleted above.
 		{ "memory_upsert", typeof(MemoryEntryInputDto), ["Version", "Deleted"] },
 		// key = identity, not a mergeable field (which key gets patched).
 		{ "apikey_update", typeof(AgentKeyPatch), ["Key"] },

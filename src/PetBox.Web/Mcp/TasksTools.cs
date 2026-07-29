@@ -32,11 +32,11 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance name, or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance `key` (its slug address, the same string every methodology verb takes as `key`), or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? wiredBoard = null,
-		[Description("The board's world: a methodology instance name, or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
+		[Description("The board's world: a methodology instance `key` (its slug address), or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -50,7 +50,7 @@ public static class TasksTools
 	public static async Task<BoardAdoptResult> BoardAdoptAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Target: a methodology instance name, or \"$utility\" to release the board into the project's utility layer.")] string methodologyInstance,
+		[Description("Target: a methodology instance `key` (its slug address), or \"$utility\" to release the board into the project's utility layer.")] string methodologyInstance,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -790,9 +790,9 @@ public static class TasksTools
 			d with { Node = d.Node with { Body = ModuleMcp.Body(d.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } })]);
 	}
 
-	[McpServerTool(Name = "tasks_search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
+	[McpServerTool(Name = "tasks_search", Title = "Read task nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
-		THE read verb for plan nodes — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
+		THE read verb for task nodes — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
 		Nodes are FLAT (a single slug `key`); hierarchy is the part_of edge (parentSlug/`depth`).
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
@@ -818,7 +818,7 @@ public static class TasksTools
 		Pulling full bodies across a wide limit "just in case" is the most expensive habit
 		available here: it routinely spends a third of the response budget on text you will not read.
 		[[full]]
-		THE read verb for plan nodes — one tool for both LISTING and SEARCH (list = search
+		THE read verb for task nodes — one tool for both LISTING and SEARCH (list = search
 		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
 		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
 		`depth` (0 = root) — build the tree from those. Every row, in BOTH modes, carries its
@@ -1256,9 +1256,9 @@ public static class TasksTools
 	static string[] ParseGroupBy(string groupBy) =>
 		groupBy.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-	[McpServerTool(Name = "tasks_upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
+	[McpServerTool(Name = "tasks_upsert", Title = "Upsert task nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
-		Declarative temporal PATCH-upsert of plan nodes. On an EDIT (version > 0) an omitted field
+		Declarative temporal PATCH-upsert of task nodes. On an EDIT (version > 0) an omitted field
 		stays unchanged, tags:[] clears; on a NEW node (version 0) an omitted field starts empty —
 		there is no prior value to inherit. Delete via {key, deleted:true}. Each node has a FLAT slug
 		`key` and nests via `partOf`. `nodes` must be non-empty — an empty array is REJECTED
@@ -1276,7 +1276,7 @@ public static class TasksTools
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
 
 		[[full]]
-		Declarative PATCH per node — a temporal upsert of plan nodes. On an EDIT (version > 0) an
+		Declarative PATCH per node — a temporal upsert of task nodes. On an EDIT (version > 0) an
 		omitted field stays unchanged; tags: [] clears, omit leaves as-is. On a NEW node (version 0)
 		an omitted field starts empty/default (there is no prior value an omission could preserve) —
 		same on-create convention as memory_upsert. Requires tasks:write.
@@ -1348,7 +1348,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board,
-		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node and is listed in the node object's `required` — omitting it is an error, not a quick-add. `key` is the slug FIELD being written and takes the slug ONLY (never a NodeId); the reference parameters below take either form. Then: optional `partOf` (the parent: a node reference — its slug key or its 32-hex NodeId, both accepted), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds, each ref a node reference — a slug key or a 32-hex NodeId, both accepted — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (the blocker: a node reference — its slug key or its 32-hex NodeId, both accepted), `supersedes` (the replaced node: a node reference — its slug key or its 32-hex NodeId, both accepted), status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename (the node's PREVIOUS slug key — a rename source, not an alias of `key`).")] PlanNodeInput[] nodes,
+		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node and is listed in the node object's `required` — omitting it is an error, not a quick-add. `key` is the slug FIELD being written and takes the slug ONLY (never a NodeId); the reference parameters below take either form. Then: optional `partOf` (the parent: a node reference — its slug key or its 32-hex NodeId, both accepted), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds, each ref a node reference — a slug key or a 32-hex NodeId, both accepted — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (the blocker: a node reference — its slug key or its 32-hex NodeId, both accepted), `supersedes` (the replaced node: a node reference — its slug key or its 32-hex NodeId, both accepted), status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename (the node's PREVIOUS slug key — a rename source, not an alias of `key`).")] TaskNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
@@ -1376,7 +1376,7 @@ public static class TasksTools
 		return Serialize(outcome, urlPrefix, bodyLen, warning);
 	}
 
-	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
+	[McpServerTool(Name = "tasks_delta", Title = "Task node delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -1471,7 +1471,7 @@ public static class TasksTools
 
 	// Delta projection of a node (no links/delivery/tags — that's tasks_search). camelCased by the
 	// serializer; `body` follows the uniform bodyLen contract with a NoBody default (a compact echo).
-	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null, int? bodyLen = null) => new(
+	static TaskNodeDelta NodeDto(TaskNode n, string? urlPrefix = null, int? bodyLen = null) => new(
 		Key: n.Key,
 		NodeId: n.NodeId,
 		Status: n.Status,
@@ -1487,7 +1487,7 @@ public static class TasksTools
 	// from the prior row) happens in the service; here an omitted field deserializes to null
 	// (inherit) and a present field to its value ("" = explicit clear) — the null-vs-"" distinction
 	// is carried by the JSON value itself, so the old Has()-presence checks are no longer needed.
-	static List<NodePatch> ParseNodePatches(PlanNodeInput[] nodes)
+	static List<NodePatch> ParseNodePatches(TaskNodeInput[] nodes)
 	{
 		var list = new List<NodePatch>(nodes.Length);
 		foreach (var n in nodes)
@@ -1528,13 +1528,13 @@ public static class TasksTools
 	// drop-legacy-aliases retired the `l1` alias (an `l1` property is now an unknown member and is
 	// REJECTED by McpUnknownParameterFilter, so a stale caller gets an error, not a lost write).
 	// Nesting is the `partOf` parent, not the key. Validated/normalized via TaskSlug.
-	static string ResolveKey(PlanNodeInput n)
+	static string ResolveKey(TaskNodeInput n)
 	{
 		if (!string.IsNullOrEmpty(n.Key))
 			return TaskSlug.Validate(n.Key);
 		throw new ArgumentException("each node needs a 'key' (a flat slug)");
 	}
 
-	static string? ResolvePrevKey(PlanNodeInput n) =>
+	static string? ResolvePrevKey(TaskNodeInput n) =>
 		!string.IsNullOrEmpty(n.PrevKey) ? TaskSlug.Validate(n.PrevKey) : null;
 }

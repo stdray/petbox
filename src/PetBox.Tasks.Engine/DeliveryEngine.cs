@@ -3,7 +3,7 @@ namespace PetBox.Tasks.Workflow;
 // The PURE half of the delivery roll-up (methodology-engine-extraction, slice 5). Cut along the
 // same seam as GuardEngine: the SELECTION stays in TasksService.ComputeSpecDeliveryAsync (which
 // still pays for the project-wide node scan and the one task_spec edge sweep), the JUDGEMENT
-// moved here. Zero IO, zero linq2db — the service maps PlanNode -> NodeState (condition 4) and
+// moved here. Zero IO, zero linq2db — the service maps TaskNode -> NodeState (condition 4) and
 // pre-groups the relation edges at the boundary, exactly as the guard slice does.
 //
 // Nothing about the judgement changed in the move: the bottom-up memoized walk, its cycle guard,

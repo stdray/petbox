@@ -5,14 +5,14 @@
    not just work's Pending/InProgress/Review/Done. View only: no drag-and-drop (a status change
    is a write through the FSM guards — a separate story).
    board-node-filter / board-sort: the SAME filter+sort bar every mode gets (_BoardFilterSort),
-   plus the full ts/board.ts data-* contract on every card (_PlanNodeCard's shape, restated here
-   since a kanban card isn't a _PlanNodeCard) so filtering/active-only/sort work identically to
+   plus the full ts/board.ts data-* contract on every card (_TaskNodeCard's shape, restated here
+   since a kanban card isn't a _TaskNodeCard) so filtering/active-only/sort work identically to
    tree/table. Sort is PER COLUMN: each column's own <ul data-sort-scope> is an independent
    reorder scope (board.ts groups scopes by DOM containment) — cards have no data-parent-id, so
    within a scope they're all "roots" and sort flat, matching "order of cards within column". *@
 @if (Model.Nodes.Count == 0)
 {
-	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+	<div class="alert" data-testid="board-empty">This board has no active task nodes.</div>
 }
 else
 {
@@ -21,7 +21,7 @@ else
 	var sortComparer = PetBox.Web.Pages.ProjectHome.TaskBoardModel.SortComparer(Model.SortBy, Model.SortDesc);
 	var byStatus = Model.Nodes
 		.GroupBy(n => n.Status, StringComparer.OrdinalIgnoreCase)
-		.ToDictionary(g => g.Key, g => (IReadOnlyList<PlanNodeView>)g
+		.ToDictionary(g => g.Key, g => (IReadOnlyList<TaskNodeView>)g
 			.OrderBy(n => n, sortComparer).ThenBy(n => n.Key, StringComparer.Ordinal).ToList(),
 			StringComparer.OrdinalIgnoreCase);
 	var knownSlugs = Model.KanbanColumns.Select(c => c.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);

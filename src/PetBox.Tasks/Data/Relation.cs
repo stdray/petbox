@@ -35,7 +35,7 @@ public sealed record Relation
 // it cannot drift from the nodes it indexes. Exists solely to be a legal FK parent for
 // relations.From/ToNodeId, which the temporal plan_nodes table cannot be.
 [Table("plan_node_ids")]
-public sealed record PlanNodeId
+public sealed record TaskNodeId
 {
 	[Column, PrimaryKey, NotNull] public string NodeId { get; init; } = string.Empty;
 }

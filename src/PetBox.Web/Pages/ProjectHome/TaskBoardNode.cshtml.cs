@@ -16,8 +16,8 @@ namespace PetBox.Web.Pages.ProjectHome;
 // Detail for ONE node of a task board, addressed by its stable NodeId alone (board-independent):
 // /ui/{ws}/{project}/tasks/node/{nodeId}. Shows the full body (no truncation) + the discussion
 // thread — the destination the board's abbreviated rows link to — and lets a human EDIT the node
-// (status, title, body) in place. Sibling of TaskBoard; named TaskBoardNode (not PlanNode) so it
-// doesn't shadow the PetBox.Tasks.Data.PlanNode record. Every read AND write goes through
+// (status, title, body) in place. Sibling of TaskBoard; named TaskBoardNode (not TaskNode) so it
+// doesn't shadow the PetBox.Tasks.Data.TaskNode record. Every read AND write goes through
 // ITasksService / ICommentService — the page never opens the DB context itself, and the edit
 // handlers route through UpsertAsync so a UI edit hits the SAME guards (FSM, link constraints, concurrency)
 // as the MCP path (spec edit-respects-guards). NetArchTest enforces the door.

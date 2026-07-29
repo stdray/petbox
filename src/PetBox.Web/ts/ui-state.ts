@@ -19,7 +19,7 @@
 export interface BrowserState {
 	sidebarPinned?: boolean;
 	kqlPanelPinned?: boolean;
-	// board-filters-server-state: which plan-node subtrees are collapsed, per (project,board) key
+	// board-filters-server-state: which task-node subtrees are collapsed, per (project,board) key
 	// (literally "projectKey/board", the same composite key BoardViewPreferences uses server-side)
 	// — a TOP-LEVEL cookie key holding the WHOLE map for every board the user has touched, since
 	// MergeCookieValue only merges at the top level (one [BrowserState] property = one cookie key);

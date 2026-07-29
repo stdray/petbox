@@ -12,7 +12,7 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
 
-// Exercises the deploy.* MCP tool methods directly (mocked HttpContext + real DeployDb +
+// Exercises the deploy_* MCP tool methods directly (mocked HttpContext + real DeployDb +
 // PetBoxDb for key minting). Validates tool logic, scope guards, and key minting.
 public sealed class DeployToolsTests : IDisposable
 {

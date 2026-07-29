@@ -39,7 +39,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		using var db = new TasksDb(TasksDb.CreateOptions(cs));
 		var now = DateTime.UtcNow;
 		for (var i = 1; i <= count; i++)
-			db.Insert(new PlanNode { Key = $"phase-{i}", Version = i, Status = "Pending", Name = $"N{i}", Body = "b", Priority = i, NodeId = Guid.NewGuid().ToString("N"), ActiveFrom = i, Created = now, Updated = now });
+			db.Insert(new TaskNode { Key = $"phase-{i}", Version = i, Status = "Pending", Name = $"N{i}", Body = "b", Priority = i, NodeId = Guid.NewGuid().ToString("N"), ActiveFrom = i, Created = now, Updated = now });
 		TestDirs.ClearPoolsUnder(_tasksDir);
 	}
 
@@ -53,10 +53,10 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		migrated.Should().Be(2);
 
 		var pdb = _factory.GetDb("proj");
-		pdb.PlanNodes.Count(n => n.Board == "roadmap").Should().Be(2);
-		pdb.PlanNodes.Count(n => n.Board == "spec").Should().Be(3);
+		pdb.TaskNodes.Count(n => n.Board == "roadmap").Should().Be(2);
+		pdb.TaskNodes.Count(n => n.Board == "spec").Should().Be(3);
 		// The same key in two boards coexists (distinct PK Board,Key,Version).
-		pdb.PlanNodes.Count(n => n.Key == "phase-1").Should().Be(2);
+		pdb.TaskNodes.Count(n => n.Key == "phase-1").Should().Be(2);
 
 		// Originals kept (renamed), not deleted.
 		File.Exists(Path.Combine(_tasksDir, "proj", "roadmap.db")).Should().BeFalse();
@@ -97,7 +97,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		new LegacyTaskFileMigrator(_tasksDir, _factory).Migrate().Should().Be(1);
 
 		var pdb = _factory.GetDb("proj");
-		var node = pdb.PlanNodes.Single(n => n.Board == "legacy");
+		var node = pdb.TaskNodes.Single(n => n.Board == "legacy");
 		node.Status.Should().Be("InProgress"); // integer 1 remapped via the migration chain
 		node.NodeId.Length.Should().Be(32);     // backfilled by M004
 		File.Exists(Path.Combine(_tasksDir, "proj", "legacy.db.migrated")).Should().BeTrue();

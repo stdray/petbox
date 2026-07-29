@@ -67,8 +67,8 @@ public sealed class NodeCommitsTests : IDisposable
 	Task<IReadOnlyList<string>> ViewCommits(string board, string key) =>
 		_tasks.GetAsync(Proj, board).ContinueWith(t => t.Result.Nodes.Single(n => n.Key == key).Commits);
 
-	List<PlanNodeCommit> Rows(string nodeId) =>
-		_store.GetContext(Proj).PlanNodeCommits.Where(c => c.NodeId == nodeId).ToList();
+	List<TaskNodeCommit> Rows(string nodeId) =>
+		_store.GetContext(Proj).TaskNodeCommits.Where(c => c.NodeId == nodeId).ToList();
 
 	[Fact]
 	public async Task Upsert_WithCommits_Persists_AndReadSurfacesReturnTheArray()
@@ -185,12 +185,12 @@ public sealed class NodeCommitsTests : IDisposable
 			TasksSchema.Ensure(cs); // runs M002..M011 in place
 
 			using var db = new TasksDb(TasksDb.CreateOptions(cs));
-			var withId = db.PlanNodes.Single(n => n.Key == "with" && n.ActiveTo == null).NodeId;
-			var withoutId = db.PlanNodes.Single(n => n.Key == "without" && n.ActiveTo == null).NodeId;
+			var withId = db.TaskNodes.Single(n => n.Key == "with" && n.ActiveTo == null).NodeId;
+			var withoutId = db.TaskNodes.Single(n => n.Key == "without" && n.ActiveTo == null).NodeId;
 
-			db.PlanNodeCommits.Where(x => x.NodeId == withId && x.ValidTo == null)
+			db.TaskNodeCommits.Where(x => x.NodeId == withId && x.ValidTo == null)
 				.Select(x => x.Sha).ToList().Should().BeEquivalentTo("abcdef1"); // lowercased
-			db.PlanNodeCommits.Any(x => x.NodeId == withoutId).Should().BeFalse();
+			db.TaskNodeCommits.Any(x => x.NodeId == withoutId).Should().BeFalse();
 
 			// The CommitRef column is gone (table rebuild) — selecting it fails.
 			var probe = () => db.Execute<long>("SELECT count(CommitRef) FROM plan_nodes");

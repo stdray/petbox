@@ -648,7 +648,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		res.Nodes[0].Retriever.Should().Be("lexical");
 	}
 
-	// Regression (orphan-search-docs 500): deleting a board bulk-drops its PlanNodes rows but must
+	// Regression (orphan-search-docs 500): deleting a board bulk-drops its TaskNodes rows but must
 	// also purge its (Scope=project, Type=board) search docs. Pre-fix the orphan FTS doc kept
 	// matching, then HybridCandidatesAsync called GetAsync on the vanished board and threw
 	// InvalidOperationException ("task board '...' not found") — surfacing as a 500 on /ui/search.

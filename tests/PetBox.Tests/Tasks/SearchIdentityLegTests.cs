@@ -65,7 +65,7 @@ public sealed class SearchIdentityLegTests : IDisposable
 	static SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, string[]? statusKind = null) =>
 		new() { Query = q, Filter = new TaskNodeFilter(board, StatusKind: statusKind) };
 
-	static async Task<PlanNodeView> NodeView(TasksService svc, string project, string board, string key) =>
+	static async Task<TaskNodeView> NodeView(TasksService svc, string project, string board, string key) =>
 		(await svc.GetAsync(project, board, includeClosed: true)).Nodes.First(n => n.Key == key);
 
 	[Fact]

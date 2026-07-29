@@ -25,7 +25,7 @@ public sealed record TaskTableRow(
 	// Populated only when ShowScopeColumns is true (cross-scope search) — a board-scoped table
 	// leaves these null; the board itself already says where every row lives.
 	string? Workspace = null, string? ProjectKey = null, string? Board = null,
-	// board-filters-server-state: server-computed active-only hide, matching PlanNodeCard.Hidden's
+	// board-filters-server-state: server-computed active-only hide, matching TaskNodeCard.Hidden's
 	// tree-view counterpart — an inline `display:none` on the <tr> so the first response already
 	// shows the filtered table (no post-load hide/reflow). Default false: Search's cross-scope table
 	// never sets it (search has no active-only concept), so its rows are unaffected.

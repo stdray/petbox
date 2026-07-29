@@ -1,4 +1,4 @@
-@model PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel.TaskNodeCard
 @{
 	var n = Model.Node;
 	var leaf = n.Key;
@@ -19,12 +19,12 @@
 	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
 }
 
-@* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
+@* One task-node card. Reused by both the part_of tree and the tag-groups projection; the
    data-* attributes power ts/board.ts (tree pane only — the tag pane uses a different list).
    data-priority/title/created/updated (board-sort-impl) feed the client sort toggle — CreatedAt/
-   UpdatedAt come straight off the active PlanNode revision, so they're only meaningful here in
+   UpdatedAt come straight off the active TaskNode revision, so they're only meaningful here in
    the tree pane. *@
-<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" style="margin-left:@(Model.Depth * 1.5)rem;display:@(Model.Hidden ? "none" : "")">
+<li class="card bg-base-200 border border-base-300" data-testid="task-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" style="margin-left:@(Model.Depth * 1.5)rem;display:@(Model.Hidden ? "none" : "")">
 	<div class="card-body p-3">
 		<div class="flex items-baseline justify-between gap-2">
 			<div class="min-w-0 flex items-baseline gap-2 flex-wrap">

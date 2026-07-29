@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace PetBox.Tasks.Data;
 
-// A plan node's address is a FLAT, board-unique slug (spec-flat-tags: the old l1/l2/l3
+// A task node's address is a FLAT, board-unique slug (spec-flat-tags: the old l1/l2/l3
 // path hierarchy is gone — vertical structure is now the `part_of` edge, and grouping is
 // a tag projection). The temporal engine is string-keyed and payload-agnostic; this type
 // just owns slug validation/normalization (lowercased, one segment). NodeId remains the

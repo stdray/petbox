@@ -36,7 +36,7 @@ public sealed class TaskTransitionEffects
 	// tests, not by any builtin preset routing through it.
 	public async Task RunTransitionEffectsAsync(
 		string projectKey, string? kindSlug, MethodologyRuntime runtime,
-		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+		TaskNode[] desired, Dictionary<string, TaskNode> prior, CancellationToken ct)
 	{
 		var effects = runtime.Effects(kindSlug);
 		if (effects.Count == 0) return;
@@ -87,7 +87,7 @@ public sealed class TaskTransitionEffects
 	// auto-unblock on delete, matching that it never gated the block in the first place.
 	public async Task RunDeleteEffectsAsync(
 		string projectKey, string board, IReadOnlyList<NodePatch> deletePatches,
-		Dictionary<string, PlanNode> prior, MethodologyRuntime runtime, CancellationToken ct)
+		Dictionary<string, TaskNode> prior, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		foreach (var p in deletePatches)
 		{
@@ -118,12 +118,12 @@ public sealed class TaskTransitionEffects
 	// BlocksGate read below).
 	public async Task SetActiveNodeStatusAsync(
 		string projectKey, string nodeId, MethodologyRuntime runtime,
-		Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, bool, string?, string?> pick, CancellationToken ct)
+		Func<PetBox.Tasks.Workflow.Workflow?, TaskNode, bool, string?, string?> pick, CancellationToken ct)
 	{
 		// NodeId is unique across the project, so find the active row directly in the one
 		// project file; its Board tells us which partition to write back into.
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
+		var node = ctx.TaskNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
 		if (node is null) return;
 		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
 		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);

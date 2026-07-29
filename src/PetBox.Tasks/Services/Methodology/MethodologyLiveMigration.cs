@@ -80,7 +80,7 @@ public sealed class MethodologyLiveMigration
 	// batches; any node still incompatible after the mappings throws — caller writes NOTHING.
 	// `subject` is the human-readable what (e.g. "methodology definition change",
 	// "methodology instance 'main' rules change") for the rejection message.
-	public static List<(string Board, List<PlanNode> Nodes)> Plan(
+	public static List<(string Board, List<TaskNode> Nodes)> Plan(
 		TasksDb ctx, MethodologyDefinition? oldDef, MethodologyDefinition? newDef,
 		MethodologyRuntime newRuntime, IReadOnlyList<MethodologyMigration> migration,
 		IReadOnlyList<TaskBoardMeta> boards,
@@ -89,14 +89,14 @@ public sealed class MethodologyLiveMigration
 		static bool Declares(MethodologyDefinition? d, string? kind) =>
 			kind is not null && d is not null && d.Kinds.Any(k => string.Equals(k.Kind, kind, StringComparison.OrdinalIgnoreCase));
 
-		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		var rewrites = new List<(string Board, List<TaskNode> Nodes)>();
 		var problems = new List<string>();
 		foreach (var b in boards)
 		{
 			if (!Declares(oldDef, b.Kind) && !Declares(newDef, b.Kind)) continue;
 			var map = migration.FirstOrDefault(m => string.Equals(m.Kind, b.Kind, StringComparison.OrdinalIgnoreCase));
-			var active = ctx.PlanNodes.Where(n => n.Board == b.Name && n.ActiveTo == null).ToList();
-			var boardRewrites = new List<PlanNode>();
+			var active = ctx.TaskNodes.Where(n => n.Board == b.Name && n.ActiveTo == null).ToList();
+			var boardRewrites = new List<TaskNode>();
 			foreach (var n in active)
 			{
 				// 1. the type must resolve a workflow under the new resolution; a type
@@ -154,7 +154,7 @@ public sealed class MethodologyLiveMigration
 	// terminal or not (search-hides-terminal-nodes); vectors are the async worker's job,
 	// as everywhere.
 	public async Task<int> RewriteAsync(
-		TasksDb ctx, string projectKey, string board, List<PlanNode> nodes, MethodologyRuntime runtime, CancellationToken ct)
+		TasksDb ctx, string projectKey, string board, List<TaskNode> nodes, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var fts = new SqliteFtsIndex(() => ctx);
 		// Mirror the reference layer alongside the FTS floor (search-index-authority): a methodology
@@ -213,7 +213,7 @@ public sealed class MethodologyLiveMigration
 	public static async Task<int> ReindexBoardMetaAsync(
 		TasksDb ctx, string projectKey, string board, string kindSlug, MethodologyRuntime runtime, CancellationToken ct)
 	{
-		var indexed = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+		var indexed = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 		if (indexed.Count == 0) return 0;
 		using var tx = await ctx.BeginTransactionAsync(ct);

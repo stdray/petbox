@@ -9,5 +9,5 @@ namespace PetBox.Web.Pages.ProjectHome;
 // the SAME chip row from two branches (the lazy-reveal <summary> and the plain heading row) — one
 // shared partial rather than two copies of the eight `@if (Model.Fields.X)` checks.
 public sealed record OutlineFieldChipsModel(
-	MethodologyRuntime Runtime, string? KindSlug, BoardFieldConfig Fields, PlanNodeView Node,
+	MethodologyRuntime Runtime, string? KindSlug, BoardFieldConfig Fields, TaskNodeView Node,
 	string WorkspaceKey, string ProjectKey);

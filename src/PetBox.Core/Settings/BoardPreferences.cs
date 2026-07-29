@@ -61,7 +61,7 @@ public sealed record BoardPreferences
 	// is a personal habit that applies the same way regardless of which board you're looking at,
 	// not a per-board display choice.
 	[Setting(TopLevel = Scope.User, Key = "board.activeOnly",
-		Description = "Hide closed (terminal-status) plan nodes on task boards by default.")]
+		Description = "Hide closed (terminal-status) task nodes on task boards by default.")]
 	public bool ActiveOnly { get; init; } = true;
 
 	// BoardSortKeys.All ("priority"|"created"|"updated"|"title") — an unrecognized/stale value (a

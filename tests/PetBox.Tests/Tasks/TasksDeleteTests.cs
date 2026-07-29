@@ -91,8 +91,8 @@ public sealed class TasksDeleteTests : IDisposable
 		r.Result.Removed.Should().Contain("leafy");
 
 		var ctx = _store.GetContext(Proj);
-		ctx.PlanNodes.Any(n => n.Key == "leafy" && n.ActiveTo == null).Should().BeFalse(); // temporal-closed
-		ctx.PlanNodes.Any(n => n.Key == "leafy" && n.ActiveTo != null).Should().BeTrue();  // history kept
+		ctx.TaskNodes.Any(n => n.Key == "leafy" && n.ActiveTo == null).Should().BeFalse(); // temporal-closed
+		ctx.TaskNodes.Any(n => n.Key == "leafy" && n.ActiveTo != null).Should().BeTrue();  // history kept
 		(await _relations.ListAsync(Proj, leafId, "both")).Should().BeEmpty();             // part_of closed
 		ctx.NodeTags.Any(t => t.NodeId == leafId && t.ValidTo == null).Should().BeFalse(); // tags closed
 		(await Search("leafword")).Hits.Should().BeEmpty(); // FTS row gone
@@ -111,7 +111,7 @@ public sealed class TasksDeleteTests : IDisposable
 		c.Kind.Should().Be(TemporalConflictKind.Rejected);
 		c.Key.Should().Be("parent");
 		c.Reason.Should().Contain("children");
-		_store.GetContext(Proj).PlanNodes.Any(n => n.Key == "parent" && n.ActiveTo == null).Should().BeTrue();
+		_store.GetContext(Proj).TaskNodes.Any(n => n.Key == "parent" && n.ActiveTo == null).Should().BeTrue();
 	}
 
 	[Fact]
@@ -123,7 +123,7 @@ public sealed class TasksDeleteTests : IDisposable
 
 		r.Result.Applied.Should().BeTrue();
 		r.Result.Removed.Should().BeEquivalentTo("parent", "child");
-		_store.GetContext(Proj).PlanNodes.Any(n => n.ActiveTo == null && n.Board == "b").Should().BeFalse();
+		_store.GetContext(Proj).TaskNodes.Any(n => n.ActiveTo == null && n.Board == "b").Should().BeFalse();
 	}
 
 	[Fact]
@@ -184,7 +184,7 @@ public sealed class TasksDeleteTests : IDisposable
 
 		r.Result.Applied.Should().BeTrue();
 		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
-		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
+		var stuck = _store.GetContext(Proj).TaskNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
 		stuck.Status.Should().Be("Blocked"); // no BlocksGate declared for `simple` -> no auto-unblock (stage2/simple-narrow)
 	}
 
@@ -212,7 +212,7 @@ public sealed class TasksDeleteTests : IDisposable
 
 		r.Result.Applied.Should().BeTrue();
 		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty(); // edge still closes
-		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
+		var stuck = _store.GetContext(Proj).TaskNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
 		stuck.Status.Should().Be("Blocked"); // no BlocksGate on `simple` -> status left as-is
 	}
 
@@ -235,7 +235,7 @@ public sealed class TasksDeleteTests : IDisposable
 
 		r.Result.Applied.Should().BeTrue();
 		(await _relations.ListAsync(Proj, stuckId, "to")).Where(e => e.Kind == "blocks").Should().BeEmpty();
-		var stuck = _store.GetContext(Proj).PlanNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
+		var stuck = _store.GetContext(Proj).TaskNodes.Single(n => n.NodeId == stuckId && n.ActiveTo == null);
 		stuck.Status.Should().Be("InProgress");
 	}
 

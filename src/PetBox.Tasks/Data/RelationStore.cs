@@ -222,7 +222,7 @@ public sealed class RelationStore : IRelationStore
 	// project's file", asked of the same source of truth the FK will consult.
 	static async Task AssertNodeExistsAsync(TasksDb ctx, string projectKey, string nodeId, string param, CancellationToken ct)
 	{
-		if (await ctx.GetTable<PlanNodeId>().AnyAsync(n => n.NodeId == nodeId, ct)) return;
+		if (await ctx.GetTable<TaskNodeId>().AnyAsync(n => n.NodeId == nodeId, ct)) return;
 		throw new ArgumentException(
 			$"{param} '{nodeId}' does not exist in project '{projectKey}' — a relation endpoint must be an existing node " +
 			"(pass a node slug or the NodeId of a node from tasks_upsert/tasks_search)");

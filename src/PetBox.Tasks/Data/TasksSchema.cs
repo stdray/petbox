@@ -7,12 +7,12 @@ namespace PetBox.Tasks.Data;
 //
 // Applies the Core invariants (WAL + busy_timeout) then runs the Tasks-tier
 // FluentMigrator migration set against this board's file. The actual DDL lives in
-// Migrations/ (M001_PlanNodes) so schema changes are versioned, not hand-edited.
+// Migrations/ (M001_TaskNodes) so schema changes are versioned, not hand-edited.
 public static class TasksSchema
 {
 	public static void Ensure(string connectionString)
 	{
 		SqlitePragmas.ApplyWal(connectionString, SqliteTier.Durable);
-		MigrationRunner.Run(connectionString, typeof(Migrations.M001_PlanNodes).Assembly, SqliteTier.Durable);
+		MigrationRunner.Run(connectionString, typeof(Migrations.M001_TaskNodes).Assembly, SqliteTier.Durable);
 	}
 }

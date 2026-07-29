@@ -20,7 +20,7 @@ namespace PetBox.Web.Search;
 // into any UI yet.
 public static class BoardSearchIndexBuilder
 {
-	public static BoardSearchIndex Build(IReadOnlyList<PlanNodeView> nodes)
+	public static BoardSearchIndex Build(IReadOnlyList<TaskNodeView> nodes)
 	{
 		var ids = new List<string>(nodes.Count);
 		var body = new Dictionary<string, List<int>>(StringComparer.Ordinal);

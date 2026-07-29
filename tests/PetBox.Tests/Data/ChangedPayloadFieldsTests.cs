@@ -10,9 +10,9 @@ namespace PetBox.Tests.Data;
 public sealed class ChangedPayloadFieldsTests
 {
 	[Fact]
-	public void PlanNode_NamesExactlyTheMovedFields()
+	public void TaskNode_NamesExactlyTheMovedFields()
 	{
-		var a = new PlanNode { Key = "k", Status = "Pending", Type = "bug", Name = "t", Body = "b", Priority = 0 };
+		var a = new TaskNode { Key = "k", Status = "Pending", Type = "bug", Name = "t", Body = "b", Priority = 0 };
 
 		a.ChangedPayloadFields(a).Should().BeEmpty();
 		a.SamePayload(a).Should().BeTrue();

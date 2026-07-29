@@ -64,7 +64,7 @@ public sealed partial class TasksService : ITasksService
 	readonly ISettingsResolver? _settings;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
-	static readonly PlanNodeChangeValidator ChangeValidator = new();
+	static readonly TaskNodeChangeValidator ChangeValidator = new();
 
 	// MRL truncation dim for the vector index (must match TasksVectorizationJob). The fusion
 	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
@@ -102,7 +102,7 @@ public sealed partial class TasksService : ITasksService
 	Task<IReadOnlyDictionary<string, int>> CountActiveStatusesAsync(string projectKey, string board, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var statuses = ctx.PlanNodes
+		var statuses = ctx.TaskNodes
 			.Where(n => n.Board == board && n.ActiveTo == null)
 			.Select(n => n.Status)
 			.ToList();
@@ -128,7 +128,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			if (instanceName is null && await _methodologyInstances.AnyAsync(projectKey, ct))
 				throw new ArgumentException(
-					$"methodology instance is required — pass methodologyInstance (an instance name, or '{TaskBoardMeta.UtilityWorld}' for the project's utility layer); board_create without one is rejected once the project has any methodology instance");
+					$"methodology instance is required — pass methodologyInstance (an instance key — its slug address, or '{TaskBoardMeta.UtilityWorld}' for the project's utility layer); board_create without one is rejected once the project has any methodology instance");
 		}
 		else
 		{
@@ -354,7 +354,7 @@ public sealed partial class TasksService : ITasksService
 		if (!await _boards.DeleteAsync(projectKey, board, ct)) return false;
 
 		// The board's rows are gone, but its search docs are not: _boards.DeleteAsync bulk-deletes
-		// the PlanNodes rows without the per-node FTS/vector hygiene the upsert path runs, so every
+		// the TaskNodes rows without the per-node FTS/vector hygiene the upsert path runs, so every
 		// search_fts/search_vec doc keyed (Scope=project, Type=board) is now orphaned. Left behind,
 		// those docs keep matching queries and then crash HybridCandidatesAsync (GetAsync on the
 		// vanished board). Purge them board-wide. Vector docs only exist when an embedder was
@@ -537,7 +537,7 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Project the full node view down to an index header, slicing the body to `bodyLen`.
-	static PlanNodeHeader ToHeader(PlanNodeView n, int bodyLen) => new(
+	static TaskNodeHeader ToHeader(TaskNodeView n, int bodyLen) => new(
 		n.Key, n.NodeId, n.ParentNodeId, n.ParentSlug, n.Depth,
 		n.Status, n.Type, n.Title, n.Priority,
 		SliceBody(n.Body, bodyLen), n.Delivery,
@@ -777,8 +777,8 @@ public sealed partial class TasksService : ITasksService
 		// SELECT list, `Body` entirely absent from it when includeBody is false, no CASE expression,
 		// nothing evaluated per row. Every other caller (GetNodeAsync, tasks_search, …) keeps
 		// includeBody's default (true), which selects every column exactly as before this change.
-		var all = await ctx.PlanNodes.Where(n => n.Board == board)
-			.Select(n => new PlanNode
+		var all = await ctx.TaskNodes.Where(n => n.Board == board)
+			.Select(n => new TaskNode
 			{
 				Key = n.Key,
 				Version = n.Version,
@@ -848,7 +848,7 @@ public sealed partial class TasksService : ITasksService
 			.Select(lk => lk.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var deliveryLink = deliveryDef?.Link;
 
-		var nodes = new List<PlanNodeView>();
+		var nodes = new List<TaskNodeView>();
 		foreach (var n in visible)
 		{
 			var fromEdges = n.NodeId.Length > 0 ? (IEnumerable<Relation>)fromByNode[n.NodeId] : [];
@@ -861,7 +861,7 @@ public sealed partial class TasksService : ITasksService
 			var linkedTasks = deliveryLink is not null ? toEdges.Where(e => e.Kind == deliveryLink).Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
 			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
-			nodes.Add(new PlanNodeView(
+			nodes.Add(new TaskNodeView(
 				Key: n.Key,
 				NodeId: n.NodeId,
 				ParentNodeId: parentId,
@@ -894,9 +894,9 @@ public sealed partial class TasksService : ITasksService
 	// board-search-stem-lookup: see ITasksService's own doc comment for why this exists (a
 	// cache/ETag probe that must stay a scalar SQL aggregate, not a node materialization) and why
 	// it composes TWO sources, NOT just plan_nodes.Version. plan_nodes.Version covers
-	// title/body/status/priority/type (PlanNode.SamePayload) AND node deaths (TemporalStore stamps
+	// title/body/status/priority/type (TaskNode.SamePayload) AND node deaths (TemporalStore stamps
 	// a closed row's ActiveTo with the batch's nextVersion, > any prior Version). What it does NOT
-	// cover: a tag-ONLY edit. Tags are not part of PlanNode.SamePayload — adding/removing a tag
+	// cover: a tag-ONLY edit. Tags are not part of TaskNode.SamePayload — adding/removing a tag
 	// (TagStore.SetAsync) writes node_tag directly and never touches plan_nodes at all, so the
 	// node's own Version is UNCHANGED. A probe over plan_nodes.Version alone would therefore serve
 	// a 304 with a stale cached index after a pure tag edit — BoardChangeStampTests.cs
@@ -922,7 +922,7 @@ public sealed partial class TasksService : ITasksService
 		await EnsureBoard(projectKey, board, ct);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 
-		var nodeVersion = await ctx.PlanNodes.Where(n => n.Board == board)
+		var nodeVersion = await ctx.TaskNodes.Where(n => n.Board == board)
 			.Select(n => (long?)n.Version).MaxAsync(ct) ?? 0;
 
 		var tagStamp = await ctx.NodeTags.Where(t => t.Board == board)
@@ -1024,7 +1024,7 @@ public sealed partial class TasksService : ITasksService
 			delivery = rollup.GetValueOrDefault(nodeId);
 		}
 
-		var node = new PlanNodeView(
+		var node = new TaskNodeView(
 			Key: row.Key,
 			NodeId: row.NodeId,
 			ParentNodeId: parentId,
@@ -1327,7 +1327,7 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Resolve `under` (a flat slug on this board) to its nodeId, or null if absent/unset.
-	static string? ResolveUnderNodeId(string? under, List<PlanNode> active)
+	static string? ResolveUnderNodeId(string? under, List<TaskNode> active)
 	{
 		if (string.IsNullOrWhiteSpace(under)) return null;
 		var slug = TaskSlug.Validate(under);
@@ -1362,7 +1362,7 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"groupBy must be tag namespaces ({string.Join("|", allowed)}); got '{ns}'");
 
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
+		var active = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
 		var delivery = deliveryDef is not null
@@ -1378,11 +1378,11 @@ public sealed partial class TasksService : ITasksService
 	// yield nesting groups (SubGroups filled, NodeKeys empty). Each group's delivery rolls up
 	// over all its nodes regardless of depth.
 	static List<TagGroup> ProjectByTags(
-		List<PlanNode> nodes, IReadOnlyList<string> dims, int depth,
+		List<TaskNode> nodes, IReadOnlyList<string> dims, int depth,
 		ILookup<string, string> tagsByNode, IReadOnlyDictionary<string, string>? delivery)
 	{
 		var prefix = dims[depth] + ":";
-		var buckets = new Dictionary<string, List<PlanNode>>(StringComparer.Ordinal);
+		var buckets = new Dictionary<string, List<TaskNode>>(StringComparer.Ordinal);
 		foreach (var n in nodes)
 		{
 			var vals = tagsByNode[n.NodeId].Where(t => t.StartsWith(prefix, StringComparison.Ordinal)).ToList();
@@ -1402,19 +1402,19 @@ public sealed partial class TasksService : ITasksService
 			.ToList();
 	}
 
-	public Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
+	public Task<IReadOnlyList<TaskNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		IReadOnlyList<PlanNode> active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
+		IReadOnlyList<TaskNode> active = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		return Task.FromResult(active);
 	}
 
 	// Hide terminal (closed) nodes unless includeClosed; keep terminal part_of ancestors of
 	// any visible node so the tree stays connected. `underId` restricts to a part_of subtree.
 	// Terminality is per the board's kind (a definition kind classifies by its own vocab).
-	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underId, Dictionary<string, string> parentOf, MethodologyRuntime runtime, string? kindSlug)
+	static List<TaskNode> FilterVisible(List<TaskNode> active, bool includeClosed, string? underId, Dictionary<string, string> parentOf, MethodologyRuntime runtime, string? kindSlug)
 	{
-		IEnumerable<PlanNode> scoped = active;
+		IEnumerable<TaskNode> scoped = active;
 		if (underId is not null)
 			scoped = active.Where(n => TaskSearchFilter.InSubtree(n.NodeId, underId, parentOf));
 		var pool = scoped.ToList();
@@ -1442,11 +1442,11 @@ public sealed partial class TasksService : ITasksService
 	// every active node's full markdown project-wide on EVERY board/node page render, silently
 	// undoing includeBody:false's savings for every OTHER caller of this method; see
 	// tasks-ui-pages-getting-slower / 83fe36df).
-	async Task<IReadOnlyList<PlanNode>> AllActiveProjectNodesAsync(string projectKey, CancellationToken ct)
+	async Task<IReadOnlyList<TaskNode>> AllActiveProjectNodesAsync(string projectKey, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodes.Where(n => n.ActiveTo == null)
-			.Select(n => new PlanNode
+		return await ctx.TaskNodes.Where(n => n.ActiveTo == null)
+			.Select(n => new TaskNode
 			{
 				Board = n.Board,
 				NodeId = n.NodeId,
@@ -1464,7 +1464,7 @@ public sealed partial class TasksService : ITasksService
 	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct) =>
 		BuildNodeIndex(await AllActiveProjectNodesAsync(projectKey, ct), await _boards.ListAsync(projectKey, ct));
 
-	static Dictionary<string, NodeRef> BuildNodeIndex(IReadOnlyList<PlanNode> activeNodes, IReadOnlyList<TaskBoardMeta> boards)
+	static Dictionary<string, NodeRef> BuildNodeIndex(IReadOnlyList<TaskNode> activeNodes, IReadOnlyList<TaskBoardMeta> boards)
 	{
 		var kindOf = boards.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
 		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
@@ -1483,10 +1483,10 @@ public sealed partial class TasksService : ITasksService
 	// revision, every column, in one query. Replaces the old "whole board without Body, then a
 	// separate single-column Body fetch, patched back" dance — that shape only existed because the
 	// node page used to route through the whole-board builder at all.
-	async Task<PlanNode?> GetActiveNodeRowAsync(string projectKey, string nodeId, CancellationToken ct)
+	async Task<TaskNode?> GetActiveNodeRowAsync(string projectKey, string nodeId, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodes.Where(n => n.NodeId == nodeId && n.ActiveTo == null).FirstOrDefaultAsync(ct);
+		return await ctx.TaskNodes.Where(n => n.NodeId == nodeId && n.ActiveTo == null).FirstOrDefaultAsync(ct);
 	}
 
 	// node-page-cost-bounded-by-degree: resolve EXACTLY the node ids a single node's render can
@@ -1506,8 +1506,8 @@ public sealed partial class TasksService : ITasksService
 		for (var i = 0; i < ids.Count; i += ChunkSize)
 		{
 			var chunk = ids.Skip(i).Take(ChunkSize).ToList();
-			var rows = await ctx.PlanNodes.Where(n => n.ActiveTo == null && chunk.Contains(n.NodeId))
-				.Select(n => new PlanNode { Board = n.Board, NodeId = n.NodeId, Key = n.Key, Status = n.Status, Type = n.Type, Name = n.Name })
+			var rows = await ctx.TaskNodes.Where(n => n.ActiveTo == null && chunk.Contains(n.NodeId))
+				.Select(n => new TaskNode { Board = n.Board, NodeId = n.NodeId, Key = n.Key, Status = n.Status, Type = n.Type, Name = n.Name })
 				.ToListAsync(ct);
 			foreach (var n in rows) index[n.NodeId] = new NodeRef(n.Board, "", n.Key, n.Name, n.Status, n.Type);
 		}
@@ -1529,7 +1529,7 @@ public sealed partial class TasksService : ITasksService
 		while (cur is not null && guard++ < 1000)
 		{
 			chain.Add(cur);
-			cur = await ctx.PlanNodes.Where(n => n.Board == board && n.Key == cur)
+			cur = await ctx.TaskNodes.Where(n => n.Board == board && n.Key == cur)
 				.OrderBy(n => n.Version).Select(n => n.PrevKey).FirstOrDefaultAsync(ct);
 		}
 		return chain;
@@ -1540,7 +1540,7 @@ public sealed partial class TasksService : ITasksService
 	async Task<IReadOnlyList<string>> NodeCommitsAsync(string projectKey, string nodeId, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodeCommits.Where(c => c.NodeId == nodeId && c.ValidTo == null)
+		return await ctx.TaskNodeCommits.Where(c => c.NodeId == nodeId && c.ValidTo == null)
 			.Select(c => c.Sha).OrderBy(s => s, StringComparer.Ordinal).ToListAsync(ct);
 	}
 
@@ -1555,7 +1555,7 @@ public sealed partial class TasksService : ITasksService
 	// One query here now: the task_spec edge sweep, plus `parentOf`, which the caller already paid
 	// for.
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(
-		string projectKey, IReadOnlyList<PlanNode> specNodes, IReadOnlyList<PlanNode> allActiveNodes,
+		string projectKey, IReadOnlyList<TaskNode> specNodes, IReadOnlyList<TaskNode> allActiveNodes,
 		Dictionary<string, string> parentOf, MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
 	{
 		var nodes = allActiveNodes.Where(n => n.NodeId.Length > 0)
@@ -1590,7 +1590,7 @@ public sealed partial class TasksService : ITasksService
 		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var kindSlug = meta.Kind;
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+		var prior = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 
 		// Split the batch: a deleted patch carries only Key + Version (a temporal-close, no new
@@ -1624,7 +1624,7 @@ public sealed partial class TasksService : ITasksService
 		var baselineOf = nodes.GroupBy(p => p.Key, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.First().Version, StringComparer.Ordinal);
 		var live = upsertPatches;
-		PlanNode[] desired;
+		TaskNode[] desired;
 		IReadOnlyList<ResolvedLink> resolvedLinks;
 
 		// EVERY row the resolvers and guards need, fetched ONCE for the whole call
@@ -1706,7 +1706,7 @@ public sealed partial class TasksService : ITasksService
 				if (atomic)
 				{
 					// Not applied; the ack still carries the fresh cursor + the caller's own rows.
-					var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), 0,
+					var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<TaskNode>(), 0,
 						partition: n => n.Board == board, ct: ct);
 					delta = delta with { Applied = false, Conflicts = guardConflicts };
 					return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion, prior), runtime.KindName(kindSlug));
@@ -1731,7 +1731,7 @@ public sealed partial class TasksService : ITasksService
 		// (search-index-authority): every FTS index/delete below is mirrored to search_meta, so a
 		// node's facets/aliases commit and roll back exactly with its text row. StatusKind comes from
 		// the runtime authority; `kindSlug` (the board's kind) gives per-board classification.
-		TemporalUpsertResult<PlanNode> r;
+		TemporalUpsertResult<TaskNode> r;
 		using (var temporalSpan = PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_temporal"))
 		{
 			// ONE engine decides the batch outcome: atomicity, the guard rejections, and the
@@ -1826,7 +1826,7 @@ public sealed partial class TasksService : ITasksService
 			// a Blocked task unblocked) land AFTER the main temporal write, so refresh the delta
 			// and cursor once the effects have run — the echo then reflects what this call actually
 			// did, and CurrentVersion is a cursor an immediate DeltaAsync returns nothing for.
-			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<PlanNode>(
+			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<TaskNode>(
 				ctx, 0, partition: n => n.Board == board, ct: ct);
 			r = r with
 			{
@@ -1845,8 +1845,8 @@ public sealed partial class TasksService : ITasksService
 	// e.g. a `supersedes` target obsoleted, an unblocked task). Other writers' history is
 	// never echoed — a full board delta is DeltaAsync's job; CurrentVersion (the cursor) is
 	// untouched.
-	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(
-		TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor, Dictionary<string, PlanNode> prior)
+	static TemporalUpsertResult<TaskNode> ScopeEchoToCall(
+		TemporalUpsertResult<TaskNode> r, IReadOnlyList<NodePatch> patches, long mainCursor, Dictionary<string, TaskNode> prior)
 	{
 		// A write that did NOT apply changed nothing — the echo must be empty so the ack reads
 		// unambiguously as "not applied" (spec upsert-ack-echo-clean). The whole story is in
@@ -1866,21 +1866,21 @@ public sealed partial class TasksService : ITasksService
 			.Concat(patches.Where(p => p.PrevKey is not null).Select(p => p.PrevKey!))
 			.Where(k => !refused.Contains(k))
 			.ToHashSet(StringComparer.Ordinal);
-		bool Own(PlanNode n) => !refused.Contains(n.Key) && (mentioned.Contains(n.Key) || n.Version > mainCursor);
+		bool Own(TaskNode n) => !refused.Contains(n.Key) && (mentioned.Contains(n.Key) || n.Version > mainCursor);
 
 		// Added vs Updated is NOT the generic Created==Updated split here (that heuristic only
 		// means "brand new" against a REAL sinceVersion cursor; this echo re-reads the delta
 		// from a hardcoded 0, so Created==Updated only says "this row has never been revised
 		// EVER" — true for a genuine create, but ALSO true for a node that was mentioned this
 		// call yet is still sitting on its original revision because the edit never touched
-		// the versioned row at all: PlanNode.SamePayload is deliberately blind to links/tags/
-		// commits (they live in separate SCD-2 association tables — see PlanNode.SamePayload's
+		// the versioned row at all: TaskNode.SamePayload is deliberately blind to links/tags/
+		// commits (they live in separate SCD-2 association tables — see TaskNode.SamePayload's
 		// own doc comment), so a links-only edit is a genuine Inserted:0 no-op at the temporal
 		// layer even though the relation store DID write something (tasks-upsert-edit-reported-
 		// as-added). The only question that actually answers "did THIS call create a new
 		// identity" is whether the key had an active row BEFORE the call started — `prior`,
 		// captured at the top of UpsertAsync. A key present in `prior` is being EDITED (with or
-		// without a new PlanNode revision); only a key absent from `prior` is a genuine CREATE.
+		// without a new TaskNode revision); only a key absent from `prior` is a genuine CREATE.
 		// This also restores the invariant added.length <= Inserted: every `prior`-absent Own
 		// key must have gone through Classify's create branch (ToInsert), which is exactly what
 		// Inserted counts; a mentioned no-op key never inflates Added.
@@ -1910,7 +1910,7 @@ public sealed partial class TasksService : ITasksService
 	// call's business. Deleted patches take part as targets (their key is in the batch) — a delete
 	// refused by the children guard therefore also cascades to whatever this call pointed at it.
 	static Dictionary<string, IReadOnlyList<string>> IntraBatchRefs(
-		IReadOnlyList<NodePatch> patches, Dictionary<string, PlanNode> prior)
+		IReadOnlyList<NodePatch> patches, Dictionary<string, TaskNode> prior)
 	{
 		var inBatch = patches.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 		// NodeId -> key, for the batch's own nodes that already exist (a ref may quote either).
@@ -1946,7 +1946,7 @@ public sealed partial class TasksService : ITasksService
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
+		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<TaskNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
 		r = r with
 		{
 			Added = await AttachCommitsAsync(ctx, board, r.Added, ct),
@@ -2045,7 +2045,7 @@ public sealed partial class TasksService : ITasksService
 		IReadOnlyList<string>? effectiveStatusKind;
 		if (query is null)
 		{
-			// LISTING: full PlanNodeView enrichment per board (links/delivery/parent/commits).
+			// LISTING: full TaskNodeView enrichment per board (links/delivery/parent/commits).
 			// MCP listing wire keeps the full row; lean projection would strip fields callers need.
 			// A status filter or explicit keys are an EXPLICIT ask — widen the pool to terminal
 			// nodes first (mirrors GetAsync's own status handling), then criteria keep only what
@@ -2332,7 +2332,7 @@ public sealed partial class TasksService : ITasksService
 				.Select(h => h.Id).Distinct().ToList();
 			var nodeText = slugs.Count == 0
 				? new Dictionary<(string, string), string>()
-				: ctx.PlanNodes
+				: ctx.TaskNodes
 					.Where(n => n.ActiveTo == null && slugs.Contains(n.Key))
 					.Select(n => new { n.Board, n.Key, n.Name, n.Body })
 					.ToList()
@@ -2404,7 +2404,7 @@ public sealed partial class TasksService : ITasksService
 			foreach (var (h, rank) in g)
 			{
 				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);
-				PlanNodeView? node;
+				TaskNodeView? node;
 				if (isComment)
 				{
 					// A comment resolves to its owner in the SAME resolve pool; if the owner is
@@ -2446,7 +2446,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		var hits = new List<TaskSearchHit>(pool.Count);
 		// One lean projection per board, reused across every address on it.
-		var byBoard = new Dictionary<string, Dictionary<string, PlanNodeView>>(StringComparer.Ordinal);
+		var byBoard = new Dictionary<string, Dictionary<string, TaskNodeView>>(StringComparer.Ordinal);
 		for (var i = 0; i < pool.Ordered.Count; i++)
 		{
 			ct.ThrowIfCancellationRequested();
@@ -2457,7 +2457,7 @@ public sealed partial class TasksService : ITasksService
 				// A board dropped since the pool was built leaves orphan addresses — skip the group
 				// rather than throwing, exactly as the fresh resolve path does.
 				bySlug = meta is null
-					? new Dictionary<string, PlanNodeView>(StringComparer.Ordinal)
+					? new Dictionary<string, TaskNodeView>(StringComparer.Ordinal)
 					: (await ProjectBoardLeanOpenAsync(projectKey, addr.Type, meta.Kind, runtime, urlPrefix, keepsTerminalCancel, ct)).BySlug;
 				byBoard[addr.Type] = bySlug;
 			}
@@ -2472,13 +2472,13 @@ public sealed partial class TasksService : ITasksService
 	// from this pool UNLESS includeClosed widened the ask; terminal-OK (accepted/Done) always
 	// stays — it's a success state search-before-rework must reach, not "closed". No
 	// terminal-ancestor keep here (query hits never address pure terminal ancestors via FTS).
-	async Task<(Dictionary<string, PlanNodeView> BySlug, Dictionary<string, PlanNodeView> ByNodeId)>
+	async Task<(Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)>
 		ProjectBoardLeanOpenAsync(
 			string projectKey, string board, string kindSlug, MethodologyRuntime runtime,
 			string? urlPrefix, bool includeClosed, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var open = ctx.PlanNodes
+		var open = ctx.TaskNodes
 			.Where(n => n.Board == board && n.ActiveTo == null)
 			.ToList()
 			.Where(n => includeClosed || !runtime.IsTerminalCancelStatus(kindSlug, n.Status))
@@ -2532,7 +2532,7 @@ public sealed partial class TasksService : ITasksService
 	Dictionary<string, (DateTime Created, DateTime Updated)> NodeTimes(string projectKey)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+		return ctx.TaskNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0)
 			.ToDictionary(n => n.NodeId, n => (n.Created, n.Updated), StringComparer.Ordinal);
 	}
@@ -2544,10 +2544,10 @@ public sealed partial class TasksService : ITasksService
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
 	// (null) inherits the prior value; a non-null value sets it ("" clears it).
-	static PlanNode Merge(NodePatch p, IReadOnlyDictionary<string, PlanNode> prior)
+	static TaskNode Merge(NodePatch p, IReadOnlyDictionary<string, TaskNode> prior)
 	{
 		var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
-		return new PlanNode
+		return new TaskNode
 		{
 			Key = p.Key,
 			Version = p.Version,
@@ -2607,7 +2607,7 @@ public sealed partial class TasksService : ITasksService
 	// The workflow resolves through the runtime: definition-declared kinds from data,
 	// everything else from the built-in presets exactly as before.
 	// `reason` is the call-scoped RequiresReason payload (NodePatch.Reason) — never the body.
-	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior, TasksActor actor, string? reason)
+	static TaskNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, TaskNode node, Dictionary<string, TaskNode> prior, TasksActor actor, string? reason)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
 		var wf = runtime.For(kindSlug, type);
@@ -2649,7 +2649,7 @@ public sealed partial class TasksService : ITasksService
 	// hasReason, in ApplyWorkflow above) — it no longer gates whether a supplied reason gets
 	// recorded. Best-effort post-write (same style as tags/partOf associations).
 	async Task PersistReasonCommentsAsync(
-		string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+		string projectKey, string board, IReadOnlyList<NodePatch> patches, TaskNode[] desired, CancellationToken ct)
 	{
 		foreach (var p in patches)
 		{
@@ -2677,13 +2677,13 @@ public sealed partial class TasksService : ITasksService
 
 	// Declarative immutable-field invariants (NodeId/type once set). The prior row is the
 	// active node at this key, or — for a rename — at its PrevKey; null means a new node.
-	static void ValidateChanges(PlanNode[] desired, Dictionary<string, PlanNode> prior)
+	static void ValidateChanges(TaskNode[] desired, Dictionary<string, TaskNode> prior)
 	{
 		foreach (var n in desired)
 		{
 			var old = prior.GetValueOrDefault(n.Key)
 				?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
-			var result = ChangeValidator.Validate(new EntityChange<PlanNode>(old, n));
+			var result = ChangeValidator.Validate(new EntityChange<TaskNode>(old, n));
 			if (!result.IsValid)
 				throw new ArgumentException(result.Errors[0].ErrorMessage).ForNode(n.Key);
 		}
@@ -2722,7 +2722,7 @@ public sealed partial class TasksService : ITasksService
 	// the SET of patches it is derived from.
 	async Task<MethodologyEngineContext> BuildEngineContextAsync(
 		string projectKey, TaskBoardMeta meta, string board, MethodologyRuntime runtime, string? kindSlug,
-		IReadOnlyList<NodePatch> nodes, Dictionary<string, PlanNode> prior, CancellationToken ct)
+		IReadOnlyList<NodePatch> nodes, Dictionary<string, TaskNode> prior, CancellationToken ct)
 	{
 		var upserts = nodes.Where(p => !p.Deleted).ToList();
 		var deletes = nodes.Where(p => p.Deleted).ToList();
@@ -2771,7 +2771,7 @@ public sealed partial class TasksService : ITasksService
 			if (allChildren.Count > 0)
 			{
 				using var ctx = _boards.NewEnsuredConnection(projectKey);
-				var alive = ctx.PlanNodes.Where(n => n.ActiveTo == null && allChildren.Contains(n.NodeId))
+				var alive = ctx.TaskNodes.Where(n => n.ActiveTo == null && allChildren.Contains(n.NodeId))
 					.Select(n => n.NodeId).ToList().ToHashSet(StringComparer.Ordinal);
 				foreach (var (id, kids) in childrenOf)
 				{
@@ -2796,7 +2796,7 @@ public sealed partial class TasksService : ITasksService
 
 	// The already-active NodeIds these patches address (a rename addresses its source row) —
 	// the only ids an edge of THIS batch's world can already point at.
-	static List<string> PriorNodeIds(IReadOnlyList<NodePatch> patches, Dictionary<string, PlanNode> prior)
+	static List<string> PriorNodeIds(IReadOnlyList<NodePatch> patches, Dictionary<string, TaskNode> prior)
 	{
 		var ids = new List<string>();
 		foreach (var p in patches)
@@ -2811,7 +2811,7 @@ public sealed partial class TasksService : ITasksService
 	// carries its own kind, target NodeId and orientation (WriterIsFrom) — so the once-hardcoded
 	// task_spec/blocks/idea_spec calls collapse into one generic sweep over every declared/builtin
 	// link the batch expressed. Idempotent (RelationStore.CreateAsync returns an identical edge).
-	async Task LinkRefsAsync(string projectKey, PlanNode[] desired, IReadOnlyList<ResolvedLink> links, CancellationToken ct)
+	async Task LinkRefsAsync(string projectKey, TaskNode[] desired, IReadOnlyList<ResolvedLink> links, CancellationToken ct)
 	{
 		if (links.Count == 0) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
@@ -2826,15 +2826,15 @@ public sealed partial class TasksService : ITasksService
 	// Active (ValidTo == null) commits for a whole board, nodeId -> sorted sha list.
 	static async Task<Dictionary<string, List<string>>> BoardCommitsAsync(TasksDb ctx, string board, CancellationToken ct)
 	{
-		var rows = await ctx.PlanNodeCommits.Where(c => c.Board == board && c.ValidTo == null)
+		var rows = await ctx.TaskNodeCommits.Where(c => c.Board == board && c.ValidTo == null)
 			.Select(c => new { c.NodeId, c.Sha }).ToListAsync(ct);
 		return rows.GroupBy(r => r.NodeId, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.Select(x => x.Sha).OrderBy(s => s, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
 	}
 
-	// Populate PlanNode.Commits (the NotColumn enrichment field) for an echo batch so the
+	// Populate TaskNode.Commits (the NotColumn enrichment field) for an echo batch so the
 	// write-ack / delta projection carries a node's attached commits.
-	static async Task<IReadOnlyList<PlanNode>> AttachCommitsAsync(TasksDb ctx, string board, IReadOnlyList<PlanNode> nodes, CancellationToken ct)
+	static async Task<IReadOnlyList<TaskNode>> AttachCommitsAsync(TasksDb ctx, string board, IReadOnlyList<TaskNode> nodes, CancellationToken ct)
 	{
 		if (nodes.Count == 0) return nodes;
 		var byNode = await BoardCommitsAsync(ctx, board, ct);
@@ -2849,7 +2849,7 @@ public sealed partial class TasksService : ITasksService
 		// EXACT match always; PREFIX match on a stored full sha only when the query is a >=7
 		// hex short id (a short query finds the long commit — spec: prefix match on stored value).
 		var prefixable = v.Length >= 7 && v.All(Uri.IsHexDigit);
-		var rows = await ctx.PlanNodeCommits
+		var rows = await ctx.TaskNodeCommits
 			.Where(c => c.ValidTo == null && (c.Sha == v || (prefixable && c.Sha.StartsWith(v))))
 			.Select(c => c.NodeId).ToListAsync(ct);
 		return rows.ToHashSet(StringComparer.Ordinal);
@@ -2866,7 +2866,7 @@ public sealed partial class TasksService : ITasksService
 	// was the hardcoded literal "Blocked".
 	async Task CloseBlocksOnLeaveAsync(
 		string projectKey, MethodologyRuntime runtime, string? kindSlug,
-		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+		TaskNode[] desired, Dictionary<string, TaskNode> prior, CancellationToken ct)
 	{
 		if (runtime.BlocksGate(kindSlug) is not { } gate) return;
 		foreach (var n in desired)
@@ -2878,15 +2878,15 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// PlanNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side
-	// half of the mapping. PlanNode can't cross into PetBox.Tasks.Engine (linq2db-bound); this
+	// TaskNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side
+	// half of the mapping. TaskNode can't cross into PetBox.Tasks.Engine (linq2db-bound); this
 	// projects onto the five fields the guards actually branch on. This is where UpsertAsync's
-	// desired/prior PlanNode rows turn into the engine's input: the guards themselves now live in
+	// desired/prior TaskNode rows turn into the engine's input: the guards themselves now live in
 	// GuardEngine and never see a linq2db type.
-	static NodeState ToNodeState(PlanNode n) => new(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type);
+	static NodeState ToNodeState(TaskNode n) => new(n.Key, n.PrevKey, n.NodeId, n.Status, n.Type);
 
 	// Active node key -> chain of prior keys it was renamed from.
-	static Dictionary<string, List<string>> BuildLineage(List<PlanNode> all)
+	static Dictionary<string, List<string>> BuildLineage(List<TaskNode> all)
 	{
 		var edge = new Dictionary<string, string>(StringComparer.Ordinal);
 		foreach (var g in all.GroupBy(n => n.Key, StringComparer.Ordinal))
@@ -2933,7 +2933,7 @@ public sealed partial class TasksService : ITasksService
 		// Assign a stable NodeId so the node can be linked (relations/specRef) later.
 		await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
+			new TaskNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
 		}, partition: n => n.Board == board, ct: ct);
 		await _boards.TouchAsync(projectKey, board, ct);
 	}
@@ -2962,7 +2962,7 @@ public sealed partial class TasksService : ITasksService
 			// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
 			// The issues board is a `simple` board → its preset vocab (Todo|InProgress|…), not the
 			// intake `reported`. Type `issue` is in the simple type set.
-			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 0 },
+			new TaskNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 0 },
 		}, partition: n => n.Board == board, ct: ct);
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;
@@ -2974,7 +2974,7 @@ public sealed partial class TasksService : ITasksService
 	// UpsertAsync) already committed content + membership transactionally with pre-upsert tags; this
 	// post-commit pass reflects SetTagsAsync into the FTS Tags column. Targeted (not a wholesale
 	// board rebuild) so it only re-writes the changed nodes and never empties the board's index.
-	static async Task RefreshFtsTagsAsync(TasksDb ctx, string projectKey, string board, IReadOnlyList<PlanNode> desired, MethodologyRuntime runtime, CancellationToken ct)
+	static async Task RefreshFtsTagsAsync(TasksDb ctx, string projectKey, string board, IReadOnlyList<TaskNode> desired, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var open = desired.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 		if (open.Count == 0) return;
@@ -3008,7 +3008,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		if (await LexicalVersionAsync(ctx, ct) >= TasksSearchDocs.LexicalProjectionVersion) return;
 
-		var open = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+		var open = ctx.TaskNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 		var tagsByNode = (await ctx.GetTable<NodeTag>().Where(t => t.ValidTo == null)
 				.Select(t => new { t.NodeId, t.Tag }).ToListAsync(ct))
@@ -3055,7 +3055,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		if (await MetaVersionAsync(ctx, ct) >= TasksSearchDocs.MetaProjectionVersion) return;
 
-		var indexed = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+		var indexed = ctx.TaskNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 
 		using var tx = await ctx.BeginTransactionAsync(ct);

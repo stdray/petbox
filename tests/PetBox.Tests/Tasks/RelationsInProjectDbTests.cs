@@ -90,7 +90,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 	{
 		var (a, b) = await TwoNodesAsync();
 		using var db = _factory.GetDb(Proj);
-		db.GetTable<PlanNodeId>().Select(n => n.NodeId).ToList().Should().BeEquivalentTo([a, b]);
+		db.GetTable<TaskNodeId>().Select(n => n.NodeId).ToList().Should().BeEquivalentTo([a, b]);
 	}
 
 	// The hole this closes: NodeRefResolver passes ANY 32-hex value through as a NodeId
@@ -169,7 +169,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 		await _tasks.DeleteBoardAsync(Proj, "work");
 
 		using var db = _factory.GetDb(Proj);
-		db.GetTable<PlanNodeId>().Count().Should().Be(0);
+		db.GetTable<TaskNodeId>().Count().Should().Be(0);
 		db.GetTable<Relation>().Count().Should().Be(0); // cascaded, not dangling
 	}
 
@@ -183,7 +183,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 		await _tasks.UpsertAsync(Proj, "work", [new NodePatch { Key = "beta", Deleted = true }]);
 
 		using var db = _factory.GetDb(Proj);
-		db.GetTable<PlanNodeId>().Select(n => n.NodeId).ToList().Should().Contain(b);
+		db.GetTable<TaskNodeId>().Select(n => n.NodeId).ToList().Should().Contain(b);
 		(await _relations.ListAsync(Proj, a, includeHistory: true)).Should().ContainSingle();
 	}
 

@@ -93,7 +93,7 @@ public sealed class EngineContextStabilityTests : IDisposable
 		// The load-bearing assertion: `parent` is STILL THERE. If the context is ever rebuilt from
 		// the narrowed set, this is what breaks — quietly, with `applied:true` and no conflict at all.
 		var ctx = _store.GetContext(Proj);
-		ctx.PlanNodes.Any(n => n.Key == "parent" && n.ActiveTo == null).Should().BeTrue();
-		ctx.PlanNodes.Any(n => n.Key == "child" && n.ActiveTo == null).Should().BeTrue(); // never orphaned
+		ctx.TaskNodes.Any(n => n.Key == "parent" && n.ActiveTo == null).Should().BeTrue();
+		ctx.TaskNodes.Any(n => n.Key == "child" && n.ActiveTo == null).Should().BeTrue(); // never orphaned
 	}
 }

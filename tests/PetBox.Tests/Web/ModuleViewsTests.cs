@@ -334,7 +334,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// this feature closes) — assert the shared _BoardFilterSort bar renders, each column is its
 	// own reorder scope, and the card carries the full data-* contract ts/board.ts needs to
 	// filter/sort it (status/type/priority/title/created/updated/closed) — the same contract
-	// _PlanNodeCard carries for the tree pane.
+	// _TaskNodeCard carries for the tree pane.
 	[Fact]
 	public async Task TaskBoard_KanbanView_RendersFilterSortBar_WithFullDataAttributesPerCard()
 	{
@@ -533,7 +533,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// board-node-filter / board-sort: outline used to have NO filter/sort panel either. Assert
 	// the shared bar renders, the row list is one reorder scope (data-sort-scope, data-parent-id
 	// so branches — not just leaves — sort correctly), AND — the regression this fix specifically
-	// guards, since a naive data-* copy from _PlanNodeCard would include n.Body — that data-search
+	// guards, since a naive data-* copy from _TaskNodeCard would include n.Body — that data-search
 	// still never leaks the body (board-body-truncate must survive the new attribute).
 	[Fact]
 	public async Task TaskBoard_OutlineView_RendersFilterSortBar_WithoutLeakingBodyIntoDataSearch()
@@ -578,7 +578,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-eager", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "sreq", NodeId = "id-sreq-eager", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -606,7 +606,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-lazy", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "sreq", NodeId = "id-sreq-lazy", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -781,10 +781,10 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			// is part_of edges now, not the key path.
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p1", NodeId = "id-p1", Version = 0, Status = "Pending", Name = "Phase one", Body = "", Priority = 10 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "wlow", NodeId = "id-wlow", Version = 0, Status = "Pending", Name = "Low wave", Body = "", Priority = 900 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "deep", NodeId = "id-deep", Version = 0, Status = "Pending", Name = "Deep task", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p2", NodeId = "id-p2", Version = 0, Status = "Pending", Name = "Phase two", Body = "", Priority = 500 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "p1", NodeId = "id-p1", Version = 0, Status = "Pending", Name = "Phase one", Body = "", Priority = 10 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "wlow", NodeId = "id-wlow", Version = 0, Status = "Pending", Name = "Low wave", Body = "", Priority = 900 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "deep", NodeId = "id-deep", Version = 0, Status = "Pending", Name = "Deep task", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "p2", NodeId = "id-p2", Version = 0, Status = "Pending", Name = "Phase two", Body = "", Priority = 500 },
 			}, partition: n => n.Board == board);
 			await relations.CreateAsync("$system", "part_of", "id-wlow", "id-p1"); // wlow under p1
 			await relations.CreateAsync("$system", "part_of", "id-deep", "id-wlow"); // deep under wlow
@@ -828,8 +828,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "reqa", NodeId = "id-reqa", Version = 0, Status = "defined", Type = "spec", Name = "Req A", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "reqb", NodeId = "id-reqb", Version = 0, Status = "deprecated", Type = "spec", Name = "Req B", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "reqa", NodeId = "id-reqa", Version = 0, Status = "defined", Type = "spec", Name = "Req A", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "reqb", NodeId = "id-reqb", Version = 0, Status = "deprecated", Type = "spec", Name = "Req B", Body = "", Priority = 2 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -923,8 +923,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "live", NodeId = "id-defres-live", Version = 0, Status = "defined", Type = "spec", Name = "Live req", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = "id-defres-dead", Version = 0, Status = "deprecated", Type = "spec", Name = "Dead req", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "live", NodeId = "id-defres-live", Version = 0, Status = "defined", Type = "spec", Name = "Live req", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "dead", NodeId = "id-defres-dead", Version = 0, Status = "deprecated", Type = "spec", Name = "Dead req", Body = "", Priority = 2 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -960,12 +960,12 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = spec, Key = "sdef", NodeId = "id-sdef", Version = 0, Status = "defined", Type = "spec", Name = "Spec defined", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = spec, Key = "sdep", NodeId = "id-sdep", Version = 0, Status = "deprecated", Type = "spec", Name = "Spec deprecated", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.TaskNode { Board = spec, Key = "sdef", NodeId = "id-sdef", Version = 0, Status = "defined", Type = "spec", Name = "Spec defined", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = spec, Key = "sdep", NodeId = "id-sdep", Version = 0, Status = "deprecated", Type = "spec", Name = "Spec deprecated", Body = "", Priority = 2 },
 			}, partition: n => n.Board == spec);
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = work, Key = "wtask", NodeId = "id-wtask", Version = 0, Status = "InProgress", Type = "task", Name = "Work task", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = work, Key = "wtask", NodeId = "id-wtask", Version = 0, Status = "InProgress", Type = "task", Name = "Work task", Body = "", Priority = 1 },
 			}, partition: n => n.Board == work);
 		}
 
@@ -1004,7 +1004,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode
+				new PetBox.Tasks.Data.TaskNode
 				{
 					Board = board, Key = "rv", NodeId = "id-rv", Version = 0, Status = "Pending",
 					Name = "Reader node",
@@ -1041,7 +1041,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode
+				new PetBox.Tasks.Data.TaskNode
 				{
 					Board = board, Key = "cm", NodeId = "id-cm", Version = 0, Status = "Pending",
 					Name = "Comment host", Body = "", Priority = 1,
@@ -1109,8 +1109,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var ctx = boards.GetContext("$system");
 		await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PetBox.Tasks.Data.PlanNode { Board = board, Key = "t1", NodeId = "id-t1", Version = 0, Status = "new", Type = "ticket", Name = "Open ticket", Body = "", Priority = 1 },
-			new PetBox.Tasks.Data.PlanNode { Board = board, Key = "t2", NodeId = "id-t2", Version = 0, Status = "closed", Type = "ticket", Name = "Closed ticket", Body = "", Priority = 2 },
+			new PetBox.Tasks.Data.TaskNode { Board = board, Key = "t1", NodeId = "id-t1", Version = 0, Status = "new", Type = "ticket", Name = "Open ticket", Body = "", Priority = 1 },
+			new PetBox.Tasks.Data.TaskNode { Board = board, Key = "t2", NodeId = "id-t2", Version = 0, Status = "closed", Type = "ticket", Name = "Closed ticket", Body = "", Priority = 2 },
 		}, partition: n => n.Board == board);
 	}
 
@@ -1189,9 +1189,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "live", NodeId = "id-live", Version = 0, Status = "triage", Type = "note", Name = "Live note", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "done", NodeId = "id-done", Version = 0, Status = "shipped", Type = "note", Name = "Shipped note", Body = "", Priority = 2 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = "id-dead", Version = 0, Status = "archived", Type = "note", Name = "Archived note", Body = "", Priority = 3 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "live", NodeId = "id-live", Version = 0, Status = "triage", Type = "note", Name = "Live note", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "done", NodeId = "id-done", Version = 0, Status = "shipped", Type = "note", Name = "Shipped note", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "dead", NodeId = "id-dead", Version = 0, Status = "archived", Type = "note", Name = "Archived note", Body = "", Priority = 3 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -1270,8 +1270,8 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "alive", NodeId = $"id-{board}-alive", Version = 0, Status = openStatus, Type = type, Name = "Alive node", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = $"id-{board}-dead", Version = 0, Status = cancelStatus, Type = type, Name = "Dead node", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "alive", NodeId = $"id-{board}-alive", Version = 0, Status = openStatus, Type = type, Name = "Alive node", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.TaskNode { Board = board, Key = "dead", NodeId = $"id-{board}-dead", Version = 0, Status = cancelStatus, Type = type, Name = "Dead node", Body = "", Priority = 2 },
 			}, partition: n => n.Board == board);
 		}
 

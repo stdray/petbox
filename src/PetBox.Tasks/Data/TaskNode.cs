@@ -8,7 +8,7 @@ namespace PetBox.Tasks.Data;
 // SLUG (validated against the board's kind/type by WorkflowEngine, not by this
 // record). `Type` is the task type (feature|bug on work boards; empty elsewhere).
 [Table("plan_nodes")]
-public sealed record PlanNode : TemporalRow
+public sealed record TaskNode : TemporalRow
 {
 	// Partition: which board this node belongs to. All boards of a project share one
 	// plan_nodes table (one file per project), scoped by Board — so Key uniqueness and
@@ -32,13 +32,13 @@ public sealed record PlanNode : TemporalRow
 	[NotColumn] public IReadOnlyList<string> Commits { get; init; } = [];
 
 	public override bool SamePayload(TemporalRow other) =>
-		other is PlanNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority;
+		other is TaskNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority;
 
 	// Wire-facing names (title, not Name) — these land in a Stale conflict's
 	// ChangedFields. Mirrors SamePayload field-for-field.
 	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
 	{
-		if (other is not PlanNode p) return [];
+		if (other is not TaskNode p) return [];
 		var fields = new List<string>();
 		if (p.Status != Status) fields.Add("status");
 		if (p.Type != Type) fields.Add("type");

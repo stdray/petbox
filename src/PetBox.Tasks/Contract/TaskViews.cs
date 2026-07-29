@@ -11,17 +11,17 @@ namespace PetBox.Tasks.Contract;
 // means the target no longer exists.
 public sealed record LinkDto(string NodeId, string? Board, string? Slug, string? Title, string Status);
 
-// A plan node enriched with its links, enforced tags, and (on a spec board) computed
+// A task node enriched with its links, enforced tags, and (on a spec board) computed
 // delivery roll-up. Hierarchy is the part_of edge: ParentNodeId/ParentSlug name the
 // parent (null = root); Depth is its computed distance from a root.
-public sealed record PlanNodeView(
+public sealed record TaskNodeView(
 	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
 	string Status, string Type, string Title, string Body, IReadOnlyList<string> Commits, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags,
 	string? Url = null,
 	// The active revision's own Created/Updated (board-sort-impl): free on this read — GetAsync
-	// already loads the PlanNode row these come from — so the board's client-side sort toggle
+	// already loads the TaskNode row these come from — so the board's client-side sort toggle
 	// (created|updated, alongside priority|title) has real data instead of a NodeId proxy.
 	DateTime? CreatedAt = null, DateTime? UpdatedAt = null,
 	// The symmetric counterpart of BlockedBy (kanban-blocked-signal review finding): outgoing
@@ -29,13 +29,13 @@ public sealed record PlanNodeView(
 	// nodes holding it up). Same relation kind, opposite direction — see GetAsync.
 	IReadOnlyList<LinkDto>? Blocks = null);
 
-// A board's active plan nodes (flat list; the tree is the part_of projection via
+// A board's active task nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is
 // the enrichment core: the Razor board renders it directly and the unified tasks read
 // (SearchNodesAsync → tasks_search) composes per-board views from it; the wire budget
 // markers live on the unified result, not here.
 public sealed record PlanBoardView(
-	long CurrentVersion, string Kind, string? WiredBoard, IReadOnlyList<PlanNodeView> Nodes);
+	long CurrentVersion, string Kind, string? WiredBoard, IReadOnlyList<TaskNodeView> Nodes);
 
 // board-search-stem-lookup: a SCALAR "has this board changed" probe for a cache/ETag check —
 // see ITasksService.GetBoardChangeStampAsync for why it's TWO numbers, not one. Two boards with
@@ -56,7 +56,7 @@ public sealed record NodeRefResolution(string Board, string Key, string NodeId, 
 // supersedes/superseded-by), one group per non-empty kind×direction. Powers the per-node
 // detail page, which addresses a node by id, not board.
 public sealed record NodeDetailView(
-	string Board, string Kind, PlanNodeView Node, IReadOnlyList<NodeCrumb> Ancestors,
+	string Board, string Kind, TaskNodeView Node, IReadOnlyList<NodeCrumb> Ancestors,
 	IReadOnlyList<NodeRelationGroup> Relations);
 
 // A lightweight node pointer (no body/links) — used for breadcrumb ancestors.
@@ -66,7 +66,7 @@ public sealed record NodeCrumb(string NodeId, string Slug, string Title);
 // `Label` is the human name for the direction ("children" = part_of reverse, "blocks" = blocks
 // forward, "superseded by" = supersedes reverse, …); each LinkDto in `Links` carries the target's
 // live status (so the detail page shows a status chip per row). Emitted only when non-empty, in a
-// fixed reading order. Unlike PlanNodeView's typed link fields (spec/blockedBy/…) this is the
+// fixed reading order. Unlike TaskNodeView's typed link fields (spec/blockedBy/…) this is the
 // COMPLETE two-way view, so the detail page renders the full graph around a node in one place.
 public sealed record NodeRelationGroup(string Label, IReadOnlyList<LinkDto> Links);
 
@@ -74,7 +74,7 @@ public sealed record NodeRelationGroup(string Label, IReadOnlyList<LinkDto> Link
 // compact-echo opt-in (spec echo-compact-by-default): null by default (the serializer
 // omits it) so a write-echo carries only key/status/title; a sliced body is filled only
 // when the caller passes bodyLen > 0.
-public sealed record PlanNodeDelta(
+public sealed record TaskNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string? Body,
 	IReadOnlyList<string> Commits, long Priority, long Version, string? Url = null);
 
@@ -102,13 +102,13 @@ public sealed record UpsertConflictView(
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
-	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed,
+	IReadOnlyList<TaskNodeDelta> Added, IReadOnlyList<TaskNodeDelta> Updated, IReadOnlyList<string> Removed,
 	IReadOnlyList<string> AutoResolved, string? Warning = null);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an
 // adapter to serialize. The service owns the logic; the adapter owns the wire shape.
-public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, string Kind);
+public sealed record UpsertOutcome(TemporalUpsertResult<TaskNode> Result, string Kind);
 
 // The workflow surface of one board (tasks_workflow): the resolved kind name plus one
 // block per DISTINCT state machine — preset kinds group identical FSMs (feature=bug=
@@ -131,12 +131,12 @@ public sealed record TagGroup(
 // sets nesting; within each level groups are ordered by key, "(none)" last.
 public sealed record GroupedBoardView(IReadOnlyList<string> GroupBy, string Kind, IReadOnlyList<TagGroup> Groups);
 
-// A compact INDEX projection of a plan node for the methodology surface: identity,
+// A compact INDEX projection of a task node for the methodology surface: identity,
 // part_of navigation, status/type/title, tags (always), links and the computed delivery
 // roll-up — but NO `Body` by default (sliced to the requested length, else null). The full
 // untruncated body is fetched per board/subtree via GetAsync. This is the index altitude
 // (spec read-index-altitude): orientation without paying for every node's body.
-public sealed record PlanNodeHeader(
+public sealed record TaskNodeHeader(
 	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
 	string Status, string Type, string Title, long Priority,
 	string? Body, string? Delivery,
@@ -145,12 +145,12 @@ public sealed record PlanNodeHeader(
 	IReadOnlyList<string> Tags, string? Url = null);
 
 // One unified-read hit: the enriched node view plus its owning board (a read may span
-// boards, and PlanNodeView itself doesn't carry the board). Query mode fills Score (the fused
+// boards, and TaskNodeView itself doesn't carry the board). Query mode fills Score (the fused
 // RRF relevance) and Retriever provenance ("lexical"|"semantic"|"exact"); listing mode leaves
 // both null (no relevance ran). MatchedIn = "comment" when this node surfaced because a COMMENT
 // under it matched the query (tasks-search-comments) — the hit points at the owner node; null
 // when the node itself matched (name/body/tags).
-public sealed record TaskSearchHit(string Board, PlanNodeView Node, double? Score = null, string? Retriever = null, string? MatchedIn = null);
+public sealed record TaskSearchHit(string Board, TaskNodeView Node, double? Score = null, string? Retriever = null, string? MatchedIn = null);
 
 // The sort axis of the unified tasks read. Priority = the deterministic listing default
 // (priority then key); Relevance = the fused hybrid order, valid ONLY with a query (it is
@@ -233,7 +233,7 @@ public sealed record TaskSearchResult(
 // cut, `Truncated` is true and `Omitted` says how many rows fell off (null = nothing cut,
 // so a board that fits serializes exactly as before).
 public sealed record MethodologyBoard(
-	string Kind, string? Name, IReadOnlyDictionary<string, int> Counts, IReadOnlyList<PlanNodeHeader> Nodes,
+	string Kind, string? Name, IReadOnlyDictionary<string, int> Counts, IReadOnlyList<TaskNodeHeader> Nodes,
 	bool? Truncated = null, int? Omitted = null);
 
 // The methodology quartet as one surface: intake → ideas → spec → work (the pipeline

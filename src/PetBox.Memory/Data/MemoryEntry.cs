@@ -21,7 +21,7 @@ public enum MemoryType
 public sealed record MemoryEntry : TemporalRow
 {
 	// Partition: which store this entry belongs to. All stores of a project share one
-	// memory_entries table (one file per project — mirrors PlanNode.Board), scoped by Store —
+	// memory_entries table (one file per project — mirrors TaskNode.Board), scoped by Store —
 	// so Key uniqueness and the version cursor are per-store. Set by the service; carried
 	// across revisions by AsRevision. NOT part of SamePayload (partition identity, never an edit).
 	[Column, NotNull] public string Store { get; init; } = string.Empty;

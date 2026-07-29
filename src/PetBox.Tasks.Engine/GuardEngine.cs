@@ -4,7 +4,7 @@ namespace PetBox.Tasks.Workflow;
 // guard and resolver here used to live in TasksService with its own DB reads spliced into the
 // middle of its judgement; each was cut in two — the FETCH stayed in the service (which now does
 // it once, into MethodologyEngineContext), the JUDGEMENT moved here. Zero IO, zero linq2db: the
-// service maps PlanNode -> NodeState (condition 4) at the boundary.
+// service maps TaskNode -> NodeState (condition 4) at the boundary.
 //
 // The verdict contract meets the service's EXCEPTION seam at exactly one point: Decide runs the
 // stages in the historical order and STOPS at the first refusal, and the service re-raises that

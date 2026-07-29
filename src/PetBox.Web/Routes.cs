@@ -73,7 +73,7 @@ public static class Routes
 	// /tasks/{board}/{slug} (TaskBoardNodeBySlug) — what the UI links to and include_url emits.
 	// The opaque /tasks/node/{nodeId} form (TaskBoardNode) stays resolvable as a stable alias
 	// (the slug changes on rename, the nodeId never does). Both hit the TaskBoardNode page
-	// (named so it doesn't shadow the PlanNode data record); `node` is a reserved board name so
+	// (named so it doesn't shadow the TaskNode data record); `node` is a reserved board name so
 	// the literal-segment route can't collide with a board called "node".
 	public static string TaskBoardNodeBySlug(string ws, string key, string board, string slug) => $"{ProjectTaskBoard(ws, key, board)}/{slug}";
 	public static string TaskBoardNode(string ws, string key, string nodeId) => $"{ProjectTasks(ws, key)}/node/{nodeId}";

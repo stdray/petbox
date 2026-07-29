@@ -3,7 +3,7 @@ using PetBox.Core.Data;
 
 namespace PetBox.Tasks.Data.Migrations;
 
-// Enforced tags for plan nodes (spec-flat-tags). Two tables in the per-project tasks file (next to
+// Enforced tags for task nodes (spec-flat-tags). Two tables in the per-project tasks file (next to
 // plan_nodes — the FK and any later FTS denorm both need same-file):
 //   tag_vocab  — the controlled vocabulary; a tag is "namespace:value", lowercased.
 //   node_tag   — SCD-2 edges binding a node's stable NodeId to a tag (ValidTo null = active),

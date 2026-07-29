@@ -12,7 +12,7 @@ namespace PetBox.Tests.Tasks;
 // TaskBoard.cshtml.cs's OnGetSearchIndexAsync uses to decide "has this board changed" without
 // materializing every node. Its whole reason to compose TWO sources (plan_nodes.Version AND a
 // node_tag mutation timestamp), rather than just Version, is this: a tag is NOT part of
-// PlanNode.SamePayload, so TagStore.SetAsync (called from a tags-only edit) writes node_tag
+// TaskNode.SamePayload, so TagStore.SetAsync (called from a tags-only edit) writes node_tag
 // directly and never mints a new plan_nodes revision — the node's own Version is untouched. A
 // probe over Version alone would then serve a stale cached search-index lookup (304, old body)
 // after a pure tag edit. This is exactly the review finding an earlier draft of the probe missed
@@ -69,7 +69,7 @@ public sealed class BoardChangeStampTests : IDisposable
 		var afterAdd = await _tasks.GetBoardChangeStampAsync(Proj, Board);
 
 		afterAdd.NodeVersion.Should().Be(before.NodeVersion,
-			"a tags-only edit must NOT bump the node's own Version — tags aren't part of PlanNode.SamePayload");
+			"a tags-only edit must NOT bump the node's own Version — tags aren't part of TaskNode.SamePayload");
 		afterAdd.TagStamp.Should().NotBe(before.TagStamp);
 		(afterAdd.TagStamp > before.TagStamp || before.TagStamp is null).Should().BeTrue("the stamp must move forward, never backward or stay put");
 	}

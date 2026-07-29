@@ -21,7 +21,7 @@ public sealed record SourceDelta(
 	long CurrentVersion);
 
 // Yields the change-delta of one entity store since a version cursor. The adapter over a concrete
-// store (memory entries, plan nodes, session log) is the consumer's; this keeps the worker generic.
+// store (memory entries, task nodes, session log) is the consumer's; this keeps the worker generic.
 public interface ISearchSource
 {
 	Task<SourceDelta> DeltaAsync(long sinceVersion, CancellationToken ct = default);

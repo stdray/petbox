@@ -89,7 +89,7 @@ public static class DeployTools
 	[Description("Lists deployments (desired + last actual state) across the WHOLE fleet, optionally filtered by node and/or service — NOT by project: there is no `projectKey` parameter, and the result spans every project's deployments a deploy:read key can see. Requires deploy:read.")]
 	public static async Task<DeployDeploymentsResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
-		[Description("Filter by node id (the deploy-fleet host, not a plan node).")] string? hostId = null,
+		[Description("Filter by node id (the deploy-fleet host, not a task node).")] string? hostId = null,
 		[Description("Filter by service.")] string? service = null,
 		CancellationToken ct = default)
 	{
@@ -107,7 +107,7 @@ public static class DeployTools
 		// McpProjectDefaultFilter keys the key's-default injection on exactly that name — an odd one
 		// out would silently sit outside the coverage.
 		[Description("Project whose config resolves into the container's env — resolution input ONLY, not an access boundary: any project name is accepted regardless of the calling key's own project claim.")] string projectKey,
-		[Description("Target node id (the deploy-fleet host, not a plan node).")] string hostId,
+		[Description("Target node id (the deploy-fleet host, not a task node).")] string hostId,
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
 		[Description("Desired running (true) or stopped (false). Default true.")] bool running = true,
@@ -169,7 +169,7 @@ public static class DeployTools
 	public static async Task<DeployDeploymentResult> MoveAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id,
-		[Description("Destination node id (the deploy-fleet host, not a plan node).")] string toHostId,
+		[Description("Destination node id (the deploy-fleet host, not a task node).")] string toHostId,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);

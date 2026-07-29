@@ -93,7 +93,7 @@ public sealed class MethodologyDefinitionService
 		// holds what the author wants, so there is nothing to protect — the guard is about payload,
 		// not version arithmetic), while a future baseline still conflicts (wrong-scope quote).
 		var sameDefinition = current is not null && JsonSerializer.Serialize(current.Definition, DefinitionJson) == row.Json;
-		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		var rewrites = new List<(string Board, List<TaskNode> Nodes)>();
 		var affected = new List<TaskBoardMeta>();
 		if (!sameDefinition)
 		{

@@ -102,7 +102,7 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 		return ("help", board);
 	}
 
-	async Task<PlanNodeView> NodeOnBoard(string board, string key)
+	async Task<TaskNodeView> NodeOnBoard(string board, string key)
 	{
 		var detail = await _tasks.GetNodeOnBoardAsync(Proj, board, key);
 		return detail.Node;

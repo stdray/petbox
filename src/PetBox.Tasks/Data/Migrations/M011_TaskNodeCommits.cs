@@ -21,7 +21,7 @@ namespace PetBox.Tasks.Data.Migrations;
 // (INSERT..SELECT — DML, and with SQLite's lower()/trim() in it) and the PARTIAL indexes have no
 // typed form, and those go through the NAMED, guarded SqliteDdl helpers.
 [Migration(11, "plan_node_commits (SCD-2) + seed from CommitRef + drop plan_nodes.CommitRef")]
-public sealed class M011_PlanNodeCommits : SqliteMigration
+public sealed class M011_TaskNodeCommits : SqliteMigration
 {
 	public override void Up()
 	{

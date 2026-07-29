@@ -222,7 +222,7 @@ public sealed class CrossScopeTaskSearchService(
 		Type: h.Node.Type,
 		Url: h.Node.Url ?? "",
 		ExactMatch: exactMatch,
-		// board-view-table reuse: h.Node is already the fully-enriched PlanNodeView (same read
+		// board-view-table reuse: h.Node is already the fully-enriched TaskNodeView (same read
 		// TaskBoard's own table view projects), so these ride along for free — no extra query.
 		Priority: h.Node.Priority,
 		Tags: h.Node.Tags,

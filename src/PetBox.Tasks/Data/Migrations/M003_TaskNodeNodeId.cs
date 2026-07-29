@@ -9,7 +9,7 @@ namespace PetBox.Tasks.Data.Migrations;
 //
 // ALTER TABLE ADD COLUMN is expressible in the typed API — see M002.
 [Migration(3, "Add stable NodeId column to plan_nodes")]
-public sealed class M003_PlanNodeNodeId : Migration
+public sealed class M003_TaskNodeNodeId : Migration
 {
 	public override void Up() =>
 		Alter.Table("plan_nodes")

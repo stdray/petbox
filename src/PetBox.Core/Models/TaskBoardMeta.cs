@@ -3,7 +3,7 @@ using LinqToDB.Mapping;
 namespace PetBox.Core.Models;
 
 // Metadata row for a single named task board. PK is (ProjectKey, Name). The
-// actual plan nodes live in `data/tasks/{ProjectKey}/{Name}.db` (temporal table);
+// actual task nodes live in `data/tasks/{ProjectKey}/{Name}.db` (temporal table);
 // this table tracks which boards exist. Mirrors LogMeta — explicit creation, no
 // auto-vivify.
 [Table("TaskBoards")]

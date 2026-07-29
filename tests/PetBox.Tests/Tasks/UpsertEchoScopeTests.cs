@@ -100,7 +100,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	}
 
 	// Regression for tasks-upsert-edit-reported-as-added: a PATCH that touches ONLY a relation
-	// (BlockedBy here — Links exercises the same PlanNode.SamePayload blind spot but needs a
+	// (BlockedBy here — Links exercises the same TaskNode.SamePayload blind spot but needs a
 	// declared methodology link kind + a spec-board target to set up; BlockedBy is the builtin,
 	// direction-less structural edge and reproduces the identical no-op-at-the-row-level shape
 	// with zero extra fixtures) is a genuine Inserted:0 no-op at the temporal layer — Board="b"
@@ -120,7 +120,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 		var nVersionBefore = created.Result.Added.Single(x => x.Key == "n").Version;
 
 		// Same title/body/status/type/priority as the original "n" (Node() is deterministic by
-		// key) — only BlockedBy is new, so PlanNode.SamePayload is true and TemporalStore takes
+		// key) — only BlockedBy is new, so TaskNode.SamePayload is true and TemporalStore takes
 		// the no-op branch: nothing inserted, nothing closed.
 		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", blockedBy: blockerId, version: 1) });
 

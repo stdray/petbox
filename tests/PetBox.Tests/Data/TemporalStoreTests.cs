@@ -6,7 +6,7 @@ using PetBox.Core.Data.Temporal;
 
 namespace PetBox.Tests.Data;
 
-// Exercises the generic temporal-upsert engine through a sample "plan node"
+// Exercises the generic temporal-upsert engine through a sample "task node"
 // payload (enum Status + Body + optional CommitRef). Ports the LINQPad
 // concurrency scenarios into the repo with a temp-file SQLite DB.
 public sealed class TemporalStoreTests : IDisposable

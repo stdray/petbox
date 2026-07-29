@@ -122,7 +122,7 @@ public sealed class WorkDeferredStatusMigratorTests : IDisposable
 	async Task SeedProjectBoard(string? methodologyInstance = null) =>
 		await _boards.CreateAsync(Proj, "work", description: null, kind: "work", methodologyInstance: methodologyInstance);
 
-	// Hand-writes an active PlanNode directly (bypassing the FSM-guarded upsert path — the
+	// Hand-writes an active TaskNode directly (bypassing the FSM-guarded upsert path — the
 	// point is to plant a node in a status the CURRENT definition may not even have an edge
 	// into, exactly the "found a straggler" scenario the migrator exists to fix).
 	async Task<string> SeedNode(string board, string key, string status, string type = "feature")
@@ -131,16 +131,16 @@ public sealed class WorkDeferredStatusMigratorTests : IDisposable
 		using var ctx = _factory.NewEnsuredConnection(Proj);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = key, Version = 0, Board = board, NodeId = nodeId, Status = status, Type = type, Name = key, Body = "" },
+			new TaskNode { Key = key, Version = 0, Board = board, NodeId = nodeId, Status = status, Type = type, Name = key, Body = "" },
 		}, partition: n => n.Board == board);
 		r.Applied.Should().BeTrue();
 		return nodeId;
 	}
 
-	async Task<PlanNode> ReadNode(string board, string key)
+	async Task<TaskNode> ReadNode(string board, string key)
 	{
 		using var ctx = _factory.NewEnsuredConnection(Proj);
-		var rows = await ctx.GetTable<PlanNode>().Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToListAsync();
+		var rows = await ctx.GetTable<TaskNode>().Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToListAsync();
 		return rows.Single();
 	}
 
