@@ -40,7 +40,7 @@ public static class AgentDefTools
 	}
 
 	[McpServerTool(Name = "agent_def_get", Title = "Get an agent definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(AgentDefGetResult))]
-	[Description("Return ONE portable agent-definition document by key (slug). Found=false on miss (not an error). Document carries roles with tier/requiredCapabilities/spawn/escalation/notes — NO model fields (model binding is local). Requires agents:read.")]
+	[Description("Return ONE portable agent-definition document by key (slug). An addressed read: a key matching no definition is a clear ERROR naming the key and the project, not a `found:false` success — the same contract as tasks_node_get and the methodology get verbs. Use agent_def_list to see what exists. Document carries roles with tier/requiredCapabilities/spawn/escalation/notes — NO model fields (model binding is local). Requires agents:read.")]
 	public static async Task<AgentDefGetResult> GetAsync(
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey,
@@ -49,10 +49,14 @@ public static class AgentDefTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsRead);
 		var view = await svc.GetAsync(projectKey, key, ct);
+		// ONE not-found contract on this surface (mcp-surface-naming-cleanup wave 5). This verb was
+		// the last holdout answering a miss with found:false while every sibling addressed read threw,
+		// and the field it set was the only reason `found` existed on the result at all. A caller that
+		// forgets to test it reads a null-everything document as a real one — the failure mode the
+		// error-shaped contract removes outright.
 		if (view is null)
-			return new AgentDefGetResult(Found: false, Key: key);
+			throw new ArgumentException($"agent definition '{key}' not found in project '{projectKey}' (agent_def_list shows what is stored)");
 		return new AgentDefGetResult(
-			Found: true,
 			Key: view.Key,
 			Name: view.Definition.Name,
 			Roles: view.Definition.Roles.Select(MapRole).ToList(),

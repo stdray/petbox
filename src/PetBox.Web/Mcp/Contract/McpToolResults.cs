@@ -701,12 +701,20 @@ public sealed record MethodologyTemplateUpsertResult(string Key, long Version, b
 // tasks_methodology_template_delete ack (Deleted mirrors Changed for the delete verb).
 public sealed record MethodologyTemplateDeleteResult(string Key, bool Deleted, long Version);
 
-// tasks_methodology_template_get answer. Found=true → key/source + the template document
-// (kinds/workflows). An addressed read: a miss (non-builtin key with no stored template and
-// not the dual-read legacy key) THROWS instead of returning Found=false — same contract as
-// tasks_node_get. Source ∈ stored|builtin|definition.
+// tasks_methodology_template_get answer: key/source + the template document (kinds/workflows).
+// An addressed read: a miss (non-builtin key with no stored template and not the dual-read legacy
+// key) THROWS — same contract as tasks_node_get. Source ∈ stored|builtin|definition.
+//
+// NO `found` FIELD (mcp-surface-naming-cleanup wave 5). It used to be here and was ALWAYS true —
+// the only branch that could have set it false throws instead. A field that cannot vary teaches a
+// caller to test it, and the test can only ever pass; worse, it advertised a second not-found
+// dialect the surface does not actually speak. One contract: an addressed read either returns the
+// thing or errors.
+//
+// `Key` is the template's SLUG ADDRESS; `Name` is the document's human-readable prose name. Both
+// stay, because here they really are two different things — this pair is the reason the instance
+// verbs' `name` had to become `key` (one word was carrying both jobs across the family).
 public sealed record MethodologyTemplateGetResult(
-	bool Found,
 	string? Key = null,
 	string? Source = null,
 	string? Name = null,
@@ -726,10 +734,18 @@ public sealed record MethodologyTemplateListItemView(
 
 // ---- methodology instances (methodology-instance-core) --------------------------------
 
+// A member board of an instance. `Name` here is the BOARD's name and stays `name`: a board is
+// addressed by the `board` parameter everywhere on this surface, never by `key`, so renaming it
+// would invent a third spelling for a concept that already has one.
 public sealed record MethodologyInstanceBoardView(string Name, string Kind, bool Closed, string? WiredBoard = null);
 
+// An instance row/view. `Key` is the instance's SLUG ADDRESS — the exact string every methodology
+// verb now takes as its `key` parameter (mcp-surface-naming-cleanup wave 5: it was `name`, which
+// on the very same surface ALSO meant a document's display prose — one word, two concepts).
+// `DefinitionName` is that display prose and keeps the `name` word, because that is all it is.
+// Read `key`, write `key`: the round trip is the point of the rename.
 public sealed record MethodologyInstanceViewResult(
-	string Name,
+	string Key,
 	bool Closed,
 	long Version,
 	DateTime Created,
@@ -741,32 +757,34 @@ public sealed record MethodologyInstanceViewResult(
 	IReadOnlyDictionary<string, int> Counts);
 
 public sealed record MethodologyInstanceCreateResult(
-	string Name, bool Changed, bool Closed, long Version,
+	string Key, bool Changed, bool Closed, long Version,
 	IReadOnlyList<MethodologyInstanceBoardView> Boards);
 
 public sealed record MethodologyInstanceCloseResult(
-	string Name, bool Changed, bool Closed, long Version,
+	string Key, bool Changed, bool Closed, long Version,
 	IReadOnlyList<MethodologyInstanceBoardView> Boards);
 
 public sealed record MethodologyInstanceListResult(IReadOnlyList<MethodologyInstanceViewResult> Instances);
 
+// tasks_methodology_get answer. No `found` field (always-true, see MethodologyTemplateGetResult)
+// and no top-level key echo — the instance itself carries `key`, and a second copy beside it was
+// never populated anyway.
 public sealed record MethodologyInstanceGetResult(
-	bool Found,
-	string? Name = null,
 	MethodologyInstanceViewResult? Instance = null);
 
 // tasks_methodology_active_get / tasks_methodology_set_active (methodology-active-instance):
-// the project's explicit "which instance is active" pointer. Name is null when unset.
-public sealed record MethodologyActiveGetResult(string? Name, long Version);
+// the project's explicit "which instance is active" pointer. `Key` is the pointed-at instance's
+// slug address (feed it back to any methodology verb's `key`); null when no pointer is set.
+public sealed record MethodologyActiveGetResult(string? Key, long Version);
 
-public sealed record MethodologyActiveSetResult(string? Name, bool Changed, long Version);
+public sealed record MethodologyActiveSetResult(string? Key, bool Changed, long Version);
 
-// tasks_methodology_rules_get: Found=true → name + full rules document (same kinds/workflows
-// shape as template_get) + version baseline for rules_upsert. An addressed read: a miss THROWS
-// instead of returning Found=false — same contract as tasks_node_get.
+// tasks_methodology_rules_get: the instance's `key` + full rules document (same kinds/workflows
+// shape as template_get) + version baseline for rules_upsert. An addressed read: a miss THROWS —
+// same contract as tasks_node_get, and no `found` field (see MethodologyTemplateGetResult).
+// `Key` addresses; `DefinitionName` is the document's display prose.
 public sealed record MethodologyInstanceRulesGetResult(
-	bool Found,
-	string? Name = null,
+	string? Key = null,
 	bool? Closed = null,
 	string? DefinitionName = null,
 	IReadOnlyList<MethodologyKindView>? Kinds = null,
@@ -780,15 +798,14 @@ public sealed record MethodologyInstanceRulesGetResult(
 // tasks_methodology_rules_upsert ack: version cursor, whether a revision was written, and
 // how many live member-board nodes the migration rewrote.
 public sealed record MethodologyInstanceRulesUpsertResult(
-	string Name, long Version, bool Changed, int Migrated = 0);
+	string Key, long Version, bool Changed, int Migrated = 0);
 
-// tasks_methodology_utility_get: Found=true → the project's utility-layer document (same
-// kinds/workflows shape as rules_get/template_get) + version baseline for utility_upsert.
-// An addressed read: THROWS when the project has never defined one, instead of returning
-// Found=false — same contract as tasks_node_get. No Name/Closed fields — the utility layer
-// is a project-level singleton, not a named, closeable instance.
+// tasks_methodology_utility_get: the project's utility-layer document (same kinds/workflows shape
+// as rules_get/template_get) + version baseline for utility_upsert. An addressed read: THROWS when
+// the project has never defined one — same contract as tasks_node_get, and no `found` field (see
+// MethodologyTemplateGetResult). No Key/Closed fields either — the utility layer is a
+// project-level singleton, not an addressable, closeable instance.
 public sealed record MethodologyUtilityGetResult(
-	bool Found,
 	string? DefinitionName = null,
 	IReadOnlyList<MethodologyKindView>? Kinds = null,
 	long? Version = null,
@@ -806,7 +823,7 @@ public sealed record MethodologyUtilityUpsertResult(long Version, bool Changed, 
 // AFTER the write (a fresh baseline for rules_upsert, same field as rules_upsert's own ack —
 // this verb still writes through the whole document internally, it just never asks the
 // caller to supply it or its version).
-public sealed record MethodologySetDescriptionResult(string Name, string Primitive, long Version);
+public sealed record MethodologySetDescriptionResult(string Key, string Primitive, long Version);
 
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
@@ -918,8 +935,12 @@ public sealed record ToolDescribeResult(
 public sealed record AgentDefListResult(IReadOnlyList<AgentDefListItemView> Definitions);
 public sealed record AgentDefListItemView(string Key, string Name, long Version, DateTime Updated);
 
+// agent_def_get answer. NO `found` field (mcp-surface-naming-cleanup wave 5): this verb used to be
+// the ONE addressed read on the surface that answered a miss with found:false while every other one
+// — tasks_node_get, tasks_methodology_template_get/_rules_get/_utility_get, the instance get —
+// threw. Two dialects for one situation is a thing every caller has to learn twice and one of them
+// gets wrong; the miss is now an error here too, naming the key and the project.
 public sealed record AgentDefGetResult(
-	bool Found,
 	string? Key = null,
 	string? Name = null,
 	IReadOnlyList<AgentDefRoleView>? Roles = null,

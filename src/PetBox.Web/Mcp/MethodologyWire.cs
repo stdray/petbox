@@ -67,7 +67,6 @@ static class MethodologyWire
 	public static MethodologyTemplateGetResult ProjectTemplate(
 		string key, string source, MethodologyDefinition def, long version, DateTime? created, DateTime? updated) =>
 		new(
-			Found: true,
 			Key: key,
 			Source: source,
 			Name: def.Name,

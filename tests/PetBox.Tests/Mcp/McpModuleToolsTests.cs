@@ -574,7 +574,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http(TasksAndMethodology);
 		var ack = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple");
-		ack.Name.Should().Be("inst");
+		ack.Key.Should().Be("inst");
 		ack.Boards.Should().NotBeEmpty();
 	}
 

@@ -504,6 +504,18 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	public async Task RetiredParameterTable_MatchesTheLiveSchemas()
 	{
 		var visible = (await _fx.Mcp.ListToolsAsync()).Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+
+		// THE SKIP IS THE HAZARD. `continue` below is what lets this fixture cover the tools it
+		// hosts without failing on the ones it does not — but it also means a whole family's
+		// entries can go unchecked in SILENCE if the family stops being visible here. The eight
+		// methodology verbs whose `name` became `key` (wave 5) live in THIS fixture's feature set
+		// (Features:Tasks), so their absence would be a regression, not a legitimate skip. Assert
+		// it, rather than trusting the loop to have looked at them.
+		foreach (var tool in McpRetiredParameters.Tools.Where(t => t.StartsWith("tasks_methodology_", StringComparison.Ordinal)))
+			visible.Should().Contain(tool,
+				$"{tool} carries retired-parameter entries this fixture is responsible for checking — "
+				+ "if it is no longer hosted here, the entries silently stop being verified");
+
 		foreach (var tool in McpRetiredParameters.Tools)
 		{
 			if (!visible.Contains(tool)) continue;
@@ -532,6 +544,134 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 					$"{tool} still declares '{retiredName}' — the table says it was removed");
 			}
 		}
+	}
+
+	// ── wave 5: methodology instances are addressed by `key`, never by `name` ─────────────────
+	//
+	// The eight instance verbs took `name` while the TEMPLATE half of the same family already took
+	// `key` for the identical concept — and `name` was simultaneously the word for a document's
+	// DISPLAY prose (template_list returns both a `key` and a `name`). One word, two concepts, one
+	// family. Every one of the eight is pinned by name here: this is the acceptance the retirement
+	// stands on, and a verb quietly left on the old spelling would be invisible otherwise.
+	[Theory]
+	[InlineData("tasks_methodology_create")]
+	[InlineData("tasks_methodology_get")]
+	[InlineData("tasks_methodology_close")]
+	[InlineData("tasks_methodology_set_active")]
+	[InlineData("tasks_methodology_rules_get")]
+	[InlineData("tasks_methodology_rules_upsert")]
+	[InlineData("tasks_methodology_set_description")]
+	[InlineData("tasks_methodology_guide")]
+	public async Task RetiredParameter_MethodologyName_IsReportedAsRemoved_WithKey(string tool)
+	{
+		// The filter runs BEFORE argument binding, so the call needs no other valid argument to
+		// reach the refusal — which is exactly the property being pinned: the old spelling can
+		// never be silently dropped on its way to a half-bound call.
+		var result = await (await Tool(_fx.Mcp, tool)).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["name"] = "unkp-some-instance",
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("REMOVED: 'name' -> use 'key'");
+	}
+
+	// The positive half, and the point of the whole rename: the slug a READ verb hands back in
+	// `key` is accepted verbatim by a WRITE verb's `key`. Before this wave the read said `name` and
+	// there was nowhere to put it back — the round trip is what makes the surface learnable from
+	// its own output instead of from documentation.
+	[Fact]
+	public async Task MethodologyInstance_KeyBinds_AndTheSlugReadBackAsKey_IsAcceptedAsKey()
+	{
+		const string inst = "unkp-inst";
+
+		var created = await (await Tool(_fx.Mcp, "tasks_methodology_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["key"] = inst,
+			["source"] = "builtin",
+			["sourceKey"] = "simple",
+		});
+		created.IsError.Should().NotBe(true, Text(created));
+		created.StructuredContent?.GetProperty("key").GetString().Should().Be(inst);
+
+		// READ 1: the listing's row identity.
+		var listed = await (await Tool(_fx.Mcp, "tasks_methodology_list")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+		});
+		var fromList = listed.StructuredContent?.GetProperty("instances").EnumerateArray()
+			.Select(i => i.GetProperty("key").GetString()).ToList();
+		fromList.Should().Contain(inst);
+
+		// WRITE: that same string, straight back into a write verb's `key`.
+		var activated = await (await Tool(_fx.Mcp, "tasks_methodology_set_active")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["key"] = inst,
+		});
+		activated.IsError.Should().NotBe(true, Text(activated));
+		activated.StructuredContent?.GetProperty("key").GetString().Should().Be(inst);
+
+		// READ 2: the pointer read hands the same slug back under the same name.
+		var active = await (await Tool(_fx.Mcp, "tasks_methodology_active_get")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+		});
+		active.StructuredContent?.GetProperty("key").GetString().Should().Be(inst);
+
+		// READ 3: the rules document, addressed by that slug, echoes it as `key` — while the
+		// document's human-readable prose stays under `definitionName`. Two fields, because after
+		// this wave they are honestly two concepts.
+		var rules = await (await Tool(_fx.Mcp, "tasks_methodology_rules_get")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["key"] = inst,
+		});
+		rules.IsError.Should().NotBe(true, Text(rules));
+		rules.StructuredContent?.GetProperty("key").GetString().Should().Be(inst);
+	}
+
+	// ── wave 5, task 2: ONE contract for a missed addressed read ──────────────────────────────
+	//
+	// A key that addresses nothing is an ERROR, never an empty success. (agent_def_get was the one
+	// verb that answered found:false instead; it is pinned in McpOutputSchemaConformanceTests,
+	// whose fixture is the one that hosts the agent_def_* family.)
+	[Theory]
+	[InlineData("tasks_methodology_get")]
+	[InlineData("tasks_methodology_rules_get")]
+	[InlineData("tasks_methodology_template_get")]
+	public async Task AddressedMethodologyRead_Miss_IsAnError_NotAnEmptySuccess(string tool)
+	{
+		var result = await (await Tool(_fx.Mcp, tool)).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["key"] = "unkp-no-such-thing",
+		});
+
+		result.IsError.Should().Be(true, Text(result));
+		var text = Text(result);
+		// The refusal has to say WHAT was not found and WHERE it looked — "not found" alone leaves
+		// a caller unable to tell a typo from a wrong project.
+		text.Should().Contain("unkp-no-such-thing").And.Contain(_fx.ProjectKey);
+	}
+
+	// And the dead field is GONE from the schema. `found` on these results could only ever be true
+	// — the branch that would have set it false throws — so it taught callers to write a test that
+	// can never fail, and advertised a second not-found dialect the surface does not speak.
+	[Theory]
+	[InlineData("tasks_methodology_get")]
+	[InlineData("tasks_methodology_rules_get")]
+	[InlineData("tasks_methodology_template_get")]
+	[InlineData("tasks_methodology_utility_get")]
+	public async Task AddressedMethodologyRead_OutputSchema_HasNoDeadFoundField(string tool)
+	{
+		var output = (await Tool(_fx.Mcp, tool)).ProtocolTool.OutputSchema;
+		output.Should().NotBeNull($"{tool} advertises a structured output schema");
+		var fields = output!.Value.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList();
+
+		fields.Should().NotContain("found", "an always-true field is a test a caller can only ever pass");
 	}
 
 	// tasks_search's schema must not carry the retired boolean either — the filter's rejection above

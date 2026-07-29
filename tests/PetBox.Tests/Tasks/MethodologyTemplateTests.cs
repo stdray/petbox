@@ -207,7 +207,6 @@ public sealed class MethodologyTemplateTests : IDisposable
 		list.Templates.Select(t => t.Key).Should().Equal("quartet", "classic", "simple");
 
 		var get = await TasksTools.MethodologyTemplateGetAsync(http, flags, _tasks, Proj, "simple");
-		get.Found.Should().BeTrue();
 		get.Source.Should().Be("builtin");
 		get.Name.Should().Be("simple");
 		get.Kinds.Should().NotBeNull().And.NotBeEmpty();

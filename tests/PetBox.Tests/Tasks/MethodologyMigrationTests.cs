@@ -56,11 +56,11 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 	// Live rules edit (with optional migration) on the helpdesk instance.
 	Task<CallToolResult> DefUpsert(object definition, long version = 0, object? migration = null) =>
 		Call("tasks_methodology_rules_upsert", migration is null
-			? new { projectKey = ProjectKey, name = Inst, definition, version }
-			: new { projectKey = ProjectKey, name = Inst, definition, version, migration });
+			? new { projectKey = ProjectKey, key = Inst, definition, version }
+			: new { projectKey = ProjectKey, key = Inst, definition, version, migration });
 
 	Task<CallToolResult> DefGet() =>
-		Call("tasks_methodology_rules_get", new { projectKey = ProjectKey, name = Inst });
+		Call("tasks_methodology_rules_get", new { projectKey = ProjectKey, key = Inst });
 
 	async Task<long> RulesVersion()
 	{
@@ -73,7 +73,7 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 	{
 		var up = await Call("tasks_methodology_template_upsert", new { projectKey = ProjectKey, key = Tmpl, definition, version = 0 });
 		IsErr(up).Should().BeFalse(Text(up));
-		var cr = await Call("tasks_methodology_create", new { projectKey = ProjectKey, name = Inst, source = "template", sourceKey = Tmpl });
+		var cr = await Call("tasks_methodology_create", new { projectKey = ProjectKey, key = Inst, source = "template", sourceKey = Tmpl });
 		IsErr(cr).Should().BeFalse(Text(cr));
 	}
 
@@ -341,7 +341,7 @@ public sealed class MethodologyMigrationTests : IClassFixture<MethodologyMigrati
 	public async Task FirstRules_OverridingPresetKind_GuardsLiveNodes()
 	{
 		// Start from builtin simple (board named after instance).
-		var cr = await Call("tasks_methodology_create", new { projectKey = ProjectKey, name = Inst, source = "builtin", sourceKey = "simple" });
+		var cr = await Call("tasks_methodology_create", new { projectKey = ProjectKey, key = Inst, source = "builtin", sourceKey = "simple" });
 		IsErr(cr).Should().BeFalse(Text(cr));
 		IsErr(await Upsert(Inst,
 			new { key = "a", title = "A", body = "x" },

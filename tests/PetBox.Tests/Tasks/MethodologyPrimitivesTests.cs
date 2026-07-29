@@ -406,8 +406,6 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		IsErr(up).Should().BeFalse(Text(up));
 
 		var got = Parse(await Call("tasks_methodology_template_get", new { projectKey = ProjectKey, key = Tmpl }));
-		got.GetProperty("found").GetBoolean().Should().BeTrue();
-
 		var kind = got.GetProperty("kinds").EnumerateArray().Single();
 		var constraint = kind.GetProperty("linkConstraints").EnumerateArray().Single();
 		constraint.GetProperty("type").GetString().Should().Be("incident");

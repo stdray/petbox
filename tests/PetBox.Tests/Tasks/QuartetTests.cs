@@ -49,7 +49,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write,methodology:write");
 		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
-		en.Name.Should().Be("quartet");
+		en.Key.Should().Be("quartet");
 		en.Changed.Should().BeTrue();
 		// Member boards ordered by name (stable index), not pipeline-kind order.
 		en.Boards.Select(b => b.Kind)
@@ -83,9 +83,10 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write,methodology:write");
 		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "classic", "builtin", "classic");
-		en.Name.Should().Be("classic");
+		en.Key.Should().Be("classic");
 		var reported = en.Boards.Should().ContainSingle().Subject;
 		reported.Kind.Should().Be("classic");
+		// The BOARD keeps `name` — a board is addressed by `board`, never by `key`.
 		reported.Name.Should().Be("classic");
 
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
@@ -131,7 +132,6 @@ public sealed class QuartetTests : IDisposable
 		var http = Http("tasks:read,tasks:write,methodology:write");
 
 		var render = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "quartet");
-		render.Found.Should().BeTrue();
 		render.Source.Should().Be("builtin");
 		render.Version.Should().Be(0);
 		render.Created.Should().BeNull();
@@ -144,7 +144,6 @@ public sealed class QuartetTests : IDisposable
 		ack.Changed.Should().BeTrue();
 
 		var stored = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "quartet-copy");
-		stored.Found.Should().BeTrue();
 		stored.Source.Should().Be("stored");
 		stored.Name.Should().Be("quartet");
 		stored.Version.Should().BeGreaterThan(0);

@@ -77,6 +77,51 @@ static class McpRetiredParameters
 		{
 			["name"] = "migrationName",
 		},
+		// tasks_methodology_* INSTANCE verbs: the instance's slug ADDRESS was called `name` while the
+		// TEMPLATE half of the very same family already called the identical concept `key`
+		// (template_upsert/_get/_delete/_snapshot). Worse than an inconsistency: `name` was doing two
+		// jobs at once here — the slug you address a resource by, and the human display prose of a
+		// document (template_list returns BOTH a `key` and a `name`; a definition's `name` is
+		// ordinary prose). One word, two concepts, inside one family. After this wave `key` is the
+		// slug address everywhere in tasks_methodology_* and `name` is display prose only — and the
+		// same rename landed on the RESPONSE side in the same wave, so a slug read out of `key` goes
+		// straight back into `key` (mcp-surface-naming-cleanup wave 5).
+		["tasks_methodology_create"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_get"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_close"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_set_active"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_rules_get"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_rules_upsert"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		["tasks_methodology_set_description"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
+		// The guide's `name` was OPTIONAL, which makes its retirement the one that most needed this
+		// entry: a stale caller passing `name:"quartet"` would not have been told it had asked for
+		// nothing — it would have got the active-pointer guide for a DIFFERENT instance and had no
+		// way to notice.
+		["tasks_methodology_guide"] = new(StringComparer.Ordinal)
+		{
+			["name"] = "key",
+		},
 	};
 
 	// The replacement for a retired name on this tool, or null when the name was never ours.

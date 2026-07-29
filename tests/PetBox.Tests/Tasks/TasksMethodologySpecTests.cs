@@ -157,7 +157,7 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 	[Fact]
 	public async Task SpecNode_LinkedTasks_ListsWorkTaskLinkedViaSpecRef_OnQuartetDefinitionResolvedBoards()
 	{
-		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "spquartet", source = "builtin", sourceKey = "quartet" });
+		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, key = "spquartet", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
 		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "login");

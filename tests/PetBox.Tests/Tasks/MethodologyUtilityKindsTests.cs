@@ -211,7 +211,6 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 		upserted.Changed.Should().BeTrue();
 
 		var got = await TasksTools.MethodologyUtilityGetAsync(http, flags, _tasks, Proj);
-		got.Found.Should().BeTrue();
 		got.Kinds!.Should().ContainSingle(k => k.Kind == "wiki");
 
 		await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "builtin", "quartet");
