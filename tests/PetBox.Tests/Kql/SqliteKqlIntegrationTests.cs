@@ -85,19 +85,22 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	static LogEntryRecord ToRecord(LogEntryCandidate c) =>
 		LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate));
 
-	async Task<IReadOnlyList<string>> RunAsync(string kql)
+	// resharper-clt-step3-defect-shaped (AsyncMethodWithoutAwait): both helpers ran fully
+	// synchronously (KqlTransformer/ToList have no async path here) while wearing `async` for no
+	// reason — Task.FromResult keeps the same awaitable signature every one of the ~50 callers uses.
+	Task<IReadOnlyList<string>> RunAsync(string kql)
 	{
 		var code = KustoCode.Parse(kql);
 		var query = KqlTransformer.Apply(_logDb.LogEntries, code);
 		var list = query.ToList();
-		return list.Select(r => r.Message).ToList();
+		return Task.FromResult<IReadOnlyList<string>>(list.Select(r => r.Message).ToList());
 	}
 
-	async Task<IReadOnlyList<string>> RunAtAsync(string kql, TimeProvider clock)
+	Task<IReadOnlyList<string>> RunAtAsync(string kql, TimeProvider clock)
 	{
 		var code = KustoCode.Parse(kql);
 		var query = KqlTransformer.Apply(_logDb.LogEntries, code, clock);
-		return query.ToList().Select(r => r.Message).ToList();
+		return Task.FromResult<IReadOnlyList<string>>(query.ToList().Select(r => r.Message).ToList());
 	}
 
 	sealed class FixedClock(DateTime utcNow) : TimeProvider

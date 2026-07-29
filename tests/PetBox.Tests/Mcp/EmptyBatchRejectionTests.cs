@@ -265,8 +265,10 @@ public sealed class EmptyBatchRejectionTests : IClassFixture<EmptyBatchRejection
 			? typeProp.GetString() == want
 			: typeProp.ValueKind == JsonValueKind.Array && typeProp.EnumerateArray().Any(v => v.GetString() == want);
 
+	// resharper-clt-step3-defect-shaped (AsyncMethodWithoutAwait): no await anywhere in this
+	// test — it only walks in-memory tool schemas — so `async Task` was pure ceremony.
 	[Fact]
-	public async Task GuardedBatchVerbSurface_HasNoUndiscoveredSixthVerb()
+	public void GuardedBatchVerbSurface_HasNoUndiscoveredSixthVerb()
 	{
 		var candidates = new List<string>();
 		foreach (var tool in _fx.Tools.Values)

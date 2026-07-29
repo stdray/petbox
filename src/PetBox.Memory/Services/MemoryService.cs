@@ -838,7 +838,11 @@ public sealed class MemoryService : IMemoryService
 	public async Task<IReadOnlyList<MemoryEntry>> ListActiveEntriesAsync(string projectKey, string store, CancellationToken ct = default)
 	{
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
-		return ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null).OrderBy(e => e.Key).ToList();
+		// resharper-clt-step3-defect-shaped (AsyncMethodWithoutAwait): this was a synchronous
+		// `.ToList()` dressed up as async — it neither yielded nor honored `ct`, so a caller passing
+		// a real token (MemoryQuarantineGcJob's background scan, MemoryApi's canon read) got a
+		// blocking call with a decorative cancellation parameter. `ToListAsync(ct)` makes both real.
+		return await ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null).OrderBy(e => e.Key).ToListAsync(ct);
 	}
 
 	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,
