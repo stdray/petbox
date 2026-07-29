@@ -236,34 +236,21 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 
 	// ── mcp-surface-naming-cleanup wave 2: db_*/log_*/data_schema_apply's bare `name` retired ──
 	//
-	// UnknownParameterFilterTests carries the general drift guard and the REMOVED-text pattern
-	// this mirrors, but its fixture's host never turns on Features:Data/Features:Logging, so
-	// db_*/log_*/data_schema_apply are not registered there at all. This fixture (EntityToolsFixture)
-	// does enable both, so the same two checks — the retired name gone / the replacement present in
-	// the live schema, and a call using the retired name refused with `REMOVED: 'x' -> use 'y'` —
-	// live here instead for exactly these six.
+	// UnknownParameterFilterTests carries the general shape of this, but its fixture's host never
+	// turns on Features:Data/Features:Logging, so db_*/log_*/data_schema_apply are not registered
+	// there at all. This fixture (EntityToolsFixture) does enable both, so the six point checks live
+	// here instead.
+	//
+	// WHAT IS PINNED (drop-retired-parameter-hints): the bare `name` is REFUSED, and the refusal
+	// carries the accepted vocabulary — which necessarily includes the replacement, because the list
+	// is read off the live input schema. The hand-written table that used to append a sentence naming
+	// each old name's successor is gone, and with it the drift guard that existed only to keep that
+	// table honest; the assertions below cover the same ground without a second contract surface,
+	// because a tool that still took `name` would return a SUCCESS here, and a tool that had lost
+	// `dbName` would not list it.
 
 	[Fact]
-	public async Task RetiredParameterTable_MatchesTheLiveSchemas_ForDataAndLogTools()
-	{
-		string[] tools = ["db_create", "db_delete", "log_create", "log_update", "log_delete", "data_schema_apply"];
-		foreach (var tool in tools)
-		{
-			var schema = (await ToolAsync(tool)).ProtocolTool.InputSchema.GetProperty("properties");
-			var live = schema.EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
-
-			foreach (var (retiredName, replacement) in McpRetiredParameters.ForTool(tool))
-			{
-				live.Should().Contain(replacement,
-					$"{tool} advertises '{replacement}' as the successor of '{retiredName}' — it must exist");
-				live.Should().NotContain(retiredName,
-					$"{tool} still declares '{retiredName}' — the table says it was removed");
-			}
-		}
-	}
-
-	[Fact]
-	public async Task DbCreate_OldNameParameter_IsRejected_AndPointsAtDbName()
+	public async Task DbCreate_OldNameParameter_IsRejected_AndListsDbName()
 	{
 		var result = await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
 		{
@@ -271,11 +258,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["name"] = "shouldnotcreate",
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'dbName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("dbName");
 	}
 
 	[Fact]
-	public async Task DbDelete_OldNameParameter_IsRejected_AndPointsAtDbName()
+	public async Task DbDelete_OldNameParameter_IsRejected_AndListsDbName()
 	{
 		var result = await (await ToolAsync("db_delete")).CallAsync(new Dictionary<string, object?>
 		{
@@ -283,11 +270,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["name"] = "whatever",
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'dbName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("dbName");
 	}
 
 	[Fact]
-	public async Task LogCreate_OldNameParameter_IsRejected_AndPointsAtLogName()
+	public async Task LogCreate_OldNameParameter_IsRejected_AndListsLogName()
 	{
 		var result = await (await ToolAsync("log_create")).CallAsync(new Dictionary<string, object?>
 		{
@@ -295,11 +282,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["name"] = "shouldnotcreate",
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("logName");
 	}
 
 	[Fact]
-	public async Task LogUpdate_OldNameParameter_IsRejected_AndPointsAtLogName()
+	public async Task LogUpdate_OldNameParameter_IsRejected_AndListsLogName()
 	{
 		var result = await (await ToolAsync("log_update")).CallAsync(new Dictionary<string, object?>
 		{
@@ -308,11 +295,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["retentionDays"] = 7,
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("logName");
 	}
 
 	[Fact]
-	public async Task LogDelete_OldNameParameter_IsRejected_AndPointsAtLogName()
+	public async Task LogDelete_OldNameParameter_IsRejected_AndListsLogName()
 	{
 		var result = await (await ToolAsync("log_delete")).CallAsync(new Dictionary<string, object?>
 		{
@@ -320,11 +307,11 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["name"] = "whatever",
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'logName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("logName");
 	}
 
 	[Fact]
-	public async Task DataSchemaApply_OldNameParameter_IsRejected_AndPointsAtMigrationName()
+	public async Task DataSchemaApply_OldNameParameter_IsRejected_AndListsMigrationName()
 	{
 		var result = await (await ToolAsync("data_schema_apply")).CallAsync(new Dictionary<string, object?>
 		{
@@ -334,7 +321,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 			["sql"] = "SELECT 1",
 		});
 		result.IsError.Should().Be(true);
-		ErrorText(result).Should().Contain("REMOVED: 'name' -> use 'migrationName'");
+		ErrorText(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("migrationName");
 	}
 
 	// ── work/mcp-surface-naming-cleanup wave 3b: data_schema_apply's Failed/Conflict stop riding
@@ -556,8 +543,9 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 
 	// Same reasoning as UnknownParameterFilterTests.Text: PetBoxJsonEncoder.Relaxed keeps the
-	// apostrophes in "REMOVED: 'name' -> use 'dbName'" wire-escaped ('), so pinning that exact
-	// punctuation needs the decoded error.message, not the raw envelope text.
+	// apostrophes the unknown-parameter refusal quotes its names with ("Unrecognized: 'name'")
+	// wire-escaped ('), so pinning that exact punctuation needs the decoded error.message, not
+	// the raw envelope text.
 	static string ErrorText(ModelContextProtocol.Protocol.CallToolResult r)
 	{
 		var raw = Text(r);

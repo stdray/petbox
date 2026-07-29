@@ -229,7 +229,7 @@ public sealed class EmptyBatchRejectionTests : IClassFixture<EmptyBatchRejection
 
 	// ── the sentinel: a future 6th batch-write verb must not silently skip this rule ────────────
 	//
-	// Hand-maintained registry, same pattern as McpRetiredParameters/the conformance-battery
+	// Hand-maintained registry, same pattern as the conformance-battery
 	// Excluded map: every tool ending in _upsert/_create with a top-level array-of-objects
 	// parameter is a "batch write verb" candidate. Not gated on JSON-Schema `required` —
 	// relations_create's `items` is schema-optional (single-form kind/from/to is the sibling
