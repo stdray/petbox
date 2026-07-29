@@ -296,8 +296,14 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	// through ResolveNodeRefAsync and resolves a SLUG or a NodeId, so a name ending in NodeId
 	// promises half of what it takes — and the batch form already called the same thing `from`.
 	// The single form now carries the same two names, so the old spelling is retired here too.
+	//
+	// drop-retired-parameter-hints: what is pinned is the REFUSAL, not the sentence that used to name
+	// the successor. Both old spellings must be named, and the live vocabulary listed — `fromNodeId`
+	// happens to reach the READ-ONLY branch (relations_* really does emit it on the response, see
+	// McpToolInputs' relations header), and that is fine: the caller is told the name is not accepted
+	// on a write and shown what is.
 	[Fact]
-	public async Task RelationsCreate_SingleForm_FromNodeId_IsRejected_AndPointsAtFrom()
+	public async Task RelationsCreate_SingleForm_FromNodeId_IsRejected_AndListsTheAcceptedNames()
 	{
 		var result = await (await Tool(_fx.Mcp, "relations_create")).CallAsync(new Dictionary<string, object?>
 		{
@@ -309,8 +315,8 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 		result.IsError.Should().Be(true);
 		var text = Text(result);
-		text.Should().Contain("REMOVED: 'fromNodeId' -> use 'from'");
-		text.Should().Contain("'toNodeId' -> use 'to'");
+		text.Should().Contain("'fromNodeId'").And.Contain("'toNodeId'");
+		text.Should().Contain("Accepted parameters").And.Contain("from").And.Contain("to");
 	}
 
 	// The other side of that line, and the point of the whole rename: `from`/`to` DO bind, and a
@@ -327,7 +333,7 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 			["to"] = "unkp-no-such-node-either",
 		});
 
-		Text(result).Should().NotContain("Unknown parameter").And.NotContain("REMOVED");
+		Text(result).Should().NotContain("Unknown parameter");
 	}
 
 	// Task 2: `key` is now REQUIRED in the published schema, not merely in the prose. While the `l1`
@@ -425,9 +431,15 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 			.Should().Be(1, "an offending name must be named exactly once");
 	}
 
-	// (b) A RETIRED name is the first branch: named, with its successor, not merely "unknown".
+	// (b) A RETIRED name still ERRORS, and the refusal still leads: it names the offending field with
+	// its `nodes[].` scope prefix and lists the fields the item shape does accept — `key` among them.
+	//
+	// drop-retired-parameter-hints CHANGED THE ASSERTION, not the coverage. This test used to pin the
+	// extra sentence that named `l1`'s successor; the hand-written table that produced it is gone, and
+	// what remains — and what the retirement actually stands on — is that `l1` is REJECTED rather than
+	// silently dropped, with the live vocabulary in the same answer.
 	[Fact]
-	public async Task RetiredAlias_IsReportedAsRemoved_WithItsReplacement()
+	public async Task RetiredAlias_L1_InBatchItem_IsRejected_AndListsTheAcceptedFields()
 	{
 		await (await Tool(_fx.Mcp, "tasks_board_create")).CallAsync(new Dictionary<string, object?>
 		{
@@ -448,15 +460,18 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 		result.IsError.Should().Be(true);
 		var text = Text(result);
-		text.Should().Contain("REMOVED: 'nodes[].l1' -> use 'key'");
-		// A retired name is NOT reported as a response field, even though `key` is in the read output
-		// too — the retired branch is checked first because "use 'key'" is the more specific fix.
-		text.Should().NotContain("READ-ONLY response field").And.NotContain("Unrecognized");
+		// The scope prefix is what makes it actionable inside a batch — `l1` alone would not say which
+		// of the item's fields to go and fix.
+		text.Should().Contain("'nodes[].l1'");
+		text.Should().Contain("Accepted parameters").And.Contain("key");
+		// `l1` was never a response field, so it takes the ordinary unrecognized treatment.
+		text.Should().Contain("Unrecognized").And.NotContain("READ-ONLY response field");
 	}
 
-	// The same first branch for the top-level retired boolean.
+	// The same refusal for the top-level retired boolean — a WHOLE-RESULT-SET difference if it were
+	// ever dropped silently (`includeClosed:true` meant "every status kind").
 	[Fact]
-	public async Task RetiredAlias_IncludeClosed_IsReportedAsRemoved_WithStatusKind()
+	public async Task RetiredAlias_IncludeClosed_IsRejected_AndListsStatusKind()
 	{
 		var result = await (await Tool(_fx.Mcp, "tasks_search")).CallAsync(new Dictionary<string, object?>
 		{
@@ -466,7 +481,8 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 		});
 
 		result.IsError.Should().Be(true);
-		Text(result).Should().Contain("REMOVED: 'includeClosed' -> use 'statusKind'");
+		Text(result).Should().Contain("'includeClosed'")
+			.And.Contain("Accepted parameters").And.Contain("statusKind");
 	}
 
 	// (c) A genuine typo keeps the ORIGINAL treatment — nearest match plus the accepted list — and
@@ -484,66 +500,8 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 		var text = Text(result);
 		text.Should().Contain("Unrecognized: 'boad'").And.Contain("Did you mean 'board'?");
 		text.Should().Contain("Accepted parameters");
-		// Neither of the two new branches may swallow an ordinary typo.
-		text.Should().NotContain("READ-ONLY response field").And.NotContain("REMOVED");
-	}
-
-	// The classification's honesty check. McpRetiredParameters is a hand-written migration aid, so it
-	// is the one part of this that CAN drift: every name it claims is retired must really be gone from
-	// the live schema, and every replacement it points at must really be there. Without this the table
-	// could keep advertising a successor that has itself since been renamed.
-	//
-	// SKIPS tools this fixture's host never registers. TasksMcpFixture only turns on
-	// Features:Tasks, so db_*/log_*/data_schema_apply (mcp-surface-naming-cleanup wave 2: their
-	// retired bare `name`) do not exist on this server at all — calling Tool() for one of them
-	// would throw "sequence contains no matching element" before the drift check even runs. The
-	// SAME two assertions below run for those six in
-	// EntityToolsTests.RetiredParameterTable_MatchesTheLiveSchemas_ForDataAndLogTools, whose
-	// fixture enables Features:Data/Features:Logging and so actually hosts them.
-	[Fact]
-	public async Task RetiredParameterTable_MatchesTheLiveSchemas()
-	{
-		var visible = (await _fx.Mcp.ListToolsAsync()).Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
-
-		// THE SKIP IS THE HAZARD. `continue` below is what lets this fixture cover the tools it
-		// hosts without failing on the ones it does not — but it also means a whole family's
-		// entries can go unchecked in SILENCE if the family stops being visible here. The eight
-		// methodology verbs whose `name` became `key` (wave 5) live in THIS fixture's feature set
-		// (Features:Tasks), so their absence would be a regression, not a legitimate skip. Assert
-		// it, rather than trusting the loop to have looked at them.
-		foreach (var tool in McpRetiredParameters.Tools.Where(t => t.StartsWith("tasks_methodology_", StringComparison.Ordinal)))
-			visible.Should().Contain(tool,
-				$"{tool} carries retired-parameter entries this fixture is responsible for checking — "
-				+ "if it is no longer hosted here, the entries silently stop being verified");
-
-		foreach (var tool in McpRetiredParameters.Tools)
-		{
-			if (!visible.Contains(tool)) continue;
-			var schema = (await Tool(_fx.Mcp, tool)).ProtocolTool.InputSchema.GetProperty("properties");
-			// Union of top-level names and every batch item's field names — the two scopes the filter checks.
-			var live = new HashSet<string>(StringComparer.Ordinal);
-			foreach (var prop in schema.EnumerateObject())
-			{
-				live.Add(prop.Name);
-				if (prop.Value.ValueKind == JsonValueKind.Object
-					&& prop.Value.TryGetProperty("items", out var items)
-					&& items.ValueKind == JsonValueKind.Object
-					&& items.TryGetProperty("properties", out var itemProps))
-					foreach (var f in itemProps.EnumerateObject()) live.Add(f.Name);
-			}
-
-			foreach (KeyValuePair<string, string> pair in McpRetiredParameters.ForTool(tool))
-			{
-				var (retiredName, replacement) = (pair.Key, pair.Value);
-				live.Should().Contain(replacement,
-					$"{tool} advertises '{replacement}' as the successor of '{retiredName}' — it must exist");
-				// No exceptions any more: `fromNodeId` used to be exempt here because it was retired as
-				// an ITEM field while still live as relations_create's single-form parameter. The single
-				// form now uses `from`/`to` too, so every retired name is absent from EVERY scope.
-				live.Should().NotContain(retiredName,
-					$"{tool} still declares '{retiredName}' — the table says it was removed");
-			}
-		}
+		// The read-only branch may not swallow an ordinary typo.
+		text.Should().NotContain("READ-ONLY response field");
 	}
 
 	// ── wave 5: methodology instances are addressed by `key`, never by `name` ─────────────────
@@ -553,6 +511,12 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	// DISPLAY prose (template_list returns both a `key` and a `name`). One word, two concepts, one
 	// family. Every one of the eight is pinned by name here: this is the acceptance the retirement
 	// stands on, and a verb quietly left on the old spelling would be invisible otherwise.
+	//
+	// The theory is ALSO what replaced the deleted table-drift guard for this family
+	// (drop-retired-parameter-hints). It proves the same thing more directly and without a second
+	// contract surface to keep in step: if a verb still declared `name`, the call would bind and
+	// succeed instead of being refused, and if `key` were not the live spelling it would not appear in
+	// the accepted list this asserts on.
 	[Theory]
 	[InlineData("tasks_methodology_create")]
 	[InlineData("tasks_methodology_get")]
@@ -562,7 +526,7 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	[InlineData("tasks_methodology_rules_upsert")]
 	[InlineData("tasks_methodology_set_description")]
 	[InlineData("tasks_methodology_guide")]
-	public async Task RetiredParameter_MethodologyName_IsReportedAsRemoved_WithKey(string tool)
+	public async Task RetiredParameter_MethodologyName_IsRejected_AndListsKey(string tool)
 	{
 		// The filter runs BEFORE argument binding, so the call needs no other valid argument to
 		// reach the refusal — which is exactly the property being pinned: the old spelling can
@@ -574,7 +538,7 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 		});
 
 		result.IsError.Should().Be(true);
-		Text(result).Should().Contain("REMOVED: 'name' -> use 'key'");
+		Text(result).Should().Contain("'name'").And.Contain("Accepted parameters").And.Contain("key");
 	}
 
 	// The positive half, and the point of the whole rename: the slug a READ verb hands back in

@@ -129,33 +129,34 @@ static class McpUnknownParameterFilter
 		if (offenders.Count > 0) throw Unknown(offenders, tool, request.Services);
 	}
 
-	// Build ONE refusal covering every offender, split into the three things a caller can actually
-	// have done. The split exists because the three need OPPOSITE advice and the generic sentence
-	// serves none of them well:
+	// Build ONE refusal covering every offender, split into the two things a caller can actually
+	// have done. The split exists because the two need OPPOSITE advice and the generic sentence
+	// serves neither well:
 	//
-	//   RETIRED  — the name was ours until recently. Say what replaced it. (McpRetiredParameters)
 	//   RESPONSE — the name is one the server ITSELF emits in this family's read output. This is the
 	//              read-modify-write paste, and it is the case where a bare "Unknown parameter" is
 	//              actively misleading: the caller did not invent the field, it read it here. Telling
 	//              it the field is unknown invites the conclusion that its own state is corrupt. It
 	//              must be told the field is response-only and simply has to be dropped.
-	//   UNKNOWN  — a typo or a name from nowhere. The original treatment: nearest-match plus the
-	//              accepted list.
+	//   UNKNOWN  — a typo, a name from nowhere, or a spelling this surface USED to accept. The
+	//              original treatment: nearest-match plus the accepted list.
 	//
-	// Order matters: a retired name that ALSO appears in the read output (relations_create's
-	// `fromNodeId` is both) is reported as retired, because "use `from`" is the more specific fix.
+	// There is deliberately no third branch naming a retired parameter's successor
+	// (drop-retired-parameter-hints). A table of former spellings saves a stale caller one round
+	// trip and costs a second contract surface that nothing expires: its entries outlive the
+	// migration, and every later rename has to remember to feed it. The two branches below already
+	// name the offending parameter, say it is not accepted, list what IS accepted in that scope, and
+	// point at the nearest live name — which is what a caller needs in order to fix the call, with or
+	// without being told the old name's history.
 	static ArgumentException Unknown(List<Offender> offenders, string tool, IServiceProvider? services)
 	{
 		var responseFields = ResponseFieldsOf(services, tool);
 
-		var retired = new List<string>();
 		var response = new List<Offender>();
 		var unknown = new List<Offender>();
 		foreach (var o in offenders)
 		{
-			if (McpRetiredParameters.ReplacementFor(tool, o.Leaf) is { } replacement)
-				retired.Add($"'{o.Display}' -> use '{replacement}'");
-			else if (responseFields.Contains(o.Leaf))
+			if (responseFields.Contains(o.Leaf))
 				response.Add(o);
 			else
 				unknown.Add(o);
@@ -166,9 +167,6 @@ static class McpUnknownParameterFilter
 		// branch is how the first draft of this read, and on the read-modify-write case (five stray
 		// fields) that doubled an already long message for no added information.
 		var sb = new System.Text.StringBuilder($"Unknown parameter(s) for tool '{tool}'.");
-
-		if (retired.Count > 0)
-			sb.Append($" REMOVED: {string.Join("; ", retired)}.");
 
 		if (response.Count > 0)
 		{
