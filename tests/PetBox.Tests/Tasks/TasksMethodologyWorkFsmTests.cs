@@ -71,7 +71,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", title = "Fix login", body = "x", links = new { task_spec = specId } }),
 		});
 		var taskId = NodeId(work, "fix-login");
-		await Agent("relations_create", new { projectKey = ProjectKey, kind = "issue_task", fromNodeId = issueId, toNodeId = taskId });
+		await Agent("relations_create", new { projectKey = ProjectKey, kind = "issue_task", from = issueId, to = taskId });
 
 		// maintainer approves Done → effect should close the linked issue
 		var done = await Approver("tasks_upsert", new
@@ -82,7 +82,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		});
 		IsErr(done).Should().BeFalse();
 
-		var intake = await Agent("tasks_search", new { projectKey = ProjectKey, board = "intake", includeClosed = true });
+		var intake = await Agent("tasks_search", new { projectKey = ProjectKey, board = "intake", statusKind = TestFacets.All });
 		Text(intake).Should().Contain("done");
 	}
 

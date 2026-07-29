@@ -145,18 +145,16 @@ public static class TasksSearchDocs
 	// The closed vocabulary a statusKind predicate ranges over (open|terminalok|terminalcancel).
 	public static readonly IReadOnlyList<string> AllStatusKindFacets = [OpenFacet, TerminalOkFacet, TerminalCancelFacet];
 
-	// THE one place the deprecated `includeClosed` alias maps onto the statusKind facet vocabulary
-	// (spec tasks-search-statuskind-facet). Returns the EFFECTIVE statusKind SET a read selects by;
-	// null/empty return = NEUTRAL (no narrowing — the facet's absence selects everything, the anchor
-	// invariant that keeps accepted/Done findable by a default query).
-	//
-	// Precedence, and why the alias mapping is spelled out (a naive includeClosed:true → [terminalcancel]
-	// would BREAK every caller — it would return ONLY closed):
-	//   1. an explicit `statusKind` set WINS (the first-class contract): values are validated + lowercased.
-	//   2. otherwise the alias derives it from includeClosed + mode:
-	//        includeClosed:true             → null            (facet omitted = everything)
-	//        includeClosed:false + query    → [open, terminalok]   (a query only ever hid terminal-CANCEL)
-	//        includeClosed:false + listing  → [open]               (a listing hid ALL terminal)
+	// THE one place a read's EFFECTIVE statusKind facet is decided (spec tasks-search-statuskind-facet).
+	// Returns the statusKind SET the read selects by:
+	//   1. an explicit `statusKind` set WINS: values are validated + lowercased.
+	//   2. otherwise the MODE DEFAULT:
+	//        query    → [open, terminalok]   (a query only ever hid terminal-CANCEL)
+	//        listing  → [open]               (a listing hid ALL terminal)
+	// There is no boolean widening knob: the deprecated `includeClosed` alias this method used to
+	// take was REMOVED (drop-legacy-aliases). A caller that wants every kind names all three
+	// facets — an explicit ask, echoed back as such, instead of a `null` NEUTRAL that read the
+	// same in the echo whether it was chosen or defaulted.
 	// The presentation TIER ordinal for a StatusKind (spec tasks-search-status-tiers, Option A —
 	// owner decision 2026-07-18, revising tasks-search-statuskind-presentation-tiers after a live
 	// observation: a near-exact Done hit, score 0.997, was demoted under open noise scored 0.0006).
@@ -179,11 +177,10 @@ public static class TasksSearchDocs
 	};
 
 	public static IReadOnlyList<string>? ResolveStatusKindFacet(
-		IReadOnlyList<string>? statusKind, bool includeClosed, bool hasQuery)
+		IReadOnlyList<string>? statusKind, bool hasQuery)
 	{
 		if (statusKind is { Count: > 0 })
 			return statusKind.Select(NormalizeStatusKindFacet).Distinct().ToList();
-		if (includeClosed) return null;
 		return hasQuery ? [OpenFacet, TerminalOkFacet] : [OpenFacet];
 	}
 

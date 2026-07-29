@@ -276,10 +276,10 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 			new { key = "printer", type = "ticket", title = "Printer", body = "x" },
 			new { key = "toner", type = "ticket", title = "Toner", body = "x" })).Should().BeFalse();
 
-		var neutral = await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "printer", toNodeId = "toner" });
+		var neutral = await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", from = "printer", to = "toner" });
 		IsErr(neutral).Should().BeFalse(Text(neutral));
 
-		var declared = await Call("relations_create", new { projectKey = ProjectKey, kind = "escalates", fromNodeId = "printer", toNodeId = "toner" });
+		var declared = await Call("relations_create", new { projectKey = ProjectKey, kind = "escalates", from = "printer", to = "toner" });
 		IsErr(declared).Should().BeFalse(Text(declared));
 
 		var list = await Call("relations_list", new { projectKey = ProjectKey, node = "printer" });
@@ -288,7 +288,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		Text(list).Should().Contain("escalates");
 
 		// NB: the envelope JSON-escapes apostrophes ('), so assertions avoid quoted spans.
-		var unknown = await Call("relations_create", new { projectKey = ProjectKey, kind = "banana", fromNodeId = "printer", toNodeId = "toner" });
+		var unknown = await Call("relations_create", new { projectKey = ProjectKey, kind = "banana", from = "printer", to = "toner" });
 		IsErr(unknown).Should().BeTrue(Text(unknown));
 		Text(unknown).Should().Contain("invalid relation kind");
 		Text(unknown).Should().Contain("banana");
@@ -307,7 +307,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		IsErr(await Upsert("scratch",
 			new { key = "a", status = "Todo", title = "A", body = "x" },
 			new { key = "b", status = "Todo", title = "B", body = "x" })).Should().BeFalse();
-		IsErr(await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "a", toNodeId = "b" }))
+		IsErr(await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", from = "a", to = "b" }))
 			.Should().BeFalse();
 
 		IsErr(await Upsert("scratch", new { key = "a", version = 1, status = "Done" })).Should().BeFalse();

@@ -82,8 +82,12 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		string[]? nodes = null, bool includeClosed = false, SortInput? sort = null,
 		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false,
 		string[]? statusKind = null, string? commit = null) =>
+		// `includeClosed` survives as a TEST-LOCAL convenience only: the tool parameter of that name
+		// was removed (drop-legacy-aliases), so it is translated here into the explicit three-facet
+		// ask that replaced it. Nothing on the MCP surface accepts the boolean any more.
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, underNode, status, nodes,
-			includeClosed, sort, groupBy, bodyLen, limit, includeUrl, commit: commit, statusKind: statusKind);
+			sort, groupBy, bodyLen, limit, includeUrl, commit: commit,
+			statusKind: statusKind ?? (includeClosed ? TestFacets.All : null));
 
 	// ---- listing mode (no q) ----
 
@@ -197,31 +201,33 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		bogus.Nodes.Should().BeEmpty();
 	}
 
-	// ---- statusKind facet + includeClosed deprecation (spec tasks-search-statuskind-facet) ----
+	// ---- statusKind facet (spec tasks-search-statuskind-facet) ----
 
-	// The single place the deprecated includeClosed alias maps onto the statusKind vocabulary.
-	// A naive includeClosed:true → [terminalcancel] would return ONLY closed and break callers;
-	// the mapping below is the contract, proven directly on the pure resolver.
+	// The resolver's whole contract after drop-legacy-aliases: an explicit set wins, otherwise the
+	// MODE DEFAULT. There is no boolean widening arm any more — the `includeClosed` parameter this
+	// resolver used to take is gone, so "every kind" is a three-value ask like any other.
 	[Fact]
-	public void StatusKind_IncludeClosedAlias_MapsExactlyThreeCases()
+	public void StatusKind_ResolvesExplicitSetOrTheModeDefault()
 	{
-		// includeClosed:true → NEUTRAL (facet omitted, every kind) in either mode.
-		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: true, hasQuery: true).Should().BeNull();
-		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: true, hasQuery: false).Should().BeNull();
-		// includeClosed:false + query → [open, terminalok] (a query only ever hid terminal-CANCEL).
-		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: false, hasQuery: true)
+		// No explicit set + query → [open, terminalok] (a query only ever hid terminal-CANCEL).
+		TasksSearchDocs.ResolveStatusKindFacet(null, hasQuery: true)
 			.Should().BeEquivalentTo("open", "terminalok");
-		// includeClosed:false + listing → [open] (a listing hid ALL terminal).
-		TasksSearchDocs.ResolveStatusKindFacet(null, includeClosed: false, hasQuery: false)
+		// No explicit set + listing → [open] (a listing hid ALL terminal).
+		TasksSearchDocs.ResolveStatusKindFacet(null, hasQuery: false)
 			.Should().BeEquivalentTo("open");
-		// An explicit statusKind WINS over the alias (validated + lowercased), in either mode.
-		TasksSearchDocs.ResolveStatusKindFacet(["TerminalCancel"], includeClosed: false, hasQuery: false)
+		// An explicit statusKind WINS over the default (validated + lowercased), in either mode.
+		TasksSearchDocs.ResolveStatusKindFacet(["TerminalCancel"], hasQuery: false)
 			.Should().BeEquivalentTo("terminalcancel");
+		// The replacement for the retired includeClosed:true — every kind, named.
+		TasksSearchDocs.ResolveStatusKindFacet(TestFacets.All, hasQuery: false)
+			.Should().BeEquivalentTo("open", "terminalok", "terminalcancel");
+		TasksSearchDocs.ResolveStatusKindFacet(TestFacets.All, hasQuery: true)
+			.Should().BeEquivalentTo("open", "terminalok", "terminalcancel");
 	}
 
 	[Fact]
 	public void StatusKind_UnknownValue_IsError() =>
-		FluentActions.Invoking(() => TasksSearchDocs.ResolveStatusKindFacet(["closed"], false, true))
+		FluentActions.Invoking(() => TasksSearchDocs.ResolveStatusKindFacet(["closed"], true))
 			.Should().Throw<ArgumentException>().WithMessage("*closed*status kind*");
 
 	// ---- effective statusKind echo (spec search-echo-effective-statuskind-filter) ----
@@ -268,24 +274,27 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		query.EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
 	}
 
-	// The deprecated includeClosed alias maps onto the SAME resolver the echo reads: includeClosed:true
-	// is NEUTRAL (no facet applied — every kind) and echoes null (there is no "effective narrowing" to
-	// report); includeClosed:false reproduces the mode default and is echoed explicitly, exactly like
-	// the no-argument default above.
+	// What replaced the retired includeClosed alias, and the ECHO CHANGE it brings (drop-legacy-aliases).
+	// "Every kind" used to be includeClosed:true → facet omitted → effectiveStatusKind echoed `null`,
+	// which read identically whether the width was chosen or merely defaulted. Naming all three facets
+	// selects the same rows and echoes them back RESOLVED, so the width is now visible in the answer.
+	// Omitting the facet still reproduces the mode default and is echoed explicitly.
 	[Fact]
-	public async Task IncludeClosedAlias_MappedAndEchoed()
+	public async Task EveryKind_IsTheThreeFacetAsk_AndIsEchoedResolved()
 	{
 		await Seed("b", """[{"key":"echo-ic","status":"Todo","title":"echoinclosed marker","body":"x"}]""");
 
-		(await Search(board: "b", includeClosed: true)).EffectiveStatusKind.Should().BeNull();
-		(await Search(q: "echoinclosed", includeClosed: true)).EffectiveStatusKind.Should().BeNull();
-		(await Search(board: "b", includeClosed: false)).EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
-		(await Search(q: "echoinclosed", includeClosed: false)).EffectiveStatusKind
+		(await Search(board: "b", statusKind: TestFacets.All)).EffectiveStatusKind
+			.Should().BeEquivalentTo(TestFacets.All);
+		(await Search(q: "echoinclosed", statusKind: TestFacets.All)).EffectiveStatusKind
+			.Should().BeEquivalentTo(TestFacets.All);
+		(await Search(board: "b")).EffectiveStatusKind.Should().BeEquivalentTo(new[] { "open" });
+		(await Search(q: "echoinclosed")).EffectiveStatusKind
 			.Should().BeEquivalentTo(new[] { "open", "terminalok" });
 	}
 
 	// HARD FRAME INVARIANT: accepted/Done (terminal-OK) MUST be found by a DEFAULT query — this is
-	// what search-before-rework and the ideaRef gate stand on. No includeClosed, no statusKind.
+	// what search-before-rework and the ideaRef gate stand on. No widening, no statusKind.
 	[Fact]
 	public async Task Query_Default_FindsTerminalOk_FrameInvariant()
 	{

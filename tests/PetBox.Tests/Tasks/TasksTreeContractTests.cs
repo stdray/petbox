@@ -231,7 +231,7 @@ public sealed class TasksTreeContractTests : IDisposable
 				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", links = new { idea_spec = ir } },
 			}));
 
-		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "spec", includeClosed: true);
+		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "spec", statusKind: TestFacets.All);
 		var nodes = got.Nodes.ToList();
 		// old obsoleted → moved to the spec workflow's terminal-cancel (deprecated).
 		nodes.Single(n => n.Key == "old").Status.Should().Be("deprecated");
@@ -256,7 +256,7 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var nodes = McpInputs.Nodes(new object[]
 		{
-			new { l1 = "Bad Phase", status = "Todo", body = "x" },
+			new { key = "Bad Phase", status = "Todo", body = "x" },
 		});
 		// Validation failure throws; McpErrorEnvelopeFilter renders it as {error} on the wire.
 		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes));
@@ -272,7 +272,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "fresh", null);
 		var nodes = McpInputs.Nodes(new object[]
 		{
-			new { l1 = "alpha", status = "Todo", title = "Alpha", body = "do alpha", priority = 0 },
+			new { key = "alpha", status = "Todo", title = "Alpha", body = "do alpha", priority = 0 },
 		});
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "fresh", nodes);
 
@@ -284,19 +284,21 @@ public sealed class TasksTreeContractTests : IDisposable
 		added.Title.Should().Be("Alpha");
 	}
 
+	// INVERTED by drop-legacy-aliases (was Upsert_AcceptsL1KeyAlias). `l1` is no longer a spelling of
+	// `key`: it does not bind through the typed record any more, so a node carrying only `l1` has no
+	// key at all and is REFUSED. The wire-level half of the retirement — that `l1` is reported by
+	// name as an unknown member instead of being quietly dropped — is McpUnknownParameterFilter's,
+	// and is pinned in McpUnknownParameterTests; this pins the record binding itself.
 	[Fact]
-	public async Task Upsert_AcceptsL1KeyAlias()
+	public async Task Upsert_L1Alias_NoLongerBinds_AndTheNodeIsRefused()
 	{
 		var http = Http("tasks:read,tasks:write");
-		// typed-surface Phase 4: `nodes` is now a typed PlanNodeInput[] (the SDK emits a rich
-		// input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
-		// a reconnect refreshes the cached schema (see McpToolInputs deviation note). The `l1`
-		// back-compat alias for the flat `key` still binds through the typed record.
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "strboard", null);
 		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Todo","body":"b","priority":0}]""");
-		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes);
-		res.Added.Should().ContainSingle()
-			.Which.Title.Should().Be("Alpha");
+		nodes.Single().Key.Should().BeNull("`l1` must not bind to Key any more");
+		var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+			TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes));
+		ex.Message.Should().Contain("each node needs a 'key'");
 	}
 
 	[Fact]

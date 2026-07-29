@@ -140,7 +140,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 		string? q = null, string? board = null, string[]? status = null, SortInput? sort = null,
 		string? groupBy = null, int? bodyLen = null, int? limit = null, string? cursor = null) =>
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, null, status, null,
-			false, sort, groupBy, bodyLen, limit, false, null, null, cursor);
+			sort, groupBy, bodyLen, limit, false, null, null, cursor);
 
 	// Walk a listing to exhaustion, returning every key in page order. `page` runs one page for a
 	// given cursor; the walk stops when the response stops issuing one.
@@ -354,13 +354,13 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
 		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, null);
+			null, null, null, 2, false, null, null, null);
 		cache.Stores.Should().Be(1, "page 1 materializes and stores the ranked pool");
 		var passesAfterPageOne = llm.RerankCalls;
 		passesAfterPageOne.Should().BeGreaterThan(0, "the cross-encoder decided this order");
 
 		var second = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, first.NextCursor);
+			null, null, null, 2, false, null, null, first.NextCursor);
 
 		second.Nodes.Should().NotBeEmpty();
 		cache.Stores.Should().Be(1, "page 2 must SERVE the stored pool, not rank a fresh one — a second store would mean it reranked");
@@ -431,7 +431,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
 		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, null);
+			null, null, null, 2, false, null, null, null);
 		first.NextCursor.Should().NotBeNull();
 
 		// Evict the pool, then take the route down: page 2 rebuilds as plain RRF — same rows, different
@@ -443,7 +443,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 		llm.EmbedDown = true;
 
 		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, first.NextCursor);
+			null, null, null, 2, false, null, null, first.NextCursor);
 
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*ranked DIFFERENTLY*").WithMessage("*Your arguments are fine*");
@@ -485,10 +485,10 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 
 		Task<TaskSearchResultView> Page(string? cursor) => TasksTools.SearchAsync(
 			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, cursor);
+			null, null, null, 2, false, null, null, cursor);
 
 		var whole = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 100, false, null, null, null);
+			null, null, null, 100, false, null, null, null);
 		var first = await Page(null);
 		first.NextCursor.Should().NotBeNull("the walk has to start for the refusal to be reachable at all");
 		cache.Stores.Should().Be(1, "a reranked pool is cached — so page 2 takes the hydrate branch");
@@ -517,7 +517,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 
 		Task<TaskSearchResultView> Call() => TasksTools.SearchAsync(
 			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
-			false, null, null, null, 2, false, null, null, null);
+			null, null, null, 2, false, null, null, null);
 
 		var one = await Call();   // cache MISS — the pool is built and stored
 		var two = await Call();   // cache HIT  — the pool is hydrated

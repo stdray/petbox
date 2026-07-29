@@ -23,8 +23,18 @@ TYPED arrays — pass real JSON arrays, not stringified JSON.
 **`tasks_search` is THE read verb** — two modes: without `q` it's a deterministic LISTING
 (pass `board` for one board, omit for the whole project; default order priority-then-key),
 with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both modes:
-`status[]`, `nodes[]` (slug|NodeId), `underNode` (subtree), `includeClosed`; `sort{by,desc}`
+`status[]`, `nodes[]`, `underNode` (subtree), `statusKind[]` (visibility: `open` |
+`terminalok` | `terminalcancel` — omit for the mode default, name all three to see everything;
+there is no `includeClosed`); `sort{by,desc}`
 reorders; `bodyLen` snippets bodies. One node in full: `tasks_node_get`.
+Every **node reference** (`nodes[]`, `underNode`, `node`, `partOf`, `blockedBy`,
+`supersedes`, and relations' `from`/`to` in BOTH the single and the batch form) takes a slug
+key **or** a 32-hex NodeId — both accepted. The NAME tells you: a node reference never ends in
+`Id`/`Key`/`Slug`, exactly because it accepts either spelling (there is no `fromNodeId`
+any more). A type suffix means it is NOT a reference: `tasks_upsert`'s `key` is the slug FIELD
+being written — slug only, and REQUIRED on every node — `parentId` is a comment id, and
+relations' `id`/`ids` are edge ids. `NodeId`-suffixed names appear only in RESPONSES, where the
+value really is always a NodeId.
 
 **Memory entries are typed** (`User` | `Feedback` | `Project` | `Reference`) — `type` is
 required only when `memory_upsert` creates a NEW entry (version 0), not on an edit;

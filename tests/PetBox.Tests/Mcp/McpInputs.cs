@@ -25,3 +25,12 @@ public static class McpInputs
 	public static MemoryEntryInputDto[] EntriesJson(string json) =>
 		JsonSerializer.Deserialize<MemoryEntryInputDto[]>(json, Opts)!;
 }
+
+// The statusKind facet sets a test asks for by name. `All` is what the retired `includeClosed:true`
+// used to mean (drop-legacy-aliases): every kind, now stated as the explicit three-value ask instead
+// of a boolean that widened by omitting the facet. Note the ECHO difference this makes —
+// effectiveStatusKind comes back as the resolved three-element set, not the old `null` NEUTRAL.
+public static class TestFacets
+{
+	public static string[] All => ["open", "terminalok", "terminalcancel"];
+}

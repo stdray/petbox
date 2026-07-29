@@ -177,7 +177,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var b2 = await Seed(http, "b2", """[{"key":"beta","status":"Todo","title":"B"}]""");
 
 		// Cross-board: each side resolves project-wide from its slug alone.
-		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "alpha", toNodeId: "beta");
+		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", from: "alpha", to: "beta");
 		rel.Relations.Should().ContainSingle();
 		rel.Relations[0].FromNodeId.Should().Be(b1["alpha"]);
 		rel.Relations[0].ToNodeId.Should().Be(b2["beta"]);
@@ -190,7 +190,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var ids = await Seed(http, "b", """
 			[{"key":"one","status":"Todo","title":"1"},{"key":"two","status":"Todo","title":"2"}]
 			""");
-		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: ids["one"], toNodeId: ids["two"]);
+		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", from: ids["one"], to: ids["two"]);
 		rel.Relations.Should().ContainSingle();
 		rel.Relations[0].FromNodeId.Should().Be(ids["one"]);
 		rel.Relations[0].ToNodeId.Should().Be(ids["two"]);
@@ -204,7 +204,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		await Seed(http, "b2", """[{"key":"dup","status":"Todo","title":"D2"}]""");
 
 		// Single-form error is verbatim (no items[i] prefix) — the pre-batch wire text is preserved.
-		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "dup", toNodeId: "target");
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", from: "dup", to: "target");
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*ambiguous slug 'dup'*")
 			.WithMessage("*boards: [b1, b2]*")
@@ -217,7 +217,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var http = Http();
 		await Seed(http, "b", """[{"key":"real","status":"Todo","title":"R"}]""");
 
-		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "ghost", toNodeId: "real");
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", from: "ghost", to: "real");
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage($"*node 'ghost' does not match any active node in project '{Proj}'*");
 	}
@@ -229,7 +229,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var ids = await Seed(http, "b", """
 			[{"key":"one","status":"Todo","title":"1"},{"key":"two","status":"Todo","title":"2"}]
 			""");
-		await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: ids["one"], toNodeId: ids["two"]);
+		await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", from: ids["one"], to: ids["two"]);
 
 		// Listed by slug and by NodeId identically (the uniform ref).
 		var bySlug = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, "one");
@@ -252,7 +252,9 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var created = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
 		[
 			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
-			new RelationCreateItemInput { Kind = "relates_to", FromNodeId = ids["c"], ToNodeId = ids["d"] },
+			// `from`/`to` are node REFERENCES: the slug form above, the 32-hex NodeId form here.
+			// (The item-level fromNodeId/toNodeId aliases were retired by drop-legacy-aliases.)
+			new RelationCreateItemInput { Kind = "relates_to", From = ids["c"], To = ids["d"] },
 		]);
 
 		created.Relations.Should().HaveCount(2);
@@ -355,7 +357,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		await Seed(http, "b", """[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"}]""");
 
 		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj,
-			kind: "blocks", fromNodeId: "a", toNodeId: "b",
+			kind: "blocks", from: "a", to: "b",
 			items: [new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" }]);
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*either items*")

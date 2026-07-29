@@ -133,11 +133,22 @@ needs blockedBy.
 
 READING: tasks_search is THE read verb — without q a deterministic listing (board= one
 board, omit for the project), with q a hybrid relevance search; both modes take status[],
-nodes[] (slug|nodeId), underNode=<slug> (subtree) and sort{by,desc}. A board listing carries
+nodes[], underNode (subtree), statusKind[] and sort{by,desc}. A board listing carries
 kind, wiredBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
-HIDES terminal nodes by default — includeClosed=true to include. One full node:
-tasks_node_get. Partial update: send only what changes — a status change needs just
-key + version + status.
+HIDES terminal nodes by default — pass statusKind:["open","terminalok","terminalcancel"] to
+see every kind (the old includeClosed=true was removed and is now a rejected parameter).
+One full node: tasks_node_get. Partial update: send only what changes — a status change
+needs just key + version + status.
+
+NODE REFERENCES vs KEYS: a "node reference" is any parameter that POINTS AT a node — node,
+nodes[], underNode, partOf, blockedBy, supersedes, and relations' from/to (in BOTH the
+single and the batch form; the old fromNodeId/toNodeId are gone). Every one of them takes
+a slug key OR a 32-hex NodeId, both accepted. You can tell by the NAME: a node reference
+never ends in Id/Key/Slug, precisely because it accepts either spelling. Names that DO
+carry a type suffix are not references — tasks_upsert's `key` is the slug FIELD you write
+(slug only, and REQUIRED on every node), comments' `parentId` is a comment id, relations'
+`id`/`ids` are edge ids. The NodeId suffix survives only in RESPONSES (nodeId,
+parentNodeId, fromNodeId, toNodeId), where the value really is always a NodeId.
 
 STORE by lifetime: durable fact -> memory (type User|Feedback|Project|Reference); current
 thinking -> session; a unit of work with a status -> task.

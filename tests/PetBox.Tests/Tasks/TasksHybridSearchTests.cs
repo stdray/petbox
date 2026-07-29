@@ -96,8 +96,10 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 		new() { Key = key, Version = 0, Title = title, Body = body };
 
 	// Query-mode request for the unified read verb (list = search without a query).
+	// `includeClosed:true` was retired (drop-legacy-aliases); a test that wants every kind now names
+	// the three facets, which is the same selection stated as an explicit ask.
 	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null, bool includeClosed = false, string[]? statusKind = null) =>
-		new() { Query = q, Filter = new TaskNodeFilter(board, IncludeClosed: includeClosed, StatusKind: statusKind) };
+		new() { Query = q, Filter = new TaskNodeFilter(board, StatusKind: statusKind ?? (includeClosed ? TestFacets.All : null)) };
 
 	[Fact]
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
@@ -249,7 +251,7 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 		// search-hides-terminal-nodes (defect 2, owner decision): terminal-OK (Done on work,
 		// accepted on ideas) is a SUCCESS state, not "closed" — it is the anchor
 		// search-before-rework needs to reach, so a default query-mode search must still find
-		// it after the transition, with no includeClosed needed.
+		// it after the transition, with no statusKind widening needed.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
@@ -268,7 +270,7 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 		// ignores visibility": the exact leg is now SUBJECT TO the statusKind facet (the last of the
 		// five terminal mechanisms to die). An exact slug of a terminal-CANCEL node is HIDDEN by a
 		// default lookup — the facet default is [open, terminalok] — and surfaces only when the ask
-		// names statusKind:[terminalcancel] (or includeClosed widens to neutral).
+		// names statusKind:[terminalcancel] (or all three facets).
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("kql-spans-query", "spans note", "some body")]);
@@ -284,7 +286,7 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 		res.Hits[0].Node.Status.Should().Be("Cancelled");
 		res.Hits[0].Retriever.Should().Be("exact");
 
-		// includeClosed:true (deprecated alias → neutral facet) also surfaces it.
+		// The all-three-facet ask (what includeClosed:true used to mean) also surfaces it.
 		(await tasks.SearchNodesAsync(Proj, Query("kql-spans-query", "b", includeClosed: true)))
 			.Hits.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
 	}
@@ -313,9 +315,9 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 	[Fact]
 	public async Task IncludeClosed_SurfacesTerminalCancelNode_InRankedQuery()
 	{
-		// search-hides-terminal-nodes (defect 3): includeClosed:true with q is no longer a
+		// search-hides-terminal-nodes (defect 3): widening with q is no longer a
 		// silent no-op — it widens the RANKED candidate pool to terminal-CANCEL nodes too,
-		// symmetric with listing mode's includeClosed. Uses a content match (not the slug) so
+		// symmetric with listing mode. Uses a content match (not the slug) so
 		// the exact escape hatch can't be the one doing the work.
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
@@ -326,7 +328,7 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 		// Regression: hidden by default.
 		(await tasks.SearchNodesAsync(Proj, Query("marmot"))).Hits.Should().BeEmpty();
 
-		// includeClosed:true actually widens the search now.
+		// the all-three-facet ask actually widens the search now.
 		var widened = await tasks.SearchNodesAsync(Proj, Query("marmot", "b", includeClosed: true));
 		widened.Hits.Select(h => h.Node.Key).Should().Equal("scrapped-widget");
 		widened.Hits[0].Node.Status.Should().Be("Cancelled");

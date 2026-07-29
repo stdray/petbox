@@ -448,11 +448,11 @@ public sealed class MethodologyInstanceTests : IClassFixture<MethodologyInstance
 		var flags = Flags();
 		var relations = new RelationStore(_factory);
 
-		var created = await RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", fromNodeId: a1.NodeId, toNodeId: a2.NodeId);
+		var created = await RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", from: a1.NodeId, to: a2.NodeId);
 		created.Relations.Should().ContainSingle();
 		created.Relations[0].Kind.Should().Be("escalates");
 
-		var mcpCross = () => RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", fromNodeId: b1.NodeId, toNodeId: b2.NodeId);
+		var mcpCross = () => RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", from: b1.NodeId, to: b2.NodeId);
 		(await mcpCross.Should().ThrowAsync<ArgumentException>()).WithMessage("*escalates*");
 	}
 

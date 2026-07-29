@@ -91,7 +91,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		up.Applied.Should().BeTrue();
 		up.Inserted.Should().Be(2);
 
-		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap", includeClosed: true);
+		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap", statusKind: TestFacets.All);
 		var keys = get.Nodes.Select(n => n.Key).ToList();
 		keys.Should().Equal("phase-16", "wave-1"); // priority order
 	}
@@ -123,7 +123,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }));
 
-		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", includeClosed: true);
+		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", statusKind: TestFacets.All);
 		var node = get.Nodes.Single();
 		node.Key.Should().Be("new");
 		node.RenamedFrom.Should().Equal("old");

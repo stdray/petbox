@@ -87,6 +87,89 @@ static class McpOutputSchema
 		return tool;
 	}
 
+	// Stamp [McpRequiredMember] onto the generated input schema: the member joins its object's
+	// `required` array and loses the "null" arm of its type union, so a strict client validates the
+	// same contract the tool body enforces. See McpRequiredMemberAttribute for why this is post-hoc
+	// and why the CLR property stays nullable.
+	//
+	// Runs AFTER generation (so NullableAware's PruneNullableRequired cannot strip it straight back
+	// out) and looks only where a batch verb actually puts its items: a parameter whose type is
+	// T[]/IEnumerable<T>, descending one level through the array schema's `items`. A parameter of a
+	// plain object type is handled too (no `items` hop).
+	//
+	// A miss THROWS at tool-creation (= startup), never silently no-ops: a required marker that
+	// quietly failed to land would be exactly the schema-lies-about-the-contract bug this exists to
+	// end.
+	static McpServerTool WithRequiredMembers(McpServerTool tool, MethodInfo method)
+	{
+		var targets = method.GetParameters()
+			.Select(p => (p.Name, Members: RequiredMembersOf(ElementTypeOf(p.ParameterType))))
+			.Where(p => p.Members.Count > 0)
+			.ToList();
+		if (targets.Count == 0) return tool;
+
+		if (JsonNode.Parse(tool.ProtocolTool.InputSchema.GetRawText()) is not JsonObject schema
+			|| schema["properties"] is not JsonObject properties)
+			throw new InvalidOperationException(
+				$"[McpRequiredMember] on {method.Name}: the generated input schema has no `properties`");
+
+		foreach (var (param, members) in targets)
+		{
+			if (properties[param!] is not JsonObject paramSchema)
+				throw new InvalidOperationException(
+					$"[McpRequiredMember] on {method.Name}({param}): no such property in the generated input schema");
+			// Array parameter → the item object carries the members; object parameter → itself.
+			var owner = paramSchema["items"] as JsonObject ?? paramSchema;
+			if (owner["properties"] is not JsonObject ownerProps)
+				throw new InvalidOperationException(
+					$"[McpRequiredMember] on {method.Name}({param}): the item schema has no `properties` " +
+					"(a $ref/$defs indirection is not supported here)");
+
+			var required = owner["required"] as JsonArray;
+			if (required is null) owner["required"] = required = [];
+
+			foreach (var member in members)
+			{
+				if (ownerProps[member] is not JsonObject memberSchema)
+					throw new InvalidOperationException(
+						$"[McpRequiredMember] on {method.Name}({param}): the item schema has no `{member}` property");
+				// Drop the "null" arm: the schema must not offer a value the tool body rejects.
+				if (memberSchema["type"] is JsonArray types)
+				{
+					var concrete = types.Select(t => t?.GetValue<string>())
+						.Where(t => t is not null and not "null").ToList();
+					if (concrete.Count == 1) memberSchema["type"] = JsonValue.Create(concrete[0]);
+					else if (concrete.Count > 1)
+						memberSchema["type"] = new JsonArray(concrete.Select(t => (JsonNode?)JsonValue.Create(t)).ToArray());
+				}
+				if (!required.Any(r => r?.GetValue<string>() == member))
+					required.Add(JsonValue.Create(member));
+			}
+		}
+
+		tool.ProtocolTool.InputSchema = JsonSerializer.SerializeToElement(schema);
+		return tool;
+	}
+
+	// The wire (camelCase) names of a type's [McpRequiredMember] properties.
+	static List<string> RequiredMembersOf(Type? type) =>
+		type is null || type.IsPrimitive || type == typeof(string)
+			? []
+			: type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+				.Where(p => p.GetCustomAttribute<McpRequiredMemberAttribute>() is not null)
+				.Select(p => JsonNamingPolicy.CamelCase.ConvertName(p.Name))
+				.ToList();
+
+	// T[] / IEnumerable<T> → T; anything else → itself.
+	static Type? ElementTypeOf(Type type)
+	{
+		if (type.IsArray) return type.GetElementType();
+		if (type.IsGenericType && type.GetGenericArguments() is [var arg]
+			&& typeof(System.Collections.IEnumerable).IsAssignableFrom(type))
+			return arg;
+		return type;
+	}
+
 	// Prune from an object node's `required` array any property whose own schema admits null,
 	// so our WhenWritingNull omission of a null value stays schema-conformant.
 	static void PruneNullableRequired(JsonObject obj)
@@ -145,20 +228,20 @@ static class McpOutputSchema
 				var mi = method;
 				var tt = toolType;
 				builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(mi.IsStatic
-					? services => WithDeclaredShapes(McpServerTool.Create(mi, options: new()
+					? services => WithRequiredMembers(WithDeclaredShapes(McpServerTool.Create(mi, options: new()
 					{
 						Services = services,
 						SerializerOptions = serializerOptions,
 						SchemaCreateOptions = schemaOptions,
-					}), mi)
-					: services => WithDeclaredShapes(McpServerTool.Create(mi, r => r.Services is { } sp
+					}), mi), mi)
+					: services => WithRequiredMembers(WithDeclaredShapes(McpServerTool.Create(mi, r => r.Services is { } sp
 						? ActivatorUtilities.CreateInstance(sp, tt)
 						: Activator.CreateInstance(tt)!, new()
 						{
 							Services = services,
 							SerializerOptions = serializerOptions,
 							SchemaCreateOptions = schemaOptions,
-						}), mi)));
+						}), mi), mi)));
 			}
 		}
 

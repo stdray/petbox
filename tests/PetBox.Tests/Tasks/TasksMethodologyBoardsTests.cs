@@ -72,9 +72,10 @@ public sealed class TasksMethodologyBoardsTests : TasksMethodologySmokeBase, ICl
 		FieldOf(get, "a", "body").Should().Be("BODY", "omitted body inherits the prior value");
 	}
 
-	// 18. tasks_search hides terminal nodes by default; includeClosed=true returns them.
+	// 18. tasks_search hides terminal nodes by default; naming all three statusKind facets returns
+	// them (this is what the retired includeClosed=true meant — drop-legacy-aliases).
 	[Fact]
-	public async Task Get_HidesClosedByDefault_IncludeClosedReturns()
+	public async Task Get_HidesClosedByDefault_ExplicitStatusKindReturns()
 	{
 		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "hc" });
 		await Agent("tasks_upsert", new
@@ -90,7 +91,7 @@ public sealed class TasksMethodologyBoardsTests : TasksMethodologySmokeBase, ICl
 		Text(def).Should().Contain("open1");
 		Text(def).Should().NotContain("done1");
 
-		var all = await Agent("tasks_search", new { projectKey = ProjectKey, board = "hc", includeClosed = true });
+		var all = await Agent("tasks_search", new { projectKey = ProjectKey, board = "hc", statusKind = TestFacets.All });
 		Text(all).Should().Contain("done1");
 	}
 

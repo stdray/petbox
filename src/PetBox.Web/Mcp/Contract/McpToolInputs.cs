@@ -62,15 +62,20 @@ public sealed class LinkRefsConverter : JsonConverter<LinkRefs>
 // value itself (an omitted property deserializes to null = inherit; an explicit "" stays "").
 public sealed record PlanNodeInput
 {
-	// Flat board-unique slug. `l1` is accepted as a back-compat alias on the wire (see converter).
+	// Flat board-unique slug — the KEY FIELD this write sets, never a reference. Typed nullable
+	// only so a missing value reaches ResolveKey's own message instead of an SDK bind error; the
+	// generated schema lists it in `required` (see McpOutputSchema.RequiredNodeKey). The legacy
+	// `l1` alias was REMOVED (drop-legacy-aliases) — `l1` is now an unknown member and is
+	// REJECTED by McpUnknownParameterFilter, not silently dropped.
+	[McpRequiredMember]
 	public string? Key { get; init; }
-	public string? L1 { get; init; }
 
-	// Rename source slug (PrevKey), `prevL1` accepted as the back-compat alias.
+	// Rename source slug (PrevKey). Not an alias: it names the node's PREVIOUS key so a rename
+	// can be expressed in one PATCH. The legacy `prevL1` alias was REMOVED.
 	public string? PrevKey { get; init; }
-	public string? PrevL1 { get; init; }
 
-	// Vertical decomposition: parent slug | NodeId. null = omit, "" = detach to root.
+	// Vertical decomposition: the parent node REFERENCE — its slug key or its 32-hex NodeId
+	// (both accepted). null = omit, "" = detach to root.
 	public string? PartOf { get; init; }
 
 	// Per-node links, addressed by relation-kind slug (spec methodology-link-kinds-declared):
@@ -80,8 +85,10 @@ public sealed record PlanNodeInput
 	// declared Direction. `blockedBy` stays as sugar (builtin `blocks`); `links.blocks` is also
 	// accepted, but not both on one node.
 	public Dictionary<string, LinkRefs>? Links { get; init; }
-	// blockedBy → a blocking NodeId|slug (builtin `blocks`); supersedes → slug|NodeId this node
-	// replaces. Kept as sugar for the direction-less builtin structural edges.
+	// blockedBy → the blocking node (builtin `blocks`); supersedes → the node this one replaces.
+	// Each is a node REFERENCE — its slug key or its 32-hex NodeId (both accepted). Kept as sugar
+	// for the direction-less builtin structural edges. Neither is an alias: `supersedes` names a
+	// DIFFERENT node, it does not restate another parameter.
 	public string? BlockedBy { get; init; }
 	public string? Supersedes { get; init; }
 
@@ -384,7 +391,8 @@ public sealed record ConfigBindingItemInput
 }
 
 // One item of a comments_upsert batch (typed array, like PlanNodeInput/MemoryEntryInputDto).
-// `id` null/absent ⇒ CREATE (needs `node` slug|NodeId + `author`; `parentId` = a COMMENT id
+// `id` null/absent ⇒ CREATE (needs `node` — a node reference: a slug key or a 32-hex NodeId,
+// both accepted — plus `author`; `parentId` = a COMMENT id, NOT a node reference
 // makes it a reply); `id` present ⇒ PATCH `body`/`tags` of that comment under the `version`
 // watermark. `tags`: null = leave as-is on an edit, [] clears, a list replaces the set.
 public sealed record CommentItemInput
@@ -398,15 +406,18 @@ public sealed record CommentItemInput
 	public long Version { get; init; }
 }
 
-// One item of a relations_create batch. Prefer card language `from`/`to`; `fromNodeId`/`toNodeId`
-// are accepted aliases (same as the tool's single-form BC params).
+// One item of a relations_create batch. `from`/`to` are each a node REFERENCE — a slug key or a
+// 32-hex NodeId (both accepted). The `fromNodeId`/`toNodeId` item aliases were REMOVED
+// (drop-legacy-aliases); they are now unknown members and are REJECTED, not silently dropped.
+// The tool's SINGLE form was renamed to match (`fromNodeId`/`toNodeId` -> `from`/`to`), so the two
+// forms now share ONE vocabulary: a node-reference parameter never carries an Id/Key/Slug suffix,
+// because it accepts either spelling. `FromNodeId`/`ToNodeId` survive only on the RESPONSE, where
+// the value really is always a NodeId and the suffix is therefore honest.
 public sealed record RelationCreateItemInput
 {
 	public string? Kind { get; init; }
 	public string? From { get; init; }
 	public string? To { get; init; }
-	public string? FromNodeId { get; init; }
-	public string? ToNodeId { get; init; }
 }
 
 // An entry as submitted to memory_upsert. Mirrors EXACTLY the fields the old JsonElement parser
