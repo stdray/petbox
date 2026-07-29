@@ -1,0 +1,10 @@
+<assembly name="ModelContextProtocol.Core">
+  <!-- PROBE ONLY (resharper-clt-suppression-via-annotations, hypothesis 2): checking whether
+       jb inspectcode 2026.2 auto-discovers a solution-adjacent ExternalAnnotations folder,
+       before any real rollout. Marks every method carrying [McpServerTool] as implicitly used
+       (the SDK invokes tools via reflection, so ReSharper's static call-graph never sees a
+       caller). -->
+  <member name="T:ModelContextProtocol.Server.McpServerToolAttribute">
+    <attribute ctor="M:JetBrains.Annotations.MeansImplicitUseAttribute.#ctor" />
+  </member>
+</assembly>

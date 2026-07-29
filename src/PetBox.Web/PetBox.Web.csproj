@@ -39,6 +39,8 @@
 		<PackageReference Include="Microsoft.OpenApi" />
 		<!-- Build tooling (GetDocument.Insider) only — keep out of the runtime/publish output. -->
 		<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" PrivateAssets="all" />
+		<!-- PROBE ONLY (resharper-clt-suppression-via-annotations task) — not a real adoption. -->
+		<PackageReference Include="JetBrains.Annotations" PrivateAssets="all" />
 	</ItemGroup>
 
 	<ItemGroup>
