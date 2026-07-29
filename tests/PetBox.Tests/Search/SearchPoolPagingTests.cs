@@ -285,7 +285,7 @@ public sealed class SearchPoolPagingTests
 
 	sealed class FakeClock(DateTimeOffset now) : TimeProvider
 	{
-		public DateTimeOffset Now = now;
+		DateTimeOffset Now = now;
 		public override DateTimeOffset GetUtcNow() => Now;
 	}
 }

@@ -21,14 +21,14 @@ namespace PetBox.Tests.Web;
 // row-001). IDataDbFactory is redirected to a per-run temp dir so nothing touches dev data.
 public sealed class DataTablePaginationFixture : IAsyncLifetime
 {
-	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string DbName = "pagedb";
 	public const string TableName = "nums";
-	public const int RowCount = 120;
+	const int RowCount = 120;
 
 	readonly string _baseDir;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public DataTablePaginationFixture()

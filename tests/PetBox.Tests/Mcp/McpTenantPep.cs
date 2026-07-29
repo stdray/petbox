@@ -35,7 +35,7 @@ static class McpTenantPep
 
 	// The verdict the MCP plane would reach for `tool` called with `projectKey` by a key whose project
 	// claim is `claim`. Pass projectKey: null to model the caller omitting the argument.
-	public static ValueTask<TenantGateResult> DecideAsync(
+	static ValueTask<TenantGateResult> DecideAsync(
 		IProjectCatalog catalog, string tool, string? projectKey, string claim, bool sandboxOnly = false)
 	{
 		var arguments = new Dictionary<string, JsonElement>(StringComparer.Ordinal);

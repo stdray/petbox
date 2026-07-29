@@ -74,18 +74,18 @@ public sealed class SandboxContainmentHost : IAsyncLifetime
 	// A sandbox project INSIDE the $system workspace. This shape is the one that makes
 	// `scope:"workspace"` dangerous: containment on the PROJECT leg is satisfied (the project really is
 	// a sandbox), and the workspace container it then derives is `$workspace` — $system's shared memory.
-	public const string SysSandboxProject = "sysbox";
+	const string SysSandboxProject = "sysbox";
 
 	// A sandbox project in a workspace of its own.
-	public const string SandboxWorkspace = "sandboxws";
-	public const string SandboxProject = "sandboxproj";
+	const string SandboxWorkspace = "sandboxws";
+	const string SandboxProject = "sandboxproj";
 
 	// The canary: an entry seeded into the $system workspace container. Any response containing it has
 	// disclosed shared workspace memory.
-	public const string Canary = "PETBOX-CANARY-WORKSPACE-MEMORY";
+	const string Canary = "PETBOX-CANARY-WORKSPACE-MEMORY";
 
 	readonly string _baseDir;
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 
 	public sealed record Observation(string Key, bool SandboxOnly, string Shape, bool Leaked, string Observed);
 

@@ -19,7 +19,7 @@ namespace PetBox.Tests.Web;
 // Project in workspace "wsb" (no row must land in wsb); an Admin of "wsb" must succeed.
 public sealed class AdminProjectsAuthzFixture : IAsyncLifetime
 {
-	public const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string Password = "test123";
 
 	public WebApplicationFactory<Program> Factory { get; }

@@ -13,7 +13,6 @@ public sealed class KestrelAppHost : IAsyncDisposable
 	string _tempDir = "";
 
 	public string BaseUrl { get; private set; } = "";
-	public string DataDir => _tempDir;
 	public IServiceProvider Services => _app?.Services ?? throw new InvalidOperationException("Host not started");
 
 	public async Task StartAsync(Action<IDictionary<string, string?>> configure)

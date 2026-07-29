@@ -39,7 +39,7 @@ public sealed class UiStateTypeSyncTests
 
 	// --- Synthetic fixtures proving the comparator fails loudly on real divergence ---
 
-	public sealed record MatchingFixture
+	sealed record MatchingFixture
 	{
 		[BrowserState(Key = "sidebarPinned")]
 		public bool SidebarPinned { get; init; }
@@ -86,7 +86,7 @@ public sealed class UiStateTypeSyncTests
 		diffs.Should().ContainSingle(d => d.Contains("sidebarPinned", StringComparison.Ordinal) && d.Contains("boolean", StringComparison.Ordinal));
 	}
 
-	public sealed record EnumFixture
+	sealed record EnumFixture
 	{
 		[BrowserState(Key = "mode")]
 		public FixtureMode Mode { get; init; }
@@ -105,7 +105,7 @@ public sealed class UiStateTypeSyncTests
 	// board-filters-server-state: CollapsedByBoard is the first Dictionary-shaped [BrowserState]
 	// property — proves the comparator's Record<string, ...> mapping (added for it) round-trips
 	// before relying on it against the real BrowserState/ui-state.ts pair below.
-	public sealed record DictionaryFixture
+	sealed record DictionaryFixture
 	{
 		[BrowserState(Key = "collapsedByBoard")]
 		public Dictionary<string, string[]> CollapsedByBoard { get; init; } = new();

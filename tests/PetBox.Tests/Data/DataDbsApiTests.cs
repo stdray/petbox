@@ -22,7 +22,7 @@ namespace PetBox.Tests.Data;
 public sealed class DataDbsApiFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "kpvotes";
-	public const string TestApiKey = "yb_key_test_data_schema_xyz";
+	const string TestApiKey = "yb_key_test_data_schema_xyz";
 
 	readonly string _baseDir;
 

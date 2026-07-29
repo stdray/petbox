@@ -185,7 +185,7 @@ public static class SchemaSnapshot
 	// Everything after the column list of `CREATE [UNIQUE] INDEX x ON t (...) <rest>`, i.e. the
 	// `WHERE <predicate>`. Scans to the paren matching the FIRST '(' so a predicate that itself
 	// contains parentheses survives intact.
-	internal static string? PartialPredicate(string sql)
+	static string? PartialPredicate(string sql)
 	{
 		var open = sql.IndexOf('(', StringComparison.Ordinal);
 		if (open < 0) return null;
@@ -228,7 +228,7 @@ public static class SchemaSnapshot
 	//     and `IF NOT EXISTS` dropped (an emit-style choice, not a schema fact);
 	//   * keywords upper-cased, everything else left verbatim.
 	// String literals are masked out first, so nothing inside 'quoted text' is rewritten.
-	internal static string NormalizeSql(string sql)
+	static string NormalizeSql(string sql)
 	{
 		var literals = new List<string>();
 		var masked = StringLiteral.Replace(sql, m =>

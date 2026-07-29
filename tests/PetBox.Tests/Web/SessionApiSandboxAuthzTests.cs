@@ -23,7 +23,7 @@ public sealed class SessionApiSandboxAuthzFixture : IAsyncLifetime
 	public const string SandboxOnlyKey = "yb_key_sessbx_only";
 	public const string WildcardSandboxOnlyKey = "yb_key_sessbx_wild";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public SessionApiSandboxAuthzFixture()

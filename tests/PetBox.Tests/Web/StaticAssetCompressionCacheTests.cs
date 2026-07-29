@@ -21,7 +21,7 @@ namespace PetBox.Tests.Web;
 // (the ModuleViewsFixture pattern: safe because there is nothing TO collide on).
 public sealed class StaticAssetCompressionCacheFixture : IAsyncLifetime
 {
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public StaticAssetCompressionCacheFixture()

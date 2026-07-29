@@ -21,7 +21,7 @@ public sealed class AgentDefsApiAuthzFixture : IAsyncLifetime
 	public const string KeyNone = "yb_key_adef_noscope";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public AgentDefsApiAuthzFixture()

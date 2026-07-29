@@ -22,11 +22,11 @@ namespace PetBox.Tests.Web;
 // plain HTTP response and delivery is deterministic.
 public sealed class LiveTailFixture : IAsyncLifetime
 {
-	public const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string Password = "test123";
 
-	public const string WsA = "tailwsa";
-	public const string WsB = "tailwsb";
+	const string WsA = "tailwsa";
+	const string WsB = "tailwsb";
 	public const string ProjA = "tailproja";
 	public const string ProjB = "tailprojb";
 	public const string Log = "default";

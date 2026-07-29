@@ -103,16 +103,16 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 {
 	// The victim: a real workspace with a real project inside it. Both exist, so a 404 from a probe
 	// is a statement about the SURFACE, never about missing seed data.
-	public const string VictimWorkspace = "victimws";
+	const string VictimWorkspace = "victimws";
 	public const string VictimProject = "victimproj";
 
 	// The attacker: an equally real tenant next door. The API key is scoped to `attackerproj`; the
 	// browser user is a Member of `attackerws` and of nothing else (never a sysadmin — the sysadmin
 	// free pass is a different axis and would mask every page result).
-	public const string AttackerWorkspace = "attackerws";
+	const string AttackerWorkspace = "attackerws";
 	public const string AttackerProject = "attackerproj";
 
-	public const string AttackerUser = "crosstenant-attacker";
+	const string AttackerUser = "crosstenant-attacker";
 	const string Password = "test123";
 	const string PasswordHashValue = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
@@ -123,8 +123,8 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 
 	readonly string _baseDir;
 
-	public WebApplicationFactory<Program> Factory { get; }
-	public string AttackerApiKey { get; } = $"yb_key_{Guid.NewGuid():N}";
+	WebApplicationFactory<Program> Factory { get; }
+	string AttackerApiKey { get; } = $"yb_key_{Guid.NewGuid():N}";
 
 	public IReadOnlyList<AuthzSurface> Surfaces { get; private set; } = [];
 	public IReadOnlyList<CrossTenantProbe> Probes { get; private set; } = [];
@@ -142,7 +142,7 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 	// AuthzCrossTenantPostHandlerTests, so the 217/144 numbers keep meaning exactly what they meant.
 	public IReadOnlyList<CrossTenantProbe> PagePostProbes { get; private set; } = [];
 
-	public string AttackerCookie { get; private set; } = "";
+	string AttackerCookie { get; set; } = "";
 	public IReadOnlyList<string> ToolsVisibleToAttacker { get; private set; } = [];
 
 	// The server's OWN account of who the probe key is — whoami, untruncated. The guard-the-guard

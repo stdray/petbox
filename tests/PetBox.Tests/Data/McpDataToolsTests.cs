@@ -18,12 +18,12 @@ namespace PetBox.Tests.Data;
 public sealed class McpDataToolsFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "kpvotes";
-	public const string TestApiKey = "yb_key_test_mcp_xyz";
+	const string TestApiKey = "yb_key_test_mcp_xyz";
 
 	readonly string _baseDir;
 	HttpClient _http = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public McpClient Mcp { get; private set; } = null!;
 
 	public McpDataToolsFixture()

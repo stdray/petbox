@@ -127,8 +127,8 @@ public sealed class ToolDescriptionEconomyMechanismTests
 // End-to-end wire path: a real server tools/list serves the head, and tool_describe returns the full text.
 public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 {
-	public const string ProjectKey = "econ";
-	public const string ApiKey = "yb_key_econ_agent";
+	const string ProjectKey = "econ";
+	const string ApiKey = "yb_key_econ_agent";
 	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write";
 
 	readonly string _baseDir;
@@ -137,7 +137,6 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 	McpClient _mcp = null!;
 
 	public IReadOnlyDictionary<string, McpClientTool> Tools { get; private set; } = null!;
-	public McpClient Mcp => _mcp;
 
 	public ToolDescriptionEconomyWireFixture()
 	{

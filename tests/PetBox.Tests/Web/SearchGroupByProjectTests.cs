@@ -24,9 +24,9 @@ public sealed class SearchGroupByProjectFixture : IAsyncLifetime
 	// The exact-identifier slug: pasting it must resolve through the identifier fast-path, landing
 	// it in SearchModel.ExactRows — first and NEVER inside a collapsed per-project section.
 	public const string ExactSlug = "xgroup-exact-slug";
-	public const string ExactProj = "xgroup-proj-exact";
+	const string ExactProj = "xgroup-proj-exact";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public SearchGroupByProjectFixture()

@@ -21,7 +21,7 @@ namespace PetBox.Tests.Web;
 // inside the UPDATE statement (AgentKeyAdminService.UpdateAsync), not in the rendered list.
 public sealed class AgentKeyEditFixture : IAsyncLifetime
 {
-	public const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string Password = "test123";
 
 	// A key declared in appsettings (Auth:ApiKeys) — NOT a DB row. CompositeApiKeyLookup asks config

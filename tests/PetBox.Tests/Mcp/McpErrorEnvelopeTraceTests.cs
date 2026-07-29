@@ -130,15 +130,15 @@ public sealed class McpErrorEnvelopeTraceFixture : IAsyncLifetime
 {
 	// Seeded by M001/M004: $system + a key scoped logs:query — the self-log's own project, so a
 	// log_query/REST read over $system/petbox passes the ownership check.
-	public const string SystemApiKey = "yb_key_system_internal";
+	const string SystemApiKey = "yb_key_system_internal";
 
-	public const string TraceHeader = "X-Test-Trace";
+	const string TraceHeader = "X-Test-Trace";
 
 	HttpClient _http = null!;
 	HttpClient _tracedHttp = null!;
 	HttpClient _untracedHttp = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Http => _http;
 
 	// An MCP session whose requests run under a valid W3C Activity…

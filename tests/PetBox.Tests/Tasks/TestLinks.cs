@@ -4,7 +4,7 @@ namespace PetBox.Tests;
 // NodePatch.Links map that replaced the specRef/ideaRef sugar fields.
 public static class TestLinks
 {
-	public static IReadOnlyDictionary<string, IReadOnlyList<string>> Of(string kind, params string[] refs) =>
+	static IReadOnlyDictionary<string, IReadOnlyList<string>> Of(string kind, params string[] refs) =>
 		new Dictionary<string, IReadOnlyList<string>> { [kind] = refs };
 
 	public static IReadOnlyDictionary<string, IReadOnlyList<string>> TaskSpec(params string[] refs) => Of("task_spec", refs);

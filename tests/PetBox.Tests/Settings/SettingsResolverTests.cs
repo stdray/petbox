@@ -64,7 +64,7 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 
 	// Test records — defined as nested types to keep them local to these tests.
 
-	public sealed record TestLogSettings
+	sealed record TestLogSettings
 	{
 		[Setting(TopLevel = Scope.Workspace, Key = "test.log.retention.days")]
 		public int RetentionDays { get; init; } = 20;
@@ -80,7 +80,7 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 	// the no-rows test happened to run before that writer; v3 orders test cases within a class
 	// differently, which turned the latent dependency into a failure. Separate keys make the test
 	// order-independent instead of merely lucky.
-	public sealed record TestDefaultsOnlySettings
+	sealed record TestDefaultsOnlySettings
 	{
 		[Setting(TopLevel = Scope.Workspace, Key = "test.defaults.retention.days")]
 		public int RetentionDays { get; init; } = 20;
@@ -89,13 +89,13 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 		public long RetentionSize { get; init; } = 40_000_000;
 	}
 
-	public sealed record TestUiSettings
+	sealed record TestUiSettings
 	{
 		[Setting(TopLevel = Scope.User, Key = "test.ui.theme")]
 		public string Theme { get; init; } = "dark";
 	}
 
-	public sealed record TestSecretSettings
+	sealed record TestSecretSettings
 	{
 		[Setting(TopLevel = Scope.User, Key = "test.secret.key", IsSecret = true)]
 		public string ApiKey { get; init; } = "";
@@ -356,7 +356,7 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 		loaded.Flag.Should().BeTrue();
 	}
 
-	public sealed record BoolSettings
+	sealed record BoolSettings
 	{
 		[Setting(TopLevel = Scope.User, Key = "test.misc.flag")]
 		public bool Flag { get; init; }

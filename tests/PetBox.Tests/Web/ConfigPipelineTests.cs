@@ -23,7 +23,7 @@ public sealed class ConfigPipelineFixture : IAsyncLifetime
 	public const string WriteKey = "yb_key_test_config_write";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public ConfigPipelineFixture()

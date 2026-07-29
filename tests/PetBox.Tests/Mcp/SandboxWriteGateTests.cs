@@ -26,13 +26,13 @@ namespace PetBox.Tests.Mcp;
 // + McpClient style.
 public sealed class SandboxWriteGateFixture : IAsyncLifetime
 {
-	public const string Workspace = "sandboxgatews";
+	const string Workspace = "sandboxgatews";
 	public const string RealProject = "sandboxgatereal";       // Sandbox = false (a normal project)
 	public const string SandboxProject = "sandboxgatesandbox"; // Sandbox = true
 
-	public const string ScopedSandboxKey = "yb_key_sbx_scoped";     // sandboxOnly=true, claim = SandboxProject
-	public const string WildcardSandboxKey = "yb_key_sbx_wild";     // sandboxOnly=true, claim = "*"
-	public const string WildcardPlainKey = "yb_key_sbx_wild_plain"; // sandboxOnly=false, claim = "*" (control)
+	const string ScopedSandboxKey = "yb_key_sbx_scoped";     // sandboxOnly=true, claim = SandboxProject
+	const string WildcardSandboxKey = "yb_key_sbx_wild";     // sandboxOnly=true, claim = "*"
+	const string WildcardPlainKey = "yb_key_sbx_wild_plain"; // sandboxOnly=false, claim = "*" (control)
 
 	const string Scopes = "tasks:read,tasks:write";
 

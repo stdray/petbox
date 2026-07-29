@@ -19,7 +19,7 @@ namespace PetBox.Tests.Data;
 public sealed class EntityToolsFixture : IAsyncLifetime
 {
 	public const string ProjectKey = "entproj";
-	public const string ApiKey = "yb_key_entity_tools";
+	const string ApiKey = "yb_key_entity_tools";
 
 	readonly string _baseDir;
 	HttpClient _http = null!;

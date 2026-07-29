@@ -21,11 +21,11 @@ namespace PetBox.Tests.Web;
 //     hide logic is conditional, not "always hide", proven by the SAME sections reappearing.
 public sealed class NavHideEmptySectionsFixture : IAsyncLifetime
 {
-	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string EmptyProject = "navhide-empty";
 	public const string FullProject = "navhide-full";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public NavHideEmptySectionsFixture()

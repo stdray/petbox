@@ -46,7 +46,7 @@ static class EngineFixture
 
 	// The generic links door as the engine reads it: (nodeKey, linkKind, refs) tuples folded into
 	// nodeKey -> (kind -> refs). Refs may be a slug or a NodeId; a single value is just one element.
-	public static Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> Links(
+	static Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> Links(
 		params (string Key, string Kind, string[] Refs)[] entries)
 	{
 		var map = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>(StringComparer.Ordinal);
@@ -96,7 +96,7 @@ static class EngineFixture
 			partOfChildren ?? Edges(),
 			commentTags ?? Edges());
 
-	public static readonly EngineBoard[] DefaultBoards =
+	static readonly EngineBoard[] DefaultBoards =
 	[
 		new(WorkBoardName, "work", Instance, Closed: false),
 		new(WiredBoardName, "spec", Instance, Closed: false),

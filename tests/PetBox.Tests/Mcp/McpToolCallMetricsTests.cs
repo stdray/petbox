@@ -24,19 +24,19 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 {
 	// Seeded by M001/M004: the $system project + a key scoped logs:query (+ingest/config) — the
 	// self-log's own project, so log_query over $system/petbox passes the ownership check.
-	public const string SystemApiKey = "yb_key_system_internal";
+	const string SystemApiKey = "yb_key_system_internal";
 
 	// A SECOND key on the same ($system) project, scoped memory:read. Needed because the two
 	// tools SystemApiKey can call (whoami, log_query) carry NO [LogArg] markup at all — log_query's
 	// `take` hides inside the free-text `kql` and must never be logged. memory_search is the tool
 	// with the marked knobs (q/scope/store/limit/bodyLen/includeUsage), so it is the only way to
 	// prove Arg_* end-to-end: emitted → flushed → QUERYABLE FROM KQL, which is the whole point.
-	public const string MemoryApiKey = "yb_key_system_memory";
+	const string MemoryApiKey = "yb_key_system_memory";
 
 	HttpClient _http = null!;
 	HttpClient _memoryHttp = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Http => _http;
 	public McpClient Mcp { get; private set; } = null!;
 	public McpClient MemoryMcp { get; private set; } = null!;
