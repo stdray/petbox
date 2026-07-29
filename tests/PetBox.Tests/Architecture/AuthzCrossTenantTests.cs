@@ -71,8 +71,20 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			// opposite answers. That asymmetry is a defect rather than an exemption anyone chose, and the
 			// REST side is the correct half: it was NOT "brought into line" with `provisioning`, which
 			// would have meant opening cross-tenant config writes to close a diff.
-			["mcp:config_binding_upsert"] = (CrossTenantVerdict.Allowed,
-				"WROTE the victim workspace's config (\"applied\":true) with admin:provision; the REST twin denies"),
+			//
+			// mcp:config_binding_upsert moved Allowed -> ArgumentError under fix/mcp-empty-batch-rule
+			// (work/mcp-surface-naming-cleanup wave 4): the probe's default arg for an array-typed
+			// parameter is items:[], and an empty batch on config_binding_upsert is now a hard reject
+			// ("'items': empty batch — nothing to write") BEFORE the tenant/write path is ever reached.
+			// This is NOT the REST/MCP asymmetry above getting fixed — a call with a NON-empty items
+			// payload is untouched by that change and this probe no longer exercises that path, so the
+			// underlying hole is UNVERIFIED here, not closed. Left in KnownDeviations (not promoted to
+			// Denied) for exactly that reason.
+			["mcp:config_binding_upsert"] = (CrossTenantVerdict.ArgumentError,
+				"empty items:[] (the probe's default array arg) is now rejected before any tenant/write "
+				+ "decision — \"'items': empty batch — nothing to write\"; a non-empty payload is not "
+				+ "exercised by this probe, so the pre-existing REST-vs-MCP asymmetry noted above is "
+				+ "neither confirmed nor fixed by this entry"),
 			["mcp:config_binding_search"] = (CrossTenantVerdict.Allowed,
 				"read the victim workspace's bindings with admin:provision; the REST twin denies"),
 			// mcp:config_binding_delta was here — same "REST twin denies" deviation as upsert/search. GONE

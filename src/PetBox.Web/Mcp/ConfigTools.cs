@@ -66,13 +66,15 @@ public static class ConfigTools
 		twin with the same path + normalized tagset (the twin is soft-closed; its id lands in
 		`superseded`). NO version watermark — bindings are immutable rows keyed by an auto-increment
 		id (a change mints a new id), so there is no CAS/conflict: `applied` is true, or the whole
-		ATOMIC batch throws (nothing written). `kind`: 'Plain' (default) or 'Secret' (value stored
+		ATOMIC batch throws (nothing written) — an empty `items` array is one such throw
+		("'items': empty batch — nothing to write"). `kind`: 'Plain' (default) or 'Secret' (value stored
 		ENCRYPTED, never returned). Every item's tags must include 'ws:{workspaceKey}'. Requires
 		admin:provision.
 		[[full]]
 		Batch upsert config bindings — the uniform write verb that replaced the single-binding
-		config_binding_upsert. `items` is a JSON array; each item is a PUT keyed by (path, normalized
-		tag SET) within `workspaceKey`:
+		config_binding_upsert. `items` is a JSON array — it must be non-empty; an empty array is
+		REJECTED ("'items': empty batch — nothing to write"), never a silent no-op. Each item is a
+		PUT keyed by (path, normalized tag SET) within `workspaceKey`:
 		  • path — the dotted config path, e.g. 'app/connectionString'.
 		  • tags — a comma-separated tag set (order/case/whitespace of the CSV don't matter for
 		    identity); MUST include 'ws:{workspaceKey}'.
@@ -109,6 +111,13 @@ public static class ConfigTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
+		// An empty batch is almost always a client bug (a filter emptied the list, the call still
+		// went out) — reject it instead of silently reporting applied:true with nothing landed.
+		// This is the raw item count, not the post-validation one: a non-empty batch where every
+		// item is refused (atomic:false) is a legitimate partial refusal via conflicts[], not an
+		// empty batch — that case is handled below by the honest `applied` computation.
+		if (items.Length == 0)
+			throw new ArgumentException("'items': empty batch — nothing to write");
 
 		// Validate + prepare every item BEFORE touching the DB, so a bad item aborts the batch
 		// without a partial write. Secret encryption happens here (needs PETBOX_MASTER_KEY).
@@ -203,8 +212,11 @@ public static class ConfigTools
 
 		var currentVersion = await MaxIdAsync(configDb, ct);
 		// `applied` keeps its meaning: something landed. An atomic call that got here always did
-		// (a refusal threw); a partial call where every item was rejected wrote nothing.
-		return new ConfigBindingsUpsertResult(prepared.Count > 0 || conflicts.Count == 0, currentVersion, added, updated, supersededAll, conflicts);
+		// (a refusal threw); a partial call where every item was rejected wrote nothing. This is
+		// now a plain `prepared.Count > 0` — the degenerate case where that read true on an empty
+		// batch (0 prepared, 0 conflicts, vacuously "no conflicts") is foreclosed by the empty-items
+		// guard above, which now rejects items:[] before this point is ever reached.
+		return new ConfigBindingsUpsertResult(prepared.Count > 0, currentVersion, added, updated, supersededAll, conflicts);
 	}
 
 	[McpServerTool(Name = "config_binding_search", Title = "Read config bindings (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsSearchResult))]

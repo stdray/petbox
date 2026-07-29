@@ -81,7 +81,10 @@ public static class SessionTools
 		OVERLAPPING batches apply idempotently (ordinals the server already holds are ignored,
 		the new tail appends); a GAP (fromOrdinal > lastOrdinal+1) writes nothing and returns the
 		structured reject { applied:false, reason:"gap", lastOrdinal } — resend from
-		lastOrdinal+1. Requires tasks:write.
+		lastOrdinal+1. UNLIKE the other batch write verbs, `messages` filtered down to zero
+		content (every entry blank) is NOT rejected: blank-content entries are dropped before the
+		cursor check, so an all-blank batch is handled the same as a full overlap — an idempotent
+		no-op, { applied:true, appended:0 } — not an error. Requires tasks:write.
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
 
 		Result: { sessionId, applied, lastOrdinal, appended, reason, warning? } — `warning` is set

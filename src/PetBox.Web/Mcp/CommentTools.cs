@@ -46,7 +46,8 @@ public static class CommentTools
 		[[full]]
 		Batch declarative upsert of node comments (a discussion thread separate from the plan) —
 		the uniform write verb that replaced comments_create + comments_edit. `items` is a JSON
-		array; each item is one of:
+		array — it must be non-empty; an empty array is REJECTED ("'items': empty batch — nothing
+		to write"), never a silent no-op. Each item is one of:
 		  • CREATE — `id` absent/null. Requires `node` (the owner node, given as a node reference —
 		    its slug key on `board` or its 32-hex NodeId, both accepted) and `author`. `parentId`
 		    is a COMMENT id, NOT a node reference: it makes the item a
@@ -81,6 +82,11 @@ public static class CommentTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// An empty batch is almost always a client bug (a filter emptied the list, the call still
+		// went out) — reject it instead of silently no-opping. `items` maps 1:1 into parsed comment
+		// items below (nothing is filtered out), so the raw array length IS the effective batch size.
+		if (items.Length == 0)
+			throw new ArgumentException("'items': empty batch — nothing to write");
 
 		// Resolve each CREATE item's node ref (slug on `board` → 32-hex NodeId) at the adapter, so
 		// the service stays free of ITasksService (comments never leak into tasks_search).
