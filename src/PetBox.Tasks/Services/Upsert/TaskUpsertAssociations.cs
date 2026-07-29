@@ -148,7 +148,7 @@ public sealed class TaskUpsertAssociations
 	// Normalize a commit set: trim, lowercase, dedupe, drop empties; reject a value that is
 	// not hex or whose length is outside 7..40 (git short-sha floor .. full sha). Empty in →
 	// empty set (an explicit clear). Same validation-error shape as tag normalization.
-	public static HashSet<string> NormalizeCommits(IReadOnlyList<string>? commits)
+	private static HashSet<string> NormalizeCommits(IReadOnlyList<string>? commits)
 	{
 		var set = new HashSet<string>(StringComparer.Ordinal);
 		if (commits is null) return set;

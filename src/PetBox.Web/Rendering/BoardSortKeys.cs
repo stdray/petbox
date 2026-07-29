@@ -11,7 +11,7 @@ public static class BoardSortKeys
 	public const string Updated = "updated";
 	public const string Title = "title";
 
-	public static readonly IReadOnlyList<string> All = [Priority, Created, Updated, Title];
+	private static readonly IReadOnlyList<string> All = [Priority, Created, Updated, Title];
 
 	public static bool IsKnown(string? key) => key is not null && All.Contains(key, StringComparer.OrdinalIgnoreCase);
 }

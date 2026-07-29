@@ -146,7 +146,7 @@ public sealed class SessionService : ISessionService
 	}
 
 	// null/whitespace → absent (caller keeps existing). Non-empty must be a JSON object.
-	internal static string? NormalizeMetaJson(string? metaJson)
+	private static string? NormalizeMetaJson(string? metaJson)
 	{
 		if (string.IsNullOrWhiteSpace(metaJson)) return null;
 		try

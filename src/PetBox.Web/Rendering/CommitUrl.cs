@@ -6,7 +6,7 @@ namespace PetBox.Web.Rendering;
 // there is nothing to expand and callers fall back to plain text (the pre-feature behavior).
 public static class CommitUrl
 {
-	public const string Placeholder = "{sha}";
+	private const string Placeholder = "{sha}";
 
 	// True when `template` can be expanded (non-empty and contains {sha}). The markdown renderer
 	// and the commit-ref chip both gate on this so an unset/garbled template is a no-op.

@@ -52,10 +52,10 @@ public sealed class CrossScopeTaskSearchService(
 {
 	// Bounded fan-out: enough parallelism to make a many-project search feel instant without
 	// hammering every project's TasksDb connection pool at once.
-	public const int MaxProjectConcurrency = 6;
+	private const int MaxProjectConcurrency = 6;
 	// Full-text hits kept per project — this is a locator, not a research tool; a handful of
 	// candidates per project is plenty, and the response-wide cap does the rest.
-	public const int MaxFullTextPerProject = 5;
+	private const int MaxFullTextPerProject = 5;
 	// Total rows returned across every workspace/project.
 	public const int MaxResults = 50;
 

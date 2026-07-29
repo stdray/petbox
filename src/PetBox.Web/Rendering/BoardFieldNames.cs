@@ -37,7 +37,7 @@ public static class BoardFieldNames
 		(Body, "Body"),
 	];
 
-	public static readonly IReadOnlyList<string> All = Options.Select(o => o.Key).ToList();
+	private static readonly IReadOnlyList<string> All = Options.Select(o => o.Key).ToList();
 
 	public static bool IsKnown(string? name) => name is not null && All.Contains(name, StringComparer.OrdinalIgnoreCase);
 }

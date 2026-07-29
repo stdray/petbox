@@ -33,7 +33,7 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 	// MemoryVectorizationJob.MaxDocsPerPass: one sequential HTTP embed per doc (~150 ms), jobs run
 	// serially on a 60s enrichment tick, so a post-reindex delta (the whole board) must be drained
 	// in portions or it owns the tick. 200 docs ≈ 30 s.
-	internal const int MaxDocsPerPass = 200;
+	private const int MaxDocsPerPass = 200;
 
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly IProjectCatalog _catalog;

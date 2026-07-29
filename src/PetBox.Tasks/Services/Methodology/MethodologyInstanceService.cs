@@ -26,8 +26,8 @@ namespace PetBox.Tasks.Services.Methodology;
 public sealed partial class MethodologyInstanceService
 {
 	public const string SourceBuiltin = "builtin";
-	public const string SourceTemplate = "template";
-	public const string SourceInstance = "instance";
+	private const string SourceTemplate = "template";
+	private const string SourceInstance = "instance";
 
 	readonly ITaskBoardStore _boards;
 	readonly MethodologyTemplateService _templates;

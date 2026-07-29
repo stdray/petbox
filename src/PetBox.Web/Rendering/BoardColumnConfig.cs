@@ -16,7 +16,7 @@ public sealed record BoardColumnConfig(IReadOnlySet<string> Visible)
 	// The visible slugs in `knownSlugsInOrder`'s order (the board's own KanbanColumns order) —
 	// so ToCsv() below round-trips through FromKeys() to an equal set/order, the same "stable
 	// canonical order" discipline BoardFieldConfig.Keys() documents.
-	public IEnumerable<string> Keys(IReadOnlyList<string> knownSlugsInOrder) => knownSlugsInOrder.Where(Has);
+	private IEnumerable<string> Keys(IReadOnlyList<string> knownSlugsInOrder) => knownSlugsInOrder.Where(Has);
 
 	public string ToCsv(IReadOnlyList<string> knownSlugsInOrder) => string.Join(",", Keys(knownSlugsInOrder));
 

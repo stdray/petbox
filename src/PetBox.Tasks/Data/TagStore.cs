@@ -85,7 +85,7 @@ public sealed class TagStore : ITagStore
 	// pair. Without it (axis-less kinds — simple boards and axis-less definitions): any
 	// namespace is allowed and a bare word is filed under the default `tag:` namespace
 	// (free-form, low ceremony). Empty in → empty set.
-	public static IReadOnlySet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null)
+	private static HashSet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null)
 	{
 		var allowed = namespaces ?? DefaultNamespaces;
 		var set = new HashSet<string>(StringComparer.Ordinal);

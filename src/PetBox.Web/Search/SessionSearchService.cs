@@ -35,17 +35,17 @@ namespace PetBox.Web.Search;
 // is skipped, not an error.
 public sealed class SessionSearchService
 {
-	public const int DefaultSessions = 10;
+	private const int DefaultSessions = 10;
 	// The hydration cap per query. Recall saturates by K≈20-30 (eval m-dcbc8d51);
 	// hydrations are sequential, so RAM stays bounded by the episodic cache cap.
 	public const int MaxSessions = 30;
-	public const int DefaultHitsPerSession = 5;
-	public const int MaxHitsPerSession = 20;
+	private const int DefaultHitsPerSession = 5;
+	private const int MaxHitsPerSession = 20;
 
 	// Term-leg over-fetch pool: mirrors the memory contract's own convention for a store's
 	// hybrid pool (max(3×limit, 50), see IMemoryService.SearchEntriesAsync) so neither leg
 	// starves the fusion of candidates the session cut would otherwise keep.
-	internal const int TermPoolFloor = 50;
+	private const int TermPoolFloor = 50;
 
 	readonly IMemoryService _memory;
 	readonly ISessionEpisodicIndex _episodic;

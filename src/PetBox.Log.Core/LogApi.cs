@@ -94,8 +94,8 @@ public static class LogApi
 
 	// spec log-retention-cascade: RetentionDays is OPTIONAL — omitted/null means "no override",
 	// the log is swept by the project/workspace/system cascade exactly as before this field existed.
-	public sealed record CreateLogRequest(string Name, string? Description, int? RetentionDays = null);
-	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt, int? RetentionDays = null);
+	private sealed record CreateLogRequest(string Name, string? Description, int? RetentionDays = null);
+	private sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt, int? RetentionDays = null);
 
 	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CreateLogAsync(

@@ -138,12 +138,12 @@ public static class TasksSearchDocs
 	// `closed` is deliberately ABSENT from this vocabulary: a boolean closed folds accepted/Done
 	// (terminalok — a SUCCESS state search-before-rework must reach) in with rejected/cancelled
 	// (terminalcancel), which is the exact silent-loss bug the statusKind facet exists to kill.
-	public static readonly string OpenFacet = StatusKindFacet(StatusKind.Open);
-	public static readonly string TerminalOkFacet = StatusKindFacet(StatusKind.TerminalOk);
+	private static readonly string OpenFacet = StatusKindFacet(StatusKind.Open);
+	private static readonly string TerminalOkFacet = StatusKindFacet(StatusKind.TerminalOk);
 	public static readonly string TerminalCancelFacet = StatusKindFacet(StatusKind.TerminalCancel);
 
 	// The closed vocabulary a statusKind predicate ranges over (open|terminalok|terminalcancel).
-	public static readonly IReadOnlyList<string> AllStatusKindFacets = [OpenFacet, TerminalOkFacet, TerminalCancelFacet];
+	private static readonly IReadOnlyList<string> AllStatusKindFacets = [OpenFacet, TerminalOkFacet, TerminalCancelFacet];
 
 	// THE one place a read's EFFECTIVE statusKind facet is decided (spec tasks-search-statuskind-facet).
 	// Returns the statusKind SET the read selects by:

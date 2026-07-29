@@ -56,7 +56,7 @@ public static class WorkspaceRoleClaims
 	}
 
 	// The principal's role in the given workspace, or null if none is recorded in the claim.
-	public static WorkspaceRole? GetWorkspaceRole(this ClaimsPrincipal user, string workspaceKey)
+	private static WorkspaceRole? GetWorkspaceRole(this ClaimsPrincipal user, string workspaceKey)
 	{
 		var claim = user.FindFirst(PetBoxClaims.WorkspaceRoles)?.Value;
 		if (string.IsNullOrEmpty(claim))

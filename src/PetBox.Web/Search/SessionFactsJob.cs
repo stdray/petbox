@@ -36,12 +36,12 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	// The shared relaxed encoder passes Cyrillic through so the judge reads the actual fact text.
 	static readonly JsonSerializerOptions PromptJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
 
-	public static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
+	private static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
 
 	internal const int MaxCandidatesPerSession = 8;
-	internal const int MessageCharCap = 4000;
-	internal const int BatchCharCap = 48_000;
-	internal const int NeighborK = 3;
+	private const int MessageCharCap = 4000;
+	private const int BatchCharCap = 48_000;
+	private const int NeighborK = 3;
 
 	const string ExtractPrompt =
 		"""
@@ -497,7 +497,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 
 	static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-	internal sealed record FactCandidate(string? Type, string? Description, string? Body, string? Tags);
+	private sealed record FactCandidate(string? Type, string? Description, string? Body, string? Tags);
 
 	// The extraction response envelope: json_object response_format forbids a bare array at the
 	// top level on some upstreams, so the CANONICAL shape going forward is `{"facts":[...]}`
@@ -507,7 +507,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	// first-value-scan) keep working UNMODIFIED for either shape; the converter only decides how
 	// to build the list once a wrapper-or-bare top-level value has surfaced.
 	[JsonConverter(typeof(FactsEnvelopeConverter))]
-	internal sealed record FactsEnvelope(IReadOnlyList<FactCandidate> Facts);
+	private sealed record FactsEnvelope(IReadOnlyList<FactCandidate> Facts);
 
 	sealed class FactsEnvelopeConverter : JsonConverter<FactsEnvelope>
 	{
@@ -627,7 +627,7 @@ internal static class ResilientJson
 	static readonly Regex ReasoningOpen =
 		new(@"<(reasoning|thinking)>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-	internal static string StripReasoningBlocks(string raw)
+	private static string StripReasoningBlocks(string raw)
 	{
 		var s = ReasoningPair.Replace(raw, " ");
 		var open = ReasoningOpen.Match(s);

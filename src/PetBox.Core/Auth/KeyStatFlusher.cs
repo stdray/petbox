@@ -20,7 +20,7 @@ public sealed partial class KeyStatFlusher(
 	ICoreDbFactory coreDb,
 	ILogger<KeyStatFlusher> logger) : BackgroundService
 {
-	public static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
+	private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
 
 	// SQLite takes far more than this, but a bounded chunk keeps one statement's parameter list
 	// (2 per key) comfortably inside every provider limit — and a fleet with >500 keys used inside

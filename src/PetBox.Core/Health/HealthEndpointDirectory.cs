@@ -51,8 +51,8 @@ public interface IHealthEndpointDirectory
 
 public sealed class HealthEndpointDirectory(ICoreDbFactory dbf) : IHealthEndpointDirectory
 {
-	public const int MinIntervalSeconds = 5;
-	public const int DefaultIntervalSeconds = 60;
+	private const int MinIntervalSeconds = 5;
+	private const int DefaultIntervalSeconds = 60;
 
 	public async Task<IReadOnlyList<HealthEndpoint>> ListForProjectAsync(
 		string projectKey, CancellationToken ct = default)

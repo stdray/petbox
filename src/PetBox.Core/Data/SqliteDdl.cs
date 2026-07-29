@@ -143,7 +143,7 @@ public sealed class SqliteDdl
 	// or FTS table that nobody is told about is worse than a failed migration.
 	// `internal` (+ InternalsVisibleTo PetBox.Tests) so the test suite can drive this exact code
 	// path with a non-SQLite connection, without needing another database engine installed.
-	internal static void Require(IDbConnection? conn, string operation, string why)
+	private static void Require(IDbConnection? conn, string operation, string why)
 	{
 		// An exact type test, not "the type name contains sqlite": the whole value of this guard is
 		// that it cannot be fooled. Microsoft.Data.Sqlite is the one SQLite provider in the

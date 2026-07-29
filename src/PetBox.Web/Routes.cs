@@ -5,14 +5,14 @@ namespace PetBox.Web;
 // Use these instead of hard-coded strings or asp-page name-based linking where practical.
 public static class Routes
 {
-	public const string UiPrefix = "/ui";
+	private const string UiPrefix = "/ui";
 
 	public static string Home() => "/";
 
 	// All admin pages live under /ui/admin/ — workspace admin under ws/{ws}/...,
 	// sysadmin under sys/.... Phase 24 unification. Account pages stay at /ui/me/*
 	// with their own _AccountLayout.
-	public const string AdminPrefix = $"{UiPrefix}/admin";
+	private const string AdminPrefix = $"{UiPrefix}/admin";
 
 	// System level (sysadmin)
 	public static string Sys() => $"{AdminPrefix}/sys";

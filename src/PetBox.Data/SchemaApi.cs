@@ -41,7 +41,7 @@ public static class SchemaApi
 			.RequireAuthorization("DataRead");
 	}
 
-	public sealed record SchemaApplyRequest(string Name, string Sql);
+	private sealed record SchemaApplyRequest(string Name, string Sql);
 	public sealed record SchemaApplyResponse(string Kind, string Hash, string? ExistingHash);
 	public sealed record MigrationEntry(long Id, string ScriptName, DateTime Applied, string Hash);
 

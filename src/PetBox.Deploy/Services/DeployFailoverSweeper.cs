@@ -12,9 +12,9 @@ namespace PetBox.Deploy.Services;
 // just the timer + scope.
 public sealed partial class DeployFailoverSweeper(IServiceScopeFactory scopes, ILogger<DeployFailoverSweeper> logger) : BackgroundService
 {
-	public static readonly TimeSpan Period = TimeSpan.FromSeconds(30);
+	private static readonly TimeSpan Period = TimeSpan.FromSeconds(30);
 	// ~3 missed 30s polls. A node must be silent this long before its work is moved.
-	public static readonly TimeSpan Staleness = TimeSpan.FromSeconds(90);
+	private static readonly TimeSpan Staleness = TimeSpan.FromSeconds(90);
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{

@@ -51,7 +51,7 @@ internal static class AutocaptureDedup
 
 	// Identity key for the cheap pass: lowercase, every non-alphanumeric run → a single
 	// space, trimmed. Casing/punctuation drift no longer hides an exact duplicate.
-	internal static string Normalize(string? s)
+	private static string Normalize(string? s)
 	{
 		if (string.IsNullOrWhiteSpace(s)) return "";
 		var sb = new System.Text.StringBuilder(s.Length);

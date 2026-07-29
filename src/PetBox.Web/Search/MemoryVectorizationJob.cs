@@ -39,7 +39,7 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 	// deltas (a handful of docs) are unaffected, and a backfill drains in portions, one per tick.
 	// The budget is spent in catalog order, so a big project can eat a whole pass; it simply
 	// continues on the next tick, and the projects behind it start moving once it is caught up.
-	internal const int MaxDocsPerPass = 200;
+	private const int MaxDocsPerPass = 200;
 
 	readonly IScopedDbFactory<MemoryDb> _factory;
 	readonly IProjectCatalog _catalog;

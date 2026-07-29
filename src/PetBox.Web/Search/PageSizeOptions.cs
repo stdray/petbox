@@ -21,7 +21,7 @@ namespace PetBox.Web.Search;
 // the CURRENT size forward via this same query parameter).
 public static class PageSizeOptions
 {
-	public const int Default = 40;
+	private const int Default = 40;
 	public static readonly IReadOnlyList<int> Allowed = [10, 20, 40, 100];
 
 	// A missing/unrecognized `?size=` value degrades to Default rather than erroring.

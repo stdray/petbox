@@ -6,9 +6,9 @@ public sealed record CleFParseError(CleFErrorKind Kind, string Message);
 
 public sealed record CleFLineResult
 {
-	public int LineNumber { get; init; }
-	public Models.LogEntryCandidate? Event { get; init; }
-	public CleFParseError? Error { get; init; }
+	public int LineNumber { get; private init; }
+	public Models.LogEntryCandidate? Event { get; private init; }
+	public CleFParseError? Error { get; private init; }
 	public bool IsSuccess => Event is not null;
 
 	public static CleFLineResult Success(int line, Models.LogEntryCandidate e) => new()

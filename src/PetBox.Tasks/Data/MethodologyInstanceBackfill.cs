@@ -92,7 +92,7 @@ public sealed class MethodologyInstanceBackfill
 	}
 
 	// Exposed for tests: run a single project and report whether any membership was written.
-	internal bool MigrateProject(PetBoxDb db, string projectKey)
+	private bool MigrateProject(PetBoxDb db, string projectKey)
 	{
 		var boards = db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey)
