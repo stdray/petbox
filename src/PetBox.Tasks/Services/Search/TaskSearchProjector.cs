@@ -19,11 +19,20 @@ public enum SearchProjectionKind
 // would use GetAsync instead; Full here is the identity-shaped shell only).
 public static class TaskSearchProjector
 {
-	// Lean row: identity, body, tags, version, priority, timestamps, optional url.
-	// Parent/depth/delivery/links/commits/lineage left empty/null — query-mode MCP strips
-	// them on the wire; sort axes that need Priority/Created/Updated still work.
+	// Lean row: identity, body, tags, commits, version, priority, timestamps, optional url.
+	// Parent/depth/delivery/links/lineage left empty/null — query-mode MCP strips them on the
+	// wire; sort axes that need Priority/Created/Updated still work.
+	//
+	// `commits` is the ONE former member of that stripped set that a lean row now carries
+	// (client-issues/tasks-tool-contract-friction-tas-c31570). It is not enrichment here: the
+	// `commit` reverse-lookup FILTER applies in query mode too, so leaving it empty meant a
+	// query could SELECT rows by a commit and then hand back rows that showed none — the caller
+	// had to re-read every hit with tasks_node_get just to see what it had matched on. Callers
+	// that genuinely have no commit map (or want the cheapest possible row) pass null and get
+	// the historic `[]`.
 	public static PlanNodeView Lean(
-		PlanNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null) =>
+		PlanNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null,
+		IReadOnlyDictionary<string, List<string>>? commitsByNode = null) =>
 		new(
 			Key: n.Key,
 			NodeId: n.NodeId,
@@ -34,7 +43,7 @@ public static class TaskSearchProjector
 			Type: n.Type,
 			Title: n.Name,
 			Body: n.Body,
-			Commits: [],
+			Commits: commitsByNode is not null && commitsByNode.TryGetValue(n.NodeId, out var cs) ? cs : [],
 			Priority: n.Priority,
 			Version: n.Version,
 			Delivery: null,
@@ -50,14 +59,15 @@ public static class TaskSearchProjector
 
 	// Project every node in `nodes` to a lean view, keyed by slug and NodeId for hit resolve.
 	public static (Dictionary<string, PlanNodeView> BySlug, Dictionary<string, PlanNodeView> ByNodeId)
-		LeanIndex(string board, IEnumerable<PlanNode> nodes, ILookup<string, string> tagsByNode, string? urlPrefix = null)
+		LeanIndex(string board, IEnumerable<PlanNode> nodes, ILookup<string, string> tagsByNode, string? urlPrefix = null,
+			IReadOnlyDictionary<string, List<string>>? commitsByNode = null)
 	{
 		var bySlug = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
 		var byNodeId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
 		foreach (var n in nodes)
 		{
 			var tags = tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList();
-			var view = Lean(n, board, tags, urlPrefix);
+			var view = Lean(n, board, tags, urlPrefix, commitsByNode);
 			bySlug[n.Key] = view;
 			if (n.NodeId.Length > 0) byNodeId[n.NodeId] = view;
 		}

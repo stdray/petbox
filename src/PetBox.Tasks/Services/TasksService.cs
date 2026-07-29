@@ -2478,7 +2478,11 @@ public sealed partial class TasksService : ITasksService
 			.Where(n => includeClosed || !runtime.IsTerminalCancelStatus(kindSlug, n.Status))
 			.ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
-		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix);
+		// One extra board-wide read, the same shape and cost class as BoardTagsAsync above (not a
+		// per-node query). Query rows carry commits because `commit` filters in query mode too —
+		// see TaskSearchProjector.Lean and client-issues/tasks-tool-contract-friction-tas-c31570.
+		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
+		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix, commitsByNode);
 	}
 
 	// Final ordering of the selected set. No sort: query mode keeps the fused relevance

@@ -571,7 +571,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		var row = res.Nodes.Single(n => n.Key == "marmot-feat");
 
 		// Lean cut: a relevance row carries nothing beyond what picks the entity — the
-		// enrichment (parent/depth/delivery/spec/links/commits/priority) is omitted (null → dropped).
+		// enrichment (parent/depth/delivery/spec/links/renamedFrom/priority) is omitted (null → dropped).
 		row.ParentNodeId.Should().BeNull();
 		row.ParentSlug.Should().BeNull();
 		row.Depth.Should().BeNull();
@@ -581,10 +581,15 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		row.LinkedTasks.Should().BeNull();
 		row.Supersedes.Should().BeNull();
 		row.RenamedFrom.Should().BeNull();
-		row.Commits.Should().BeNull();
 		row.Priority.Should().BeNull();
 
-		// Kept: identity/title/status/type/tags/version + score/retriever (+ url when asked).
+		// `commits` is the ONE carve-out from the lean cut, added by
+		// client-issues/tasks-tool-contract-friction-tas-c31570: the `commit` reverse-lookup filter
+		// applies in query mode too, so a query that can SELECT on commits must not hide them.
+		// Everything else above stays dropped — this is a carve-out, not a rollback of the spec.
+		row.Commits.Should().BeEquivalentTo(["abc1234"]);
+
+		// Kept: identity/title/status/type/tags/version/commits + score/retriever (+ url when asked).
 		row.Key.Should().Be("marmot-feat");
 		row.NodeId.Should().Be(featId);
 		row.Board.Should().Be("b");

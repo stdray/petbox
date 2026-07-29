@@ -715,6 +715,12 @@ public static class TasksTools
 		same slug-or-NodeId convention as blockedBy/partOf). `node` reads ONE; `nodes` reads a
 		BATCH in one call — the same split as memory_get `key`/`keys`: combine them or use either
 		alone. Always returns { nodes: [...] }, one shape for both arities.
+		The parameter is `node`, NOT `key` — passing `key` is rejected as an unknown parameter.
+		This is a deliberate difference from tasks_upsert, not an inconsistency: `key` there is
+		the node's slug FIELD, the thing a write sets, and only a slug is valid. `node` here is a
+		REFERENCE, and it resolves EITHER a slug OR a 32-hex NodeId — the same two-form reference
+		blockedBy/partOf/`underNode` take. Naming it `key` would promise slug-only addressing and
+		lie about half of what it accepts. Rule of thumb: you WRITE a `key`, you READ BY a `node`.
 		In a BATCH a node that doesn't resolve on `board` (miss, or a hit that lives on a
 		DIFFERENT board) is silently dropped (soft filter) and an empty result is not an error;
 		rows come back in the REQUESTED order. With a single `node` a miss (or wrong-board hit)
@@ -734,7 +740,7 @@ public static class TasksTools
 	public static async Task<NodeGetResultView> NodeGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("One node's slug key on the board, or its 32-hex NodeId. Combine with `nodes` or use either alone.")] string? node = null,
+		[Description("One node's slug key on the board, or its 32-hex NodeId. Named `node`, not `key`, because it is a REFERENCE that takes either form — tasks_upsert's `key` is the slug field itself. Combine with `nodes` or use either alone.")] string? node = null,
 		[Description("Batch of nodes (slug key or 32-hex NodeId) read in ONE call; a node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
@@ -802,11 +808,14 @@ public static class TasksTools
 		THE read verb for plan nodes — one tool for both LISTING and SEARCH (list = search
 		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
 		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
-		`depth` (0 = root) — build the tree from those. Every row carries its `board` plus
-		key, nodeId, status, type, title, body, priority, version, renamedFrom, `tags`, `commits` (attached commit SHAs), and
-		links: `spec` (spec nodes a task implements), `blockedBy`, and on a spec board
-		`linkedTasks` + the COMPUTED `delivery` roll-up (not_started|in_progress|done|
-		done_with_defects).
+		`depth` (0 = root) — build the tree from those. Every row, in BOTH modes, carries its
+		`board` plus key, nodeId, status, type, title, body, version, `tags` and `commits`
+		(attached commit SHAs — never dropped, so the `commit` filter's own field is always
+		visible). A LISTING row (no `q`) additionally carries the enrichment: priority,
+		parentNodeId/parentSlug/depth, renamedFrom, and links — `spec` (spec nodes a task
+		implements), `blockedBy`, and on a spec board `linkedTasks` + the COMPUTED `delivery`
+		roll-up (not_started|in_progress|done|done_with_defects). A QUERY row (`q`) omits that
+		enrichment and adds score/retriever instead — see "Query rows are LEAN" below.
 
 		MODES. Without `q`: a DETERMINISTIC listing — `board` scopes to one board (the
 		response then carries the board context: `kind`, `wiredBoard`, `currentVersion`);
@@ -894,10 +903,13 @@ public static class TasksTools
 		are searched too (lexical leg): a comment match returns its OWNER node row marked
 		`matchedIn:"comment"` (spec tasks-search-comments); a plain node match leaves it null.
 		Query
-		rows are LEAN (spec search-lean-rows): identity/title/snippet/status/tags/version +
-		score/retriever only — links/delivery/parent/commits/priority are dropped and ride the
-		listing mode (no q) or tasks_node_get (version stays as the CAS baseline for an
-		upsert-after-find, tags aid selection).
+		rows are LEAN (spec search-lean-rows): identity/title/snippet/status/tags/version/commits
+		+ score/retriever only — links/delivery/parent/renamedFrom/priority are dropped and ride
+		the listing mode (no q) or tasks_node_get (version stays as the CAS baseline for an
+		upsert-after-find, tags aid selection). `commits` is EXEMPT from the lean cut and rides
+		BOTH modes: `commit` filters in both modes too, so a query must never select on a field
+		it then hides. If a field you expected is missing from a `q` result, it is one of the
+		dropped ones — re-read that node with tasks_node_get rather than assuming it is unset.
 
 		PROJECTION: `groupBy` = an ORDERED, comma-separated list of tag namespaces (e.g.
 		"area" or "area,concern") returns the tag-bucket view instead of rows (`groups`
@@ -1177,10 +1189,19 @@ public static class TasksTools
 	// may span boards). RenamedFrom is omitted when empty (null → dropped by the serializer).
 	// LEAN when the caller has a query (spec search-lean-rows): a relevance row carries only
 	// what picks the entity — identity/title/snippet/status/tags/version + score/retriever —
-	// while the enrichment (parent/depth/delivery/spec/links/commits/priority) is nulled →
+	// while the enrichment (parent/depth/delivery/spec/links/priority) is nulled →
 	// omitted on the wire; completeness comes from listing mode or tasks_node_get. Version is
 	// kept as the CAS baseline for upsert-after-find (same as memory_search rows) and Tags aid
 	// selection. Listing mode (no query) keeps the full row unchanged.
+	//
+	// `commits` is DELIBERATELY EXEMPT from the lean cut (client-issues/tasks-tool-contract-friction):
+	// it was swept in with the rest of the enrichment, but it is not enrichment here — `commit` is a
+	// FILTER on this very tool and it applies in BOTH modes, so {q, commit:"…"} used to select rows by
+	// a field the response then refused to show, and the only way to see what matched was a second
+	// tasks_node_get per row. The economy argument the spec rests on does not carry either: an empty
+	// set serializes to `"commits":[]` (~13 chars) and a carrying node holds a handful of SHAs — an
+	// order of magnitude under the body snippet that dominates a row. Identity of the commit IS part
+	// of picking the entity for any commit-shaped read, which is the spec's own criterion.
 	static TaskSearchNodeView SearchRow(TaskSearchHit h, int? bodyLen, bool lean)
 	{
 		var n = h.Node;
@@ -1197,7 +1218,8 @@ public static class TasksTools
 			// Uniform bodyLen contract, default a ~240-char snippet (compact listing); null
 			// (bodyLen:0) is omitted by the serializer.
 			Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.DefaultSnippet),
-			Commits: lean ? null : n.Commits,
+			// NOT lean-cut — see the note above: the `commit` filter works in query mode too.
+			Commits: n.Commits,
 			Priority: lean ? null : (long?)n.Priority,
 			Delivery: lean ? null : n.Delivery,
 			Spec: lean ? null : n.Spec,
@@ -1226,6 +1248,12 @@ public static class TasksTools
 		stays unchanged, tags:[] clears; on a NEW node (version 0) an omitted field starts empty —
 		there is no prior value to inherit. Delete via {key, deleted:true}. Each node has a FLAT slug
 		`key` and nests via `partOf`.
+		`key` is REQUIRED on EVERY node, including a brand-new one — there is no quick-add that
+		invents a slug for you, and a node without one is rejected with "each node needs a 'key'
+		(a flat slug)". The JSON schema types it `["string","null"]` and does NOT list it in
+		`required`: that is a back-compat artifact, not optionality — the legacy alias `l1` is
+		still accepted in its place, so no single property can carry the `required` marker. Read
+		it as "exactly one of `key` (use this) or `l1` (legacy) must be present".
 		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
 		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
 		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
@@ -1300,7 +1328,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board,
-		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node — it is typed nullable and left out of `required` only because the legacy alias `l1` is still accepted in its place; omitting both is an error, not a quick-add. Then: optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
