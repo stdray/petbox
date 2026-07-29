@@ -127,7 +127,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	[Fact]
 	public async Task Blocked_WithoutBlocker_Rejected_OnQuartetDefinitionResolvedWorkBoard()
 	{
-		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "wfquartet", source = "builtin", sourceKey = "quartet" });
+		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, key = "wfquartet", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
 		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");
@@ -217,7 +217,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 	[Fact]
 	public async Task Block_ManuallyLeavingBlocked_ClosesTheEdge_OnQuartetDefinitionResolvedWorkBoard()
 	{
-		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "wfquartet2", source = "builtin", sourceKey = "quartet" });
+		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, key = "wfquartet2", source = "builtin", sourceKey = "quartet" });
 		var ir = await AcceptedIdeaId(createBoard: false);
 		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", links = new { idea_spec = ir } }) });
 		var specId = NodeId(spec, "f");

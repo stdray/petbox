@@ -125,15 +125,18 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 		// MCP door.
 		var http = Http("tasks:read");
 		var mcp = await TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "help");
-		mcp.Found.Should().BeTrue();
-		mcp.Name.Should().Be("help");
+		// `key` is the instance's slug ADDRESS, `definitionName` the document's display prose —
+		// two fields because they are two concepts (wave 5 of mcp-surface-naming-cleanup; `key`
+		// used to be spelled `name`, colliding head-on with the prose one line below).
+		mcp.Key.Should().Be("help");
 		mcp.DefinitionName.Should().Be("support-process");
 		mcp.Version.Should().Be(rules.Version);
 		mcp.Kinds.Should().NotBeNull().And.ContainSingle(k => k.Kind == "support");
 
-		// Addressed read: a missing instance name is a clear error, not Found=false
-		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_rules_get now
-		// matches tasks_node_get's contract instead of the old nullable-get one).
+		// Addressed read: a key matching no instance is a clear error, never an empty success
+		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_rules_get matches
+		// tasks_node_get's contract instead of the old nullable-get one; wave 5 then deleted the
+		// vestigial always-true `found` field the old contract had left behind).
 		var miss = () => TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "nope");
 		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*nope*");
 	}

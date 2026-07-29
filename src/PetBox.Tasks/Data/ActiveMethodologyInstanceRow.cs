@@ -5,7 +5,7 @@ namespace PetBox.Tasks.Data;
 
 // The project's explicit "which methodology instance is active" pointer (spec
 // methodology-active-instance): controls DEFAULTS only (UI, MCP verbs called without an
-// explicit instance, tasks_methodology_guide with no `name`) — NEVER board membership
+// explicit instance, tasks_methodology_guide with no `key`) — NEVER board membership
 // rules, which always resolve through TaskBoards.MethodologyInstance regardless of what is
 // active here. Multi-key temporal (SCD type-2) SINGLETON row in the per-project tasks file,
 // same one-key shape as MethodologyDefRow: Key is the fixed SingletonKey, InstanceName is

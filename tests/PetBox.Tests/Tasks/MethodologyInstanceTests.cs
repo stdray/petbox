@@ -504,19 +504,19 @@ public sealed class MethodologyInstanceTests : IClassFixture<MethodologyInstance
 		var flags = Flags();
 
 		var created = await TasksTools.MethodologyCreateAsync(http, flags, _tasks, Proj, "mcp-main", "builtin", "classic");
-		created.Name.Should().Be("mcp-main");
+		created.Key.Should().Be("mcp-main");
 		created.Boards.Should().HaveCount(1);
 
 		var list = await TasksTools.MethodologyListAsync(http, flags, _tasks, Proj);
-		list.Instances.Should().Contain(i => i.Name == "mcp-main");
+		list.Instances.Should().Contain(i => i.Key == "mcp-main");
 
 		var get = await TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "mcp-main");
-		get.Found.Should().BeTrue();
-		get.Instance!.Name.Should().Be("mcp-main");
+		get.Instance!.Key.Should().Be("mcp-main");
 
-		// Addressed read: a missing instance name is a clear error, not Found=false
-		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_get now matches
-		// tasks_node_get's contract instead of the old nullable-get one).
+		// Addressed read: a key matching no instance is a clear error, never an empty success
+		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_get matches
+		// tasks_node_get's contract instead of the old nullable-get one; wave 5 then deleted the
+		// vestigial always-true `found` field the old contract had left behind).
 		var miss = () => TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "nope");
 		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*nope*");
 

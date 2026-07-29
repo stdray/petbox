@@ -701,23 +701,28 @@ public sealed partial class TasksService : ITasksService
 		MethodologyGuide.Render(MethodologyPresets.Name, MethodologyRuntime.PresetsOnly, "presets", null);
 
 	// The guide for "several open instances, none active" — names them and tells the caller
-	// how to resolve the ambiguity (name one explicitly, or set the project default) instead
+	// how to resolve the ambiguity (address one explicitly, or set the project default) instead
 	// of silently blending their rules the way the pre-methodology-active-instance merge did.
+	//
+	// This prose is a PRODUCT SURFACE, not a comment: it is the markdown an agent reads when the
+	// project is in this state, and it names a live parameter. When `name` became `key` across the
+	// tasks_methodology_* family (mcp-surface-naming-cleanup wave 5) this sentence had to move with
+	// it — a guide that teaches a retired parameter sends the reader into a REMOVED refusal.
 	static MethodologyGuideView AmbiguousInstancesGuide(IReadOnlyList<MethodologyInstanceView> open)
 	{
-		var names = string.Join(", ", open.Select(o => o.Name));
+		var keys = string.Join(", ", open.Select(o => o.Name));
 		var md = $"""
 			# Process guide: no active methodology instance
 
-			This project has {open.Count} OPEN methodology instances ({names}) and none is marked
+			This project has {open.Count} OPEN methodology instances ({keys}) and none is marked
 			active (spec methodology-active-instance) — this is an EXPLICIT, visible state, not a
 			silent merge of their rules. A board's own methodology instance always resolves its
 			rules regardless of this (tasks_workflow / a board-scoped call already works). To pick
 			a project-wide default:
 
-			- Pass `name` to tasks_methodology_guide (or any other call that accepts it) to see one
-			  instance's rules explicitly, or
-			- Call tasks_methodology_set_active to make one of {names} the project default.
+			- Pass `key` (an instance's slug, one of {keys}) to tasks_methodology_guide — or to any
+			  other tasks_methodology_* verb — to see one instance's rules explicitly, or
+			- Call tasks_methodology_set_active to make one of {keys} the project default.
 			""";
 		return new MethodologyGuideView(md, [], "ambiguous", null);
 	}

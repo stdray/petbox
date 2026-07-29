@@ -284,14 +284,14 @@ public sealed class MethodologyActiveInstanceTests : IDisposable
 		await _tasks.CreateMethodologyInstanceAsync(Proj, "mcp-inst", "builtin", "classic");
 
 		var before = await TasksTools.MethodologyActiveGetAsync(http, flags, _tasks, Proj);
-		before.Name.Should().BeNull();
+		before.Key.Should().BeNull();
 
 		var set = await TasksTools.MethodologySetActiveAsync(http, flags, _tasks, Proj, "mcp-inst", before.Version);
-		set.Name.Should().Be("mcp-inst");
+		set.Key.Should().Be("mcp-inst");
 		set.Changed.Should().BeTrue();
 
 		var after = await TasksTools.MethodologyActiveGetAsync(http, flags, _tasks, Proj);
-		after.Name.Should().Be("mcp-inst");
+		after.Key.Should().Be("mcp-inst");
 
 		var missing = () => TasksTools.MethodologySetActiveAsync(http, flags, _tasks, Proj, "ghost", 0);
 		(await missing.Should().ThrowAsync<ArgumentException>()).WithMessage("*not found*");

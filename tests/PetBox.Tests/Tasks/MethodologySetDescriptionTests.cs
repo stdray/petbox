@@ -100,18 +100,18 @@ public sealed class MethodologySetDescriptionTests : IClassFixture<MethodologySe
 		await tasks.CreateMethodologyInstanceAsync(ProjectKey, Inst, "template", Tmpl);
 	}
 
-	// Merges the fixed {projectKey, name} envelope onto the primitive-specific natural-key
+	// Merges the fixed {projectKey, key} envelope onto the primitive-specific natural-key
 	// fields, then round-trips through Call's own JsonElement pipeline like every other verb.
 	Task<CallToolResult> Describe(Dictionary<string, object?> args)
 	{
 		args["projectKey"] = ProjectKey;
-		args["name"] = Inst;
+		args["key"] = Inst;
 		return Call("tasks_methodology_set_description", args);
 	}
 
 	async Task<JsonElement> RulesGet()
 	{
-		var r = await Call("tasks_methodology_rules_get", new { projectKey = ProjectKey, name = Inst });
+		var r = await Call("tasks_methodology_rules_get", new { projectKey = ProjectKey, key = Inst });
 		IsErr(r).Should().BeFalse(Text(r));
 		return Parse(r);
 	}
@@ -214,7 +214,7 @@ public sealed class MethodologySetDescriptionTests : IClassFixture<MethodologySe
 	[Fact]
 	public async Task SetDescription_MissingInstance_IsAClearError()
 	{
-		var r = await Call("tasks_methodology_set_description", new { projectKey = ProjectKey, name = "no-such-instance", primitive = "kind", kind = "support", description = "x" });
+		var r = await Call("tasks_methodology_set_description", new { projectKey = ProjectKey, key = "no-such-instance", primitive = "kind", kind = "support", description = "x" });
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("not found");
 	}

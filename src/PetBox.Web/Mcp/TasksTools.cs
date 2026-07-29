@@ -145,20 +145,23 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_create", Title = "Create a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCreateResult))]
 	[Description("""
 		Create a NAMED methodology INSTANCE in one act from an EXPLICIT source — no silent
-		quartet default. Sources: `builtin` (sourceKey = quartet|classic|simple), `template`
-		(sourceKey = stored/builtin template key), `instance` (sourceKey = existing instance
-		name — snapshot its rules). Provisions instance rules + one board per kind in the
-		source definition; process-role singleton applies INSIDE the new instance (a second
-		instance may reuse the same process-role kinds). Template write alone never creates
-		boards — only this call does. GOVERNANCE: this authors a LIVE rules document —
-		requires tasks:write AND methodology:write.
+		quartet default. `key` is the new instance's SLUG ADDRESS — the same string every
+		other methodology verb takes as `key`, and the same string the read verbs hand back
+		in their `key` field (an instance's human-readable prose lives in the rules
+		document's own `name`, which this verb never sets). Sources: `builtin` (sourceKey =
+		quartet|classic|simple), `template` (sourceKey = stored/builtin template key),
+		`instance` (sourceKey = existing instance key — snapshot its rules). Provisions
+		instance rules + one board per kind in the source definition; process-role singleton
+		applies INSIDE the new instance (a second instance may reuse the same process-role
+		kinds). Template write alone never creates boards — only this call does. GOVERNANCE:
+		this authors a LIVE rules document — requires tasks:write AND methodology:write.
 		""")]
 	public static async Task<MethodologyInstanceCreateResult> MethodologyCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug ^[a-z][a-z0-9_-]{0,99}$).")] string name,
+		[Description("Instance slug key (^[a-z][a-z0-9_-]{0,99}$) — the address, not a display name.")] string key,
 		[Description("Source kind: builtin | template | instance.")] string source,
-		[Description("Source key: builtin slug, template key, or source instance name.")] string sourceKey,
+		[Description("Source key: builtin slug, template key, or source instance key.")] string sourceKey,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -168,7 +171,7 @@ public static class TasksTools
 		// rules_upsert (mint your own rules, then pull existing boards under them), so the
 		// criterion binds here too and both halves must be gated or neither is.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
-		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, name, source, sourceKey, ct);
+		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, key, source, sourceKey, ct);
 		return new MethodologyInstanceCreateResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
@@ -176,9 +179,10 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_list", Title = "List methodology instances", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceListResult))]
 	[Description("""
-		List methodology INSTANCES in the project as a compact INDEX: name, closed, kinds,
-		boards (name/kind/closed/wiredBoard), status histogram counts — no node bodies.
-		Requires tasks:read.
+		List methodology INSTANCES in the project as a compact INDEX: key (the instance's
+		slug address, what every methodology verb's `key` takes), closed, kinds, boards
+		(name/kind/closed/wiredBoard — a board is addressed by `board`, so its name stays
+		`name`), status histogram counts — no node bodies. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceListResult> MethodologyListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -192,24 +196,25 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
 	[Description("""
-		Return ONE methodology INSTANCE by `name` as a compact INDEX (identity, boards,
-		status histogram counts, computed summary — no node bodies). An addressed read: an
-		instance name matching nothing is a clear error (nothing returned), not an empty
-		result — same contract as tasks_node_get. For every instance use tasks_methodology_list
-		(a listing, which stays a soft/empty result). Requires tasks:read.
+		Return ONE methodology INSTANCE by `key` as a compact INDEX (identity, boards,
+		status histogram counts, computed summary — no node bodies). An addressed read: a
+		key matching no instance is a clear ERROR naming the key and the project (nothing
+		returned), not an empty result and not a `found:false` — same contract as
+		tasks_node_get. For every instance use tasks_methodology_list (a listing, which
+		stays a soft/empty result). Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceGetResult> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug).")] string name,
+		[Description("Instance slug key.")] string key,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var view = await tasks.GetMethodologyInstanceAsync(projectKey, name, ct);
+		var view = await tasks.GetMethodologyInstanceAsync(projectKey, key, ct);
 		if (view is null)
-			throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
-		return new MethodologyInstanceGetResult(Found: true, Instance: ProjectInstance(view));
+			throw new ArgumentException($"methodology instance '{key}' not found in project '{projectKey}'");
+		return new MethodologyInstanceGetResult(Instance: ProjectInstance(view));
 	}
 
 	[McpServerTool(Name = "tasks_methodology_close", Title = "Close a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCloseResult))]
@@ -222,7 +227,7 @@ public static class TasksTools
 	public static async Task<MethodologyInstanceCloseResult> MethodologyCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug) to close.")] string name,
+		[Description("Instance slug key to close.")] string key,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -233,7 +238,7 @@ public static class TasksTools
 		// is the criterion. Gating rules_upsert while leaving this open would be a hole: you
 		// cannot rewrite the process, but you could retire it wholesale.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
-		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, name, ct);
+		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, key, ct);
 		return new MethodologyInstanceCloseResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
@@ -243,12 +248,13 @@ public static class TasksTools
 	[Description("""
 		Return the project's explicit ACTIVE methodology instance pointer (spec
 		methodology-active-instance) — the instance DEFAULT surfaces (UI, MCP verbs called
-		without an explicit instance, tasks_methodology_guide with no `name`) resolve through
+		without an explicit instance, tasks_methodology_guide with no `key`) resolve through
 		when set. NEVER overrides board membership — a board's own methodology instance
 		(tasks_board_create's methodologyInstance) always wins regardless of what is active
-		here. `name` is null when no pointer is set: resolution then falls back to the single
-		open instance when there is exactly one, or an explicit "no active instance" guide
-		otherwise (never a silent merge). `version` is the CAS baseline for
+		here. `key` is the pointed-at instance's SLUG ADDRESS — feed it straight back to any
+		methodology verb's `key`. It is null when no pointer is set: resolution then falls
+		back to the single open instance when there is exactly one, or an explicit "no active
+		instance" guide otherwise (never a silent merge). `version` is the CAS baseline for
 		tasks_methodology_set_active. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyActiveGetResult> MethodologyActiveGetAsync(
@@ -264,14 +270,14 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_set_active", Title = "Set (or clear) the project's active methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveSetResult))]
 	[Description("""
 		Set the project's explicit ACTIVE methodology instance pointer, or CLEAR it (omit/null
-		`name`) — spec methodology-active-instance. Controls DEFAULTS only: UI, MCP verbs
-		without an explicit instance, and tasks_methodology_guide with no `name` resolve
+		`key`) — spec methodology-active-instance. Controls DEFAULTS only: UI, MCP verbs
+		without an explicit instance, and tasks_methodology_guide with no `key` resolve
 		through this pointer when set. NEVER controls board membership — a board that belongs
 		to instance X always resolves X's rules even while Y is active (board membership
-		always wins). The pointer MUST reference an OPEN instance: naming a missing or closed
-		instance is rejected, nothing is written — close it first or pick another. `version`
-		is the watermark baseline from tasks_methodology_active_get (0 = no prior read).
-		GOVERNANCE: tasks_methodology_guide (called with no `name`) resolves through this
+		always wins). The pointer MUST reference an OPEN instance: a key matching a missing or
+		closed instance is rejected, nothing is written — close it first or pick another.
+		`version` is the watermark baseline from tasks_methodology_active_get (0 = no prior
+		read). GOVERNANCE: tasks_methodology_guide (called with no `key`) resolves through this
 		pointer, and the guide is the only control that exists for CONVENTION gates — moving
 		it changes what every agent is taught the process IS. Requires tasks:write AND
 		methodology:write.
@@ -279,7 +285,7 @@ public static class TasksTools
 	public static async Task<MethodologyActiveSetResult> MethodologySetActiveAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug) to make active; omit/null to clear the pointer.")] string? name,
+		[Description("Instance slug key to make active; omit/null to clear the pointer.")] string? key,
 		[Description("Watermark baseline: version from tasks_methodology_active_get; 0 = no prior read.")] long version = 0,
 		CancellationToken ct = default)
 	{
@@ -290,7 +296,7 @@ public static class TasksTools
 		// ("changes the rules for existing nodes") this verb would walk free. It is gated under
 		// the WIDENED criterion, and the reason is not cosmetic:
 		//
-		// tasks_methodology_guide with no `name` resolves through this pointer, and the guide is
+		// tasks_methodology_guide with no `key` resolves through this pointer, and the guide is
 		// the ONLY control that exists for CONVENTION gates — a non-enforced approval_gate is,
 		// by definition, one the server does NOT block; the sole thing stopping an agent from
 		// self-approving is that the guide told it not to. Flipping the pointer at an instance
@@ -299,7 +305,7 @@ public static class TasksTools
 		// structure). That is a complete bypass of every convention gate, by one pointer write.
 		// Gating board_close while leaving this open would be incoherent.
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
-		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, name, version, ct);
+		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, key, version, ct);
 		return new MethodologyActiveSetResult(ack.Name, ack.Changed, ack.Version);
 	}
 
@@ -310,29 +316,31 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
 	[Description("""
-		Return the RULES DOCUMENT of one methodology INSTANCE by name — the live process
+		Return the RULES DOCUMENT of one methodology INSTANCE by `key` — the live process
 		document (kinds/types/statuses/transitions) that member boards resolve against,
 		plus the version baseline for tasks_methodology_rules_upsert. Same document shape as
-		tasks_methodology_template_get (kinds/workflows/linkKinds/tagAxes). An addressed
-		read: an instance name matching nothing is a clear error (nothing returned), not an
-		empty result — same contract as tasks_node_get. Closed instances still return their
-		last rules (read-only — rules_upsert rejects closed). Requires tasks:read.
+		tasks_methodology_template_get (kinds/workflows/linkKinds/tagAxes). The answer's own
+		`key` is the instance's slug address (hand it straight back to rules_upsert's `key`);
+		`definitionName` is the document's human-readable prose name, which addresses nothing.
+		An addressed read: a key matching no instance is a clear ERROR naming the key and the
+		project (nothing returned), not an empty result and not a `found:false` — same
+		contract as tasks_node_get. Closed instances still return their last rules (read-only
+		— rules_upsert rejects closed). Requires tasks:read.
 		""")]
 	public static async Task<MethodologyInstanceRulesGetResult> MethodologyRulesGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug).")] string name,
+		[Description("Instance slug key.")] string key,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
+		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, key, ct);
 		if (view is null)
-			throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
+			throw new ArgumentException($"methodology instance '{key}' not found in project '{projectKey}'");
 		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 		return new MethodologyInstanceRulesGetResult(
-			Found: true,
-			Name: view.Name,
+			Key: view.Name,
 			Closed: view.Closed,
 			DefinitionName: doc.Name,
 			Kinds: doc.Kinds,
@@ -351,7 +359,8 @@ public static class TasksTools
 		Replace means the WHOLE document: a field omitted ANYWHERE inside `definition` — not
 		just at the top level — is REMOVED from what gets stored, not left as-is. There is no
 		per-field merge; resend the COMPLETE document every time (rules_get, edit, resubmit whole).
-		`name` addresses the instance; `version` is the watermark baseline from
+		`key` addresses the instance — the same slug tasks_methodology_rules_get returns in its
+		own `key`; `version` is the watermark baseline from
 		tasks_methodology_rules_get (a stale/future baseline is a clear conflict).
 		`definition` is the same document shape as tasks_methodology_template_upsert. A CHANGE
 		is validated against LIVE NODES on this instance's open member boards only: every
@@ -360,14 +369,14 @@ public static class TasksTools
 		board/node/value — nothing is written. `migration` declares the repairs:
 		[{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a node's
 		current value is invalid under the new resolution (a valid value is never rewritten).
-		Closed instances reject the write. Returns { name, version, changed, migrated }.
+		Closed instances reject the write. Returns { key, version, changed, migrated }.
 		GOVERNANCE: this changes the rules that already govern EXISTING nodes — requires
 		tasks:write AND methodology:write. (Inert templates do not: see template_upsert.)
 		""")]
 	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyRulesUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug) whose rules to replace.")] string name,
+		[Description("Instance slug key whose rules to replace.")] string key,
 		[Description("The whole methodology rules document (same shape as tasks_methodology_template_upsert).")] MethodologyDefInput definition,
 		[Description("Watermark baseline: the `version` from your last tasks_methodology_rules_get.")] long version = 0,
 		[Description("Per-kind {from,to} type/status repairs for live nodes on this instance the change would strand.")] MethodologyMigrationInput[]? migration = null,
@@ -380,7 +389,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
-			projectKey, name, def, version, MethodologyWire.ParseMigration(migration), ct);
+			projectKey, key, def, version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
 	}
 
@@ -395,8 +404,9 @@ public static class TasksTools
 		"$utility" sentinel on tasks_board_create/tasks_board_adopt) resolves its kind against
 		this document; an undeclared kind falls back to the built-in presets (simple|classic).
 		An addressed read: the project having never defined a utility layer (everything then
-		resolves from presets alone) is a clear error (nothing returned), not an empty result
-		— same contract as tasks_node_get. Requires tasks:read.
+		resolves from presets alone) is a clear ERROR naming the project (nothing returned),
+		not an empty result and not a `found:false` — same contract as tasks_node_get.
+		Requires tasks:read.
 		""")]
 	public static async Task<MethodologyUtilityGetResult> MethodologyUtilityGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -409,7 +419,6 @@ public static class TasksTools
 			throw new ArgumentException($"project '{projectKey}' has no utility-kind layer defined");
 		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 		return new MethodologyUtilityGetResult(
-			Found: true,
 			DefinitionName: doc.Name,
 			Kinds: doc.Kinds,
 			Version: view.Version,
@@ -485,7 +494,7 @@ public static class TasksTools
 	public static async Task<MethodologySetDescriptionResult> MethodologySetDescriptionAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Instance name (slug) whose rules the primitive lives on.")] string name,
+		[Description("Instance slug key whose rules the primitive lives on.")] string key,
 		[Description("kind | status | transition | effect | constraint | linkKind | tagAxis. Matched case-insensitively.")] string primitive,
 		[Description("The new prose. Pass \"\" to clear an existing description.")] string description,
 		[Description("Kind slug — required for every primitive except linkKind/tagAxis.")] string? kind = null,
@@ -523,15 +532,15 @@ public static class TasksTools
 		const int maxAttempts = 5;
 		for (var attempt = 1; ; attempt++)
 		{
-			var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct)
-				?? throw new ArgumentException($"methodology instance '{name}' not found in project '{projectKey}'");
+			var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, key, ct)
+				?? throw new ArgumentException($"methodology instance '{key}' not found in project '{projectKey}'");
 			var (def, matched) = MethodologySetDescription.Apply(
 				view.Definition, primitive, kind, type, slug, from, to, on, link, direction, onLeave, @namespace, description);
 			if (!matched)
-				throw new ArgumentException($"no {primitive} matched the given natural key on methodology instance '{name}'");
+				throw new ArgumentException($"no {primitive} matched the given natural key on methodology instance '{key}'");
 			try
 			{
-				var ack = await tasks.DefineMethodologyInstanceRulesAsync(projectKey, name, def, view.Version, null, ct);
+				var ack = await tasks.DefineMethodologyInstanceRulesAsync(projectKey, key, def, view.Version, null, ct);
 				return new MethodologySetDescriptionResult(ack.Name, primitive, ack.Version);
 			}
 			catch (InvalidOperationException ex) when (attempt < maxAttempts && ex.Message.Contains("conflict", StringComparison.OrdinalIgnoreCase))
@@ -602,9 +611,11 @@ public static class TasksTools
 		Return ONE methodology template by `key`. Resolution order: stored template →
 		builtin (quartet|classic|simple, source="builtin", version 0) → dual-read of the
 		legacy project singleton under key "methodology" (source="definition", compat) →
-		error. An addressed read: a key matching none of the above is a clear error (nothing
-		returned), not an empty result — same contract as tasks_node_get. Document body
-		(name/kinds/…) is copyable into template_upsert or into
+		error. An addressed read: a key matching none of the above is a clear ERROR naming
+		the key and the project (nothing returned), not an empty result and not a
+		`found:false` — same contract as tasks_node_get. `key` in the answer is the template's
+		slug address; `name` beside it is the document's human-readable prose name, which
+		addresses nothing. Document body (name/kinds/…) is copyable into template_upsert or into
 		tasks_methodology_rules_upsert for a live instance. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyTemplateGetResult> MethodologyTemplateGetAsync(
@@ -669,8 +680,9 @@ public static class TasksTools
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
 		boards — DERIVED AT RUNTIME from OPEN methodology INSTANCE rules (tasks_methodology_create
 		/ tasks_methodology_rules_upsert), with builtin templates (quartet|classic|simple)
-		as the baseline where no open instance applies. Optional `name` selects one instance
-		explicitly. When omitted, resolution follows the project's ACTIVE INSTANCE pointer
+		as the baseline where no open instance applies. Optional `key` selects one instance
+		explicitly — the same slug address tasks_methodology_list/_active_get return in their
+		own `key`. When omitted, resolution follows the project's ACTIVE INSTANCE pointer
 		(spec methodology-active-instance, tasks_methodology_active_get /
 		tasks_methodology_set_active): the pointer when set and open; else the single open
 		instance when there is exactly one; else an EXPLICIT "N open, none active" guide
@@ -697,12 +709,12 @@ public static class TasksTools
 	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Optional methodology instance name; when omitted, resolves via the active-instance pointer (tasks_methodology_active_get/set_active).")] string? name = null,
+		[Description("Optional methodology instance slug key; when omitted, resolves via the active-instance pointer (tasks_methodology_active_get/set_active).")] string? key = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return await tasks.GetMethodologyGuideAsync(projectKey, name, ct);
+		return await tasks.GetMethodologyGuideAsync(projectKey, key, ct);
 	}
 
 	// The definition wire mapping (ParseDefinition/ParseMigration/ProjectDefinition) lives in

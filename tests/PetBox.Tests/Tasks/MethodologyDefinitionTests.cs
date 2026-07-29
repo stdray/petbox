@@ -132,7 +132,6 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		ack.GetProperty("key").GetString().Should().Be(TemplateKey);
 
 		var got = Parse(await Get());
-		got.GetProperty("found").GetBoolean().Should().BeTrue();
 		got.GetProperty("source").GetString().Should().Be("stored");
 		got.GetProperty("name").GetString().Should().Be("acme-process");
 		got.GetProperty("version").GetInt64().Should().Be(1);

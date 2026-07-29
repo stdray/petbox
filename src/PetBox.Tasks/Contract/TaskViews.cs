@@ -334,8 +334,12 @@ public sealed record MethodologyInstanceView(
 
 // The project's explicit "active methodology instance" pointer (spec
 // methodology-active-instance): controls DEFAULTS only (UI, MCP verbs without an explicit
-// instance, tasks_methodology_guide with no `name`) — board membership rules always
-// resolve through TaskBoards.MethodologyInstance regardless of what is active here. Name is
+// instance, tasks_methodology_guide with no `key`) — board membership rules always
+// resolve through TaskBoards.MethodologyInstance regardless of what is active here. This is
+// the DOMAIN view, whose field keeps the storage-side spelling `Name`; the MCP wire result
+// (MethodologyActiveGetResult) exposes it as `key`, the slug address every
+// tasks_methodology_* verb takes (mcp-surface-naming-cleanup wave 5 renamed the SURFACE, not
+// the stored column — the card forbids data migration). Name is
 // null when no pointer is set (resolution then falls back to the single-open-instance case,
 // or an explicit "no default" state — never a silent merge). Version is the CAS baseline
 // for tasks_methodology_set_active.

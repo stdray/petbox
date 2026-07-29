@@ -350,7 +350,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_delete", new { projectKey = ProjectKey, board = "no-such-board" }),
 			// deleting a template that never existed: conformant {deleted:false} no-op.
 			("tasks_methodology_template_delete", new { projectKey = ProjectKey, key = "no-such-tmpl" }),
-			// agent_def_get miss → Found:false (not isError); delete miss → deleted:false.
+			// agent_def_get miss → isError, same as every other addressed read (wave 5 of
+			// mcp-surface-naming-cleanup retired its found:false dialect); delete miss → deleted:false.
 			("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def" }),
 			("agent_def_delete", new { projectKey = ProjectKey, key = "no-such-def" }),
 		};
@@ -419,7 +420,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 
 		// Both landed: read them back through the surface.
 		var readBack = await Call("agent_def_get", new { projectKey = ProjectKey, key = "tolerant-str" });
-		readBack.StructuredContent?.GetProperty("found").GetBoolean().Should().BeTrue();
 		readBack.StructuredContent?.GetProperty("name").GetString().Should().Be("tolerant-str");
 
 		// Garbage string → a STRUCTURAL error (ArgumentException + an actionable message), not a
@@ -435,6 +435,31 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		notAnObject.IsError.Should().BeTrue();
 		JsonDocument.Parse(Text(notAnObject)).RootElement.GetProperty("error").GetProperty("message").GetString()
 			.Should().Contain("definition must be a JSON object");
+	}
+
+	// mcp-surface-naming-cleanup wave 5, task 2 — ONE contract for a missed addressed read.
+	//
+	// agent_def_get was the last verb on the surface answering a miss with `found:false` while
+	// tasks_node_get and every methodology get THREW. Two dialects for one situation is a thing
+	// each caller learns twice and half of them get wrong: the found:false answer is a SUCCESS
+	// carrying a document of nulls, so a caller that forgets the check reads the miss as data.
+	// The edge battery above only asserts the weaker "isError OR conforms" property, which passed
+	// under BOTH dialects — this test is the one that pins which of the two is live.
+	[Fact]
+	public async Task AgentDefGet_Miss_IsAnError_NamingTheKeyAndProject_NotAFoundFalseSuccess()
+	{
+		var miss = await Call("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def-at-all" });
+
+		miss.IsError.Should().BeTrue("an addressed read that resolves nothing is an error, not an empty success");
+		var message = JsonDocument.Parse(Text(miss)).RootElement.GetProperty("error").GetProperty("message").GetString();
+		message.Should().Contain("no-such-def-at-all").And.Contain(ProjectKey);
+
+		// And the dead field is gone from the published output schema, so no client can be written
+		// against it: `found` could only ever have been true once the miss branch started throwing.
+		var output = _tools["agent_def_get"].ProtocolTool.OutputSchema;
+		output.Should().NotBeNull();
+		output!.Value.GetProperty("properties").EnumerateObject().Select(p => p.Name)
+			.Should().NotContain("found");
 	}
 
 	// workspace-curation-assertproject-bug (bonus finding). The card suspected store_delete /
