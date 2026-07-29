@@ -819,7 +819,7 @@ public static class TasksTools
 		available here: it routinely spends a third of the response budget on text you will not read.
 		[[full]]
 		THE read verb for task nodes — one tool for both LISTING and SEARCH (list = search
-		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
+		without `q`). Nodes are FLAT (a single slug `key`);
 		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
 		`depth` (0 = root) — build the tree from those. Every row, in BOTH modes, carries its
 		`board` plus key, nodeId, status, type, title, body, version, `tags` and `commits`
