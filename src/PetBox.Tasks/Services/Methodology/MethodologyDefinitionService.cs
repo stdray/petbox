@@ -108,15 +108,15 @@ public sealed class MethodologyDefinitionService
 		if (!r.Applied)
 		{
 			// Singleton document: exactly one conflict possible. Name the current version so
-			// the caller re-reads (tasks_methodology_def_get) and rebases — same optimistic-
+			// the caller re-reads (tasks_methodology_utility_get) and rebases — same optimistic-
 			// concurrency spirit as the node upsert, but a throw (there is no batch to ack).
 			// Thrown BEFORE any node rewrite, so a conflicting call writes nothing at all.
 			var c = r.Conflicts[0];
 			throw new InvalidOperationException(c.Kind switch
 			{
-				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — that version was never reached here (a baseline from another project/scope?); re-read with tasks_methodology_def_get and resubmit against the current version",
-				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks_methodology_def_get and resubmit with version 0",
-				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the currentVersion from your last tasks_methodology_def_get (0 = no definition yet)",
+				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — that version was never reached here (a baseline from another project/scope?); re-read with tasks_methodology_utility_get and resubmit against the current version",
+				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks_methodology_utility_get and resubmit with version 0",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the currentVersion from your last tasks_methodology_utility_get (0 = no definition yet)",
 			});
 		}
 
@@ -159,8 +159,8 @@ public sealed class MethodologyDefinitionService
 			var c = r.Conflicts[0];
 			throw new InvalidOperationException(c.Kind switch
 			{
-				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with tasks_methodology_def_get and retry the delete against the current version",
-				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_def_get and retry the delete against the current version",
+				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with tasks_methodology_utility_get and retry the delete against the current version",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_utility_get and retry the delete against the current version",
 			});
 		}
 		// tasks-reindex-on-methodology-vocab-change: the delete reverts every declared board to its
