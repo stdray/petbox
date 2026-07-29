@@ -212,6 +212,40 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 		Events().Should().OnlyContain(e => e.UsageSource == "machine");
 	}
 
+	// work/mcp-surface-naming-cleanup wave 3b: usageSource was documented as "deliberate" |
+	// "machine" but never validated — anything else silently fell through to "deliberate",
+	// permanently counting a typo toward the honest value signal GC trusts. It must now be
+	// validated: null | "deliberate" | "machine" (case-insensitive, trimmed) are the only
+	// legal values, everything else is a refusal naming both.
+	[Fact]
+	public async Task Search_UsageSource_Garbage_IsRejected_NamingBothValidValues()
+	{
+		await Seed("u1");
+
+		var act = () => MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder,
+			"телеметрию", scope: "project", store: "notes", usageSource: "bogus");
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.Which.Message.Should().Contain("bogus").And.Contain("deliberate").And.Contain("machine");
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData("deliberate")]
+	[InlineData("machine")]
+	[InlineData("MACHINE")]
+	[InlineData(" Deliberate ")]
+	[InlineData("  machine  ")]
+	public async Task Search_UsageSource_LegalValues_AreAccepted_CaseAndWhitespaceInsensitive(string? usageSource)
+	{
+		await Seed("u1");
+
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder,
+			"телеметрию", scope: "project", store: "notes", usageSource: usageSource);
+
+		res.Items.Should().ContainSingle();
+	}
+
 	// The delivery events are an ADDITION, not a replacement: entry_usage keeps counting exactly
 	// as before (the fast counter cache stays the read surface for "how often").
 	[Fact]

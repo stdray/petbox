@@ -5,6 +5,7 @@ using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Models;
 using PetBox.Data.Contract;
+using PetBox.Data.Schema;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -30,7 +31,7 @@ namespace PetBox.Web.Mcp;
 public static class DataTools
 {
 	[McpServerTool(Name = "data_schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true, OutputSchemaType = typeof(DataSchemaApplyResult))]
-	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op; same name with different sql is a 409-style conflict. Requires data:schema scope.")]
+	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op (kind: 'AlreadyApplied'). Same name with different sql, or a SQL/DbUp failure, is a REFUSAL through the standard error envelope (not a field of a successful response) — the Conflict error names both the existing and the provided hash. Requires data:schema scope.")]
 	public static async Task<DataSchemaApplyResult> SchemaApplyAsync(
 		IHttpContextAccessor http,
 		IDataSqlService dataSql,
@@ -43,7 +44,27 @@ public static class DataTools
 		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, migrationName, sql, ct);
-		return new DataSchemaApplyResult(result.Kind.ToString(), result.Hash, result.ExistingHash, result.Error);
+		// data_schema_apply used to be the one tool on the surface with its own error channel
+		// around McpErrorEnvelopeFilter: Failed/Conflict rode home as FIELDS of a successful
+		// response (kind:'Failed'+error, kind:'Conflict'+existingHash), invisible to anything that
+		// only checked isError. AlreadyApplied is the one kind that stays a soft success — a no-op
+		// re-apply is not a refusal. Applied/AlreadyApplied both report the same shape (kind + the
+		// hash that is now on file); Conflict and Failed throw instead, through the central envelope,
+		// and Conflict's message carries BOTH hashes (error text is a product surface here — a
+		// caller deciding whether to bump migrationName needs to see what it collided with).
+		return result.Kind switch
+		{
+			SchemaApplyKind.Applied or SchemaApplyKind.AlreadyApplied =>
+				new DataSchemaApplyResult(result.Kind.ToString(), result.Hash),
+			SchemaApplyKind.Conflict => throw new InvalidOperationException(
+				$"data_schema_apply: migration '{migrationName}' was already applied with different sql — " +
+				$"existingHash '{result.ExistingHash}', providedHash '{result.Hash}'. Re-apply with the " +
+				"SAME sql to no-op, or pick a new migrationName for the changed script."),
+			SchemaApplyKind.Failed => throw new ArgumentException(
+				$"data_schema_apply: migration '{migrationName}' failed — {result.Error}"),
+			_ => throw new InvalidOperationException(
+				$"data_schema_apply: unexpected result kind '{result.Kind}'"),
+		};
 	}
 
 	[McpServerTool(Name = "data_query", Title = "Run SQL query", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataQueryResult))]

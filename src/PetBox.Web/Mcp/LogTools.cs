@@ -33,8 +33,19 @@ public static class LogTools
 	// The shared relaxed encoder keeps human text as-is while HTML-sensitive chars stay escaped.
 	static readonly JsonSerializerOptions PropertyJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
 
+	// Surfaced on LogQueryResultView.Hint when the row cap cut the result (either arm). log_query is
+	// the one truncated-carrying verb on the surface with no accompanying hint (unlike the search
+	// verbs' truncated/omitted/hint trio) — the row cap names the fact of a cut but not an action.
+	// Same vocabulary as the search verbs' SearchBudgetHint constants, adapted to a row cap (KQL
+	// take/top/summarize) rather than a serialized-output budget. Deliberately NO omitted count: the
+	// row cap does not know how many rows it dropped, so reporting one would be a fabricated number,
+	// worse than reporting none.
+	const string TruncationHint =
+		"Row cap reached: results were truncated (see truncated). Narrow the query: add or tighten " +
+		"`take`/`top`, or aggregate (`summarize`) to bound the result deliberately.";
+
 	[McpServerTool(Name = "log_query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
-	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Responses are row-capped: no explicit take/top applies a default limit (1000 rows), an explicit one is bounded by a hard max (100k); a cut result carries truncated: true — add/tighten take (or aggregate) to bound the query deliberately. Requires logs:query scope.")]
+	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Responses are row-capped: no explicit take/top applies a default limit (1000 rows), an explicit one is bounded by a hard max (100k); a cut result carries truncated: true plus a narrowing `hint` (add/tighten take, or aggregate, to bound the query deliberately) — omitted (null) when the result was not cut. Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
 		IHttpContextAccessor http,
 		ILogQueryService logs,
@@ -62,8 +73,9 @@ public static class LogTools
 				await foreach (var row in table.Result.Rows.WithCancellation(ct))
 					rows.Add(row.Select(cell => (object?)cell).ToList());
 				// The truncation signal is final only after the enumeration above; omit when false.
+				var truncated = table.Truncation.Truncated;
 				return new LogQueryResultView("table", Columns: columns, Rows: rows,
-					Truncated: table.Truncation.Truncated ? true : null);
+					Truncated: truncated ? true : null, Hint: truncated ? TruncationHint : null);
 			}
 
 			var eventsResult = (LogQueryResult.Events)result;
@@ -77,7 +89,7 @@ public static class LogTools
 				Exception: e.Exception,
 				Properties: e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value, PropertyJson)))).ToList();
 			return new LogQueryResultView("events", Count: events.Count, Events: events,
-				Truncated: eventsResult.Truncated ? true : null);
+				Truncated: eventsResult.Truncated ? true : null, Hint: eventsResult.Truncated ? TruncationHint : null);
 		}
 		catch (UnsupportedKqlException ex)
 		{

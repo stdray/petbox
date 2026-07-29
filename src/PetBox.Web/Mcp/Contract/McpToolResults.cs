@@ -140,7 +140,14 @@ public sealed record ApiKeyDeletedResult(bool Deleted, string Key);
 
 // ---- data.* --------------------------------------------------------------------------
 
-public sealed record DataSchemaApplyResult(string Kind, string Hash, string? ExistingHash, string? Error);
+// data_schema_apply's success shape — ONLY the two soft outcomes reach here now: Kind is
+// "Applied" (this call wrote it) or "AlreadyApplied" (same name+sql, no-op), Hash the migration's
+// on-file hash either way. Kind:'Failed' (bad SQL) and Kind:'Conflict' (same name, different sql)
+// used to ride home as fields of THIS successful response, with a caller that only checked
+// isError silently missing them — they now throw through the central error envelope instead
+// (McpErrorEnvelopeFilter), so there is no ExistingHash/Error field here to carry: a Conflict's
+// existingHash/providedHash live in the thrown exception's message, a Failed's reason too.
+public sealed record DataSchemaApplyResult(string Kind, string Hash);
 
 // db lifecycle (replaces entity.* type "db"): create/list/delete/describe.
 public sealed record DataDbCreatedResult(string Name, string? Description, long MaxPageCount, DateTime CreatedAt);
@@ -234,13 +241,18 @@ public sealed record LogEventView(
 // record carries both arms; null-omission keeps each arm's wire identical to the old anonymous
 // objects. Rows are an open table (cells are arbitrary scalars). Truncated (either arm): the
 // result was cut by the service's row cap (KqlLimits); true when cut, omitted otherwise.
+// `Hint` (either arm) accompanies a cut the same way the search verbs' Hint does — the fact of a
+// cut alone names no action. It is present only when Truncated is true. NO `Omitted` here,
+// unlike the search verbs: a row cap has no candidate count behind it, so there is no honest
+// number to report — silence beats a fabricated one.
 public sealed record LogQueryResultView(
 	string Kind,
 	int? Count = null,
 	IReadOnlyList<LogEventView>? Events = null,
 	IReadOnlyList<string>? Columns = null,
 	IReadOnlyList<IReadOnlyList<object?>>? Rows = null,
-	bool? Truncated = null);
+	bool? Truncated = null,
+	string? Hint = null);
 
 // ---- memory.* ------------------------------------------------------------------------
 
