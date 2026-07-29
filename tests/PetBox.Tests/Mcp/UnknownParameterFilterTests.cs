@@ -492,11 +492,21 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 	// is the one part of this that CAN drift: every name it claims is retired must really be gone from
 	// the live schema, and every replacement it points at must really be there. Without this the table
 	// could keep advertising a successor that has itself since been renamed.
+	//
+	// SKIPS tools this fixture's host never registers. TasksMcpFixture only turns on
+	// Features:Tasks, so db_*/log_*/data_schema_apply (mcp-surface-naming-cleanup wave 2: their
+	// retired bare `name`) do not exist on this server at all — calling Tool() for one of them
+	// would throw "sequence contains no matching element" before the drift check even runs. The
+	// SAME two assertions below run for those six in
+	// EntityToolsTests.RetiredParameterTable_MatchesTheLiveSchemas_ForDataAndLogTools, whose
+	// fixture enables Features:Data/Features:Logging and so actually hosts them.
 	[Fact]
 	public async Task RetiredParameterTable_MatchesTheLiveSchemas()
 	{
+		var visible = (await _fx.Mcp.ListToolsAsync()).Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
 		foreach (var tool in McpRetiredParameters.Tools)
 		{
+			if (!visible.Contains(tool)) continue;
 			var schema = (await Tool(_fx.Mcp, tool)).ProtocolTool.InputSchema.GetProperty("properties");
 			// Union of top-level names and every batch item's field names — the two scopes the filter checks.
 			var live = new HashSet<string>(StringComparer.Ordinal);

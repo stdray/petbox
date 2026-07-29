@@ -147,7 +147,7 @@ public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
 		var create = await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
-			["name"] = TestDbName,
+			["dbName"] = TestDbName,
 		});
 		create.IsError.Should().NotBe(true);
 
@@ -155,7 +155,7 @@ public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
 		{
 			["projectKey"] = TestProjectKey,
 			["dbName"] = TestDbName,
-			["name"] = "M001",
+			["migrationName"] = "M001",
 			["sql"] = "CREATE TABLE votes (id INTEGER PRIMARY KEY, film TEXT NOT NULL)",
 		});
 		migrate.IsError.Should().NotBe(true);
@@ -205,7 +205,7 @@ public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
 		await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
-			["name"] = "tmp",
+			["dbName"] = "tmp",
 		});
 
 		var result = await tools["data_exec"].CallAsync(new Dictionary<string, object?>

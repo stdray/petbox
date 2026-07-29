@@ -32,15 +32,15 @@ public static class DataDbTools
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
 	public static async Task<DataDbCreatedResult> CreateAsync(
 		IHttpContextAccessor http, IDataDbCatalog catalog,
-		string projectKey, string name,
+		string projectKey, string dbName,
 		[Description("Optional description.")] string? description = null,
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.DataSchema);
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
+		if (string.IsNullOrWhiteSpace(dbName)) throw new ArgumentException("dbName is required");
 
-		var result = await catalog.CreateAsync(projectKey, name, description, maxPageCount, ct);
+		var result = await catalog.CreateAsync(projectKey, dbName, description, maxPageCount, ct);
 		return result switch
 		{
 			DataDbChangeResult.Created c => new DataDbCreatedResult(c.Db.Name, c.Db.Description, c.Db.MaxPageCount, c.Db.CreatedAt),
@@ -66,14 +66,14 @@ public static class DataDbTools
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
 	public static async Task<DataDbDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, IDataDbCatalog catalog,
-		string projectKey, string name, CancellationToken ct = default)
+		string projectKey, string dbName, CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.DataSchema);
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
+		if (string.IsNullOrWhiteSpace(dbName)) throw new ArgumentException("dbName is required");
 
-		var result = await catalog.DeleteAsync(projectKey, name, ct);
+		var result = await catalog.DeleteAsync(projectKey, dbName, ct);
 		if (result is not DataDbChangeResult.Deleted) throw new InvalidOperationException("DataDb not found");
-		return new DataDbDeletedResult(true, name);
+		return new DataDbDeletedResult(true, dbName);
 	}
 
 	[McpServerTool(Name = "db_describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]

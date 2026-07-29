@@ -237,8 +237,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		await Ok(failures, "memory_store_create", new { projectKey = ProjectKey, store = "extra" });
 		await Ok(failures, "memory_remember", new { text = "a durable fact", projectKey = ProjectKey, store = "notes", type = "Project" });
 		await Ok(failures, "session_upsert", new { projectKey = ProjectKey, sessionId = "s1", agent = "claude-code", content = "# plan" });
-		await Ok(failures, "log_create", new { projectKey = ProjectKey, name = "audit" });
-		await Ok(failures, "log_update", new { projectKey = ProjectKey, name = "audit", retentionDays = 14 });
+		await Ok(failures, "log_create", new { projectKey = ProjectKey, logName = "audit" });
+		await Ok(failures, "log_update", new { projectKey = ProjectKey, logName = "audit", retentionDays = 14 });
 		// Portable agent definitions (agent-definition-as-data) — seed + list/get.
 		await Ok(failures, "agent_def_upsert", new
 		{
@@ -342,7 +342,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			// are strict-client-ok; the null-structured-success shape is what we forbid.
 			("session_delete", new { projectKey = ProjectKey, sessionId = "no-such-session" }),
 			("memory_store_delete", new { projectKey = ProjectKey, store = "no-such-store" }),
-			("log_delete", new { projectKey = ProjectKey, name = "no-such-log" }),
+			("log_delete", new { projectKey = ProjectKey, logName = "no-such-log" }),
 			("relations_delete", new { projectKey = ProjectKey, id = "no-such-relation" }),
 			("comments_delete", new { projectKey = ProjectKey, board = "work", id = "no-such-comment" }),
 			("tasks_board_close", new { projectKey = ProjectKey, board = "no-such-board" }),

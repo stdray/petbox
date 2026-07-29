@@ -25,16 +25,16 @@ public static class LogCatalogTools
 	[Description("Creates a named log (its SQLite file + metadata) in a project. Requires logs:admin scope. `retentionDays` (optional) sets this log's OWN retention window in days, overriding the project/workspace/system cascade (spec log-retention-cascade); omit it to keep the log on the cascade like every log before this field existed. Must be positive if given.")]
 	public static async Task<LogCreatedResult> CreateAsync(
 		IHttpContextAccessor http, ILogStore logStore,
-		string projectKey, string name,
+		string projectKey, string logName,
 		[Description("Optional description.")] string? description = null,
 		[Description("Optional per-log retention window in days. Omit to use the project/workspace/system cascade.")] int? retentionDays = null,
 		CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-		if (await logStore.ExistsAsync(projectKey, name, ct))
-			throw new InvalidOperationException($"Log '{name}' already exists");
-		var meta = await logStore.CreateAsync(projectKey, name, description, retentionDays, ct);
+		if (string.IsNullOrWhiteSpace(logName)) throw new ArgumentException("logName is required");
+		if (await logStore.ExistsAsync(projectKey, logName, ct))
+			throw new InvalidOperationException($"Log '{logName}' already exists");
+		var meta = await logStore.CreateAsync(projectKey, logName, description, retentionDays, ct);
 		return new LogCreatedResult(meta.Name, meta.Description, meta.CreatedAt, meta.RetentionDays);
 	}
 
@@ -53,13 +53,13 @@ public static class LogCatalogTools
 	[Description("Sets or clears a named log's OWN retention override (spec log-retention-cascade). Requires logs:admin scope. `retentionDays` is REQUIRED: a positive value sets the log's own window (it is then swept by that window regardless of the project/workspace/system cascade); 0 CLEARS the override, reverting the log to the cascade. This does not touch name/description — there is nothing else on a log to patch today.")]
 	public static async Task<LogUpdatedResult> UpdateAsync(
 		IHttpContextAccessor http, ILogStore logStore,
-		string projectKey, string name,
+		string projectKey, string logName,
 		[Description("Positive = set the log's own retention window in days. 0 = clear the override (revert to the cascade).")] int retentionDays,
 		CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-		var meta = await logStore.UpdateRetentionDaysAsync(projectKey, name, retentionDays, ct)
+		if (string.IsNullOrWhiteSpace(logName)) throw new ArgumentException("logName is required");
+		var meta = await logStore.UpdateRetentionDaysAsync(projectKey, logName, retentionDays, ct)
 			?? throw new InvalidOperationException("Log not found");
 		return new LogUpdatedResult(meta.Name, meta.RetentionDays);
 	}
@@ -68,13 +68,13 @@ public static class LogCatalogTools
 	[Description("Deletes a named log and its file. Requires logs:admin scope.")]
 	public static async Task<LogDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, ILogStore logStore,
-		string projectKey, string name, CancellationToken ct = default)
+		string projectKey, string logName, CancellationToken ct = default)
 	{
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-		var deleted = await logStore.DeleteAsync(projectKey, name, ct);
+		if (string.IsNullOrWhiteSpace(logName)) throw new ArgumentException("logName is required");
+		var deleted = await logStore.DeleteAsync(projectKey, logName, ct);
 		if (!deleted) throw new InvalidOperationException("Log not found");
-		return new LogDeletedResult(true, name);
+		return new LogDeletedResult(true, logName);
 	}
 
 	static void AssertScope(IHttpContextAccessor accessor, string required)
