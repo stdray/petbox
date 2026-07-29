@@ -29,7 +29,7 @@ public sealed class SearchDocKeyProjectionTests
 	[Fact]
 	public void Tasks_ToDoc_SeparatesKey_Title_And_Body()
 	{
-		var node = new PlanNode
+		var node = new TaskNode
 		{
 			Board = "b",
 			Key = "kql-spans-query",

@@ -4,7 +4,7 @@ using PetBox.Core.Data;
 namespace PetBox.Tasks.Data.Migrations;
 
 // search-doc-model-title-weights: search_fts gets a dedicated INDEXED `Title` column so the node's
-// title (PlanNode.Name) lives in its OWN field instead of being spliced onto the front of `Text`
+// title (TaskNode.Name) lives in its OWN field instead of being spliced onto the front of `Text`
 // (`Name + "\n" + Body`, as TasksSearchDocs.ToDoc did before this slice). A splice made the title
 // indistinguishable from the body at rank time; a dedicated column lets the lexical leg weight a
 // title hit above a body hit (FtsColumnWeights: Key 3 / Title 2 / Tags 2 / Body 1). Title is

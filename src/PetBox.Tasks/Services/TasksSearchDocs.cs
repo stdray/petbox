@@ -4,7 +4,7 @@ using PetBox.Tasks.Workflow;
 
 namespace PetBox.Tasks.Services;
 
-// Single source of truth for how a plan node maps onto the entity-addressed search contract.
+// Single source of truth for how a task node maps onto the entity-addressed search contract.
 // Tasks search indexes every node with a stable identity, terminal or not (search-hides-terminal-
 // nodes) — membership is the IsIndexable predicate, and it no longer forks on terminality; a
 // terminal-CANCEL node stays reachable via includeClosed, and terminal-OK (accepted/Done) is a
@@ -51,9 +51,9 @@ public static class TasksSearchDocs
 	// is a read-time filter (hide terminal-CANCEL unless includeClosed), not an index-membership
 	// one, so ranked search can still reach it when asked. The runtime parameter is kept for
 	// call-site stability (many callers pass one) though it is no longer consulted here.
-	public static bool IsIndexable(PlanNode n) => IsIndexable(n, MethodologyRuntime.PresetsOnly);
+	public static bool IsIndexable(TaskNode n) => IsIndexable(n, MethodologyRuntime.PresetsOnly);
 
-	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime)
+	public static bool IsIndexable(TaskNode n, MethodologyRuntime runtime)
 	{
 		_ = runtime;
 		return n.NodeId.Length > 0;
@@ -86,7 +86,7 @@ public static class TasksSearchDocs
 	// weights), not spliced into one `Text` blob: the lexical leg weights a title hit above a body hit
 	// (FtsColumnWeights), and the embed-template (SearchDoc.EmbedInput) recombines them as Name\nBody
 	// — the exact string the old spliced Text carried, so the semantic vectors are unchanged.
-	public static SearchDoc ToDoc(PlanNode n, string scope, IReadOnlyList<string> tags) =>
+	public static SearchDoc ToDoc(TaskNode n, string scope, IReadOnlyList<string> tags) =>
 		new(scope, n.Board, n.Key, n.Body, string.Join(' ', tags), Key: n.Key, Title: n.Name);
 
 	// Namespace prefix for a comment's FTS Id. A node slug is `[a-z][a-z0-9_-]*` (no colon
@@ -119,7 +119,7 @@ public static class TasksSearchDocs
 	// purpose (an identity lookup then resolves ANY node through the one alias table, Id included), and
 	// the NodeId is the identifier the lexical index does NOT carry — closing exactly the "agents search
 	// by node id and get nothing" gap this reference layer exists to close.
-	public static SearchMetaDoc ToMetaDoc(PlanNode n, string scope, MethodologyRuntime runtime, string? kindSlug) =>
+	public static SearchMetaDoc ToMetaDoc(TaskNode n, string scope, MethodologyRuntime runtime, string? kindSlug) =>
 		new(scope, n.Board, n.Key,
 			StatusKind: StatusKindFacet(runtime.StatusKindOf(kindSlug, n.Status)),
 			Created: n.Created,

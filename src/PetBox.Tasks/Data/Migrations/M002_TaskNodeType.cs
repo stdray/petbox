@@ -12,7 +12,7 @@ namespace PetBox.Tasks.Data.Migrations;
 // Execute.Sql it used to be said nothing that Alter.Table does not say, and hid the operation
 // from the runner's expression model.
 [Migration(2, "Add Type column to plan_nodes (workflow task type)")]
-public sealed class M002_PlanNodeType : Migration
+public sealed class M002_TaskNodeType : Migration
 {
 	public override void Up() =>
 		Alter.Table("plan_nodes")

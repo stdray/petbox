@@ -9,7 +9,7 @@ namespace PetBox.Tasks.Data;
 // may carry many active rows. Board is a denormalized mirror of the node's partition so
 // a board-scoped read needs no join. `Sha` is normalized (lowercased hex, 7..40 chars).
 [Table("plan_node_commits")]
-public sealed record PlanNodeCommit
+public sealed record TaskNodeCommit
 {
 	[Column, NotNull] public string NodeId { get; init; } = string.Empty;
 	[Column, NotNull] public string Board { get; init; } = string.Empty;

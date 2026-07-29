@@ -74,7 +74,7 @@ public sealed record BrowserState
 	[BrowserState(Key = "kqlPanelPinned")]
 	public bool KqlPanelPinned { get; init; } = false;
 
-	// board-filters-server-state: WHICH plan nodes are collapsed (their subtree hidden) on the
+	// board-filters-server-state: WHICH task nodes are collapsed (their subtree hidden) on the
 	// tree/outline panes. Cookie branch, not DB — this is window/device state (the brief's own call:
 	// "collapsed-node set looks like window state"), not a preference someone wants following them to
 	// a second device. Keyed per (project,board) — collapsing node X on board A saying nothing about

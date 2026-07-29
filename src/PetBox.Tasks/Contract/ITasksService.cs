@@ -180,7 +180,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// --- nodes ---
 
-	// The active plan nodes of one board (flat slugs + part_of projection) with links and
+	// The active task nodes of one board (flat slugs + part_of projection) with links and
 	// (spec boards) delivery. Kept for the Razor board UI and as the enrichment core the
 	// unified SearchNodesAsync composes; the MCP read verb is tasks_search.
 	// `status` (slugs, case-insensitive) filters on top of the selection; a terminal status
@@ -188,7 +188,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// ask overrides the default hiding); an unknown slug for the board's kind is rejected.
 	// `includeBody` (board-page-cost, default true = the historical behavior): false lets a
 	// caller that already knows nothing on its render shows Body (a board view with the body
-	// field off) skip the column in the DB read entirely — every PlanNodeView.Body comes back
+	// field off) skip the column in the DB read entirely — every TaskNodeView.Body comes back
 	// "" instead. Callers that need the real body (GetNodeAsync, tasks_search, …) never set this.
 	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, bool includeBody = true, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default);
 	// board-search-stem-lookup: a SCALAR "has this board changed at all" probe — two independent
@@ -198,7 +198,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// column), but it still selects and materializes every node row, which is the wrong cost for
 	// "did anything change" alone. Node tags are the reason this isn't just MAX(Version): they live
 	// in a SEPARATE SCD-2 table (node_tag: ValidFrom/ValidTo) that TagStore.SetAsync never threads
-	// back into the owning PlanNode's own Version column, so a probe over plan_nodes alone would
+	// back into the owning TaskNode's own Version column, so a probe over plan_nodes alone would
 	// miss a tag-only edit (add/remove a tag with no other change) and serve a stale cached
 	// lookup after one.
 	Task<BoardChangeStamp> GetBoardChangeStampAsync(string projectKey, string board, CancellationToken ct = default);
@@ -257,7 +257,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// dimension order, each group with a delivery roll-up. The projection is a view — it
 	// never touches part_of (tag-grouping-is-projection).
 	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, IReadOnlyList<string> groupBy, CancellationToken ct = default);
-	// Declarative temporal upsert of plan nodes (workflow + spec/blocker rules + effects).
+	// Declarative temporal upsert of task nodes (workflow + spec/blocker rules + effects).
 	// The result is a pure write-ack (spec sinceversion-contract): the echoed Added/Updated/
 	// Removed cover ONLY this call — the patched nodes plus rows revised/closed by the call's
 	// own cascade effects (a superseded node obsoleted, an unblocked task, a deleted
@@ -336,7 +336,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 
-	Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default);
+	Task<IReadOnlyList<TaskNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default);
 	// Quick-add from the board UI: drops a node into the `incoming` phase with a
 	// generated key, the kind's initial status/type, and a stable NodeId.
 	Task QuickAddAsync(string projectKey, string board, string name, string? body, long priority, CancellationToken ct = default);

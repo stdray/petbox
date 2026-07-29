@@ -30,7 +30,7 @@ public sealed class TaskUpsertAssociations
 	// to the node's stable NodeId.
 	public async Task SetTagsAsync(
 		string projectKey, string board, MethodologyRuntime runtime, string? kindSlug,
-		IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+		IReadOnlyList<NodePatch> patches, TaskNode[] desired, CancellationToken ct)
 	{
 		// ONE RULE for every kind (primitives-tag-axes + methodology-instance-scoped-axes):
 		// the kind's TAG AXES on this board's runtime drive enforcement — none = free-form
@@ -56,7 +56,7 @@ public sealed class TaskUpsertAssociations
 	// the SCD-2 tag write. A patch whose Commits is null OMITS them (leave as-is); a non-null
 	// list (incl. empty) is the node's new full commit set. Commits bind to the stable NodeId.
 	public static async Task SetCommitsAsync(
-		TasksDb ctx, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+		TasksDb ctx, string board, IReadOnlyList<NodePatch> patches, TaskNode[] desired, CancellationToken ct)
 	{
 		if (!patches.Any(p => p.Commits is not null)) return;
 		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
@@ -66,20 +66,20 @@ public sealed class TaskUpsertAssociations
 			if (!nodeIdOf.TryGetValue(p.Key, out var nid) || nid.Length == 0) continue;
 
 			var desiredSet = NormalizeCommits(p.Commits);
-			var active = await ctx.PlanNodeCommits.Where(c => c.NodeId == nid && c.ValidTo == null).ToListAsync(ct);
+			var active = await ctx.TaskNodeCommits.Where(c => c.NodeId == nid && c.ValidTo == null).ToListAsync(ct);
 			var activeShas = active.Select(c => c.Sha).ToHashSet(StringComparer.Ordinal);
 			var now = DateTime.UtcNow;
 
 			// Soft-close commits no longer desired.
 			foreach (var a in active.Where(a => !desiredSet.Contains(a.Sha)))
-				await ctx.PlanNodeCommits
+				await ctx.TaskNodeCommits
 					.Where(c => c.NodeId == nid && c.Sha == a.Sha && c.ValidTo == null)
 					.Set(c => c.ValidTo, _ => (DateTime?)now)
 					.UpdateAsync(ct);
 
 			// Insert newly desired commits.
 			foreach (var sha in desiredSet.Where(s => !activeShas.Contains(s)))
-				await ctx.InsertAsync(new PlanNodeCommit { NodeId = nid, Board = board, Sha = sha, ValidFrom = now }, token: ct);
+				await ctx.InsertAsync(new TaskNodeCommit { NodeId = nid, Board = board, Sha = sha, ValidFrom = now }, token: ct);
 		}
 	}
 
@@ -87,13 +87,13 @@ public sealed class TaskUpsertAssociations
 	// OMITS it (leave as-is); "" DETACHES (make a root); otherwise sets the parent (a slug
 	// on this board or a NodeId). Enforces a single active parent and rejects cycles.
 	public async Task SetPartOfAsync(
-		string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+		string projectKey, string board, IReadOnlyList<NodePatch> patches, TaskNode[] desired, CancellationToken ct)
 	{
 		if (!patches.Any(p => p.PartOf is not null)) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		// Slug -> nodeId for parent resolution on this board: active rows overlaid with this batch.
-		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+		var slugToId = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var (k, nid) in byKey) slugToId[k] = nid;
 		var parentOf = await ParentMapAsync(projectKey, ct);
@@ -123,13 +123,13 @@ public sealed class TaskUpsertAssociations
 	// its kind's terminal-cancel (obsoleted). A system effect (no approve gate), like the
 	// Done effects. Self-supersede and a missing target are ignored.
 	public async Task SetSupersedesAsync(
-		string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired,
+		string projectKey, string board, IReadOnlyList<NodePatch> patches, TaskNode[] desired,
 		MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (!patches.Any(p => !string.IsNullOrWhiteSpace(p.Supersedes))) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+		var slugToId = ctx.TaskNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var (k, nid) in byKey) slugToId[k] = nid;
 
@@ -170,7 +170,7 @@ public sealed class TaskUpsertAssociations
 	{
 		var v = partOf.Trim();
 		if (slugToId.TryGetValue(v.ToLowerInvariant(), out var bySlug)) return bySlug;
-		if (ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == v)) return v;
+		if (ctx.TaskNodes.Any(n => n.ActiveTo == null && n.NodeId == v)) return v;
 		throw new ArgumentException($"part_of parent '{partOf}' is neither a node key on this board nor a known NodeId");
 	}
 

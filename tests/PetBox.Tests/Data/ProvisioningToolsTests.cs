@@ -330,9 +330,9 @@ public sealed class ProvisioningToolsTests
 	[Fact]
 	public async Task ProjectDelete_DoesNotExist_NoAlias()
 	{
-		// project has no delete (it would orphan logs/dbs/keys) — there is no project.delete tool.
+		// project has no delete (it would orphan logs/dbs/keys) — there is no project_delete tool.
 		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToList();
-		names.Should().NotContain("project.delete");
+		names.Should().NotContain("project_delete");
 	}
 
 	[Fact]

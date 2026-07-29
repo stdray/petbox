@@ -126,7 +126,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	public async Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodes
+		return await ctx.TaskNodes
 			.Where(n => n.NodeId == nodeId && n.ActiveTo == null)
 			.Select(n => n.Board)
 			.FirstOrDefaultAsync(ct)!;
@@ -135,7 +135,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	public async Task<string?> FindNodeIdBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
-		return await ctx.PlanNodes
+		return await ctx.TaskNodes
 			.Where(n => n.Board == board && n.Key == slug && n.ActiveTo == null)
 			.Select(n => n.NodeId)
 			.FirstOrDefaultAsync(ct)!;
@@ -211,7 +211,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		// not the file. Relations (in petbox.db) bind to NodeId and are left as-is — they
 		// resolve to "missing", same as when a board file used to be dropped.
 		using var db = _factory.NewEnsuredConnection(projectKey);
-		await db.PlanNodes.Where(n => n.Board == board).DeleteAsync(ct);
+		await db.TaskNodes.Where(n => n.Board == board).DeleteAsync(ct);
 		return true;
 	}
 }

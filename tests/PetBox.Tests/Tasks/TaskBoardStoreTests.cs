@@ -94,19 +94,19 @@ public sealed class TaskBoardStoreTests : IDisposable
 	}
 
 	[Fact]
-	public async Task PlanNode_TemporalRoundtrip_ThroughBoardFile()
+	public async Task TaskNode_TemporalRoundtrip_ThroughBoardFile()
 	{
 		await _store.CreateAsync("proj", "roadmap", null);
 		var ctx = _store.GetContext("proj");
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Board = "roadmap", Key = "Phase 1", Version = 0, Status = "InProgress", Body = "Foundation", Priority = 100 },
+			new TaskNode { Board = "roadmap", Key = "Phase 1", Version = 0, Status = "InProgress", Body = "Foundation", Priority = 100 },
 		}, partition: n => n.Board == "roadmap");
 		r.Applied.Should().BeTrue();
 		r.Inserted.Should().Be(1);
 
-		var active = ctx.PlanNodes.Where(n => n.Board == "roadmap" && n.ActiveTo == null).ToList();
+		var active = ctx.TaskNodes.Where(n => n.Board == "roadmap" && n.ActiveTo == null).ToList();
 		active.Should().ContainSingle();
 		active[0].Status.Should().Be("InProgress");
 		active[0].Body.Should().Be("Foundation");

@@ -3,7 +3,7 @@ using PetBox.Tasks.Data;
 
 namespace PetBox.Tasks.Validation;
 
-// Declarative immutable-field rules for a plan-node upsert, expressed over the old-vs-new
+// Declarative immutable-field rules for a task-node upsert, expressed over the old-vs-new
 // change so they read as invariants rather than scattered throws. These hold things that
 // must not drift once a node exists:
 //   - NodeId never changes (links bind to it; the service carries it across edits/renames,
@@ -14,9 +14,9 @@ namespace PetBox.Tasks.Validation;
 // Status/transition legality stays in WorkflowEngine (already the single point); the async
 // cross-entity rules (spec links, blockers) stay in the service. This validator owns only
 // what is genuinely a declarative, context-carrying invariant.
-internal sealed class PlanNodeChangeValidator : AbstractValidator<EntityChange<PlanNode>>
+internal sealed class TaskNodeChangeValidator : AbstractValidator<EntityChange<TaskNode>>
 {
-	public PlanNodeChangeValidator()
+	public TaskNodeChangeValidator()
 	{
 		// New nodes (Old is null) have no prior to violate — every rule is guarded on Old.
 		RuleFor(c => c.New.NodeId)

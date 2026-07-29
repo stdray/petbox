@@ -175,7 +175,7 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 	}
 
 	// board-view-mode-framework: the table-reuse columns (priority/tags/updatedAt/delivery) ride
-	// along on CrossScopeSearchHit for free — h.Node is already the fully-enriched PlanNodeView,
+	// along on CrossScopeSearchHit for free — h.Node is already the fully-enriched TaskNodeView,
 	// so no extra per-hit query is needed to back the reused _TaskTable's columns.
 	[Fact]
 	public async Task Hit_CarriesPriorityTagsUpdatedAt_ForTheReusedTableColumns()

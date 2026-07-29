@@ -2,7 +2,7 @@ using FluentMigrator;
 
 namespace PetBox.Core.Data.Migrations;
 
-// Metadata about per-project named task boards. The actual plan nodes live in
+// Metadata about per-project named task boards. The actual task nodes live in
 // `data/tasks/{ProjectKey}/{Name}.db` temporal files; this table tracks which
 // boards exist. Mirrors Logs (M016) — explicit creation, no quota.
 [Migration(21, "Create TaskBoards metadata table for the Tasks module")]

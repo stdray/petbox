@@ -1,7 +1,7 @@
 namespace PetBox.Web.Pages.Shared;
 
 // The ONE spec-delivery-badge rule, shared by the board group headers (roll-up), the board card
-// (_PlanNodeCard) and the node detail page (TaskBoardNode) so the delivery→colour mapping lives in
+// (_TaskNodeCard) and the node detail page (TaskBoardNode) so the delivery→colour mapping lives in
 // one place. Muted (outline) palette — delivery is context, not an alert (spec-board-status-noise
 // #11). Size/title/testid vary per surface (a group roll-up vs a node's own delivery) and are
 // passed in; a null TestId omits the attribute (the group header carries none).

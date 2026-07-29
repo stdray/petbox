@@ -70,7 +70,7 @@
 								<button type="submit" class="btn btn-xs btn-ghost" data-testid="board-close">@(b.ClosedAt == null ? "Close" : "Reopen")</button>
 							</form>
 							<form method="post" asp-page-handler="Delete" asp-route-name="@b.Name"
-								onsubmit="return confirm('Delete board @b.Name? All plan nodes will be removed.')" style="display:inline">
+								onsubmit="return confirm('Delete board @b.Name? All task nodes will be removed.')" style="display:inline">
 								@Html.AntiForgeryToken()
 								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="board-delete">Delete</button>
 							</form>

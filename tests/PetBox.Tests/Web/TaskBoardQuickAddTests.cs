@@ -75,7 +75,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	}
 
 	int ActiveNodeCount(string board) =>
-		_store.GetContext("proj").PlanNodes.Count(n => n.Board == board && n.ActiveTo == null);
+		_store.GetContext("proj").TaskNodes.Count(n => n.Board == board && n.ActiveTo == null);
 
 	// The render decision and the POST gate are BOTH driven off the single catalog knob —
 	// the test reads the same source of truth, so flipping QuickAddAllowed for a kind flips
@@ -117,7 +117,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		// The actual create semantics on the allowed path (distinct from the gate above).
 		var model = await Board(BoardKind.Simple);
 		await model.OnPostCreateAsync("My item", "details", 50, default);
-		var n = _store.GetContext("proj").PlanNodes.Where(x => x.Board == model.Board && x.ActiveTo == null).ToList().Single();
+		var n = _store.GetContext("proj").TaskNodes.Where(x => x.Board == model.Board && x.ActiveTo == null).ToList().Single();
 		n.Status.Should().Be("Todo");  // free preset initial
 		n.Type.Should().Be("task");    // free empty-type default
 	}

@@ -82,7 +82,7 @@ public sealed class RelationsToTasksDbMigrator
 	{
 		// No tasks file => the project has no nodes => every edge it has is dangling. Report and
 		// move on; do NOT create an empty file just to drop them all. ($workspace / $ws-* memory
-		// pseudo-projects land here — they hold relation rows but no plan nodes.)
+		// pseudo-projects land here — they hold relation rows but no task nodes.)
 		if (!File.Exists(Path.Combine(_tasksDir, project + ".db")))
 		{
 			var (a, c) = (edges.Count(e => e.ClosedAt is null), edges.Count(e => e.ClosedAt is not null));
@@ -95,7 +95,7 @@ public sealed class RelationsToTasksDbMigrator
 		using var db = _factory.GetDb(project); // ensures schema (M001..M014)
 
 		// Node identities that actually exist in this file — the same set the FK consults.
-		var nodes = db.GetTable<PlanNodeId>().Select(n => n.NodeId).ToHashSet(StringComparer.Ordinal);
+		var nodes = db.GetTable<TaskNodeId>().Select(n => n.NodeId).ToHashSet(StringComparer.Ordinal);
 		// Already-copied ids: what makes a re-run (or a resumed, interrupted run) a no-op.
 		var present = db.GetTable<Relation>().Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
 

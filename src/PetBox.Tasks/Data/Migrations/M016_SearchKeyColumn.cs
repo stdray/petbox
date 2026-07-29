@@ -13,7 +13,7 @@ namespace PetBox.Tasks.Data.Migrations;
 // FTS5 does NOT support `ALTER TABLE ... ADD COLUMN` on a virtual table (verified empirically
 // against the SQLite build this repo ships: "virtual tables may not be altered") — the table has
 // to be REBUILT. This migration rebuilds it with the create-new/copy/DROP/RENAME idiom
-// M009_StoreColumn and M011_PlanNodeCommits already use for a table-shape change, carrying every
+// M009_StoreColumn and M011_TaskNodeCommits already use for a table-shape change, carrying every
 // existing row across (Key defaults to '' for them). Losing those rows would not corrupt anything
 // — search_fts is a derived mirror and the backfill re-projects an empty index on the next search
 // — but copying costs one INSERT..SELECT and saves every project file that rebuild, so there is no

@@ -62,7 +62,7 @@ public sealed class CommentUiEditTests : IDisposable
 		await _tasks.UpsertAsync(Proj, board, nodes);
 
 	string NodeId(string board, string key) =>
-		_store.GetContext(Proj).PlanNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
+		_store.GetContext(Proj).TaskNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
 
 	// Give the bare PageModel an HttpContext so `User.Identity?.Name` (the comment author) reads
 	// without an NRE outside a real request pipeline — same need as MutationFeedbackPageTests.

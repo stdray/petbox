@@ -44,13 +44,13 @@ public sealed class LinkRefsConverter : JsonConverter<LinkRefs>
 // array params of tasks_upsert (`nodes`) and memory_upsert (`entries`) used to arrive as a
 // raw JsonElement, so the SDK-generated inputSchema was an opaque blob and the per-field
 // types were invisible to the client (the class of bug that produced the config_binding
-// stringified-object trap). Making the param a typed array (PlanNodeInput[] / MemoryEntryInputDto[])
+// stringified-object trap). Making the param a typed array (TaskNodeInput[] / MemoryEntryInputDto[])
 // makes the SDK emit a real per-field array schema.
 //
 // STALE-SCHEMA TRADE-OFF: the old JsonElement parser also accepted the array double-encoded as
 // a JSON *string* ("[{...}]") — the MCP stale-schema gotcha (a client whose cached schema still
 // believes the param is a string). With a typed-array parameter the SDK deserializes the
-// argument into PlanNodeInput[] BEFORE our code runs, so a string payload now fails to bind at
+// argument into TaskNodeInput[] BEFORE our code runs, so a string payload now fails to bind at
 // the SDK layer (a custom tolerant converter would flatten the element schema back to opaque,
 // defeating the whole point). This is an accepted deviation: the typed schema is the primary
 // goal, and the stale-string risk is bounded to within a single MCP session (a reconnect
@@ -60,7 +60,7 @@ public sealed class LinkRefsConverter : JsonConverter<LinkRefs>
 // (TasksTools.ParseNodePatches/ParseTags/ResolveKey/ResolvePrevKey) accepted. Field semantics
 // (null = omit/inherit, "" = explicit clear) are unchanged — they are now carried by the JSON
 // value itself (an omitted property deserializes to null = inherit; an explicit "" stays "").
-public sealed record PlanNodeInput
+public sealed record TaskNodeInput
 {
 	// Flat board-unique slug — the KEY FIELD this write sets, never a reference. Typed nullable
 	// only so a missing value reaches ResolveKey's own message instead of an SDK bind error; the
@@ -381,7 +381,7 @@ public sealed record SessionMessageDto
 	public string? Content { get; init; }
 }
 
-// One item of a config_binding_upsert batch (typed array, like PlanNodeInput/CommentItemInput).
+// One item of a config_binding_upsert batch (typed array, like TaskNodeInput/CommentItemInput).
 // A binding is identified by (path, normalized tag SET) within the workspace — a PUT: an active
 // twin with the same (path, tagset) is superseded. There is NO version watermark (config rows are
 // immutable, keyed by an auto-increment id; a change mints a new row), so this DTO carries no
@@ -394,7 +394,7 @@ public sealed record ConfigBindingItemInput
 	public string? Kind { get; init; }
 }
 
-// One item of a comments_upsert batch (typed array, like PlanNodeInput/MemoryEntryInputDto).
+// One item of a comments_upsert batch (typed array, like TaskNodeInput/MemoryEntryInputDto).
 // `id` null/absent ⇒ CREATE (needs `node` — a node reference: a slug key or a 32-hex NodeId,
 // both accepted — plus `author`; `parentId` = a COMMENT id, NOT a node reference
 // makes it a reply); `id` present ⇒ PATCH `body`/`tags` of that comment under the `version`

@@ -54,7 +54,7 @@ public sealed class FlatNodePartOfMigratorTests : IDisposable
 		migrated.Should().Be(1);
 
 		// Keys flattened; the second "login" gets a deterministic suffix.
-		var keys = _factory.GetDb(Proj).PlanNodes.Where(n => n.Board == "spec" && n.ActiveTo == null)
+		var keys = _factory.GetDb(Proj).TaskNodes.Where(n => n.Board == "spec" && n.ActiveTo == null)
 			.Select(n => n.Key).ToList();
 		keys.Should().Contain(["auth", "login", "mfa", "ui"]);
 		keys.Should().Contain(k => k.StartsWith("login-", StringComparison.Ordinal));
@@ -72,7 +72,7 @@ public sealed class FlatNodePartOfMigratorTests : IDisposable
 		(await relations.ListByKindAsync(Proj, "part_of")).Should().HaveCount(3);
 	}
 
-	static PlanNode Node(string board, string key, string nodeId) => new()
+	static TaskNode Node(string board, string key, string nodeId) => new()
 	{
 		Board = board,
 		Key = key,

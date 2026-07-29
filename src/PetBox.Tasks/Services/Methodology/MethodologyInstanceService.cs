@@ -192,7 +192,7 @@ public sealed partial class MethodologyInstanceService
 		var json = JsonSerializer.Serialize(def, DefinitionJson);
 		var sameDefinition = string.Equals(current.Json, json, StringComparison.Ordinal);
 		var newRuntime = new MethodologyRuntime(def);
-		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		var rewrites = new List<(string Board, List<TaskNode> Nodes)>();
 		var affected = new List<TaskBoardMeta>();
 		if (!sameDefinition)
 		{

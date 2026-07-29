@@ -6,15 +6,15 @@ using PetBox.Core.Data;
 namespace PetBox.Tasks.Data;
 
 // linq2db context over a project's task file (data/tasks/{project}.db) — all of the
-// project's boards share it, partitioned by PlanNode.Board.
+// project's boards share it, partitioned by TaskNode.Board.
 public sealed class TasksDb : DataConnection
 {
 	public TasksDb(DataOptions<TasksDb> options) : base(options.Options) { }
 
-	public ITable<PlanNode> PlanNodes => this.GetTable<PlanNode>();
+	public ITable<TaskNode> TaskNodes => this.GetTable<TaskNode>();
 	public ITable<NodeTag> NodeTags => this.GetTable<NodeTag>();
 	public ITable<TagVocab> TagVocab => this.GetTable<TagVocab>();
-	public ITable<PlanNodeCommit> PlanNodeCommits => this.GetTable<PlanNodeCommit>();
+	public ITable<TaskNodeCommit> TaskNodeCommits => this.GetTable<TaskNodeCommit>();
 	// Lexical (search_fts) + vector (search_vec) live behind PetBox.Core.Search indexes, which
 	// own their own row mappings — no table props here. See the TasksService search seam.
 

@@ -22,11 +22,11 @@
        bodies are one short normative line each — reading the whole tree sequentially is the
        common case there.
    board-node-filter / board-sort: the shared _BoardFilterSort bar plus the same ts/board.ts
-   data-* contract _PlanNodeCard carries — the outline row list is DFS-flat exactly like the tree
+   data-* contract _TaskNodeCard carries — the outline row list is DFS-flat exactly like the tree
    pane (indentation via margin-left, no actual DOM nesting), so it's ONE reorder scope. *@
 @if (Model.Nodes.Count == 0)
 {
-	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+	<div class="alert" data-testid="board-empty">This board has no active task nodes.</div>
 }
 else
 {
@@ -64,7 +64,7 @@ else
 			// misjudge once a few sibling groups stack up.
 			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
 			var titleClass = "font-semibold link link-hover" + (terminalCancel ? " line-through opacity-60" : "");
-			// board-filters-server-state: same hide computation as the tree pane's PlanNodeCard —
+			// board-filters-server-state: same hide computation as the tree pane's TaskNodeCard —
 			// outline rows carry a real data-parent-id (unlike kanban/table), so a node collapsed
 			// via the tree pane stays hidden here too on the SAME board.
 			var hiddenByActive = Model.ActiveOnly && closed && !keepVisible;

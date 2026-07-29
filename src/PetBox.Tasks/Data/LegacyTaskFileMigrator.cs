@@ -58,7 +58,7 @@ public sealed class LegacyTaskFileMigrator
 	{
 		// Defensive idempotency: if the project file already holds this board's rows (a prior
 		// run got that far), don't copy again — just mark the legacy file done.
-		if (projectDb.PlanNodes.Any(n => n.Board == board))
+		if (projectDb.TaskNodes.Any(n => n.Board == board))
 		{
 			MarkMigrated(boardFile);
 			return false;
@@ -76,14 +76,14 @@ public sealed class LegacyTaskFileMigrator
 			var tempCs = $"Data Source={temp};Pooling=False";
 			TasksSchema.Ensure(tempCs);
 
-			List<PlanNode> rows;
+			List<TaskNode> rows;
 			using (var legacy = new TasksDb(TasksDb.CreateOptions(tempCs)))
-				rows = legacy.PlanNodes.ToList();
+				rows = legacy.TaskNodes.ToList();
 
 			foreach (var r in rows)
 				projectDb.Insert(r with { Board = board }); // preserves all temporal columns
 
-			var copied = projectDb.PlanNodes.Count(n => n.Board == board);
+			var copied = projectDb.TaskNodes.Count(n => n.Board == board);
 			if (copied != rows.Count)
 				throw new InvalidOperationException($"row-count mismatch for board '{board}': {rows.Count} legacy vs {copied} copied");
 

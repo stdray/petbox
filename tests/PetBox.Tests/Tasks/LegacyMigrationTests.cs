@@ -46,7 +46,7 @@ public sealed class LegacyMigrationTests
 			TasksSchema.Ensure(cs);
 
 			using var db = new TasksDb(TasksDb.CreateOptions(cs));
-			var nodes = db.PlanNodes.Where(n => n.ActiveTo == null).OrderBy(n => n.Key).ToList();
+			var nodes = db.TaskNodes.Where(n => n.ActiveTo == null).OrderBy(n => n.Key).ToList();
 
 			nodes.Should().HaveCount(2);
 			nodes[0].Status.Should().Be("InProgress"); // 1 -> slug

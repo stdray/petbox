@@ -144,11 +144,11 @@ public sealed partial class SearchReindexService
 	async Task<ReindexTierResult> ResetTasksAsync(string projectKey, CancellationToken ct)
 	{
 		using var db = _tasks.NewEnsuredConnection(projectKey);
-		var boards = await db.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
+		var boards = await db.GetTable<TaskNode>().Where(n => n.ActiveTo == null)
 			.Select(n => n.Board).Distinct().ToListAsync(ct);
 		var (dead, cursors) = await SearchIndexReset.ResetAsync(db, boards, ct);
 		var (_, lexicalReset) = await SearchIndexReset.ResetAsync(db, [TasksCursors.Lexical], ct);
-		var open = await db.GetTable<PlanNode>().Where(n => n.ActiveTo == null).ToListAsync(ct);
+		var open = await db.GetTable<TaskNode>().Where(n => n.ActiveTo == null).ToListAsync(ct);
 		var active = open.LongCount(TasksSearchDocs.IsIndexable);
 		var (vectors, _) = await SearchIndexStatsReader.ReadAsync(db, ct);
 		return new ReindexTierResult("tasks", boards, active, vectors, dead, cursors, lexicalReset);

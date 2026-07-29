@@ -3,19 +3,19 @@ using PetBox.Core.Data.Temporal;
 
 namespace PetBox.Tasks.Data;
 
-// A comment under a plan node, stored as a temporal (SCD type-2) row — structurally a
+// A comment under a task node, stored as a temporal (SCD type-2) row — structurally a
 // degenerate spec node: a tree (via ParentId) with tags, but NO status/type/priority.
 // Identity (Key) is a stable GUID; the active revision is the one whose ActiveTo is null.
 // Lives in the per-project tasks file next to plan_nodes (same IScopedDbFactory<TasksDb>),
-// owned by a node via the stable NodeId. NOT a PlanNode, so it never enters tasks_search /
+// owned by a node via the stable NodeId. NOT a TaskNode, so it never enters tasks_search /
 // the workflow FSM / delivery roll-ups.
 [Table("comments")]
 public sealed record CommentRow : TemporalRow
 {
-	// Partition: which board the owning node lives on. Mirrors PlanNode.Board so the
+	// Partition: which board the owning node lives on. Mirrors TaskNode.Board so the
 	// version cursor and key space are per-board. Identity, not payload.
 	[Column, NotNull] public string Board { get; init; } = string.Empty;
-	// The stable PlanNode.NodeId this comment hangs under (cross-board by id). Identity.
+	// The stable TaskNode.NodeId this comment hangs under (cross-board by id). Identity.
 	[Column, NotNull] public string NodeId { get; init; } = string.Empty;
 	// Tree edge: the Key of the parent comment, or null for a thread root. A reply's
 	// parent must live under the same (Board, NodeId) — enforced in the service.
@@ -24,7 +24,7 @@ public sealed record CommentRow : TemporalRow
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 
 	// Only the content (Body/Author/ParentId) can differ between revisions; Board/NodeId
-	// are immutable identity (excluded, like PlanNode excludes Board/NodeId).
+	// are immutable identity (excluded, like TaskNode excludes Board/NodeId).
 	public override bool SamePayload(TemporalRow other) =>
 		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId;
 

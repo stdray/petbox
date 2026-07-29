@@ -3,7 +3,7 @@ namespace PetBox.Web.Mcp;
 // Declares that a BATCH-ITEM property is genuinely REQUIRED, so the generated input schema says so
 // instead of only the prose saying so.
 //
-// Why an attribute and not the C# `required` modifier. These item records (PlanNodeInput and
+// Why an attribute and not the C# `required` modifier. These item records (TaskNodeInput and
 // friends) are deserialized by the SDK BEFORE our tool body runs. Marking the property `required`
 // in C# makes STJ throw its own JsonException at bind time ("missing required properties"), which
 // reaches the caller as a raw -32602 instead of the tool's own sentence ("each node needs a 'key'

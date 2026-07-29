@@ -86,7 +86,7 @@ public sealed class NodeRefResolver
 		// All revisions across every board (history is needed to trace former slugs). A minimal
 		// projection keeps the read cheap; ordering/grouping is done in memory.
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var rows = ctx.PlanNodes
+		var rows = ctx.TaskNodes
 			.Select(n => new { n.Board, n.Key, n.NodeId, n.Name, n.PrevKey, n.Version, n.ActiveTo })
 			.ToList();
 
@@ -138,10 +138,10 @@ public sealed class NodeRefResolver
 	}
 
 	// Active rows matching a slug key, optionally board-scoped; empty NodeId rows dropped.
-	List<PlanNode> FindActiveBySlug(string projectKey, string slug, string? board)
+	List<TaskNode> FindActiveBySlug(string projectKey, string slug, string? board)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
+		var q = ctx.TaskNodes.Where(n => n.ActiveTo == null && n.Key == slug);
 		if (board is not null) q = q.Where(n => n.Board == board);
 		return q.ToList().Where(n => n.NodeId.Length > 0).ToList();
 	}

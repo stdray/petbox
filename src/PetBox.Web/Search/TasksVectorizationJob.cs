@@ -79,7 +79,7 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 
 				List<string> boards;
 				using (var probe = _factory.NewEnsuredConnection(project))
-					boards = probe.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
+					boards = probe.GetTable<TaskNode>().Where(n => n.ActiveTo == null)
 						.Select(n => n.Board).Distinct().ToList();
 
 				int projectIndexed = 0, projectDead = 0;

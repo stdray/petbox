@@ -31,7 +31,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 
 	public TaskBoardNodePageTests()
 	{
-		_dir = Path.Combine(Path.GetTempPath(), "petbox-plannode-" + Guid.NewGuid().ToString("N"));
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-tasknode-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
@@ -59,7 +59,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		await _tasks.UpsertAsync(Proj, board, nodes);
 
 	string NodeId(string board, string key) =>
-		_store.GetContext(Proj).PlanNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
+		_store.GetContext(Proj).TaskNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
 
 	// Sysadmin claim: OnPost* handlers now guard themselves to Member+ (viewer-member-consistency)
 	// via User.HasWorkspaceRoleAtLeast, so an unwired PageModel's PageContext (null) or an

@@ -43,11 +43,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	// surface makes its entry stale (delete the line), and a surface getting WORSE — an argument error
 	// turning into a success — fails here rather than sliding through under an old note.
 	//
-	// The seven `Allowed` entries are all reachable only with a scope the system already documents as
+	// EVERY `Allowed` entry below is reachable only with a scope the system already documents as
 	// root-equivalent (`admin:provision`, and `deploy:write` which ApiKeyScopes calls "NEAR-ROOT,
 	// FLEET-WIDE"). That is the `Provisioning` / `FleetWide` exemption of spec `authz-scope-declaration`
-	// showing up as a measured number rather than a footnote — acceptance criterion 5. Three of the
-	// seven MUTATE the other tenant, which is the part of that number worth staring at.
+	// showing up as a measured number rather than a footnote — acceptance criterion 5. No count is
+	// stated here on purpose: the list is a ratchet, so any number written down goes stale the next
+	// time a surface is fixed. The ones that MUTATE the other tenant — their `Observed` text opens
+	// with CREATED — are the part worth staring at; count them off the list, not off this comment.
 	//
 	// Since the MCP declaration wave (step 5) those exemptions are no longer an interpretation of this
 	// list: every one of the eleven MCP entries below is now [TenantExempt(...)] on its own tool type,
@@ -101,7 +103,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			["mcp:apikey_list"] = (CrossTenantVerdict.Allowed,
 				"listed the victim project's api keys with admin:provision"),
 
-			// Fleet-wide, as declared — and the only one of the seven that does not need
+			// Fleet-wide, as declared — and the only `Allowed` entry that does not need
 			// admin:provision. deploy:write alone attached a deployment to the victim's PROJECT.
 			["mcp:deploy_upsert"] = (CrossTenantVerdict.Allowed,
 				"CREATED a deployment carrying \"project\":\"victimproj\" with deploy:write alone"),

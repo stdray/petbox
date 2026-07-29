@@ -20,7 +20,7 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Mcp;
 
-// Exercises the tasks.*/memory.*/session.* tool methods directly (mocked
+// Exercises the tasks_*/memory_*/session_* tool methods directly (mocked
 // HttpContext + real stores). The MCP transport itself is covered by the
 // existing McpDataToolsTests; here we validate tool logic, auth guards, and
 // the temporal integration.

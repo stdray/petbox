@@ -3,7 +3,7 @@ using PetBox.Core.Data;
 
 namespace PetBox.Tasks.Data.Migrations;
 
-// Node comments: a temporal (SCD-2) comment tree under any plan node, plus open tags.
+// Node comments: a temporal (SCD-2) comment tree under any task node, plus open tags.
 // Two tables in the per-project tasks file (next to plan_nodes):
 //   comments     — temporal comment rows; ParentId (self-ref to Key) gives the tree. At most one
 //                  active revision (ActiveTo IS NULL) per Key.

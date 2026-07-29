@@ -6,8 +6,8 @@ namespace PetBox.Web.Rendering;
 // config every view partial (Tree/Outline/Kanban's card, Table's row) reads to decide what to
 // render, so the SAME 9-field vocabulary (BoardFieldNames) works identically in every view mode —
 // the mode only picks the DEFAULT (below), never a ceiling on what's togglable. Threaded through
-// TaskBoardModel.PlanNodeCard and read directly off TaskBoardModel by the partials that don't go
-// through PlanNodeCard (Kanban/Outline/Table).
+// TaskBoardModel.TaskNodeCard and read directly off TaskBoardModel by the partials that don't go
+// through TaskNodeCard (Kanban/Outline/Table).
 public sealed record BoardFieldConfig(
 	bool Slug, bool Type, bool Status, bool Priority, bool Tags, bool UpdatedAt,
 	bool Delivery, bool BlockedBy, bool Body)
@@ -58,7 +58,7 @@ public sealed record BoardFieldConfig(
 	//     weight there today — table currently shows it unconditionally, which is exactly the
 	//     "dead column" board-view-display-config-impl calls out).
 	//   - Status defaults OFF in tree/outline ("it cuts the eye" — bullet 3): the terminal-cancel
-	//     strikethrough (see _PlanNodeCard/_BoardView* title rendering) already carries the one bit
+	//     strikethrough (see _TaskNodeCard/_BoardView* title rendering) already carries the one bit
 	//     that actually matters (is this node dead?) independent of this toggle, so the badge
 	//     becomes optional detail rather than default noise. Kanban already communicates status via
 	//     its column, so it defaults off there too; table's whole point is the flat column list, so

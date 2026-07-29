@@ -5,13 +5,13 @@ namespace PetBox.Web.Pages.Shared;
 
 // One rendered line of a comment thread: the comment plus its nesting depth. The flat
 // CommentView list (each carrying parentId) is turned into this DFS-ordered shape so the
-// view just iterates with an indent — the same shape the plan-node list uses.
+// view just iterates with an indent — the same shape the task-node list uses.
 public sealed record CommentLine(CommentView Comment, int Depth);
 
 // Model for the _CommentThread partial: the DFS-flattened lines plus the project's optional
 // commit-view URL template and `[[slug]]` node-mention map, threaded down so comment bodies
 // autolink commit hashes and node mentions the same way node bodies do. Null template / null
-// map = plain text (the pre-feature behavior). NodeId is the owning node's stable PlanNode.NodeId
+// map = plain text (the pre-feature behavior). NodeId is the owning node's stable TaskNode.NodeId
 // (comments-ui-edit): the add/reply forms carry it as a hidden field so a POST on the board page
 // (many node cards, one page) still names the right node — the node detail page ignores the
 // field and resolves the node from its own bound route instead, but the same partial/markup

@@ -3,7 +3,7 @@ using PetBox.Tasks.Data;
 
 namespace PetBox.Tasks.Services.Search;
 
-// Projection altitude for unified-read rows. Listing mode needs the full PlanNodeView
+// Projection altitude for unified-read rows. Listing mode needs the full TaskNodeView
 // (parent/depth/links/delivery/commits) — same fields the board UI and MCP listing wire
 // expose. Query mode only needs identity + body/tags/version/priority/timestamps for
 // ranking, sort, and the MCP lean wire cut (spec search-lean-rows); relation panel work is
@@ -14,7 +14,7 @@ public enum SearchProjectionKind
 	Lean,
 }
 
-// Builds PlanNodeView rows for search/list without going through GetAsync's full enrichment
+// Builds TaskNodeView rows for search/list without going through GetAsync's full enrichment
 // when Lean is enough. Pure projection — callers supply already-loaded tags (and, for Full,
 // would use GetAsync instead; Full here is the identity-shaped shell only).
 public static class TaskSearchProjector
@@ -30,8 +30,8 @@ public static class TaskSearchProjector
 	// had to re-read every hit with tasks_node_get just to see what it had matched on. Callers
 	// that genuinely have no commit map (or want the cheapest possible row) pass null and get
 	// the historic `[]`.
-	public static PlanNodeView Lean(
-		PlanNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null,
+	public static TaskNodeView Lean(
+		TaskNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null,
 		IReadOnlyDictionary<string, List<string>>? commitsByNode = null) =>
 		new(
 			Key: n.Key,
@@ -58,12 +58,12 @@ public static class TaskSearchProjector
 			UpdatedAt: n.Updated);
 
 	// Project every node in `nodes` to a lean view, keyed by slug and NodeId for hit resolve.
-	public static (Dictionary<string, PlanNodeView> BySlug, Dictionary<string, PlanNodeView> ByNodeId)
-		LeanIndex(string board, IEnumerable<PlanNode> nodes, ILookup<string, string> tagsByNode, string? urlPrefix = null,
+	public static (Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)
+		LeanIndex(string board, IEnumerable<TaskNode> nodes, ILookup<string, string> tagsByNode, string? urlPrefix = null,
 			IReadOnlyDictionary<string, List<string>>? commitsByNode = null)
 	{
-		var bySlug = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
-		var byNodeId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
+		var bySlug = new Dictionary<string, TaskNodeView>(StringComparer.Ordinal);
+		var byNodeId = new Dictionary<string, TaskNodeView>(StringComparer.Ordinal);
 		foreach (var n in nodes)
 		{
 			var tags = tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList();

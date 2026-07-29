@@ -22,7 +22,7 @@ namespace PetBox.Web.Mcp.Contract;
 // only on a cross-project ("*") key that carries one (omitted from the wire when null).
 public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null);
 
-// ---- comments.* ----------------------------------------------------------------------
+// ---- comments_* ----------------------------------------------------------------------
 
 // Truncated/Omitted/Hint are the response-budget markers (spec bounded-result-sets): filled
 // only when the rows were prefix-cut against the output budget — an in-budget answer
@@ -60,7 +60,7 @@ public sealed record CommentsSearchResult(
 
 public sealed record CommentDeleteResult(bool Deleted);
 
-// ---- config.* ------------------------------------------------------------------------
+// ---- config_* ------------------------------------------------------------------------
 
 public sealed record ConfigBindingRow(long Id, string Path, string Tags, string Kind);
 
@@ -102,7 +102,7 @@ public sealed record ConfigBindingsSearchResult(
 
 public sealed record ConfigBindingDeletedResult(bool Deleted, long Id);
 
-// ---- project.* (provisioning; replaces entity.* type "project") ----------------------
+// ---- project_* (provisioning; replaces the RETIRED entity.* type "project") ----------------------
 
 // `Sandbox` (spec work/smoke-writes-into-real-projects) marks a project as the containment target
 // for sandbox-only API keys — see ApiKeyCreatedResult.SandboxOnly.
@@ -112,7 +112,7 @@ public sealed record ProjectRow(string Key, string WorkspaceKey, string Name, st
 
 public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 
-// ---- apikey.* (provisioning; replaces entity.* type "apikey") -------------------------
+// ---- apikey_* (provisioning; replaces the RETIRED entity.* type "apikey") -------------------------
 
 // apikey_create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
 // `DefaultProjectKey` is the cross-project key's fallback project (null on a project-scoped key,
@@ -149,7 +149,7 @@ public sealed record ApiKeyDeletedResult(bool Deleted, string Key);
 // existingHash/providedHash live in the thrown exception's message, a Failed's reason too.
 public sealed record DataSchemaApplyResult(string Kind, string Hash);
 
-// db lifecycle (replaces entity.* type "db"): create/list/delete/describe.
+// db lifecycle (replaces the RETIRED entity.* type "db"): create/list/delete/describe.
 public sealed record DataDbCreatedResult(string Name, string? Description, long MaxPageCount, DateTime CreatedAt);
 
 public sealed record DataDbRow(string Name, string? Description, long MaxPageCount, DateTime CreatedAt, DateTime UpdatedAt);
@@ -169,7 +169,7 @@ public sealed record DataQueryResult(IReadOnlyList<IReadOnlyDictionary<string, o
 
 public sealed record DataExecResult(int Affected);
 
-// ---- llm.* ---------------------------------------------------------------------------
+// ---- llm_* ---------------------------------------------------------------------------
 
 // `Version` is the level's CAS baseline — pass it back as llm_config_upsert's `version`. 0 = the
 // level declares nothing yet.
@@ -199,7 +199,7 @@ public sealed record LlmConfigGetResult(
 // write reports its own target instead of leaving the caller to re-derive it from the projectKey.
 public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes, long Version, string Level);
 
-// ---- log.* lifecycle (replaces entity.* type "log") ----------------------------------
+// ---- log.* lifecycle (replaces the RETIRED entity.* type "log") ----------------------------------
 
 // RetentionDays is the log's OWN override (spec log-retention-cascade) — null means the log has
 // none and is swept by the project/workspace/system cascade.
@@ -254,7 +254,7 @@ public sealed record LogQueryResultView(
 	bool? Truncated = null,
 	string? Hint = null);
 
-// ---- memory.* ------------------------------------------------------------------------
+// ---- memory_* ------------------------------------------------------------------------
 
 public sealed record MemoryStoreCreatedResult(string ProjectKey, string Name, string? Description, DateTime CreatedAt);
 
@@ -414,7 +414,7 @@ public sealed record MemorySearchResultView(
 	int? PoolLimit = null,
 	string? PoolBoundaryHint = null);
 
-// ---- relations.* ---------------------------------------------------------------------
+// ---- relations_* ---------------------------------------------------------------------
 
 // One row of a relations_create batch (and the historical single-create shape).
 public sealed record RelationCreatedResult(string Id, string Kind, string FromNodeId, string ToNodeId);
@@ -451,7 +451,7 @@ public sealed record RelationsDeletedResult(IReadOnlyList<RelationDeletedResult>
 
 public sealed record ReportIssueResult(bool Reported, string Project, string Board, string Key);
 
-// ---- session.* -----------------------------------------------------------------------
+// ---- session_* -----------------------------------------------------------------------
 
 // `Warning` (card size-warning-not-wired-to-write-verbs, mirroring MemoryRememberResult.Warning):
 // session_upsert always writes (no conflict/reject path — it is a last-write-wins snapshot
@@ -536,7 +536,7 @@ public sealed record SessionSearchResultView(
 	int? PoolLimit = null,
 	string? PoolBoundaryHint = null);
 
-// ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
+// ---- tasks_* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
 public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, string? MethodologyInstance = null);
 

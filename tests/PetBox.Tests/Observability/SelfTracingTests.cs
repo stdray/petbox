@@ -114,13 +114,13 @@ public sealed class SelfTracingTests : IDisposable
 		var (listener, started) = Listen(PetBoxActivitySources.McpSourceName);
 		Activity? span;
 		using (listener)
-		using (span = McpTracingFilter.StartToolSpan("tasks.upsert"))
+		using (span = McpTracingFilter.StartToolSpan("tasks_upsert"))
 			Assert.NotNull(span);
 
 		// Other tests' MCP hosts emit identically-named spans — pin by identity.
 		var op = Assert.Single(Snapshot(started), a => ReferenceEquals(a, span));
-		Assert.Equal("mcp.tool tasks.upsert", op.OperationName);
-		Assert.Equal("tasks.upsert", op.GetTagItem("petbox.tool"));
+		Assert.Equal("mcp.tool tasks_upsert", op.OperationName);
+		Assert.Equal("tasks_upsert", op.GetTagItem("petbox.tool"));
 	}
 
 	[Theory]

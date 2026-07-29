@@ -38,7 +38,7 @@ public sealed class TasksSearchSource : ISearchSource
 	{
 		using var db = _connect();
 		var (added, updated, removed, current) =
-			await TemporalStore.ChangesSinceAsync<PlanNode>(db, sinceVersion, n => n.Board == _board, ct);
+			await TemporalStore.ChangesSinceAsync<TaskNode>(db, sinceVersion, n => n.Board == _board, ct);
 		var (changed, watermark) = SearchDeltaCap.Take(added.Concat(updated), current, _maxDocs);
 
 		var upserts = changed.Where(TasksSearchDocs.IsIndexable)

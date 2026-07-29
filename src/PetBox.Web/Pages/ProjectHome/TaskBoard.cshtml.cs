@@ -17,7 +17,7 @@ using PetBox.Web.Settings;
 namespace PetBox.Web.Pages.ProjectHome;
 
 // Read-only detail for one task board (/ui/{ws}/{project}/tasks/{board}). Shows
-// the currently-active plan nodes (ActiveTo == null) in plan-tree order. Reads and
+// the currently-active task nodes (ActiveTo == null) in plan-tree order. Reads and
 // the quick-add write both go through ITasksService — the page never opens the DB
 // context itself, so quick-add gets the same NodeId/status handling the MCP path does.
 // viewer-member-consistency: the class policy is WorkspaceViewer — a Viewer must be able to READ
@@ -95,7 +95,7 @@ public sealed class TaskBoardModel : PageModel
 	// Nodes in plan-tree (DFS) render order; ClosedWithActiveDescendant holds the
 	// NodeIds of Done/Cancelled nodes that must stay visible under "active only"
 	// because a descendant is still open (else the children would orphan).
-	public IReadOnlyList<PlanNodeView> Nodes { get; private set; } = [];
+	public IReadOnlyList<TaskNodeView> Nodes { get; private set; } = [];
 	public IReadOnlySet<string> ClosedWithActiveDescendant { get; private set; }
 		= new HashSet<string>(StringComparer.Ordinal);
 
@@ -137,9 +137,9 @@ public sealed class TaskBoardModel : PageModel
 
 	// What THIS render actually shows: FieldsParam when the request explicitly declared a
 	// selection (FieldsSetParam present — including a deliberately empty one), else the saved
-	// per-board DB preference (board-view-cross-device), else DefaultFields. Read by _PlanNodeCard
-	// (via PlanNodeCard.Fields below) and directly by the view partials that don't route through a
-	// PlanNodeCard (Kanban/Outline/Table).
+	// per-board DB preference (board-view-cross-device), else DefaultFields. Read by _TaskNodeCard
+	// (via TaskNodeCard.Fields below) and directly by the view partials that don't route through a
+	// TaskNodeCard (Kanban/Outline/Table).
 	public BoardFieldConfig Fields { get; private set; } = BoardFieldConfig.None;
 
 	// kanban-column-picker: which kanban columns (workflow-status slugs) are visible — the SAME
@@ -170,7 +170,7 @@ public sealed class TaskBoardModel : PageModel
 	public bool SortDesc { get; private set; }
 
 	// board-filters-server-state: which nodes are collapsed on THIS board (cookie branch, per
-	// (project,board) — see BrowserState.CollapsedByBoard). Read by _PlanNodeCard (caret glyph +
+	// (project,board) — see BrowserState.CollapsedByBoard). Read by _TaskNodeCard (caret glyph +
 	// data-collapsed) and IsHiddenByCollapse below (descendant hiding) — tree/outline only, exactly
 	// like the client mechanism it replaces (kanban/table cards never carried a data-parent-id for
 	// the old client-side hiddenByCollapse to walk, so they're unaffected here too).
@@ -201,19 +201,19 @@ public sealed class TaskBoardModel : PageModel
 	// only; the secondary Key tie-break stays ascending regardless of `desc` — this matches the
 	// EXACT previous hardcoded behavior when sortBy is the default ("priority", desc:false), which
 	// is what every pre-existing ordering test still asserts.
-	public static IComparer<PlanNodeView> SortComparer(string sortBy, bool desc)
+	public static IComparer<TaskNodeView> SortComparer(string sortBy, bool desc)
 	{
-		Comparison<PlanNodeView> primary = sortBy switch
+		Comparison<TaskNodeView> primary = sortBy switch
 		{
 			BoardSortKeys.Created => (a, b) => (a.CreatedAt?.Ticks ?? 0).CompareTo(b.CreatedAt?.Ticks ?? 0),
 			BoardSortKeys.Updated => (a, b) => (a.UpdatedAt?.Ticks ?? 0).CompareTo(b.UpdatedAt?.Ticks ?? 0),
 			BoardSortKeys.Title => (a, b) => string.Compare(TitleKey(a), TitleKey(b), StringComparison.Ordinal),
 			_ => (a, b) => a.Priority.CompareTo(b.Priority),
 		};
-		return Comparer<PlanNodeView>.Create((a, b) => desc ? -primary(a, b) : primary(a, b));
+		return Comparer<TaskNodeView>.Create((a, b) => desc ? -primary(a, b) : primary(a, b));
 	}
 
-	static string TitleKey(PlanNodeView n) => (string.IsNullOrEmpty(n.Title) ? n.Key : n.Title).ToLowerInvariant();
+	static string TitleKey(TaskNodeView n) => (string.IsNullOrEmpty(n.Title) ? n.Key : n.Title).ToLowerInvariant();
 
 	// The mode BoardViewModeRegistry.Resolve settled on (explicit -> methodology defaultView
 	// -> Tree) — RENDERABLE by construction (Resolve never returns a mode without a partial).
@@ -302,18 +302,18 @@ public sealed class TaskBoardModel : PageModel
 	// One flattened row of the tag-groups pane: a group HEADER (Node null) at nesting `Depth`,
 	// or a node CARD (Node set) sitting just under its deepest group. Flattening keeps the
 	// Razor a single loop — the same shape the part_of pane already renders.
-	public sealed record GroupRow(int Depth, string? GroupKey, string? Delivery, PlanNodeView? Node);
+	public sealed record GroupRow(int Depth, string? GroupKey, string? Delivery, TaskNodeView? Node);
 
-	// Everything the shared _PlanNodeCard partial needs to render one node card in either
+	// Everything the shared _TaskNodeCard partial needs to render one node card in either
 	// pane. `Runtime` + `KindSlug` let the card classify statuses per the board's EFFECTIVE
 	// kind (definition first, preset fallback). `Depth` drives the indent (part_of depth in
 	// the tree pane, 0 in the tag-groups pane — grouping is the structure there).
 	// `HasChildren` shows the collapse caret (tree only). The tree-interactivity data-*
 	// (parent/closed/keep-visible) are inert in the tag pane because ts/board.ts binds only
 	// to the tree's board-nodes list.
-	public sealed record PlanNodeCard(
+	public sealed record TaskNodeCard(
 		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
-		string? KindSlug, PlanNodeView Node,
+		string? KindSlug, TaskNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
 		// board-page-cost: a COUNT only (0 = no chip) — the card never renders the thread itself
 		// (see CommentCounts' own header comment).
@@ -668,7 +668,7 @@ public sealed class TaskBoardModel : PageModel
 			: Fields.Body;
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
-		// client-side, and now also server-side via ActiveOnly/Hidden — see PlanNodeCard.Hidden);
+		// client-side, and now also server-side via ActiveOnly/Hidden — see TaskNodeCard.Hidden);
 		// GetAsync supplies each node's part_of parent + depth.
 		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: needsBody, ct: ct);
 		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
@@ -724,7 +724,7 @@ public sealed class TaskBoardModel : PageModel
 	// Depth-first flatten of the nested tag groups into header/card rows. A leaf group emits a
 	// header then a card row per node (looked up by key); an inner group emits a header then
 	// recurses its sub-groups one level deeper.
-	static List<GroupRow> FlattenGroups(IReadOnlyList<TagGroup> groups, int depth, IReadOnlyDictionary<string, PlanNodeView> byKey)
+	static List<GroupRow> FlattenGroups(IReadOnlyList<TagGroup> groups, int depth, IReadOnlyDictionary<string, TaskNodeView> byKey)
 	{
 		var rows = new List<GroupRow>();
 		foreach (var g in groups)
@@ -759,22 +759,22 @@ public sealed class TaskBoardModel : PageModel
 	// this is behaviorally unchanged for every caller that doesn't pass a different sort). A flat
 	// priority sort let a low-priority child of an early branch visually drift past a later one
 	// (finding D11). DFS keeps every node under its parent regardless of which key sorts siblings.
-	static List<PlanNodeView> OrderHierarchically(
-		List<PlanNodeView> nodes, MethodologyRuntime runtime, string? kindSlug, IComparer<PlanNodeView> sort,
+	static List<TaskNodeView> OrderHierarchically(
+		List<TaskNodeView> nodes, MethodologyRuntime runtime, string? kindSlug, IComparer<TaskNodeView> sort,
 		out IReadOnlySet<string> closedWithActiveDescendant)
 	{
-		var byId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
+		var byId = new Dictionary<string, TaskNodeView>(StringComparer.Ordinal);
 		foreach (var n in nodes) byId[n.NodeId] = n;
 
 		// A node is a root when it has no part_of parent, or its parent isn't on this board.
-		static string? ParentOf(PlanNodeView n) => n.ParentNodeId;
+		static string? ParentOf(TaskNodeView n) => n.ParentNodeId;
 
 		var childMap = nodes
 			.Where(n => ParentOf(n) is { } pid && byId.ContainsKey(pid))
 			.GroupBy(n => ParentOf(n)!)
 			.ToDictionary(
 				g => g.Key,
-				g => (IReadOnlyList<PlanNodeView>)g
+				g => (IReadOnlyList<TaskNodeView>)g
 					.OrderBy(n => n, sort)
 					.ThenBy(n => n.Key, StringComparer.Ordinal)
 					.ToList(),
@@ -786,13 +786,13 @@ public sealed class TaskBoardModel : PageModel
 			.ThenBy(n => n.Key, StringComparer.Ordinal)
 			.ToList();
 
-		var ordered = new List<PlanNodeView>(nodes.Count);
+		var ordered = new List<TaskNodeView>(nodes.Count);
 		var closedKeep = new HashSet<string>(StringComparer.Ordinal);
 
 		// Returns whether the subtree holds a non-closed node, so a closed parent of open
 		// work stays visible. Guarded against part_of cycles via the visited set.
 		var visited = new HashSet<string>(StringComparer.Ordinal);
-		bool Emit(PlanNodeView node)
+		bool Emit(TaskNodeView node)
 		{
 			if (!visited.Add(node.NodeId)) return false;
 			ordered.Add(node);

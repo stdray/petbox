@@ -8,7 +8,7 @@ using PetBox.Core.Features;
 
 namespace PetBox.Web.Mcp;
 
-// Shared guards + JSON helpers for the tasks.*/memory.*/session.* MCP tools.
+// Shared guards + JSON helpers for the tasks_*/memory_*/session_* MCP tools.
 // Mirrors the private AssertProject/AssertScope helpers in DataTools/LogTools,
 // factored out so the three new tool classes don't each copy them. Claims
 // ("project", "scopes") are set by ApiKeyAuthenticationHandler.

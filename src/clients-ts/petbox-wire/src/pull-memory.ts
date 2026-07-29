@@ -1,7 +1,7 @@
 // Claude Code SessionStart hook (global) — port of pull-memory.ps1.
 //
 // Injects the PetBox memory protocol so the agent recalls relevant memory at session start
-// and captures learnings as it works, via the already-connected petbox MCP (native memory.*
+// and captures learnings as it works, via the already-connected petbox MCP (native memory_*
 // tools). Stdout is added to the session context by Claude Code.
 //
 // The project is resolved from cwd via the shared registry; if the cwd is not a registered

@@ -3,7 +3,7 @@ using PetBox.Core.Data;
 
 namespace PetBox.Tasks.Data.Migrations;
 
-// Per-board temporal plan-node table, plus the partial unique index that keeps the temporal model
+// Per-board temporal task-node table, plus the partial unique index that keeps the temporal model
 // honest: at most ONE active revision (ActiveTo IS NULL) per Key. That index is what turns the
 // concurrent-insert race (critic C1) into a catchable constraint violation instead of a silent
 // double-active row. M004/M005/M011 later rebuild this table (Status -> TEXT, Board partition,
@@ -18,7 +18,7 @@ namespace PetBox.Tasks.Data.Migrations;
 // TasksSchema.Ensure. That is gone: a migration runs exactly once, gated by VersionInfo, so a
 // tolerant CREATE never protected anything — it only stood ready to swallow a schema divergence.
 [Migration(1, "Create plan_nodes temporal table + unique-active-key index")]
-public sealed class M001_PlanNodes : SqliteMigration
+public sealed class M001_TaskNodes : SqliteMigration
 {
 	public override void Up()
 	{

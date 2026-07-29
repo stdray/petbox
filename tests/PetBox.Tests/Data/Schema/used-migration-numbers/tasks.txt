@@ -14,17 +14,17 @@
 # New migration -> APPEND a line at the bottom with a number greater than every number above.
 # Deleted migration -> flip its line to BURNED (keep the number, add a reason) instead of
 # removing the line. See work/migration-number-reuse-is-silently-destructive.
-1 LIVE M001_PlanNodes
-2 LIVE M002_PlanNodeType
-3 LIVE M003_PlanNodeNodeId
+1 LIVE M001_TaskNodes
+2 LIVE M002_TaskNodeType
+3 LIVE M003_TaskNodeNodeId
 4 LIVE M004_StatusSlugAndNodeId
 5 LIVE M005_BoardColumn
 6 LIVE M006_TagTables
 7 LIVE M007_Comments
-8 LIVE M008_PlanNodeSearch
+8 LIVE M008_TaskNodeSearch
 9 LIVE M009_SearchTables
 10 LIVE M010_MethodologyDefs
-11 LIVE M011_PlanNodeCommits
+11 LIVE M011_TaskNodeCommits
 12 LIVE M012_MethodologyTemplates
 13 LIVE M013_MethodologyInstances
 14 LIVE M014_Relations

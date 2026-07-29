@@ -2,7 +2,7 @@ using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Pages.Shared;
 
-// The ONE status-badge rule, shared by the board list card (_PlanNodeCard) and the node detail
+// The ONE status-badge rule, shared by the board list card (_TaskNodeCard) and the node detail
 // page (TaskBoardNode) so the two can never disagree on whether a status shows
 // (ui-spec-status-board-node-mismatch). Given the board's effective kind (resolved through
 // MethodologyRuntime) and a status slug it answers both questions: SHOULD the badge render, and

@@ -293,7 +293,7 @@ public sealed class WorkDeferredStatusMigrator
 		var total = 0;
 		foreach (var board in scope)
 		{
-			var stale = ctx.GetTable<PlanNode>()
+			var stale = ctx.GetTable<TaskNode>()
 				.Where(n => n.Board == board.Name && n.ActiveTo == null && n.Status == DeferredStatus)
 				.ToList();
 			if (stale.Count == 0) continue;

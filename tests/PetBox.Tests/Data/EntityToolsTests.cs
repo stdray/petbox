@@ -115,7 +115,7 @@ public sealed class EntityToolsFixture : IAsyncLifetime
 
 // Covers the per-type lifecycle MCP tools that replaced the generic entity.* surface
 // (typed-surface Phase 4): log_create/list/delete, db_create/describe, and the
-// config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
+// config_* binding tools. Each tool now takes flat, typed params (no JsonElement),
 // so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
 // lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
 public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
@@ -511,7 +511,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 	[Fact]
 	public async Task ToolsList_FilteredByKeyScope()
 	{
-		// A7b: a tasks-only key should see tasks.* but not other modules' tools
+		// A7b: a tasks-only key should see tasks_* but not other modules' tools
 		// (call-time scope still enforces; this only trims the listing).
 		const string narrowKey = "yb_key_tasks_only";
 		using (var scope = _factory.Services.CreateScope())

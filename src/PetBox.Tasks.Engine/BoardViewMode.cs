@@ -1,7 +1,7 @@
 namespace PetBox.Tasks.Workflow;
 
 // The named view modes a board may render (spec board-view-modes): interchangeable ways
-// to present the SAME set of plan nodes — switching never touches data (board-view-modes),
+// to present the SAME set of task nodes — switching never touches data (board-view-modes),
 // only which mode is shown (board-view-persistence). This is the vocabulary
 // MethodologyKindDef.DefaultView draws from (spec methodology-default-view-field).
 //

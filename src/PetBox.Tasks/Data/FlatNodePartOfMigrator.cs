@@ -54,7 +54,7 @@ public sealed class FlatNodePartOfMigrator
 	async Task<bool> MigrateProject(string project)
 	{
 		using var db = _factory.GetDb(project); // ensures schema (M001..M006)
-		var active = db.PlanNodes.Where(n => n.ActiveTo == null).ToList();
+		var active = db.TaskNodes.Where(n => n.ActiveTo == null).ToList();
 		var multi = active.Where(n => n.Key.Contains('/', StringComparison.Ordinal)).ToList();
 		if (multi.Count == 0) return false;
 
@@ -82,9 +82,9 @@ public sealed class FlatNodePartOfMigrator
 				}
 
 				// Rewrite Key (all revisions) + any PrevKey references on this board.
-				await db.PlanNodes.Where(n => n.Board == board && n.Key == oldKey)
+				await db.TaskNodes.Where(n => n.Board == board && n.Key == oldKey)
 					.Set(n => n.Key, _ => slug).UpdateAsync();
-				await db.PlanNodes.Where(n => n.Board == board && n.PrevKey == oldKey)
+				await db.TaskNodes.Where(n => n.Board == board && n.PrevKey == oldKey)
 					.Set(n => n.PrevKey, _ => slug).UpdateAsync();
 
 				// Synthesize the part_of edge from the original parent path.

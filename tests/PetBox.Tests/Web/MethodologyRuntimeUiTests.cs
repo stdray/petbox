@@ -130,7 +130,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 		runtime.IsTerminalStatus("simple", "Done").Should().BeTrue();
 		runtime.IsTerminalStatus("simple", "InProgress").Should().BeFalse();
 
-		// Spec preset stays a quartet kind (the _PlanNodeCard spec-noise guard keys on this).
+		// Spec preset stays a quartet kind (the _TaskNodeCard spec-noise guard keys on this).
 		runtime.PresetKind("spec").Should().Be(BoardKind.Spec);
 		runtime.QuickAddAllowed("spec").Should().BeFalse();
 	}
@@ -209,7 +209,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 		var result = await model.OnPostCreateAsync("a risk", "body", 50, default);
 
 		result.Should().BeOfType<Microsoft.AspNetCore.Mvc.BadRequestResult>();
-		_store.GetContext(Proj).PlanNodes.Count(n => n.Board == board && n.ActiveTo == null)
+		_store.GetContext(Proj).TaskNodes.Count(n => n.Board == board && n.ActiveTo == null)
 			.Should().Be(0, "quick-add is gated off for this kind — nothing written");
 	}
 

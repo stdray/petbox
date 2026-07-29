@@ -304,7 +304,7 @@ public sealed class McpLogToolsTests : IClassFixture<McpLogToolsFixture>, IAsync
 			["kql"] = "events",
 		});
 		// A foreign project surfaces via McpErrorEnvelopeFilter: the structured {error}
-		// body on the text content, with IsError=true (consistent with tasks.*).
+		// body on the text content, with IsError=true (consistent with tasks_*).
 		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
 			.Should().Contain("UnauthorizedAccessException");
 	}

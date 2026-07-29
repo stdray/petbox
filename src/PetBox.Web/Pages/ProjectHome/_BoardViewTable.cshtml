@@ -24,11 +24,11 @@
 			Priority: n.Priority, Tags: n.Tags, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 			Delivery: n.Delivery,
 			// board-terminal-negative-visible: the strikethrough trigger is the status CATEGORY, on
-			// every board kind (the spec-board-only scoping is gone — see _PlanNodeCard's comment).
+			// every board kind (the spec-board-only scoping is gone — see _TaskNodeCard's comment).
 			TerminalCancel: Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel,
 			BlockedBy: n.BlockedBy, Body: n.Body,
 			// board-filters-server-state: table has no hierarchy to orphan a child out of, so
-			// (unlike PlanNodeCard) there's no keepVisible exception — a closed row hides under
+			// (unlike TaskNodeCard) there's no keepVisible exception — a closed row hides under
 			// active-only, period. No collapse either (table never showed one).
 			Hidden: Model.ActiveOnly && closed);
 	}).ToList();
