@@ -12,7 +12,7 @@ boards/memory/sessions live at https://petbox.3po.su/ui/{{WORKSPACE}}/{{PROJECT}
 In opencode the MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`, `petbox_memory_search`);
 in Claude Code they are `mcp__petbox__<verb>`. Just prefix the base verb per runtime.
 
-**Plan nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
+**Task nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
 grouping is `tags` (`area:*` / `concern:*`). Give each node a short `title` and a markdown
 `body`. A cold `tasks_upsert` to an **unknown** board is rejected (with a did-you-mean) —
 create it first with `tasks_board_create` (or a methodology). The upsert response is a pure ack for

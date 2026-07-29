@@ -37,7 +37,7 @@ config/               ← per-workspace config DBs (bindings + tag vocab)
 logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
 ```
 
-**Rule of thumb:** the *registry/metadata* lives in `petbox.db`; the *content* (memory entries, session lines, plan nodes) lives in per-project scoped files. Relations & tags are the exception worth knowing: **relations** (the task graph) are in `petbox.db` (project-scoped, bind to stable NodeId, cross-board); **node tags** are in the per-project `tasks.db` (they need a same-file FK to `tag_vocab`).
+**Rule of thumb:** the *registry/metadata* lives in `petbox.db`; the *content* (memory entries, session lines, task nodes) lives in per-project scoped files. Relations & tags are the exception worth knowing: **relations** (the task graph) are in `petbox.db` (project-scoped, bind to stable NodeId, cross-board); **node tags** are in the per-project `tasks.db` (they need a same-file FK to `tag_vocab`).
 
 ## 3. Three doors (URL prefixes)
 
@@ -97,7 +97,7 @@ Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag
 
 - **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks_search` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
 - **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks_methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks_methodology_get(project)` returns the quartet as one **compact index** (per-board status `counts` + header rows, no node bodies by default; pass `bodyLen` for a body snippet, `includeBoards` to pick boards; full bodies via `tasks_search` / `tasks_node_get`). The admin board page (`/ui/.../tasks`) offers EITHER **Enable methodology** (provisions the quartet as one unit) OR a **Free board** form — never per-kind creation by hand.
-- **MCP tools:** `tasks_board_create|list|delete|close|reopen|set_wire`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_enable|get`, `relations_create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks_search|node_get|methodology_get|upsert|delta` accept `include_url=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
+- **MCP tools:** `tasks_board_create|list|delete|close|reopen|set_wire`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_enable|get`, `relations_create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks_search|node_get|methodology_get|upsert|delta` accept `includeUrl=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
 - **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
 
 ## 7. Shared containers: one per workspace

@@ -39,7 +39,7 @@ Owner axis is `$HOME`; definitions are portable across machines, models are not.
    ```bash
    npx petbox-wire doctor
    ```
-   Doctor reports truthfulness violations (role + capability + harness). Exit 1 on failure — fix before apply.
+   Doctor reports truthfulness violations (role + capability + harness). Exit 3 on a violation — fix before apply.
 3. Materialize:
    ```bash
    npx petbox-wire apply

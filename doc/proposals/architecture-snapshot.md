@@ -72,7 +72,7 @@ Companion to `spec-backfill-map.jsonl`. Describes **as-built** module structure,
 
 ## PetBox.Tasks
 
-- **Responsibility:** Task boards + methodology engine: plan nodes, comments, relations/tags, workflow FSM, methodology definitions/templates/instances, delivery roll-up, and search docs. All boards for a project live in one SQLite file partitioned by Board column.
+- **Responsibility:** Task boards + methodology engine: task nodes, comments, relations/tags, workflow FSM, methodology definitions/templates/instances, delivery roll-up, and search docs. All boards for a project live in one SQLite file partitioned by Board column.
 - **Key files:**
   - `src/PetBox.Tasks/Contract/ITasksService.cs`, `ICommentService.cs`, `TasksActor.cs`, `NodePatch.cs`, `TaskViews.cs`
   - `src/PetBox.Tasks/Services/TasksService.cs`, `CommentService.cs`, `Upsert/*`, `Methodology/*`

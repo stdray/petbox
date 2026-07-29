@@ -50,7 +50,7 @@ setx PETBOX_<PROJECT>_API_KEY "<your key>"
 
 If your agent can't expand env vars, inline the key directly in the MCP config instead — but keep that config file gitignored.
 
-## 4. Plan nodes are flat slugs; hierarchy is `partOf`
+## 4. Task nodes are flat slugs; hierarchy is `partOf`
 
 Every node has a **flat slug** `key` (lowercase `^[a-z][a-z0-9_-]{0,99}$`, board-unique). Nesting is the `partOf` field — a parent slug or nodeId (`""` detaches to a root); cross-cutting grouping is `tags` (`area:*` / `concern:*`). Give every node a short `title` AND a markdown `body`.
 
@@ -70,7 +70,7 @@ tasks_upsert board="spec" projectKey="<proj>" nodes=[
 - `tasks_board_create(kind?) / board_list / board_delete` — named boards; `kind` ∈ spec|work|ideas|intake|simple. A cold `tasks_upsert` auto-creates a simple board.
 - `tasks_search / node_get / upsert / delta` — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed `delivery`). `search` is the one read verb: without `q` a deterministic listing (board or whole project), with `q` hybrid relevance search; filters (`status`, `nodes`, `underNode`) and `sort` work in both modes. `links:{kind:ref}` / `blockedBy` create links.
 - `tasks_workflow` — the live statuses/transitions for a board's kind.
-- `relations_create / list / delete` — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the [cheatsheet](/doc/methodology).
+- `relations_create / list / delete` — typed temporal edges (task_spec|issue_task|idea_spec|blocks|part_of|supersedes). See the [cheatsheet](/doc/methodology).
 - `memory_store_list / store_create / store_delete` — named memory stores (a cold `memory_upsert` auto-creates the store).
 - `memory_search / get / upsert / delta / remember` — durable notes. Each entry needs a `type` (User|Feedback|Project|Reference) plus description, body, optional `tags` (an array of strings). `upsert` is a PATCH on edits: an omitted field stays unchanged, an explicit `""` (or `[]` for tags) clears it. `search` is the one read verb: without `q` a deterministic listing (updated desc), with `q` hybrid relevance search (FTS ⊕ vectors); no `scope` cascades project ⊕ workspace over every store; optional `type` filter and `sort` work in both modes.
 - `session_search / get / upsert / append / delete` — the session archive. `search` is the one read verb: without `q` a listing of compact rows, with `q` a two-stage search (digest discovery → episodic hits with message ordinals for `session_get`).

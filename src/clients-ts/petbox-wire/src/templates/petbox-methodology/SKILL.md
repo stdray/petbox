@@ -68,12 +68,12 @@ to check for — don't assume any of these are absent just because you haven't s
 - `tasks_methodology_rules_get` / `tasks_methodology_list` — the raw rules document / instance
   index, for when the guide's rendering isn't enough. `_list` hands back each instance's `key`;
   that same string is what every `tasks_methodology_*` verb takes as its `key`.
-- `tasks_methodology_get` / `tasks_get` / `tasks_workflow` — read boards/nodes once you know the
-  shape from the guide above.
+- `tasks_methodology_get` / `tasks_search` / `tasks_node_get` / `tasks_workflow` — read
+  boards/nodes once you know the shape from the guide above.
+- `tasks_upsert` / `comments_upsert` / `relations_create` — the writes the gates above govern.
 
 Addressing: a methodology INSTANCE is addressed by `key` (its slug) on every verb — never by
 `name`. `name` on this surface means a document's human-readable title and addresses nothing.
-- `tasks_upsert` / `comments_upsert` / `relations_create` — the writes the gates above govern.
 
 Tool naming: base verbs are underscore-delimited (`tasks_methodology_guide`); opencode prefixes
 `petbox_`, Claude Code prefixes `mcp__petbox__`.
