@@ -25,7 +25,7 @@ public sealed class SessionsSearchUiFixture : IAsyncLifetime
 	public const string Ws = "sessui-ws";
 	public const string Proj = "sessui-proj";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public SessionsSearchUiFixture()

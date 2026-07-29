@@ -40,7 +40,7 @@ namespace PetBox.Tests.Mcp;
 public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 {
 	public const string ProjectKey = "conf";
-	public const string ApiKey = "yb_key_conf_agent";
+	const string ApiKey = "yb_key_conf_agent";
 	// Full enumerated scope set — so scope-gating never turns a covered read into an isError.
 	const string Scopes =
 		"config:read,config:write,logs:ingest,logs:query,logs:admin,health:read,health:write," +

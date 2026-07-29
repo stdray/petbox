@@ -61,7 +61,7 @@ public static class TestCoreDb
 	// looks — this repo has been bitten by that three times. See WorkspaceDeletePageTests for the
 	// worst of them: a workspace-delete gate stayed green for two days because the fixture's raw
 	// insert never created the service-managed container the gate keys on.
-	public static IWorkspaceMembershipService Memberships(this ICoreDbFactory dbf) =>
+	static IWorkspaceMembershipService Memberships(this ICoreDbFactory dbf) =>
 		new WorkspaceMembershipService(dbf);
 
 	// Seed a membership for an ALREADY-SEEDED user, through the production service. Tests hold a user
@@ -88,8 +88,6 @@ public static class TestCoreDb
 	public static Task SeedMemberAsync(this PetBoxDb db, long userId, string workspaceKey, WorkspaceRole role) =>
 		db.Factory().SeedMemberAsync(userId, workspaceKey, role);
 
-	public static IWorkspaceMembershipService Memberships(this PetBoxDb db) => db.Factory().Memberships();
-
 	// Drop every membership — a fixture RESET, not a production path (nothing in production wipes the
 	// table). Still goes through the service, one user at a time, because RemoveUserAsync is the
 	// cascade the service owns and the quota ledger is what it keeps honest.
@@ -114,7 +112,7 @@ public static class TestCoreDb
 public static class MembershipProbe
 {
 #pragma warning disable RS0030 // The sanctioned ground-truth read — see the note above.
-	public static IReadOnlyList<WorkspaceMemberOf> MembershipRows(this ICoreDbFactory dbf)
+	static IReadOnlyList<WorkspaceMemberOf> MembershipRows(this ICoreDbFactory dbf)
 	{
 		using var db = dbf.Open();
 		return [.. db.WorkspaceMembers.Select(m => new WorkspaceMemberOf(m.UserId, m.WorkspaceKey, m.Role))];

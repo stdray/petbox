@@ -24,10 +24,10 @@ public sealed class ConfigApiWorkspaceAuthzFixture : IAsyncLifetime
 {
 	public const string WsA = "authzwsa";
 	public const string WsB = "authzwsb";
-	public const string ProjA = "authzproja";
-	public const string ProjB = "authzprojb";
+	const string ProjA = "authzproja";
+	const string ProjB = "authzprojb";
 	public const string KeyA = "yb_key_authz_config_a";
-	public const string KeyB = "yb_key_authz_config_b";
+	const string KeyB = "yb_key_authz_config_b";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
 	public WebApplicationFactory<Program> Factory { get; }

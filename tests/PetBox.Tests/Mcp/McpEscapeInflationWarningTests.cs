@@ -149,12 +149,12 @@ public sealed class JsonEscapeInflationScannerTests
 public sealed class McpEscapeInflationRealPathFixture : IAsyncLifetime
 {
 	public const string ProjectKey = "$system"; // seeded by the migrations
-	public const string ApiKeyValue = "yb_key_escape_inflation_probe";
+	const string ApiKeyValue = "yb_key_escape_inflation_probe";
 	public const string Store = "escape-probe";
 
 	HttpClient _http = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Http => _http;
 
 	public McpEscapeInflationRealPathFixture()

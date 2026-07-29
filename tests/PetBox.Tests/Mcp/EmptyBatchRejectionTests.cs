@@ -28,14 +28,14 @@ public sealed class EmptyBatchRejectionFixture : IAsyncLifetime
 {
 	public const string ProjectKey = "ebatch";
 	public const string WorkspaceKey = "ebatch-ws";
-	public const string ApiKey = "yb_key_ebatch_agent";
+	const string ApiKey = "yb_key_ebatch_agent";
 	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write,admin:provision";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;
 	HttpClient _http = null!;
 
-	public McpClient Mcp { get; private set; } = null!;
+	McpClient Mcp { get; set; } = null!;
 	public IReadOnlyDictionary<string, McpClientTool> Tools { get; private set; } = null!;
 
 	public EmptyBatchRejectionFixture()

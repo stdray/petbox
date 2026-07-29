@@ -18,8 +18,8 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "kpvotes";
 	public const string TestApiKey = "yb_key_test_mcp_log_xyz";
-	public const string TestServiceKey = "kpvotes-net";
-	public const string TestScopes = "logs:query,logs:ingest";
+	const string TestServiceKey = "kpvotes-net";
+	const string TestScopes = "logs:query,logs:ingest";
 
 	readonly string _baseDir;
 	HttpClient _http = null!;

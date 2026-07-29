@@ -19,7 +19,7 @@ namespace PetBox.Tests.Web;
 // AdminProjectsAuthzTests.cs.
 public sealed class WorkspaceUsersAuthzFixture : IAsyncLifetime
 {
-	public const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string Password = "test123";
 
 	public WebApplicationFactory<Program> Factory { get; }

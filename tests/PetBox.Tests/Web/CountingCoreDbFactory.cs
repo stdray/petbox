@@ -23,7 +23,7 @@ public sealed class CountingCoreDbFactory : ICoreDbFactory
 	public CountingCoreDbFactory(string connectionString)
 		: this(PetBoxDb.CreateOptions(connectionString)) { }
 
-	public CountingCoreDbFactory(DataOptions<PetBoxDb> options) =>
+	CountingCoreDbFactory(DataOptions<PetBoxDb> options) =>
 		_inner = new CoreDbFactory(new DataOptions<PetBoxDb>(options.Options.UseTracing(
 			System.Diagnostics.TraceLevel.Info,
 			info =>

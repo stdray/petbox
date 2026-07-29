@@ -30,14 +30,14 @@ namespace PetBox.Tests.Tasks;
 public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 {
 	public const string ProjectKey = "wf";
-	public const string AgentKey = "yb_key_wf_agent";        // tasks:read,tasks:write   (an agent — cannot approve)
-	public const string MaintainerKey = "yb_key_wf_approve"; // + tasks:approve          (the maintainer — confirms Done)
+	const string AgentKey = "yb_key_wf_agent";        // tasks:read,tasks:write   (an agent — cannot approve)
+	const string MaintainerKey = "yb_key_wf_approve"; // + tasks:approve          (the maintainer — confirms Done)
 
 	readonly string _baseDir;
 	HttpClient _httpAgent = null!;
 	HttpClient _httpApprove = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public McpClient Agent { get; private set; } = null!;    // default client used by most scenarios
 	public McpClient Approver { get; private set; } = null!;
 

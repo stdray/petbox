@@ -30,8 +30,8 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 	public const string HomeProject = "w2home";     // the wildcard key's default project
 	public const string OtherProject = "w2other";   // an explicitly-addressed project
 
-	public const string StarWithDefaultKey = "yb_key_w2_star_default";
-	public const string StarNoDefaultKey = "yb_key_w2_star_plain";
+	const string StarWithDefaultKey = "yb_key_w2_star_default";
+	const string StarNoDefaultKey = "yb_key_w2_star_plain";
 	public const string ScopedKey = "yb_key_w2_scoped";
 	public const string MarkerKey = "yb_key_w2_marker";  // lives in OtherProject — the observable
 

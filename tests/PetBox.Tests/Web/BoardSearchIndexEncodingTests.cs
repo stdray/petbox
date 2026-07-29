@@ -20,12 +20,12 @@ namespace PetBox.Tests.Web;
 // gzip byte inflation under the default encoder.
 public sealed class BoardSearchIndexEncodingFixture : IAsyncLifetime
 {
-	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 	public const string Ws = "json-enc-ws";
 	public const string Proj = "json-enc-proj";
 	public const string Board = "json-enc-board";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public BoardSearchIndexEncodingFixture()

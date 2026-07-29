@@ -63,7 +63,7 @@ public sealed class TempDirReaper
 
 	public TempDirReaper() => Sweep();
 
-	internal static void Sweep()
+	static void Sweep()
 	{
 		try
 		{

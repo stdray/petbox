@@ -19,12 +19,12 @@ namespace PetBox.Tests.Data;
 public sealed class SchemaApiFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "kpvotes";
-	public const string TestApiKey = "yb_key_test_schema_xyz";
+	const string TestApiKey = "yb_key_test_schema_xyz";
 	public const string TestDbName = "cache";
 
 	readonly string _baseDir;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public SchemaApiFixture()

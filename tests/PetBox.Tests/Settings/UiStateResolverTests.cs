@@ -24,7 +24,7 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 	// Test-only combined record mixing BOTH branches on one type — exactly the shape a real
 	// BrowserState.cs will take once a follow-up adds its first property.
-	public sealed record TestUiState
+	sealed record TestUiState
 	{
 		[Setting(TopLevel = Scope.User, Key = "test.uistate.notifyByEmail")]
 		public bool NotifyByEmail { get; init; } = true;

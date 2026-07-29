@@ -25,7 +25,7 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 	HttpClient _http = null!;
 
 	public string ProjectKey { get; }
-	public string AgentKey { get; }
+	string AgentKey { get; }
 	public WebApplicationFactory<Program> Factory { get; }
 	public McpClient Mcp { get; private set; } = null!;
 

@@ -333,7 +333,7 @@ public sealed class VectorizationOutageTests
 	// Real memory/tasks files + core catalog, so the job under test is the production one.
 	sealed class JobFixture : IDisposable
 	{
-		public const string Proj = "proj";
+		const string Proj = "proj";
 
 		readonly string _dir;
 		readonly PetBoxDb _db;

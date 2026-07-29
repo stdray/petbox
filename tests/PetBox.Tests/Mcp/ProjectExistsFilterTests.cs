@@ -30,13 +30,13 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 	public const string GoneProject = "w3gone";      // created, then DELETED — a stale key default
 
 	public const string StarRealKey = "yb_key_w3_star_real";
-	public const string StarGoneKey = "yb_key_w3_star_gone";
-	public const string StarBareKey = "yb_key_w3_star_bare";
+	const string StarGoneKey = "yb_key_w3_star_gone";
+	const string StarBareKey = "yb_key_w3_star_bare";
 	// A CONFIG-sourced key (Auth:ApiKeys[] → ConfigApiKeyLookup) whose default names GoneProject.
 	// Config keys take DefaultProjectKey from appsettings with NO validation and no deletion hook —
 	// so a DANGLING default is reachable there, which is what makes the apikey_create carve-out below
 	// a real case rather than a hypothetical one.
-	public const string ConfigStarGoneKey = "yb_key_w3_cfg_gone";
+	const string ConfigStarGoneKey = "yb_key_w3_cfg_gone";
 
 	const string Scopes = "admin:provision,tasks:read,tasks:write,memory:read,memory:write";
 

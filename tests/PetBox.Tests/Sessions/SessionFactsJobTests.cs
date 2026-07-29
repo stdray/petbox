@@ -533,7 +533,7 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	sealed class CapturingLogger : ILogger<SessionFactsJob>
 	{
 		public List<string> Warnings { get; } = [];
-		public List<string> Infos { get; } = [];
+		List<string> Infos { get; } = [];
 		public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
 		public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, EventId eventId, TState state,

@@ -70,11 +70,11 @@ public sealed class McpRequestBytesUnitTests
 public sealed class McpRequestBytesEndToEndFixture : IAsyncLifetime
 {
 	// Seeded by M001/M004: $system + a key scoped logs:query — enough to call log_query.
-	public const string SystemApiKey = "yb_key_system_internal";
+	const string SystemApiKey = "yb_key_system_internal";
 
 	HttpClient _http = null!;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Http => _http;
 
 	public McpRequestBytesEndToEndFixture()

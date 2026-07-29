@@ -17,12 +17,12 @@ namespace PetBox.Tests.Data;
 public sealed class CoreSdkDataE2EFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "sdke2e";
-	public const string TestApiKey = "yb_key_sdk_e2e_xyz";
-	public const string TestWorkspace = "sdke2e-ws";
+	const string TestApiKey = "yb_key_sdk_e2e_xyz";
+	const string TestWorkspace = "sdke2e-ws";
 
 	readonly string _baseDir;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public PetBoxClient Sdk { get; private set; } = null!;
 
 	public CoreSdkDataE2EFixture()

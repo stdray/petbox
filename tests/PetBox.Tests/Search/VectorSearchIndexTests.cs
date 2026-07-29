@@ -118,8 +118,8 @@ public sealed class VectorSearchIndexTests : IDisposable
 	// vector, putting marked documents adjacent to the query embedding.
 	sealed class FakeEmbedder : IEmbedder
 	{
-		public const int Dim = 8;
-		public const string Model = "fake-embed-v1";
+		const int Dim = 8;
+		const string Model = "fake-embed-v1";
 		public const string NearQueryMarker = "__NEARQUERY__";
 
 		public Task<EmbedBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default) =>

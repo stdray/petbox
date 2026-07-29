@@ -27,7 +27,7 @@ public sealed class DeployApiFixture : IAsyncLifetime
 	public const string NodeKey = "yb_key_deploy_node_test";     // agent:poll,agent:heartbeat
 
 	public string Node { get; } = "node-" + Guid.NewGuid().ToString("N")[..8];
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public DeployApiFixture()

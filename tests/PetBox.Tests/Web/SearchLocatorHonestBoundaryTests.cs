@@ -29,7 +29,7 @@ public sealed class SearchLocatorHonestBoundaryFixture : IAsyncLifetime
 	public const string FewTerm = "xlocatorfewmarker";
 	const int CeilingProjects = 10;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public SearchLocatorHonestBoundaryFixture()

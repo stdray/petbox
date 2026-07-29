@@ -304,9 +304,9 @@ public sealed class MemoryReadRefusalContractTests : IClassFixture<MemoryRefusal
 // Plus one foreign-but-existing and one nonexistent container key for the named plane.
 public sealed class MemoryRefusalContractHost : IAsyncLifetime
 {
-	public const string OrdinaryWorkspace = "refeqws";
+	const string OrdinaryWorkspace = "refeqws";
 	public const string OrdinaryProject = "refeqproj";
-	public const string CascadeWorkspace = "refcascws";
+	const string CascadeWorkspace = "refcascws";
 	public const string CascadeProject = "refcascproj";
 	public const string ForeignWorkspace = "refotherws";
 	public const string NonexistentWorkspace = "refnosuchws";
@@ -330,7 +330,7 @@ public sealed class MemoryRefusalContractHost : IAsyncLifetime
 	public string KeyCascade { get; } = $"yb_key_{Guid.NewGuid():N}";
 
 	readonly string _baseDir;
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 
 	public MemoryRefusalContractHost()
 	{

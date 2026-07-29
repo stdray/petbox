@@ -18,7 +18,7 @@ namespace PetBox.Tests.Data;
 public sealed class ProvisioningToolsFixture : IAsyncLifetime
 {
 	public const string Workspace = "wsprov";
-	public const string AgentKey = "yb_key_agent_prov";
+	const string AgentKey = "yb_key_agent_prov";
 	public const string NoScopeKey = "yb_key_no_prov";
 	// Declared in Auth:ApiKeys (below) — the config source owns it, so apikey_update must refuse it
 	// (spec apikey-update-config-key-refused). There is no row for it in the DB, on purpose.

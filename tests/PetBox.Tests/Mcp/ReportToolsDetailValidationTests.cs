@@ -20,8 +20,8 @@ public sealed class ReportToolsDetailValidationFixture : IDisposable
 	public const string SystemProj = "$system";
 
 	readonly string _dir;
-	public PetBoxDb Db { get; }
-	public ScopedDbFactory<TasksDb> Factory { get; }
+	PetBoxDb Db { get; }
+	ScopedDbFactory<TasksDb> Factory { get; }
 	public TasksService Tasks { get; }
 
 	public ReportToolsDetailValidationFixture()

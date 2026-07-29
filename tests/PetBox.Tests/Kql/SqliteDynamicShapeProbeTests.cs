@@ -36,7 +36,7 @@ public sealed class SqliteDynamicShapeProbeTests : IDisposable
 	readonly DataConnection _db;
 
 	[Table("log")]
-	public sealed class LogRow
+	sealed class LogRow
 	{
 		[Column] public long Id { get; set; }
 		[Column] public string Level { get; set; } = "";
@@ -44,9 +44,9 @@ public sealed class SqliteDynamicShapeProbeTests : IDisposable
 	}
 
 	// Compile-time control types (the baseline — NOT the dynamic proof).
-	public sealed class S1 { public string K { get; set; } = ""; public double V { get; set; } }
-	public sealed class S2 { public string K { get; set; } = ""; public double V { get; set; } public double V2 { get; set; } }
-	public sealed class S4 { public string K { get; set; } = ""; public long Cnt { get; set; } }
+	sealed class S1 { public string K { get; set; } = ""; public double V { get; set; } }
+	sealed class S2 { public string K { get; set; } = ""; public double V { get; set; } public double V2 { get; set; } }
+	sealed class S4 { public string K { get; set; } = ""; public long Cnt { get; set; } }
 
 	public SqliteDynamicShapeProbeTests(ITestOutputHelper output)
 	{

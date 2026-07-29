@@ -20,7 +20,7 @@ namespace PetBox.Tests.Data;
 public sealed class QueryExecApiFixture : IAsyncLifetime
 {
 	public const string TestProjectKey = "kpvotes";
-	public const string TestApiKey = "yb_key_test_query_xyz";
+	const string TestApiKey = "yb_key_test_query_xyz";
 	public const string TestDbName = "cache";
 
 	readonly string _baseDir;
@@ -28,7 +28,7 @@ public sealed class QueryExecApiFixture : IAsyncLifetime
 	// Exposed so quota tests can drop pooled DataDb connections (see Quota_Exceeded_Returns507).
 	public string BaseDir => _baseDir;
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public QueryExecApiFixture()

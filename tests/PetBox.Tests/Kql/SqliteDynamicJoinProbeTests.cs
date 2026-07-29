@@ -44,7 +44,7 @@ public sealed class SqliteDynamicJoinProbeTests : IDisposable
 	// Compile-time intermediate holder for the GroupJoin stage (its shape is fixed: an outer row plus the
 	// grouped inner rows). Only the FINAL projected result is runtime-emitted — matching the ask ("two
 	// seeded [Table] sources, projecting a runtime-shaped result").
-	public sealed class GjHolder
+	sealed class GjHolder
 	{
 		public OrderRow O { get; set; } = null!;
 		public IEnumerable<CustRow> G { get; set; } = null!;

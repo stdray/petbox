@@ -684,8 +684,8 @@ public sealed class TasksHybridSearchTests : IClassFixture<TasksHybridSearchFixt
 
 	sealed class FakeLlmClient : ILlmClient
 	{
-		public const int Dim = 8;
-		public const string Model = "fake-embed-v1";
+		const int Dim = 8;
+		const string Model = "fake-embed-v1";
 		public const string NearQueryMarker = "__NEARQUERY__";
 
 		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)

@@ -367,7 +367,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	{
 		readonly Queue<string> _queue = new(responses);
 		string _last = responses[^1];
-		public List<string> Prompts { get; } = [];
+		List<string> Prompts { get; } = [];
 
 		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 		{

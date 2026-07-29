@@ -45,8 +45,8 @@ namespace PetBox.Tests.Mcp;
 // deliberate header/_meta mismatch, which the server rejects with -32020).
 public sealed class McpProtocolVersionGateFixture : IAsyncLifetime
 {
-	public const string ProjectKey = "pvgate";
-	public const string ApiKey = "yb_key_pvgate_agent";
+	const string ProjectKey = "pvgate";
+	const string ApiKey = "yb_key_pvgate_agent";
 
 	// Deliberately NOT admin:provision and NOT every module: with a partial scope set
 	// McpToolScopeFilter actually REBUILDS the tool list, so the fields are observed after our

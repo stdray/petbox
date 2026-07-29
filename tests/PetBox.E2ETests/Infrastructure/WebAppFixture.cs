@@ -10,7 +10,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 	IBrowser? _browser;
 
 	public string BaseUrl => _host.BaseUrl;
-	public IBrowser Browser => _browser ?? throw new InvalidOperationException("Fixture not initialized");
+	IBrowser Browser => _browser ?? throw new InvalidOperationException("Fixture not initialized");
 	public IServiceProvider Services => _host.Services;
 
 	string _storageStatePath = "";
@@ -61,7 +61,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 	public Task<IBrowserContext> NewContextAsync(bool authenticated = true) =>
 		NewContextAsync(authenticated, trace: true);
 
-	public async Task<IBrowserContext> NewContextAsync(bool authenticated, bool trace)
+	async Task<IBrowserContext> NewContextAsync(bool authenticated, bool trace)
 	{
 		var ctx = await Browser.NewContextAsync(new BrowserNewContextOptions
 		{

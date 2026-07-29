@@ -48,7 +48,7 @@ public static class TestTempRoot
 	// (a local run alongside CI, two IDE sessions) must never resolve to the same root, since
 	// Cleanup() below deletes it WHOLESALE at process exit — if two hosts shared one, one host's
 	// exit would delete the other's still-live temp files. Container is shared; Root never is.
-	public static string Root { get; private set; } = "";
+	static string Root { get; set; } = "";
 
 	[ModuleInitializer]
 	internal static void Init()

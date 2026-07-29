@@ -21,12 +21,12 @@ namespace PetBox.Tests.Web;
 // resolves workspace config BINDINGS, not host configuration), and no env var is written.
 public sealed class ConfV1Fixture : IAsyncLifetime
 {
-	public const string Ws = "wsv1";
-	public const string Project = "projv1";
+	const string Ws = "wsv1";
+	const string Project = "projv1";
 	public const string Key = "yb_key_v1conf_test";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public WebApplicationFactory<Program> Factory { get; }
+	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
 	public ConfV1Fixture()
