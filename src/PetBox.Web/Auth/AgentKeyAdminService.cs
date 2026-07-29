@@ -13,7 +13,6 @@ public sealed record AgentKeyRow(
 	string Name,
 	string ProjectKey,
 	string Scopes,
-	DateTime CreatedAt,
 	DateTime? ExpiresAt,
 	bool Expired,
 	string? DefaultProjectKey,
@@ -138,7 +137,7 @@ public sealed class AgentKeyAdminService(
 
 		var now = DateTime.UtcNow;
 		return [.. rows.Select(k => new AgentKeyRow(
-			k.Key, k.Name, k.ProjectKey, k.Scopes, k.CreatedAt, k.ExpiresAt,
+			k.Key, k.Name, k.ProjectKey, k.Scopes, k.ExpiresAt,
 			k.ExpiresAt != null && k.ExpiresAt <= now,
 			k.DefaultProjectKey,
 			// The merge that keeps the column honest (spec apikey-last-used): KeyStatFlusher persists

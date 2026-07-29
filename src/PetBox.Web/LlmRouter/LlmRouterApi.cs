@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.LlmRouter.Contract;
 
@@ -24,6 +25,12 @@ public static class LlmRouterApi
 
 	// ---- DTOs (OpenAI chat.completions shape, camelCase JSON with snake_case overrides) ----
 
+	// [UsedImplicitly(WithMembers)]: deserialized from the POST body by ReadFromJsonAsync below —
+	// properties are populated by System.Text.Json reflection, never read back by a local call site
+	// (resharper-clt-step5-dead-public-code doctrine: minimal-API JSON model binding, same shape as
+	// DeployApi.NodeEnrollRequest). [UsedImplicitly] rather than [PublicAPI]: this record is a
+	// private nested implementation detail of this one endpoint, not a published public type.
+	[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 	sealed record ChatCompletionRequest
 	{
 		public string? Model { get; init; }
@@ -42,6 +49,10 @@ public static class LlmRouterApi
 		public string Content { get; init; } = "";
 	}
 
+	// [UsedImplicitly(WithMembers)]: serialized out by TypedResults.Ok(new ChatCompletionResponse
+	// {...}) below — properties are set by object initializer and read back only by the JSON writer,
+	// never by a local call site (same doctrine as the request record above).
+	[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 	sealed record ChatCompletionResponse
 	{
 		public string Id { get; init; } = "";
@@ -51,6 +62,9 @@ public static class LlmRouterApi
 		public IReadOnlyList<ChatCompletionChoice> Choices { get; init; } = [];
 	}
 
+	// [UsedImplicitly(WithMembers)]: same doctrine — the OpenAI-shaped response's per-choice entry,
+	// populated by object initializer, read back only by the JSON writer.
+	[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 	sealed record ChatCompletionChoice
 	{
 		public int Index { get; init; }
@@ -60,6 +74,11 @@ public static class LlmRouterApi
 		public string FinishReason { get; init; } = "stop";
 	}
 
+	// [UsedImplicitly(WithMembers)]: same doctrine — the assistant message nested in a choice,
+	// populated by object initializer, read back only by the JSON writer. Distinct from
+	// ChatCompletionMessage above, whose Role/Content ARE read locally (line ~118) to build the
+	// neutral ChatMessage the router takes — which is exactly why that record has no findings here.
+	[UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 	sealed record ChatCompletionResponseMessage
 	{
 		public string Role { get; init; } = "assistant";

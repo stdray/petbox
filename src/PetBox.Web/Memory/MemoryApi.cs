@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Memory.Contract;
@@ -136,6 +137,10 @@ public static class MemoryApi
 // must classify by Version first, then treat Body as real curated text only when Version > 0.
 // null at the CanonResponse level means the leg was never asked (no workspace) or was withheld
 // (sandbox containment) — see CanonAsync.
+// [PublicAPI]: serialized to the caller by TypedResults.Ok(new CanonResponse(...)) in CanonAsync —
+// the minimal-API JSON writer reads UpdatedAt back by reflection, not any C# call site
+// (resharper-clt-step5-dead-public-code doctrine, same shape as HealthApi.HealthPushRequest).
+[PublicAPI]
 public sealed record CanonPart(string Body, DateTime UpdatedAt, long Version);
 
 // GET /api/memory/{projectKey}/canon — the project's canon and its workspace's shared canon.

@@ -30,13 +30,12 @@ public static class MemorySearchScope
 	// Pool facts merged across every container the scope selection read (spec: result-set-pageable) —
 	// the UI-side twin of what MemoryTools.SearchAsync folds into its cascade answer. Meaningful only
 	// when the request asked for the whole pool (WholePool: true) — a plain top-K caller never reads
-	// these (PoolLimit stays null). `PoolLimit`/`PoolBounded` mirror the MCP cascade's Math.Min/OR
-	// merge: the merged walk is bounded if ANY leg was, and the declared depth is the shallowest of
-	// the legs that ran. `DataVersion`/`PoolOrderHash` join each container's own stamp ("scope=value")
+	// these. `PoolBounded` mirrors the MCP cascade's OR merge: the merged walk is bounded if ANY leg
+	// was. `DataVersion`/`PoolOrderHash` join each container's own stamp ("scope=value")
 	// with '|' — the SAME encoding MemoryTools.SearchFingerprint/order-hash join uses, so a page model
 	// can feed them straight into a KeysetCursor fingerprint/AssertPoolOrder exactly as the MCP adapter does.
 	public sealed record Result(IReadOnlyList<Row> Rows, SearchRetrievers? Retrievers,
-		int? PoolLimit = null, bool PoolBounded = false, string? DataVersion = null, string? PoolOrderHash = null);
+		bool PoolBounded = false, string? DataVersion = null, string? PoolOrderHash = null);
 
 	// Whether offering the scope control makes sense at all: moot when the project IS already the
 	// workspace's shared-memory container (ResolveContainersAsync collapses to one leg regardless
@@ -91,10 +90,9 @@ public static class MemorySearchScope
 		var collected = new List<(double Score, int Rank, Row Row)>();
 		SearchRetrievers? retrievers = null;
 		// Pool facts across the cascade (WholePool callers only — see the Result doc): the same
-		// Math.Min/OR merge MemoryTools.SearchAsync folds its legs through, plus per-container stamps
+		// OR merge MemoryTools.SearchAsync folds its legs through, plus per-container stamps
 		// joined "scope=value" with '|' so a page model's KeysetCursor fingerprint/order-hash binds to
 		// the SAME state the MCP cascade would bind to for an identical request.
-		int? poolLimit = null;
 		var poolBounded = false;
 		var dataVersionParts = new List<string>();
 		var orderHashParts = new List<string>();
@@ -102,7 +100,6 @@ public static class MemorySearchScope
 		{
 			var (scopeName, container) = containers[rank];
 			var res = await memory.SearchEntriesAsync(container, request, ct);
-			if (res.PoolLimit is { } pl) poolLimit = poolLimit is { } cur ? Math.Min(cur, pl) : pl;
 			poolBounded |= res.PoolBounded;
 			dataVersionParts.Add(scopeName + "=" + (res.DataVersion ?? ""));
 			orderHashParts.Add(scopeName + "=" + (res.PoolOrderHash ?? ""));
@@ -134,7 +131,7 @@ public static class MemorySearchScope
 		// (a KeysetCursor seek, exactly like MemoryTools' cascade) — truncating here would cut the very
 		// tail the caller asked to see, so only a plain top-K request gets the Take.
 		if (!request.WholePool && request.Limit > 0 && rows.Count > request.Limit) rows = rows.Take(request.Limit).ToList();
-		return new Result(rows, retrievers, poolLimit, poolBounded,
+		return new Result(rows, retrievers, poolBounded,
 			string.Join('|', dataVersionParts), string.Join('|', orderHashParts));
 	}
 
