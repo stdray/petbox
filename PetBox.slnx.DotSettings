@@ -245,4 +245,66 @@
 		locally. A FUTURE finding under either rule is not pre-judged by this entry — the source of the
 		specific value it's arguing about still decides, the same way it did here.
 	-->
+
+	<!--
+		resharper-clt-step5-dead-public-code, FINAL STEP (severity raise) — NONE OF THE FIVE FAMILIES
+		RAISED. Written the same way the CS8602/AccessToDisposedClosure/nullable-contract entries above
+		are: a considered decision, not an omission, and not a "didn't get to it".
+
+		The plan when 5a-5e were split off assumed the five families (NotAccessedPositionalProperty
+		.Global, MemberCanBePrivate.Global/.Local, UnusedAutoPropertyAccessor.Global/.Local,
+		UnusedMember.Global, ClassNeverInstantiated.Global) would reach zero once every zone closed, at
+		which point the gate would start guarding them via ERROR severity here. They did NOT reach zero:
+		the zones closed with a mix of real fixes, .editorconfig globs (rule x subtree, see the MCP/DTO
+		sections above), and documented, deliberate leftovers (xUnit fixtures, DI-hosted services,
+		linq2db/reflection materialization). Measured fresh rather than trusting the sub-cards' own
+		numbers, which were each taken at a different commit as the effort progressed:
+
+		`jb inspectcode` at severity SUGGESTION (the CLI flag, spelled without its two leading hyphens
+		together per the note above), own caches-home option value (NOT the gate's hash, so a stale
+		cache can't hide behind this measurement), on origin/main 281e581b (2026-07-29, after all of
+		5a/5b/5c/5d/5e and the suppression-mechanism card were merged), exit 0, whole-solution:
+
+		family (repo-wide residual, post-glob):
+		  NotAccessedPositionalProperty.Global :  42
+		  MemberCanBePrivate.Global            :   5
+		  MemberCanBePrivate.Local             :   0
+		  UnusedAutoPropertyAccessor.Global    :  32
+		  UnusedAutoPropertyAccessor.Local     :  51
+		  UnusedMember.Global                  :  62
+		  ClassNeverInstantiated.Global        :  11
+
+		Every one of the five families (grouping Global/.Local as one family, matching the parent
+		card's own table) has a NONZERO repo-wide residual — including MemberCanBePrivate, where
+		.Local alone is 0 but .Global is 5, so the family as a whole does not qualify. Per the parent
+		card's own stated rule ("a family with zero residual gets raised, a family with nonzero
+		residual does not — a red gate on main is not acceptable"), NONE of the five is raised here.
+		This is the valid, unforced outcome of that rule, not a failure to reach it.
+
+		Residual shape, so the next attempt does not re-derive it: MemberCanBePrivate's 5 are new
+		since 5c/5d closed (test files added afterward — SqliteDynamicJoinProbeTests.cs,
+		UiStateTypeSyncTests.cs — plus one clients-net and one Core/Contract member), i.e. the kind of
+		drift a zero-residual family will keep re-accumulating from new code, not a backlog anyone
+		missed. ClassNeverInstantiated.Global's 11 are mostly BackgroundService/hosted-service DI
+		construction (DeployFailoverSweeper, HealthPoller, KeyStatFlusher, the four *OrphanCleanupService
+		classes) plus a couple of DTOs (EntryUsage, Relation) and ShareApi — the same DI-construction
+		blindness 5d already named for other hosted services, just not yet swept into a glob or
+		annotation. NotAccessedPositionalProperty.Global's 42 concentrate in
+		src/PetBox.Web/Mcp/HealthTools.cs (7 — the exact zone 5a's verdict flagged as "outside the
+		existing Mcp/Contract/*.cs glob, candidate for its own card, left alone on purpose") plus
+		DataDbsApi.cs, StartupMigrationRun.cs and a long tail of one-two-per-file DTOs across
+		LlmRouter.Contract, Search, Sessions. UnusedAutoPropertyAccessor's 83 (32 Global + 51 Local)
+		lean heavily on materialization shapes already named by 5c/5d (linq2db [Table]/[Column] probe
+		rows, KQL/DuckDb dynamic-shape test types) plus LlmRouterApi.cs alone accounting for 15 of the
+		51 Local findings. UnusedMember.Global's 62 is the least characterized of the five — the
+		largest true backlog, spread thin (Routes.cs 7, AuthConfiguration.cs 4, NodeRefPolicy.cs 4,
+		then mostly 1-3 per file across a dozen assemblies) and not yet triaged item-by-item the way
+		5b/5d/5e did for their zones.
+
+		To actually reach zero on any one of these needs the SAME zone-by-zone triage 5a-5e already
+		did — per-finding review (real dead code removed, confirmed-blind shapes glob'd or annotated),
+		not a bulk suppression — repeated against whatever is left. Nothing here blocks that from being
+		picked up as new work; it just wasn't this step's job, which was to measure honestly and raise
+		only what measurement supports.
+	-->
 </wpf:ResourceDictionary>
