@@ -45,8 +45,10 @@ using System.Text.Json.Nodes;
 //      THIRD-PARTY TYPE — for when a glob would ALSO catch genuinely dead code colocated in the
 //      same file/subtree (worked example: ModelContextProtocol.Core.xml marks every third-party
 //      [McpServerTool]-attributed member implicitly-used without also blinding
-//      ModuleExtensions.cs/ModuleMcp.OptLong/ReqStr, which sit in the same files and ARE real
-//      dead-code candidates).
+//      ModuleExtensions.cs, which sits in the same tier and holds real dead code — confirmed and
+//      unrelated worked example: ModuleMcp.cs's own OptStr/ReqStr/OptLong were exactly this shape,
+//      UNattributed and zero-caller repo-wide, and were removed rather than suppressed
+//      (resharper-clt-step5a-mcp-contract-surface)).
 //   3. A point `[UsedImplicitly]`/`[PublicAPI]`/etc. annotation (`JetBrains.Annotations`,
 //      `PrivateAssets="all"`, see Directory.Build.props) or a `// ReSharper disable <Rule>` file
 //      header, at the declaration itself — ONE symbol or ONE file. For a false positive that is
