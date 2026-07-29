@@ -181,8 +181,10 @@ public static class LogApi
 		ctx.User.Identities.Any(i => i.IsAuthenticated
 			&& string.Equals(i.AuthenticationType, ApiKeyAuthenticationHandler.SchemeName, StringComparison.Ordinal));
 
+	// scopes is provably non-null: the one caller (HasScope(HttpContext, string) above) already
+	// coalesces the claim value before calling in.
 	static bool HasScope(string scopes, string required) =>
-		(scopes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+		scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.Contains(required, StringComparer.Ordinal);
 
 	// Parse a CLEF ingest body into per-event results. Two wire formats are accepted

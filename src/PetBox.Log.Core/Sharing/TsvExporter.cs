@@ -37,8 +37,10 @@ public static class TsvExporter
 
 	static string RenderCell(string column, LogEntry e, MaskMode mode, ValueMasker masker)
 	{
+		// raw is provably non-null: LookupScalar (string?) falls back to LookupProperty, whose every
+		// switch branch returns a non-null string (never LookupScalar's own null case unguarded).
 		var raw = LookupScalar(column, e) ?? LookupProperty(e, column);
-		return mode == MaskMode.Mask ? masker.Mask(column, raw) : raw ?? "";
+		return mode == MaskMode.Mask ? masker.Mask(column, raw) : raw;
 	}
 
 	static string? LookupScalar(string column, LogEntry e) => column switch

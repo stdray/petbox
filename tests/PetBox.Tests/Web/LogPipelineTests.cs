@@ -734,7 +734,7 @@ public sealed class LogPipelineTests
 
 	// --- application/json {"Events":[…]} envelope (seq-logging / @datalust/winston-seq parity) ---
 
-	static HttpRequestMessage JsonEnvelope(string path, string apiKey, string apiKeyHeader, string serviceKey, string json)
+	static HttpRequestMessage JsonEnvelope(string path, string apiKey, string apiKeyHeader, string? serviceKey, string json)
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, path);
 		req.Headers.Add(apiKeyHeader, apiKey);
@@ -789,7 +789,7 @@ public sealed class LogPipelineTests
 		var msg = UniqueMsg("seq-env-raw");
 		var body = $$"""{"Events":[{"Timestamp":"2024-01-01T00:00:00.000Z","Level":"Error","MessageTemplate":"{{msg}}"}]}""";
 		using var resp = await _client.SendAsync(
-			JsonEnvelope("/api/events/raw", key, "X-Seq-ApiKey", null!, body));
+			JsonEnvelope("/api/events/raw", key, "X-Seq-ApiKey", null, body));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		await WaitForProjectIngestAsync(proj, LogNames.Default, msg);
