@@ -132,7 +132,9 @@ public sealed record ConfigBindingDraft(
 // `DuplicateOfId` = the save succeeded, but another binding now has the SAME (Path, Tags); the
 // resolve pipeline breaks that tie by id (older wins), so this is a warning to surface, not a
 // failure to roll back — same as the page behaved before.
-public sealed record ConfigBindingSaveResult(long SavedId, bool NotFound, long? DuplicateOfId);
+// No SavedId field: the one caller (Editor.cshtml.cs) only branches on NotFound/DuplicateOfId —
+// confirmed zero readers repo-wide before this field was dropped (resharper-clt-step5g).
+public sealed record ConfigBindingSaveResult(bool NotFound, long? DuplicateOfId);
 
 public sealed class ConfigDirectory(IConfigDbFactory configFactory, ICoreDbFactory coreFactory) : IConfigDirectory
 {
@@ -287,7 +289,7 @@ public sealed class ConfigDirectory(IConfigDbFactory configFactory, ICoreDbFacto
 		{
 			var existing = await configDb.Bindings.FirstOrDefaultAsync(b => b.Id == id, ct);
 			if (existing is null)
-				return new ConfigBindingSaveResult(0, NotFound: true, DuplicateOfId: null);
+				return new ConfigBindingSaveResult(NotFound: true, DuplicateOfId: null);
 
 			// Skip the Version bump on no-op edits (same content + same tags + same kind). A
 			// soft-deleted row never counts as a no-op — reviving it IS a change.
@@ -367,7 +369,7 @@ public sealed class ConfigDirectory(IConfigDbFactory configFactory, ICoreDbFacto
 			.Select(b => (long?)b.Id)
 			.FirstOrDefaultAsync(ct);
 
-		return new ConfigBindingSaveResult(savedId, NotFound: false, DuplicateOfId: duplicate);
+		return new ConfigBindingSaveResult(NotFound: false, DuplicateOfId: duplicate);
 	}
 
 	public async Task<IReadOnlyList<ConfigBindingHistoryEntry>> ListHistoryAsync(

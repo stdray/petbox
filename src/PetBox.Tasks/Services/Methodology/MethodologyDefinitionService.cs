@@ -133,40 +133,4 @@ public sealed class MethodologyDefinitionService
 			await MethodologyLiveMigration.ReindexBoardMetaAsync(ctx, projectKey, b.Name, b.Kind, newRuntime, ct);
 		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Inserted > 0, Migrated: migrated);
 	}
-
-	public async Task<MethodologyDefAck> DeleteAsync(string projectKey, long version, CancellationToken ct = default)
-	{
-		var current = await GetAsync(projectKey, ct);
-		if (current is null)
-			return new MethodologyDefAck(Version: 0, Changed: false); // idempotent: nothing to delete
-
-		// Live-node compatibility against the PRESETS-ONLY resolution the delete reverts to:
-		// every active node on a board whose kind the current definition declares must fit
-		// the preset it falls back to (a declared quartet kind → its preset; a custom kind →
-		// `simple`). No `migration` on delete — an incompatible node REJECTS the call with a
-		// clear message and nothing is written (repair the definition/nodes first, or change
-		// the definition with a migration instead of deleting it).
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var boards = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
-		MethodologyLiveMigration.Plan(ctx, current.Definition, newDef: null, MethodologyRuntime.PresetsOnly, [], boards,
-			subject: "methodology definition delete (revert to builtin presets)", migrationHint: false);
-
-		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<MethodologyDefRow>(),
-			[(MethodologyDefRow.SingletonKey, version)], ct: ct);
-		if (!r.Applied)
-		{
-			var c = r.Conflicts[0];
-			throw new InvalidOperationException(c.Kind switch
-			{
-				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with tasks_methodology_utility_get and retry the delete against the current version",
-				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_utility_get and retry the delete against the current version",
-			});
-		}
-		// tasks-reindex-on-methodology-vocab-change: the delete reverts every declared board to its
-		// preset resolution — a status the old definition classified one way may classify differently
-		// under the presets — so reproject those boards' facet layer under PresetsOnly.
-		foreach (var b in MethodologyLiveMigration.AffectedBoards(current.Definition, newDef: null, boards))
-			await MethodologyLiveMigration.ReindexBoardMetaAsync(ctx, projectKey, b.Name, b.Kind, MethodologyRuntime.PresetsOnly, ct);
-		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Closed > 0);
-	}
 }

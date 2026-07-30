@@ -82,7 +82,7 @@ public sealed class MethodologyLiveMigration
 		TasksDb ctx, MethodologyDefinition? oldDef, MethodologyDefinition? newDef,
 		MethodologyRuntime newRuntime, IReadOnlyList<MethodologyMigration> migration,
 		IReadOnlyList<TaskBoardMeta> boards,
-		string subject = "methodology definition change", bool migrationHint = true)
+		string subject = "methodology definition change")
 	{
 		static bool Declares(MethodologyDefinition? d, string? kind) =>
 			kind is not null && d is not null && d.Kinds.Any(k => string.Equals(k.Kind, kind, StringComparison.OrdinalIgnoreCase));
@@ -136,9 +136,7 @@ public sealed class MethodologyLiveMigration
 		{
 			const int cap = 10;
 			var more = problems.Count > cap ? $" …and {problems.Count - cap} more" : "";
-			var fix = migrationHint
-				? " Extend `migration` (per kind: types:[{from,to}] / statuses:[{from,to}]) to map every remaining value, or fix the nodes first."
-				: " Move or close the offending nodes first, or change the rules (with a migration) instead of deleting them.";
+			const string fix = " Extend `migration` (per kind: types:[{from,to}] / statuses:[{from,to}]) to map every remaining value, or fix the nodes first.";
 			throw new ArgumentException(
 				$"{subject} is incompatible with live nodes — rejected, nothing was written: "
 				+ string.Join("; ", problems.Take(cap)) + more + fix);

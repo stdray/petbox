@@ -13,7 +13,10 @@ namespace PetBox.Core.Data;
 // else / nowhere" is not a representable state. KeyCipher/KeyIv/KeyAuthTag are the AES-GCM triple
 // from ISecretEncryptor; all three NULL means a deliberately keyless endpoint (local, no auth),
 // all three set means an authenticated one, and any half-filled combination is a corrupt row.
-[Table("llm_endpoints")]
+// linq2db [Table]/[Column] entity: materialized by SELECT, not `new` + property-set the analyzer
+// can trace (resharper-clt-step5g). UpdatedAt/UpdatedBy are set on every write but genuinely never
+// read back — audit columns kept for a future admin view, not currently surfaced anywhere.
+[Table("llm_endpoints"), JetBrains.Annotations.UsedImplicitly(JetBrains.Annotations.ImplicitUseTargetFlags.WithMembers)]
 public sealed record LlmEndpointRow
 {
 	[Column, PrimaryKey(0), NotNull] public string Scope { get; init; } = string.Empty;
@@ -54,7 +57,7 @@ public sealed record LlmRegistryLevelRow
 // composite FK (Scope, ScopeKey, Endpoint) -> llm_endpoints(Scope, ScopeKey, Name) is declared in
 // the migration and enforced by SQLite (PetBoxDb turns foreign_keys ON): a route CANNOT reference
 // an endpoint from another level.
-[Table("llm_routes")]
+[Table("llm_routes"), JetBrains.Annotations.UsedImplicitly(JetBrains.Annotations.ImplicitUseTargetFlags.WithMembers)]
 public sealed record LlmRouteRow
 {
 	[Column, PrimaryKey, NotNull] public string Id { get; init; } = string.Empty;

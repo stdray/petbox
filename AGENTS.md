@@ -428,9 +428,13 @@ migration `M019_DropServices`.)
 - **Feature toggle gating.** Every subsystem checks `Features:<Name>` before
   registering endpoints/middleware/BackgroundServices. Disabled subsystem = zero
   runtime cost.
-- **Auth: local and remote modes.** Default local (validate against own DB). Remote
-  mode (`Auth:Mode: remote`, `RemoteUrl: …`) delegates validation to a central
-  instance.
+- **Auth: local only.** Validates against the instance's own DB. A remote/delegated mode
+  (validation forwarded to a central instance, for a future split-out of loaded modules like
+  Log+metrics onto separate servers without issuing clients new keys) was scaffolded
+  (`RemoteAuthHandler`) but never wired to `AddAuthentication` and never functional — the
+  split-out horizon was judged too distant and the requirement too costly to carry, so it was
+  dropped from the spec and the scaffold removed (`spec/auth-mode-local-remote` deprecated,
+  idea `drop-remote-auth-mode`, intake `remote-auth-handler-unregistered`).
 - **No PetBox self-config via ConfigModule.** PetBox configures itself from
   `appsettings.json` only. ConfigModule serves external consumers.
 - **`$system` is the reserved built-in.** Auto-seeded on first migration as both a
