@@ -80,7 +80,13 @@ public sealed class ProjectConnectModel : PageModel
 		? null
 		: $"$env:{EnvVarName}='{NewKey}'; npx -y petbox-wire@latest . '{ProjectKey}' --env {EnvVarName}";
 
-	public IReadOnlyList<ApiKeyScope> AllScopes => ApiKeyScopes.All;
+	// The scopes THIS caller may issue, not the whole catalog. This page is the OTHER mint surface a
+	// WorkspaceAdmin reaches (work workspaceadmin-self-issue-admin-provision-root names
+	// Admin/ProjectKeys; onboarding mints here, through the same unguarded MintAsync), so filtering
+	// only the one form would have left the identical hole one click away. Cosmetics over the server
+	// gate in AgentKeyAdminService, which is what a forged POST actually meets.
+	public IReadOnlyList<ApiKeyScope> AllScopes =>
+		ApiKeyScopes.GrantableBy(KeyIssuer.From(User).MayGrantPrivileged);
 
 	// Absolute MCP endpoint for this instance, derived from the current request so
 	// it works behind a reverse proxy without extra config.
@@ -136,7 +142,7 @@ public sealed class ProjectConnectModel : PageModel
 
 		// Same two calls ProjectDetail's OnPostCreateKeyAsync makes — MintAsync owns the raw secret's
 		// generation and the project-existence check.
-		var minted = await _keys.MintAsync(new AgentKeyMint(name.Trim(), valid, ProjectKey));
+		var minted = await _keys.MintAsync(new AgentKeyMint(name.Trim(), valid, ProjectKey), KeyIssuer.From(User));
 		switch (minted)
 		{
 			case KeyMintResult.Minted m:

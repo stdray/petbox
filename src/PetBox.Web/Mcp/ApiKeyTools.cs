@@ -78,8 +78,14 @@ public static class ApiKeyTools
 
 		// Everything the DATABASE decides — the project exists, a sandboxOnly key names a sandbox
 		// project, the default project exists — lives in AgentKeyAdminService, the one door onto ApiKeys.
+		// The issuer travels to the service. On THIS surface it always clears the grant gate — the
+		// AssertScope above already proved the caller holds admin:provision, which is itself the
+		// privileged authority — so nothing that works today stops working. What it adds is
+		// ATTRIBUTION: the minted row records `key:<name>` of the key that made it, which is the half
+		// of spec access-attribution ApiKeys was missing (apikey_update already logged its actor).
 		var minted = await keys.MintAsync(
-			new AgentKeyMint(name, valid, effectiveProject, expiresAt, effectiveDefault, sandboxOnly), ct);
+			new AgentKeyMint(name, valid, effectiveProject, expiresAt, effectiveDefault, sandboxOnly),
+			KeyIssuer.From(http.HttpContext?.User), ct);
 
 		return minted switch
 		{
@@ -129,7 +135,8 @@ public static class ApiKeyTools
 		// key is refused rather than silently no-op'd, scopes are validated exactly as on a mint — live
 		// in AgentKeyAdminService, alongside the admin pages' edit. One door onto ApiKeys.
 		var result = await keys.PatchAsync(
-			new AgentKeyPatch(keyValue, name, scopes, expiresInSeconds, defaultProject), ct);
+			new AgentKeyPatch(keyValue, name, scopes, expiresInSeconds, defaultProject),
+			KeyIssuer.From(ctx.User), ct);
 
 		var patched = result switch
 		{

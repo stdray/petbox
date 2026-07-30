@@ -35,4 +35,15 @@ public sealed record ApiKey
 	// flushes). Reads that must be fresh (apikey_list, the admin UI) merge this with the in-memory
 	// value and take the later of the two. NULL = never used since the column existed (M043).
 	public DateTime? LastUsedAt { get; init; }
+	// WHO issued this key (spec access-attribution) — `user:<username>` for a mint from an admin
+	// page, `key:<name>` for one through the apikey_create MCP verb, "system" for the node-agent
+	// enroll/rotate path. The raw secret of the ISSUING key is never stored here, only its label.
+	//
+	// NULLABLE, and that is load-bearing rather than lazy: every key minted before M049 genuinely has
+	// no recorded issuer, and NULL says exactly that. A default of "system" would have been a
+	// FABRICATION — it would claim the operator minted keys nobody can account for, which is the
+	// opposite of what an attribution column is for. ShareLink.CreatedBy defaults to "system" because
+	// its rows are created by one code path; ApiKeys has five, so HealthEndpoint's nullable shape is
+	// the honest precedent here.
+	public string? CreatedBy { get; init; }
 }

@@ -56,6 +56,15 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// check", i.e. the old behavior, for every existing key. ProjectScope.AuthorizesAsync reads it.
 	public const string SandboxOnlyClaim = "sandbox_only";
 
+	// The claim carrying ApiKey.Name — the key's human-readable label, so an act performed BY a key
+	// can be attributed to something a person can read (spec access-attribution). KeyIssuer turns it
+	// into the `key:<name>` actor that lands in ApiKeys.CreatedBy on an MCP-path mint.
+	//
+	// The LABEL, never the secret: the raw key value is deliberately not a claim, so nothing derived
+	// from the principal can leak a live credential into a stored row or a log line. Present only
+	// when the key has a name (pre-M014 rows can have an empty one).
+	public const string KeyNameClaim = "key_name";
+
 	// The ONE place that knows where a key may arrive from — shared with KeyUsageStampMiddleware and
 	// with LogApi's Seq ingest (which compares the presented key against the configured self-log key
 	// to pick a DESTINATION, never to authenticate), so the stamp is keyed by exactly the key this
@@ -104,6 +113,10 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 			claims.Add(new Claim(DefaultProjectClaim, key.DefaultProjectKey.Trim()));
 		if (key.SandboxOnly)
 			claims.Add(new Claim(SandboxOnlyClaim, "true"));
+		// The key's LABEL, for attribution (KeyIssuer -> ApiKeys.CreatedBy). Omitted when the key has
+		// no name, so an unnamed key attributes as "key:(unnamed)" rather than as "key:".
+		if (!string.IsNullOrWhiteSpace(key.Name))
+			claims.Add(new Claim(KeyNameClaim, key.Name.Trim()));
 
 		var identity = new ClaimsIdentity(claims, SchemeName);
 		var principal = new ClaimsPrincipal(identity);

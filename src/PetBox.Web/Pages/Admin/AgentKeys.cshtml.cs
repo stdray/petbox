@@ -50,7 +50,10 @@ public sealed class AgentKeysModel(AgentKeyAdminService keys) : PageModel
 	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject)
 	{
 		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject);
-		switch (await keys.UpdateAsync(edit, workspaceKey: null, HttpContext.RequestAborted))
+		// A sysadmin (this page's policy) may grant privileged scopes — KeyIssuer reads that off the
+		// IsSysAdmin claim rather than off the page's identity, so the authority travels with the
+		// PRINCIPAL and the service does not have to trust which page called it.
+		switch (await keys.UpdateAsync(edit, workspaceKey: null, KeyIssuer.From(User), HttpContext.RequestAborted))
 		{
 			case KeyUpdateResult.Updated:
 				this.NotifySuccess("API key updated.");

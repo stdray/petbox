@@ -22,6 +22,7 @@ else
 					<th>Name</th>
 					<th>Project</th>
 					<th>Scopes</th>
+					<th>Issued by</th>
 					<th>Last used</th>
 					<th>Expires</th>
 					<th class="w-32">Actions</th>
@@ -59,6 +60,20 @@ else
 									<span class="badge badge-outline badge-xs font-mono">@scope</span>
 								}
 							</div>
+						</td>
+						<td class="text-xs">
+							@* spec access-attribution: WHO minted this key — `user:<name>` from an admin page,
+								`key:<name>` from apikey_create, "system" for a node-agent key. A key minted
+								before M049 has no recorded issuer and says "unknown" rather than showing a
+								blank cell or a fabricated default. *@
+							@if (string.IsNullOrEmpty(k.CreatedBy))
+							{
+								<span class="badge badge-ghost badge-sm" data-testid="agent-key-created-by-unknown">unknown</span>
+							}
+							else
+							{
+								<span class="font-mono opacity-70" data-testid="agent-key-created-by">@k.CreatedBy</span>
+							}
 						</td>
 						<td class="text-xs">
 							@* A key that has never authenticated SAYS so. An empty cell would read as "unknown",

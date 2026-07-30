@@ -8,6 +8,8 @@ namespace PetBox.Web.Auth;
 // clear in ApiKeys and both views are admin-gated; it is what the revoke/edit forms post back.
 // `LastUsedAt` is served FRESH (the stored column merged with the in-memory stamp — see ListAsync);
 // null means the key has genuinely never authenticated, and the table says so in words.
+// `CreatedBy` is the issuing actor (spec access-attribution) — null on every key minted before M049,
+// which the table renders as "unknown" in words rather than as an empty cell that reads like a bug.
 public sealed record AgentKeyRow(
 	string Key,
 	string Name,
@@ -16,7 +18,8 @@ public sealed record AgentKeyRow(
 	DateTime? ExpiresAt,
 	bool Expired,
 	string? DefaultProjectKey,
-	DateTime? LastUsedAt);
+	DateTime? LastUsedAt,
+	string? CreatedBy);
 
 // What an admin submitted from the edit form. It is a full REPLACE of the three editable fields,
 // not a patch: the form always renders them pre-filled with the current values, so what comes back
@@ -125,6 +128,58 @@ public sealed class AgentKeyAdminService(
 			? q
 			: q.Where(k => db.Projects.Any(p => p.Key == k.ProjectKey && p.WorkspaceKey == workspaceKey));
 
+	// ── THE GRANT GATE (work workspaceadmin-self-issue-admin-provision-root) ──────────────────
+	//
+	// The second question the mint path never asked. `ApiKeyScopes.Validate` answers "is this a scope
+	// that EXISTS?"; this answers "may THIS issuer hand it out?". Without it a WorkspaceAdmin — which
+	// every self-service tenant becomes on creating a workspace — ticked `admin:provision` on their
+	// own project's key and walked out with cross-tenant root, because tenancy was standing in for
+	// capability.
+	//
+	// IT LIVES HERE, IN THE SERVICE, ON PURPOSE, and the same sentence is already written three times
+	// in this file about ownership: the rendered checkbox list was never the guard. `scopes` arrives
+	// as a string[] straight off a form, so a hand-crafted POST carries whatever it likes no matter
+	// what the markup chose to render. Every door onto ApiKeys' scope column goes through this
+	// function — mint, the admin form's replace, the project page's re-scope, the MCP patch — so a
+	// future fifth caller cannot re-derive the rule or forget it, exactly as the ownership predicate
+	// cannot be forgotten.
+	//
+	// THE CARRY-OVER, which is the subtle half. On a RE-SCOPE the submitted set REPLACES the current
+	// one, and the UI now hides privileged checkboxes from an issuer who may not grant them — so a
+	// workspace admin merely renaming a key would submit a set with the key's existing
+	// `deploy:write` missing, and a naive gate would read that as a request and silently STRIP it.
+	// Silently downgrading a working key is its own outage. So the privileged scopes a key ALREADY
+	// has are preserved untouched, and only an attempt to ADD one the key does not have is refused —
+	// loudly, naming the scope. Escalation is blocked; nothing legitimate breaks.
+	//
+	// Returns the effective scope set, or a refusal reason (never both).
+	static (List<string>? Scopes, string? Refusal) GateGrant(
+		IReadOnlyList<string> requested, string? existingScopes, KeyIssuer issuer)
+	{
+		if (issuer.MayGrantPrivileged)
+			return ([.. requested.Distinct(StringComparer.Ordinal)], null);
+
+		// The privileged scopes the key ALREADY carries — the set this issuer may keep but not change.
+		// Empty for a mint (there is no existing key), which is what makes a fresh privileged scope a
+		// refusal there and never a carry-over.
+		var held = ApiKeyScopes.PrivilegedIn(
+			(existingScopes ?? "").Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+		var adding = ApiKeyScopes.PrivilegedIn(requested).Except(held, StringComparer.Ordinal).ToList();
+		if (adding.Count > 0)
+			return (null,
+				$"Not allowed to grant {(adding.Count == 1 ? "scope" : "scopes")} {string.Join(", ", adding)}: "
+				+ "these reach beyond a single tenant (cross-tenant provisioning or the fleet-wide deploy "
+				+ "control-plane), so only a sysadmin — or a key that already holds admin:provision — may "
+				+ "issue them. Administering a workspace does not carry that authority. Ask an operator to "
+				+ "mint this key, or pick scopes confined to this project.");
+
+		// Kept, not stripped: whatever privileged scopes the key already had survive the edit.
+		var effective = requested.Distinct(StringComparer.Ordinal).ToList();
+		effective.AddRange(held.Where(h => !effective.Contains(h, StringComparer.Ordinal)));
+		return (effective, null);
+	}
+
 	public async Task<IReadOnlyList<AgentKeyRow>> ListAsync(string? workspaceKey, CancellationToken ct = default)
 	{
 		using var db = dbf.Open();
@@ -144,7 +199,8 @@ public sealed class AgentKeyAdminService(
 			// the marks only every ~5 minutes, so the STORED value alone would show a key as never-used
 			// for minutes after it was actually used. Take the later of stored and the live in-memory
 			// stamp. This reads a singleton dictionary — no extra DB work, and no write on a render.
-			Later(k.LastUsedAt, stats.LastUsed(k.Key))))];
+			Later(k.LastUsedAt, stats.LastUsed(k.Key)),
+			k.CreatedBy))];
 	}
 
 	static DateTime? Later(DateTime? stored, DateTime? inMemory) =>
@@ -167,7 +223,8 @@ public sealed class AgentKeyAdminService(
 	// Rename / re-scope / set + clear the default project of an ALREADY-ISSUED key (spec
 	// apikey-mutable). The secret itself never changes — `key` is the address, not a field.
 	// Mirrors the apikey_update MCP verb's semantics, with workspace confinement added on top.
-	public async Task<KeyUpdateResult> UpdateAsync(AgentKeyEdit edit, string? workspaceKey, CancellationToken ct = default)
+	public async Task<KeyUpdateResult> UpdateAsync(
+		AgentKeyEdit edit, string? workspaceKey, KeyIssuer issuer, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(edit.Key))
 			return new KeyUpdateResult.NotFound();
@@ -208,6 +265,14 @@ public sealed class AgentKeyAdminService(
 			.FirstOrDefaultAsync(ct);
 		if (existing is null)
 			return new KeyUpdateResult.NotFound();
+
+		// May this issuer hand out what the submission asks for? Decided AFTER ownership so a caller
+		// cannot use the privilege refusal as an existence oracle for another tenant's key: a key that
+		// is not theirs is 404 first, whatever scopes the POST named.
+		var (granted, refusal) = GateGrant(valid, existing.Scopes, issuer);
+		if (refusal is not null)
+			return new KeyUpdateResult.Refused(refusal);
+		valid = granted!;
 
 		string? defaultProject = null;
 		var requested = edit.DefaultProject?.Trim() ?? string.Empty;
@@ -265,7 +330,7 @@ public sealed class AgentKeyAdminService(
 	// this project's — indistinguishable on purpose, so the page cannot be used to probe for the
 	// existence of a sibling project's key.
 	public async Task<KeyUpdateResult> SetScopesForProjectAsync(
-		string key, string projectKey, IReadOnlyList<string> scopes, CancellationToken ct = default)
+		string key, string projectKey, IReadOnlyList<string> scopes, KeyIssuer issuer, CancellationToken ct = default)
 	{
 		var (valid, invalid) = ApiKeyScopes.Validate(string.Join(',', scopes));
 		if (invalid.Count > 0)
@@ -274,9 +339,25 @@ public sealed class AgentKeyAdminService(
 			return new KeyUpdateResult.Refused("At least one scope is required.");
 
 		using var db = dbf.Open();
+
+		// The key's CURRENT scopes, read project-confined — the grant gate needs them to tell an
+		// escalation ("add admin:provision") from a benign edit of a key that already holds a
+		// privileged scope. This read is project-confined exactly like the UPDATE below, so it is not
+		// a new way to observe a sibling project's key; the UPDATE still re-proves ownership in the
+		// statement, which is what keeps the TOCTOU window closed.
+		var existing = await db.ApiKeys
+			.Where(k => k.Key == key && k.ProjectKey == projectKey)
+			.FirstOrDefaultAsync(ct);
+		if (existing is null)
+			return new KeyUpdateResult.NotFound();
+
+		var (granted, refusal) = GateGrant(valid, existing.Scopes, issuer);
+		if (refusal is not null)
+			return new KeyUpdateResult.Refused(refusal);
+
 		var affected = await db.ApiKeys
 			.Where(k => k.Key == key && k.ProjectKey == projectKey)
-			.Set(k => k.Scopes, string.Join(',', valid))
+			.Set(k => k.Scopes, string.Join(',', granted!))
 			.UpdateAsync(ct);
 
 		return affected > 0 ? new KeyUpdateResult.Updated() : new KeyUpdateResult.NotFound();
@@ -312,9 +393,17 @@ public sealed class AgentKeyAdminService(
 	// could never write anything: ProjectScope.AuthorizesAsync would refuse every call), and a default
 	// project must name a real one. The cross-project claim ("*") is not a project row, so it is never
 	// looked up. The raw secret is generated here and returned exactly once, in the Minted row.
-	public async Task<KeyMintResult> MintAsync(AgentKeyMint mint, CancellationToken ct = default)
+	public async Task<KeyMintResult> MintAsync(AgentKeyMint mint, KeyIssuer issuer, CancellationToken ct = default)
 	{
 		using var db = dbf.Open();
+
+		// FIRST, before the database is even consulted: may this issuer grant these scopes? A mint has
+		// no existing key, so there is nothing to carry over — any privileged scope here is a fresh
+		// grant and is refused unless the issuer holds that authority. This is the exact check whose
+		// absence let a WorkspaceAdmin mint themselves cross-tenant root.
+		var (granted, refusal) = GateGrant(mint.Scopes, existingScopes: null, issuer);
+		if (refusal is not null)
+			return new KeyMintResult.Refused(refusal);
 
 		if (mint.ProjectKey != ProjectScope.AllProjects)
 		{
@@ -335,12 +424,16 @@ public sealed class AgentKeyAdminService(
 		{
 			Key = $"yb_key_{Guid.NewGuid():N}",
 			ProjectKey = mint.ProjectKey,
-			Scopes = string.Join(',', mint.Scopes),
+			Scopes = string.Join(',', granted!),
 			Name = mint.Name.Trim(),
 			CreatedAt = DateTime.UtcNow,
 			ExpiresAt = mint.ExpiresAt,
 			DefaultProjectKey = mint.DefaultProjectKey,
 			SandboxOnly = mint.SandboxOnly,
+			// spec access-attribution: the issuer, by label — `user:<name>` from an admin page,
+			// `key:<name>` from apikey_create. Recorded at the one door every mint goes through, so no
+			// caller can produce an unattributed key.
+			CreatedBy = issuer.Actor,
 		};
 		await db.InsertAsync(row, token: ct);
 		return new KeyMintResult.Minted(row);
@@ -349,7 +442,7 @@ public sealed class AgentKeyAdminService(
 	// PATCH an already-issued key: a field left null keeps its stored value bit-for-bit. Same rules a
 	// mint obeys (an update must never grant what a mint could not) — and the same refusal of a
 	// config-declared key, which has no row here and whose lifecycle belongs to appsettings.
-	public async Task<KeyPatchResult> PatchAsync(AgentKeyPatch patch, CancellationToken ct = default)
+	public async Task<KeyPatchResult> PatchAsync(AgentKeyPatch patch, KeyIssuer issuer, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(patch.Key))
 			return new KeyPatchResult.Refused("key is required");
@@ -386,7 +479,14 @@ public sealed class AgentKeyAdminService(
 			var (valid, invalid) = ApiKeyScopes.Validate(patch.Scopes);
 			if (invalid.Count > 0) return new KeyPatchResult.Refused($"Unknown scopes: {string.Join(", ", invalid)}");
 			if (valid.Count == 0) return new KeyPatchResult.Refused("At least one valid scope is required");
-			updated = updated with { Scopes = string.Join(',', valid) };
+			// The same grant gate the mint and the admin forms pass through — an update must never be
+			// able to grant what a mint could not, which this file already asserts twice about scope
+			// VALIDITY and now also holds for scope AUTHORITY. In practice today's only caller is
+			// apikey_update (admin:provision, so it passes), but the rule belongs to the door, not to
+			// the caller that happens to be standing in it.
+			var (granted, refusal) = GateGrant(valid, existing.Scopes, issuer);
+			if (refusal is not null) return new KeyPatchResult.Refused(refusal);
+			updated = updated with { Scopes = string.Join(',', granted!) };
 			touched.Add("scopes");
 		}
 
@@ -434,6 +534,13 @@ public sealed class AgentKeyAdminService(
 	// `node:<id>` name. Re-minting ROTATES it — the previous one is dropped in the same call, so a
 	// node can never end up with two live keys. Its "project" is the node id (the deploy plane is
 	// fleet-wide, not project-scoped); the scopes are fixed by the caller (poll + heartbeat + logs).
+	//
+	// DELIBERATELY NOT GATED, and it is not an escape hatch. `agent:poll`/`agent:heartbeat` are
+	// classified Privileged, but this path takes no caller-chosen scope set — the constant is baked
+	// into DeployTools/DeployAgentService, and reaching it at all already requires `deploy:write`,
+	// itself privileged and therefore already gated at the mint that issued the calling key. Routing
+	// enrollment through the grant gate would check an authority the caller has necessarily proven
+	// one step earlier. The key is attributed to the system, because that is literally who made it.
 	public async Task<string> MintNodeKeyAsync(string keyRef, string nodeId, string scopes, CancellationToken ct = default)
 	{
 		using var db = dbf.Open();
@@ -446,6 +553,7 @@ public sealed class AgentKeyAdminService(
 			Scopes = scopes,
 			Name = keyRef,
 			CreatedAt = DateTime.UtcNow,
+			CreatedBy = KeyIssuer.System.Actor,
 		}, token: ct);
 		return key;
 	}
