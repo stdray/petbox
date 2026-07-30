@@ -3,7 +3,7 @@
 # 10.0.201 while CI installed 10.0.202 and a dev box ran 10.0.301 — three SDKs on one commit,
 # and `dotnet format` disagrees across feature bands, so the format gate's verdict depended on
 # where it ran. Bump this and global.json together.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.103 AS build
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl unzip \
 	&& rm -rf /var/lib/apt/lists/*
