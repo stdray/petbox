@@ -1,4 +1,3 @@
-using JetBrains.Annotations;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
@@ -11,7 +10,7 @@ namespace PetBox.Config.Data;
 // the analyzer's static graph can trace (resharper-clt-step5g doctrine, mechanism 3 — see
 // scripts/inspect-gate.cs). [UsedImplicitly(WithMembers)] rather than a glob: these two record
 // types are the only content of this file next to the DataConnection subclass itself.
-[Table("ConfigBindingHistory"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
+[Table("ConfigBindingHistory"), JetBrains.Annotations.UsedImplicitly(JetBrains.Annotations.ImplicitUseTargetFlags.WithMembers)]
 public sealed record ConfigBindingHistoryEntry
 {
 	[Column, Identity, PrimaryKey]
@@ -36,7 +35,7 @@ public sealed record ConfigBindingHistoryEntry
 	public DateTime At { get; init; }
 }
 
-[Table("TagVocabulary"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
+[Table("TagVocabulary"), JetBrains.Annotations.UsedImplicitly(JetBrains.Annotations.ImplicitUseTargetFlags.WithMembers)]
 public sealed record TagVocabularyEntry
 {
 	[Column, Identity, PrimaryKey]

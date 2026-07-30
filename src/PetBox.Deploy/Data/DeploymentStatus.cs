@@ -1,4 +1,3 @@
-using JetBrains.Annotations;
 using LinqToDB.Mapping;
 
 namespace PetBox.Deploy.Data;
@@ -10,7 +9,7 @@ namespace PetBox.Deploy.Data;
 public enum ActualState
 {
 	Missing = 0,
-	[UsedImplicitly] Stopped = 1,
+	[JetBrains.Annotations.UsedImplicitly] Stopped = 1,
 	Running = 2,
 }
 
@@ -20,7 +19,7 @@ public enum ActualState
 // linq2db [Table]/[Column] entity: materialized by SELECT, not `new` + property-set the analyzer
 // can trace (resharper-clt-step5g). ContainerId/ImageDigest are set on every agent report but not
 // currently read back by any consumer.
-[Table("deploy_deployment_status"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
+[Table("deploy_deployment_status"), JetBrains.Annotations.UsedImplicitly(JetBrains.Annotations.ImplicitUseTargetFlags.WithMembers)]
 public sealed record DeploymentStatus
 {
 	[PrimaryKey(0), NotNull] public string NodeId { get; init; } = string.Empty;
