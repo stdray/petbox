@@ -37,7 +37,24 @@ public sealed class WebAppFixture : IAsyncLifetime
 		// (e.g. lightpanda in WSL) instead of launching the bundled chromium.
 		var cdp = Environment.GetEnvironmentVariable("PETBOX_E2E_CDP");
 		_browser = string.IsNullOrEmpty(cdp)
-			? await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true })
+			// Playwright's actionability checks (element "stable" across two frames) drive off
+			// requestAnimationFrame. Headless Chromium 149 (bundled with Playwright 1.61) backgrounds
+			// the renderer and stops producing frames even though document.visibilityState reports
+			// "visible", so rAF never fires and every click times out at 30s waiting for "stable"
+			// (measured 2026-07-30: 19/95 E2E red, wall-clock 11m42s vs ~1m20s; rAF probe confirmed
+			// it never fires). These flags keep the renderer unthrottled so frames — and rAF — keep
+			// coming. 1.59.0 did not need them; the frame-scheduling change is new in Chromium 149.
+			? await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+			{
+				Headless = true,
+				Args = new[]
+				{
+					"--disable-backgrounding-occluded-windows",
+					"--disable-renderer-backgrounding",
+					"--disable-background-timer-throttling",
+					"--disable-features=CalculateNativeWinOcclusion",
+				},
+			})
 			: await _playwright.Chromium.ConnectOverCDPAsync(cdp);
 
 		_storageStatePath = Path.Combine(
