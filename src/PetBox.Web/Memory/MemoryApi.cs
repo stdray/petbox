@@ -1,8 +1,8 @@
-using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Memory.Contract;
 using PetBox.Web.Auth;
+using PetBox.Web.Contract;
 
 namespace PetBox.Web.Memory;
 
@@ -130,18 +130,14 @@ public static class MemoryApi
 	}
 }
 
-// One scope's canon: the raw index body plus its temporal cursor (updatedAt/version), so the
-// hook can cache and detect staleness. A QUERIED scope is never null — an empty one carries an
-// empty string as its Body (Version 0) instead of vanishing silently: Version 0 is the
-// discriminator, NOT the Body text (card canon-banner-empty-notice-unlabelled) — a consumer
-// must classify by Version first, then treat Body as real curated text only when Version > 0.
-// null at the CanonResponse level means the leg was never asked (no workspace) or was withheld
-// (sandbox containment) — see CanonAsync.
-// [PublicAPI]: serialized to the caller by TypedResults.Ok(new CanonResponse(...)) in CanonAsync —
-// the minimal-API JSON writer reads UpdatedAt back by reflection, not any C# call site
-// (resharper-clt-step5-dead-public-code doctrine, same shape as HealthApi.HealthPushRequest).
-[PublicAPI]
-public sealed record CanonPart(string Body, DateTime UpdatedAt, long Version);
+// CanonPart (one scope's canon: raw index body + temporal cursor) moved to
+// Web/Contract/WebResponses.cs (resharper-clt-move-wire-records) — that directory's glob already
+// covers the NotAccessedPositionalProperty.Global finding (UpdatedAt) a point [PublicAPI] used to
+// carry here. A QUERIED scope is never null — an empty one carries an empty string as its Body
+// (Version 0) instead of vanishing silently: Version 0 is the discriminator, NOT the Body text
+// (card canon-banner-empty-notice-unlabelled) — a consumer must classify by Version first, then
+// treat Body as real curated text only when Version > 0. null at the CanonResponse level means
+// the leg was never asked (no workspace) or was withheld (sandbox containment) — see CanonAsync.
 
 // GET /api/memory/{projectKey}/canon — the project's canon and its workspace's shared canon.
 // Project is always populated (real content or the empty-canon nudge); Workspace is null only

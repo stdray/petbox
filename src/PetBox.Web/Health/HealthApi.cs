@@ -1,7 +1,7 @@
-using JetBrains.Annotations;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Health;
+using PetBox.Web.Contract;
 
 namespace PetBox.Web.Health;
 
@@ -18,19 +18,10 @@ public static class HealthApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	// Constructed by ASP.NET Core JSON model binding on PushAsync below, not by a `new` call this
-	// analyzer's static graph can see (confirmed doctrine gotcha, resharper-clt-step5-dead-public
-	// -code) — [PublicAPI] rather than narrowing: this record IS the wire contract of POST
-	// /api/health.
-	[PublicAPI]
-	public sealed record HealthPushRequest(
-		string Svc,
-		string? Name,
-		Dictionary<string, string>? Tags,
-		string? Version,
-		string? Sha,
-		string? BuildDate,
-		string Status);
+	// HealthPushRequest (the wire contract of POST /api/health) moved to
+	// Web/Contract/WebResponses.cs (resharper-clt-move-wire-records): measured with no properties
+	// left unaccessed (PushAsync below reads every field), so it needed no positional-property
+	// suppression there either — the point [PublicAPI] here was already redundant.
 
 	// Authorize, validate, delegate. The handler opens no database — it hands a validated report to
 	// IHealthReportService, which owns the table (AGENTS.md: the database is visible only in the

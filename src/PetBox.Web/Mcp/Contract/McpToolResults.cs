@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
+using PetBox.Web.Search;
 
 namespace PetBox.Web.Mcp.Contract;
 
@@ -168,6 +169,37 @@ public sealed record DataDbDescribeResult(IReadOnlyList<DataTableView> Tables);
 public sealed record DataQueryResult(IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
 public sealed record DataExecResult(int Affected);
+
+// ---- health_search ---------------------------------------------------------------------
+
+// Latest report for one running service (HealthTools.SearchAsync). ReceivedAt is ISO-8601 UTC;
+// AgeSeconds is the server-computed age; Stale = AgeSeconds > staleThresholdSeconds. History is
+// null (omitted by the serializer) unless the caller asked for it; null Name/Version/Sha are
+// likewise omitted. Moved here from Mcp/HealthTools.cs (resharper-clt-move-wire-records): that
+// file also holds the live SearchAsync tool method, so a point [PublicAPI] used to be the only
+// safe suppression mechanism there — here the directory-wide glob (root .editorconfig) covers
+// NotAccessedPositionalProperty.Global/UnusedAutoPropertyAccessor.Global on its own.
+public sealed record HealthServiceView(
+	string Svc,
+	string? Name,
+	IReadOnlyDictionary<string, string> Tags,
+	string Status,
+	string? Version,
+	string? Sha,
+	string ReceivedAt,
+	long AgeSeconds,
+	bool Stale,
+	IReadOnlyList<HealthHistoryEntryView>? History = null);
+
+// One historical report for a service, most-recent first. Source is "push" | "pull". Moved here
+// alongside HealthServiceView above (same doctrine).
+public sealed record HealthHistoryEntryView(
+	string Status,
+	string? Version,
+	string? Sha,
+	string ReceivedAt,
+	long AgeSeconds,
+	string Source);
 
 // ---- llm_* ---------------------------------------------------------------------------
 
@@ -446,6 +478,20 @@ public sealed record RelationDeletedResult(string Id, bool Deleted);
 
 // Batch delete result — Relations is always present (length 1 for the single-id BC path).
 public sealed record RelationsDeletedResult(IReadOnlyList<RelationDeletedResult> Relations);
+
+// ---- search_reindex --------------------------------------------------------------------
+
+// search_reindex's OutputSchemaType (SearchTools.ReindexAsync). Moved here from
+// Search/SearchReindexService.cs (resharper-clt-move-wire-records): ProjectKey is populated for
+// the remote client's structured content and never read back by local C#
+// (ProjectDetail.cshtml.cs's OnPostReindexAsync only reads .Tiers) — the directory-wide glob
+// covers NotAccessedPositionalProperty.Global on its own, same as the other records in this file.
+// ReindexTierResult stays in SearchReindexService.cs: every one of its properties is read locally
+// (LogReindexed), so it never needed a suppression in the first place.
+public sealed record SearchReindexResult(string ProjectKey, IReadOnlyList<ReindexTierResult> Tiers)
+{
+	public long TotalDocsToEmbed => Tiers.Sum(t => t.ActiveDocs);
+}
 
 // ---- petbox_report_issue ---------------------------------------------------------------
 

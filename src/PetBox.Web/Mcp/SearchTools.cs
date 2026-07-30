@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
+using PetBox.Web.Mcp.Contract;
 using PetBox.Web.Search;
 
 namespace PetBox.Web.Mcp;
