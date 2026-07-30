@@ -61,6 +61,7 @@
 46 LIVE M046_LlmRouteEmbedSpaceId
 47 LIVE M047_LlmRegistryLevelVersion
 48 LIVE M048_SmokeOwnWorkspace
+49 LIVE M049_ApiKeyCreatedBy
 #
 # --- 1000+ : the DISK CACHE set (PetBox.Core.Data.CacheMigrations), not the core.db timeline ---
 # A second migration set shares this assembly, and FluentMigrator numbers are per-SCAN, so the two

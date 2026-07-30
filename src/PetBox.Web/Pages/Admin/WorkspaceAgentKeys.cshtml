@@ -3,7 +3,13 @@
 @{
 	ViewData["Title"] = "Agent keys";
 	Layout = "_AdminLayout";
-	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "ws-agent-keys-table", "ws-agent-keys-empty");
+	@* Workspace-admin page: the editor offers only what THIS caller may grant. Derived from the
+		principal, not hardcoded to the confined set — a sysadmin who navigates to a workspace's own
+		keys page is still a sysadmin and should not silently lose the affordance. *@
+	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "ws-agent-keys-table", "ws-agent-keys-empty")
+	{
+		AllScopes = PetBox.Core.Auth.ApiKeyScopes.GrantableBy(PetBox.Core.Auth.KeyIssuer.From(User).MayGrantPrivileged),
+	};
 }
 
 <div class="mb-4">

@@ -64,7 +64,12 @@ public sealed class WorkspaceAgentKeysModel(AgentKeyAdminService keys) : PageMod
 	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject)
 	{
 		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject);
-		switch (await keys.UpdateAsync(edit, WorkspaceKey, HttpContext.RequestAborted))
+		// THE THIRD ESCALATION PATH, and the comment right above already described the attack without
+		// noticing it applied here too: "would otherwise re-scope it to admin:provision". That was
+		// written about a FOREIGN key (the IDOR, closed by the workspace predicate) — but re-scoping
+		// one of your OWN workspace's keys to admin:provision was equally open, and needed no forgery
+		// at all. KeyIssuer.From(User) says a WorkspaceAdmin may not, and the service enforces it.
+		switch (await keys.UpdateAsync(edit, WorkspaceKey, KeyIssuer.From(User), HttpContext.RequestAborted))
 		{
 			case KeyUpdateResult.Updated:
 				this.NotifySuccess("API key updated.");

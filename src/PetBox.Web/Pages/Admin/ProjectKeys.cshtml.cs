@@ -53,6 +53,14 @@ public sealed class ProjectKeysModel : PageModel
 	public string? ErrorMessage { get; set; }
 	public string? NewKey { get; set; }
 
+	// The scopes THIS caller may actually issue — what both forms on this page render. A workspace
+	// admin sees the tenant-confined catalog; a sysadmin reaching the same page sees all of it.
+	// COSMETICS, and the file says so twice more: the server gate in AgentKeyAdminService is what
+	// stops a forged POST, this only stops the honest user from being offered a scope they'd be
+	// refused for.
+	public IReadOnlyList<ApiKeyScope> GrantableScopes =>
+		ApiKeyScopes.GrantableBy(KeyIssuer.From(User).MayGrantPrivileged);
+
 	public async Task OnGetAsync()
 	{
 		Project = await _projects.GetAsync(ProjectKey);
@@ -97,7 +105,12 @@ public sealed class ProjectKeysModel : PageModel
 			return Page();
 		}
 
-		var minted = await _keys.MintAsync(new AgentKeyMint(name, valid, ProjectKey));
+		// WHO is minting travels to the service, which decides whether they may grant what they ticked
+		// (work workspaceadmin-self-issue-admin-provision-root). The page does NOT pre-filter `valid`
+		// here on purpose: `scopes` is a string[] straight off the form, so a forged POST carries
+		// whatever it likes and a check written at this level would be checking the attacker's own
+		// input. The gate is in MintAsync; the checkbox filtering below is cosmetics over it.
+		var minted = await _keys.MintAsync(new AgentKeyMint(name, valid, ProjectKey), KeyIssuer.From(User));
 		switch (minted)
 		{
 			case KeyMintResult.Minted m:
@@ -130,7 +143,7 @@ public sealed class ProjectKeysModel : PageModel
 	// the service, so this page cannot forget it and neither can the next caller.
 	public async Task<IActionResult> OnPostUpdateKeyScopesAsync(string keyValue, string[]? scopes)
 	{
-		var result = await _keys.SetScopesForProjectAsync(keyValue, ProjectKey, scopes ?? []);
+		var result = await _keys.SetScopesForProjectAsync(keyValue, ProjectKey, scopes ?? [], KeyIssuer.From(User));
 		if (result is KeyUpdateResult.Refused refused)
 		{
 			ErrorMessage = refused.Reason;

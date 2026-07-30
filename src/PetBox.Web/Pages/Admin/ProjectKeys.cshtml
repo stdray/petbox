@@ -45,13 +45,14 @@
 					<th>Key (prefix)</th>
 					<th>Scopes</th>
 					<th class="w-32">Created</th>
+					<th class="w-40">Issued by</th>
 					<th class="w-24"></th>
 				</tr>
 			</thead>
 			<tbody>
 				@if (Model.Keys.Count == 0)
 				{
-					<tr data-testid="project-keys-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No keys issued yet.</td></tr>
+					<tr data-testid="project-keys-empty"><td colspan="6" class="text-xs opacity-60 italic text-center">No keys issued yet.</td></tr>
 				}
 				else
 				{
@@ -77,7 +78,12 @@
 									<form method="post" asp-page-handler="UpdateKeyScopes" asp-route-keyValue="@k.Key"
 										class="mt-2 border border-base-300 rounded p-2 bg-base-200 max-w-md" data-testid="project-key-edit-form">
 										@Html.AntiForgeryToken()
-										@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+										@* The EDIT form renders the grantable set, same as the create form below — the
+											re-scope path was every bit as open as the mint path. A privileged scope the
+											key already holds is preserved by the server (it is not in this list, so it is
+											not resubmitted, and SetScopesForProjectAsync carries it over rather than
+											stripping it). *@
+										@foreach (var module in Model.GrantableScopes.GroupBy(s => s.Module))
 										{
 											<div class="text-xs font-semibold opacity-70 uppercase tracking-wide mt-1">@module.Key</div>
 											@foreach (var scope in module)
@@ -95,6 +101,19 @@
 								</details>
 							</td>
 							<td class="text-xs opacity-70 font-mono">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
+							@* spec access-attribution. A pre-M049 key says "unknown" in words — an empty cell
+								would read as a rendering bug, and inventing "system" would be a lie about who
+								minted it. *@
+							<td class="text-xs">
+								@if (string.IsNullOrEmpty(k.CreatedBy))
+								{
+									<span class="badge badge-ghost badge-xs" data-testid="project-key-created-by-unknown">unknown</span>
+								}
+								else
+								{
+									<span class="font-mono opacity-70" data-testid="project-key-created-by">@k.CreatedBy</span>
+								}
+							</td>
 							<td>
 								<form method="post" asp-page-handler="RevokeKey" asp-route-keyValue="@k.Key"
 									onsubmit="return confirm('Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?')" style="display:inline">
@@ -127,7 +146,7 @@
 					<span class="label-text">Scopes</span>
 					<span class="text-xs opacity-60">Click checkboxes — typed input is not supported.</span>
 				</div>
-				@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+				@foreach (var module in Model.GrantableScopes.GroupBy(s => s.Module))
 				{
 					<div class="mt-2">
 						<div class="text-xs font-semibold opacity-70 uppercase tracking-wide">@module.Key</div>

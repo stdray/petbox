@@ -3,7 +3,13 @@
 @{
 	ViewData["Title"] = "Agent Keys";
 	Layout = "_AdminLayout";
-	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "sys-agent-keys-table", "sys-agent-keys-empty");
+	@* SysAdmin page: the editor offers the FULL catalog, privileged scopes included — this is the one
+		surface whose caller is by definition entitled to them. The view record defaults to the
+		confined subset, so this page has to ask for the rest explicitly. *@
+	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "sys-agent-keys-table", "sys-agent-keys-empty")
+	{
+		AllScopes = PetBox.Core.Auth.ApiKeyScopes.GrantableBy(PetBox.Core.Auth.KeyIssuer.From(User).MayGrantPrivileged),
+	};
 }
 
 <div class="mb-4">

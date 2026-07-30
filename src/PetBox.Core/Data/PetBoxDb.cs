@@ -129,7 +129,12 @@ public sealed class PetBoxDb : DataConnection
 			// M043 (spec apikey-last-used) — declared for the same reason as ExpiresAt above: an
 			// undeclared DateTime column is dropped from the schema cache, and the flusher's UPDATE
 			// would write a column linq2db then refuses to read back (every key would look unused).
-			.Property(a => a.LastUsedAt).HasDataType(DataType.DateTime).IsNullable(true);
+			.Property(a => a.LastUsedAt).HasDataType(DataType.DateTime).IsNullable(true)
+			// M049 (spec access-attribution) — the SAME trap, and it bit again: without this
+			// declaration the INSERT silently omitted CreatedBy and every minted key read back with a
+			// null issuer, so the attribution column existed and recorded nothing. Caught by
+			// ApiKeyScopeGrantAuthzTests asserting the value rather than the column's existence.
+			.Property(a => a.CreatedBy).HasLength(200).IsNullable(true);
 
 		builder.Entity<DataTable>()
 			.HasTableName("DataTables")
