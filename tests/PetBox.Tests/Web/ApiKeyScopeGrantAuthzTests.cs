@@ -207,7 +207,14 @@ public sealed class ApiKeyScopeGrantAuthzTests : IClassFixture<ApiKeyScopeGrantA
 		KeysOfPa().Should().NotContain(k => k.Name == "pwn-provision",
 			"NO key may be minted at all when the submission asks for a scope the issuer cannot grant — "
 			+ "this is the escalation the card documents");
-		KeysOfPa().Should().NotContain(k => k.Scopes.Contains(ApiKeyScopes.AdminProvision, StringComparison.Ordinal),
+		// Scoped to EVE'S HAND, not to the project. `Sysadmin_can_mint_a_key_with_admin_provision`
+		// legitimately puts an admin:provision key into this same project, and the class shares one
+		// fixture and one database — so "project pa holds no such key" is only true while xUnit happens
+		// to run that test later. It did locally and did not on CI. The claim being made here was never
+		// about the project's contents anyway: it is that no key carrying this scope was issued BY the
+		// workspace admin, which CreatedBy now states outright (the attribution column M049 added).
+		KeysOfPa().Should().NotContain(
+			k => k.Scopes.Contains(ApiKeyScopes.AdminProvision, StringComparison.Ordinal) && k.CreatedBy == "user:eve",
 			"admin:provision must not reach the ApiKeys table by a workspace admin's hand");
 	}
 
