@@ -94,14 +94,16 @@
 		<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
 		<PackageVersion Include="xunit.v3" Version="3.2.2" />
 		<PackageVersion Include="AwesomeAssertions" Version="9.5.0" />
-		<!-- HELD at 1.59.0 — 1.61.0 is the latest but reproducibly reds the E2E suite. Its newer
-		     bundled Chromium leaves something animating forever, so Playwright's actionability
-		     "stable" check (bounding box unchanged across two animation frames) never settles and
-		     every click times out at 30s: 15-18/95 failed, run wall-clock 1m20s -> 11m+. Measured
-		     with a clean tests/PetBox.E2ETests/bin (the .playwright driver dir is copied
-		     incrementally and a stale one fails ALL 95 in ~40ms — not the same fault). Every other
-		     bump in this file is on 1.59.0 and green at 95/95, so the cause is this package alone. -->
-		<PackageVersion Include="Microsoft.Playwright" Version="1.59.0" />
+		<!-- 1.61.0 is the first version whose browser matrix supports ubuntu 26.04. An earlier note
+		     here HELD at 1.59.0, blaming 1.61.0's Chromium for "animating forever" and timing out
+		     Playwright's actionability "stable" check (19/95 red, 11m+). That diagnosis was wrong:
+		     nothing animates (document.getAnimations() is empty and the target's box is byte-stable).
+		     The real cause — verified 2026-07-30 with an rAF probe — is that headless Chromium 149
+		     backgrounds the renderer and stops producing frames (visibilityState still "visible"), so
+		     requestAnimationFrame never fires; the stable check is rAF-based and hangs. The fix lives
+		     in WebAppFixture (launch flags --disable-renderer-backgrounding et al.), not here. With
+		     those flags 1.61.0 is green at 95/95 in ~58s. -->
+		<PackageVersion Include="Microsoft.Playwright" Version="1.61.0" />
 		<PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
 		<PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
 	</ItemGroup>
