@@ -9,6 +9,11 @@ services:
     image: ${PETBOX_IMAGE}
     container_name: petbox
     restart: unless-stopped
+    # Must stay >= ShutdownBudget.MinimumStopGracePeriod (src/PetBox.Web/ShutdownBudget.cs),
+    # asserted by ComposeStopGraceTests. Docker's default is 10 s, which SIGKILLed the app
+    # mid-drain while its own ShutdownTimeout still believed it had 30. Not a wait: docker
+    # stops as soon as the process exits and only kills at this deadline.
+    stop_grace_period: 40s
     ports:
       - "127.0.0.1:8083:8080"   # loopback only — central Caddy terminates TLS
     volumes:
