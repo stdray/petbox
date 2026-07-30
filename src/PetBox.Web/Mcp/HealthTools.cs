@@ -1,10 +1,10 @@
 using System.ComponentModel;
 using System.Globalization;
-using JetBrains.Annotations;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Health;
 using PetBox.Core.Models;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -125,40 +125,10 @@ public static class HealthTools
 	}
 }
 
-// ---- health_search wire shapes (kept in this file so parallel agents editing the shared
-// Contract records don't collide) -----------------------------------------------------------
-
-// Latest report for one running service. ReceivedAt is ISO-8601 UTC; AgeSeconds is the
-// server-computed age; Stale = AgeSeconds > staleThresholdSeconds. History is null (omitted
-// by the serializer) unless the caller asked for it; null Name/Version/Sha are likewise omitted.
-// [PublicAPI]: this is the health_search MCP tool's OutputSchemaType (UseStructuredContent=true
-// above) — properties are populated by named-arg construction and read back only by the MCP SDK's
-// reflection-based structured-content serializer for the remote client, never by local code
-// (resharper-clt-step5-dead-public-code doctrine, same shape as Mcp/Contract/*.cs). Deliberately
-// NOT folded into that glob (5a) because this file also holds the live SearchAsync tool method —
-// a point annotation is the safe mechanism here, not a directory-wide suppression.
-[PublicAPI]
-public sealed record HealthServiceView(
-	string Svc,
-	string? Name,
-	IReadOnlyDictionary<string, string> Tags,
-	string Status,
-	string? Version,
-	string? Sha,
-	string ReceivedAt,
-	long AgeSeconds,
-	bool Stale,
-	IReadOnlyList<HealthHistoryEntryView>? History = null);
-
-// One historical report for a service, most-recent first. Source is "push" | "pull".
-// [PublicAPI]: same wire-contract shape as HealthServiceView above.
-[PublicAPI]
-public sealed record HealthHistoryEntryView(
-	string Status,
-	string? Version,
-	string? Sha,
-	string ReceivedAt,
-	long AgeSeconds,
-	string Source);
-
+// health_search's own result wrapper stays here (trivial, no findings of its own); the two
+// per-service view records it carries (HealthServiceView, HealthHistoryEntryView) moved to
+// Mcp/Contract/McpToolResults.cs (resharper-clt-move-wire-records) — that directory's
+// .editorconfig glob already silences NotAccessedPositionalProperty.Global/
+// UnusedAutoPropertyAccessor.Global for every record there, so the point [PublicAPI] these two
+// used to carry is now redundant.
 public sealed record HealthSearchResultView(IReadOnlyList<HealthServiceView> Services);

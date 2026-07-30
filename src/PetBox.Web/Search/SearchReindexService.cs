@@ -1,10 +1,10 @@
-using JetBrains.Annotations;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Data;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Search;
 
@@ -34,16 +34,10 @@ public sealed record ReindexTierResult(
 	int CursorsReset,
 	int LexicalReset);
 
-// [PublicAPI]: this is the search_reindex MCP tool's OutputSchemaType (SearchTools.cs,
-// UseStructuredContent=true) — ProjectKey/TotalDocsToEmbed are populated for the remote client's
-// structured content and never read back by local C# (ProjectDetail.cshtml.cs's OnPostReindexAsync
-// only reads .Tiers). Same shape as HealthTools' [PublicAPI] records (resharper-clt-step5-dead
-// -public-code doctrine).
-[PublicAPI]
-public sealed record SearchReindexResult(string ProjectKey, IReadOnlyList<ReindexTierResult> Tiers)
-{
-	public long TotalDocsToEmbed => Tiers.Sum(t => t.ActiveDocs);
-}
+// SearchReindexResult (the search_reindex MCP tool's OutputSchemaType) moved to
+// Mcp/Contract/McpToolResults.cs (resharper-clt-move-wire-records) — that directory's glob
+// already covers the NotAccessedPositionalProperty.Global finding a point [PublicAPI] used to
+// carry here.
 
 // REINDEX = resurrect a project's semantic index from zero.
 //
