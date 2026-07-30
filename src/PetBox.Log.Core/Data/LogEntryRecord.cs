@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using LinqToDB.Mapping;
 
 namespace PetBox.Log.Core.Data;
@@ -21,7 +22,9 @@ public sealed class LogEntryRecord
 
 	[Column, NotNull] public string PropertiesJson { get; set; } = "{}";
 
-	[Column, NotNull] public long TemplateHash { get; set; }
+	// Written on every insert (dedup key for the template-mining job) but not read back through
+	// this record today — set-only, linq2db-materialized like the rest of this row.
+	[Column, NotNull, UsedImplicitly] public long TemplateHash { get; set; }
 
 	public static LogEntryRecord FromCandidate(Models.LogEntryCandidate c, long templateHash) => new()
 	{

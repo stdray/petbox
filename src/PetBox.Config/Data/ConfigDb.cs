@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
@@ -6,7 +7,11 @@ using PetBox.Core.Models;
 
 namespace PetBox.Config.Data;
 
-[Table("ConfigBindingHistory")]
+// linq2db [Table]/[Column] entity: populated by SELECT materialization, not `new` + property-set
+// the analyzer's static graph can trace (resharper-clt-step5g doctrine, mechanism 3 — see
+// scripts/inspect-gate.cs). [UsedImplicitly(WithMembers)] rather than a glob: these two record
+// types are the only content of this file next to the DataConnection subclass itself.
+[Table("ConfigBindingHistory"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public sealed record ConfigBindingHistoryEntry
 {
 	[Column, Identity, PrimaryKey]
@@ -31,7 +36,7 @@ public sealed record ConfigBindingHistoryEntry
 	public DateTime At { get; init; }
 }
 
-[Table("TagVocabulary")]
+[Table("TagVocabulary"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public sealed record TagVocabularyEntry
 {
 	[Column, Identity, PrimaryKey]

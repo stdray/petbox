@@ -1,3 +1,4 @@
+using JetBrains.Annotations;
 using LinqToDB.Mapping;
 
 namespace PetBox.Log.Core.Tracing;
@@ -32,7 +33,11 @@ public static class SpanStatusNames
 	};
 }
 
-[Table("Spans")]
+// linq2db [Table]/[Column] entity: materialized by SELECT, not `new` + property-set the analyzer
+// can trace (resharper-clt-step5g). EventsJson/LinksJson are stored on ingest but no query reads
+// them back yet (the KQL engine's computed columns cover Kind/Status; span events/links are not
+// surfaced today).
+[Table("Spans"), UsedImplicitly(ImplicitUseTargetFlags.WithMembers)]
 public sealed record SpanRecord
 {
 	[Column, PrimaryKey, NotNull]
