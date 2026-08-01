@@ -101,8 +101,8 @@
 		     The real cause — verified 2026-07-30 with an rAF probe — is that headless Chromium 149
 		     backgrounds the renderer and stops producing frames (visibilityState still "visible"), so
 		     requestAnimationFrame never fires; the stable check is rAF-based and hangs. The fix lives
-		     in WebAppFixture (launch flags --disable-renderer-backgrounding et al.), not here. With
-		     those flags 1.61.0 is green at 95/95 in ~58s. -->
+		     in WebAppFixture (Chromium launch flags that disable renderer backgrounding), not here.
+		     With those flags 1.61.0 is green at 95/95 in ~58s. -->
 		<PackageVersion Include="Microsoft.Playwright" Version="1.61.0" />
 		<PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
 		<PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
