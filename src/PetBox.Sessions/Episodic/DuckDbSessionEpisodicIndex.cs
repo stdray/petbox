@@ -17,8 +17,11 @@ namespace PetBox.Sessions.Episodic;
 
 // The episodic tier of session search: a TRANSIENT per-session index, hydrated on
 // demand from the session store and aged out by idleness (spec: session-episodic-lazy).
-// Measurements killed a global always-on transcript index (1-core prod box); lazy
-// hydration is ~100ms per session and only for sessions a search actually points at.
+// Measurements killed a global always-on transcript index (1-core prod box): hydration is
+// paid lazily and ONLY for the sessions a search actually points at. No latency number is
+// quoted here on purpose — a figure in a comment is unfalsifiable and rots silently. Cost
+// belongs in a measurement you can re-run, and for the LLM legs the unit is CALL COUNT,
+// not wall time.
 //
 // Each hydration builds two legs over the session's messages and fuses them through the
 // standard SearchService (RRF + provenance, spec: search-provenance):
@@ -61,8 +64,9 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	readonly SessionEpisodicOptions _options;
 
 	readonly Dictionary<string, Hydrated> _cache = new(StringComparer.Ordinal);
-	// One gate serializes hydration AND queries: a DuckDB connection is not thread-safe,
-	// and queries are ~17ms — contention is cheaper than per-entry locking.
+	// One gate serializes hydration AND queries: a DuckDB connection is not thread-safe, and a
+	// query is short next to the hydration it rides on — contention is cheaper than the
+	// bookkeeping of per-entry locking. (Same rule as above: no quoted millisecond figure.)
 	readonly SemaphoreSlim _gate = new(1, 1);
 
 	// PRODUCTION wiring. The LLM client AND the settings resolver are resolved from ONE FRESH DI
