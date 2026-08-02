@@ -1257,6 +1257,52 @@ public partial class Program
 			await next();
 		});
 
+		// bfcache-eligible-ui-pages (card ui-back-nav-no-bfcache): ASP.NET Core's built-in
+		// Antiforgery sets `Cache-Control: no-store, no-cache` + `Pragma: no-cache` on ANY response
+		// that renders @Html.AntiForgeryToken() — and _Layout.cshtml does that unconditionally (the
+		// sign-out POST form in the header), so EVERY authenticated GET page inherited it. No page in
+		// this repo sets `no-store` itself (grepped — only Error.cshtml.cs via its OWN explicit
+		// [ResponseCache], see the opt-out below). Confirmed empirically, not by reading framework
+		// source: a WebApplicationFactory<Program> hit against GET /ui/{ws}/{project}/sessions came
+		// back with exactly that header pair and an antiforgery token in the body
+		// (BfcacheHeaderProbeTests, throwaway diagnostic run for this card). Chrome's bfcache checks
+		// ONLY `Cache-Control: no-store` on the top-level document — `no-cache`/`private` do not
+		// block it, because a bfcache restore never re-enters HTTP caching semantics at all — so
+		// rewriting the header to `private, no-cache` keeps the ORIGINAL intent (a shared/proxy cache
+		// must never store a per-user page carrying a live antiforgery token) while no longer
+		// disqualifying the tab's own bfcache entry.
+		//
+		// GET/HEAD only — a mutating request's antiforgery TOKEN VALIDATION lives entirely on the
+		// request side (model binding / page filter) and is untouched by this response-header
+		// rewrite; POST responses are left exactly as ASP.NET Core produces them.
+		// text/html only — API/JSON/MCP responses never carry this header today and are irrelevant to
+		// browser bfcache.
+		// Skips any endpoint that declares its OWN [ResponseCache] (Error.cshtml: NoStore=true,
+		// deliberately, since it is re-executed for a failed/refused request) — that is an explicit,
+		// page-level decision this convention must not override.
+		// OnStarting, not a direct header write after `next()`: Antiforgery may set its headers via
+		// its own OnStarting callback deep inside Razor rendering, and OnStarting callbacks run
+		// LIFO — registering here, once, above every page/endpoint, guarantees this callback fires
+		// LAST and gets the final word regardless of how or when Antiforgery sets its own headers.
+		app.Use(async (ctx, next) =>
+		{
+			if (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method))
+			{
+				ctx.Response.OnStarting(() =>
+				{
+					if (ctx.Response.ContentType?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true
+						&& ctx.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Mvc.ResponseCacheAttribute>() is null
+						&& ctx.Response.Headers.CacheControl.Any(v => v?.Contains("no-store", StringComparison.OrdinalIgnoreCase) == true))
+					{
+						ctx.Response.Headers.CacheControl = "private, no-cache";
+						ctx.Response.Headers.Remove("Pragma");
+					}
+					return Task.CompletedTask;
+				});
+			}
+			await next();
+		});
+
 		app.UseAuthentication();
 
 		// spec apikey-last-used: record the key's use IN MEMORY (KeyStatService), never in SQLite —
