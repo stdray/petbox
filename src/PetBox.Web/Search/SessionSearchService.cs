@@ -92,12 +92,25 @@ public sealed class SessionSearchService
 	// MemoryService/TasksService take for SearchRequest.RankingMode). The EDGE decides: the MCP
 	// verb (session_search) hardcodes Precision, the UI page reads the human's
 	// ui-search-ranking-mode-preference override of the Speed default.
+	// The two ARGUMENT NORMALIZATIONS SearchAsync applies before it does anything else, lifted out of
+	// the method body so they are callable WITHOUT running a search. SessionSearchMemo's key is built
+	// from the EFFECTIVE values the engine actually runs with, not from the raw ones a caller passed
+	// (ui-search-render-memoized) — and the only way that claim can stay true is for both to read the
+	// same function. Inlined clamps would drift the first time a bound moved: the key would keep
+	// separating two asks the engine had already collapsed into one, and the memo would quietly stop
+	// hitting with nothing failing.
+	public static int ClampSessions(int sessions) =>
+		Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
+
+	public static int ClampHitsPerSession(int hitsPerSession) =>
+		Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
+
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
 		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, int? bodyLen = null,
 		string? afterSessionId = null, SearchRankingMode mode = SearchRankingMode.Precision, CancellationToken ct = default)
 	{
-		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
-		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
+		sessions = ClampSessions(sessions);
+		hitsPerSession = ClampHitsPerSession(hitsPerSession);
 
 		// DISCOVERY leg 1: the digest store's own hybrid (lexical ⊕ semantic, RRF-fused) search,
 		// keeping the raw re-ranking signals (per-hit fused score, freshness, lexical-confirmation

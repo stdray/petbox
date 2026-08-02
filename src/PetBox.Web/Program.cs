@@ -327,6 +327,15 @@ public partial class Program
 			sp.GetRequiredService<PetBox.Core.Settings.ISettingsResolver>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
 			sp.GetRequiredService<PetBox.Core.Search.SearchOrderingPolicies>()));
+		// The sessions UI's OUTCOME memo (card: ui-search-render-memoized). SINGLETON for the same
+		// reason SearchPoolCache is one — the page model that reads it is SCOPED, so anything narrower
+		// would be born empty on every render and memoize nothing. It rides the SAME HybridCache over
+		// the SAME SqliteDistributedCache registered above rather than standing up parallel plumbing;
+		// absent this registration SessionsModel falls back to SessionSearchMemo.Disabled, which is
+		// correct and visibly not a cache. It is DELIBERATELY not wired into the MCP session_search
+		// verb: an agent that appends to a session and immediately searches must not read a snapshot
+		// up to a TTL old, and the card's subject is the human page's repeat render.
+		builder.Services.AddSingleton<PetBox.Web.Search.SessionSearchMemo>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
 		// out by idleness. Singleton — it IS the hydration cache. The stage-2 in-session
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec
