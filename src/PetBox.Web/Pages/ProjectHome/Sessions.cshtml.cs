@@ -37,15 +37,22 @@ public sealed class SessionsModel : PageModel
 	// unconditionally); a bare unit-test construction with no HttpContext may omit it and falls
 	// back to the pre-existing hardcoded Speed default below.
 	readonly IUiState? _uiState;
+	// The OUTCOME memo (card: ui-search-render-memoized) — why re-opening this search URL, or coming
+	// back to it, no longer re-runs the pipeline. Optional with the same posture as _uiState: DI always
+	// supplies it, and a bare unit-test construction that omits it falls back to
+	// SessionSearchMemo.Disabled, which runs every search and stores nothing (visibly uncached by name,
+	// never a private per-request cache nobody can read back).
+	readonly SessionSearchMemo _memo;
 
 	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store, SessionSearchService search,
-		IUiState? uiState = null)
+		IUiState? uiState = null, SessionSearchMemo? memo = null)
 	{
 		_projects = projects;
 		_features = features;
 		_store = store;
 		_search = search;
 		_uiState = uiState;
+		_memo = memo ?? SessionSearchMemo.Disabled;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -198,14 +205,16 @@ public sealed class SessionsModel : PageModel
 			SessionSearchOutcome outcome;
 			try
 			{
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, afterSessionId: peeked?.Key, mode: rankingMode, ct: ct);
+				outcome = await MemoizedSearchAsync(peeked?.Key, rankingMode, ct);
 			}
 			catch (ArgumentException)
 			{
 				// The session this cursor named fell out of the discovery pool (SessionSearchService's
-				// own refusal) — restart the walk from the top rather than a raw 500.
+				// own refusal) — restart the walk from the top rather than a raw 500. The refusal is
+				// raised INSIDE the memo's compute factory and propagates unchanged; a throwing search is
+				// never stored, so a restart is never served a memoized failure.
 				CursorWasReset = true;
-				outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, mode: rankingMode, ct: ct);
+				outcome = await MemoizedSearchAsync(null, rankingMode, ct);
 			}
 			if (peeked is { } token && !CursorWasReset)
 			{
@@ -216,7 +225,7 @@ public sealed class SessionsModel : PageModel
 					// ranked differently (a rerank/discovery input moved between pages) — restart rather
 					// than splice two orderings.
 					CursorWasReset = true;
-					outcome = await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions, mode: rankingMode, ct: ct);
+					outcome = await MemoizedSearchAsync(null, rankingMode, ct);
 				}
 			}
 			Distilled = outcome.Distilled;
@@ -302,6 +311,30 @@ public sealed class SessionsModel : PageModel
 		};
 		return ordered.ToList();
 	}
+
+	// The ONE door this page reaches session search through (card: ui-search-render-memoized) — every
+	// branch above goes via here, so no future edit can add a fourth call site that quietly bypasses the
+	// memo.
+	//
+	// The key is built from the arguments actually handed to the engine, which is what makes the
+	// equivalence the card asks for fall out instead of being parsed for: `agent`, `sortBy`/`sortDesc`
+	// and `pos` are absent from this call (they reshape the fetched pool further down OnGetAsync), so
+	// `?q=X`, `?q=X&agent=` and `?q=X&sortBy=updated` all land on one entry — and `size` normalizes
+	// through the engine's own clamp, so 40 and 100 (both 30 sessions) do too.
+	//
+	// A CONSEQUENCE WORTH NAMING, because it is the cursor semantics changing shape: re-opening a page
+	// already computed inside the TTL now replays the SAME outcome, DataVersion included, so a cursor
+	// minted from it still satisfies AssertPoolOrder above and CursorWasReset stays false where a
+	// recompute might have tripped it. That covers Back and re-opening a link. It does NOT make FORWARD
+	// paging free or stable: a new page carries a new afterSessionId, which is a different key by
+	// construction (the hydrated slice genuinely differs), so it recomputes and remains subject to a
+	// real data move like before.
+	async Task<SessionSearchOutcome> MemoizedSearchAsync(string? afterSessionId, SearchRankingMode mode, CancellationToken ct) =>
+		(await _memo.GetOrComputeAsync(
+			SessionSearchMemo.MemoKey.For(ProjectKey, Query!, EffectiveSearchSessions, mode, afterSessionId),
+			async innerCt => await _search.SearchAsync(ProjectKey, Query!, sessions: EffectiveSearchSessions,
+				afterSessionId: afterSessionId, mode: mode, ct: innerCt),
+			ct)).Outcome;
 
 	// The query identity a search cursor is bound to: the discovery ORDER's underlying question. `Agent`
 	// is included even though SessionSearchService never sees it (it's a UI-only post-filter over the
