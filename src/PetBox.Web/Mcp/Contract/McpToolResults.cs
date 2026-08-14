@@ -495,7 +495,34 @@ public sealed record SearchReindexResult(string ProjectKey, IReadOnlyList<Reinde
 
 // ---- petbox_report_issue ---------------------------------------------------------------
 
-public sealed record ReportIssueResult(bool Reported, string Project, string Board, string Key);
+// `Hint` (work report-issue-has-no-reply-channel): the write verb's ack is the one moment the
+// reporter holds a `Key` and has just discovered the channel, so it is where the READ verb has to be
+// named. Prose on the result rather than only in the tool description — an agent that already
+// decided to file never re-reads the description afterwards.
+public sealed record ReportIssueResult(bool Reported, string Project, string Board, string Key, string? Hint = null);
+
+// ---- petbox_report_issue_status --------------------------------------------------------
+//
+// The READ-BACK half of the feedback channel (work report-issue-has-no-reply-channel). The write
+// verb was one-way: a project-scoped key could file a report carrying a direct question to the
+// maintainers and then had no verb to read the answer, because $system/client-issues is (correctly)
+// closed to it. This is the pull side — the credential IS the address, so there is nothing for the
+// caller to aim and no address-resolution/delivery story to invent.
+//
+// `Comments` REUSES the Tasks module's CommentView rather than re-declaring a slimmer triple
+// (author/body/created): that is the file's stated rule for a shape a module Contract already
+// owns, it is already the wire shape comments_get/comments_search serve, and the reporter needs
+// WHO answered and WHEN — the id/parentId/version it also carries cost nothing and let a reply
+// thread be read in the same shape as everywhere else.
+public sealed record ReportIssueStatusResult(IReadOnlyList<ReportIssueStatusItem> Reports);
+
+// One of the caller's own reports as the maintainers' triage board currently holds it. `Status` is
+// the `client-issues` board's live status (a `simple` board: Todo|InProgress|Done|…) — that IS the
+// answer to "did anything happen to my report". `Body` is the full stored body, marker line
+// included, so the reporter can see exactly what was filed under its name.
+public sealed record ReportIssueStatusItem(
+	string Key, string Title, string Status, DateTime? Created, DateTime? Updated, string Body,
+	IReadOnlyList<CommentView> Comments);
 
 // ---- session_* -----------------------------------------------------------------------
 

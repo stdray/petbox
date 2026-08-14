@@ -3,7 +3,8 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 217 surfaces: 57 REST, 65 Razor, 95 MCP; was 215/55 REST before
+// ratchet guards (AuthzSurfaces — 218 surfaces: 57 REST, 65 Razor, 96 MCP; was 217/95 MCP before
+// report-issue-has-no-reply-channel added petbox_report_issue_status; 215/55 REST before
 // doc-surface-undiscoverable-from-ui added the /docs and /help redirects, and 217/97 MCP before that
 // when batch3 (read-surface-shape-batch-and-dead-delta) removed session_delta and config_binding_delta).
 // One test source, one inventory: a second enumeration would drift from the ratchet's and the two
@@ -14,7 +15,7 @@ namespace PetBox.Tests.Architecture;
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 217 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 218 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
 //   * REFUSED               — 143 addressed surfaces that already deny a foreign tenant today.
@@ -23,12 +24,12 @@ namespace PetBox.Tests.Architecture;
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
 //                              papered over.
-//   * NotAddressable        —  65 surfaces with nowhere to write a foreign tenant: no
+//   * NotAddressable        —  66 surfaces with nowhere to write a foreign tenant: no
 //                              {projectKey}/{workspaceKey} in the route, none in the tool schema.
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 143 + 9 + 65 = 217, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 143 + 9 + 66 = 218, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -208,8 +209,14 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"page:/Share",
 		]),
 
-		("FEEDBACK — writes into the vendor's own project, never the caller's tenant", [
+		("FEEDBACK — writes into, and reads back out of, the vendor's own project, never the caller's "
+			+ "tenant. petbox_report_issue_status has no projectKey BY CONSTRUCTION (work "
+			+ "report-issue-has-no-reply-channel): the reporting project is resolved from the CREDENTIAL, so "
+			+ "there is no slot to aim it with — which is also why it lands here rather than among the "
+			+ "refusals. What keeps one reporter out of another's reports is the identity filter inside the "
+			+ "tool, pinned by Mcp/ReportIssueStatusTests, not this axis", [
 			"mcp:petbox_report_issue",
+			"mcp:petbox_report_issue_status",
 		]),
 
 		("FLEET-WIDE — the deploy control plane is addressed by node/deployment id and carries NO tenant "
@@ -406,9 +413,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(217,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 57 REST + 65 Razor + 95 MCP "
-			+ "(was 55 REST / 215 before doc-surface-undiscoverable-from-ui added /docs and /help; "
+		_host.Surfaces.Should().HaveCount(218,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 57 REST + 65 Razor + 96 MCP "
+			+ "(was 95 MCP / 217 before report-issue-has-no-reply-channel added petbox_report_issue_status; "
+			+ "55 REST / 215 before doc-surface-undiscoverable-from-ui added /docs and /help; "
 			+ "97 MCP / 217 before that when batch3 removed session_delta and config_binding_delta). "
 			+ "If that number moved, a surface was added or removed and this test must be re-read, not "
 			+ "re-baselined");
@@ -464,11 +472,12 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	{
 		// The scope axis is already centralised and already works. If the probe key were short a scope,
 		// the surfaces guarded by it would deny for the WRONG reason and read as passes.
-		_host.ToolsVisibleToAttacker.Should().HaveCount(95,
+		_host.ToolsVisibleToAttacker.Should().HaveCount(96,
 			"McpToolScopeFilter trims tools/list to what the key's scopes allow. A key missing a scope sees "
-			+ "fewer than the full 95 verbs (was 97 before batch3 removed session_delta and "
+			+ "fewer than the full 96 verbs (was 95 before report-issue-has-no-reply-channel added "
+			+ "petbox_report_issue_status; 97 before batch3 removed session_delta and "
 			+ "config_binding_delta), and every tool it cannot see would deny on the scope axis — a "
-			+ "field of false greens. Seeing all 95 is the proof that every MCP denial above is about the "
+			+ "field of false greens. Seeing all 96 is the proof that every MCP denial above is about the "
 			+ "TENANT");
 
 		// The two scopes the deviation list BLAMES for the seven surfaces a foreign tenant reaches. If
