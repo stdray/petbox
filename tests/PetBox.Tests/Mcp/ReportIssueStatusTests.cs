@@ -5,7 +5,6 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Settings;
-using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
