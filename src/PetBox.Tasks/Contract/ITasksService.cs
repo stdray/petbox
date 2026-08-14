@@ -329,6 +329,9 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// --- system surface (petbox_report_issue: report-to-maintainer, not project-scoped) ---
 
-	// File an issue node onto a triage board (auto-created), returning its key.
-	Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default);
+	// File an issue node onto a triage board (auto-created), returning its key. `reporter` is the
+	// RESOLVED reporting project (never a raw "*" claim) and is recorded as a `reporter:<project>`
+	// tag so the reporter can read its own reports back (petbox_report_issue_status); null files
+	// the report untagged rather than failing the write.
+	Task<string> ReportIssueAsync(string project, string board, string title, string body, string? reporter = null, CancellationToken ct = default);
 }
