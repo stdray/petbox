@@ -1,3 +1,5 @@
+using System.Reflection;
+using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Settings;
@@ -43,6 +45,43 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 	readonly Func<string, TContext> _create;
 	readonly Action<string> _ensureSchema;
 	readonly Dictionary<string, bool> _ensured = [];
+
+	// Bug: linq2db-per-connection-options-leak (prod OOM, 773k live interceptors / ~13h).
+	// `_create` is always `cs => new XDb(XDb.CreateOptions(cs))` — one step that BOTH builds the
+	// immutable DataOptions AND opens a fresh DataConnection. XDb.CreateOptions runs
+	// SqliteDurability.WithDurability, which allocates a NEW LinqToDB.Interceptors.
+	// ConnectionOptionsConnectionInterceptor on every call (the delegate it wraps is static and
+	// harmless — the wrapper object is not). linq2db's static LinqToDB.Internal.Common.
+	// IdentifierBuilder._objects interns that interceptor FOREVER (no eviction; ClearCache() is never
+	// called anywhere in the codebase). Every context that rebuilt DataOptions on each
+	// NewEnsuredConnection call therefore leaked one interceptor per connection opened.
+	//
+	// Fix: cache the built (non-generic) DataOptions per (scopeKey, name) so the SAME immutable
+	// config object — interceptor included — backs every later connection to that file. Only the
+	// DataOptions is shared; NewEnsuredConnection still returns a brand-new, caller-owned TContext
+	// with its own ADO connection on every call (spec: conn-safety-fresh-conn). This is the same
+	// shape as the already-healthy CoreDbFactory/CacheDbFactory/DeployDbFactory, which build
+	// DataOptions once in their constructor and reuse it for every Open() — ScopedDbFactory just has
+	// to do it per scope-key instead of once, since it is keyed by file rather than bound to one.
+	//
+	// Bounded by construction: the key space is the distinct (scopeKey, name) pairs this factory
+	// instance is ever asked to open, i.e. the distinct .db files this context owns on disk — bounded
+	// by how many project/workspace/log files exist (tens, not the millions of connections opened
+	// against them), so it cannot grow with request or background-job volume the way the leaked
+	// linq2db registries did.
+	readonly Dictionary<string, DataOptions> _optionsCache = [];
+
+	// Resolved once per TContext type, not per connection. Every context wired through this factory
+	// declares exactly one public constructor shaped `TContext(DataOptions<TContext> options)` (see
+	// LogDb, TasksDb, MemoryDb, SessionsDb, ConfigDb) — a generic constraint can't express "has this
+	// constructor" (C# only supports the parameterless `new()`), so a single reflective lookup stands
+	// in to rebuild a TContext from a cached DataOptions.
+	static readonly ConstructorInfo _optionsCtor =
+		typeof(TContext).GetConstructor([typeof(DataOptions<TContext>)])
+		?? throw new InvalidOperationException(
+			$"{typeof(TContext)} must declare a public constructor accepting DataOptions<{typeof(TContext).Name}> " +
+			"for ScopedDbFactory to memoize its DataOptions (see linq2db-per-connection-options-leak).");
+
 	readonly object _lock = new();
 
 	public ScopedDbFactory(
@@ -74,12 +113,18 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 			Directory.CreateDirectory(dir);
 		var cs = SqliteConnectionStrings.ForFile(dbPath);
 
-		// Flag+lock serializes ONLY the first DDL per file — without the flag two threads
-		// both see "not migrated" and race on the FluentMigrator journal table. After the
-		// first caller runs the schema, every later caller skips the lock and creates a
-		// fresh connection lock-free. Removing the flag reintroduces the race.
-		// File.Exists guards against stale flags (file deleted without EvictAsync — e.g.
-		// race with background job drain loops + test ResetAsync).
+		// Flag+lock serializes the first DDL per file — without the flag two threads both see
+		// "not migrated" and race on the FluentMigrator journal table. File.Exists guards against
+		// stale flags (file deleted without EvictAsync — e.g. race with background job drain loops +
+		// test ResetAsync).
+		//
+		// The DataOptions memoization (see _optionsCache above) rides the SAME lock and the same
+		// "first caller pays" shape: the first caller for a cacheKey ensures schema AND builds+caches
+		// the DataOptions (the only call that reaches `_create`, and the only one that can allocate a
+		// new linq2db interceptor); every later caller does neither — it just rewraps the cached
+		// DataOptions into a fresh TContext via reflection, which is cheap enough to not be worth
+		// taking back out of the lock. This also rules out two threads racing to build — and
+		// separately intern — two DataOptions for the same file.
 		lock (_lock)
 		{
 			if (!_ensured.TryGetValue(cacheKey, out _) || !File.Exists(dbPath))
@@ -87,9 +132,14 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 				_ensureSchema(cs);
 				_ensured[cacheKey] = true;
 			}
-		}
 
-		return _create(cs);
+			if (_optionsCache.TryGetValue(cacheKey, out var cachedOptions))
+				return (TContext)_optionsCtor.Invoke([new DataOptions<TContext>(cachedOptions)]);
+
+			var fresh = _create(cs);
+			_optionsCache[cacheKey] = fresh.Options;
+			return fresh;
+		}
 	}
 
 	public async ValueTask EvictAsync(string scopeKey, string? name = null)
@@ -107,7 +157,10 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 	public ValueTask DisposeAsync()
 	{
 		lock (_lock)
+		{
 			_ensured.Clear();
+			_optionsCache.Clear();
+		}
 		return default;
 	}
 }
