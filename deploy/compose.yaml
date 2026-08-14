@@ -14,6 +14,27 @@ services:
     # mid-drain while its own ShutdownTimeout still believed it had 30. Not a wait: docker
     # stops as soon as the process exits and only kills at this deadline.
     stop_grace_period: 40s
+    # Without a limit here the container inherits "unlimited" and can eat the whole host —
+    # which is exactly what happened: every OOM before 2026-08-12 logged
+    # `constraint=CONSTRAINT_NONE` (a HOST-level OOM, not a cgroup one), taking down sibling
+    # services (Caddy-L4, accel-ppp, 3proxy, yobapub-proxy) and TCP/443 with it. Defaults sized
+    # for the actual prod host: 1 vCPU / 1793 MiB RAM / 896 MiB swap, shared with those four
+    # daemons plus petbox-backup. Post-fix baseline RSS for petbox is well under 150 MiB
+    # (comparable siblings YobaLog/YobaConf run ~80-105 MiB); the pre-fix leak that caused the
+    # incident above peaked around 560-725 MiB before being killed. 1024m leaves real headroom
+    # above that worst observed spike (so a legitimate burst — a big KQL query, an embedding
+    # batch, a log-ingestion spike — doesn't trip a false-positive self-OOM) while still capping
+    # the blast radius at ~57% of host RAM, leaving the rest for the host + siblings. It also
+    # matters for a second, unrelated reason: .NET's GC computes its heap hard limit as ~75% of
+    # the cgroup memory limit (768 MiB here); with NO limit set it calibrates against the HOST's
+    # memory instead and never sees a ceiling worth reacting to — this line is what gives the GC
+    # a pressure signal at all, not just a blast-radius fence. `memswap_limit` caps combined
+    # memory+swap so a degraded-but-not-crashed container can't quietly swap-thrash for HOURS on
+    # a 1-vCPU host (the failure mode HEALTHCHECK below is also aimed at) — it's capped to 256
+    # MiB of swap above mem_limit, leaving the bulk of the host's 896 MiB swap for everyone else.
+    # Override per-deploy with `PETBOX_MEM_LIMIT=... PETBOX_MEMSWAP_LIMIT=... docker compose ...`.
+    mem_limit: ${PETBOX_MEM_LIMIT:-1024m}
+    memswap_limit: ${PETBOX_MEMSWAP_LIMIT:-1280m}
     ports:
       - "127.0.0.1:8083:8080"   # loopback only — central Caddy terminates TLS
     volumes:

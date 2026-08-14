@@ -79,4 +79,16 @@ COPY --from=build --chown=app:app /app/publish .
 # container restarts.
 VOLUME ["/app/data"]
 EXPOSE 8080
+# `docker ps` STATUS is not proof of liveness here: a hung/thrashing process keeps its PID
+# and its container id (a restart does NOT get a new container id), so `Up` alone has already
+# been seen with an empty `docker top` and, separately, with a process that stayed "Up" for
+# hours while its own request/log throughput had collapsed to near zero. This image is
+# self-contained chiseled with no shell, no curl/wget, no `dotnet` CLI — `./PetBox.Web
+# --healthcheck` (see Program.cs) is the only executable HEALTHCHECK CMD can call. interval
+# 30s / timeout 5s / retries 3 -> ~90-125s from first bad probe to `unhealthy`, deliberately
+# tight: the failure mode this guards is a process that stays running but degraded for HOURS,
+# so a lenient healthcheck would just watch it happen. start-period 20s covers Kestrel bind +
+# first-request JIT/warmup, well under the app's own startup path.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+	CMD ["./PetBox.Web", "--healthcheck"]
 ENTRYPOINT ["./PetBox.Web"]

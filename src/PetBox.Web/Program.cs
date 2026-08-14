@@ -28,6 +28,17 @@ if (args.Length >= 2 && args[0] == "--hash-password")
 	return;
 }
 
+// `HEALTHCHECK CMD ["./PetBox.Web", "--healthcheck"]` in the Dockerfile. The final image
+// (mcr.microsoft.com/dotnet/nightly/runtime-deps:...-chiseled) is self-contained with no
+// shell, no curl/wget, no `dotnet` CLI — this apphost is the ONLY executable that exists
+// inside the container, so a self-check mode is the only way `HEALTHCHECK CMD` can work at
+// all here. `Environment.Exit` (not `return`) so the process ends here instead of falling
+// through into `WebApplication.CreateBuilder` below.
+if (args.Length >= 1 && args[0] == "--healthcheck")
+{
+	Environment.Exit(Program.RunHealthCheck() ? 0 : 1);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 ConfigureServices(builder);
 var app = builder.Build();
@@ -43,6 +54,30 @@ public partial class Program
 	// migrated db / backups / self-log in the working tree (see ConfigureServices).
 	static bool IsOpenApiDocumentGeneration =>
 		System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name == "GetDocument.Insider";
+
+	// Backs `--healthcheck` (see the top-level branch above). Hits this same process's own
+	// anonymous /health over loopback and maps the result to a process exit code, which is
+	// what `docker inspect --format='{{.State.Health.Status}}'` / `docker ps` STATUS reads.
+	// 8080 is not a guess: ASPNETCORE_URLS is pinned to `http://+:8080` by ENV in the
+	// Dockerfile and nothing in prod ever overrides it — if that ever changes, this needs to
+	// change with it. A short timeout matters as much as the request itself: under the GC/
+	// thread-pool thrashing this is meant to catch, the process stays alive and *eventually*
+	// answers, so a lenient timeout would pass through exactly the multi-hour degraded state
+	// this exists to surface. `Send` (sync), not `SendAsync` — this path runs before the host
+	// or any DI container exists; no reason to make Main async just for one blocking call.
+	internal static bool RunHealthCheck()
+	{
+		try
+		{
+			using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+			using var response = client.Send(new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:8080/health"));
+			return response.IsSuccessStatusCode;
+		}
+		catch
+		{
+			return false;
+		}
+	}
 
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
