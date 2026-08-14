@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using LinqToDB;
 using LinqToDB.Data;
@@ -69,7 +70,16 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 	// by how many project/workspace/log files exist (tens, not the millions of connections opened
 	// against them), so it cannot grow with request or background-job volume the way the leaked
 	// linq2db registries did.
-	readonly Dictionary<string, DataOptions> _optionsCache = [];
+	//
+	// ConcurrentDictionary, not Dictionary+_lock: this is read on the HOT path (see
+	// NewEnsuredConnection below), and it must be readable WITHOUT taking _lock. Production is a
+	// single vCPU with Kestrel already logging thread-pool-starvation heartbeats, and connections
+	// open here at ~16/sec from five competing background jobs plus request paths — serializing
+	// every connection open on one lock (which an earlier version of this fix did, reasoning that
+	// the reflective rebuild was "cheap enough") would trade the OOM for exactly the kind of
+	// contention that host cannot absorb. Only the FIRST build for a (scopeKey, name) — the one
+	// call that can allocate a new linq2db interceptor — takes _lock; see below.
+	readonly ConcurrentDictionary<string, DataOptions> _optionsCache = new();
 
 	// Resolved once per TContext type, not per connection. Every context wired through this factory
 	// declares exactly one public constructor shaped `TContext(DataOptions<TContext> options)` (see
@@ -113,18 +123,28 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 			Directory.CreateDirectory(dir);
 		var cs = SqliteConnectionStrings.ForFile(dbPath);
 
-		// Flag+lock serializes the first DDL per file — without the flag two threads both see
-		// "not migrated" and race on the FluentMigrator journal table. File.Exists guards against
-		// stale flags (file deleted without EvictAsync — e.g. race with background job drain loops +
-		// test ResetAsync).
-		//
-		// The DataOptions memoization (see _optionsCache above) rides the SAME lock and the same
-		// "first caller pays" shape: the first caller for a cacheKey ensures schema AND builds+caches
-		// the DataOptions (the only call that reaches `_create`, and the only one that can allocate a
-		// new linq2db interceptor); every later caller does neither — it just rewraps the cached
-		// DataOptions into a fresh TContext via reflection, which is cheap enough to not be worth
-		// taking back out of the lock. This also rules out two threads racing to build — and
-		// separately intern — two DataOptions for the same file.
+		// LOCK-FREE FAST PATH — this is the hot one and it is deliberate; do not move this back
+		// under _lock. Once a (scopeKey, name)'s DataOptions has been built (see the slow path
+		// below), every later caller reaches this branch: it takes no lock, runs no schema check,
+		// and never calls `_create` — it only reads the ConcurrentDictionary and reflectively
+		// rewraps the cached DataOptions into a fresh TContext. Production opens connections here
+		// at ~16/sec from five competing background jobs plus request paths on a single vCPU that
+		// already logs Kestrel thread-pool-starvation heartbeats; serializing that on one lock is
+		// not an option regardless of how cheap the rebuild is per call.
+		// File.Exists is still checked on every call (a plain stat(), not a lock) to preserve the
+		// original guard: a file deleted without EvictAsync (background job drain loops, test
+		// ResetAsync) must fall through to the slow path and re-run schema, not silently hand out a
+		// connection to a file that no longer exists.
+		if (File.Exists(dbPath) && _optionsCache.TryGetValue(cacheKey, out var cachedOptions))
+			return (TContext)_optionsCtor.Invoke([new DataOptions<TContext>(cachedOptions)]);
+
+		// SLOW PATH — only the first caller for a (scopeKey, name) (or a caller after EvictAsync /
+		// an out-of-band file deletion) reaches here. Flag+lock serializes the first DDL per file —
+		// without the flag two threads both see "not migrated" and race on the FluentMigrator
+		// journal table — and the DataOptions build rides the SAME lock, so the one call that can
+		// allocate a new linq2db interceptor (`_create`, which runs XDb.CreateOptions) never races
+		// itself. Double-checked: another thread may have already built+cached the DataOptions (and
+		// possibly re-ensured schema) while this one was waiting for the lock.
 		lock (_lock)
 		{
 			if (!_ensured.TryGetValue(cacheKey, out _) || !File.Exists(dbPath))
@@ -133,7 +153,7 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 				_ensured[cacheKey] = true;
 			}
 
-			if (_optionsCache.TryGetValue(cacheKey, out var cachedOptions))
+			if (_optionsCache.TryGetValue(cacheKey, out cachedOptions))
 				return (TContext)_optionsCtor.Invoke([new DataOptions<TContext>(cachedOptions)]);
 
 			var fresh = _create(cs);

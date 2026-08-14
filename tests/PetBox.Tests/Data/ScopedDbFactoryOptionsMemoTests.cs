@@ -4,19 +4,23 @@ using PetBox.Tasks.Data;
 
 namespace PetBox.Tests.Data;
 
-// Regression coverage for work/linq2db-per-connection-options-leak — the prod OOM where
-// ScopedDbFactory<T> rebuilt DataOptions (and therefore a brand-new
-// LinqToDB.Interceptors.ConnectionOptionsConnectionInterceptor) on EVERY NewEnsuredConnection
-// call. linq2db's static LinqToDB.Internal.Common.IdentifierBuilder._objects interns each such
-// interceptor forever — 773k live interceptors / ~13h in the production dump that diagnosed this.
+// Secondary regression coverage for work/linq2db-per-connection-options-leak, ONE LEVEL ABOVE the
+// disease itself. The primary test is IdentifierBuilderGrowthProbeTests (this directory), which
+// reads linq2db's actual leaking registry (LinqToDB.Internal.Common.IdentifierBuilder._objects /
+// _identifiers) and proves querying does not grow it — that is the mechanism, and the only thing
+// that fully rules out the leak.
 //
-// The disease is "a fresh DataOptions per connection", not merely "memory grows" — a symptom-level
-// test (e.g. watching process RSS) would not distinguish this from a dozen other possible leaks and
-// would be slow/flaky. So this asserts the actual invariant the fix establishes: for one
+// This file asserts the API-level CONTRACT the fix establishes to stop that mechanism: for one
 // (scopeKey, name), every connection opened over the factory's lifetime shares the SAME DataOptions
-// reference. TasksDb stands in for all five contexts that shared this bug (TasksDb, MemoryDb,
-// SessionsDb, ConfigDb, LogDb) — they are wired identically through ScopedDbFactory<T>, so one is
-// sufficient to pin the shared invariant without duplicating the same test five times.
+// reference (the object the interceptor lives inside). It is necessary but NOT sufficient on its
+// own — a future change could keep this contract while still re-triggering interning some other
+// way (e.g. rebuilding an interceptor list on every query instead of every connection) — which is
+// exactly why the growth-probe test exists and must not be deleted in favor of this one. Kept
+// alongside it because it pins the DESIGN invariant (one DataOptions per file) independently of
+// linq2db's internals, and fails with a much more direct message when that invariant regresses.
+// TasksDb stands in for all five contexts that shared this bug (TasksDb, MemoryDb, SessionsDb,
+// ConfigDb, LogDb) — they are wired identically through ScopedDbFactory<T>, so one is sufficient to
+// pin the shared invariant without duplicating the same test five times.
 public sealed class ScopedDbFactoryOptionsMemoTests : IDisposable
 {
 	readonly List<string> _dirs = [];
