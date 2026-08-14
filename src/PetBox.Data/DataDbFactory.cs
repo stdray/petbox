@@ -148,6 +148,22 @@ public sealed class DataDbFactory : IDataDbFactory
 	public bool TryDelete(string projectKey, string dbName)
 	{
 		var path = GetDbPath(projectKey, dbName);
+
+		// Evict pooled connections BEFORE unlinking the file. Microsoft.Data.Sqlite pools native
+		// handles keyed by connection string and disposing a connection returns it to the pool
+		// instead of truly closing it. On POSIX, File.Delete on a path with an open pooled handle
+		// succeeds (the inode lingers, detached from any directory entry, until every fd on it
+		// closes) — so without this ClearPool call, a LATER CreateAsync for the same (projectKey,
+		// dbName) can reuse that stale pooled handle: OpenAsync/WAL/quota all "succeed" against the
+		// detached, deleted inode, DataDbs.CreateAsync inserts its metadata row and returns 201, and
+		// no file ever reappears at `path`. That's exactly how Post_CreatesDb_AndPersistsRow could
+		// fail with the file missing despite a correct DataDbs row: an earlier delete+recreate of
+		// the same name (Delete_Then_Recreate_Works_EvenIfFileStillOnDisk) left a stale pool entry,
+		// and nothing had cleared it. Mirrors ScopedDbFactory.EvictAsync, which already does this
+		// for the Log/Config modules.
+		foreach (var cs in SqliteConnectionStrings.Spellings(path))
+			SqliteConnection.ClearPool(new SqliteConnection(cs));
+
 		// SQLite WAL mode produces -wal / -shm sidecars next to the main file.
 		var sidecars = new[] { path, path + "-wal", path + "-shm" };
 
