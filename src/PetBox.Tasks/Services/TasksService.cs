@@ -2945,22 +2945,40 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- system: petbox_report_issue ----
 
-	public async Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default)
+	// `reporter` is the RESOLVED reporting project (ModuleMcp.DefaultProjectOf: the key's `project`
+	// claim, or a "*" key's `project_default`) — never the raw claim, because "*" is not an identity.
+	// It is recorded as a `reporter:<project>` TAG here rather than only as the trailing body line the
+	// adapter composes: petbox_report_issue_status filters on it, and a filter over prose is a filter
+	// over something a maintainer's edit can reflow. The tag write lives in THIS method and not in
+	// ReportTools because this path goes straight to TemporalStore and never touches the tag machinery
+	// — an adapter cannot reach it. null (a "*" key with no default) files the report untagged: the
+	// write must never fail for want of an identity, and the read side refuses that key explicitly
+	// instead of silently showing it everyone's reports.
+	public async Task<string> ReportIssueAsync(string project, string board, string title, string body, string? reporter = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
 		var key = IssueSlug(title);
+		// Assign a stable NodeId here: this path writes straight to TemporalStore and skips
+		// ApplyWorkflow (the usual NodeId-assignment point), so without this the row lands with
+		// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
+		var nodeId = Guid.NewGuid().ToString("N");
 		await _boards.EnsureAsync(project, board, ct); // auto-create the triage board on first report
 		using var ctx = _boards.NewEnsuredConnection(project);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			// Assign a stable NodeId here: this path writes straight to TemporalStore and skips
-			// ApplyWorkflow (the usual NodeId-assignment point), so without this the row lands with
-			// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
 			// The issues board is a `simple` board → its preset vocab (Todo|InProgress|…), not the
 			// intake `reported`. Type `issue` is in the simple type set.
-			new TaskNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 0 },
+			new TaskNode { Board = board, Key = key, NodeId = nodeId, Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 0 },
 		}, partition: n => n.Board == board, ct: ct);
-		if (r.Applied) await _boards.TouchAsync(project, board, ct);
+		if (r.Applied)
+		{
+			// enforceNamespaces:false — `client-issues` is a `simple` board (no tag axes), so its tags
+			// are free-form and `reporter:` needs no vocabulary entry. Only after the node actually
+			// landed: on a no-op upsert `nodeId` names a row that was never written.
+			if (!string.IsNullOrWhiteSpace(reporter))
+				await _tags.SetAsync(project, board, nodeId, [$"reporter:{reporter.Trim()}"], enforceNamespaces: false, ct: ct);
+			await _boards.TouchAsync(project, board, ct);
+		}
 		return key;
 	}
 

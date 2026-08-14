@@ -316,6 +316,10 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("db_list", new { projectKey = ProjectKey }),
 			("whoami", new { }),
 			("tool_describe", new { name = "tasks_upsert" }),
+			// The read-back half of the feedback channel. Takes no projectKey (the credential IS the
+			// address) and needs no seeding: this project has filed nothing, and `{reports: []}` is a
+			// real conforming answer — the identity filter itself is covered by ReportIssueStatusTests.
+			("petbox_report_issue_status", new { }),
 		};
 		foreach (var (tool, args) in reads)
 			await Ok(failures, tool, args);
@@ -498,6 +502,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"health_search", "deploy_list", "deploy_node_list", "project_list", "relations_list",
 		"llm_config_get", "apikey_list", "db_list", "whoami", "tool_describe",
 		"agent_def_upsert", "agent_def_list", "agent_def_get",
+		"petbox_report_issue_status",
 	};
 
 	// Names exercised for edge branches (delete-missing + not-found).

@@ -259,7 +259,8 @@ things came to be decided, while the current plan and status are the boards abov
 It exposes the **full PetBox tool surface** (~95 tools, underscore-named):
 `tasks_*`, `memory_*`, `session_*`, `comments_*`, `relations_*`, `config_*`,
 `log_*` / `log_query`, `data_*` / `db_*`, `llm_*`, `deploy_*`, `apikey_*`,
-`project_*`, `health_search`, `petbox_report_issue`, `whoami`. Each tool's visibility is
+`project_*`, `health_search`, `petbox_report_issue` / `petbox_report_issue_status`, `whoami`.
+Each tool's visibility is
 gated by the calling key's scopes.
 
 Setup (one-time, per machine):

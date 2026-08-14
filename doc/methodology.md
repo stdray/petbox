@@ -96,6 +96,12 @@ Two queues (agent-reported, user-reported); items land at `reported` (via `petbo
 or a direct upsert). It is NOT part of the requirements pipeline — it's a holding area
 until each item is routed.
 
+The agent-reported queue is **two-way**: `petbox_report_issue` returns the report's key, and
+`petbox_report_issue_status` reads the reporter's OWN reports back — current status plus the
+maintainers' comments. The reporting project is resolved from the calling key (its `project`
+claim, or a `*` key's default project), so a reporter never has to be granted access to the
+triage board itself, and never sees another project's reports.
+
 **Intake is deferred triage, NOT a mandatory gateway.** It exists for reports whose
 reporter is not the router (external users, an agent without the context to diagnose) and
 for observations you don't want to route right now (noticed mid-task — park it, don't
@@ -212,7 +218,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 ## It rides on what PetBox already has
 - Spec = temporal tree ← `TemporalStore` (SCD-2).
 - Iteration = release ← CI `ci.NNN` + `commits[]` + deploy.
-- Intake ← the `incoming` phase + `petbox_report_issue`.
+- Intake ← the `incoming` phase + `petbox_report_issue` / `petbox_report_issue_status`.
 - `type=auto` ← the agent already classifies incoming requests reliably.
 
 ## Adoption status
