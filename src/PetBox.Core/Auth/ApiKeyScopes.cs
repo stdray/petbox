@@ -75,8 +75,8 @@ public static class ApiKeyScopes
 
 	public static readonly IReadOnlyList<ApiKeyScope> All =
 	[
-		new(ConfigRead,  "Read shared config",     "GET /v1/conf (resolved config bundle).",                                       "Config"),
-		new(ConfigWrite, "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets.",                     "Config"),
+		new(ConfigRead,  "Read shared config",     "GET /v1/conf (resolved config bundle); read bindings of your own workspace via the MCP config_binding_search/_get tools.", "Config"),
+		new(ConfigWrite, "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets — over REST, or in your own workspace via the MCP config_binding_upsert/_delete tools.", "Config"),
 		new(LogsIngest,  "Ingest log events",      "POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines.", "Logs"),
 		new(LogsQuery,   "Query logs (KQL)",       "KQL search via /api/logs/{p}/{log}/query and the MCP `log_query` tool; list logs.", "Logs"),
 		new(LogsAdmin,   "Manage logs",            "Create and delete named logs via /api/logs/{p}/logs.",                        "Logs"),
