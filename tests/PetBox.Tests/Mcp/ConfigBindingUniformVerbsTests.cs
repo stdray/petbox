@@ -46,7 +46,11 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 		{
 			HttpContext = new DefaultHttpContext
 			{
-				User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("scopes", "admin:provision")], "test")),
+				// config:read + config:write — the gate these verbs carry since
+				// work `config-binding-mcp-declare-tenant` (it used to be admin:provision). This fixture
+				// calls the tool methods DIRECTLY, so only AssertScope runs here; the workspace half of
+				// the rule is the PEP's and is proved over the wire in ConfigBindingTenantAuthzTests.
+				User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("scopes", "config:read,config:write")], "test")),
 				RequestServices = TestProjectCatalog.Services,
 			},
 		};

@@ -64,7 +64,11 @@ static class McpToolScopeFilter
 		: tool.StartsWith("data_", StringComparison.Ordinal) || tool.StartsWith("db_", StringComparison.Ordinal) ? "data"
 		: tool.StartsWith("deploy_", StringComparison.Ordinal) ? "deploy"
 		: tool.StartsWith("agent_def_", StringComparison.Ordinal) ? "agents"
-		: tool.StartsWith("config_", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision
+		// config_binding_* are ordinary TENANT verbs (config:read / config:write over the workspace named
+		// by `workspaceKey`), so they get a module of their own like every other family. They used to map
+		// to the literal admin:provision, which matched the gate they had then — and hid them from a key
+		// holding config:read/config:write, i.e. from exactly the keys that may now call them.
+		: tool.StartsWith("config_", StringComparison.Ordinal) ? "config"
 		: null; // project_* / apikey_* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
 
 	static bool Allowed(string tool, HashSet<string> granted)

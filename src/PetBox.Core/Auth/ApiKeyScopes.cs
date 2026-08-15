@@ -109,10 +109,12 @@ public static class ApiKeyScopes
 		new(AgentHeartbeat, "Agent: report state", "FLEET-WIDE node-agent scope: POST /agent/heartbeat reports a NODE's actual container state (the node comes from the key's own claim, not from a tenant). Issued automatically on node keys; not a tenant scope.", "Deploy", ScopeAuthority.Privileged),
 		new(AgentsRead,  "Read agent definitions", "List/get portable agent-definition documents (roles/tier/capabilities/spawn/escalation) via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
 		new(AgentsWrite, "Write agent definitions","Create/update/delete portable agent-definition documents via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
-		// PRIVILEGED — the root-equivalent one. ApiKeyTools/ProjectTools/ConfigTools are all
+		// PRIVILEGED — the root-equivalent one. ApiKeyTools and ProjectTools are
 		// [TenantExempt(Provisioning)]: this scope mints keys into ANY project (itself included),
-		// so holding it is holding every other scope in every tenant.
-		new(AdminProvision, "Provision projects & keys", "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project_create), sets config bindings (config_binding_upsert). Issue deliberately; prefer short-lived keys for routine work.", "Admin", ScopeAuthority.Privileged),
+		// so holding it is holding every other scope in every tenant. ConfigTools was on that list
+		// and is NOT any more — config_binding_* declare their workspace and gate on config:read /
+		// config:write, so this scope no longer reaches config bindings at all.
+		new(AdminProvision, "Provision projects & keys", "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project_create). Issue deliberately; prefer short-lived keys for routine work.", "Admin", ScopeAuthority.Privileged),
 	];
 
 	static readonly HashSet<string> Allowed =

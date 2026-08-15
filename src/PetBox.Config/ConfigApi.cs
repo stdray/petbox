@@ -32,13 +32,14 @@ public sealed record ConfigBindingDto(string Path, string Value, string Tags, Bi
 // ConfigDirectory.GetProjectWorkspaceAsync are the same query on the same column), same wildcard
 // pass, and the same non-treatment of sandboxOnly for a workspace target.
 //
-// WHAT THIS IS DELIBERATELY *NOT*: `provisioning`. The three MCP config verbs
-// (config_binding_upsert/search/delta) declared that class and consequently SERVE a foreign
-// workspace — AuthzCrossTenantTests records all three, and records that "the REST twin denies". That
-// asymmetry is a known defect with its own card, owned by the maintainer; it is NOT a licence to
-// bring REST into line by opening it. Declaring these two `provisioning` would turn a measured 403
-// into cross-tenant config WRITE, i.e. it would use this wave to widen the hole the wave exists to
-// close. The REST refusal is the correct half of the divergence and it is kept.
+// WHAT THIS IS DELIBERATELY *NOT*: `provisioning`. The MCP config verbs used to declare that class
+// and consequently SERVED a foreign workspace, while these routes answered the identical call 403 —
+// AuthzCrossTenantTests measured both halves. The REST refusal was the correct half and it was never
+// "brought into line" by opening it; instead MCP was brought into line with THIS, under work
+// `config-binding-mcp-declare-tenant`: ConfigTools now declares
+// [TenantFrom(Argument, "workspaceKey", TenantKind.Workspace)] and gates on config:read/config:write,
+// the same two things this file does. Both transports now give one answer. Declaring these routes
+// `provisioning` would still be a widening of the hole that closure removed — do not.
 public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
