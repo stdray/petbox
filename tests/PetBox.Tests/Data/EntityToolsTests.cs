@@ -87,7 +87,7 @@ public sealed class EntityToolsFixture : IAsyncLifetime
 			{
 				Key = ApiKey,
 				ProjectKey = ProjectKey,
-				Scopes = "logs:admin,logs:query,data:read,data:write,data:schema,admin:provision",
+				Scopes = "logs:admin,logs:query,data:read,data:write,data:schema,config:read,config:write,admin:provision",
 				CreatedAt = DateTime.UtcNow,
 			});
 		}

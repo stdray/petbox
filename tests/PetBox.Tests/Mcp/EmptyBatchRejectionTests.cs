@@ -29,7 +29,7 @@ public sealed class EmptyBatchRejectionFixture : IAsyncLifetime
 	public const string ProjectKey = "ebatch";
 	public const string WorkspaceKey = "ebatch-ws";
 	const string ApiKey = "yb_key_ebatch_agent";
-	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write,admin:provision";
+	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write,config:read,config:write,admin:provision";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;

@@ -13,8 +13,9 @@ namespace PetBox.Web.Mcp;
 // Typed config-binding tools (mcp-typing wave), on the uniform-entity-verbs matrix mirroring
 // tasks/memory/comments: config_binding_upsert (batch write) · config_binding_search (list =
 // search without q) · config_binding_get (addressed single read) · config_binding_delete.
-// Provisioning ops — admin:provision scope, no per-project claim. Secrets are stored encrypted,
-// never returned as plaintext Value.
+// Tenant ops over ONE workspace's config store — config:read to read, config:write to write, and the
+// workspace is the one named by `workspaceKey`. Secrets are stored encrypted, never returned as
+// plaintext Value.
 //
 // NO config_binding_delta (batch3, read-surface-shape-batch-and-dead-delta P.3): config bindings
 // are immutable rows with no tombstone — a delete just drops the row from _search, so a delta
@@ -30,30 +31,32 @@ namespace PetBox.Web.Mcp;
 // MAX id (`currentVersion` on config_binding_upsert/_search). See the config_binding_upsert essay.
 //
 // Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
-// TENANT DECLARATION (spec authz-scope-declaration): `provisioning`, as the spec has it today — and
-// this is the one declaration in the MCP wave that records a KNOWN DISAGREEMENT rather than a settled
-// design. Read the whole note before changing it.
+// TENANT DECLARATION (spec authz-scope-declaration): the tenant is the WORKSPACE named by the
+// `workspaceKey` argument, and the gate is the ordinary config:read / config:write pair. This used to
+// be [TenantExempt(Provisioning)] + admin:provision, and the divergence that created is CLOSED — the
+// note below is the record of how, kept because the next reader will otherwise re-derive it.
 //
-// WHAT IS TRUE. These five verbs take a `workspaceKey` and check NOTHING about it: the only gate is
-// ModuleMcp.AssertScope(admin:provision). So an admin:provision key scoped to one project reads and
-// WRITES any workspace's config store. The cross-tenant probe measures exactly that
-// (config_binding_upsert wrote the victim workspace's config; _search/_delta read it).
+// WHAT WAS WRONG. These verbs took a `workspaceKey` and checked NOTHING about it: the only gate was
+// ModuleMcp.AssertScope(admin:provision), so an admin:provision key scoped to one project read and
+// WROTE any workspace's config store, while the REST twin over the SAME data — POST/DELETE
+// /api/config/{workspaceKey}/bindings — answered the identical call with 403. Same operation, two
+// transports, opposite answers (intake `config-binding-mcp-vs-rest-disagree`). `Provisioning` was
+// also the wrong class on its own terms: TenantDeclaration.cs defines it as the cross-tenant handing
+// OUT of resources (apikey_create mints a new one) — a config binding edits what an existing
+// workspace already has.
 //
-// WHY IT IS NOT [TenantFrom(Argument, "workspaceKey", Tenant = TenantKind.Workspace)] — which is what
-// the parameter looks like. Declaring that would START REFUSING calls that work today, and acceptance
-// criterion 1 of the work card ("ключ, работавший до перехода, работает после") outranks the urge to
-// be stricter mid-wave. The class is what the spec assigns; a PR is not where it gets reassigned.
+// WHY IT IS NOW SETTLED. The one argument for keeping the exemption was acceptance criterion 1 of
+// work `authz-default-deny-delivery` ("ключ, работавший до перехода, работает после") — the reason
+// commit 515f0469 declared the divergence instead of fixing it. The owner lifted that criterion for
+// this surface on 2026-08-15: nothing relies on cross-workspace admin:provision on a regular basis.
+// So the REST half was the correct half, and MCP is brought into line with it rather than the other
+// way round.
 //
-// THE DISAGREEMENT, on the record (intake `config-binding-mcp-vs-rest-disagree`): the REST twin over
-// the SAME data — POST/DELETE /api/config/{workspaceKey}/bindings — DENIES the identical call, 403,
-// via ConfigApi.AuthorizeWorkspaceAsync (project claim → Project.WorkspaceKey → compare; wildcard
-// passes). Same operation, two transports, opposite answers. Closing that gap means moving these
-// verbs out of `provisioning`, which is a change to the CLOSED list of exemption classes — the
-// owner's decision and a new idea, not a line in this PR. Declaring the class is what makes the
-// divergence declared and countable instead of merely true.
+// THE PRICE, ACCEPTED KNOWINGLY: a key holding admin:provision but no config:* scope loses these four
+// verbs, and no key reaches a workspace outside its own project's — exactly what REST has always done.
+// Do not re-add a compatibility path: it would restore the cross-tenant config write this closes.
 [McpServerToolType]
-[TenantExempt(TenantExemption.Provisioning,
-	"config stores are provisioned across workspaces under admin:provision; the REST twin denies the same call — see intake `config-binding-mcp-vs-rest-disagree`")]
+[TenantFrom(TenantSource.Argument, "workspaceKey", tenant: TenantKind.Workspace)]
 public static class ConfigTools
 {
 	[McpServerTool(Name = "config_binding_upsert", Title = "Upsert config bindings", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsUpsertResult))]
@@ -66,7 +69,8 @@ public static class ConfigTools
 		ATOMIC batch throws (nothing written) — an empty `items` array is one such throw
 		("'items': empty batch — nothing to write"). `kind`: 'Plain' (default) or 'Secret' (value stored
 		ENCRYPTED, never returned). Every item's tags must include 'ws:{workspaceKey}'. Requires
-		admin:provision.
+		config:write, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs
+		to) — a foreign workspace is refused, exactly as on POST /api/config/{workspaceKey}/bindings.
 		[[full]]
 		Batch upsert config bindings — the uniform write verb that replaced the single-binding
 		config_binding_upsert. `items` is a JSON array — it must be non-empty; an empty array is
@@ -97,7 +101,8 @@ public static class ConfigTools
 		config_binding_delta: config bindings have no tombstone, so a delta would only ever repeat
 		what config_binding_search already shows — use that for the current active set). To delete
 		a binding use config_binding_delete (delete is not folded into upsert). Requires
-		admin:provision.
+		config:write, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs
+		to) — a foreign workspace is refused, exactly as on POST /api/config/{workspaceKey}/bindings.
 		""")]
 	public static async Task<ConfigBindingsUpsertResult> BindingUpsertAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory, ISecretEncryptor secrets,
@@ -106,7 +111,7 @@ public static class ConfigTools
 		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in, same promise as the other batch verbs): valid bindings LAND, each refused one comes back in conflicts[] with its reason. Config rows are immutable and keyed by (path, tagset) with NO version watermark, so the mode DEGENERATES here — there is no stale conflict to have, and no intra-batch references, so every item is independent. That is the point: the flag means the same thing everywhere, you never have to remember which verb is the exception.")] bool atomic = true,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigWrite);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		// An empty batch is almost always a client bug (a filter emptied the list, the call still
 		// went out) — reject it instead of silently reporting applied:true with nothing landed.
@@ -217,7 +222,7 @@ public static class ConfigTools
 	}
 
 	[McpServerTool(Name = "config_binding_search", Title = "Read config bindings (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsSearchResult))]
-	[Description("THE config-binding read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic list of a workspace's ACTIVE bindings (id, path, tags, kind), ordered by path, optionally narrowed by `pathPrefix`. With `q`: a case-insensitive SUBSTRING match over path/tags/plaintext-value (config has no FTS/vector index, so a query degrades to this lexical floor — `retrievers` reports semantic:false). Secret values are NEVER returned (rows carry no value), so there is no bodyLen knob; the ~30k-char output budget still applies (overflow → truncated/omitted/hint). Requires admin:provision.")]
+	[Description("THE config-binding read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic list of a workspace's ACTIVE bindings (id, path, tags, kind), ordered by path, optionally narrowed by `pathPrefix`. With `q`: a case-insensitive SUBSTRING match over path/tags/plaintext-value (config has no FTS/vector index, so a query degrades to this lexical floor — `retrievers` reports semantic:false). Secret values are NEVER returned (rows carry no value), so there is no bodyLen knob; the ~30k-char output budget still applies (overflow → truncated/omitted/hint). Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused.")]
 	public static async Task<ConfigBindingsSearchResult> BindingSearchAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key to read bindings for.")] string workspaceKey,
@@ -226,7 +231,7 @@ public static class ConfigTools
 		[Description("Max rows returned (0 = no cap — the output budget still applies).")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigRead);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 
@@ -265,14 +270,14 @@ public static class ConfigTools
 	}
 
 	[McpServerTool(Name = "config_binding_get", Title = "Get one config binding", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingRow))]
-	[Description("Return ONE active config binding by its id (the addressed single read; mirrors memory_get/comments_get). Carries id/path/tags/kind — never the value (secret-safety). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). Requires admin:provision.")]
+	[Description("Return ONE active config binding by its id (the addressed single read; mirrors memory_get/comments_get). Carries id/path/tags/kind — never the value (secret-safety). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused BEFORE the id is looked up, so this can no longer answer an outsider whether a binding exists.")]
 	public static async Task<ConfigBindingRow> BindingGetAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
 		[Description("Binding id (from config_binding_search/_upsert).")] long id,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigRead);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var b = await configDb.Bindings
@@ -284,14 +289,14 @@ public static class ConfigTools
 	}
 
 	[McpServerTool(Name = "config_binding_delete", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
-	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires admin:provision.")]
+	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires config:write, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused BEFORE the id is looked up, exactly as on DELETE /api/config/{workspaceKey}/bindings.")]
 	public static async Task<ConfigBindingDeletedResult> BindingDeleteAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
 		[Description("Binding id (from config_binding_search).")] long id,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigWrite);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;

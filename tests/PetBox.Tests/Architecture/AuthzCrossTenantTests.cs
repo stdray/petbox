@@ -18,8 +18,8 @@ namespace PetBox.Tests.Architecture;
 // WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 218 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 143 addressed surfaces that already deny a foreign tenant today.
-//   * KnownDeviations       —   9 addressed surfaces that do NOT, each named, with the behaviour that
+//   * REFUSED               — 147 addressed surfaces that already deny a foreign tenant today.
+//   * KnownDeviations       —   5 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
@@ -29,7 +29,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 143 + 9 + 66 = 218, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 147 + 5 + 66 = 218, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -53,8 +53,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	// with CREATED — are the part worth staring at; count them off the list, not off this comment.
 	//
 	// Since the MCP declaration wave (step 5) those exemptions are no longer an interpretation of this
-	// list: every one of the eleven MCP entries below is now [TenantExempt(...)] on its own tool type,
-	// or declares where its tenant comes from. memory_get was the last one held back on the allowlist;
+	// list: every one of the MCP entries below is now [TenantExempt(...)] on its own tool type, or
+	// declares where its tenant comes from. It read "eleven MCP entries" until
+	// `config-binding-mcp-declare-tenant` took the four config_binding_* ones out by making them declare
+	// a tenant instead — a declaration that REFUSES is how an entry leaves this list, and the count is
+	// not restated here for the reason the paragraph above gives. memory_get was the last one held back on the allowlist;
 	// it declares too now ([TenantFrom(ArgumentOrContainer, "projectKey")], with the rest of the memory
 	// family), and TenantEnforcementAllowlist is EMPTY — so there is no longer any surface here whose
 	// exemption rests on a list. The list did not move a single verdict when enforcement went live
@@ -66,33 +69,30 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 		{
 			// ── SERVED A FOREIGN TENANT ──────────────────────────────────────────────────────────
 			//
-			// The three MCP config verbs are the sharpest of these: their REST twin on the same data,
-			// POST|DELETE /api/config/{workspaceKey}/bindings, DENIES the identical call — since the REST
-			// wave with a 403 from TenantEnforcementMiddleware, on a
-			// [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)] declaration rather than the
-			// hand-written ConfigApi.AuthorizeWorkspaceAsync it replaced. Same operation, two transports,
-			// opposite answers. That asymmetry is a defect rather than an exemption anyone chose, and the
-			// REST side is the correct half: it was NOT "brought into line" with `provisioning`, which
-			// would have meant opening cross-tenant config writes to close a diff.
+			// ALL FOUR mcp:config_binding_* entries were here, and they are GONE — the sharpest deviation
+			// the list ever held, closed rather than re-worded. Their REST twin on the same data,
+			// POST|DELETE /api/config/{workspaceKey}/bindings, always DENIED the identical call (403 from
+			// TenantEnforcementMiddleware on [TenantFrom(Route, "workspaceKey", TenantKind.Workspace)]),
+			// and MCP is now brought into line with THAT half rather than the reverse: under work
+			// `config-binding-mcp-declare-tenant` ConfigTools dropped [TenantExempt(Provisioning)] for
+			// [TenantFrom(Argument, "workspaceKey", TenantKind.Workspace)] and moved its gate from
+			// admin:provision to config:read/config:write. All four now answer Denied from the PEP, ahead
+			// of the tool body — which is also why the two that used to be ArgumentError stopped being
+			// existence oracles: _get no longer names the workspace back at an outsider, and _delete no
+			// longer says whether a binding is there. Denied count 143 -> 147.
 			//
-			// mcp:config_binding_upsert moved Allowed -> ArgumentError under fix/mcp-empty-batch-rule
-			// (work/mcp-surface-naming-cleanup wave 4): the probe's default arg for an array-typed
-			// parameter is items:[], and an empty batch on config_binding_upsert is now a hard reject
-			// ("'items': empty batch — nothing to write") BEFORE the tenant/write path is ever reached.
-			// This is NOT the REST/MCP asymmetry above getting fixed — a call with a NON-empty items
-			// payload is untouched by that change and this probe no longer exercises that path, so the
-			// underlying hole is UNVERIFIED here, not closed. Left in KnownDeviations (not promoted to
-			// Denied) for exactly that reason.
-			["mcp:config_binding_upsert"] = (CrossTenantVerdict.ArgumentError,
-				"empty items:[] (the probe's default array arg) is now rejected before any tenant/write "
-				+ "decision — \"'items': empty batch — nothing to write\"; a non-empty payload is not "
-				+ "exercised by this probe, so the pre-existing REST-vs-MCP asymmetry noted above is "
-				+ "neither confirmed nor fixed by this entry"),
-			["mcp:config_binding_search"] = (CrossTenantVerdict.Allowed,
-				"read the victim workspace's bindings with admin:provision; the REST twin denies"),
-			// mcp:config_binding_delta was here — same "REST twin denies" deviation as upsert/search. GONE
-			// (batch3, read-surface-shape-batch-and-dead-delta P.3): config_binding_delta itself was
-			// removed (no tombstone, so a delta could only ever repeat _search — never called).
+			// _upsert deserves its own line, because its old entry said the hole was UNVERIFIED here: the
+			// probe's default array arg is items:[], and the empty-batch reject
+			// ("'items': empty batch — nothing to write") fired before any tenant decision, so this probe
+			// never exercised the write path at all. That is still true of the probe — the PEP is what
+			// makes the entry go away, since it decides before the tool body runs and therefore before the
+			// empty-batch guard. The non-empty payload the probe still does not send is covered
+			// deliberately, over the wire, by ConfigBindingTenantAuthzTests.
+			//
+			// The owner's decision that permits this (2026-08-15): nothing relies on cross-workspace
+			// admin:provision on a regular basis, so acceptance criterion 1 of `authz-default-deny-delivery`
+			// ("ключ, работавший до перехода, работает после") is lifted for this surface. A key with
+			// admin:provision and no config:* scope has genuinely lost these four verbs.
 
 			// Provisioning, as declared: admin:provision is de facto root over every tenant
 			// (TenantDeclaration.cs says so in the enum). project_create is the one that MUTATES —
@@ -111,14 +111,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 			// ── ANSWERED SOMETHING OTHER THAN "NO" ───────────────────────────────────────────────
 			//
-			// These four decided about the ARGUMENTS of a foreign tenant's request before deciding
-			// about the tenant. Two of them are existence oracles: they tell an outsider whether a
-			// binding exists in a workspace they may not touch, and one echoes the workspace key back.
-			["mcp:config_binding_get"] = (CrossTenantVerdict.ArgumentError,
-				"InvalidOperationException \"config binding '0' not found in workspace 'victimws'\" — an existence "
-				+ "answer to an outsider, naming the workspace back at them"),
-			["mcp:config_binding_delete"] = (CrossTenantVerdict.ArgumentError,
-				"InvalidOperationException \"Binding not found\" — an existence answer to an outsider"),
+			// This one decides about the ARGUMENTS of a foreign tenant's request before deciding about
+			// the tenant. It used to have three companions: mcp:config_binding_get and
+			// mcp:config_binding_delete, the two existence oracles that told an outsider whether a binding
+			// exists in a workspace they may not touch (one echoing the workspace key back at them), are
+			// GONE with the rest of the config family — see the note above.
 			["mcp:apikey_create"] = (CrossTenantVerdict.ArgumentError,
 				"ArgumentException \"Unknown scopes: …\" — validates the scope list before the tenant"),
 
@@ -430,7 +427,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(143,
+		refused.Should().Be(147,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -441,7 +438,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "/api/config/{{workspaceKey}}/bindings, whose 400 came from binding its query parameters inside "
 			+ "the endpoint and is now a 403 decided above it; 144 -> 143 when batch3 "
 			+ "(read-surface-shape-batch-and-dead-delta) removed session_delta, a surface that was itself "
-			+ "part of this Denied count. "
+			+ "part of this Denied count; 143 -> 147 under `config-binding-mcp-declare-tenant`, when all "
+			+ "four mcp:config_binding_* verbs stopped being [TenantExempt(Provisioning)] and started "
+			+ "declaring [TenantFrom(Argument, \"workspaceKey\", TenantKind.Workspace)] — the largest "
+			+ "single rise this line has seen, and the one that finally makes the MCP and REST halves of "
+			+ "the config bindings answer alike. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
@@ -480,9 +481,13 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "field of false greens. Seeing all 96 is the proof that every MCP denial above is about the "
 			+ "TENANT");
 
-		// The two scopes the deviation list BLAMES for the seven surfaces a foreign tenant reaches. If
-		// the probe key did not actually carry them, those seven entries would be describing a denial
-		// that never happened for a reason that was never tested.
+		// The two scopes the deviation list BLAMES for the surfaces a foreign tenant still reaches. If
+		// the probe key did not actually carry them, those entries would be describing a denial that
+		// never happened for a reason that was never tested.
+		//
+		// The key carries config:read/config:write too (it is minted from ApiKeyScopes.All), which is
+		// what makes the four config_binding_* denials REAL: they are refusals on the TENANT axis, from
+		// the PEP, and not the scope axis quietly answering for it.
 		var whoami = _host.AttackerWhoAmI;
 		whoami.Should().Contain(ApiKeyScopes.AdminProvision).And.Contain(ApiKeyScopes.DeployWrite,
 			"the probe key is minted from ApiKeyScopes.All and whoami is the server's own account of what it "
