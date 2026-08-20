@@ -379,6 +379,24 @@ for fixing that, not a matter of taste.
 Most of `Pages/**` predates this rule and still opens core.db directly (see
 `db-out-of-pages-into-services` on the work board). New code does not add to the pile.
 
+**Which types are "presentation" is declared in exactly one place** —
+`tests/PetBox.Tests/Architecture/LayerClassification.cs` — and every architectural gate reads
+that table instead of restating the list. The categories above (Razor PageModel, page filter,
+middleware, `IClaimsTransformation`, minimal-API endpoint class) are that table's presentation
+rules, and each is matched by SHAPE, so new code is classified without editing anything.
+
+`Mcp/**` is split by shape rather than swept by namespace, and this is a decision, not an
+omission. The **transport pipeline** — a class with a `Register(IMcpRequestFilterBuilder)`
+method, i.e. `Mcp/Mcp*Filter.cs` — is presentation: it wraps every MCP request the way
+middleware wraps an HTTP one. An **MCP tool class** — anything carrying `[McpServerToolType]` —
+is the SERVICE layer of its module, the agent-facing twin of that module's REST surface, and it
+may hold its own module's db factory the way `LogCatalogTools` owns the log catalog. It owns its
+own module's data and nothing else: reaching into ANOTHER module's store is still forbidden, by
+that module's `*BoundaryTests`. Before this was written down, `DbLayerGuardTests` called the whole
+namespace presentation while `ConfigBoundaryTests` called `ConfigTools` service code, and both
+tests were green (work `configtools-gate-classification`). If you want to change the
+classification, change the table — not one of the gates.
+
 ## Module architecture
 
 PetBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:

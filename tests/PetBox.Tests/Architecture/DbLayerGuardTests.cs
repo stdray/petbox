@@ -28,9 +28,13 @@ namespace PetBox.Tests.Architecture;
 // factory. A page that cannot obtain a factory cannot open a connection, so "ask a service" stops
 // being a convention a new page can forget and becomes the only thing that compiles.
 //
-// THE FOUR CATEGORIES (AGENTS.md's own list, in `Presentation` below): Razor PageModels (Pages/**),
-// page filters, middleware and IClaimsTransformation, minimal-API endpoint classes, and the MCP
-// tools (Mcp/**).
+// WHICH TYPES ARE PRESENTATION IS NOT DECIDED HERE. It is declared once, in `LayerClassification`,
+// and this gate READS that declaration (see `Presentation` below, now a one-line delegation). It used
+// to decide for itself, and the cost was work `configtools-gate-classification`: this file swept the
+// whole `PetBox.Web.Mcp` namespace into presentation while `ConfigBoundaryTests` recorded in prose
+// that `ConfigTools` is service code — one type, two opposite answers, both gates green. The
+// classification now lives in one place because the two gates could not be trusted to agree on it
+// separately; `LayerClassificationTests` is what fails when a second definition reappears.
 //
 // WHY REFLECTION AND NOT A TEXT SCAN. A text scan over Pages/** would be simpler and STRICTLY
 // WRONG here, in both directions:
@@ -87,7 +91,7 @@ public sealed class DbLayerGuardTests
 
 	// Every PetBox product assembly, anchored on Web (the composition root references them all) —
 	// the same sweep DbInjectionGuardTests uses.
-	static readonly Assembly[] ProductAssemblies = LoadProductAssemblies();
+	internal static readonly Assembly[] ProductAssemblies = LoadProductAssemblies();
 
 	static Assembly[] LoadProductAssemblies()
 	{
@@ -100,64 +104,21 @@ public sealed class DbLayerGuardTests
 			.ToArray();
 	}
 
-	// THE COMPOSITION ROOT IS NOT THE PRESENTATION LAYER. Program builds the service graph: it hands
-	// factories TO services, and at startup it resolves them directly to run migrations and seed the
-	// admin. That is the one place in the app where holding a factory outside a service is the whole
-	// job, so it is excluded by construction rather than allowlisted — an allowlist entry would claim
-	// it is debt somebody should pay off, and it is not.
+	// AGENTS.md's categories, as reflectable signatures — DECLARED IN ONE PLACE and read here.
+	// Returns the category name (used in the failure message) or null when the type is not presentation.
 	//
-	// The cost of this exclusion, stated plainly: an endpoint lambda written INLINE in Program.cs
-	// would not be seen. Today Program maps by delegating to the *Api classes (which ARE swept), so
-	// this is not a live hole — but if inline endpoints ever appear in Program, this exclusion is the
-	// thing to revisit.
-	static bool IsCompositionRoot(Type t) => t == typeof(Program);
-
-	// AGENTS.md's four categories, as reflectable signatures. Returns the category name (used in the
-	// failure message) or null when the type is not presentation.
-	static string? Presentation(Type t)
-	{
-		if (IsCompositionRoot(t)) return null;
-
-		// 1. Razor PageModels — the Pages/** pile.
-		if (typeof(PageModel).IsAssignableFrom(t)) return "Razor PageModel";
-
-		// 2. Page filters, middleware, claims transformation. Middleware is matched BOTH ways:
-		//    the interface (IMiddleware) and the CONVENTION (a ctor taking RequestDelegate), because
-		//    ASP.NET's conventional middleware implements no interface at all and every middleware in
-		//    this repo is the conventional kind — matching only IMiddleware would sweep nothing.
-		if (typeof(IPageFilter).IsAssignableFrom(t) || typeof(IAsyncPageFilter).IsAssignableFrom(t))
-			return "page filter";
-		if (typeof(IClaimsTransformation).IsAssignableFrom(t)) return "IClaimsTransformation";
-		if (typeof(IMiddleware).IsAssignableFrom(t)) return "middleware";
-		if (t.GetConstructors(AllMembers).Any(c => c.GetParameters().Any(p => p.ParameterType == typeof(RequestDelegate))))
-			return "middleware";
-
-		// 3. Minimal-API endpoint classes: the reflectable signature of "this class maps endpoints" is
-		//    a method that takes the thing you map them onto.
-		if (t.GetMethods(AllMembers).Any(m => m.GetParameters().Any(p =>
-				p.ParameterType == typeof(IEndpointRouteBuilder) || p.ParameterType == typeof(WebApplication))))
-			return "minimal-API endpoint class";
-
-		// 4. The MCP tool surface — Mcp/** by namespace.
-		if (t.Namespace?.StartsWith("PetBox.Web.Mcp", StringComparison.Ordinal) == true)
-			return "MCP tools";
-
-		return null;
-	}
+	// The composition root, the four HTTP-side categories and the MCP split (transport pipeline =
+	// presentation, tool class = its module's service layer) all live in `LayerClassification.Rules`.
+	// Do not re-add a local rule here: the whole point of the delegation is that a second definition
+	// of "presentation" cannot exist without `LayerClassificationTests` going red.
+	// `internal` so LayerClassificationTests can compare THIS gate's own entry point against the
+	// other gate's, rather than comparing two copies of the same idea.
+	internal static string? Presentation(Type t) => LayerClassification.PresentationCategory(t);
 
 	const BindingFlags AllMembers =
 		BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
-	// The outermost declaring type. A lambda inside `AuthApi.Map(...)` is lowered onto a nested
-	// `<>c__DisplayClass`/`<>c` whose DeclaringType is AuthApi — so a captured factory is a FIELD of a
-	// nested type, and a `[FromServices] ICoreDbFactory` handler parameter is a PARAMETER of a nested
-	// type's method. Classifying by the outermost type is what makes those two visible as violations
-	// of the class that hosts them.
-	static Type Outermost(Type t)
-	{
-		while (t.DeclaringType is { } outer) t = outer;
-		return t;
-	}
+	static Type Outermost(Type t) => LayerClassification.Outermost(t);
 
 	static bool IsGuarded(Type t) =>
 		GuardedFactories.Contains(t)
@@ -394,8 +355,23 @@ public sealed class DbLayerGuardTests
 			.HaveCountGreaterThan(25, "Pages/** is the pile this work item exists to drain");
 		byCategory.Should().ContainKey("middleware");
 		byCategory.Should().ContainKey("minimal-API endpoint class");
-		byCategory.Should().ContainKey("MCP tools").WhoseValue.Should()
-			.HaveCountGreaterThan(5, "Mcp/**Tools.cs must be in the swept set");
+		byCategory.Should().ContainKey("MCP pipeline stage").WhoseValue.Should()
+			.HaveCountGreaterThan(5, "the MCP transport pipeline (Mcp/Mcp*Filter.cs) wraps every request "
+				+ "the way middleware wraps an HTTP one and is swept as presentation");
+
+		// AND THE HALF THAT IS DELIBERATELY NOT SWEPT. There used to be an "MCP tools" category here
+		// covering the whole namespace; it is gone by DECISION (work `configtools-gate-classification`),
+		// not by the classifier quietly failing to match. Assert the decision, so that "no MCP tool is
+		// presentation" cannot become true by accident — a broken attribute check would show up here as
+		// a missing rule name rather than as a silently emptied category.
+		byCategory.Should().NotContainKey("MCP tools",
+			"the namespace is no longer swept wholesale — the pipeline and the tool classes are "
+			+ "classified separately, by shape");
+		LayerClassification.Decide(typeof(PetBox.Web.Mcp.ConfigTools)).Should().NotBeNull()
+			.And.Subject.As<LayerRule>().Should().Match<LayerRule>(
+				r => r.Name == "MCP module adapter" && r.Layer == Layer.Service,
+				"an MCP tool class is its module's service layer BY A DECLARED RULE, not by falling "
+				+ "through every presentation rule unmatched");
 
 		// And the specific shapes that are easy to break silently.
 		byCategory["Razor PageModel"].Should().Contain(typeof(PetBox.Web.Pages.Admin.ProjectDetailModel),
@@ -464,9 +440,5 @@ public sealed class DbLayerGuardTests
 		ServiceLocatorPattern.IsMatch("services.AddScoped<IProjectDirectory, ProjectDirectory>()").Should().BeFalse();
 	}
 
-	static IEnumerable<Type> SafeGetTypes(Assembly asm)
-	{
-		try { return asm.GetTypes(); }
-		catch (ReflectionTypeLoadException ex) { return ex.Types.Where(t => t is not null)!; }
-	}
+	static IEnumerable<Type> SafeGetTypes(Assembly asm) => LayerClassification.SafeGetTypes(asm);
 }
