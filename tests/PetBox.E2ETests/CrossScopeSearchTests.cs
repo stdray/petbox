@@ -63,7 +63,7 @@ public sealed class CrossScopeSearchTests(WebAppFixture app, ITestOutputHelper o
 		// AddMemberAsync is idempotent for an account that is already a member, so re-running is safe.
 		var members = scope.ServiceProvider.GetRequiredService<IWorkspaceMembershipService>();
 		foreach (var ws in new[] { WsA, WsB })
-			await members.AddMemberAsync(ws, WebAppFixture.AdminUsername, password: null, WorkspaceRole.Admin);
+			await members.AddMemberAsync(ws, WebAppFixture.AdminUsername, AddMemberMode.AddExisting, password: null, workspaceQuota: null, WorkspaceRole.Admin);
 
 		// The target node lives in project B / workspace B — a workspace the "current" page
 		// (workspace A) is NOT scoped to, proving the search really fans out cross-workspace.

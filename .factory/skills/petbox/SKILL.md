@@ -12,7 +12,7 @@ boards/memory/sessions live at https://petbox.3po.su/ui/$system/$system).
 In opencode the MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`, `petbox_memory_search`);
 in Claude Code they are `mcp__petbox__<verb>`. Just prefix the base verb per runtime.
 
-**Plan nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
+**Task nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
 grouping is `tags` (`area:*` / `concern:*`). Give each node a short `title` and a markdown
 `body`. A cold `tasks_upsert` to an **unknown** board is rejected (with a did-you-mean) —
 create it first with `tasks_board_create` (or a methodology). The upsert response is a pure ack for
@@ -23,19 +23,35 @@ TYPED arrays — pass real JSON arrays, not stringified JSON.
 **`tasks_search` is THE read verb** — two modes: without `q` it's a deterministic LISTING
 (pass `board` for one board, omit for the whole project; default order priority-then-key),
 with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both modes:
-`status[]`, `nodes[]` (slug|NodeId), `underNode` (subtree), `includeClosed`; `sort{by,desc}`
+`status[]`, `nodes[]`, `underNode` (subtree), `statusKind[]` (visibility: `open` |
+`terminalok` | `terminalcancel` — omit for the mode default, name all three to see everything;
+there is no `includeClosed`); `sort{by,desc}`
 reorders; `bodyLen` snippets bodies. One node in full: `tasks_node_get`.
+Every **node reference** (`nodes[]`, `underNode`, `node`, `partOf`, `blockedBy`,
+`supersedes`, and relations' `from`/`to` in BOTH the single and the batch form) takes a slug
+key **or** a 32-hex NodeId — both accepted. The NAME tells you: a node reference never ends in
+`Id`/`Key`/`Slug`, exactly because it accepts either spelling (there is no `fromNodeId`
+any more). A type suffix means it is NOT a reference: `tasks_upsert`'s `key` is the slug FIELD
+being written — slug only, and REQUIRED on every node — `parentId` is a comment id, and
+relations' `id`/`ids` are edge ids. `NodeId`-suffixed names appear only in RESPONSES, where the
+value really is always a NodeId.
 
-**Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
-required on `memory_upsert`; `tags` is an ARRAY of strings ([] clears, omit keeps).
+**Memory entries are typed** (`User` | `Feedback` | `Project` | `Reference`) — `type` is
+required only when `memory_upsert` creates a NEW entry (version 0), not on an edit;
+`tags` is an ARRAY of strings ([] clears, omit keeps).
 `memory_search` is THE read verb: with `q`
 a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing (updated
 desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 
 **Canon** — SessionStart injects an index from memory store `canon`, key `index` (per
 scope: `$system` project / `$system`). To edit it: `memory_upsert` with
-`store:"canon"`, `key:"index"` at the matching scope; keep it a compact index of pointers,
-not a growing doc.
+`store:"canon"`, `entries:[{key:"index", version:<from your last read>, body:"..."}]` at
+the matching scope — the key already exists, so `version:0` always conflicts; read first
+(`memory_get`/`memory_search`). Keep it a compact index of pointers, not a growing doc.
+PetBox memory is primary — your harness's own local notes/autoindex is
+secondary, never a parallel store. Propose promoting a fact to canon when it keeps getting
+re-derived, a rule keeps getting repeated, or a gotcha bites twice — the owner curates, you
+don't push silently.
 
 **What goes where:**
 - Session (`session_*`) — the current working plan/thinking. "Stale next week?" → session.

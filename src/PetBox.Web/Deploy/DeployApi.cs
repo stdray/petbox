@@ -105,7 +105,5 @@ public static class DeployApi
 		ctx.User.Claims.FirstOrDefault(c => c.Type == type)?.Value;
 
 	static bool HasScope(HttpContext ctx, string scope) =>
-		(Claim(ctx, "scopes") ?? "")
-			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.Contains(scope, StringComparer.Ordinal);
+		ApiKeyScopes.Granted(ctx.User, scope);
 }
