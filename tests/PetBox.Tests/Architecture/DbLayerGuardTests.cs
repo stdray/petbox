@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using LinqToDB.Data;
 using PetBox.Core.Data;
 using PetBox.Deploy.Data;
 
@@ -50,15 +51,68 @@ namespace PetBox.Tests.Architecture;
 // from a leaking page. Same reason DbInjectionGuardTests composes DI by hand instead.
 public sealed class DbLayerGuardTests
 {
-	// The doors onto every database in the system. `IScopedDbFactory<>` is matched as an OPEN
-	// generic, so `IScopedDbFactory<TasksDb>`, `<MemoryDb>`, `<LogDb>`, `<SessionsDb>`, `<ConfigDb>`
-	// are all covered by the one entry — a new context gets a guarded factory for free.
-	static readonly Type[] GuardedFactories =
-	[
-		typeof(ICoreDbFactory),
-		typeof(IDeployDbFactory),
-		typeof(IScopedDbFactory<>),
-	];
+	// The doors onto every database in the system — INFERRED from shape, not enumerated by name.
+	//
+	// Work `arch-gates-scope-declared-not-inferred`: this used to be a hand-listed
+	// `Type[] { ICoreDbFactory, IDeployDbFactory, IScopedDbFactory<> }`, and `IConfigDbFactory` —
+	// a thin typed facade over the guarded `IScopedDbFactory<ConfigDb>` — was invisible to it simply
+	// because nobody added a fourth line. Any future `IFooDbFactory` facade would have repeated the
+	// same miss: the list only knows what its author remembered to write down.
+	//
+	// THE SHAPE, INSTEAD: every guarded factory's job is handing back a live database connection —
+	// `ICoreDbFactory.Open(): PetBoxDb`, `IDeployDbFactory.Open(): DeployDb`,
+	// `IScopedDbFactory<TContext>.GetDb()/NewEnsuredConnection(): TContext`,
+	// `IConfigDbFactory.GetConfigDb()/NewConfigDb(): ConfigDb` — and `PetBoxDb`/`DeployDb`/`TContext`/
+	// `ConfigDb` are all `LinqToDB.Data.DataConnection`. That is the trait a hand-list can't grow on
+	// its own: a new `IFooDbFactory` is a door the instant handing back a connection is what it does,
+	// with no line to remember here.
+	//
+	// WHY "WHAT IT DOES" MEANS A STRICT MAJORITY OF ITS OWN METHODS, NOT "ANY OF THEM". A type is a
+	// door when handing back a connection is its PRIMARY job — more than half of the (non-accessor)
+	// methods it declares do that. This threshold is not decoration; it is what separates a factory
+	// from a STORE that also happens to expose one raw-connection escape hatch alongside a domain
+	// CRUD surface, and the difference is load-bearing:
+	//
+	//   - `IConfigDbFactory`: GetConfigDb/NewConfigDb, 2 of 2 methods return ConfigDb (100%) — a door.
+	//   - `IScopedDbFactory<>`: GetDb/NewEnsuredConnection return TContext, EvictAsync does not — 2 of
+	//     3 (67%) — still a door (its EvictAsync is bookkeeping on the SAME set of connections).
+	//   - `ILogStore` (PetBox.Log.Core.Data): GetContext/NewEnsuredContext return LogDb, but
+	//     ExistsAsync/ListAsync/CreateAsync/DeleteAsync/UpdateRetentionDaysAsync do not — 2 of 7
+	//     (29%) — NOT a door: its majority is domain CRUD over log metadata.
+	//   - `ISessionStore` (PetBox.Sessions.Data): GetContext returns SessionsDb; ListAsync/
+	//     ListPageAsync/GetAsync/GetCreatedAsync/ResolveIdAsync/UpsertAsync/DeleteAsync do not — 1 of
+	//     8 (12.5%) — NOT a door, same reason.
+	//   - `IProjectDirectory`: 0 of 9 methods return a `DataConnection` at all — NOT a door (it is the
+	//     sanctioned service the dozen `Pages/Admin/*.cshtml.cs` models are SUPPOSED to hold).
+	//
+	// The first version of this inference used "ANY method returns a DataConnection", not "a
+	// majority" — it was run against this tree (not just reasoned about) and it lit up
+	// `NoPresentationType_TakesADbFactory` on `ILogStore`/`ISessionStore` too: real methods on real
+	// interfaces really do hand back a raw connection, and `LogApi`/`SessionModel`/`SessionsModel`/
+	// `ShareApi`/`OtlpEndpoints` really do hold those stores. Whether that raw-connection escape hatch
+	// on an otherwise-domain store is itself worth closing is a SEPARATE, real question (see the
+	// accumulator note filed alongside this work) — it is not what this task's target
+	// (`IConfigDbFactory`) needed, and landing it here would have turned five unrelated, currently-
+	// green files red. The majority threshold is the line that catches the one facade this task named
+	// without also re-opening that separate question by accident.
+	//
+	// WHY THE SHAPE IS RETURN-TYPE, NOT "WRAPS A GUARDED FACTORY IN ITS CONSTRUCTOR". The other
+	// obvious alternative — close the set transitively over "an implementation that HOLDS a guarded
+	// factory" — was tried against this tree too and rejected on its own, independent grounds:
+	// `ProjectDirectory` takes `ICoreDbFactory` in its own constructor, so that closure would have
+	// made `IProjectDirectory` itself guarded regardless of any threshold — the same false violation
+	// as above, for a type with ZERO connection-returning methods of its own.
+	//
+	// `internal` so a proof test can compare this inference against the old enumeration form on a
+	// fixture type — see DbLayerGuardInferenceTests.
+	internal static bool IsGuarded(Type t)
+	{
+		var methods = t.GetMethods(AllMembers).Where(m => !m.IsSpecialName).ToArray();
+		if (methods.Length == 0) return false;
+
+		var doors = methods.Count(m => typeof(DataConnection).IsAssignableFrom(m.ReturnType));
+		return doors * 2 > methods.Length;
+	}
 
 	// ── THE ALLOWLIST — AND IT IS EMPTY ───────────────────────────────────────────────────────────
 	//
@@ -114,15 +168,13 @@ public sealed class DbLayerGuardTests
 
 	static Type Outermost(Type t) => LayerClassification.Outermost(t);
 
-	static bool IsGuarded(Type t) =>
-		GuardedFactories.Contains(t)
-		|| (t.IsGenericType && GuardedFactories.Contains(t.GetGenericTypeDefinition()));
-
 	// Every way a factory can come to REST inside a type: taken in a constructor, stored in a field
 	// (including a lambda's captured local, which the compiler turns into exactly that), or accepted
 	// as a method parameter (including a minimal-API handler's, which the compiler turns into exactly
 	// that). Properties are covered too — an auto-property IS a field.
-	static IEnumerable<string> GuardedMembersOf(Type t) =>
+	// `internal` so a proof test can point it at a fixture type and show the inference actually fires
+	// (see DbLayerGuardInferenceTests) — same reason `Presentation` above is internal.
+	internal static IEnumerable<string> GuardedMembersOf(Type t) =>
 		t.GetConstructors(AllMembers)
 			.SelectMany(c => c.GetParameters())
 			.Where(p => IsGuarded(p.ParameterType))
@@ -384,9 +436,36 @@ public sealed class DbLayerGuardTests
 			"a static *Api class maps endpoints via IEndpointRouteBuilder and must be swept");
 
 		// The guarded set really is the set of db doors — i.e. this guard points at what it claims to.
-		GuardedFactories.Should().HaveCount(3);
+		// No enumerated list to assert a count against any more (work
+		// `arch-gates-scope-declared-not-inferred`): the inference is a shape predicate, so what is
+		// worth pinning is which real types it does and does not call doors.
+		IsGuarded(typeof(ICoreDbFactory)).Should().BeTrue("Open(): PetBoxDb is the door's own shape");
+		IsGuarded(typeof(IDeployDbFactory)).Should().BeTrue("Open(): DeployDb is the door's own shape");
 		IsGuarded(typeof(IScopedDbFactory<PetBox.Tasks.Data.TasksDb>)).Should()
-			.BeTrue("IScopedDbFactory<> is matched as an OPEN generic, so every context is covered");
+			.BeTrue("GetDb()/NewEnsuredConnection(): TasksDb — closed generics are covered directly, "
+				+ "with no open-generic special case needed any more");
+		IsGuarded(typeof(PetBox.Config.Data.IConfigDbFactory)).Should().BeTrue(
+			"THE FIX: a typed facade over IScopedDbFactory<ConfigDb> is a door by ITS OWN shape "
+			+ "(GetConfigDb()/NewConfigDb(): ConfigDb) — the enumerated form this guard used to have "
+			+ "never named it and never saw it");
+		IsGuarded(typeof(PetBox.Web.Auth.IProjectDirectory)).Should().BeFalse(
+			"NOT a door: IProjectDirectory's own implementation holds ICoreDbFactory in its ctor, but "
+			+ "its members return Project/bool/domain results, never a DataConnection — a closure over "
+			+ "'wraps a guarded factory' would have made every one of the Pages/Admin/* models that "
+			+ "legitimately ask this service a false violation, which is exactly the pattern this guard "
+			+ "exists to REQUIRE, not forbid");
+		// Pinned so the majority threshold cannot silently widen back to "any method returns a
+		// DataConnection": that form was tried, run against this tree, and it lit up real violations
+		// on ILogStore/ISessionStore's real callers (LogApi, SessionModel, SessionsModel, ShareApi,
+		// OtlpEndpoints) — a different, real question this task did not ask, see DbLayerGuardTests'
+		// GuardedFactories comment and the accumulator note filed alongside this work.
+		IsGuarded(typeof(PetBox.Log.Core.Data.ILogStore)).Should().BeFalse(
+			"GetContext/NewEnsuredContext return LogDb, but 5 of its other 7 methods are domain CRUD "
+			+ "(ExistsAsync/ListAsync/CreateAsync/DeleteAsync/UpdateRetentionDaysAsync) — a minority, "
+			+ "not the type's primary job");
+		IsGuarded(typeof(PetBox.Sessions.Data.ISessionStore)).Should().BeFalse(
+			"GetContext returns SessionsDb, but 7 of its other 8 methods are domain CRUD — a minority, "
+			+ "not the type's primary job");
 
 		// THE MEMBER SWEEP MUST STILL SEE A FACTORY WHEN THERE IS ONE. This assertion used to read
 		// `Offenders().Should().NotBeEmpty()` — the offenders WERE the proof the sweep worked. Both
