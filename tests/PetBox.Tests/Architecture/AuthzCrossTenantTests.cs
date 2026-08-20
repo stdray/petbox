@@ -3,7 +3,8 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 218 surfaces: 57 REST, 65 Razor, 96 MCP; was 217/95 MCP before
+// ratchet guards (AuthzSurfaces — 219 surfaces: 58 REST, 65 Razor, 96 MCP; was 218/57 REST before
+// share-link-no-revocation added DELETE /api/share/{token}; 217/95 MCP before
 // report-issue-has-no-reply-channel added petbox_report_issue_status; 215/55 REST before
 // doc-surface-undiscoverable-from-ui added the /docs and /help redirects, and 217/97 MCP before that
 // when batch3 (read-surface-shape-batch-and-dead-delta) removed session_delta and config_binding_delta).
@@ -24,12 +25,12 @@ namespace PetBox.Tests.Architecture;
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
 //                              visible. These are step 5's work — they are NOT repaired here and NOT
 //                              papered over.
-//   * NotAddressable        —  66 surfaces with nowhere to write a foreign tenant: no
+//   * NotAddressable        —  67 surfaces with nowhere to write a foreign tenant: no
 //                              {projectKey}/{workspaceKey} in the route, none in the tool schema.
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 147 + 5 + 66 = 218, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 147 + 5 + 67 = 219, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -276,9 +277,14 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ ".tmp/authz-cross-tenant-report.txt are real. They are still listed here rather than asserted "
 			+ "because `Addressed` answers a question about the ROUTE, and that has not changed; the probe "
 			+ "measured two of them (/api/ui/project, /api/ui/workspace) SERVING the attacker before the "
-			+ "declarations went in, which is the reason the blind spot was worth closing", [
+			+ "declarations went in, which is the reason the blind spot was worth closing. "
+			+ "share-link-revocable added a seventh: DELETE /api/share/{token} takes the SAME "
+			+ "[TenantFrom(BodyField, \"projectKey\")] declaration CreateShareAsync already carries, for the "
+			+ "same reason — revoke reuses the create endpoint's own tenant-proof mechanism rather than "
+			+ "inventing a second one", [
 			"rest:POST /api/health",
 			"rest:POST /api/share",
+			"rest:DELETE /api/share/{token}",
 			"rest:POST /api/ui/board-filter-prefs",
 			"rest:POST /api/ui/project",
 			"rest:POST /api/ui/workspace",
@@ -410,9 +416,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(218,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 57 REST + 65 Razor + 96 MCP "
-			+ "(was 95 MCP / 217 before report-issue-has-no-reply-channel added petbox_report_issue_status; "
+		_host.Surfaces.Should().HaveCount(219,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 65 Razor + 96 MCP "
+			+ "(was 57 REST / 218 before share-link-no-revocation added DELETE /api/share/{{token}}; "
+			+ "95 MCP / 217 before report-issue-has-no-reply-channel added petbox_report_issue_status; "
 			+ "55 REST / 215 before doc-surface-undiscoverable-from-ui added /docs and /help; "
 			+ "97 MCP / 217 before that when batch3 removed session_delta and config_binding_delta). "
 			+ "If that number moved, a surface was added or removed and this test must be re-read, not "

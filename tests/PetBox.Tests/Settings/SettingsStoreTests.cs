@@ -91,18 +91,6 @@ public sealed class SettingsStoreTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Chain_for_a_membership_splits_into_its_user_and_workspace()
-	{
-		var snap = await _store.LoadChainAsync(Scope.Membership, "7:w3");
-
-		snap.Chain.Should().Equal(
-			(Scope.Membership, "7:w3"),
-			(Scope.User, "7"),
-			(Scope.Workspace, "w3"),
-			(Scope.System, "$"));
-	}
-
-	[Fact]
 	public async Task Snapshot_carries_every_row_on_the_chain()
 	{
 		await SeedProjectAsync("p4", "w4");

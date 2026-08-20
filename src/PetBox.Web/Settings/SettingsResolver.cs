@@ -95,7 +95,7 @@ public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encr
 		await store.DeleteAsync(scope, scopeKey, match.Attribute.Key, ct);
 	}
 
-	// Scope is ordered coarse -> fine (System = 0 ... Membership = 5), so a property whose TopLevel
+	// Scope is ordered coarse -> fine (System = 0 ... User = 4), so a property whose TopLevel
 	// is Project is not readable at System or Workspace: the cap names the COARSEST scope that may
 	// carry it.
 	static bool IsReachable(Scope topLevel, Scope scope) => (int)topLevel <= (int)scope;

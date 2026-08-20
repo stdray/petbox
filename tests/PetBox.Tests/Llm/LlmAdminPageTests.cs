@@ -388,7 +388,8 @@ public sealed class LlmAdminPageTests : IDisposable
 
 		public async Task<LlmRegistryDeclaration> PatchAsync(
 			string projectKey, IReadOnlyList<LlmEndpoint>? endpoints, IReadOnlyList<LlmRoute>? routes,
-			IReadOnlyDictionary<string, string> apiKeys, long version, CancellationToken ct = default)
+			IReadOnlyDictionary<string, string> apiKeys, long version, bool acknowledgeShadow = false,
+			CancellationToken ct = default)
 		{
 			await SaveAsync(
 				projectKey,

@@ -218,6 +218,77 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-a");
 	}
 
+	// ---- shadow guard (work llm-config-upsert-shadow-radius-mismatch) ----
+	//
+	// version 0 against a level that is currently empty does not just create it — it SHADOWS
+	// whatever the workspace inherits, WHOLE, for every OTHER project of the same workspace. Prose
+	// in the tool description warned about this; these four pin the CHECKED signal: refuse before
+	// the write with the count named, unless the caller passes acknowledgeShadow, and never get in
+	// the way when there is nothing to shadow or the write is not a first declaration.
+
+	[Fact]
+	public async Task Version_0_with_siblings_in_the_workspace_is_refused_and_names_the_count()
+	{
+		_db.Insert(new Project { Key = "proj-b", WorkspaceKey = Ws, Name = "B", Description = "" });
+		_db.Insert(new Project { Key = "proj-c", WorkspaceKey = Ws, Name = "C", Description = "" });
+
+		var act = async () => await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)));
+
+		(await act.Should().ThrowAsync<InvalidOperationException>())
+			.Which.Message.Should().Contain("2").And.Contain("proj-b").And.Contain("proj-c").And.Contain("acknowledgeShadow");
+
+		// Refused BEFORE the write — nothing landed, not even for the caller itself.
+		(await LlmRouterTools.ConfigGetAsync(Http("llm:admin", Proj), Flags(), _editor, Proj)).Version.Should().Be(0);
+	}
+
+	[Fact]
+	public async Task Version_0_with_siblings_SUCCEEDS_when_acknowledgeShadow_is_true()
+	{
+		_db.Insert(new Project { Key = "proj-b", WorkspaceKey = Ws, Name = "B", Description = "" });
+		_db.Insert(new Project { Key = "proj-c", WorkspaceKey = Ws, Name = "C", Description = "" });
+
+		var written = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)),
+			acknowledgeShadow: true);
+
+		written.Ok.Should().BeTrue();
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-a");
+	}
+
+	[Fact]
+	public async Task Version_0_with_NO_siblings_SUCCEEDS_without_the_flag()
+	{
+		// Constructor seeds only `Proj` into `Ws` — nothing else shares this workspace, so there is
+		// nothing to shadow. No extra friction: the flag must not be required here.
+		var written = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)));
+
+		written.Ok.Should().BeTrue();
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-a");
+	}
+
+	[Fact]
+	public async Task An_ordinary_write_with_version_greater_than_0_is_unaffected_by_the_shadow_guard()
+	{
+		_db.Insert(new Project { Key = "proj-b", WorkspaceKey = Ws, Name = "B", Description = "" });
+		_db.Insert(new Project { Key = "proj-c", WorkspaceKey = Ws, Name = "C", Description = "" });
+
+		// A first declaration still needs acknowledgeShadow with siblings present...
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50)),
+			acknowledgeShadow: true);
+
+		// ...but once the level is no longer empty, an ordinary version>0 edit needs no flag at all —
+		// it is not a first declaration and shadows nothing beyond what version 0 already did.
+		var edited = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj,
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-b", 50)),
+			version: created.Version);
+
+		edited.Ok.Should().BeTrue();
+		(await _resolver.ResolveAsync(Proj)).Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-b");
+	}
+
 	[Fact]
 	public async Task The_version_from_llm_config_get_is_the_baseline_a_correct_write_quotes()
 	{
@@ -465,8 +536,13 @@ public sealed class LlmRegistryEditorTests : IDisposable
 			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "m", 50)));
 		wsWrite.Level.Should().Be($"Workspace:{Ws}");
 
+		// System:$ always has siblings — the reserved `$system`/`$workspace` container projects live
+		// there too (M001/M028) — so a version-0 first write needs acknowledgeShadow here regardless
+		// of test setup. That is not incidental to this test (which only cares what level was
+		// reported); it is the shadow guard working as intended (see the tests below).
 		var sysWrite = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", SysProj), Flags(), _editor, SysProj,
-			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "m", 50)));
+			Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "m", 50)),
+			acknowledgeShadow: true);
 		sysWrite.Level.Should().Be("System:$", "a project of the `$system` workspace writes the live system level");
 	}
 

@@ -170,23 +170,6 @@ public sealed class SettingsStore(ICoreDbFactory factory) : ISettingsStore
 				// planned; that's out of scope here.
 				chain.Add((Scope.System, "$"));
 				break;
-			case Scope.Membership:
-				// reserved, no consumers yet — grep for `Scope.Membership` across src/** (incl.
-				// src/clients-net/) turns up no GetAsync/SetAsync call site and no reader of the
-				// "{userId}:{workspaceKey}" key format; SettingsStoreTests.cs exercises only this
-				// chain-building mechanism, not a real feature. Kept deliberately: doc/plan.md
-				// ("UiSettings.DefaultHome.LastProject" / MembershipSettings, item 25.3) already
-				// plans a consumer for per-membership settings. Same Users.Id caveat as Scope.User
-				// above applies to the userId half of the key once it's wired up.
-				// ScopeKey format: "{userId}:{workspaceKey}"
-				var colon = deepestKey.IndexOf(':');
-				if (colon > 0)
-				{
-					chain.Add((Scope.User, deepestKey[..colon]));
-					chain.Add((Scope.Workspace, deepestKey[(colon + 1)..]));
-				}
-				chain.Add((Scope.System, "$"));
-				break;
 		}
 
 		return chain;
