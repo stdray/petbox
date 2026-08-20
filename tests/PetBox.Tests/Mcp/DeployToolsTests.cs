@@ -47,10 +47,15 @@ public sealed class DeployToolsTests : IDisposable
 		r.GetProperty("key").GetString().Should().StartWith("yb_key_node_");
 		r.GetProperty("node").GetProperty("id").GetString().Should().Be("vdsina-1");
 
-		// minted key persisted with the node-agent scopes, project = node id
-		var minted = _db.ApiKeys.Where(k => k.ProjectKey == "vdsina-1").ToList();
+		// Minted key persisted with the node-agent scopes, and its node id sits in HostId — the
+		// carrier of its own type (M050, spec node-grant-own-carrier). ProjectKey is EMPTY: the MCP
+		// mint path must produce the same key shape as the REST enroll path, so a key minted here
+		// can no more be confused with a project named `vdsina-1` than one minted there.
+		var minted = _db.ApiKeys.Where(k => k.HostId == "vdsina-1").ToList();
 		minted.Should().ContainSingle();
 		minted[0].Scopes.Should().Contain("agent:poll").And.Contain("agent:heartbeat");
+		minted[0].ProjectKey.Should().BeEmpty();
+		_db.ApiKeys.Where(k => k.ProjectKey == "vdsina-1").ToList().Should().BeEmpty();
 
 		var list = Json(await DeployTools.NodeListAsync(Http("deploy:read"), Flags(), _svc));
 		list.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("id").GetString())

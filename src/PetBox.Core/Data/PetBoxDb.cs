@@ -134,7 +134,12 @@ public sealed class PetBoxDb : DataConnection
 			// declaration the INSERT silently omitted CreatedBy and every minted key read back with a
 			// null issuer, so the attribution column existed and recorded nothing. Caught by
 			// ApiKeyScopeGrantAuthzTests asserting the value rather than the column's existence.
-			.Property(a => a.CreatedBy).HasLength(200).IsNullable(true);
+			.Property(a => a.CreatedBy).HasLength(200).IsNullable(true)
+			// M050 (spec node-grant-own-carrier) — the SAME trap once more: undeclared, HostId would be
+			// dropped from the schema cache, the enroll INSERT would omit it, and every node key would
+			// read back HostId=null — i.e. every node agent in the fleet would fail to resolve its host
+			// and poll would 400. DeployApiTests' minted-key poll is what proves the value round-trips.
+			.Property(a => a.HostId).HasLength(100).IsNullable(true);
 
 		builder.Entity<DataTable>()
 			.HasTableName("DataTables")

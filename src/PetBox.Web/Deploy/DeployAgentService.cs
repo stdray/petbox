@@ -85,7 +85,11 @@ public sealed class DeployAgentService(
 		await db.InsertAsync(new ApiKey
 		{
 			Key = key,
-			ProjectKey = node.Id,        // the node id is the agent's "project" claim
+			// The node id rides its OWN column (M050, spec node-grant-own-carrier). ProjectKey is
+			// left EMPTY on purpose: a node is not a tenant, and a blank project claim authorizes
+			// no project at all (ProjectScope.Authorizes), so this key's reach is exactly its host.
+			HostId = node.Id,
+			ProjectKey = string.Empty,
 			Scopes = NodeKeyScopes,
 			Name = keyRef,
 			CreatedAt = DateTime.UtcNow,

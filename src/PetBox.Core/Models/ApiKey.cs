@@ -46,4 +46,22 @@ public sealed record ApiKey
 	// its rows are created by one code path; ApiKeys has five, so HealthEndpoint's nullable shape is
 	// the honest precedent here.
 	public string? CreatedBy { get; init; }
+	// The FLEET HOST this key is bound to (M050, spec node-grant-own-carrier) — the deploy plane's
+	// node id, on the node-agent keys minted by the enroll/rotate path. NULL on every other key, and
+	// that is the whole point: a grant limited to ONE MACHINE now has a carrier of its own type
+	// instead of borrowing ProjectKey, which names a TENANT.
+	//
+	// Before M050 the node id lived in ProjectKey, so a node `vdsina-1` and a project `vdsina-1` were
+	// the same value in the same column and resolved through the same claim — the collision was
+	// structural, not a naming convention anyone could tighten. Now they are DIFFERENT COLUMNS and
+	// different claims (`host` vs `project`), so the collision cannot be expressed.
+	//
+	// A node key carries HostId and an EMPTY ProjectKey. Empty is not an oversight: ProjectScope
+	// treats a blank claim as authorizing nothing at all, so the node key's reach over the tenant
+	// axis is now nil rather than "whatever project happens to share the node's name".
+	//
+	// Not projected by ConfigApiKeyLookup: an appsettings-declared key is never a node key (node keys
+	// are minted by the enroll/rotate path and rotated by it), so a config key always has HostId null
+	// and can never claim to be a machine.
+	public string? HostId { get; init; }
 }
