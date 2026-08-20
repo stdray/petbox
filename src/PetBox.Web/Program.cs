@@ -669,6 +669,54 @@ public partial class Program
 				ApiKeyAuthenticationHandler.SchemeName, null);
 
 		builder.Services.AddAuthorizationBuilder()
+			// THE DEFAULT POLICY IS COOKIE-ONLY, and that is the whole point (work
+			// `apikey-principal-authz-cluster`, finding 1). `DefaultScheme = "Smart"` forwards ANY request
+			// carrying X-Api-Key / X-Seq-ApiKey to the ApiKey handler, and the framework's stock default
+			// policy (`RequireAuthenticatedUser()` with NO scheme named) then accepts whatever that handler
+			// produced. So a bare `[Authorize]` — which is what the seven identity-shaped Razor pages carry
+			// (/, /ui/search, /ui/_nav/tree, /ui/me/{account,preferences,security}, /AccessDenied) — used to
+			// admit an API KEY: a principal with `project`/`scopes`/`host` and NO `yb:user_id`, no
+			// `yb:sysadmin`, no `yb:ws_roles`. /ui/me/account rendered "your account" for an identity that
+			// has no user at all, and every component on such a page had to invent its own answer to
+			// "there is no user here" — one of them invented the wrong one (the AvailableWorkspaces free
+			// pass that showed the whole tenant catalog).
+			//
+			// Cookie and api-key are DIFFERENT AXES — "a cookie has no scopes and an api key has no roles",
+			// as the ApiKeyOrCookie comment below already says. Every ROLE policy was narrowed to the cookie
+			// scheme long ago; the default was the last door left on the Smart selector, so the pages under
+			// a bare [Authorize] were exactly the unnarrowed remainder. Narrowing the DEFAULT (rather than
+			// pinning a policy on each of the seven) is deliberate: the eighth such page, written tomorrow
+			// with a bare [Authorize], is closed the moment it is written.
+			//
+			// WHAT AN API KEY GETS NOW: the policy names the cookie scheme, cookie auth returns NoResult,
+			// so the request is CHALLENGED — the cookie handler's challenge, i.e. 302 -> /Login. Not a 401
+			// body, but the page and its data are gone, which is the security property. Do NOT "improve"
+			// this into a 401 by teaching the cookie handler about api-key headers: that changes the
+			// challenge shape on every ApiKeyOrCookie route too.
+			//
+			// WHAT THIS IS NOT: it is not a narrowing of the four minimal-API endpoints that were also
+			// riding the default (`POST /api/share`, `DELETE /api/share/{token}`, `POST /api/ui/workspace`,
+			// `POST /api/ui/project`, `POST /api/ui/board-filter-prefs`). Those genuinely serve api keys —
+			// ShareApiAuthzTests.CreateShare_OwnProject_Succeeds mints a share link with X-Api-Key and must
+			// keep doing so — so each now names "AuthenticatedAnyScheme" below, which IS the old default,
+			// verbatim. Their behaviour is unchanged by construction, not by hope.
+			.SetDefaultPolicy(
+				new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+						CookieAuthenticationDefaults.AuthenticationScheme)
+					.RequireAuthenticatedUser()
+					.Build())
+			// The PRE-NARROWING default, kept verbatim for the endpoints that were relying on it: no
+			// AddAuthenticationSchemes call, so the policy judges whatever the Smart selector already
+			// authenticated (api key when a key header is present, cookie otherwise) and challenges through
+			// the default challenge scheme. It is deliberately NOT "ApiKeyOrCookie": that policy names both
+			// schemes and would MERGE both identities into one principal when a request carries a cookie
+			// AND a key header — a different principal than these surfaces see today, and their tenant
+			// declarations are evaluated against exactly that principal.
+			//
+			// This is a compatibility shim, not a pattern. A NEW endpoint states which axis it is on
+			// ("ApiKey" for a key surface, the default for a cookie one); reaching for this one means
+			// "I have not decided", which is how the hole above got made in the first place.
+			.AddPolicy("AuthenticatedAnyScheme", p => p.RequireAuthenticatedUser())
 			.AddPolicy("ApiKey", p => p
 				.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName)
 				.RequireAuthenticatedUser())

@@ -10,9 +10,14 @@ public static class WorkspaceSwitchEndpoint
 
 	public static void MapWorkspaceSwitch(this IEndpointRouteBuilder app)
 	{
+		// "AuthenticatedAnyScheme" is the framework default this endpoint used to get from a bare
+		// .RequireAuthorization(); it is named explicitly only because the DEFAULT policy was narrowed to
+		// the cookie scheme (Program.cs, work `apikey-principal-authz-cluster`). An api key is a
+		// principal ITenantAuthorizer knowingly answers HERE — the comment below is about exactly that
+		// case — so the old policy is kept rather than inherited from a default that no longer means it.
 		app.MapPost("/api/ui/workspace", Switch)
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
-			.RequireAuthorization()
+			.RequireAuthorization("AuthenticatedAnyScheme")
 			.DisableAntiforgery();
 	}
 

@@ -21,7 +21,14 @@ namespace PetBox.Web.Mcp.Contract;
 
 // `DefaultProject` is the key's fallback project for tools whose projectKey is optional — set
 // only on a cross-project ("*") key that carries one (omitted from the wire when null).
-public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null);
+//
+// `Host` is the fleet host a NODE-AGENT key is bound to (the `host` claim, M050). It is the last
+// piece of a node key's identity that whoami could not say: since M050 a node key carries an EMPTY
+// project claim, so `whoami` on one answered `project: null, scopes: […]` and read as a broken key
+// rather than as "a key that identifies a machine, not a project". Absent (omitted from the wire) on
+// every ordinary project key, which is exactly what tells the caller it is not a node.
+public sealed record WhoAmIResult(
+	string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null, string? Host = null);
 
 // ---- comments_* ----------------------------------------------------------------------
 

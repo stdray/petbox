@@ -15,9 +15,12 @@ public static class ProjectSwitchEndpoint
 
 	public static void MapProjectSwitch(this IEndpointRouteBuilder app)
 	{
+		// "AuthenticatedAnyScheme" is the framework default this endpoint used to get from a bare
+		// .RequireAuthorization() — see WorkspaceSwitchEndpoint for why it is spelled out now (the
+		// default policy was narrowed to the cookie scheme in Program.cs).
 		app.MapPost("/api/ui/project", Switch)
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
-			.RequireAuthorization()
+			.RequireAuthorization("AuthenticatedAnyScheme")
 			.DisableAntiforgery();
 	}
 

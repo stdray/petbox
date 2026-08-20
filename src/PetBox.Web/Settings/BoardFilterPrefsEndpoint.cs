@@ -18,8 +18,14 @@ public static class BoardFilterPrefsEndpoint
 {
 	public static void MapBoardFilterPrefs(this IEndpointRouteBuilder app)
 	{
+		// "AuthenticatedAnyScheme" is the framework default this endpoint used to get from a bare
+		// .RequireAuthorization(); named explicitly because the default policy was narrowed to the cookie
+		// scheme (Program.cs, work `apikey-principal-authz-cluster`). Keeping the old policy keeps the
+		// REFUSAL where the comment below says it is — the user-id guard inside Save, which answers an
+		// api key with a 401 for a reason this endpoint can state — instead of moving it silently into
+		// the authentication layer.
 		app.MapPost("/api/ui/board-filter-prefs", Save)
-			.RequireAuthorization()
+			.RequireAuthorization("AuthenticatedAnyScheme")
 			.DisableAntiforgery();
 	}
 
