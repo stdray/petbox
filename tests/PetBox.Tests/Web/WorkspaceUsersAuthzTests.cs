@@ -125,7 +125,9 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 		addReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["Username"] = "intruder-user",
+			["Mode"] = "CreateNew",
 			["Password"] = "somepassword1",
+			["WorkspaceQuota"] = "0",
 			["Role"] = "Member",
 			["__RequestVerificationToken"] = token,
 		});
@@ -161,7 +163,9 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 		addReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["Username"] = "pwn-user",
+			["Mode"] = "CreateNew",
 			["Password"] = "somepassword1",
+			["WorkspaceQuota"] = "0",
 			["Role"] = "Member",
 			["workspaceKey"] = "wsb",
 			["__RequestVerificationToken"] = token,

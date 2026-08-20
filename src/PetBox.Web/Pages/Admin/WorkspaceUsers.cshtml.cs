@@ -34,27 +34,68 @@ public sealed class WorkspaceUsersModel : PageModel
 	// authz-bypass-project-create: [FromRoute] pins this to the ROUTE workspace — never a
 	// form-supplied "workspaceKey" field, which the default composite provider (Form -> Route ->
 	// Query) would otherwise let override the route after the WorkspaceAdmin policy check passed.
+	//
+	// THE ORACLE MAPPING (add-member-composite-fix, spec composite-write-branch-opaque). The page
+	// is where the enumeration oracle was actually READABLE, so this is where it has to be shut.
+	// Two rules, and both are load-bearing:
+	//
+	//  1. `Mode` comes from the admin, in the markup, before the post. The page has TWO add forms
+	//     — "create a new account" and "add an existing account" — each with a fixed field set,
+	//     so which fields are required is a property of the form the admin chose, never of what
+	//     the server found in the Users table.
+	//  2. Added, AlreadyMember and NoSuchUser get ONE response: same 302, same notice text, same
+	//     Location. Those three are the outcomes that depend on the table, so telling them apart
+	//     is exactly the leak. Only the form-shaped refusals (which depend on the POST alone, and
+	//     only ever in CreateNew mode) get distinct text.
 	public async Task<IActionResult> OnPostAddAsync(
-		[FromRoute(Name = "workspaceKey")] string workspaceKey, string Username, string? Password, WorkspaceRole Role, CancellationToken ct)
+		[FromRoute(Name = "workspaceKey")] string workspaceKey,
+		string Username,
+		AddMemberMode? Mode,
+		string? Password,
+		int? WorkspaceQuota,
+		WorkspaceRole Role,
+		CancellationToken ct)
 	{
+		// No declared intent = a post this page did not render (or a hand-rolled one). Refusing is
+		// safe: it depends on the body only. Guessing a default would silently pick a field set for
+		// the caller, which is the habit that grew the oracle in the first place.
+		if (Mode is not { } mode)
+			return await RefuseAsync(workspaceKey, "Choose whether you are creating a new account or adding an existing one.", ct);
+
 		if (string.IsNullOrWhiteSpace(Username))
-		{
-			ErrorMessage = "Username is required.";
-			await LoadMembersAsync(workspaceKey, ct);
-			return Page();
-		}
+			return await RefuseAsync(workspaceKey, "Username is required.", ct);
 
-		var outcome = await _members.AddMemberAsync(workspaceKey, Username, Password, Role, ct);
-		if (outcome == AddMemberOutcome.PasswordRequired)
-		{
-			ErrorMessage = "A password is required to create a new user.";
-			await LoadMembersAsync(workspaceKey, ct);
-			return Page();
-		}
+		var outcome = await _members.AddMemberAsync(workspaceKey, Username, mode, Password, WorkspaceQuota, Role, ct);
 
-		// AlreadyMember is a success for the caller: the user IS in the workspace afterwards.
-		this.NotifySuccess("Member added.");
+		// FORM-SHAPED refusals only. Each is decided from the POSTed fields before the service reads
+		// a single row, so distinct text here reveals nothing about who exists.
+		var refusal = outcome switch
+		{
+			AddMemberOutcome.PasswordRequired => "A password is required to create a new account.",
+			AddMemberOutcome.QuotaRequired =>
+				"Workspace allowance is required — enter 0 if this account may not create workspaces.",
+			AddMemberOutcome.QuotaInvalid => "Workspace allowance cannot be negative.",
+			_ => null,
+		};
+		if (refusal is not null)
+			return await RefuseAsync(workspaceKey, refusal, ct);
+
+		// TABLE-SHAPED answers — Added, AlreadyMember, NoSuchUser — collapse to ONE response.
+		// AlreadyMember is a success for the caller (the account IS in the workspace afterwards);
+		// NoSuchUser is phrased conditionally because that is the honest thing this page can say
+		// without answering "does this account exist?". The text varies by MODE, which the admin
+		// chose, and by nothing else.
+		this.NotifySuccess(mode == AddMemberMode.CreateNew
+			? "Member added."
+			: "Done — if an account with that username exists, it is now a member of this workspace.");
 		return RedirectToPage();
+	}
+
+	async Task<IActionResult> RefuseAsync(string workspaceKey, string message, CancellationToken ct)
+	{
+		ErrorMessage = message;
+		await LoadMembersAsync(workspaceKey, ct);
+		return Page();
 	}
 
 	public async Task<IActionResult> OnPostRemoveAsync(

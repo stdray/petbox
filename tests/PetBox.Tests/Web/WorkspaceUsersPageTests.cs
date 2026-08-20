@@ -44,7 +44,8 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 			new User { Username = "alice", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
 
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "alice", Password: null, WorkspaceRole.Member, default);
+		var result = await page.OnPostAddAsync(
+			Ws, "alice", AddMemberMode.AddExisting, Password: null, WorkspaceQuota: null, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		page.ErrorMessage.Should().BeNull();
@@ -60,7 +61,8 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	public async Task Add_new_user_without_password_shows_visible_error_and_creates_nothing()
 	{
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "bob", Password: "   ", WorkspaceRole.Member, default);
+		var result = await page.OnPostAddAsync(
+			Ws, "bob", AddMemberMode.CreateNew, Password: "   ", WorkspaceQuota: 0, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
@@ -73,13 +75,15 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	public async Task Add_new_user_with_password_creates_loginable_account_and_membership()
 	{
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "carol", "s3cret", WorkspaceRole.Admin, default);
+		var result = await page.OnPostAddAsync(
+			Ws, "carol", AddMemberMode.CreateNew, "s3cret", WorkspaceQuota: 2, WorkspaceRole.Admin, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		var user = _db.Users.FirstOrDefault(u => u.Username == "carol");
 		user.Should().NotBeNull();
 		user!.PasswordHash.Should().NotBeNullOrEmpty();
 		_db.MembershipRows().Count(m => m.UserId == user.Id && m.WorkspaceKey == Ws && m.Role == WorkspaceRole.Admin).Should().Be(1);
+		user.WorkspaceQuota.Should().Be(2, "the allowance the admin typed is the allowance the account gets");
 	}
 
 	// workspace-member-role-edit: changing a member's role in place — no more remove+re-add.

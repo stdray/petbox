@@ -67,34 +67,77 @@ else
 	</div>
 }
 
+@* TWO forms, not one with a smart field — add-member-composite-fix / spec
+	composite-write-branch-opaque. Which fields you fill in is YOUR declaration of what you are
+	doing, decided here, before the post. The old single form derived that from the server's answer
+	("a password is required to create a new user" appeared only for names that did not exist), and
+	that difference told a workspace admin which usernames exist in the whole instance — including
+	accounts created elsewhere by a sysadmin. Neither form's outcome now depends on that: both
+	always redirect with the same notice for their own mode.
+
+	Static markup on purpose: no script toggles these, so the required field set cannot become a
+	function of anything the server knows. *@
 <h2 class="text-lg font-semibold mb-3">Add member</h2>
-<form method="post" asp-page-handler="Add" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="workspace-user-add-form" autocomplete="off">
-	@Html.AntiForgeryToken()
-	<div class="card-body p-4">
-		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-5xl">
+	<form method="post" asp-page-handler="Add" class="card bg-base-200 border border-base-300" data-testid="workspace-user-create-form" autocomplete="off">
+		@Html.AntiForgeryToken()
+		<input type="hidden" name="Mode" value="CreateNew" />
+		<div class="card-body p-4">
+			<h3 class="font-semibold">Create a new account</h3>
+			<p class="text-xs opacity-60">Makes the account and gives it this role here.</p>
 			<label class="form-control">
 				<span class="label-text">Username</span>
 				<input type="text" name="Username" required class="input input-bordered input-sm font-mono"
-					placeholder="new-user" data-testid="workspace-user-add-username" autocomplete="off" />
-				<span class="text-xs opacity-60 mt-1">Re-using an existing username will not re-create the account; only membership is added.</span>
+					placeholder="new-user" data-testid="workspace-user-create-username" autocomplete="off" />
 			</label>
 			<label class="form-control">
 				<span class="label-text">Password</span>
-				<input type="password" name="Password" class="input input-bordered input-sm"
-					data-testid="workspace-user-add-password" autocomplete="new-password" />
-				<span class="text-xs opacity-60 mt-1">Required for new users; ignored if the username already exists.</span>
+				<input type="password" name="Password" required class="input input-bordered input-sm"
+					data-testid="workspace-user-create-password" autocomplete="new-password" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Workspace allowance</span>
+				<input type="number" name="WorkspaceQuota" min="0" step="1" required class="input input-bordered input-sm"
+					placeholder="0" data-testid="workspace-user-create-quota" />
+				<span class="text-xs opacity-60 mt-1">How many workspaces this account may create of its own. Enter 0 if none — there is no default, the number is your decision.</span>
 			</label>
 			<label class="form-control">
 				<span class="label-text">Role</span>
-				<select name="Role" class="select select-bordered select-sm" data-testid="workspace-user-add-role">
+				<select name="Role" class="select select-bordered select-sm" data-testid="workspace-user-create-role">
 					<option value="Admin">Admin — full management</option>
 					<option value="Member" selected>Member — read & write data</option>
 					<option value="Viewer">Viewer — read only</option>
 				</select>
 			</label>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="workspace-user-create-submit">Create and add</button>
+			</div>
 		</div>
-		<div class="card-actions mt-3">
-			<button type="submit" class="btn btn-sm btn-primary" data-testid="workspace-user-add-submit">Add</button>
+	</form>
+
+	<form method="post" asp-page-handler="Add" class="card bg-base-200 border border-base-300" data-testid="workspace-user-existing-form" autocomplete="off">
+		@Html.AntiForgeryToken()
+		<input type="hidden" name="Mode" value="AddExisting" />
+		<div class="card-body p-4">
+			<h3 class="font-semibold">Add an existing account</h3>
+			<p class="text-xs opacity-60">Grants this role to an account that already exists. Its password and its workspace allowance are left exactly as they are.</p>
+			<label class="form-control">
+				<span class="label-text">Username</span>
+				<input type="text" name="Username" required class="input input-bordered input-sm font-mono"
+					placeholder="existing-user" data-testid="workspace-user-existing-username" autocomplete="off" />
+				<span class="text-xs opacity-60 mt-1">You need the exact username. This form neither confirms nor denies that an account exists — the answer is the same either way, so check the members list below to see the result.</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text">Role</span>
+				<select name="Role" class="select select-bordered select-sm" data-testid="workspace-user-existing-role">
+					<option value="Admin">Admin — full management</option>
+					<option value="Member" selected>Member — read & write data</option>
+					<option value="Viewer">Viewer — read only</option>
+				</select>
+			</label>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="workspace-user-existing-submit">Add</button>
+			</div>
 		</div>
-	</div>
-</form>
+	</form>
+</div>
