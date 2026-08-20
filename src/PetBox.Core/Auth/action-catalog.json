@@ -32,7 +32,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:tasks_board_create",
-				"page:/ProjectHome/TaskBoard"
+				"page:/ProjectHome/TaskBoard",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
@@ -48,7 +49,10 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:tasks_board_list",
-				"page:/ProjectHome/Tasks"
+				"page:/ProjectHome/Tasks",
+				"page:/Admin/ProjectMethodology",
+				"page:/Admin/ProjectTasks",
+				"page:/ProjectHome/Index"
 			],
 			"bg": [],
 			"internal": [],
@@ -78,11 +82,12 @@
 			"targetNote": "⚠ Переводит существующие ограничения/доставку на другую spec-доску",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:tasks_board_set_wire"
+				"mcp:tasks_board_set_wire",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
-			"note": null
+			"note": "page:/Admin/ProjectTasks — не отдельной кнопкой: OnPostEnableMethodologyAsync идёт через ITasksService.EnableMethodologyAsync, который в конце зовёт AutoWireSpecAsync (TasksService.cs:459). Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "boards.close-reopen",
@@ -94,7 +99,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:tasks_board_close",
-				"mcp:tasks_board_reopen"
+				"mcp:tasks_board_reopen",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
@@ -109,7 +115,8 @@
 			"targetNote": "⚠ Удаляет процессную роль из живого экземпляра",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:tasks_board_delete"
+				"mcp:tasks_board_delete",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
@@ -124,7 +131,9 @@
 			"targetNote": "⚠ Создаёт ЖИВОЙ документ правил; с board_adopt = обход rules_upsert",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:tasks_methodology_create"
+				"mcp:tasks_methodology_create",
+				"page:/Admin/ProjectMethodology",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
@@ -144,7 +153,9 @@
 				"mcp:tasks_methodology_active_get",
 				"mcp:tasks_methodology_rules_get",
 				"mcp:tasks_methodology_guide",
-				"mcp:tasks_workflow"
+				"mcp:tasks_workflow",
+				"page:/Admin/ProjectMethodology",
+				"page:/Admin/ProjectTasks"
 			],
 			"bg": [],
 			"internal": [],
@@ -159,7 +170,8 @@
 			"targetNote": "⚠ Меняет разрешённые переходы (convention gates) в guide",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:tasks_methodology_set_active"
+				"mcp:tasks_methodology_set_active",
+				"page:/Admin/ProjectMethodology"
 			],
 			"bg": [],
 			"internal": [],
@@ -174,7 +186,8 @@
 			"targetNote": "⚠ Paradigm case: переписывает правила живого экземпляра + миграция узлов",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:tasks_methodology_rules_upsert"
+				"mcp:tasks_methodology_rules_upsert",
+				"page:/Admin/ProjectMethodology"
 			],
 			"bg": [],
 			"internal": [],
@@ -211,6 +224,21 @@
 			"note": null
 		},
 		{
+			"id": "methodology.utility-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Mcp/TasksTools.cs:394 (tasks_methodology_utility_get)",
+			"subdomain": "methodology",
+			"action": "читать utility-слой типов проекта",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_utility_get"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Read-половина пары к methodology.utility-upsert: TasksTools.cs:394 отдаёт ITasksService.GetMethodologyDefinitionAsync — документ utility-слоя плюс version-baseline для upsert. Источник переноса знал только write-половину (находка #3 карточки)."
+		},
+		{
 			"id": "methodology.set-description",
 			"source": "08-summary §1 #13",
 			"subdomain": "methodology",
@@ -235,7 +263,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:tasks_methodology_template_upsert",
-				"mcp:tasks_methodology_template_snapshot"
+				"mcp:tasks_methodology_template_snapshot",
+				"page:/Admin/ProjectMethodology"
 			],
 			"bg": [],
 			"internal": [],
@@ -266,7 +295,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:tasks_methodology_template_get",
-				"mcp:tasks_methodology_template_list"
+				"mcp:tasks_methodology_template_list",
+				"page:/Admin/ProjectMethodology"
 			],
 			"bg": [],
 			"internal": [],
@@ -300,11 +330,12 @@
 				"mcp:tasks_search",
 				"mcp:tasks_delta",
 				"mcp:tasks_node_get",
-				"page:/ProjectHome/Tasks"
+				"page:/ProjectHome/Tasks",
+				"page:/Search"
 			],
 			"bg": [],
 			"internal": [],
-			"note": null
+			"note": "page:/Search — кросс-скоуп поиск по узлам задач (CrossScopeTaskSearchService.SearchAsync), тот же доменный read, что tasks_search, только веером по проектам вызывающего (Search.cshtml.cs:82-90). Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "nodes.relations-create",
@@ -440,7 +471,9 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:session_get",
-				"rest:GET /api/sessions/{projectKey}"
+				"rest:GET /api/sessions/{projectKey}",
+				"page:/ProjectHome/Session",
+				"page:/ProjectHome/Sessions"
 			],
 			"bg": [],
 			"internal": [],
@@ -455,7 +488,8 @@
 			"targetNote": null,
 			"targetSource": null,
 			"surfaces": [
-				"mcp:session_search"
+				"mcp:session_search",
+				"page:/ProjectHome/Sessions"
 			],
 			"bg": [],
 			"internal": [],
@@ -486,7 +520,8 @@
 			"targetNote": "Цель выводится из scope-параметра (project/workspace); workspace — ContainerKeyFor, не именованный вызывающим (02-memory-settings.md #1).",
 			"targetSource": "derived",
 			"surfaces": [
-				"mcp:memory_store_create"
+				"mcp:memory_store_create",
+				"page:/Admin/ProjectMemory"
 			],
 			"bg": [],
 			"internal": [],
@@ -501,7 +536,10 @@
 			"targetNote": "⚠ каскад: per-leg skip UnauthorizedAccessException (silent read refusal = отсутствие); AssertMemoryProjectAsync per scope; cascade project-first скрывает отсутствие от остального кода (02-memory-settings.md #2).",
 			"targetSource": "derived",
 			"surfaces": [
-				"mcp:memory_store_list"
+				"mcp:memory_store_list",
+				"page:/Admin/ProjectMemory",
+				"page:/ProjectHome/Memory",
+				"page:/ProjectHome/MemoryStore"
 			],
 			"bg": [],
 			"internal": [],
@@ -516,7 +554,8 @@
 			"targetNote": "Для project: AssertMemoryProjectAsync; для workspace: AssertMemoryProjectAsync (write throws, не skip) — write-выход отличается от read-выхода (02-memory-settings.md #3).",
 			"targetSource": "derived",
 			"surfaces": [
-				"mcp:memory_store_delete"
+				"mcp:memory_store_delete",
+				"page:/Admin/ProjectMemory"
 			],
 			"bg": [],
 			"internal": [],
@@ -549,7 +588,9 @@
 			"surfaces": [
 				"mcp:memory_search",
 				"mcp:memory_get",
-				"mcp:memory_delta"
+				"mcp:memory_delta",
+				"page:/ProjectHome/Memory",
+				"page:/ProjectHome/MemoryStore"
 			],
 			"bg": [],
 			"internal": [],
@@ -648,7 +689,8 @@
 			"targetSource": "decoy",
 			"surfaces": [
 				"mcp:config_binding_upsert",
-				"rest:POST /api/config/{workspaceKey}/bindings"
+				"rest:POST /api/config/{workspaceKey}/bindings",
+				"page:/Config/Editor"
 			],
 			"bg": [],
 			"internal": [],
@@ -664,7 +706,11 @@
 			"targetSource": "decoy",
 			"surfaces": [
 				"mcp:config_binding_search",
-				"mcp:config_binding_get"
+				"mcp:config_binding_get",
+				"page:/Config/Editor",
+				"page:/Config/Index",
+				"page:/Config/Preview",
+				"page:/Config/Tags"
 			],
 			"bg": [],
 			"internal": [],
@@ -680,7 +726,8 @@
 			"targetSource": "decoy",
 			"surfaces": [
 				"mcp:config_binding_delete",
-				"rest:DELETE /api/config/{workspaceKey}/bindings"
+				"rest:DELETE /api/config/{workspaceKey}/bindings",
+				"page:/Config/Index"
 			],
 			"bg": [],
 			"internal": [],
@@ -702,6 +749,111 @@
 			"note": null
 		},
 		{
+			"id": "config.binding-history-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/History.cshtml.cs:36",
+			"subdomain": "config",
+			"action": "читать историю правок связок конфигурации",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/History"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.ListHistoryAsync с опциональным фильтром по path (History.cshtml.cs:33-37). Отдельное действие, а не config.binding-search-get: читается журнал ревизий, а не действующие связки."
+		},
+		{
+			"id": "config.secret-reveal",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Index.cshtml.cs:207",
+			"subdomain": "config",
+			"action": "раскрыть значение секретной связки (с записью в аудит раскрытий)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "OnPostRevealAsync расшифровывает ciphertext через ISecretEncryptor и ОБЯЗАТЕЛЬНО пишет IConfigDirectory.RecordRevealAsync (Config/Index.cshtml.cs:207-236) — это не чтение связки, а отдельное аудируемое действие над секретом."
+		},
+		{
+			"id": "config.saved-filter-save",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Index.cshtml.cs:174",
+			"subdomain": "config",
+			"action": "сохранить именованный фильтр тегов воркспейса",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.SaveFilterAsync (Config/Index.cshtml.cs:160-178). НЕ ui-preference: строка живёт в configDb воркспейса и видна всем его админам, а не только автору — в отличие от rest:POST /api/ui/board-filter-prefs, который правит представление одного вызывающего."
+		},
+		{
+			"id": "config.saved-filter-delete",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Index.cshtml.cs:183",
+			"subdomain": "config",
+			"action": "удалить именованный фильтр тегов воркспейса",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.DeleteFilterAsync (Config/Index.cshtml.cs:180-186)."
+		},
+		{
+			"id": "config.tag-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Tags.cshtml.cs:63",
+			"subdomain": "config",
+			"action": "читать словарь тегов воркспейса",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Tags"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.ListTagsAsync плюс сведение фактически используемых значений по всем связкам (Config/Tags.cshtml.cs:63-66)."
+		},
+		{
+			"id": "config.tag-declare",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Tags.cshtml.cs:49",
+			"subdomain": "config",
+			"action": "объявить тег в словаре воркспейса",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Tags"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.DeclareTagAsync (Config/Tags.cshtml.cs:38-52)."
+		},
+		{
+			"id": "config.tag-retire",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Config/Tags.cshtml.cs:57",
+			"subdomain": "config",
+			"action": "вывести тег из словаря воркспейса (retire)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Config/Tags"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "IConfigDirectory.RetireTagAsync (Config/Tags.cshtml.cs:54-58)."
+		},
+		{
 			"id": "llm.registry-get",
 			"source": "08-summary §1 #44",
 			"subdomain": "llm",
@@ -710,7 +862,8 @@
 			"targetNote": "LlmRouterTools.cs:42 декларирует `[TenantFrom(Argument,\"projectKey\")]`, но реестр УРОВНЕВЫЙ (System:$ или Workspace:<key>), и уровень выводится из ВОРКСПЕЙСА проекта, не из самого проекта: LlmRouterTools.cs:33-37 — 'the level is derived from the project's WORKSPACE… no projectKey isolates this write'. Декларация называет тенантом projectKey, но фактическая проверяемая цель — уровень workspace/system (§3 вид (г), первый пример).",
 			"targetSource": "coarse",
 			"surfaces": [
-				"mcp:llm_config_get"
+				"mcp:llm_config_get",
+				"page:/Llm/Index"
 			],
 			"bg": [],
 			"internal": [],
@@ -725,7 +878,8 @@
 			"targetNote": "Аналогично llm.registry-get: LlmRouterTools.cs:42 `[TenantFrom(Argument,\"projectKey\")]`, реальная цель — уровень (System:$/Workspace:<key>), выводимый из workspace проекта (LlmRouterTools.cs:33-37, §3 вид (г)). Дополнительно: version=0 на upsert ОБЪЯВЛЯЕТ и ЗАТЕНЯЕТ весь inherited уровень целиком, а не мёржит — не очевидно из сигнатуры (04-config-llm-agents.md).",
 			"targetSource": "coarse",
 			"surfaces": [
-				"mcp:llm_config_upsert"
+				"mcp:llm_config_upsert",
+				"page:/Llm/Index"
 			],
 			"bg": [],
 			"internal": [],
@@ -761,7 +915,8 @@
 				"mcp:agent_def_list",
 				"mcp:agent_def_get",
 				"rest:GET /api/{projectKey}/agent-defs",
-				"rest:GET /api/{projectKey}/agent-defs/{key}"
+				"rest:GET /api/{projectKey}/agent-defs/{key}",
+				"page:/Admin/ProjectAgentDefs"
 			],
 			"bg": [],
 			"internal": [],
@@ -777,7 +932,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:agent_def_upsert",
-				"rest:PUT /api/{projectKey}/agent-defs/{key}"
+				"rest:PUT /api/{projectKey}/agent-defs/{key}",
+				"page:/Admin/ProjectAgentDefs"
 			],
 			"bg": [],
 			"internal": [],
@@ -793,7 +949,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:agent_def_delete",
-				"rest:DELETE /api/{projectKey}/agent-defs/{key}"
+				"rest:DELETE /api/{projectKey}/agent-defs/{key}",
+				"page:/Admin/ProjectAgentDefs"
 			],
 			"bg": [],
 			"internal": [],
@@ -811,11 +968,12 @@
 				"mcp:log_list",
 				"rest:GET /api/logs/{projectKey}/logs",
 				"page:/Logs/Index",
-				"page:/Admin/ProjectLogs"
+				"page:/Admin/ProjectLogs",
+				"page:/Nav/Tree"
 			],
 			"bg": [],
 			"internal": [],
-			"note": "page:/Admin/ProjectLogs.OnGetAsync тоже вызывает ILogService.ListAsync (ProjectLogs.cshtml.cs:46-56) — второй, недокументированный источником U-вход на то же действие; таблица §1 не различает их, просто помечает 'U'."
+			"note": "page:/Admin/ProjectLogs.OnGetAsync тоже вызывает ILogService.ListAsync (ProjectLogs.cshtml.cs:46-56) — второй, недокументированный источником U-вход на то же действие; таблица §1 не различает их, просто помечает 'U'. page:/Nav/Tree — htmx-хендлер OnGetLogsAsync зовёт тот же ILogService.ListAsync для ленивых детей сайдбара (Nav/Tree.cshtml.cs:81-86). Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "logs.create",
@@ -1052,7 +1210,8 @@
 			"targetNote": null,
 			"targetSource": null,
 			"surfaces": [
-				"mcp:health_search"
+				"mcp:health_search",
+				"page:/Dashboard/Index"
 			],
 			"bg": [],
 			"internal": [],
@@ -1068,7 +1227,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:db_create",
-				"rest:POST /api/data/{projectKey}/dbs"
+				"rest:POST /api/data/{projectKey}/dbs",
+				"page:/Admin/ProjectData"
 			],
 			"bg": [],
 			"internal": [],
@@ -1085,11 +1245,16 @@
 			"surfaces": [
 				"mcp:db_list",
 				"mcp:db_describe",
-				"rest:GET /api/data/{projectKey}/dbs"
+				"rest:GET /api/data/{projectKey}/dbs",
+				"page:/Admin/ProjectData",
+				"page:/Admin/ProjectDataDb",
+				"page:/Nav/Tree",
+				"page:/ProjectHome/Database",
+				"page:/ProjectHome/Databases"
 			],
 			"bg": [],
 			"internal": [],
-			"note": "db_describe не имеет REST-пары (нет соответствующего route в живом инвентаре) — согласуется с 03-logs-health-data.md #20, где REST для Describe не указан."
+			"note": "db_describe не имеет REST-пары (нет соответствующего route в живом инвентаре) — согласуется с 03-logs-health-data.md #20, где REST для Describe не указан. page:/Nav/Tree зовёт IDataDbCatalog.ListAsync и DescribeAsync (Nav/Tree.cshtml.cs:88-104); page:/ProjectHome/Database и page:/Admin/ProjectDataDb — describe одной БД (таблицы+колонки), page:/ProjectHome/Databases и page:/Admin/ProjectData — список. Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "data.db-delete",
@@ -1101,7 +1266,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:db_delete",
-				"rest:DELETE /api/data/{projectKey}/dbs/{name}"
+				"rest:DELETE /api/data/{projectKey}/dbs/{name}",
+				"page:/Admin/ProjectData"
 			],
 			"bg": [],
 			"internal": [],
@@ -1117,11 +1283,12 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:data_query",
-				"rest:POST /api/data/{projectKey}/{dbName}/query"
+				"rest:POST /api/data/{projectKey}/{dbName}/query",
+				"page:/ProjectHome/Table"
 			],
 			"bg": [],
 			"internal": [],
-			"note": null
+			"note": "page:/ProjectHome/Table — SELECT вызывающего по DataDb, обёрнутый в пагинацию и открытый READ-ONLY соединением (Table.cshtml.cs:80-100). Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "data.exec",
@@ -1149,7 +1316,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"mcp:data_schema_apply",
-				"rest:POST /api/data/{projectKey}/{dbName}/schema"
+				"rest:POST /api/data/{projectKey}/{dbName}/schema",
+				"page:/Admin/ProjectDataDb"
 			],
 			"bg": [],
 			"internal": [],
@@ -1164,11 +1332,12 @@
 			"targetNote": null,
 			"targetSource": null,
 			"surfaces": [
-				"rest:GET /api/data/{projectKey}/{dbName}/migrations"
+				"rest:GET /api/data/{projectKey}/{dbName}/migrations",
+				"page:/Admin/ProjectDataDb"
 			],
 			"bg": [],
 			"internal": [],
-			"note": "Вход только R (REST) — нет соответствующего MCP-тула для списка миграций; подтверждено живым инвентарём (нет mcp:*migrations* ключа)."
+			"note": "Вход только R (REST) — нет соответствующего MCP-тула для списка миграций; подтверждено живым инвентарём (нет mcp:*migrations* ключа). page:/Admin/ProjectDataDb читает журнал __SchemaVersions напрямую по соединению (ProjectDataDb.cshtml.cs, PopulateAsync), а не через REST-пару — доменное действие то же. Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "deploy.node-upsert",
@@ -1471,7 +1640,8 @@
 			"targetNote": null,
 			"targetSource": null,
 			"surfaces": [
-				"page:/Admin/WorkspaceDetail"
+				"page:/Admin/WorkspaceDetail",
+				"page:/Admin/WorkspaceAdmin"
 			],
 			"bg": [],
 			"internal": [],
@@ -1610,7 +1780,8 @@
 			"targetSource": null,
 			"surfaces": [
 				"page:/Admin/ProjectKeys",
-				"mcp:apikey_create"
+				"mcp:apikey_create",
+				"page:/Admin/ProjectConnect"
 			],
 			"bg": [],
 			"internal": [],
@@ -1689,7 +1860,8 @@
 			"targetNote": "⚠ workspaceKey параметр НЕ тенант; создание самого арендатора отменяет обычный тенант-check (ProjectTools.cs:27-28, [TenantExempt(Provisioning)]).",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:project_create"
+				"mcp:project_create",
+				"page:/Admin/Projects"
 			],
 			"bg": [],
 			"internal": [],
@@ -1704,11 +1876,14 @@
 			"targetNote": "⚠ Возвращает контейнеры ($ws-*) в ADMIN-виде; includeContainers:true.",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:project_list"
+				"mcp:project_list",
+				"page:/Admin/Projects",
+				"page:/Admin/ProjectMethodology",
+				"page:/Dashboard/Index"
 			],
 			"bg": [],
 			"internal": [],
-			"note": null
+			"note": "page:/Admin/ProjectMethodology перечисляет проекты (ListAllAsync/ListByWorkspaceAsync) для переноса шаблонов между проектами; page:/Dashboard/Index и page:/Admin/Projects — обычный листинг воркспейса. Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "introspection.whoami",
@@ -1719,11 +1894,12 @@
 			"targetNote": "⚠ Интроспекция: раскрывает project, scopes, defaultProject вызывающего.",
 			"targetSource": null,
 			"surfaces": [
-				"mcp:whoami"
+				"mcp:whoami",
+				"page:/Me/Account"
 			],
 			"bg": [],
 			"internal": [],
-			"note": null
+			"note": "page:/Me/Account — браузерная половина ровно этого действия: AccountModel.OnGet читает username / user id / sysadmin-флаг с СОБСТВЕННЫХ клеймов вызывающего и никакого хранилища не трогает (Me/Account.cshtml.cs:20-27); отдельного доменного объекта тут нет, цель та же `none`. Добавлено при гашении долга 2026-08-20."
 		},
 		{
 			"id": "introspection.tool-describe",
@@ -1754,108 +1930,78 @@
 			"bg": [],
 			"internal": [],
 			"note": null
+		},
+		{
+			"id": "feedback.report-status-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Mcp/ReportTools.cs:136 (petbox_report_issue_status)",
+			"subdomain": "feedback",
+			"action": "прочитать статус СВОИХ отчётов о проблеме и ответы мейнтейнеров",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:petbox_report_issue_status"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Pull-половина канала обратной связи: у ReportTools ДВА тула, источник покрыл только write (находка #3 карточки). Адресом служит сам ключ вызывающего (фильтр по тегу reporter:), поэтому цель — система, как и у feedback.report-issue."
+		},
+		{
+			"id": "rollup.system-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Admin/Index.cshtml.cs:44",
+			"subdomain": "rollup",
+			"action": "прочитать сводные счётчики установки (воркспейсы/проекты/пользователи/переопределения настроек/агентские ключи/узлы деплоя)",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "ICoreDbRollupService.GetAdminRollupAsync плюс IDeployService.ListNodesAsync под фиче-флагом (Admin/Index.cshtml.cs:41-53). Цель — система: у страницы нет слота тенанта, её предмет — весь флот (та же причина, что у её [TenantExempt(FleetWide)])."
+		},
+		{
+			"id": "rollup.workspace-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/Dashboard/Index.cshtml.cs:603",
+			"subdomain": "rollup",
+			"action": "прочитать сводные счётчики воркспейса (логи/БД/ключи по проектам + последние отчёты здоровья)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Dashboard/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "ICoreDbRollupService.GetWorkspaceRollupAsync по множеству проектов воркспейса (Dashboard/Index.cshtml.cs, OnGetAsync). Отдельное действие от rollup.system-read: другой метод сервиса и другой вид цели."
+		},
+		{
+			"id": "rollup.project-read",
+			"source": "разбор кода 2026-08-20 (work action-catalog-debt-and-drift, гашение долга not-covered-by-source-pass): src/PetBox.Web/Pages/ProjectHome/Index.cshtml.cs:85",
+			"subdomain": "rollup",
+			"action": "прочитать сводные счётчики проекта",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/ProjectHome/Index"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "ICoreDbRollupService.GetProjectRollupAsync (ProjectHome/Index.cshtml.cs:85)."
 		}
 	],
 	"unmapped": [
-		{
-			"surface": "mcp:petbox_report_issue_status",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "mcp:tasks_methodology_utility_get",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
 		{
 			"surface": "page:/AccessDenied",
 			"reason": "no-domain-action",
 			"note": "Страница отказа в доступе."
 		},
 		{
-			"surface": "page:/Admin/Index",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectAgentDefs",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectConnect",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectData",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectDataDb",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
 			"surface": "page:/Admin/ProjectLogSettings",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectMemory",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectMethodology",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/ProjectTasks",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/Projects",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Admin/WorkspaceAdmin",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Config/Editor",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Config/History",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Config/Index",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Config/Preview",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Config/Tags",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Dashboard/Index",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+			"reason": "no-domain-action",
+			"note": "Доменного действия нет вовсе: ProjectLogSettingsModel.OnGet — чистый 302 на страницу настроек проекта, ничего не читает и не пишет (ProjectLogSettings.cshtml.cs:28); страница оставлена только ради старых ссылок и закладок. Реальная настройка retention живёт в субдомене settings (LogSettings.RetentionDays в SettingsScopePolicy.Records) — это уже зафиксировано в поле note действия logs.retention-set. Переклассифицировано при гашении долга 2026-08-20."
 		},
 		{
 			"surface": "page:/Doc/Agent",
@@ -1903,69 +2049,9 @@
 			"note": "Корневая страница."
 		},
 		{
-			"surface": "page:/Llm/Index",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
 			"surface": "page:/Login",
 			"reason": "no-domain-action",
 			"note": "Поток аутентификации."
-		},
-		{
-			"surface": "page:/Me/Account",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Nav/Tree",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Database",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Databases",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Index",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Memory",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/MemoryStore",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Session",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Sessions",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/ProjectHome/Table",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
-		},
-		{
-			"surface": "page:/Search",
-			"reason": "not-covered-by-source-pass",
-			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
 		},
 		{
 			"surface": "rest:GET /.well-known/oauth-authorization-server",
