@@ -1,0 +1,439 @@
+
+=== q1-petboxclaims-type.cqlinq ===
+записей: 1   за 2 мс
+  PetBox.Core.Auth.PetBoxClaims  |  0  |  0
+wall_ms=1271
+
+=== q10-type-connectivity.cqlinq ===
+записей: 2   за 1 мс
+  PetBox.Core.Auth.TenantAuthorizer  |  1  |  38
+  PetBox.Core.Auth.WorkspaceMembershipService  |  1  |  75
+wall_ms=1263
+
+=== q11-no-tests-check.cqlinq ===
+записей: 0   за 2 мс
+wall_ms=1609
+
+=== q11b-assemblies.cqlinq ===
+записей: 16   за 1 мс
+  PetBox.Client
+  PetBox.Client.Config
+  PetBox.Client.Data.Linq2Db
+  PetBox.Core
+  PetBox.Config
+  PetBox.Dashboard
+  PetBox.Data
+  PetBox.Deploy
+  PetBox.LlmRouter.Contract
+  PetBox.LlmRouter
+  PetBox.Log.Core
+  PetBox.Memory
+  PetBox.Sessions
+  PetBox.Tasks.Engine
+  PetBox.Tasks
+  PetBox.Web
+wall_ms=1477
+
+=== q2-petboxclaims-fields.cqlinq ===
+записей: 6   за 7 мс
+  PetBox.Core.Auth.PetBoxClaims.UserId  |  0
+  PetBox.Core.Auth.PetBoxClaims.ActiveWorkspace  |  0
+  PetBox.Core.Auth.PetBoxClaims.ProjectKey  |  0
+  PetBox.Core.Auth.PetBoxClaims.Scopes  |  0
+  PetBox.Core.Auth.PetBoxClaims.WorkspaceRoles  |  0
+  PetBox.Core.Auth.PetBoxClaims.IsSysAdmin  |  0
+wall_ms=1202
+
+=== q3-scope-membership.cqlinq ===
+записей: 0   за 4 мс
+wall_ms=1205
+
+=== q4-mcp-tool-attribute.cqlinq ===
+записей: 96   за 2 мс
+  PetBox.Web.Mcp.AgentDefTools.ListAsync(IHttpContextAccessor,IAgentDefinitionService,String,CancellationToken)
+  PetBox.Web.Mcp.AgentDefTools.GetAsync(IHttpContextAccessor,IAgentDefinitionService,String,String,CancellationToken)
+  PetBox.Web.Mcp.AgentDefTools.UpsertAsync(IHttpContextAccessor,IAgentDefinitionService,String,String,JsonElement,Int64,CancellationToken)
+  PetBox.Web.Mcp.AgentDefTools.DeleteAsync(IHttpContextAccessor,IAgentDefinitionService,String,String,Int64,CancellationToken)
+  PetBox.Web.Mcp.ApiKeyTools.CreateAsync(IHttpContextAccessor,AgentKeyAdminService,String,String,String,Nullable<Int64>,Boolean,String,Boolean,CancellationToken)
+  PetBox.Web.Mcp.ApiKeyTools.ListAsync(IHttpContextAccessor,AgentKeyAdminService,String,CancellationToken)
+  PetBox.Web.Mcp.ApiKeyTools.UpdateAsync(IHttpContextAccessor,AgentKeyAdminService,String,String,String,Nullable<Int64>,String,CancellationToken)
+  PetBox.Web.Mcp.ApiKeyTools.DeleteAsync(IHttpContextAccessor,AgentKeyAdminService,String,CancellationToken)
+  PetBox.Web.Mcp.CommentTools.UpsertAsync(IHttpContextAccessor,FeatureFlags,ICommentService,ITasksService,String,String,CommentItemInput[],Nullable<Int32>,Boolean,CancellationToken)
+  PetBox.Web.Mcp.CommentTools.SearchAsync(IHttpContextAccessor,FeatureFlags,ICommentService,ITasksService,String,String,String,String,Nullable<Int32>,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.CommentTools.DeltaAsync(IHttpContextAccessor,FeatureFlags,ICommentService,String,String,Int64,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.CommentTools.GetAsync(IHttpContextAccessor,FeatureFlags,ICommentService,String,String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.CommentTools.DeleteAsync(IHttpContextAccessor,FeatureFlags,ICommentService,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.ConfigTools.BindingUpsertAsync(IHttpContextAccessor,IConfigDbFactory,ISecretEncryptor,String,ConfigBindingItemInput[],Boolean,CancellationToken)
+  PetBox.Web.Mcp.ConfigTools.BindingSearchAsync(IHttpContextAccessor,IConfigDbFactory,String,String,String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.ConfigTools.BindingGetAsync(IHttpContextAccessor,IConfigDbFactory,String,Int64,CancellationToken)
+  PetBox.Web.Mcp.ConfigTools.BindingDeleteAsync(IHttpContextAccessor,IConfigDbFactory,String,Int64,CancellationToken)
+  PetBox.Web.Mcp.DataDbTools.CreateAsync(IHttpContextAccessor,IDataDbCatalog,String,String,String,Nullable<Int64>,CancellationToken)
+  PetBox.Web.Mcp.DataDbTools.ListAsync(IHttpContextAccessor,IDataDbCatalog,String,CancellationToken)
+  PetBox.Web.Mcp.DataDbTools.DeleteAsync(IHttpContextAccessor,IDataDbCatalog,String,String,CancellationToken)
+  PetBox.Web.Mcp.DataDbTools.DescribeAsync(IHttpContextAccessor,IDataDbCatalog,String,String,CancellationToken)
+  PetBox.Web.Mcp.DataTools.SchemaApplyAsync(IHttpContextAccessor,IDataSqlService,String,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.DataTools.QueryAsync(IHttpContextAccessor,IDataSqlService,String,String,String,Nullable<JsonElement>,CancellationToken)
+  PetBox.Web.Mcp.DataTools.ExecAsync(IHttpContextAccessor,IDataSqlService,String,String,String,Nullable<JsonElement>,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.NodeListAsync(IHttpContextAccessor,FeatureFlags,IDeployService,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.NodeUpsertAsync(IHttpContextAccessor,FeatureFlags,IDeployService,AgentKeyAdminService,String,String,String,Nullable<Boolean>,Boolean,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.NodeDeleteAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.ListAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,String,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.UpsertAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,String,String,String,String,Boolean,Nullable<Boolean>,String,String,String[],String[],String,String,String,String,Nullable<Int32>,String,Nullable<Double>,String,String[],String[],String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.StartAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.StopAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.MoveAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,String,CancellationToken)
+  PetBox.Web.Mcp.DeployTools.DeleteAsync(IHttpContextAccessor,FeatureFlags,IDeployService,String,CancellationToken)
+  PetBox.Web.Mcp.DescribeTools.Describe(IOptions<McpServerOptions>,String)
+  PetBox.Web.Mcp.HealthTools.SearchAsync(IHttpContextAccessor,IHealthReportService,String,String,Int32,Nullable<Int32>,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.LlmRouterTools.ConfigGetAsync(IHttpContextAccessor,FeatureFlags,ILlmRegistryEditor,String,CancellationToken)
+  PetBox.Web.Mcp.LlmRouterTools.ConfigUpsertAsync(IHttpContextAccessor,FeatureFlags,ILlmRegistryEditor,String,JsonElement,Int64,CancellationToken)
+  PetBox.Web.Mcp.LlmRouterTools.EmbedAsync(IHttpContextAccessor,FeatureFlags,ILlmClient,String,JsonElement,String,CancellationToken)
+  PetBox.Web.Mcp.LlmRouterTools.RerankAsync(IHttpContextAccessor,FeatureFlags,ILlmClient,String,String,JsonElement,Nullable<Int32>,String,CancellationToken)
+  PetBox.Web.Mcp.LlmRouterTools.ChatAsync(IHttpContextAccessor,FeatureFlags,ILlmClient,String,JsonElement,String,Nullable<Double>,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.LogCatalogTools.CreateAsync(IHttpContextAccessor,ILogStore,String,String,String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.LogCatalogTools.ListAsync(IHttpContextAccessor,ILogStore,String,CancellationToken)
+  PetBox.Web.Mcp.LogCatalogTools.UpdateAsync(IHttpContextAccessor,ILogStore,String,String,Int32,CancellationToken)
+  PetBox.Web.Mcp.LogCatalogTools.DeleteAsync(IHttpContextAccessor,ILogStore,String,String,CancellationToken)
+  PetBox.Web.Mcp.LogTools.QueryAsync(IHttpContextAccessor,ILogQueryService,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.StoreCreateAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.StoreListAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,Boolean,Nullable<Int32>,String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.StoreDeleteAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.GetAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,IMemoryUsageRecorder,String,String,String,String[],String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.UpsertAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,String,MemoryEntryInputDto[],Nullable<Int32>,String,Boolean,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.DeltaAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,String,Int64,Nullable<Int32>,String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.RememberAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,String,String,String,String,String,String[],String,CancellationToken)
+  PetBox.Web.Mcp.MemoryTools.SearchAsync(IHttpContextAccessor,FeatureFlags,IWorkspaceMemoryDirectory,IMemoryService,IMemoryUsageRecorder,String,String,String,String,String,SortInput,Nullable<Int32>,Nullable<Int32>,Boolean,String,String,CancellationToken)
+  PetBox.Web.Mcp.ProjectTools.CreateAsync(IHttpContextAccessor,IProjectDirectory,String,String,String,String,Boolean,CancellationToken)
+  PetBox.Web.Mcp.ProjectTools.ListAsync(IHttpContextAccessor,IProjectDirectory,String,CancellationToken)
+  PetBox.Web.Mcp.RelationTools.CreateAsync(IHttpContextAccessor,FeatureFlags,IRelationStore,ITasksService,String,String,String,String,RelationCreateItemInput[],Boolean,CancellationToken)
+  PetBox.Web.Mcp.RelationTools.ListAsync(IHttpContextAccessor,FeatureFlags,IRelationStore,ITasksService,String,String,String,Boolean,CancellationToken)
+  PetBox.Web.Mcp.RelationTools.DeleteAsync(IHttpContextAccessor,FeatureFlags,IRelationStore,String,String,String[],CancellationToken)
+  PetBox.Web.Mcp.ReportTools.IssueAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.ReportTools.IssueStatusAsync(IHttpContextAccessor,FeatureFlags,ITasksService,ICommentService,String,Nullable<Int32>,CancellationToken)
+  PetBox.Web.Mcp.SearchTools.ReindexAsync(IHttpContextAccessor,FeatureFlags,SearchReindexService,String,String,CancellationToken)
+  PetBox.Web.Mcp.SessionTools.UpsertAsync(IHttpContextAccessor,FeatureFlags,ISessionService,String,String,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.SessionTools.AppendAsync(IHttpContextAccessor,FeatureFlags,ISessionService,String,String,String,Int64,SessionMessageDto[],String,CancellationToken)
+  PetBox.Web.Mcp.SessionTools.GetAsync(IHttpContextAccessor,FeatureFlags,ISessionService,String,String,Nullable<Int32>,Int64,CancellationToken)
+  PetBox.Web.Mcp.SessionTools.DeleteAsync(IHttpContextAccessor,FeatureFlags,ISessionService,String,String,CancellationToken)
+  PetBox.Web.Mcp.SessionTools.SearchAsync(IHttpContextAccessor,FeatureFlags,ISessionService,SessionSearchService,String,String,Int32,Int32,Boolean,Nullable<Int32>,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardCreateAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardAdoptAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardSetWireAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardListAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardDeleteAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardCloseAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.BoardReopenAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyCreateAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyListAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyCloseAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyActiveGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologySetActiveAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,Int64,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyRulesGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyRulesUpsertAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,MethodologyDefInput,Int64,MethodologyMigrationInput[],CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyUtilityGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyUtilityUpsertAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,MethodologyDefInput,Int64,MethodologyMigrationInput[],CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologySetDescriptionAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,String,String,String,String,String,String,String,String,String,Boolean,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyTemplateUpsertAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,MethodologyDefInput,Int64,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyTemplateDeleteAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,Int64,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyTemplateGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyTemplateListAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyTemplateSnapshotAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,Int64,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.MethodologyGuideAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.NodeGetAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,String[],Nullable<Int32>,Boolean,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.SearchAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,String,String,String[],String[],SortInput,String,Nullable<Int32>,Nullable<Int32>,Boolean,String,String[],String,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.UpsertAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,TaskNodeInput[],Nullable<Int32>,Boolean,Boolean,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.DeltaAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,Int64,Nullable<Int32>,Boolean,CancellationToken)
+  PetBox.Web.Mcp.TasksTools.WorkflowAsync(IHttpContextAccessor,FeatureFlags,ITasksService,String,String,CancellationToken)
+  PetBox.Web.Mcp.WhoAmITools.WhoAmI(IHttpContextAccessor)
+wall_ms=1325
+
+=== q5-tenantfrom-attribute.cqlinq ===
+записей: 56   за 1 мс
+  PetBox.Web.Pages.ProjectHome.DatabaseModel
+  PetBox.Web.Pages.ProjectHome.DatabasesModel
+  PetBox.Web.Pages.ProjectHome.IndexModel
+  PetBox.Web.Pages.ProjectHome.MemoryModel
+  PetBox.Web.Pages.ProjectHome.MemoryStoreModel
+  PetBox.Web.Pages.ProjectHome.SessionModel
+  PetBox.Web.Pages.ProjectHome.SessionsModel
+  PetBox.Web.Pages.ProjectHome.TableModel
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel
+  PetBox.Web.Pages.ProjectHome.TasksModel
+  PetBox.Web.Pages.Nav.TreeModel
+  PetBox.Web.Pages.Logs.EventDetailsModel
+  PetBox.Web.Pages.Logs.IndexModel
+  PetBox.Web.Pages.Logs.TraceModel
+  PetBox.Web.Pages.Logs.TracesModel
+  PetBox.Web.Pages.Llm.IndexModel
+  PetBox.Web.Pages.Dashboard.IndexModel
+  PetBox.Web.Pages.Config.EditorModel
+  PetBox.Web.Pages.Config.HistoryModel
+  PetBox.Web.Pages.Config.IndexModel
+  PetBox.Web.Pages.Config.PreviewModel
+  PetBox.Web.Pages.Config.TagsModel
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel
+  PetBox.Web.Pages.Admin.ProjectConnectModel
+  PetBox.Web.Pages.Admin.ProjectDataModel
+  PetBox.Web.Pages.Admin.ProjectDataDbModel
+  PetBox.Web.Pages.Admin.ProjectDetailModel
+  PetBox.Web.Pages.Admin.ProjectKeysModel
+  PetBox.Web.Pages.Admin.ProjectLogsModel
+  PetBox.Web.Pages.Admin.ProjectLogSettingsModel
+  PetBox.Web.Pages.Admin.ProjectMemoryModel
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel
+  PetBox.Web.Pages.Admin.ProjectsModel
+  PetBox.Web.Pages.Admin.ProjectSettingsAdminModel
+  PetBox.Web.Pages.Admin.ProjectTasksModel
+  PetBox.Web.Pages.Admin.WorkspaceAdminModel
+  PetBox.Web.Pages.Admin.WorkspaceAgentKeysModel
+  PetBox.Web.Pages.Admin.WorkspaceDefaultsModel
+  PetBox.Web.Pages.Admin.WorkspaceDetailModel
+  PetBox.Web.Pages.Admin.WorkspaceSettingsModel
+  PetBox.Web.Pages.Admin.WorkspaceUsersModel
+  PetBox.Web.Mcp.AgentDefTools
+  PetBox.Web.Mcp.CommentTools
+  PetBox.Web.Mcp.ConfigTools
+  PetBox.Web.Mcp.DataDbTools
+  PetBox.Web.Mcp.DataTools
+  PetBox.Web.Mcp.HealthTools
+  PetBox.Web.Mcp.LlmRouterTools
+  PetBox.Web.Mcp.LogCatalogTools
+  PetBox.Web.Mcp.LogTools
+  PetBox.Web.Mcp.MemoryTools
+  PetBox.Web.Mcp.RelationTools
+  PetBox.Web.Mcp.SearchTools
+  PetBox.Web.Mcp.SessionTools
+  PetBox.Web.Mcp.TasksTools
+wall_ms=1205
+
+=== q5b-tenantfrom-methods.cqlinq ===
+записей: 36   за 2 мс
+  PetBox.Config.ConfigApi.Conf(HttpContext,IConfigDirectory,ISecretEncryptor)
+  PetBox.Config.ConfigApi.Create(HttpContext,IConfigDirectory,String,ConfigBindingDto)
+  PetBox.Config.ConfigApi.Delete(HttpContext,IConfigDirectory,String,String,String)
+  PetBox.Data.DataDbsApi.CreateAsync(String,DataDbsApi+CreateDbRequest,IDataDbCatalog,CancellationToken)
+  PetBox.Data.DataDbsApi.ListAsync(String,IDataDbCatalog,CancellationToken)
+  PetBox.Data.DataDbsApi.DeleteAsync(String,String,IDataDbCatalog,CancellationToken)
+  PetBox.Data.QueryExecApi.QueryAsync(HttpContext,String,String,QueryExecApi+QueryRequest,IDataSqlService,CancellationToken)
+  PetBox.Data.QueryExecApi.ExecAsync(HttpContext,String,String,QueryExecApi+QueryRequest,IDataSqlService,CancellationToken)
+  PetBox.Data.SchemaApi.ApplyAsync(String,String,SchemaApi+SchemaApplyRequest,IDataSqlService,CancellationToken)
+  PetBox.Data.SchemaApi.ListMigrationsAsync(String,String,IDataDbCatalog,CancellationToken)
+  PetBox.Log.Core.LogApi.CreateLogAsync(HttpContext,String,LogApi+CreateLogRequest,ILogStore,CancellationToken)
+  PetBox.Log.Core.LogApi.ListLogsAsync(HttpContext,String,ILogStore,CancellationToken)
+  PetBox.Log.Core.LogApi.DeleteLogAsync(HttpContext,String,String,ILogStore,CancellationToken)
+  PetBox.Log.Core.LogApi.IngestClefPathAsync(HttpContext,String,String,ILogStore,CleFParser,IIngestionPipeline,CancellationToken)
+  PetBox.Log.Core.LogApi.QueryLogsAsync(HttpContext,String,String,ILogQueryService,CancellationToken)
+  PetBox.Log.Core.LogApi.GetServicesAsync(HttpContext,String,String,ILogStore,CancellationToken)
+  PetBox.Log.Core.LogApi.SeqIngestAsync(HttpContext,ILogStore,CleFParser,IIngestionPipeline,IConfiguration,CancellationToken)
+  PetBox.Log.Core.LogApi.SeqIngestPathAsync(HttpContext,String,String,ILogStore,CleFParser,IIngestionPipeline,CancellationToken)
+  PetBox.Log.Core.LogApi.LiveTailAsync(HttpContext,String,String,ITailBroadcaster,ILogStore,CancellationToken)
+  PetBox.Log.Core.ShareApi.CreateShareAsync(HttpContext,IShareLinkDirectory,ShareCreateRequest,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.ListAsync(HttpContext,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.UpsertAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.AppendAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.DeleteAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Navigation.ProjectSwitchEndpoint.Switch(HttpContext,IProjectDirectory,String,String,String)
+  PetBox.Web.Navigation.WorkspaceSwitchEndpoint.Switch(HttpContext,String,String)
+  PetBox.Web.Memory.MemoryApi.CanonAsync(HttpContext,String,IMemoryService,IProjectDirectory,IProjectCatalog,CancellationToken)
+  PetBox.Web.LlmRouter.LlmRouterApi.ChatCompletionsAsync(HttpContext,ILlmClient,CancellationToken)
+  PetBox.Web.Ingestion.OtlpEndpoints.IngestLogs(HttpContext,String,String,ILogStore,IIngestionPipeline,CancellationToken)
+  PetBox.Web.Ingestion.OtlpEndpoints.IngestTraces(HttpContext,String,String,ILogStore,CancellationToken)
+  PetBox.Web.Ingestion.OtlpEndpoints.IngestMetrics(HttpContext,String,String,ILogStore,CancellationToken)
+  PetBox.Web.Health.HealthApi.PushAsync(HttpContext,IHealthReportService,HealthPushRequest,CancellationToken)
+  PetBox.Web.AgentDefs.AgentDefsApi.ListAsync(HttpContext,String,IAgentDefinitionService,CancellationToken)
+  PetBox.Web.AgentDefs.AgentDefsApi.GetAsync(HttpContext,String,String,IAgentDefinitionService,CancellationToken)
+  PetBox.Web.AgentDefs.AgentDefsApi.PutAsync(HttpContext,String,String,IAgentDefinitionService,CancellationToken)
+  PetBox.Web.AgentDefs.AgentDefsApi.DeleteAsync(HttpContext,String,String,IAgentDefinitionService,CancellationToken)
+wall_ms=1187
+
+=== q6-claimsprincipal-users.cqlinq ===
+записей: 69   за 6 мс
+  PetBox.Core.Auth.AccountSelfService.ChangeOwnPasswordAsync(ClaimsPrincipal,String,String,CancellationToken)
+  PetBox.Core.Auth.ApiKeyAuthenticationHandler.HandleAuthenticateAsync()
+  PetBox.Core.Auth.AuthApi.Validate(HttpContext,IProjectCatalog,CancellationToken)
+  PetBox.Core.Auth.CallerTenant.DefaultProjectOf(ClaimsPrincipal)
+  PetBox.Core.Auth.KeyIssuer.From(ClaimsPrincipal)
+  PetBox.Core.Auth.KeyIssuer.IsApiKeyPrincipal(ClaimsPrincipal)
+  PetBox.Core.Auth.KeyIssuer.HasScope(ClaimsPrincipal,String)
+  PetBox.Core.Auth.ProjectScope.ClaimOf(ClaimsPrincipal)
+  PetBox.Core.Auth.ProjectScope.SandboxOnlyOf(ClaimsPrincipal)
+  PetBox.Core.Auth.SandboxContainment.AppliesTo(ClaimsPrincipal)
+  PetBox.Core.Auth.TenantAuthorizer.AuthorizeAsync(ClaimsPrincipal,TenantRef,CancellationToken)
+  PetBox.Core.Auth.WorkspaceCreateAuthorizationHandler.HandleRequirementAsync(AuthorizationHandlerContext,WorkspaceCreateRequirement)
+  PetBox.Core.Auth.WorkspaceRoleClaims.CanAdminWorkspace(ClaimsPrincipal,String)
+  PetBox.Core.Auth.WorkspaceRoleClaims.HasWorkspaceRoleAtLeast(ClaimsPrincipal,String,WorkspaceRole)
+  PetBox.Core.Auth.WorkspaceRoleClaims.MemberWorkspaceKeys(ClaimsPrincipal)
+  PetBox.Core.Auth.WorkspaceRoleClaims.GetWorkspaceRole(ClaimsPrincipal,String)
+  PetBox.Core.Auth.WorkspaceRoleAuthorizationHandler.HandleRequirementAsync(AuthorizationHandlerContext,WorkspaceRoleRequirement)
+  PetBox.Log.Core.LogApi.HasScope(HttpContext,String)
+  PetBox.Log.Core.LogApi.IsApiKeyPrincipal(HttpContext)
+  PetBox.Log.Core.ShareApi.CreateShareAsync(HttpContext,IShareLinkDirectory,ShareCreateRequest,CancellationToken)
+  Program.Configure(WebApplication)
+  PetBox.Web.Settings.BoardFilterPrefsEndpoint.Save(HttpContext,ISettingsResolver,Nullable<Boolean>,String,Nullable<Boolean>,CancellationToken)
+  PetBox.Web.Settings.SettingsScopePageModel.OnPostSaveAsync(String)
+  PetBox.Web.Settings.UiStateResolver.ResolveForCurrentUserAsync<T>(INavigationContext,ISettingsResolver,HttpContext,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.ListAsync(HttpContext,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.UpsertAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.AppendAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Sessions.SessionApi.DeleteAsync(HttpContext,String,String,ISessionService,CancellationToken)
+  PetBox.Web.Navigation.NavigationContext.get_IsAuthenticated()
+  PetBox.Web.Navigation.NavigationContext.get_Username()
+  PetBox.Web.Navigation.NavigationContext.get_AvailableWorkspaces()
+  PetBox.Web.Navigation.NavigationContext.MembershipKeys(Int64)
+  PetBox.Web.Navigation.NavigationContext.ResolveWorkspace()
+  PetBox.Web.Memory.MemoryApi.CanonAsync(HttpContext,String,IMemoryService,IProjectDirectory,IProjectCatalog,CancellationToken)
+  PetBox.Web.Logging.RequestLoggingMiddleware.InvokeAsync(HttpContext)
+  PetBox.Web.Health.HealthApi.PushAsync(HttpContext,IHealthReportService,HealthPushRequest,CancellationToken)
+  PetBox.Web.Deploy.DeployApi.Claim(HttpContext,String)
+  PetBox.Web.Auth.WorkspaceClaimsRefresher.TransformAsync(ClaimsPrincipal)
+  PetBox.Web.AgentDefs.AgentDefsApi.RequireScope(HttpContext,String)
+  PetBox.Web.Pages.AccessDeniedModel.OnGet()
+  PetBox.Web.Pages.LoginModel.OnGet()
+  PetBox.Web.Pages.LoginModel.OnPostAsync(String,String,String)
+  PetBox.Web.Pages.Shared.Pages_Shared__AdminSidebar.ExecuteAsync()
+  PetBox.Web.Pages.Shared.Pages_Shared__Footer.ExecuteAsync()
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.OnPostCommentAddAsync(String,String,String,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.LoadAsync(CancellationToken,String)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostCommentAddAsync(String,String,CancellationToken)
+  PetBox.Web.Pages.Me.AccountModel.OnGet()
+  PetBox.Web.Pages.Me.NewWorkspaceModel.OnPostAsync(String,String,String)
+  PetBox.Web.Pages.Me.PreferencesModel.TryGetUserId(Int64&,String&)
+  PetBox.Web.Pages.Config.EditorModel.OnPostSaveAsync(CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostDeleteAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostRevealAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostSetCommitTemplateAsync(String)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostCreateHealthEndpointAsync(String,Nullable<Int32>)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.AccessibleProjectsAsync(CancellationToken)
+  PetBox.Web.Pages.Admin.UsersModel.get_CurrentUserId()
+  PetBox.Web.Pages.Admin.WorkspacesModel.OnPostCreateAsync(String,String,String)
+  PetBox.Web.Mcp.ApiKeyTools.UpdateAsync(IHttpContextAccessor,AgentKeyAdminService,String,String,String,Nullable<Int64>,String,CancellationToken)
+  PetBox.Web.Mcp.DataDbTools.AssertScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.DataTools.AssertScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.HealthTools.AssertScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.LogCatalogTools.AssertScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.LogTools.AssertScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.McpProjectExistsFilter.AssertExistsAsync(RequestContext<CallToolRequestParams>,CancellationToken)
+  PetBox.Web.Mcp.McpToolScopeFilter.ScopesOf(ClaimsPrincipal)
+  PetBox.Web.Mcp.MemoryTools.AssertMemoryProjectAsync(IHttpContextAccessor,IWorkspaceMemoryDirectory,String,CancellationToken)
+  PetBox.Web.Mcp.ModuleMcp.HasScope(IHttpContextAccessor,String)
+  PetBox.Web.Mcp.WhoAmITools.WhoAmI(IHttpContextAccessor)
+wall_ms=1204
+
+=== q7-ilogger-fields.cqlinq ===
+записей: 11   за 2 мс
+  PetBox.Core.Search.AsyncVectorizationWorker._log  |  PetBox.Core.Search.AsyncVectorizationWorker
+  PetBox.Core.Search.SearchService._log  |  PetBox.Core.Search.SearchService
+  PetBox.Deploy.Services.DeployService._logger  |  PetBox.Deploy.Services.DeployService
+  PetBox.LlmRouter.Registry.LlmRegistryImporter._log  |  PetBox.LlmRouter.Registry.LlmRegistryImporter
+  PetBox.Tasks.Data.AutoWireFieldRenamedMigrator._log  |  PetBox.Tasks.Data.AutoWireFieldRenamedMigrator
+  PetBox.Tasks.Data.FlatNodePartOfMigrator._log  |  PetBox.Tasks.Data.FlatNodePartOfMigrator
+  PetBox.Tasks.Data.LegacyTaskFileMigrator._log  |  PetBox.Tasks.Data.LegacyTaskFileMigrator
+  PetBox.Tasks.Data.LinkKindsDeclaredMigrator._log  |  PetBox.Tasks.Data.LinkKindsDeclaredMigrator
+  PetBox.Tasks.Data.MethodologyInstanceBackfill._log  |  PetBox.Tasks.Data.MethodologyInstanceBackfill
+  PetBox.Tasks.Data.RelationsToTasksDbMigrator._log  |  PetBox.Tasks.Data.RelationsToTasksDbMigrator
+  PetBox.Tasks.Data.WorkDeferredStatusMigrator._log  |  PetBox.Tasks.Data.WorkDeferredStatusMigrator
+wall_ms=1216
+
+=== q8-gatedhostedservice.cqlinq ===
+записей: 0   за 1 мс
+wall_ms=1219
+
+=== q8b-gatedhostedservice-users.cqlinq ===
+записей: 5   за 10 мс
+  PetBox.Web.HostedServiceGate.AddGatedHostedService<T>(IServiceCollection)
+  PetBox.Web.HostedServiceGate.AddGatedHostedService<T>(IServiceCollection,Func<IServiceProvider,T>)
+  PetBox.Web.GatedHostedService<T>..ctor(IServiceProvider)
+  PetBox.Web.GatedHostedService<T>.StartAsync(CancellationToken)
+  PetBox.Web.GatedHostedService<T>.StopAsync(CancellationToken)
+wall_ms=1243
+
+=== q9-razor-onpost.cqlinq ===
+записей: 84   за 7 мс
+  PetBox.Web.Settings.SettingsScopePageModel.OnPostSaveAsync(String)
+  PetBox.Web.Pages.ErrorModel.OnPost()
+  PetBox.Web.Pages.LoginModel.OnPostAsync(String,String,String)
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.OnPostCommentAddAsync(String,String,String,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.OnPostCommentEditAsync(String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.OnPostCommentDeleteAsync(String,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardModel.OnPostCreateAsync(String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostStatusAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostEditAsync(String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostCommentAddAsync(String,String,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostCommentEditAsync(String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel.OnPostCommentDeleteAsync(String,CancellationToken)
+  PetBox.Web.Pages.Me.NewWorkspaceModel.OnPostAsync(String,String,String)
+  PetBox.Web.Pages.Me.PreferencesModel.OnPostSaveAsync(Theme,SearchRankingMode)
+  PetBox.Web.Pages.Me.SecurityModel.OnPostChangePasswordAsync(String,String,String)
+  PetBox.Web.Pages.Logs.IndexModel.OnPostSaveAsync(String,String,CancellationToken)
+  PetBox.Web.Pages.Logs.IndexModel.OnPostDeleteAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Llm.IndexModel.OnPostSaveAsync(String,String,String,Int32,Int32,String,Int64,CancellationToken)
+  PetBox.Web.Pages.Llm.IndexModel.OnPostDeleteAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.Llm.IndexModel.OnPostSaveRouteAsync(LlmCapability,String,String,Int32,String,String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.Llm.IndexModel.OnPostDeleteRouteAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.Config.EditorModel.OnPostSaveAsync(CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostDeleteAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostSaveFilterAsync(String,CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostDeleteFilterAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Config.IndexModel.OnPostRevealAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Config.PreviewModel.OnPostAsync(CancellationToken)
+  PetBox.Web.Pages.Config.TagsModel.OnPostDeclareAsync(String,String,CancellationToken)
+  PetBox.Web.Pages.Config.TagsModel.OnPostRetireAsync(Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.AgentKeysModel.OnPostRevokeAsync(String)
+  PetBox.Web.Pages.Admin.AgentKeysModel.OnPostEditAsync(String,String,String[],String)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostNewNodeAsync(String,String,String,Boolean)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostDeleteNodeAsync(String)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostNewDeploymentAsync(String,String,String,String,Boolean,String,String,String,String,String,String,Nullable<Double>,String,String)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostSetStateAsync(String,DesiredState)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostMoveAsync(String,String)
+  PetBox.Web.Pages.Admin.DeployModel.OnPostDeleteDeploymentAsync(String)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostCreateAsync(String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostSaveAsync(String,String,Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostDeleteAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostSaveRoleAsync(String,Int64,Int32,String,String,List<String>,Boolean,List<String>,Boolean,List<String>,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostAddRoleAsync(String,Int64,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectAgentDefsModel.OnPostDeleteRoleAsync(String,Int64,Int32,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectConnectModel.OnPostMintAsync(String,String[])
+  PetBox.Web.Pages.Admin.ProjectDataModel.OnPostCreateAsync(String,String,Nullable<Int64>)
+  PetBox.Web.Pages.Admin.ProjectDataModel.OnPostDeleteAsync(String)
+  PetBox.Web.Pages.Admin.ProjectDataDbModel.OnPostApplyAsync(String,String)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostSetCommitTemplateAsync(String)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostClearCommitTemplateAsync()
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostCreateHealthEndpointAsync(String,Nullable<Int32>)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostDeleteHealthEndpointAsync(Int64)
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostReindexAsync()
+  PetBox.Web.Pages.Admin.ProjectDetailModel.OnPostDeleteAsync()
+  PetBox.Web.Pages.Admin.ProjectKeysModel.OnPostCreateKeyAsync(String,String[])
+  PetBox.Web.Pages.Admin.ProjectKeysModel.OnPostRevokeKeyAsync(String)
+  PetBox.Web.Pages.Admin.ProjectKeysModel.OnPostUpdateKeyScopesAsync(String,String[])
+  PetBox.Web.Pages.Admin.ProjectLogsModel.OnPostCreateAsync(String,String)
+  PetBox.Web.Pages.Admin.ProjectLogsModel.OnPostDeleteAsync(String)
+  PetBox.Web.Pages.Admin.ProjectMemoryModel.OnPostCreateAsync(String,String)
+  PetBox.Web.Pages.Admin.ProjectMemoryModel.OnPostDeleteAsync(String)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostStartEditAsync(String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostLoadPresetAsync(String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostPreviewAsync(String,String,Int64,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostConfirmAsync(String,String,Int64,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostSaveAsync(String,String,Int64,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostDeleteAsync(Int64,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectMethodologyModel.OnPostActivateAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectsModel.OnPostCreateAsync(String,String,String)
+  PetBox.Web.Pages.Admin.ProjectTasksModel.OnPostCreateAsync(String,String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectTasksModel.OnPostEnableMethodologyAsync(String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectTasksModel.OnPostDeleteAsync(String,CancellationToken)
+  PetBox.Web.Pages.Admin.ProjectTasksModel.OnPostCloseAsync(String,Boolean,CancellationToken)
+  PetBox.Web.Pages.Admin.UsersModel.OnPostCreateAsync(String,String,Nullable<Int32>)
+  PetBox.Web.Pages.Admin.UsersModel.OnPostSetQuotaAsync(Int64,Nullable<Int32>)
+  PetBox.Web.Pages.Admin.UsersModel.OnPostResetPasswordAsync(Int64,String)
+  PetBox.Web.Pages.Admin.UsersModel.OnPostDeleteAsync(Int64)
+  PetBox.Web.Pages.Admin.WorkspaceAgentKeysModel.OnPostRevokeAsync(String)
+  PetBox.Web.Pages.Admin.WorkspaceAgentKeysModel.OnPostEditAsync(String,String,String[],String)
+  PetBox.Web.Pages.Admin.WorkspacesModel.OnPostCreateAsync(String,String,String)
+  PetBox.Web.Pages.Admin.WorkspacesModel.OnPostDeleteAsync(String)
+  PetBox.Web.Pages.Admin.WorkspaceSettingsModel.OnPostSaveAsync()
+  PetBox.Web.Pages.Admin.WorkspaceUsersModel.OnPostAddAsync(String,String,String,WorkspaceRole,CancellationToken)
+  PetBox.Web.Pages.Admin.WorkspaceUsersModel.OnPostRemoveAsync(String,Int64,CancellationToken)
+  PetBox.Web.Pages.Admin.WorkspaceUsersModel.OnPostSetRoleAsync(String,Int64,WorkspaceRole,CancellationToken)
+wall_ms=1197
+

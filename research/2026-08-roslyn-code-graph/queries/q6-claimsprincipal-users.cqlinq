@@ -1,0 +1,4 @@
+// D1: кто использует System.Security.Claims.ClaimsPrincipal (прямо). Ожидание из полевого отчёта: 68 выдал / 2 релевантно.
+from m in Application.Methods
+where m.IsUsing("System.Security.Claims.ClaimsPrincipal")
+select m

@@ -1,0 +1,5 @@
+// Дополнительно: TenantFromAttribute на МЕТОДАХ (MCP-инструменты объявляют tenant-источник
+// на методе, если не на классе-носителе — см. TenantDeclaration.cs). Сверка с q5 (типы).
+from m in Application.Methods
+where m.HasAttribute("PetBox.Core.Auth.TenantFromAttribute")
+select m

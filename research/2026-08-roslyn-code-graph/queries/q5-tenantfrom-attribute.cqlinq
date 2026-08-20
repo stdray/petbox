@@ -1,0 +1,4 @@
+// D2/провал-3b: атрибут TenantFromAttribute на ТИПАХ. Ожидание из полевого отчёта: 85.
+from t in Application.Types
+where t.HasAttribute("PetBox.Core.Auth.TenantFromAttribute")
+select t

@@ -1,0 +1,5 @@
+// D1/провал-1b: сколько методов читают каждое из шести const-полей PetBoxClaims напрямую.
+// const инлайнится компилятором в IL -> ожидание графа: 0 по каждому полю.
+from f in Application.Fields
+where f.ParentType.FullName == "PetBox.Core.Auth.PetBoxClaims"
+select new { f, NbMethodsUsingMe = Application.Methods.Count(m => m.IsUsingField(f)) }

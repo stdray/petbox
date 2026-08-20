@@ -1,0 +1,1 @@
+from a in Application.Assemblies select a
