@@ -1,0 +1,5 @@
+// D4-доп: кто ИСПОЛЬЗУЕТ (в смысле IsUsing) открытый generic-тип GatedHostedService<T> -
+// проверка, ловит ли граф хоть что-то про паттерн "T как generic-аргумент метода".
+from m in Application.Methods
+where m.IsUsing("PetBox.Web.GatedHostedService<T>")
+select m

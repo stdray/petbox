@@ -1,0 +1,34 @@
+Raw runtime-dump evidence for the McpTenantEnforcementFilter / McpProjectExistsFilter order claim
+in src/PetBox.Web/Program.cs. Produced by proto/di/full-host-harness (WebApplicationFactory-shaped
+TestServer over PetBox's real Program.ConfigureServices/Configure, temp SQLite db, Host:BackgroundServices=false).
+Command: dotnet run -c Release -- mcp-tools-registered.json (see full-host-harness/Harness.cs)
+2026-08-20.
+
+mcp-tools-registered=96
+
+Call 1 - tool=tasks_search, projectKey=didump-proja (exists, OWNED by the calling key), bad param name "query":
+  IsError=True
+  {"error":{"type":"ArgumentException","message":"Unknown parameter(s) for tool 'tasks_search'.
+  Unrecognized: 'query'. Did you mean 'q'? ..."}}
+  -> tenant check + existence check both PASSED silently; the call reached the INNERMOST filter
+     (McpUnknownParameterFilter), exactly the position Program.cs's comments claim for it.
+
+Call 2 - tool=tasks_search, projectKey=didump-projb (EXISTS in core.db, NOT owned by the calling key):
+  IsError=True
+  {"error":{"type":"UnauthorizedAccessException","message":"Not authorized for project:didump-projb."}}
+  -> refused on the tenant axis. McpProjectExistsFilter and McpUnknownParameterFilter never ran
+     (their errors never appear).
+
+Call 3 - tool=tasks_search, projectKey=didump-does-not-exist (NEVER INSERTED - does not exist at all):
+  IsError=True
+  {"error":{"type":"UnauthorizedAccessException","message":"Not authorized for project:didump-does-not-exist."}}
+  -> IDENTICAL exception type and message template to Call 2, only the project key substring differs.
+     No "does not exist" / "did you mean" text anywhere. A caller cannot distinguish "project exists,
+     I don't own it" from "project doesn't exist at all" from this response - which is exactly the
+     property Program.cs's comment says the ordering (tenant PEP OUTSIDE/ABOVE the existence check)
+     is FOR: an unauthorized caller never gets to use project non-existence as an oracle.
+
+Conclusion: the documented filter order (ErrorEnvelope -> ToolScope -> Tracing -> ProjectDefault ->
+TenantEnforcement -> ProjectExists -> UnknownParameter, later-registered = more inner) is not just a
+comment - it is what the live pipeline actually does, confirmed by 3 real HTTP tools/call requests
+against a real (test-isolated) host.

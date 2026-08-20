@@ -1,0 +1,5 @@
+// Доп.проверка: подтверждение, что Application.Methods НЕ содержит тестовых сборок.
+// Ищем тип, заведомо живущий только в tests/**.
+from t in Application.Types
+where t.FullName == "PetBox.Tests.Auth.TenantAuthorizerTests"
+select t

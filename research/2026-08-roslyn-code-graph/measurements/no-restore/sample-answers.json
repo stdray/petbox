@@ -1,0 +1,147 @@
+[
+  {
+    "Question": "who-uses PetBox.Core.Auth.PetBoxClaims (type \u002B every const member)",
+    "Count": 88,
+    "Provenance": {
+      "SourcesSearched": [
+        "semantics (Roslyn ISymbol/SymbolFinder over every C# document in the solution)",
+        "syntax (declaration sites of the same documents)"
+      ],
+      "NotSearched": [
+        "strings (claim names / routes / partial names in string literals, .cshtml text, .ts)",
+        "runtime-dump (DI registrations, endpoint table)",
+        "IL (bin/** assemblies; nothing here was read from compiled output)",
+        "reflection (Type.GetType / Activator / attribute discovery at runtime)",
+        "non-C# projects (none in this solution) and any project MSBuild failed to load"
+      ],
+      "Completeness": "UNTRUSTWORTHY-model-does-not-compile",
+      "CompletenessNote": "Every C# declaration and reference in every loaded project was examined; a zero here is a HONEST ZERO for the semantic source and says nothing about strings/DI/reflection.",
+      "EdgeSource": "semantics",
+      "SolutionLoad": "MSBuildWorkspace.OpenSolutionAsync over PetBox.slnx",
+      "ModelHealth": {
+        "Projects": 22,
+        "Documents": 1206,
+        "GeneratedDocuments": 125,
+        "CompilationErrors": 34459,
+        "WorkspaceLoadFailures": 0,
+        "Verdict": "34459 binding errors: unresolved names silently drop edges, so a zero here means NOTHING"
+      }
+    }
+  },
+  {
+    "Question": "who-uses PetBox.Core.Settings.Scope members (incl. switch case labels)",
+    "Count": 9,
+    "Provenance": {
+      "SourcesSearched": [
+        "semantics (Roslyn ISymbol/SymbolFinder over every C# document in the solution)",
+        "syntax (declaration sites of the same documents)"
+      ],
+      "NotSearched": [
+        "strings (claim names / routes / partial names in string literals, .cshtml text, .ts)",
+        "runtime-dump (DI registrations, endpoint table)",
+        "IL (bin/** assemblies; nothing here was read from compiled output)",
+        "reflection (Type.GetType / Activator / attribute discovery at runtime)",
+        "non-C# projects (none in this solution) and any project MSBuild failed to load"
+      ],
+      "Completeness": "UNTRUSTWORTHY-model-does-not-compile",
+      "CompletenessNote": "Every C# declaration and reference in every loaded project was examined; a zero here is a HONEST ZERO for the semantic source and says nothing about strings/DI/reflection.",
+      "EdgeSource": "semantics",
+      "SolutionLoad": "MSBuildWorkspace.OpenSolutionAsync over PetBox.slnx",
+      "ModelHealth": {
+        "Projects": 22,
+        "Documents": 1206,
+        "GeneratedDocuments": 125,
+        "CompilationErrors": 34459,
+        "WorkspaceLoadFailures": 0,
+        "Verdict": "34459 binding errors: unresolved names silently drop edges, so a zero here means NOTHING"
+      }
+    }
+  },
+  {
+    "Question": "who-uses PetBox.Core.Auth.ProjectAccess members (incl. switch case labels)",
+    "Count": 6,
+    "Provenance": {
+      "SourcesSearched": [
+        "semantics (Roslyn ISymbol/SymbolFinder over every C# document in the solution)",
+        "syntax (declaration sites of the same documents)"
+      ],
+      "NotSearched": [
+        "strings (claim names / routes / partial names in string literals, .cshtml text, .ts)",
+        "runtime-dump (DI registrations, endpoint table)",
+        "IL (bin/** assemblies; nothing here was read from compiled output)",
+        "reflection (Type.GetType / Activator / attribute discovery at runtime)",
+        "non-C# projects (none in this solution) and any project MSBuild failed to load"
+      ],
+      "Completeness": "UNTRUSTWORTHY-model-does-not-compile",
+      "CompletenessNote": "Every C# declaration and reference in every loaded project was examined; a zero here is a HONEST ZERO for the semantic source and says nothing about strings/DI/reflection.",
+      "EdgeSource": "semantics",
+      "SolutionLoad": "MSBuildWorkspace.OpenSolutionAsync over PetBox.slnx",
+      "ModelHealth": {
+        "Projects": 22,
+        "Documents": 1206,
+        "GeneratedDocuments": 125,
+        "CompilationErrors": 34459,
+        "WorkspaceLoadFailures": 0,
+        "Verdict": "34459 binding errors: unresolved names silently drop edges, so a zero here means NOTHING"
+      }
+    }
+  },
+  {
+    "Question": "carriers-of ModelContextProtocol.Server.McpServerToolAttribute at any declaration level",
+    "Count": 0,
+    "Provenance": {
+      "SourcesSearched": [
+        "semantics (Roslyn ISymbol/SymbolFinder over every C# document in the solution)",
+        "syntax (declaration sites of the same documents)"
+      ],
+      "NotSearched": [
+        "strings (claim names / routes / partial names in string literals, .cshtml text, .ts)",
+        "runtime-dump (DI registrations, endpoint table)",
+        "IL (bin/** assemblies; nothing here was read from compiled output)",
+        "reflection (Type.GetType / Activator / attribute discovery at runtime)",
+        "non-C# projects (none in this solution) and any project MSBuild failed to load"
+      ],
+      "Completeness": "UNTRUSTWORTHY-model-does-not-compile",
+      "CompletenessNote": "Every C# declaration and reference in every loaded project was examined; a zero here is a HONEST ZERO for the semantic source and says nothing about strings/DI/reflection.",
+      "EdgeSource": "semantics",
+      "SolutionLoad": "MSBuildWorkspace.OpenSolutionAsync over PetBox.slnx",
+      "ModelHealth": {
+        "Projects": 22,
+        "Documents": 1206,
+        "GeneratedDocuments": 125,
+        "CompilationErrors": 34459,
+        "WorkspaceLoadFailures": 0,
+        "Verdict": "34459 binding errors: unresolved names silently drop edges, so a zero here means NOTHING"
+      }
+    }
+  },
+  {
+    "Question": "carriers-of PetBox.Core.Auth.TenantFromAttribute at any declaration level",
+    "Count": 93,
+    "Provenance": {
+      "SourcesSearched": [
+        "semantics (Roslyn ISymbol/SymbolFinder over every C# document in the solution)",
+        "syntax (declaration sites of the same documents)"
+      ],
+      "NotSearched": [
+        "strings (claim names / routes / partial names in string literals, .cshtml text, .ts)",
+        "runtime-dump (DI registrations, endpoint table)",
+        "IL (bin/** assemblies; nothing here was read from compiled output)",
+        "reflection (Type.GetType / Activator / attribute discovery at runtime)",
+        "non-C# projects (none in this solution) and any project MSBuild failed to load"
+      ],
+      "Completeness": "UNTRUSTWORTHY-model-does-not-compile",
+      "CompletenessNote": "Every C# declaration and reference in every loaded project was examined; a zero here is a HONEST ZERO for the semantic source and says nothing about strings/DI/reflection.",
+      "EdgeSource": "semantics",
+      "SolutionLoad": "MSBuildWorkspace.OpenSolutionAsync over PetBox.slnx",
+      "ModelHealth": {
+        "Projects": 22,
+        "Documents": 1206,
+        "GeneratedDocuments": 125,
+        "CompilationErrors": 34459,
+        "WorkspaceLoadFailures": 0,
+        "Verdict": "34459 binding errors: unresolved names silently drop edges, so a zero here means NOTHING"
+      }
+    }
+  }
+]

@@ -1,0 +1,4 @@
+// D7: перечислить Razor OnPost*-обработчики. Ожидание из полевого отчёта: ~84 (по решению против 65 страниц).
+from m in Application.Methods
+where m.SimpleName.StartsWith("OnPost")
+select m
