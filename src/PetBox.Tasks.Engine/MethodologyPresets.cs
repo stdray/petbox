@@ -351,7 +351,7 @@ public static class MethodologyPresets
 	// and vocabulary, the validator admits the trio in effects/constraints, and RenderPresetDefinition
 	// seeds them into a quartet document. A project may override any of them by declaring its own
 	// linkKind with the same slug (declared wins over this preset fallback). Descriptions/labels are
-	// from doc/methodology-redesign/02-expressed §1.1.
+	// carried over from the quartet methodology's original design proposal (§1.1 "expressed").
 	public static readonly IReadOnlyList<MethodologyLinkKindDef> QuartetLinkKinds =
 	[
 		new MethodologyLinkKindDef("idea_spec",

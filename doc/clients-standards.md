@@ -180,6 +180,7 @@ Spec: `sdk-release-uniform`. The three client packages publish uniformly:
 - **Secrets** (CI, repo settings): `NUGET_API_KEY` (nuget.org), `NPM_TOKEN` (npmjs), `PYPI_TOKEN` (PyPI). A publish job fails-closed if its secret is absent.
 
 ## Related
-- Pre-methodology client roadmap in `doc/plan.md` Phase 26 is partly superseded: the "PetBox.Client +
-  .Config + ts/py" multi-package vision and the bespoke config-runner are revised per this document.
+- The pre-methodology client roadmap (Phase 26, now only in git history) is partly superseded: the
+  "PetBox.Client + .Config + ts/py" multi-package vision and the bespoke config-runner are revised
+  per this document.
 - Methodology idea `config-runner` ($system/ideas) is pivoted to this dotenv posture.

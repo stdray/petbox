@@ -226,4 +226,4 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 This is the target model. It is adopted incrementally; until a feature is built,
 the corresponding convention applies on the current Tasks primitives (e.g. separate
 `spec`/`backlog` boards, the approve gate by convention). See the roadmap in the
-`$system/roadmap` board (`mcp-typing` and methodology phases) and `doc/decision-log.md`.
+`$system/roadmap` board (`mcp-typing` and methodology phases).
