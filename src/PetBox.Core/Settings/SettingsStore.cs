@@ -161,9 +161,23 @@ public sealed class SettingsStore(ICoreDbFactory factory) : ISettingsStore
 				chain.Add((Scope.System, "$"));
 				break;
 			case Scope.User:
+				// ScopeKey here is the caller's own auth Users.Id (see BoardFilterPrefsEndpoint,
+				// TaskBoard.cshtml.cs, Preferences.cshtml.cs — all key Scope.User off userIdString
+				// straight from the yb:user_id claim). There is no separate stable subject id: a
+				// future renumbering/merge of Users.Id (account merge, auth source change, import)
+				// silently orphans the user's existing settings rows — no error, they just stop
+				// resolving. Introduce a dedicated SubjectId BEFORE such a migration if it's ever
+				// planned; that's out of scope here.
 				chain.Add((Scope.System, "$"));
 				break;
 			case Scope.Membership:
+				// reserved, no consumers yet — grep for `Scope.Membership` across src/** (incl.
+				// src/clients-net/) turns up no GetAsync/SetAsync call site and no reader of the
+				// "{userId}:{workspaceKey}" key format; SettingsStoreTests.cs exercises only this
+				// chain-building mechanism, not a real feature. Kept deliberately: doc/plan.md
+				// ("UiSettings.DefaultHome.LastProject" / MembershipSettings, item 25.3) already
+				// plans a consumer for per-membership settings. Same Users.Id caveat as Scope.User
+				// above applies to the userId half of the key once it's wired up.
 				// ScopeKey format: "{userId}:{workspaceKey}"
 				var colon = deepestKey.IndexOf(':');
 				if (colon > 0)
