@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class WhoAmITools
 {
 	[McpServerTool(Name = "whoami", Title = "Identify the calling ApiKey", ReadOnly = true, UseStructuredContent = true)]
-	[Description("Returns the calling ApiKey's identity: { project, scopes, defaultProject }. `project` is the key's project claim — every other tool needs a projectKey that must match it ('*' = a cross-project key: any projectKey is allowed). `scopes` is the list of granted scopes (e.g. 'data:read', 'logs:query', 'tasks:write') that gate what you may do. `defaultProject` (cross-project keys only, when set) is the project the tools with an OPTIONAL projectKey fall back to when you omit it. Call this first when you do not already know your own project key and scopes.")]
+	[Description("Returns the calling ApiKey's identity: { project, scopes, defaultProject, host }. `project` is the key's project claim — every other tool needs a projectKey that must match it ('*' = a cross-project key: any projectKey is allowed). `scopes` is the list of granted scopes (e.g. 'data:read', 'logs:query', 'tasks:write') that gate what you may do. `defaultProject` (cross-project keys only, when set) is the project the tools with an OPTIONAL projectKey fall back to when you omit it. `host` is present only on a NODE-AGENT key and names the fleet host it is bound to; such a key has an empty `project` by design — it identifies a machine, not a project. Call this first when you do not already know your own project key and scopes.")]
 	public static WhoAmIResult WhoAmI(IHttpContextAccessor http)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
@@ -32,6 +32,11 @@ public static class WhoAmITools
 			ctx.User.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ScopesClaim)?.Value);
 		var defaultProject = ctx.User.Claims
 			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value;
-		return new WhoAmIResult(project, scopes, defaultProject);
+		// The `host` claim (M050) is emitted ONLY for a key bound to a fleet host. Reading it here is
+		// what makes a node key self-describing: without it whoami reported the empty project claim a
+		// node key now carries and nothing else, so the one identity the key DOES have was invisible.
+		var host = ctx.User.Claims
+			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.HostClaim)?.Value;
+		return new WhoAmIResult(project, scopes, defaultProject, host);
 	}
 }

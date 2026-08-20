@@ -34,24 +34,32 @@ public sealed record ShareDeleteRequest(string ProjectKey);
 
 public static class ShareApi
 {
+	// "AuthenticatedAnyScheme" IS the framework default policy these two endpoints used to get from a
+	// bare .RequireAuthorization() — RequireAuthenticatedUser() with no scheme named. It is spelled out
+	// now only because the DEFAULT was narrowed to the cookie scheme (Program.cs, work
+	// `apikey-principal-authz-cluster`) to keep an api key off the /ui pages. Minting a share link WITH
+	// an api key is a first-class use of this endpoint — an agent exporting its own project's logs — so
+	// naming the old default here keeps that working with no change in the principal these handlers see.
+	// The tenant proof is unaffected either way: it is the [TenantFrom(BodyField, "projectKey")] below,
+	// not the authentication policy.
 	public static void MapShareEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/share", CreateShareAsync)
 			.Accepts<ShareCreateRequest>("application/json")
 			.Produces<ShareCreatedResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
-			.RequireAuthorization();
+			.RequireAuthorization("AuthenticatedAnyScheme");
 		app.MapGet("/api/share/{token}/tsv", GetTsvAsync).AllowAnonymous();
 		app.MapDelete("/api/share/{token}", DeleteShareAsync)
 			.Accepts<ShareDeleteRequest>("application/json")
 			.Produces<DeletedResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
-			.RequireAuthorization();
+			.RequireAuthorization("AuthenticatedAnyScheme");
 	}
 
-	// req.ProjectKey comes from the JSON BODY, and bare .RequireAuthorization() only proves SOME
-	// authenticated identity — not that it is authorized for THIS project. Without a tenant check any
+	// req.ProjectKey comes from the JSON BODY, and .RequireAuthorization("AuthenticatedAnyScheme")
+	// above only proves SOME authenticated identity — not that it is authorized for THIS project. Without a tenant check any
 	// authenticated caller could mint a share link (served ANONYMOUSLY at GetTsvAsync) exporting another
 	// project's log data, which makes this the sharpest body tenant in the tree. It is declared as one:
 	// [TenantFrom(BodyField, "projectKey")], read out of the body by TenantEnforcementMiddleware
