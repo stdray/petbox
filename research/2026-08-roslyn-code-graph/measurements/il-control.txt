@@ -1,0 +1,17 @@
+assemblies scanned: 22
+
+member                                                        il_refs  field_def_exists
+PetBox.Core.Auth.PetBoxClaims.UserId                                0  yes
+PetBox.Core.Auth.PetBoxClaims.IsSysAdmin                            0  yes
+PetBox.Core.Auth.PetBoxClaims.WorkspaceRoles                        0  yes
+PetBox.Core.Auth.PetBoxClaims.ActiveWorkspace                       0  yes
+PetBox.Core.Auth.ProjectAccess.SandboxContainment                   0  yes
+PetBox.Core.Auth.ProjectAccess.ClaimMismatch                        0  yes
+PetBox.Core.Settings.Scope.Service                                  0  yes
+PetBox.Core.Settings.Scope.Project                                  0  yes
+PetBox.Core.Auth.ProjectScope.EvaluateAsync                         3  -
+PetBox.Core.Auth.ApiKeyScopes.Granted                               2  -
+PetBox.Core.Auth.TenantAuthorizer.AuthorizeAsync                    1  -
+
+total distinct member-refs across all PetBox assemblies: 6618
+total field definitions across all PetBox assemblies:    57033

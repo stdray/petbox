@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Was an absolute path into the (ephemeral) worktree the research session ran in;
+		     repointed to the real in-repo project when this harness moved into research/. -->
+		<ProjectReference Include="..\..\..\..\..\src\PetBox.Web\PetBox.Web.csproj" />
+	</ItemGroup>
+
+</Project>

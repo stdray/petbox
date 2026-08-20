@@ -1,0 +1,24 @@
+<Project>
+
+	<!--
+		This directory is a dated research snapshot (research/2026-08-roslyn-code-graph), not
+		maintained PetBox product code. MSBuild's Directory.Build.props/.Packages.props resolution
+		walks UP the directory tree and stops at the first file it finds — the root
+		Directory.Build.props (TreatWarningsAsErrors, AnalysisMode=All, EnforceCodeStyleInBuild,
+		BannedApiAnalyzers) would otherwise apply to every prototype .csproj under proto/**, even
+		though this code was written as throwaway research and never made to satisfy those gates.
+
+		This file's only job is to stop that walk here. It intentionally does NOT
+		<Import Project="$([MSBuild]::GetPathOfFileAbove(...))" /> the parent (contrast
+		tests/Directory.Build.props, which does import it) — no import means the search for
+		Directory.Build.props terminates at this file, and the root's rules never reach proto/**.
+
+		Each prototype .csproj under proto/** sets its own TargetFramework/Nullable/ImplicitUsings
+		explicitly, so nothing beyond "stop the inheritance" is needed here. Do not add the root's
+		analysis/style/banned-API rules back — that would defeat the point of this file. This
+		snapshot is not built or gated by CI/pre-push (PetBox.slnx does not reference it — same
+		precedent as tools/** in .gitignore); dotnet build on an individual prototype is a manual,
+		best-effort exercise, not a maintained build target.
+	-->
+
+</Project>

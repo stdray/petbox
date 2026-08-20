@@ -1,0 +1,19 @@
+<Project>
+
+	<!--
+		Same reasoning as Directory.Build.props next to this file: MSBuild also walks UP the tree
+		looking for the nearest Directory.Packages.props, and the root one turns on central package
+		management (ManagePackageVersionsCentrally=true). Every prototype .csproj under proto/**
+		pins its own PackageReference Version="..." attribute directly (they predate this move and
+		were never wired into the central version list) — under central package management that
+		shape is NU1008 ("... a PackageVersion... central version management..."), not a warning.
+
+		Turning central package management back OFF here (rather than adding these packages to the
+		root's central list) keeps this snapshot's dependency versions exactly as they were measured
+		on 2026-08-20, unaffected by future bumps to the product's central versions.
+	-->
+	<PropertyGroup>
+		<ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+	</PropertyGroup>
+
+</Project>
