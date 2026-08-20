@@ -10,9 +10,9 @@ namespace PetBox.Tasks.Workflow;
 // prior states, the raw link fields) are therefore ARGUMENTS to GuardEngine.Decide, not fields
 // here. The context is what the service paid IO for; it is built once and never rebuilt.
 //
-// Deviation from the sketch in doc/methodology-redesign/04-engine-extraction.md: the sketch put
-// `desiredStates`/`priorStates` in the context. They change every pass, so keeping them here
-// would make "prefetched once" a lie and invite a per-pass refetch.
+// Deviation from the original design sketch, which put `desiredStates`/`priorStates` in the
+// context. They change every pass, so keeping them here would make "prefetched once" a lie and
+// invite a per-pass refetch.
 public sealed record MethodologyEngineContext(
 	MethodologyRuntime Runtime,
 	string? KindSlug,

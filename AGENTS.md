@@ -49,9 +49,9 @@ instance's boards" are the same four boards today, and only today.
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
 [doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a
 **MAINTAINED reader surface**, not an archive — onboarding reads it, so a change that
-outdates it fixes it in the same commit. What lives there is *explanation*, never live
-plan or status: the record files (`plan.md`, `spec.md`, `decision-log.md`, …) say how
-things came to be decided, while the current plan and status are the boards above.
+outdates it fixes it in the same commit. It no longer holds an archive at all (purged
+2026-08-20): historical records of how things came to be decided live only in git
+history now, while the current plan and status are the boards above.
 
 ## Process contract (binding for ALL agents)
 
@@ -316,8 +316,9 @@ Live reference docs:
   process-violation sampling (incl. false-verify). Run it to audit; it files intake
   cards + an owner report.
 
-Historical (frozen) — a record of how the project got here, not current state:
-`doc/plan.md`, `doc/spec.md`, `doc/decision-log.md`, and the older design notes.
+The historical record of how the project got here — the old frozen plan/spec/decision-log
+files and design notes — was purged from the working tree on 2026-08-20; it lives only in
+git history now, not current state.
 
 ## Target stack
 

@@ -39,6 +39,10 @@ tools/*
 tools/KqlBench/bench-results.jsonl
 .cake/
 
+# Python (agent/ deploy tool)
+__pycache__/
+*.pyc
+
 # NuGet
 *.nupkg
 *.snupkg

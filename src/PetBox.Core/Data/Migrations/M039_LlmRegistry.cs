@@ -6,7 +6,7 @@ namespace PetBox.Core.Data.Migrations;
 //
 // WHY IT MOVES. Endpoints/routes/keys lived in the Config module (`llm/registry`,
 // `llm/secret/{endpoint}` bindings). Config is BY INVARIANT the store for EXTERNAL pet projects'
-// configuration (spec.md:305) and is partitioned per workspace (`config/{ws}.db`), so the only
+// configuration and is partitioned per workspace (`config/{ws}.db`), so the only
 // place bindings were ever entered was `$system` — every project in every other workspace resolved
 // ZERO routes and semantic search was dead there ("no route configured for Embed"). PetBox's own
 // router config is not a pet project's config; it belongs to PetBox, in core.db, with a scope
