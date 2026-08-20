@@ -1,6 +1,6 @@
 namespace PetBox.Core.Models;
 
-public enum WorkspaceRole { Admin, Member, Viewer }
+public enum WorkspaceRole { Admin = 0, Member = 1, Viewer = 2 }
 
 public sealed record WorkspaceMember
 {
