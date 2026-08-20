@@ -18,6 +18,14 @@
 		     LogicalName is explicit because the file lives OUTSIDE this project directory, and the
 		     default resource name would otherwise encode that relative path. -->
 		<EmbeddedResource Include="../common/default-agents.json" LogicalName="PetBox.Core.default-agents.json" />
+
+		<!-- THE catalog of domain actions (spec `action-catalog-artifact`), read at run time by
+		     PetBox.Core.Auth.ActionCatalog and checked against the LIVE surface sweep by
+		     ActionCatalogCompletenessTests. Embedded rather than copied to disk so the artifact
+		     travels with the assembly that parses it — a future reader (Identity.Abstract) gets the
+		     catalog by referencing PetBox.Core and nothing else. LogicalName is explicit for the
+		     same reason as above: the resource name must not depend on the file's directory. -->
+		<EmbeddedResource Include="Auth\action-catalog.json" LogicalName="PetBox.Core.action-catalog.json" />
 	</ItemGroup>
 
 	<ItemGroup>

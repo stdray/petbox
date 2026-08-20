@@ -1,0 +1,2051 @@
+{
+	"note": [
+		"КАТАЛОГ ДОМЕННЫХ ДЕЙСТВИЙ PetBox — поддерживаемый машинно-читаемый артефакт.",
+		"Спеки: `action-catalog-artifact` (перечень существует как артефакт, где для каждого",
+		"действия объявлен ТИП ЕГО ЦЕЛИ) и `action-catalog-completeness` (расхождение каталога",
+		"с живыми поверхностями обнаруживается механически, а не вниманием ревьюера).",
+		"",
+		"ЕГО ЧИТАЕТ КОД, А НЕ ТОЛЬКО ЧЕЛОВЕК: PetBox.Core.Auth.ActionCatalog разбирает этот файл,",
+		"а ActionCatalogCompletenessTests сверяет его с ЖИВЫМ обходом поверхностей и краснеет в обе",
+		"стороны — поверхность без записи в каталоге И запись без живой поверхности. Прозу здесь",
+		"обновлять не обязательно; данные — обязательно, иначе гейт не пройдёт.",
+		"",
+		"ЧИСЛА В КОММЕНТАРИЯХ НЕ ЖИВУТ. Разбивку печатает прогон в .tmp/action-catalog-inventory.txt.",
+		"",
+		"`surfaces` — ключи из того же инвентаря, который строит AuthzSurfaces (`mcp:`/`rest:`/`page:`).",
+		"Единица Razor — СТРАНИЦА (носитель декларации — класс PageModel), поэтому несколько действий",
+		"законно ссылаются на одну страницу.",
+		"",
+		"`unmapped` — живые поверхности, за которыми не стоит записи каталога, каждая с ПРИЧИНОЙ из",
+		"закрытого списка. `not-covered-by-source-pass` — это ДОЛГ, и он обязан только сокращаться."
+	],
+	"transferredFrom": "petbox-user-model/05-action-catalog/08-summary.md §1 + 09-uncovered.md",
+	"transferredAt": "2026-08-20",
+	"actions": [
+		{
+			"id": "boards.upsert",
+			"source": "08-summary §1 #1",
+			"subdomain": "boards",
+			"action": "создать/изменить доску",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_create",
+				"page:/ProjectHome/TaskBoard"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "boards.list",
+			"source": "08-summary §1 #2",
+			"subdomain": "boards",
+			"action": "перечислить доски",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_list",
+				"page:/ProjectHome/Tasks"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "boards.adopt",
+			"source": "08-summary §1 #3",
+			"subdomain": "boards",
+			"action": "переместить доску в экземпляр методологии (adopt)",
+			"target": "project",
+			"targetNote": "⚠ Двойная проверка: узлы на доске переходят под другие правила",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_adopt"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "boards.set-wire",
+			"source": "08-summary §1 #4",
+			"subdomain": "boards",
+			"action": "переустановить связь work→spec",
+			"target": "project",
+			"targetNote": "⚠ Переводит существующие ограничения/доставку на другую spec-доску",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_set_wire"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "boards.close-reopen",
+			"source": "08-summary §1 #5",
+			"subdomain": "boards",
+			"action": "закрыть/переоткрыть доску",
+			"target": "project",
+			"targetNote": "close: ⚠ Останавливает процесс без редактирования правил; reopen: ⚠ Обратная операция close, требует двойной проверки",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_close",
+				"mcp:tasks_board_reopen"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "boards.delete",
+			"source": "08-summary §1 #6",
+			"subdomain": "boards",
+			"action": "удалить доску и её узлы",
+			"target": "project",
+			"targetNote": "⚠ Удаляет процессную роль из живого экземпляра",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_board_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.create",
+			"source": "08-summary §1 #7",
+			"subdomain": "methodology",
+			"action": "создать экземпляр методологии",
+			"target": "project",
+			"targetNote": "⚠ Создаёт ЖИВОЙ документ правил; с board_adopt = обход rules_upsert",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_create"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.read",
+			"source": "08-summary §1 #8",
+			"subdomain": "methodology",
+			"action": "читать экземпляр(ы)/активный указатель/правила/guide/workflow",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_list",
+				"mcp:tasks_methodology_get",
+				"mcp:tasks_methodology_active_get",
+				"mcp:tasks_methodology_rules_get",
+				"mcp:tasks_methodology_guide",
+				"mcp:tasks_workflow"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.set-active",
+			"source": "08-summary §1 #9",
+			"subdomain": "methodology",
+			"action": "установить активный экземпляр",
+			"target": "project",
+			"targetNote": "⚠ Меняет разрешённые переходы (convention gates) в guide",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_set_active"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.rules-upsert",
+			"source": "08-summary §1 #10",
+			"subdomain": "methodology",
+			"action": "отредактировать правила экземпляра (+миграция узлов)",
+			"target": "project",
+			"targetNote": "⚠ Paradigm case: переписывает правила живого экземпляра + миграция узлов",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_rules_upsert"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.close",
+			"source": "08-summary §1 #11",
+			"subdomain": "methodology",
+			"action": "закрыть экземпляр",
+			"target": "project",
+			"targetNote": "⚠ Закрывает живой процесс целиком",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_close"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.utility-upsert",
+			"source": "08-summary §1 #12",
+			"subdomain": "methodology",
+			"action": "отредактировать utility-слой типов",
+			"target": "project",
+			"targetNote": "⚠ Меняет правила, которые уже управляют существующими узлами",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_utility_upsert"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.set-description",
+			"source": "08-summary §1 #13",
+			"subdomain": "methodology",
+			"action": "установить описание примитива правил",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_set_description"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.template-save-snapshot",
+			"source": "08-summary §1 #14",
+			"subdomain": "methodology",
+			"action": "сохранить шаблон / снять снимок",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_template_upsert",
+				"mcp:tasks_methodology_template_snapshot"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.template-delete",
+			"source": "08-summary §1 #15",
+			"subdomain": "methodology",
+			"action": "удалить шаблон (soft)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_template_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "methodology.template-read",
+			"source": "08-summary §1 #16",
+			"subdomain": "methodology",
+			"action": "читать шаблон(ы)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_methodology_template_get",
+				"mcp:tasks_methodology_template_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.upsert",
+			"source": "08-summary §1 #17",
+			"subdomain": "nodes",
+			"action": "upsert узлов (batch, под FSM)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_upsert",
+				"page:/ProjectHome/TaskBoardNode"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.read",
+			"source": "08-summary §1 #18",
+			"subdomain": "nodes",
+			"action": "читать узлы (search/delta/get)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_search",
+				"mcp:tasks_delta",
+				"mcp:tasks_node_get",
+				"page:/ProjectHome/Tasks"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.relations-create",
+			"source": "08-summary §1 #19",
+			"subdomain": "nodes",
+			"action": "создать связи",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:relations_create"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.relations-read",
+			"source": "08-summary §1 #20",
+			"subdomain": "nodes",
+			"action": "читать связи",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:relations_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.relations-delete",
+			"source": "08-summary §1 #21",
+			"subdomain": "nodes",
+			"action": "удалить связи (soft)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:relations_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.comments-upsert",
+			"source": "08-summary §1 #22",
+			"subdomain": "nodes",
+			"action": "upsert комментариев",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:comments_upsert"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.comments-read",
+			"source": "08-summary §1 #23",
+			"subdomain": "nodes",
+			"action": "читать комментарии",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:comments_search",
+				"mcp:comments_delta",
+				"mcp:comments_get"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "nodes.comments-delete",
+			"source": "08-summary §1 #24",
+			"subdomain": "nodes",
+			"action": "удалить комментарий (soft)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:comments_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "sessions.snapshot-put",
+			"source": "08-summary §1 #25",
+			"subdomain": "sessions",
+			"action": "сохранить snapshot (PUT)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:session_upsert",
+				"rest:POST /api/sessions/{projectKey}/{sessionId}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "sessions.append",
+			"source": "08-summary §1 #26",
+			"subdomain": "sessions",
+			"action": "дописать сообщения (server-cursor)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:session_append",
+				"rest:POST /api/sessions/{projectKey}/{sessionId}/append"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "sessions.read",
+			"source": "08-summary §1 #27",
+			"subdomain": "sessions",
+			"action": "читать сессию/список",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:session_get",
+				"rest:GET /api/sessions/{projectKey}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "sessions.search",
+			"source": "08-summary §1 #28",
+			"subdomain": "sessions",
+			"action": "искать по сессиям (digest⊕FTS)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:session_search"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "session_search требует ДВА доменных скоупа (tasks:read + memory:read) — единственный такой случай в дереве (08-summary §2 #9). REST-поверхности нет."
+		},
+		{
+			"id": "sessions.delete",
+			"source": "08-summary §1 #29",
+			"subdomain": "sessions",
+			"action": "удалить сессию (soft)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:session_delete",
+				"rest:DELETE /api/sessions/{projectKey}/{sessionId}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.store-create",
+			"source": "08-summary §1 #30",
+			"subdomain": "memory",
+			"action": "создать хранилище",
+			"target": "project-and-workspace",
+			"targetNote": "Цель выводится из scope-параметра (project/workspace); workspace — ContainerKeyFor, не именованный вызывающим (02-memory-settings.md #1).",
+			"targetSource": "derived",
+			"surfaces": [
+				"mcp:memory_store_create"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.store-list",
+			"source": "08-summary §1 #31",
+			"subdomain": "memory",
+			"action": "перечислить хранилища (+usage)",
+			"target": "project-and-workspace",
+			"targetNote": "⚠ каскад: per-leg skip UnauthorizedAccessException (silent read refusal = отсутствие); AssertMemoryProjectAsync per scope; cascade project-first скрывает отсутствие от остального кода (02-memory-settings.md #2).",
+			"targetSource": "derived",
+			"surfaces": [
+				"mcp:memory_store_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.store-delete",
+			"source": "08-summary §1 #32",
+			"subdomain": "memory",
+			"action": "удалить хранилище",
+			"target": "project-and-workspace",
+			"targetNote": "Для project: AssertMemoryProjectAsync; для workspace: AssertMemoryProjectAsync (write throws, не skip) — write-выход отличается от read-выхода (02-memory-settings.md #3).",
+			"targetSource": "derived",
+			"surfaces": [
+				"mcp:memory_store_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.upsert",
+			"source": "08-summary §1 #33",
+			"subdomain": "memory",
+			"action": "записать/обновить записи",
+			"target": "project-and-workspace",
+			"targetNote": "Для project: AssertMemoryProjectAsync; для workspace: AssertMemoryProjectAsync (write throws); Canon budget enforce; ATOMIC vs PARTIAL по параметру atomic (02-memory-settings.md #11).",
+			"targetSource": "derived",
+			"surfaces": [
+				"mcp:memory_upsert",
+				"mcp:memory_remember"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "mcp:memory_remember (09-uncovered #6) добавлен как ВТОРАЯ поверхность этого действия, не как отдельное действие: по 09-uncovered.md §Гранулярность у memory_remember тот же scope и та же проверка (AssertMemoryProjectAsync per cascade leg), что у memory_upsert, разница только в размере батча (single-fact write vs batch). Обе не каскадируют и THROW на refusal — в отличие от read-семейства (02-memory-settings.md, Асимметрии #1). Нюанс: 09-uncovered таблица приписывает memory_remember дополнительно scope tasks:write (наряду с memory:write), тогда как для memory_upsert этот второй scope в источниках не упомянут — перенесено как есть, не проверено дополнительно кодом в рамках этого фрагмента."
+		},
+		{
+			"id": "memory.read",
+			"source": "08-summary §1 #34",
+			"subdomain": "memory",
+			"action": "читать записи (search/get/delta)",
+			"target": "project-and-workspace",
+			"targetNote": "⚠ Cascade per container: AssertMemoryProjectAsync per leg, с silent skip UnauthorizedAccessException (read refusal = отсутствие) — задокументировано тестом MemoryReadRefusalContractTests (02-memory-settings.md #5,#6,#8,#10,#12, Асимметрии #1).",
+			"targetSource": "derived",
+			"surfaces": [
+				"mcp:memory_search",
+				"mcp:memory_get",
+				"mcp:memory_delta"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.canon-read",
+			"source": "08-summary §1 #35",
+			"subdomain": "memory",
+			"action": "прочитать канон проекта+воркспейса",
+			"target": "project",
+			"targetNote": "Цель — projectKey, но плечо воркспейса ВЫВОДИТСЯ (MemoryApi.cs:94) и может быть подавлено SandboxContainment (08-summary §3г); workspace leg может быть null (нет workspace) или suppressed, project leg всегда есть (02-memory-settings.md #16).",
+			"targetSource": "coarse",
+			"surfaces": [
+				"rest:GET /api/memory/{projectKey}/canon"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "memory.reindex",
+			"source": "08-summary §1 #36",
+			"subdomain": "memory",
+			"action": "переиндексировать поиск",
+			"target": "project",
+			"targetNote": "⚠ Resets BOTH Class-A (lexical: sync) и Class-B (vector: async drain); идемпотентно; gate на LlmClient.IsAvailableAsync (Embed capability) — отказывает до ANY write при недоступности embed, оператор остаётся без явного сигнала об ожидании (02-memory-settings.md #30, Асимметрии #7).",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:search_reindex"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "settings.read",
+			"source": "08-summary §1 #37",
+			"subdomain": "settings",
+			"action": "прочитать типизированную настройку",
+			"target": "scope-chain",
+			"targetNote": "System (cascades up); TopLevel per property; isReachable(TopLevel, scope); first-row-wins по цепи (02-memory-settings.md #18).",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/SysDefaults",
+				"page:/Admin/WorkspaceDefaults",
+				"page:/Admin/ProjectSettingsAdmin",
+				"page:/Me/Preferences",
+				"page:/Admin/ProjectDetail"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Поверхности определены проверкой кода (сайты вызова ISettingsResolver.GetAsync), а не только по заготовленному в задаче списку кандидатов: page:/Admin/WorkspaceSettings ИСКЛЮЧЕНА — несмотря на имя, ISettingsResolver туда вообще не инжектирован, страница правит name/description воркспейса через IWorkspaceAdminService (WorkspaceSettings.cshtml.cs:9-20), это субдомен workspaces (действие #93), не settings. Добавлена page:/Admin/ProjectDetail сверх заготовленного списка — читает RepoSettings через тот же resolver на Project scope (ProjectDetail.cshtml.cs:96)."
+		},
+		{
+			"id": "settings.set",
+			"source": "08-summary §1 #38",
+			"subdomain": "settings",
+			"action": "установить",
+			"target": "scope-chain",
+			"targetNote": "System (cascades up); TopLevel per property; Encode BEFORE WriteAsync; all-or-nothing (02-memory-settings.md #19).",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/SysDefaults",
+				"page:/Admin/WorkspaceDefaults",
+				"page:/Admin/ProjectSettingsAdmin",
+				"page:/Me/Preferences",
+				"page:/Admin/ProjectDetail"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "SysDefaults/WorkspaceDefaults/ProjectSettingsAdmin пишут через общий SettingsScopePageModel.OnPostSaveAsync (SettingsScopePageModel.cs:54-75,106-112); Me/Preferences — OnPostSaveAsync (Preferences.cshtml.cs:43-57); Admin/ProjectDetail — OnPostSetCommitTemplateAsync (ProjectDetail.cshtml.cs:101-114). page:/Admin/WorkspaceSettings исключена по той же причине, что и в settings.read. Найден REST-твин того же per-user Get+Set (rest:POST /api/ui/board-filter-prefs, BoardFilterPrefsEndpoint.cs:39-65, комментарий в коде прямо называет его 'the same setting store'), но НЕ добавлен в surfaces: источник (08-summary §1 #37/#38) размечает входы этого семейства действий только как U — REST-поверхность здесь фиксируется как находка, не как выдуманная поверхность."
+		},
+		{
+			"id": "settings.reset",
+			"source": "08-summary §1 #39",
+			"subdomain": "settings",
+			"action": "сбросить override",
+			"target": "scope-chain",
+			"targetNote": "System (cascades up); TopLevel per property; SettingsStore.DeleteAsync; удаляет override row, cascade fallback вверх (02-memory-settings.md #20).",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/ProjectDetail"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Единственный вызов ISettingsResolver.ResetAsync во всём Web-слое — Admin/ProjectDetail (OnPostClearCommitTemplateAsync и blank-branch OnPostSetCommitTemplateAsync, ProjectDetail.cshtml.cs:101-125), сбрасывающий RepoSettings.CommitUrlTemplate на Project scope. Ни SysDefaults, ни WorkspaceDefaults, ни ProjectSettingsAdmin (SettingsScopePageModel — только OnGetAsync/OnPostSaveAsync, SettingsScopePageModel.cs:49-75), ни Me/Preferences нигде не вызывают ResetAsync — заготовленные в задаче кандидаты для reset кодом не подтвердились, кроме ProjectDetail, которой в заготовленном списке не было."
+		},
+		{
+			"id": "config.binding-upsert",
+			"source": "08-summary §1 #40",
+			"subdomain": "config",
+			"action": "уписать связки",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": "decoy",
+			"surfaces": [
+				"mcp:config_binding_upsert",
+				"rest:POST /api/config/{workspaceKey}/bindings"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: источник (08-summary §2 #1, §3 вид (в)) описывает состояние ДО коммита e5c089cf: MCP config_binding_upsert был [TenantExempt(Provisioning)] — только admin:provision, БЕЗ проверки workspace, при этом workspaceKey принимался параметром, но нигде не проверялся (классический вид (в), decoy). Живой инвентарь (.tmp/authz-surface-inventory.txt) показывает: mcp:config_binding_upsert теперь `tenant: Workspace from Argument 'workspaceKey'`. В коде — class-level `[TenantFrom(TenantSource.Argument, \"workspaceKey\", tenant: TenantKind.Workspace)]` (ConfigTools.cs:59); комментарий ConfigTools.cs:35-42 подтверждает: 'This used to be [TenantExempt(Provisioning)] + admin:provision, and the divergence that created is CLOSED'. targetSource=decoy перенесён из источника дословно, но фактически на живом дереве уже не decoy, а named/checked."
+		},
+		{
+			"id": "config.binding-search-get",
+			"source": "08-summary §1 #41",
+			"subdomain": "config",
+			"action": "читать связки (search/get)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": "decoy",
+			"surfaces": [
+				"mcp:config_binding_search",
+				"mcp:config_binding_get"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: источник (08-summary §2 #2, §3 вид (в): 'ConfigTools — workspaceKey есть в каждом из пяти глаголов и не проверяется ни в одном') описывает состояние ДО e5c089cf: MCP config_binding_search/get читали ЛЮБОЙ workspace под admin:provision. Живой инвентарь показывает: mcp:config_binding_search и mcp:config_binding_get теперь `tenant: Workspace from Argument 'workspaceKey'` — те же class-level TenantFrom (ConfigTools.cs:59), расхождение закрыто. Отдельно подтверждено: REST-пары для search/get по-прежнему НЕТ (в инвентаре нет GET /api/config/... routes) — эта часть источника (08-summary §2 #2, 'REST-пары НЕТ вовсе') актуальна."
+		},
+		{
+			"id": "config.binding-delete",
+			"source": "08-summary §1 #42",
+			"subdomain": "config",
+			"action": "удалить связку (soft)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": "decoy",
+			"surfaces": [
+				"mcp:config_binding_delete",
+				"rest:DELETE /api/config/{workspaceKey}/bindings"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: аналогично config.binding-upsert — источник (08-summary §2 #1, §3 вид (в)) описывает состояние ДО e5c089cf (MCP [TenantExempt(Provisioning)], без проверки workspace). Живой инвентарь: mcp:config_binding_delete теперь `tenant: Workspace from Argument 'workspaceKey'` (class-level TenantFrom, ConfigTools.cs:59); комментарий ConfigTools.cs:35-42 явно называет расхождение CLOSED. targetSource=decoy перенесён дословно из источника, но на живом дереве это уже не decoy."
+		},
+		{
+			"id": "config.resolve",
+			"source": "08-summary §1 #43",
+			"subdomain": "config",
+			"action": "разрешить конфиг клиенту /v1/conf",
+			"target": "project",
+			"targetNote": "Источник классифицирует цель дважды: §3 вид (б) — `[TenantFrom(CallerDefault)]` (ConfigApi.cs:81): арендатор-проект выводится из claim'а вызывающего ключа, в сигнатуре как параметр отсутствует; §3 вид (г), названо 'слабее' — 'цель — проект, а разрешение идёт по воркспейсу через каталог'. targetSource=derived взят как основной механизм (CallerDefault); нюанс (г) сохранён здесь дословно.",
+			"targetSource": "derived",
+			"surfaces": [
+				"rest:GET /v1/conf"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "llm.registry-get",
+			"source": "08-summary §1 #44",
+			"subdomain": "llm",
+			"action": "прочитать реестр УРОВНЯ",
+			"target": "workspace-or-system",
+			"targetNote": "LlmRouterTools.cs:42 декларирует `[TenantFrom(Argument,\"projectKey\")]`, но реестр УРОВНЕВЫЙ (System:$ или Workspace:<key>), и уровень выводится из ВОРКСПЕЙСА проекта, не из самого проекта: LlmRouterTools.cs:33-37 — 'the level is derived from the project's WORKSPACE… no projectKey isolates this write'. Декларация называет тенантом projectKey, но фактическая проверяемая цель — уровень workspace/system (§3 вид (г), первый пример).",
+			"targetSource": "coarse",
+			"surfaces": [
+				"mcp:llm_config_get"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "llm.registry-patch",
+			"source": "08-summary §1 #45",
+			"subdomain": "llm",
+			"action": "патчить реестр УРОВНЯ",
+			"target": "workspace-or-system",
+			"targetNote": "Аналогично llm.registry-get: LlmRouterTools.cs:42 `[TenantFrom(Argument,\"projectKey\")]`, реальная цель — уровень (System:$/Workspace:<key>), выводимый из workspace проекта (LlmRouterTools.cs:33-37, §3 вид (г)). Дополнительно: version=0 на upsert ОБЪЯВЛЯЕТ и ЗАТЕНЯЕТ весь inherited уровень целиком, а не мёржит — не очевидно из сигнатуры (04-config-llm-agents.md).",
+			"targetSource": "coarse",
+			"surfaces": [
+				"mcp:llm_config_upsert"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "llm.invoke",
+			"source": "08-summary §1 #46",
+			"subdomain": "llm",
+			"action": "вызвать модель (embed/rerank/chat)",
+			"target": "project",
+			"targetNote": "Источник даёт цель как 'project→уровень': resolver проходит цепочку Project(пусто)→Workspace→System, первый уровень с маршрутами побеждает ЦЕЛИКОМ (LEVEL-ATOMIC, не merged; 04-config-llm-agents.md #8-10). Проверяемый тенант при этом смешанный по поверхности: MCP llm_chat/llm_embed/llm_rerank — `[TenantFrom(Argument,\"projectKey\")]` (обычная декларация); REST /v1/chat/completions — `[TenantFrom(CallerDefault)]` (LlmRouterApi.cs:101, §3 вид (б)). targetSource не проставлен единым значением из-за этой смешанности между поверхностями одного действия.",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:llm_chat",
+				"mcp:llm_embed",
+				"mcp:llm_rerank",
+				"rest:POST /v1/chat/completions"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "agent-defs.read",
+			"source": "08-summary §1 #47",
+			"subdomain": "agent-defs",
+			"action": "читать (list/get)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:agent_def_list",
+				"mcp:agent_def_get",
+				"rest:GET /api/{projectKey}/agent-defs",
+				"rest:GET /api/{projectKey}/agent-defs/{key}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "agent-defs.upsert",
+			"source": "08-summary §1 #48",
+			"subdomain": "agent-defs",
+			"action": "сохранить (CAS, full replace)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:agent_def_upsert",
+				"rest:PUT /api/{projectKey}/agent-defs/{key}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "agent-defs.delete",
+			"source": "08-summary §1 #49",
+			"subdomain": "agent-defs",
+			"action": "удалить (soft-close)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:agent_def_delete",
+				"rest:DELETE /api/{projectKey}/agent-defs/{key}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "logs.list",
+			"source": "08-summary §1 #50",
+			"subdomain": "logs",
+			"action": "перечислить логи",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:log_list",
+				"rest:GET /api/logs/{projectKey}/logs",
+				"page:/Logs/Index",
+				"page:/Admin/ProjectLogs"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "page:/Admin/ProjectLogs.OnGetAsync тоже вызывает ILogService.ListAsync (ProjectLogs.cshtml.cs:46-56) — второй, недокументированный источником U-вход на то же действие; таблица §1 не различает их, просто помечает 'U'."
+		},
+		{
+			"id": "logs.create",
+			"source": "08-summary §1 #51",
+			"subdomain": "logs",
+			"action": "создать лог",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:log_create",
+				"rest:POST /api/logs/{projectKey}/logs",
+				"page:/Admin/ProjectLogs"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: таблица §1 декларирует входы 'M,R' (без U), но page:/Admin/ProjectLogs.OnPostCreateAsync (ProjectLogs.cshtml.cs:58-74) вызывает ILogService.CreateAsync напрямую — реальный третий (UI) вход, не отражённый в опорной таблице."
+		},
+		{
+			"id": "logs.delete",
+			"source": "08-summary §1 #52",
+			"subdomain": "logs",
+			"action": "удалить лог",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:log_delete",
+				"rest:DELETE /api/logs/{projectKey}/logs/{name}",
+				"page:/Admin/ProjectLogs"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: таблица §1 декларирует входы 'M,R' (без U), но page:/Admin/ProjectLogs.OnPostDeleteAsync (ProjectLogs.cshtml.cs:76-90) вызывает ILogService.DeleteAsync напрямую (с защитой system/$self-log) — реальный третий (UI) вход, не отражённый в опорной таблице."
+		},
+		{
+			"id": "logs.retention-set",
+			"source": "08-summary §1 #53",
+			"subdomain": "logs",
+			"action": "установить/снять retention override лога",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:log_update"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "page:/Admin/ProjectLogSettings в инвентаре НЕ используется здесь: по коду (ProjectLogSettingsModel.OnGet, ProjectLogSettings.cshtml.cs:28) это чистый редирект на общую страницу Settings — реальная UI-настройка retention живёт в субдомене settings (действие #38 'установить', scope-chain), не в logs. Оставлено неразложенным намеренно, см. итоговый отчёт."
+		},
+		{
+			"id": "logs.query",
+			"source": "08-summary §1 #54",
+			"subdomain": "logs",
+			"action": "запросить события (KQL)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:log_query",
+				"rest:GET /api/logs/{projectKey}/{logName}/query",
+				"page:/Logs/Index",
+				"rest:GET /api/logs/{projectKey}/{logName}/services"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "rest:GET .../services не назван источником явно; по коду (LogApi.cs:89-91,397-410) это read-хелпер (distinct ServiceKey в логе) под тем же ApiKeyScopes.LogsQuery, что и query — ближайшее совпадение среди #50..#59, добавлено по коду."
+		},
+		{
+			"id": "logs.trace-read",
+			"source": "08-summary §1 #55",
+			"subdomain": "logs",
+			"action": "читать спаны/группы трейсов",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Logs/Trace",
+				"page:/Logs/Traces"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "logs.event-get",
+			"source": "08-summary §1 #56",
+			"subdomain": "logs",
+			"action": "получить событие по id",
+			"target": "project",
+			"targetNote": "⚠ §2 #5: ApiKeyOrCookie вместо header-only ApiKey (EventDetails.cshtml.cs:22) — та же кросс-арендаторная поверхность, что live-tail (#57), по коду и комментарию 'THE SAME cross-tenant surface'.",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Logs/EventDetails"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Источник (файл 03, строка 8) пишет 'REST:.../events/{id} implied', но в инвентаре нет отдельного rest:-ключа — есть только page:/Logs/EventDetails; по коду (EventDetails.cshtml.cs:36,47) маршрут действительно лежит под /api и фетчится скриптом, но как Razor Page он попадает в каталог поверхностей под ключом страницы (правило SCHEMA.md 'единица поверхности Razor — страница')."
+		},
+		{
+			"id": "logs.live-tail",
+			"source": "08-summary §1 #57",
+			"subdomain": "logs",
+			"action": "live-tail (SSE)",
+			"target": "project",
+			"targetNote": "⚠ §2 #4: единственный REST-эндпоинт логов под ApiKeyOrCookie вместо header-only ApiKey (LogApi.cs:84) — транспортный артефакт: EventSource в браузере не может слать заголовки.",
+			"targetSource": null,
+			"surfaces": [
+				"rest:GET /api/logs/{projectKey}/{logName}/live-tail"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "logs.ingest",
+			"source": "08-summary §1 #58",
+			"subdomain": "logs",
+			"action": "принять логи (CLEF/Seq/OTLP)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"rest:POST /api/ingest/{projectKey}/{logName}/clef",
+				"rest:POST /api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw",
+				"rest:POST /api/events/raw",
+				"rest:POST /v1/logs/{projectKey}/{logName}",
+				"rest:POST /v1/metrics/{projectKey}/{logName}",
+				"rest:POST /v1/traces/{projectKey}/{logName}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Разведение #58 vs #59: источник (08-summary §6, 'Кандидаты в субдомены') утверждает — три протокола CLEF/SEQ/OTLP это ОДНО действие ('цель, проверка и идемпотентность совпадают, различие в кодировке'), и файл 03 §Асимметрии п.3 подтверждает единую цель project + единый scope logs:ingest. Сюда же добавлен bare 'rest:POST /api/events/raw' — по третьей колонке инвентаря его декларация 'tenant: Project from the caller's own claim' (LogApi.cs:447, SEQ-протокол header-routed) — это ПРОЕКТНАЯ цель (таксономия §3(б), выводится из claim'а вызывающего), а не system/CapabilityToken, поэтому он относится к #58, а не к #59. Все 6 поверхностей объединены под одной записью, различие в note не требуется по каждой отдельно."
+		},
+		{
+			"id": "logs.self-export",
+			"source": "08-summary §1 #59",
+			"subdomain": "logs",
+			"action": "самоэкспорт петбокса",
+			"target": "system",
+			"targetNote": "⚠ §2 #16: bare-OTLP self-export — [TenantExempt(CapabilityToken)] + секрет из конфига (OtlpEndpoints.cs:89,110,131), фиксированное место назначения $system/$self-log, класс К (осознанный компромисс).",
+			"targetSource": null,
+			"surfaces": [
+				"rest:POST /v1/logs",
+				"rest:POST /v1/metrics",
+				"rest:POST /v1/traces"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Разведение #59 vs #58: третья колонка инвентаря декларирует эти три bare-маршрута (без {projectKey} в пути) как 'exempt: CapabilityToken' с целью $system self-log и хардкодным секретом Seq:SelfLog:ApiKey — в отличие от path-based форм (.../{projectKey}/{logName}), у которых декларация 'tenant: Project from Route projectKey' и они идут в #58."
+		},
+		{
+			"id": "share.token-create",
+			"source": "08-summary §1 #60",
+			"subdomain": "share",
+			"action": "создать share-token на KQL",
+			"target": "project",
+			"targetNote": "цель — projectKey из ТЕЛА запроса (ShareApi.cs:50, [TenantFrom(BodyField,\"projectKey\")]); требует auth любой identity, TTL default 1440 мин.",
+			"targetSource": "body",
+			"surfaces": [
+				"rest:POST /api/share"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "share.token-read",
+			"source": "08-summary §1 #61",
+			"subdomain": "share",
+			"action": "прочитать логи по токену",
+			"target": "share-token",
+			"targetNote": "⚠ §2 #15: GET /api/share/{token}/tsv — AllowAnonymous, токен и есть вся авторизация (ShareApi.cs:87-95), класс К (capability-token); тело/токен контролируется вызывающим, но это не ослабление — токен несёт ВЕСЬ объём доступа (проект, лог, KQL, колонки, маскирование), а не просто идентифицирует того, кто спрашивает.",
+			"targetSource": null,
+			"surfaces": [
+				"rest:GET /api/share/{token}/tsv",
+				"page:/Share"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "page:/Share (Pages/Share.cshtml.cs) — браузерная половина той же поверхности capability-token: [AllowAnonymous] + [TenantExempt(CapabilityToken)], читает IShareLinkDirectory.FindAsync тем же токеном, что и ShareApi.GetTsvAsync."
+		},
+		{
+			"id": "share.revoke",
+			"source": "spec share-link-revocable @3deeb4a7 (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "share",
+			"action": "отозвать share-token",
+			"target": "project",
+			"targetNote": "Цель читается из ТЕЛА (`projectKey`, [TenantFrom(BodyField)], §3 вид (д)) — тот же довод, что у создания: доказать, что вызывающий вправе выпустить эквивалентный токен. Вторая половина проверки не в PEP, а в IShareLinkDirectory.DeleteAsync: строка ищется по (token, projectKey) ВМЕСТЕ, поэтому чужой токен просто не находится, а «нет строки» и «чужой арендатор» намеренно дают один ответ, чтобы не получился оракул существования.",
+			"targetSource": "body",
+			"surfaces": [
+				"rest:DELETE /api/share/{token}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Действие ПОЯВИЛОСЬ ПОСЛЕ переноса и в источнике его нет — 08-summary §5 наоборот фиксировала его отсутствие как дыру: «Share-link: удаления НЕТ ни на одной поверхности… бирер-кредненшл, который нельзя отозвать до истечения». Дыру закрыл коммит 3deeb4a7 (spec `share-link-revocable`), и ратчет полноты поймал новую поверхность как незаявленную — это первое срабатывание механизма на живом изменении, а не на подстроенном."
+		},
+		{
+			"id": "health.report-push",
+			"source": "08-summary §1 #62",
+			"subdomain": "health",
+			"action": "записать отчёт (push)",
+			"target": "project",
+			"targetNote": "цель — tags.project из ТЕЛА запроса (HealthApi.cs:38, [TenantFrom(BodyField,\"tags.project\")]); ⚠ §2 #10: асимметрия с #64 (read берёт project из аргумента) — класс Т (артефакт), риск в том, что tags.project — те же теги, что канонизируются и становятся ключом группировки здоровья, т.е. одно поле служит и границей доступа, и данными.",
+			"targetSource": "body",
+			"surfaces": [
+				"rest:POST /api/health"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "health.poll",
+			"source": "08-summary §1 #63",
+			"subdomain": "health",
+			"action": "опросить эндпоинт (pull)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [],
+			"bg": [
+				"PetBox.Dashboard.HealthPoller"
+			],
+			"internal": [],
+			"note": "Вход типа B — фоновый инвокер, внешней поверхности нет. Класс подтверждён кодом: PetBox.Dashboard/HealthPoller.cs:16."
+		},
+		{
+			"id": "health.search",
+			"source": "08-summary §1 #64",
+			"subdomain": "health",
+			"action": "читать здоровье сервисов",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:health_search"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.db-create",
+			"source": "08-summary §1 #65",
+			"subdomain": "data",
+			"action": "создать DataDb",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:db_create",
+				"rest:POST /api/data/{projectKey}/dbs"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.db-list-describe",
+			"source": "08-summary §1 #66",
+			"subdomain": "data",
+			"action": "перечислить/описать",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:db_list",
+				"mcp:db_describe",
+				"rest:GET /api/data/{projectKey}/dbs"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "db_describe не имеет REST-пары (нет соответствующего route в живом инвентаре) — согласуется с 03-logs-health-data.md #20, где REST для Describe не указан."
+		},
+		{
+			"id": "data.db-delete",
+			"source": "08-summary §1 #67",
+			"subdomain": "data",
+			"action": "удалить DataDb",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:db_delete",
+				"rest:DELETE /api/data/{projectKey}/dbs/{name}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.query",
+			"source": "08-summary §1 #68",
+			"subdomain": "data",
+			"action": "SELECT",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:data_query",
+				"rest:POST /api/data/{projectKey}/{dbName}/query"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.exec",
+			"source": "08-summary §1 #69",
+			"subdomain": "data",
+			"action": "exec (DML/DDL)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:data_exec",
+				"rest:POST /api/data/{projectKey}/{dbName}/exec"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.schema-apply",
+			"source": "08-summary §1 #70",
+			"subdomain": "data",
+			"action": "применить миграцию",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:data_schema_apply",
+				"rest:POST /api/data/{projectKey}/{dbName}/schema"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "data.migrations-list",
+			"source": "08-summary §1 #71",
+			"subdomain": "data",
+			"action": "перечислить миграции",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"rest:GET /api/data/{projectKey}/{dbName}/migrations"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Вход только R (REST) — нет соответствующего MCP-тула для списка миграций; подтверждено живым инвентарём (нет mcp:*migrations* ключа)."
+		},
+		{
+			"id": "deploy.node-upsert",
+			"source": "08-summary §1 #72",
+			"subdomain": "deploy",
+			"action": "зарегистрировать/обновить узел",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_node_upsert",
+				"rest:POST /api/deploy/nodes"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.node-list",
+			"source": "08-summary §1 #73",
+			"subdomain": "deploy",
+			"action": "перечислить узлы",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_node_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.node-delete",
+			"source": "08-summary §1 #74",
+			"subdomain": "deploy",
+			"action": "удалить узел и его развёртывания",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_node_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.upsert",
+			"source": "08-summary §1 #75",
+			"subdomain": "deploy",
+			"action": "создать/обновить развёртывание",
+			"target": "project",
+			"targetNote": "⚠ цель-обманка: DeployTools.cs:108 — «resolution input ONLY, not an access boundary: any project name is accepted regardless of the calling key's own project claim»; весь тип под [TenantExempt(FleetWide)] (DeployTools.cs:33). projectKey выглядит границей доступа, но проверка её не читает.",
+			"targetSource": "decoy",
+			"surfaces": [
+				"mcp:deploy_upsert",
+				"page:/Admin/Deploy"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.list",
+			"source": "08-summary §1 #76",
+			"subdomain": "deploy",
+			"action": "перечислить развёртывания",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_list",
+				"page:/Admin/Deploy"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.delete",
+			"source": "08-summary §1 #77",
+			"subdomain": "deploy",
+			"action": "удалить развёртывание",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_delete",
+				"page:/Admin/Deploy"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.start-stop",
+			"source": "08-summary §1 #78",
+			"subdomain": "deploy",
+			"action": "запустить/остановить",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_start",
+				"mcp:deploy_stop",
+				"page:/Admin/Deploy"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: 09-uncovered #7,#8 (deploy_start/deploy_stop) называет эти mcp-ключи «упущенными из основной таблицы» и предлагает завести под них отдельные доменные действия. Это неверно относительно 08-summary: §1 #78 уже покрывает это действие («запустить/остановить», M,U) — mcp:deploy_start/mcp:deploy_stop суть его MCP-поверхности, а не отдельные действия. 09-uncovered пропуск валиден только относительно частичного файла 05-deploy.md (где start/stop упомянуты лишь в разделе «Асимметрии», не в основной таблице), но не относительно сводки §1. Новых записей для deploy_start/deploy_stop не создаю, ключи разложены сюда."
+		},
+		{
+			"id": "deploy.move",
+			"source": "08-summary §1 #79",
+			"subdomain": "deploy",
+			"action": "переместить",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:deploy_move",
+				"page:/Admin/Deploy"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "РАСХОЖДЕНИЕ: 09-uncovered #9 (deploy_move) называет mcp:deploy_move «упущенным из основной таблицы 05». Это верно относительно частичного файла 05-deploy.md (упомянут только в UI-разделе «Асимметрии»/«Гранулярность»), но 08-summary §1 #79 («переместить», M,U) уже покрывает это действие как отдельное — согласно §9.3 «deploy_start/stop vs deploy_upsert — не схлопывать: разный радиус». Новую запись не создаю, mcp:deploy_move разложен сюда."
+		},
+		{
+			"id": "deploy.poll",
+			"source": "08-summary §1 #80",
+			"subdomain": "deploy",
+			"action": "poll желаемого состояния",
+			"target": "node",
+			"targetNote": "(claim) Node ID берётся не из именованного параметра, а из claim 'project' на node-scoped ключе (DeployApi.cs:61,71,86 + ApiKeyScopes.cs:104,108-109) — семантически это узел парка, а не проект; вид (б) таксономии §3 («цель выводится из инвокера, в сигнатуре отсутствует»).",
+			"targetSource": "derived",
+			"surfaces": [
+				"rest:GET /agent/poll"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.heartbeat",
+			"source": "08-summary §1 #81",
+			"subdomain": "deploy",
+			"action": "heartbeat",
+			"target": "node",
+			"targetNote": "(claim) Node ID берётся не из именованного параметра, а из claim 'project' на node-scoped ключе (DeployApi.cs:61,71,86 + ApiKeyScopes.cs:104,108-109) — семантически это узел парка, а не проект; вид (б) таксономии §3 («цель выводится из инвокера, в сигнатуре отсутствует»).",
+			"targetSource": "derived",
+			"surfaces": [
+				"rest:POST /agent/heartbeat"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "deploy.reschedule-stale",
+			"source": "08-summary §1 #82",
+			"subdomain": "deploy",
+			"action": "перепланировать stale",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [],
+			"bg": [
+				"PetBox.Deploy.Services.DeployFailoverSweeper"
+			],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "accounts.list",
+			"source": "08-summary §1 #83",
+			"subdomain": "accounts",
+			"action": "перечислить",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Users"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "accounts.create",
+			"source": "08-summary §1 #84",
+			"subdomain": "accounts",
+			"action": "создать",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Users"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "UserAdminService.CreateAsync требует workspaceQuota явно (UserAdminService.cs:160) — в отличие от membership.grant (AddMemberAsync), которая вставляет User без явной квоты; расхождение задокументировано источником как дефект, 08-summary §2 #12."
+		},
+		{
+			"id": "accounts.set-quota",
+			"source": "08-summary §1 #85",
+			"subdomain": "accounts",
+			"action": "установить квоту воркспейсов",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Users"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Затрагивает только последующие создания воркспейсов; уже созданные ws не пересчитываются (06-identity-admin.md #4)."
+		},
+		{
+			"id": "accounts.reset-password",
+			"source": "08-summary §1 #86",
+			"subdomain": "accounts",
+			"action": "сбросить пароль",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Users"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "accounts.delete",
+			"source": "08-summary §1 #87",
+			"subdomain": "accounts",
+			"action": "удалить",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Users"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Отказано при самоудалении, удалении bootstrap-аккаунта или последнего $system/Admin (06-identity-admin.md #6); пересекается с «двумя определениями системного администратора», 08-summary §2 #14."
+		},
+		{
+			"id": "accounts.change-own-password",
+			"source": "08-summary §1 #88",
+			"subdomain": "accounts",
+			"action": "сменить СВОЙ пароль",
+			"target": "self",
+			"targetNote": "Цель — принципал вызывающего: IAccountSelfService.ChangeOwnPasswordAsync берёт User из аутентифицированного принципала, не из параметра запроса (06-identity-admin.md #8; 08-summary §3(б) называет это действие явным примером «выведенной» цели).",
+			"targetSource": "derived",
+			"surfaces": [
+				"page:/Me/Security"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "accounts.seed-bootstrap-admin",
+			"source": "08-summary §1 #89",
+			"subdomain": "accounts",
+			"action": "посеять bootstrap-админа",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [],
+			"bg": [],
+			"internal": [
+				"PetBox.Core.Auth.AdminBootstrapper"
+			],
+			"note": "РАСХОЖДЕНИЕ: источник помечает вход как B (фоновый), но это НЕ background/hosted service. IUserAdminService.EnsureBootstrapAdminAsync вызывается СИНХРОННО из PetBox.Web/Program.cs:1023-1025 (scope.ServiceProvider.GetRequiredService<IUserAdminService>().EnsureBootstrapAdminAsync().GetAwaiter().GetResult()) внутри app-startup кода до запуска хоста; сам сидинг — статический AdminBootstrapper.EnsureAdminUser (AdminBootstrapper.cs:32), и комментарий над классом сам это подтверждает: 'startup code is not the service layer'. Это стартовый seeder (запускается один раз при старте процесса), а не BackgroundService/IHostedService — типа для поля bg нет, поэтому surfaces и bg оставлены пустыми."
+		},
+		{
+			"id": "workspaces.list",
+			"source": "08-summary §1 #90",
+			"subdomain": "workspaces",
+			"action": "перечислить (+сироты)",
+			"target": "system",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Workspaces"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Объединяет два сервисных метода на одной странице (06-identity-admin.md #9 ListAsync, #10 ListForSysAdminAsync с синтезом воркспейсов-сирот). Есть также вход UI:Nav (общий layout-партиал) БЕЗ проверки прав — 08-summary §2 #13; в инвентаре нет ключа для Nav-списка воркспейсов (только page:/Nav/Tree — другая страница), поэтому Nav не добавлен в surfaces."
+		},
+		{
+			"id": "workspaces.read",
+			"source": "08-summary §1 #91",
+			"subdomain": "workspaces",
+			"action": "читать (+счётчики)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/WorkspaceDetail"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Объединяет 06-identity-admin.md #11 GetAsync и #12 GetOverviewAsync — оба через Admin/WorkspaceDetail.OnGetAsync."
+		},
+		{
+			"id": "workspaces.create",
+			"source": "08-summary §1 #92",
+			"subdomain": "workspaces",
+			"action": "создать",
+			"target": "system",
+			"targetNote": "system + квота инвокера — WorkspaceAdminService.CreateAsync делегирует WorkspaceProvisioning.CreateAsync, которая резервирует слот через IWorkspaceMembershipService.ClaimAdminSlotAsync и внутри INSERT проверяет квоту вызывающего (bypassQuota обходит гейт для sysadmin, но не выключает подсчёт); см. также membership.claim-admin-slot.",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Workspaces",
+				"page:/Me/NewWorkspace"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "workspaces.update",
+			"source": "08-summary §1 #93",
+			"subdomain": "workspaces",
+			"action": "обновить",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/WorkspaceSettings"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "workspaces.delete",
+			"source": "08-summary §1 #94",
+			"subdomain": "workspaces",
+			"action": "удалить",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/Workspaces"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Отказано если в воркспейсе есть USER-проекты (06-identity-admin.md #15); контейнер памяти ($ws-*) удаляется вместе с ws."
+		},
+		{
+			"id": "membership.grant",
+			"source": "08-summary §1 #95",
+			"subdomain": "membership",
+			"action": "выдать членство (создав уч. запись, если нет)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/WorkspaceUsers"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "AddMemberAsync создаёт User без явной квоты (колоночный дефолт 0), в отличие от accounts.create, требующего workspaceQuota явно — задокументированное расхождение источника, 08-summary §2 #12 (WorkspaceMembershipService.cs:187-192 vs UserAdminService.cs:160). Тот же путь порождает оракул перечисления аккаунтов через AddMemberOutcome.PasswordRequired (08-summary §9.2 п.4)."
+		},
+		{
+			"id": "membership.revoke",
+			"source": "08-summary §1 #96",
+			"subdomain": "membership",
+			"action": "отозвать",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/WorkspaceUsers"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Отказано если удаляемый — последний Admin воркспейса (06-identity-admin.md #17)."
+		},
+		{
+			"id": "membership.set-role",
+			"source": "08-summary §1 #97",
+			"subdomain": "membership",
+			"action": "изменить роль",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/WorkspaceUsers"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Отказано при понижении последнего Admin (06-identity-admin.md #18)."
+		},
+		{
+			"id": "membership.claim-admin-slot",
+			"source": "08-summary §1 #98",
+			"subdomain": "membership",
+			"action": "зарезервировать слот админа (атомарно с квотой)",
+			"target": "workspace",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [],
+			"bg": [],
+			"internal": [
+				"PetBox.Core.Auth.WorkspaceMembershipService"
+			],
+			"note": "РАСХОЖДЕНИЕ: источник помечает вход как B/внутр., но это НЕ background/hosted service. IWorkspaceMembershipService.ClaimAdminSlotAsync (WorkspaceMembershipService.cs:265) вызывается СИНХРОННО внутри WorkspaceProvisioning.CreateAsync (WorkspaceProvisioning.cs:128), которая сама вызывается из scoped WorkspaceAdminService.CreateAsync при обработке UI POST-запросов создания воркспейса (Admin/Workspaces.OnPostCreateAsync, Me/NewWorkspace.OnPostAsync — см. workspaces.create) — то есть это внутренний шаг синхронного request-handling потока, а не BackgroundService/IHostedService. Типа для поля bg нет, поэтому surfaces и bg оставлены пустыми; отсутствие отдельной внешней точки входа при этом верно и совпадает с пометкой источника «внутр.»."
+		},
+		{
+			"id": "apikeys.list",
+			"source": "08-summary §1 #99",
+			"subdomain": "apikeys",
+			"action": "перечислить",
+			"target": "workspace",
+			"targetNote": "workspace (null=все) — AgentKeyAdminService.ListAsync принимает null как «все воркспейсы» (06-identity-admin.md #20).",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/AgentKeys",
+				"page:/Admin/WorkspaceAgentKeys",
+				"mcp:apikey_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "mcp:apikey_list — вторая поверхность этого действия; пропущена в 06-identity-admin.md и восстановлена по 09-uncovered.md #10 (тот же сервисный метод AgentKeyAdminService.ListAsync, что и у UI-поверхностей). Отдельного каталожного действия под неё не заводится."
+		},
+		{
+			"id": "apikeys.mint",
+			"source": "08-summary §1 #100",
+			"subdomain": "apikeys",
+			"action": "выпустить",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/ProjectKeys",
+				"mcp:apikey_create"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "apikeys.revoke",
+			"source": "08-summary §1 #101",
+			"subdomain": "apikeys",
+			"action": "отозвать",
+			"target": "workspace",
+			"targetNote": "workspace (null=все) — RevokeAsync принимает null как «все воркспейсы»; ownership проверена дважды, в SELECT и в DELETE (06-identity-admin.md #22).",
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/AgentKeys",
+				"page:/Admin/WorkspaceAgentKeys",
+				"mcp:apikey_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "apikeys.update",
+			"source": "08-summary §1 #102",
+			"subdomain": "apikeys",
+			"action": "обновить/пропатчить",
+			"target": "workspace",
+			"targetNote": "UI-близнец (AgentKeyAdminService.UpdateAsync, полная замена, 06-identity-admin.md #23): цель workspace (null=все). MCP-близнец (apikey_update → AgentKeyAdminService.PatchAsync, частичное обновление, 06-identity-admin.md #25): цели НЕТ вообще, проверяется только admin:provision — 08-summary §2 #11 и §3(в) прямо называют это действие видом «decoy».",
+			"targetSource": "decoy",
+			"surfaces": [
+				"page:/Admin/AgentKeys",
+				"page:/Admin/WorkspaceAgentKeys",
+				"mcp:apikey_update"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "UI-поверхности (UpdateAsync) и MCP-поверхность (PatchAsync) — РАЗНЫЕ сервисные методы с разной проверкой цели: у UI цель есть, у MCP её нет вообще (08-summary §2 #11, класс дефекта Д). Источник (§1 #102) фиксирует это как одно действие с двумя несравнимыми проверками, поэтому обе поверхности оставлены в одной записи."
+		},
+		{
+			"id": "apikeys.set-project-scopes",
+			"source": "08-summary §1 #103",
+			"subdomain": "apikeys",
+			"action": "заменить scopes ключа проекта",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"page:/Admin/ProjectKeys"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Ownership проверена дважды (06-identity-admin.md #24)."
+		},
+		{
+			"id": "apikeys.mint-node-key",
+			"source": "08-summary §1 #104",
+			"subdomain": "apikeys",
+			"action": "выпустить узловой ключ",
+			"target": "node",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [],
+			"bg": [],
+			"internal": [
+				"PetBox.Web.Auth.AgentKeyAdminService"
+			],
+			"note": "РАСХОЖДЕНИЕ: источник помечает вход как B/внутр., но это НЕ background/hosted service. AgentKeyAdminService.MintNodeKeyAsync (AgentKeyAdminService.cs:544) вызывается СИНХРОННО из MCP-хендлера deploy_node_upsert (DeployTools.cs:70, [McpServerTool(Name = \"deploy_node_upsert\")] на DeployTools.cs:50) как побочный эффект этого MCP-вызова, а не из BackgroundService/IHostedService. Типа для поля bg нет, поэтому surfaces и bg оставлены пустыми; наружу как отдельная точка входа не выведено (совпадает с пометкой источника «внутр.») — фактическая поверхность, через которую он срабатывает, это mcp:deploy_node_upsert, но та принадлежит ДРУГОМУ каталожному действию (deploy upsert), не этому."
+		},
+		{
+			"id": "provisioning.project-create",
+			"source": "09-uncovered #1",
+			"subdomain": "provisioning",
+			"action": "Создать проект в рабочем пространстве",
+			"target": "system",
+			"targetNote": "⚠ workspaceKey параметр НЕ тенант; создание самого арендатора отменяет обычный тенант-check (ProjectTools.cs:27-28, [TenantExempt(Provisioning)]).",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:project_create"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "provisioning.project-list",
+			"source": "09-uncovered #2",
+			"subdomain": "provisioning",
+			"action": "Перечислить проекты (опц. по рабочему пространству)",
+			"target": "system",
+			"targetNote": "⚠ Возвращает контейнеры ($ws-*) в ADMIN-виде; includeContainers:true.",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:project_list"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "introspection.whoami",
+			"source": "09-uncovered #3",
+			"subdomain": "introspection",
+			"action": "Получить сведения о вызывающем",
+			"target": "none",
+			"targetNote": "⚠ Интроспекция: раскрывает project, scopes, defaultProject вызывающего.",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:whoami"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "introspection.tool-describe",
+			"source": "09-uncovered #4",
+			"subdomain": "introspection",
+			"action": "Получить полное описание инструмента",
+			"target": "none",
+			"targetNote": "⚠ Интроспекция: раскрывает ToolCollection, схемы, full description.",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tool_describe"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		},
+		{
+			"id": "feedback.report-issue",
+			"source": "09-uncovered #5",
+			"subdomain": "feedback",
+			"action": "Подать отчёт о проблеме в систему",
+			"target": "system",
+			"targetNote": "⚠ УНИКАЛЬНЫЙ: пишет ВСЕГДА в $system/client-issues, независимо от вызывающего проекта — фиксированный чужой арендатор (ReportTools.cs:26, [TenantExempt(Feedback)]).",
+			"targetSource": null,
+			"surfaces": [
+				"mcp:petbox_report_issue"
+			],
+			"bg": [],
+			"internal": [],
+			"note": null
+		}
+	],
+	"unmapped": [
+		{
+			"surface": "mcp:petbox_report_issue_status",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "mcp:tasks_methodology_utility_get",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/AccessDenied",
+			"reason": "no-domain-action",
+			"note": "Страница отказа в доступе."
+		},
+		{
+			"surface": "page:/Admin/Index",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectAgentDefs",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectConnect",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectData",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectDataDb",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectLogSettings",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectMemory",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectMethodology",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/ProjectTasks",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/Projects",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Admin/WorkspaceAdmin",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Config/Editor",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Config/History",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Config/Index",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Config/Preview",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Config/Tags",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Dashboard/Index",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Doc/Agent",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Index",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Methodology",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Onboarding",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Overview",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Philosophy",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Doc/Wire",
+			"reason": "no-domain-action",
+			"note": "Статическая страница документации."
+		},
+		{
+			"surface": "page:/Error",
+			"reason": "no-domain-action",
+			"note": "Страница ошибки."
+		},
+		{
+			"surface": "page:/Index",
+			"reason": "no-domain-action",
+			"note": "Корневая страница."
+		},
+		{
+			"surface": "page:/Llm/Index",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Login",
+			"reason": "no-domain-action",
+			"note": "Поток аутентификации."
+		},
+		{
+			"surface": "page:/Me/Account",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Nav/Tree",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Database",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Databases",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Index",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Memory",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/MemoryStore",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Session",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Sessions",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/ProjectHome/Table",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "page:/Search",
+			"reason": "not-covered-by-source-pass",
+			"note": "Проход 05-action-catalog до этой поверхности не дошёл; доменное действие за ней есть, записи в каталоге пока нет. Этот список обязан только сокращаться."
+		},
+		{
+			"surface": "rest:GET /.well-known/oauth-authorization-server",
+			"reason": "no-domain-action",
+			"note": "OAuth-дискавери: статический документ метаданных, доменного объекта не трогает."
+		},
+		{
+			"surface": "rest:GET /.well-known/oauth-authorization-server/{*rest}",
+			"reason": "no-domain-action",
+			"note": "Тот же дискавери-документ под catch-all суффиксом."
+		},
+		{
+			"surface": "rest:GET /.well-known/oauth-protected-resource",
+			"reason": "no-domain-action",
+			"note": "OAuth-дискавери защищаемого ресурса."
+		},
+		{
+			"surface": "rest:GET /.well-known/oauth-protected-resource/{*rest}",
+			"reason": "no-domain-action",
+			"note": "Тот же документ под catch-all суффиксом."
+		},
+		{
+			"surface": "rest:GET /.well-known/openid-configuration",
+			"reason": "no-domain-action",
+			"note": "OIDC-дискавери."
+		},
+		{
+			"surface": "rest:GET /.well-known/openid-configuration/{*rest}",
+			"reason": "no-domain-action",
+			"note": "Тот же документ под catch-all суффиксом."
+		},
+		{
+			"surface": "rest:GET /api/auth/validate",
+			"reason": "no-domain-action",
+			"note": "Поток аутентификации: проверяет предъявленный принципал вызывающего, доменной цели нет."
+		},
+		{
+			"surface": "rest:GET /docs",
+			"reason": "no-domain-action",
+			"note": "Редирект/страница документации API."
+		},
+		{
+			"surface": "rest:GET /help",
+			"reason": "no-domain-action",
+			"note": "Справка по API."
+		},
+		{
+			"surface": "rest:GET /openapi/{documentName}.json",
+			"reason": "no-domain-action",
+			"note": "Сгенерированная OpenAPI-схема — описание поверхности, не действие над данными."
+		},
+		{
+			"surface": "rest:GET|HEAD /health",
+			"reason": "no-domain-action",
+			"note": "Проба живости процесса. НЕ путать с субдоменом health (#62-64): та отчётность про здоровье ЧУЖИХ сервисов, эта — про сам петбокс."
+		},
+		{
+			"surface": "rest:GET|HEAD /version",
+			"reason": "no-domain-action",
+			"note": "Версия сборки, константа процесса."
+		},
+		{
+			"surface": "rest:POST /api/auth/logout",
+			"reason": "no-domain-action",
+			"note": "Поток аутентификации: гасит собственную куку вызывающего."
+		},
+		{
+			"surface": "rest:POST /api/ui/board-filter-prefs",
+			"reason": "ui-preference",
+			"note": "Пользовательские фильтры доски. Воркер по настройкам проверил код: это реальный Get+Set над стором настроек, но опорная таблица §1 #37-39 объявляет входы только `U`, поэтому как отдельное действие не заявлено."
+		},
+		{
+			"surface": "rest:POST /api/ui/project",
+			"reason": "ui-preference",
+			"note": "Переключатель текущего проекта в интерфейсе: меняет представление вызывающего. §3 вид (д) — цель из ТЕЛА (поле `ws`), но доменного объекта не меняет."
+		},
+		{
+			"surface": "rest:POST /api/ui/workspace",
+			"reason": "ui-preference",
+			"note": "Переключатель текущего воркспейса в интерфейсе, парный предыдущему."
+		}
+	]
+}
