@@ -35,10 +35,12 @@ public static class TenantEnforcementAllowlist
 	// took ALL 97 tools out, the REST wave 53 of the 55, and the Razor wave all 65 pages. The last two
 	// REST entries — the Seq-protocol ingest routes — came out in work `seq-compat-ingest-has-no-principal`.
 	//
-	// So all 217 surfaces are under enforcement, with NO exemption-by-technical-reason anywhere: every
-	// one of them either declares where its tenant comes from or names one of the six closed exemption
-	// classes, and both PEPs now reach the declaration path on every single call. The live count is
-	// never a comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
+	// So every one of those 217 left this list and none has gone back on it, with NO
+	// exemption-by-technical-reason anywhere: each surface either declares where its tenant comes from
+	// or names one of the six closed exemption classes, and both PEPs now reach the declaration path on
+	// every single call — including the ones added since, which were never on this list at all. That
+	// 217 is the ACCOUNTING OF WHAT LEFT, not a headcount of what is live now; the live count is never
+	// a comment: run AuthzDeclarationRatchetTests and read .tmp/authz-surface-inventory.txt.
 	//
 	// NOTHING MAY BE ADDED BACK. A new surface declares like everything written after the rule; an
 	// entry here would be a surface exempted by a LIST instead of by a declaration, which is the opt-in

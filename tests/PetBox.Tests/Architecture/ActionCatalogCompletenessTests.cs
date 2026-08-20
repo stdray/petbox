@@ -204,9 +204,21 @@ public sealed partial class ActionCatalogCompletenessTests : IClassFixture<Authz
 	// StaleAllowlistEntries_AreDeleted over there, this constant over here — a debt made countable so
 	// it cannot grow back while nobody is looking.
 	//
+	// IT IS ZERO, AND THAT IS THE FINISHED STATE — the same shape TenantEnforcementAllowlist.Keys is
+	// in next door, and for the same reason: a ceiling of zero is what makes "only shrinks" mean
+	// "cannot come back". It STARTED at 31 (2 MCP tools plus 29 Razor pages, the transfer pass having
+	// been MCP/REST-centric), and work `action-catalog-debt-and-drift` paid all 31 off in one commit:
+	// 30 were catalogued against a read of their PageModel/tool, and page:/Admin/ProjectLogSettings —
+	// a bare 302 to the settings page — was reclassified `no-domain-action`, which is a statement
+	// about the surface and not a line in the backlog.
+	//
+	// The name is a CEILING, not a historical marker, precisely because it may no longer stand at the
+	// transfer's number: the assertions below quote it, so a constant claiming to be "the count at the
+	// transfer" while reading 0 would put a false sentence in a failure message.
+	//
 	// LOWER IT WHEN YOU CATALOGUE ONE. Raising it is not a fix; it is a decision to ship an
 	// uncatalogued domain action, and it needs the owner, not a PR.
-	const int UncataloguedDebtAtTransfer = 31;
+	const int UncataloguedDebtCeiling = 0;
 
 	[Fact]
 	public void UncataloguedDebt_OnlyShrinks()
@@ -216,17 +228,17 @@ public sealed partial class ActionCatalogCompletenessTests : IClassFixture<Authz
 			.OrderBy(u => u.Surface, StringComparer.Ordinal)
 			.ToList();
 
-		debt.Count.Should().BeLessThanOrEqualTo(UncataloguedDebtAtTransfer,
-			$"`not-covered-by-source-pass` is DEBT and only ever shrinks (it was "
-			+ $"{UncataloguedDebtAtTransfer} at the transfer). A new surface does not go on this list — it "
-			+ "gets catalogued, or it is `no-domain-action` / `ui-preference`, which are statements about "
-			+ "the surface rather than about the backlog. Current:\n  "
+		debt.Count.Should().BeLessThanOrEqualTo(UncataloguedDebtCeiling,
+			$"`not-covered-by-source-pass` is DEBT and only ever shrinks (the ceiling stands at "
+			+ $"{UncataloguedDebtCeiling}; it was 31 at the transfer). A new surface does not go on this "
+			+ "list — it gets catalogued, or it is `no-domain-action` / `ui-preference`, which are "
+			+ "statements about the surface rather than about the backlog. Current:\n  "
 			+ string.Join("\n  ", debt.Select(u => u.Surface)));
 
 		// And when it does shrink, the pin comes down with it — otherwise the guard slowly loosens
 		// into a budget with room in it, which is how a paid-off debt gets re-borrowed.
-		debt.Count.Should().Be(UncataloguedDebtAtTransfer,
-			"the debt shrank — lower UncataloguedDebtAtTransfer to " + debt.Count
+		debt.Count.Should().Be(UncataloguedDebtCeiling,
+			"the debt shrank — lower UncataloguedDebtCeiling to " + debt.Count
 			+ " in the same commit, so the ratchet holds at the new level instead of leaving slack");
 	}
 
