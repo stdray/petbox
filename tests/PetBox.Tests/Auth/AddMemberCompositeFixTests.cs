@@ -62,6 +62,11 @@ public sealed class AddMemberCompositeFixTests : IDisposable
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_dbf = _db.Factory();
 		_svc = new WorkspaceMembershipService(_dbf);
+
+		// add-member-hardening-cluster #2: AddMemberAsync now refuses a workspaceKey with no
+		// Workspaces row. Every test in this file targets Ws ("alpha"), so it must exist for any of
+		// them to reach the behaviour they actually test.
+		_db.Insert(new Workspace { Key = Ws, Name = Ws, Description = "", CreatedAt = DateTime.UtcNow });
 	}
 
 	public void Dispose()
@@ -342,6 +347,76 @@ public sealed class AddMemberCompositeFixTests : IDisposable
 		var user = _db.Users.Single(u => u.Username == "orphan");
 		user.WorkspaceQuota.Should().Be(3);
 		_db.MembershipRows().Should().ContainSingle().Which.UserId.Should().Be(user.Id);
+	}
+
+	// ---- (D) username trim (add-member-hardening-cluster #1) --------------------------------
+
+	// THE scenario named in the card: a post of " alice" in CreateNew mode, against an EXISTING
+	// "alice", must find her and grant membership — not miss her (untrimmed comparison) and insert
+	// a second, visually-indistinguishable account.
+	[Fact]
+	public async Task CreateNew_with_a_padded_username_finds_the_existing_account_instead_of_duplicating_it()
+	{
+		var aliceId = SeedUser("alice", quota: 5);
+
+		var outcome = await _svc.AddMemberAsync(Ws, " alice", AddMemberMode.CreateNew, "pw", 7, WorkspaceRole.Member);
+
+		outcome.Should().Be(AddMemberOutcome.Added, "the trimmed name matches the existing account");
+		_db.Users.Count(u => u.Username == "alice").Should().Be(1,
+			"a padded post must not create a second, visually-indistinguishable account");
+		_db.Users.Any(u => u.Username == " alice").Should().BeFalse("the untrimmed name must never be stored");
+		_db.Users.Single().WorkspaceQuota.Should().Be(5, "the existing account's own allowance is untouched");
+		_db.MembershipRows().Should().ContainSingle().Which.UserId.Should().Be(aliceId);
+	}
+
+	// The AddExisting half of the same defect: untrimmed, " alice" would not match "alice" and the
+	// mode would answer NoSuchUser (silently) instead of granting the membership that was asked for.
+	[Fact]
+	public async Task AddExisting_with_a_padded_username_finds_the_existing_account()
+	{
+		var aliceId = SeedUser("alice", quota: 5);
+
+		var outcome = await _svc.AddMemberAsync(Ws, "alice ", AddMemberMode.AddExisting, null, null, WorkspaceRole.Member);
+
+		outcome.Should().Be(AddMemberOutcome.Added);
+		_db.MembershipRows().Should().ContainSingle().Which.UserId.Should().Be(aliceId);
+	}
+
+	// Padding must not leak through into a NEW account's stored name either.
+	[Fact]
+	public async Task CreateNew_with_a_padded_username_stores_the_trimmed_name_for_a_brand_new_account()
+	{
+		(await _svc.AddMemberAsync(Ws, "  fresh  ", AddMemberMode.CreateNew, "pw", 1, WorkspaceRole.Member))
+			.Should().Be(AddMemberOutcome.Added);
+
+		_db.Users.Single().Username.Should().Be("fresh");
+	}
+
+	// ---- (E) workspace existence (add-member-hardening-cluster #2) --------------------------
+
+	// A workspaceKey with no Workspaces row must refuse before writing anything — a membership row
+	// on a key nobody owns would be an Admin-slot spend the ledger can never reclaim.
+	[Fact]
+	public async Task A_nonexistent_workspace_is_refused_and_writes_nothing()
+	{
+		SeedUser("alice", quota: 5);
+
+		var outcome = await _svc.AddMemberAsync(
+			"no-such-workspace", "alice", AddMemberMode.AddExisting, null, null, WorkspaceRole.Member);
+
+		outcome.Should().Be(AddMemberOutcome.NoSuchWorkspace);
+		_db.MembershipRows().Should().BeEmpty("nothing is granted against a workspace that does not exist");
+	}
+
+	[Fact]
+	public async Task A_nonexistent_workspace_in_CreateNew_mode_creates_no_account_either()
+	{
+		var outcome = await _svc.AddMemberAsync(
+			"no-such-workspace", "newcomer", AddMemberMode.CreateNew, "pw", 3, WorkspaceRole.Member);
+
+		outcome.Should().Be(AddMemberOutcome.NoSuchWorkspace);
+		_db.Users.Any(u => u.Username == "newcomer").Should().BeFalse(
+			"refusing the workspace must not still spend an account creation — nothing is written at all");
 	}
 
 	sealed class NoopTempDataProvider : ITempDataProvider

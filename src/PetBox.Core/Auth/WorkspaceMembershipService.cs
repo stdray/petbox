@@ -50,13 +50,17 @@ public enum AddMemberMode
 // ORACLE CONTRACT — read this before adding a member or changing how a page renders these. They
 // fall into two groups that must never be mixed:
 //
-//  * FORM-SHAPED refusals — PasswordRequired, QuotaRequired, QuotaInvalid. Decided from the POSTed
-//    fields ALONE, before any read of Users, and only ever in CreateNew mode. They carry zero bits
-//    about who exists, so a page may render each with its own text.
+//  * FORM-SHAPED refusals — NoSuchWorkspace, PasswordRequired, QuotaRequired, QuotaInvalid. Decided
+//    from the POSTed fields / route ALONE, never from a read of Users. NoSuchWorkspace reads
+//    Workspaces, not Users, so it carries zero bits about who exists, same as the other three — a
+//    page may render each with its own text.
 //  * TABLE-SHAPED answers — Added, AlreadyMember, NoSuchUser. WHICH of the three comes back does
-//    depend on the table, so a page MUST render all three identically: same status, same text, same
-//    redirect. WorkspaceUsersModel.OnPostAddAsync is the reference mapping. Rendering NoSuchUser as
-//    an error, or AlreadyMember as a warning, re-opens the oracle this enum exists to close.
+//    depend on the Users table, so a page MUST render all three identically: same status, same text,
+//    same redirect. WorkspaceUsersModel.OnPostAddAsync is the reference mapping. Rendering NoSuchUser
+//    as an error, or AlreadyMember as a warning, re-opens the oracle this enum exists to close.
+//
+// A NEW CALLER of AddMemberAsync is exactly the way this contract gets broken silently — see
+// AddMemberAsyncCallerGuardTests, which fails the build the moment a second call site appears.
 public enum AddMemberOutcome
 {
 	// The membership row is there and this call wrote it.
@@ -68,6 +72,17 @@ public enum AddMemberOutcome
 	// AddExisting mode and no account holds that name, so there was nothing to grant membership to.
 	// Nothing written. Indistinguishable from Added/AlreadyMember to the page, ON PURPOSE.
 	NoSuchUser,
+
+	// `workspaceKey` has no row in Workspaces. Decided from that table alone — never from Users —
+	// so it carries none of the account-enumeration bits the three answers above must hide; a page
+	// may render it with its own text, the same as the form-shaped refusals below. Guards the
+	// quota ledger (add-member-hardening-cluster #2): a membership row is also an Admin-slot spend
+	// (ClaimAdminSlotAsync counts these rows), so writing one against a key nobody owns would be an
+	// allowance spent and never returned. In production [FromRoute] + the WorkspaceAdmin policy
+	// already keep an unknown key from reaching this method through the page; this is the same rule
+	// enforced at the door every OTHER writer (WorkspaceProvisioning, AdminBootstrapper) also walks
+	// through.
+	NoSuchWorkspace,
 
 	// CreateNew mode with no password. An empty PasswordHash cannot authenticate (M008_Users).
 	PasswordRequired,
@@ -127,6 +142,13 @@ public interface IWorkspaceMembershipService
 	// Adds `username` to the workspace. `mode` is the CALLER'S DECLARED INTENT, and it — not the
 	// contents of the Users table — decides what this call requires and what class of answer it
 	// gives. See AddMemberMode, and the oracle contract on AddMemberOutcome.
+	//
+	// `username` is trimmed before comparison or storage, the same normalisation
+	// UserAdminService.CreateAsync applies before its own Users lookup.
+	//
+	// `workspaceKey` must already have a row in Workspaces or the call refuses with
+	// NoSuchWorkspace — a membership row is also a quota-ledger spend (ClaimAdminSlotAsync), so one
+	// written against a key nobody owns would be an allowance lost with no workspace to show for it.
 	//
 	// CreateNew needs `password` AND `workspaceQuota`; both are refused when missing, before any
 	// read. AddExisting needs neither and ignores both. An EXISTING account keeps its password and
@@ -242,7 +264,8 @@ public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceM
 
 	// Three defects lived in this one method; all three are answered here — add-member-composite-fix.
 	// Read the three numbered blocks as one design: each undoes a way this method used to leak or
-	// lose something.
+	// lose something. add-member-hardening-cluster added the trim below and the workspace check in
+	// block 1a — neither touches the oracle, since neither reads Users.
 	public async Task<AddMemberOutcome> AddMemberAsync(
 		string workspaceKey,
 		string username,
@@ -252,6 +275,18 @@ public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceM
 		WorkspaceRole role,
 		CancellationToken ct = default)
 	{
+		// Same normalisation UserAdminService.CreateAsync applies before its own Users lookup
+		// (CreateAsync: `var name = username.Trim();`) — this method writes the same kind of row and
+		// owes the same decision. Untrimmed, a post of " alice" against an existing "alice" misses the
+		// AlreadyMember read below and (in CreateNew mode) inserts a second, visually-indistinguishable
+		// account instead of granting membership to the one that already exists.
+		//
+		// Comparison stays plain `==` (unchanged) — CreateAsync's own lookup (`u.Username == name`) is
+		// the same plain `==` against the same Username column (M008: no COLLATE NOCASE, so SQLite's
+		// default BINARY collation applies), so the two paths already agreed on case sensitivity before
+		// this fix; trimming is the only normalisation that was missing.
+		username = username.Trim();
+
 		// 1. EVERY refusal is decided before the first read.
 		//
 		// Nothing past this block can refuse. That ordering is the oracle fix itself, not tidiness:
@@ -283,6 +318,17 @@ public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceM
 		}
 
 		using var db = dbf.Open();
+
+		// 1a. The target workspace must exist. Checked from Workspaces, never from Users, so it sits
+		// in the FORM-SHAPED half of the contract above — it carries no bit about account existence.
+		// Placed after the (possibly wasted) password hash rather than before it: the hash's
+		// unconditional cost is what defeats the Users-table timing oracle, and moving cheap work
+		// around it changes nothing about that; reordering the two would only be worth it if this
+		// check were expensive, and an indexed existence read is not. Guards the quota ledger — a
+		// membership row for a key nobody owns would be an Admin-slot spend (ClaimAdminSlotAsync)
+		// that can never be reclaimed.
+		if (!await db.Workspaces.AnyAsync(w => w.Key == workspaceKey, ct))
+			return AddMemberOutcome.NoSuchWorkspace;
 
 		// 2. Both inserts AND the read between them are one transaction.
 		//
