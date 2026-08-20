@@ -113,6 +113,18 @@ internal static class Program
 		_workspaceFailures = ws.Diagnostics.Count(d => d.Kind == WorkspaceDiagnosticKind.Failure);
 		foreach (var e in errSample.Take(15)) Say($"  ERR {e}");
 
+		// ── worker I: real caller->callee edges ──────────────────────────────────────────────
+		if (phase == "calls")
+		{
+			var repoRoot = Path.GetDirectoryName(Path.GetFullPath(sln))!;
+			Say($"GATE CompilationErrors={_compileErrors}, WorkspaceLoadFailures={_workspaceFailures}, projects={_projects}; " +
+				(_compileErrors == 0 && _workspaceFailures == 0
+					? "model is trustworthy, proceeding"
+					: "MODEL IS UNTRUSTWORTHY — numbers below mean nothing"));
+			await CallGraph.RunAsync(solution, comps, outDir, repoRoot, Say).ConfigureAwait(false);
+			return 0;
+		}
+
 		// ── Source generators (Razor + others) ───────────────────────────────────────────────
 		var tg = Stopwatch.StartNew();
 		var genTotal = 0;

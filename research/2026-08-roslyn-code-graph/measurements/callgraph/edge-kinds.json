@@ -1,0 +1,67 @@
+{
+  "generated": "2026-08-20",
+  "source": "semantics",
+  "producer": "research/2026-08-roslyn-code-graph/proto/CodeGraphProbe --phase calls",
+  "tables": {
+    "edges": { "file": "call-edges.parquet", "columns": [
+      { "name": "caller", "type": "VARCHAR", "note": "stable key of the member the call site is attributed to" },
+      { "name": "callee", "type": "VARCHAR", "note": "stable key of the target; always the ORIGINAL DEFINITION, never a constructed generic" },
+      { "name": "kind", "type": "VARCHAR", "note": "one of edgeKinds[].kind" },
+      { "name": "reason", "type": "VARCHAR", "note": "SymbolInfo.CandidateReason; non-empty only on *.ambiguous edges" },
+      { "name": "via", "type": "VARCHAR", "note": "'lambda' when the call site sits inside an anonymous function; local functions are their own caller instead" },
+      { "name": "file", "type": "VARCHAR", "note": "call-site path relative to repo root" },
+      { "name": "line", "type": "BIGINT" },
+      { "name": "tests", "type": "BIGINT", "note": "1 when the call site is in a tests/** project" },
+      { "name": "gen", "type": "BIGINT", "note": "1 when the call site is in source-generator output (Razor, LoggerMessage, Regex, OpenApi)" },
+      { "name": "ext", "type": "BIGINT", "note": "1 when the callee is declared outside the PetBox* assemblies" },
+      { "name": "constructed", "type": "BIGINT", "note": "1 when the call site used a constructed generic / reduced extension form" }
+    ] },
+    "nodes": { "file": "call-nodes.parquet", "columns": [
+      { "name": "key", "type": "VARCHAR", "note": "join key; unique" },
+      { "name": "display", "type": "VARCHAR" },
+      { "name": "kind", "type": "VARCHAR", "note": "ISymbol.Kind" },
+      { "name": "method_kind", "type": "VARCHAR", "note": "IMethodSymbol.MethodKind, empty for non-methods" },
+      { "name": "asm", "type": "VARCHAR" },
+      { "name": "ext", "type": "BIGINT" },
+      { "name": "gen", "type": "BIGINT" },
+      { "name": "tests", "type": "BIGINT" },
+      { "name": "file", "type": "VARCHAR" },
+      { "name": "line", "type": "BIGINT" }
+    ] }
+  },
+  "keyCaveats": [
+    "Local functions have no documentation comment id; they are keyed 'L:<container doc-id>#<name>'.",
+    "Lambdas are never keyed: calls inside them are attributed to the enclosing member with via='lambda'.",
+    "Anonymous-type members DO return a doc id, but a containerless and therefore COLLIDING one ('M:.get_Key'). Treat keys matching '^[MPT]:\\.' as unstable."
+  ],
+  "totals": { "edges": 165681, "nodes": 27293, "constructedGeneric": 44497, "unattributedCallSites": 7955 },
+  "edgeKinds": [
+    { "kind": "call.direct", "count": 70587, "fromTests": 50539, "fromGeneratedCode": 5471, "externalCallee": 49757, "description": "non-virtual invocation; the callee symbol is the one that runs" },
+    { "kind": "prop.get", "count": 41558, "fromTests": 18181, "fromGeneratedCode": 7224, "externalCallee": 14012, "description": "property read; callee is the get accessor" },
+    { "kind": "ctor", "count": 10578, "fromTests": 6431, "fromGeneratedCode": 1366, "externalCallee": 4567, "description": "explicit `new T(...)`" },
+    { "kind": "ctor.attribute", "count": 9591, "fromTests": 4678, "fromGeneratedCode": 1171, "externalCallee": 9371, "description": "attribute application; callee is the attribute constructor" },
+    { "kind": "prop.set", "count": 9041, "fromTests": 6273, "fromGeneratedCode": 687, "externalCallee": 1625, "description": "property write; callee is the set accessor" },
+    { "kind": "call.virtual", "count": 7474, "fromTests": 782, "fromGeneratedCode": 5558, "externalCallee": 7324, "description": "invocation of a virtual/abstract/override member on a class; edge points at the DECLARED member" },
+    { "kind": "call.interface", "count": 5858, "fromTests": 1955, "fromGeneratedCode": 188, "externalCallee": 4096, "description": "invocation through an interface member; edge points at the DECLARED interface member" },
+    { "kind": "impl.override", "count": 2987, "fromTests": 145, "fromGeneratedCode": 0, "externalCallee": 0, "description": "overridden member -> the override; NOT a call site, a dispatch target" },
+    { "kind": "impl.interface", "count": 2702, "fromTests": 954, "fromGeneratedCode": 0, "externalCallee": 159, "description": "declared interface member -> its implementation; NOT a call site, a dispatch target" },
+    { "kind": "indexer.get", "count": 1574, "fromTests": 1061, "fromGeneratedCode": 86, "externalCallee": 1566, "description": "indexer read" },
+    { "kind": "ctor.implicit-new", "count": 1241, "fromTests": 757, "fromGeneratedCode": 13, "externalCallee": 454, "description": "target-typed `new()`" },
+    { "kind": "methodgroup", "count": 818, "fromTests": 405, "fromGeneratedCode": 162, "externalCallee": 474, "description": "method named without invoking it (method group conversion / delegate creation)" },
+    { "kind": "ctor.implicit-base", "count": 574, "fromTests": 348, "fromGeneratedCode": 24, "externalCallee": 571, "description": "synthesised: constructor with no initializer implicitly calls base()" },
+    { "kind": "indexer.set", "count": 350, "fromTests": 74, "fromGeneratedCode": 96, "externalCallee": 350, "description": "indexer write" },
+    { "kind": "ref.ambiguous", "count": 240, "fromTests": 28, "fromGeneratedCode": 70, "externalCallee": 26, "description": "same, at a non-invocation reference site" },
+    { "kind": "call.delegate", "count": 227, "fromTests": 63, "fromGeneratedCode": 62, "externalCallee": 223, "description": "invocation through a delegate variable; callee is the delegate type's Invoke" },
+    { "kind": "call.localfunction", "count": 195, "fromTests": 70, "fromGeneratedCode": 78, "externalCallee": 0, "description": "invocation of a local function" },
+    { "kind": "ctor.chain", "count": 77, "fromTests": 11, "fromGeneratedCode": 0, "externalCallee": 15, "description": "`: base(...)` / `: this(...)`" },
+    { "kind": "event", "count": 9, "fromTests": 9, "fromGeneratedCode": 0, "externalCallee": 9, "description": "event reference (add/remove/raise)" }
+  ],
+  "candidateReasons": [
+    { "reason": "MemberGroup", "count": 191 },
+    { "reason": "OverloadResolutionFailure", "count": 49 }
+  ],
+  "callSiteContext": [
+    { "via": "lambda", "count": 15476 }
+  ],
+  "keys": { "scheme": "ISymbol.GetDocumentationCommentId()", "withDocId": 556146, "fallback": 1425, "fallbackByKind": { "Method/LocalFunction": 1425 } }
+}

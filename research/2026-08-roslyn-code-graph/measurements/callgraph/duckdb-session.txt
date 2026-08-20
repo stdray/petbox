@@ -1,0 +1,221 @@
+Worker I — 2026-08-20 — raw DuckDB session over the REAL call graph.
+duckdb v1.5.5 (Variegata) d8cdaa33fd. Windows 11, SDK 10.0.111.
+Wall time / peak RSS per line = whole CLI process, sampled via PowerShell Process.PeakWorkingSet64
+(same method worker E used in 15-blocking-measurements.md).
+
+Inputs produced by: CodeGraphProbe --phase calls  (call-edges.tsv 43.3 MB, call-nodes.tsv 5.0 MB).
+Committed form: call-edges.parquet / call-nodes.parquet in this directory.
+
+=========================================================================================
+1. EXPORT
+=========================================================================================
+COPY (SELECT * FROM read_csv('call-edges.tsv', delim='\t', header=true, quote='', escape=''))
+  TO 'call-edges.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
+COPY (SELECT * FROM read_csv('call-nodes.tsv', ...)) TO 'call-nodes.parquet' (...);
+  -> exit=0 wall=0.176s peakRSS=152MB
+  -> call-edges.parquet 1.06 MB, call-nodes.parquet 0.57 MB   (from 48.3 MB of TSV)
+
+CREATE TABLE edge AS SELECT * FROM read_parquet('call-edges.parquet');
+CREATE TABLE node AS SELECT * FROM read_parquet('call-nodes.parquet');
+CREATE INDEX ix_caller ON edge(caller); CREATE INDEX ix_callee ON edge(callee);
+  -> exit=0 wall=0.593s peakRSS=100MB, graph.duckdb = 19.01 MB
+
+=========================================================================================
+2. SHAPE OF THE GRAPH
+=========================================================================================
+CREATE VIEW g AS SELECT caller, callee FROM edge WHERE kind NOT LIKE 'impl.%';
+edges (call-only)                        159992
+edges (call+dispatch, all kinds)         165681
+distinct callers (out-degree > 0)         14038
+distinct callees (in-degree  > 0)         13856   (19113 when impl.* edges are included)
+mean out-degree over callers               11.4   <- synthetic graph of worker E: 10.44
+callees that are SINKS (never a caller)    9432   = 68% of all callees
+  of those, external (BCL/nuget)           2826
+edges from tests/**                       92764   = 56%
+edges with external callee                94599   = 57%
+edges whose CALL SITE is generated code   22256
+  of those, callee is PetBox source        5543
+nodes declared in generated code           2527
+
+in-degree distribution (call-only):
+  bucket  nodes   edges
+  1        4780    4780
+  2-3      3769    8873
+  4-10     3195   19321
+  11-50    1634   34143
+  51-200    359   32703
+  200+      119   60172   <- 0.9% of callees carry 38% of all edges
+
+=========================================================================================
+3. TOP-20 BY IN-DEGREE (call-only; impl.* excluded).  ext=1 means non-PetBox assembly.
+=========================================================================================
+ rk  in-deg ext symbol
+  1   3414   1  M:Xunit.FactAttribute.#ctor(System.String,System.Int32)
+  2   3242   1  M:AwesomeAssertions.AssertionExtensions.Should(System.String)
+  3   3196   1  M:Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.WriteLiteral(System.String)
+  4   1579   1  M:System.Linq.Enumerable.Select``2(IEnumerable{``0},Func{``0,``1})
+  5   1425   1  M:AwesomeAssertions.Primitives.StringAssertions`1.Be(String,String,Object[])
+  6   1274   1  M:AwesomeAssertions.AssertionExtensions.Should(System.Boolean)
+  7   1242   1  M:AwesomeAssertions.Primitives.StringAssertions`1.Contain(String,String,Object[])
+  8   1119   1  M:AwesomeAssertions.AssertionExtensions.Should(IEnumerable{System.String})
+  9   1113   1  M:AwesomeAssertions.AssertionExtensions.Should``1(IEnumerable{``0})
+ 10   1086   1  M:AwesomeAssertions.Numeric.NumericAssertionsBase`3.Be(`0,String,Object[])
+ 11   1015   1  M:System.CodeDom.Compiler.GeneratedCodeAttribute.#ctor(String,String)
+ 12   1010   1  M:System.Linq.Enumerable.ToList``1(IEnumerable{``0})
+ 13    870   1  M:System.Diagnostics.DebuggerNonUserCodeAttribute.#ctor
+ 14    773   1  M:AwesomeAssertions.AssertionExtensions.Should(System.Int32)
+ 15    767   1  M:Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.WriteAttributeValue(...)
+ 16    762   1  M:AwesomeAssertions.Primitives.BooleanAssertions`1.BeTrue(String,Object[])
+ 17    729   1  M:Xunit.InlineDataAttribute.#ctor(System.Object[])
+ 18    704   1  M:Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.Write(System.String)
+ 19    703   1  M:AwesomeAssertions.Primitives.EnumAssertions`2.Be(`0,String,Object[])
+ 20    671   1  M:AwesomeAssertions.AssertionExtensions.Should(System.Object)
+ALL TWENTY are external: xunit + AwesomeAssertions + the Razor runtime + LINQ + attribute ctors.
+
+Same query restricted to PetBox-declared callees (n.ext = 0), top 8:
+  449 M:PetBox.Tests.TestCoreDb.Factory(..)
+  344 M:.get_projectKey              <- DEGENERATE KEY, see section 6
+  333 M:PetBox.Core.Data.ICoreDbFactory.Open
+  279 M:.get_key                     <- DEGENERATE KEY
+  271 M:PetBox.Core.Data.Temporal.TemporalRow.get_Key
+  256 M:PetBox.Core.Models.Project.set_WorkspaceKey(..)
+  256 M:PetBox.Core.Models.Project.#ctor
+  228 M:.get_board                   <- DEGENERATE KEY
+
+=========================================================================================
+4. TRANSITIVITY, POINTWISE ("who transitively calls X, depth <= 3")
+=========================================================================================
+WITH RECURSIVE r(node,d) AS (
+  SELECT '<target>',0 UNION SELECT g.caller, r.d+1 FROM g JOIN r ON g.callee=r.node WHERE r.d<3)
+SELECT count(DISTINCT node)-1 FROM r;
+Each row = one cold duckdb process against graph.duckdb.
+
+target (direct in-degree)                        call-only   call+dispatch  wall   peakRSS
+ICoreDbFactory.Open              (333, iface)          886           1226   .089s / .053s   9/31 MB
+MemoryDb.CreateOptions           (60)                  106            107   .060s / .063s   6 MB
+BindingContentHash.Compute       (5)                    14             19   .053s / .054s   6 MB
+Enumerable.Select                (1579, BCL hub)      2740           2913   .072s / .057s   9 MB
+AssertionExtensions.Should(str)  (3242, test hub)     1658           1658   .061s / .065s   6 MB
+Xunit.FactAttribute..ctor        (3414, top hub)      3414           3414   .053s / .053s   6 MB
+
+Same question straight off call-edges.parquet with NO database and NO index, cold process:
+  -> 886 (matches), exit=0 wall=0.082s peakRSS=10MB
+
+Note on FactAttribute: depth adds NOTHING (3414 direct == 3414 at depth 3) because [Fact]
+methods are leaves — nothing in the graph calls a test method.
+Note on ICoreDbFactory.Open: adding the impl.* dispatch edges grows the answer 886 -> 1226
+(+38%). That is the whole justification for emitting the two edge kinds separately.
+
+=========================================================================================
+5. TRANSITIVITY, "CALLS A BUT NOT B"
+=========================================================================================
+A = reach<=3 callers of M:PetBox.Core.Data.ICoreDbFactory.Open                       1227
+B = reach<=3 callers of M:PetBox.Core.Auth.TenantAuthorizer.AuthorizeAsync(...)         27
+A and not B (all nodes)                                                              1227
+A and not B, restricted to PetBox members declared under src/**                       486
+  -> exit=0 wall=0.076s peakRSS=9MB
+sample: PetBox.Web.AgentDefs.AgentDefsApi.{List,Get,Delete}Async,
+        PetBox.Web.AgentDefs.ProjectAgentDefSeeder.SeedAsync,
+        PetBox.Web.Auth.AgentKeyAdminService.{List,Revoke}Async
+CAVEAT: this is NOT a security finding. Authorization in PetBox runs in middleware and
+endpoint filters, not on the same 3-hop call path, so "does not reach AuthorizeAsync within
+3 hops" says nothing about whether the request was authorized. The query shape works; the
+question as posed is the wrong question for this codebase.
+
+=========================================================================================
+6. PRECOMPUTED REACHABILITY OVER THE WHOLE GRAPH
+=========================================================================================
+CREATE TABLE reach AS
+WITH RECURSIVE r(target,node,d) AS (
+  SELECT callee,callee,0 FROM (SELECT DISTINCT callee FROM g)
+  UNION SELECT r.target, g.caller, r.d+1 FROM g JOIN r ON g.callee=r.node WHERE r.d < N)
+SELECT DISTINCT target,node FROM r;
+
+variant                                    rows     targets  wall    peakRSS  db file
+depth<=3, call-only                     440 659      13 856  0.807s   395 MB   38.3 MB
+depth<=3, call+dispatch (all edges)     550 524      19 113  0.974s   482 MB   46.5 MB
+depth<=5, call-only                     664 628      13 856  1.279s   635 MB   56.3 MB
+depth<=8, call-only                     834 910      13 856  1.547s   776 MB   71.8 MB
+UNBOUNDED full closure, call-only       872 709      13 856  0.964s   443 MB   26.5 MB
+  (unbounded variant drops the depth column: r(target,node) with UNION, cycle-safe)
+
+set-size stats for depth<=3 call-only: max 3415, mean 31.8, MEDIAN 7.0
+verification against section 4 (all four reproduce exactly):
+  ICoreDbFactory.Open 886 | MemoryDb.CreateOptions 106 | BindingContentHash.Compute 14
+  | FactAttribute..ctor 3414
+rows contributed by the 20 highest in-degree targets: 34 612 = 7.9% of the depth<=3 table
+rows whose target is external (BCL/nuget):           198 243 = 45.0% of the depth<=3 table
+
+COMPARISON WITH THE SYNTHETIC MEASUREMENT (15-blocking-measurements.md):
+  synthetic 48 173 nodes / 503 019 edges, depth<=3, ALL nodes: 59 703 306 rows, 7.9s, 5535 MB
+  real      27 293 nodes / 165 681 edges, depth<=3, ALL nodes:    440 659 rows, 0.8s,  395 MB
+  ratio: 135x fewer rows, 10x less wall, 14x less RSS.
+  The real graph's UNBOUNDED closure is still 68x smaller than the synthetic's depth-3 table.
+  This is NOT a density effect: mean out-degree is 11.4 (real) vs 10.44 (synthetic).
+  It is a STRUCTURE effect: 68% of real callees are sinks (property accessors, DTO ctors,
+  and every external symbol, whose bodies we never walk), whereas the uniform random
+  synthetic made 47 104 of 48 173 nodes sources.
+
+=========================================================================================
+7. AMBIGUOUS EDGES (SymbolInfo.Symbol == null, CandidateSymbols non-empty)
+=========================================================================================
+reason                       edges  distinct sites  distinct callers
+MemberGroup                    191             172               139
+OverloadResolutionFailure       49              49                20
+
+OverloadResolutionFailure sample — src/PetBox.Config/ConfigApi.cs:47:
+    app.MapPost("/api/config/{workspaceKey}/bindings", Create)
+  The method group `Create` is an argument to a Map* overload set, so it does not bind to a
+  single symbol. These 49 edges ARE the HTTP-route -> handler edges. A builder that does
+  `if (si.Symbol is null) continue;` silently loses every minimal-API endpoint edge.
+
+MemberGroup sample — 70 of 191 sit in LoggerMessage.g.cs (the [LoggerMessage] generator's
+partial declarations); 121 elsewhere, e.g. src/PetBox.Log.Core/Query/KqlScalar.cs:142:
+    typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))
+  i.e. `nameof` over a method group.
+
+=========================================================================================
+8. STABLE-KEY EXCEPTIONS (ISymbol.GetDocumentationCommentId)
+=========================================================================================
+lookups returning a usable doc id                                          556 146
+lookups falling back                                                         1 425  (all local functions)
+distinct nodes keyed by the 'L:' local-function fallback                         86
+distinct nodes keyed by the 'X:' display-string fallback                          0
+distinct node keys total / distinct                                   27 293 / 27 293
+
+CONTAINERLESS (and therefore COLLIDING) doc ids — these are NOT reported as missing,
+GetDocumentationCommentId returns a non-null but useless string for anonymous-type members:
+  nodes whose key matches '^[MPT]:\.'                          184
+  edges touching such nodes                                  2 956
+  such keys reached from more than one project                  29
+proof of collision (n_files / n_projects sharing ONE key):
+  M:.get_projectKey  21 files / 2 projects
+  M:.get_type        20 / 2
+  M:.get_name        16 / 3
+  M:.get_tags        13 / 2
+  M:.get_Key          9 / 5      <- five unrelated anonymous types collapsed into one node
+  M:.get_Id           7 / 4
+
+=========================================================================================
+9. DISPATCH: SymbolFinder vs the symbolic sweep
+=========================================================================================
+symbolic sweep (INamedTypeSymbol.FindImplementationForInterfaceMember + OverriddenMethod)
+over the 22 compilations: 5 689 impl/override edges in 0.04-0.05 s, no solution-wide search.
+  distinct interface methods with >=1 implementation in PetBox source: 461
+    top: IEquatable.Equals 799, IDisposable.Dispose 233, IAsyncDisposable.DisposeAsync 145,
+         IAsyncLifetime.InitializeAsync 131, IRazorPage.ExecuteAsync 115
+  distinct base methods with >=1 override: 159
+    top: GetHashCode 661, Equals 661, ToString 660, ExecuteAsync 115, Up 97
+
+cross-check on the SAME 10 interface methods:
+  SymbolFinder.FindImplementationsAsync = 3460 results in 1.25-1.32 s
+     of which in-source 491, in-metadata 2969, distinct-by-key 3459
+  symbolic sweep over PetBox source assemblies = 1880
+     of which compiler-synthesized (record Equals/GetHashCode etc.) = 757
+cross-check on 10 virtual/abstract methods that DO have overrides:
+  SymbolFinder.FindOverridesAsync = 8991 results in 1.74-2.07 s (in-source 2704, distinct 8135)
+
+The two APIs answer DIFFERENT questions: SymbolFinder walks referenced metadata as well as
+source and returns per-project duplicates; the sweep is source-only and deduplicated.
+The remaining in-source gap (1880-757=1123 sweep vs 491 SymbolFinder) is NOT diagnosed to
+root cause; the synthesized-member share explains part of it, not all.
