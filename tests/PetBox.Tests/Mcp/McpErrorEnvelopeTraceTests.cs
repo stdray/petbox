@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Core.Data;
+using PetBox.Tests.Support;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
@@ -216,7 +217,7 @@ public sealed class McpErrorEnvelopeTraceFixture : IAsyncLifetime
 				[TraceHeader] = mode,
 			},
 		}, http);
-		return (http, await McpClient.CreateAsync(transport, cancellationToken: default));
+		return (http, await McpTestClient.ConnectAsync(transport));
 	}
 
 	public async ValueTask DisposeAsync()

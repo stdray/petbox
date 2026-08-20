@@ -7,6 +7,7 @@ using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Tasks.Data;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Tasks;
 
@@ -100,7 +101,7 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = AgentKey },
 		}, _http);
-		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpTestClient.ConnectAsync(transport);
 	}
 
 	// Wipe everything the previous test may have written under the shared host, so each

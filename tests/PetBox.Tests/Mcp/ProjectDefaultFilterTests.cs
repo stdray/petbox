@@ -13,6 +13,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
+using PetBox.Tests.Support;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
@@ -126,7 +127,7 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = apiKey },
 		}, http);
-		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		var mcp = await McpTestClient.ConnectAsync(transport);
 		_mcps.Add(mcp);
 		return mcp;
 	}

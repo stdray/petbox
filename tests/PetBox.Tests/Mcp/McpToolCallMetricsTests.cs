@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Mcp;
 
@@ -110,7 +111,7 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = SystemApiKey },
 		}, _http);
-		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpTestClient.ConnectAsync(transport);
 
 		// Its own HttpClient (no default X-Api-Key) so the two MCP sessions can never share or
 		// shadow each other's key header.
@@ -120,7 +121,7 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 			Endpoint = new Uri(_memoryHttp.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = MemoryApiKey },
 		}, _memoryHttp);
-		MemoryMcp = await McpClient.CreateAsync(memoryTransport, cancellationToken: default);
+		MemoryMcp = await McpTestClient.ConnectAsync(memoryTransport);
 	}
 
 	public async ValueTask DisposeAsync()
