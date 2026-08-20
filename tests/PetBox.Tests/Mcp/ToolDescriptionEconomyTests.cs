@@ -11,6 +11,7 @@ using ModelContextProtocol.Server;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Tasks.Data;
+using PetBox.Tests.Support;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
@@ -186,7 +187,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = ApiKey },
 		}, _http);
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		_mcp = await McpTestClient.ConnectAsync(transport);
 		Tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 	}
 

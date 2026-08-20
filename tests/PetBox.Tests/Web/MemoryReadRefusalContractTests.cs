@@ -10,6 +10,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Memory.Contract;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Web;
 
@@ -444,11 +445,11 @@ public sealed class MemoryRefusalContractHost : IAsyncLifetime
 	{
 		var http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 		http.DefaultRequestHeaders.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, apiKey);
-		return await McpClient.CreateAsync(new HttpClientTransport(new HttpClientTransportOptions
+		return await McpTestClient.ConnectAsync(new HttpClientTransport(new HttpClientTransportOptions
 		{
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { [ApiKeyAuthenticationHandler.ApiKeyHeader] = apiKey },
-		}, http), cancellationToken: default);
+		}, http));
 	}
 
 	public async ValueTask DisposeAsync()

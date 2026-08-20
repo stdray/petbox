@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Data;
 
@@ -295,7 +296,7 @@ public sealed class ApiKeyUpdateToolTests
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = ProvisioningToolsFixture.NoScopeKey },
 		}, http);
-		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		var mcp = await McpTestClient.ConnectAsync(transport);
 		try
 		{
 			var result = Text(await mcp.CallToolAsync("apikey_update", new Dictionary<string, object?>
@@ -332,7 +333,7 @@ public sealed class ApiKeyUpdateToolTests
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = key },
 		}, http);
-		var victimMcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		var victimMcp = await McpTestClient.ConnectAsync(transport);
 		try
 		{
 			var call = () => victimMcp.CallToolAsync("tasks_search",

@@ -7,6 +7,7 @@ using ModelContextProtocol.Client;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Data;
 
@@ -78,7 +79,7 @@ public sealed class ApiKeyLastUsedTests
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = key },
 		}, http);
-		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		var mcp = await McpTestClient.ConnectAsync(transport);
 		try
 		{
 			await mcp.CallToolAsync("tasks_search", new Dictionary<string, object?>

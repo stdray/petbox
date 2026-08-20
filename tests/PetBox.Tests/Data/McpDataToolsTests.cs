@@ -8,6 +8,7 @@ using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Data;
 
@@ -88,7 +89,7 @@ public sealed class McpDataToolsFixture : IAsyncLifetime
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = TestApiKey },
 		}, _http);
 
-		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpTestClient.ConnectAsync(transport);
 	}
 
 	public async ValueTask DisposeAsync()

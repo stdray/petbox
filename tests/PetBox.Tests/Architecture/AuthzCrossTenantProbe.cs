@@ -18,6 +18,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Architecture;
 
@@ -394,14 +395,14 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 
 		using var http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 		http.DefaultRequestHeaders.Add(ApiKeyAuthenticationHandler.ApiKeyHeader, AttackerApiKey);
-		await using var mcp = await McpClient.CreateAsync(new HttpClientTransport(new HttpClientTransportOptions
+		await using var mcp = await McpTestClient.ConnectAsync(new HttpClientTransport(new HttpClientTransportOptions
 		{
 			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string>
 			{
 				[ApiKeyAuthenticationHandler.ApiKeyHeader] = AttackerApiKey,
 			},
-		}, http), cancellationToken: default);
+		}, http));
 
 		var result = await mcp.CallToolAsync(
 			"tasks_board_list", new Dictionary<string, object?> { ["projectKey"] = AttackerProject });
@@ -743,7 +744,7 @@ public sealed class AuthzCrossTenantHost : IAsyncLifetime
 			},
 		}, http);
 
-		await using var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		await using var mcp = await McpTestClient.ConnectAsync(transport);
 		ToolsVisibleToAttacker = [.. (await mcp.ListToolsAsync()).Select(t => t.Name).Order(StringComparer.Ordinal)];
 		AttackerWhoAmI = string.Join(" ",
 			(await mcp.CallToolAsync("whoami", new Dictionary<string, object?>()))
