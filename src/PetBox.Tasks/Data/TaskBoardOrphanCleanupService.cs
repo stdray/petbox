@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 
 namespace PetBox.Tasks.Data;
 
@@ -20,6 +21,9 @@ public sealed partial class TaskBoardOrphanCleanupService(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(TaskBoardOrphanCleanupService));
+
 		// Grace period — let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); }
 		catch (OperationCanceledException) { return; }

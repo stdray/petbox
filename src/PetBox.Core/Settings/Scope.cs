@@ -10,5 +10,4 @@ public enum Scope
 	Project = 2,
 	Service = 3,
 	User = 4,
-	Membership = 5,
 }

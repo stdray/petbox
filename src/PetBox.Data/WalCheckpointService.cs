@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 
 namespace PetBox.Data;
 
@@ -25,6 +26,10 @@ public sealed partial class WalCheckpointService(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs: covers LogPassFailed below (outside
+		// RunOncePassAsync's own narrower scope).
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(WalCheckpointService));
+
 		try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken); }
 		catch (OperationCanceledException) { return; }
 
@@ -47,6 +52,8 @@ public sealed partial class WalCheckpointService(
 
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
+		// Narrower scope so a direct test call (bypassing ExecuteAsync) still tags it.
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(WalCheckpointService));
 		using var db = coreDb.Open();
 
 		var dbs = await db.DataDbs
