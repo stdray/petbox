@@ -1,3 +1,31 @@
 #!/bin/sh
 # See scripts/inspect-gate.cs for what this does, why, and how to bypass.
+#
+# Git feeds this hook one line per ref being pushed, on stdin:
+#   <local ref> SP <local sha> SP <remote ref> SP <remote sha>
+# (githooks(5), "pre-push"). A ref DELETION (`git push origin --delete <ref>`, or
+# `git push origin :<ref>`) reports an all-zero <local sha> -- no code is being
+# transferred in that case, so there is nothing for inspectcode to inspect, and running
+# the full solution-wide gate on it is pure cost (observed 2026-08-20: three branch
+# deletions in a row blew the two-minute timeout).
+#
+# If EVERY ref line on stdin is a deletion, skip the gate. A mixed push (any ref that is
+# NOT a deletion) still runs it in full -- one real ref is enough to require inspection.
+# A push with zero lines on stdin (should not happen per githooks(5), but be
+# conservative about it) also still runs the gate: absence of evidence that it's
+# delete-only is not evidence that it is.
+all_deletes=1
+saw_line=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	saw_line=1
+	case "$local_sha" in
+		*[!0]*) all_deletes=0 ;;
+	esac
+done
+
+if [ "$saw_line" = "1" ] && [ "$all_deletes" = "1" ]; then
+	echo "pre-push: all refs are deletions -- skipping inspectcode (nothing to inspect)."
+	exit 0
+fi
+
 exec dotnet run scripts/inspect-gate.cs

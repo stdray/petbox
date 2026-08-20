@@ -39,12 +39,24 @@ public sealed class CrossScopeSearchTests(WebAppFixture app, ITestOutputHelper o
 
 	public async ValueTask InitializeAsync()
 	{
+		// WsA and WsB are member workspaces, seeded through TestWorkspace.SeedAsync — it folds the
+		// membership grant into workspace creation (agent-toolchain-misleads-2026-08-20 §5) instead
+		// of leaving it as a step a future test can forget. WorkspaceClaimsRefresher rebuilds
+		// yb:ws_roles from the membership row on every authenticated request, so it takes effect on
+		// the fixture's existing cookie with no re-login. SeedAsync is idempotent, so re-running
+		// against an already-seeded workspace/membership is safe.
+		await TestWorkspace.SeedAsync(app.Services, WsA, "XScope A");
+		await TestWorkspace.SeedAsync(app.Services, WsB, "XScope B");
+
 		using var scope = app.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
-		foreach (var ws in new[] { WsA, WsB, WsC })
-			if (!await db.Workspaces.AnyAsync(w => w.Key == ws))
-				await db.InsertAsync(new Workspace { Key = ws, Name = ws, CreatedAt = DateTime.UtcNow });
+		// WsC is deliberately seeded WITHOUT membership, raw — it is the negative case this file
+		// exists to prove: the signed-in account holds the system permission but is NOT a member of
+		// C, and must not see C's nodes anyway (tenant-visibility-by-membership). Do not route this
+		// one through SeedAsync, or the negative case disappears.
+		if (!await db.Workspaces.AnyAsync(w => w.Key == WsC))
+			await db.InsertAsync(new Workspace { Key = WsC, Name = WsC, CreatedAt = DateTime.UtcNow });
 
 		if (!await db.Projects.AnyAsync(p => p.Key == ProjA))
 			await db.InsertAsync(new Project { Key = ProjA, WorkspaceKey = WsA, Name = "XScope A" });
@@ -52,18 +64,6 @@ public sealed class CrossScopeSearchTests(WebAppFixture app, ITestOutputHelper o
 			await db.InsertAsync(new Project { Key = ProjB, WorkspaceKey = WsB, Name = "XScope B" });
 		if (!await db.Projects.AnyAsync(p => p.Key == ProjC))
 			await db.InsertAsync(new Project { Key = ProjC, WorkspaceKey = WsC, Name = "XScope C" });
-
-		// The signed-in account joins A and B — and pointedly NOT C. Since tenant-visibility-by-
-		// membership the user zone enumerates by membership, so without these rows the fan-out below
-		// would legitimately see nothing: holding the system permission stopped being a listing gate.
-		// WorkspaceClaimsRefresher rebuilds yb:ws_roles from these rows on every authenticated
-		// request, so they take effect on the fixture's existing cookie with no re-login.
-		// Through IWorkspaceMembershipService, the production path — a raw insert here is banned
-		// (RS0030) precisely because seeding around the service is how membership bugs stay green.
-		// AddMemberAsync is idempotent for an account that is already a member, so re-running is safe.
-		var members = scope.ServiceProvider.GetRequiredService<IWorkspaceMembershipService>();
-		foreach (var ws in new[] { WsA, WsB })
-			await members.AddMemberAsync(ws, WebAppFixture.AdminUsername, AddMemberMode.AddExisting, password: null, workspaceQuota: null, WorkspaceRole.Admin);
 
 		// The target node lives in project B / workspace B — a workspace the "current" page
 		// (workspace A) is NOT scoped to, proving the search really fans out cross-workspace.
