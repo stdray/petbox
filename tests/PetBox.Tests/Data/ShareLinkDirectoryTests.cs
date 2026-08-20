@@ -95,4 +95,49 @@ public sealed class ShareLinkDirectoryTests : IDisposable
 		row.Should().NotBeNull();
 		row!.CreatedBy.Should().Be("tester");
 	}
+
+	// share-link-revocable: revoke must not depend on TTL — this link's ExpiresAt is far in the
+	// future, and DeleteAsync still removes it.
+	[Fact]
+	public async Task DeleteAsync_OwnProject_HardDeletesTheRow_EvenFarFromExpiry()
+	{
+		var (svc, dbf) = New();
+		var link = NewLink("tok-revoke-me", DateTime.UtcNow.AddDays(30));
+		await svc.CreateAsync(link);
+
+		var deleted = await svc.DeleteAsync("tok-revoke-me", "proj");
+
+		deleted.Should().BeTrue();
+		using var db = dbf.Open();
+		db.ShareLinks.Any(s => s.Id == "tok-revoke-me").Should().BeFalse(
+			"revoke is a hard delete — no row, readable or not, should remain");
+	}
+
+	// The ownership-confinement half of the trap: a caller that is honestly authorized for ITS OWN
+	// project must not be able to remove a row that belongs to a DIFFERENT project just by knowing
+	// the token value. (Id, ProjectKey) is the address, so a mismatched projectKey finds nothing —
+	// mirrors AgentKeyAdminService.RevokeAsync's Owned(...) confinement.
+	[Fact]
+	public async Task DeleteAsync_ForeignProject_DeletesNothing_RowSurvives()
+	{
+		var (svc, dbf) = New();
+		var link = NewLink("tok-foreign", DateTime.UtcNow.AddHours(1));
+		await svc.CreateAsync(link);
+
+		var deleted = await svc.DeleteAsync("tok-foreign", "some-other-project");
+
+		deleted.Should().BeFalse();
+		using var db = dbf.Open();
+		db.ShareLinks.Any(s => s.Id == "tok-foreign").Should().BeTrue(
+			"a caller claiming a different project must not be able to delete this row");
+	}
+
+	[Fact]
+	public async Task DeleteAsync_UnknownToken_ReturnsFalse_SameAsForeignProject()
+	{
+		var (svc, _) = New();
+
+		(await svc.DeleteAsync("tok-does-not-exist", "proj")).Should().BeFalse(
+			"a nonexistent token must answer identically to a foreign-project token — no existence oracle");
+	}
 }
