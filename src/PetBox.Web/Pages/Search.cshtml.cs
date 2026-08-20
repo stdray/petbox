@@ -23,8 +23,11 @@ namespace PetBox.Web.Pages;
 // every tenant the caller can reach. There is nothing to declare a source FROM: the route is a bare
 // /ui/search, `q` is a search string and not a tenant, and the page never accepts a
 // workspace/project from the request at all. The extent of the fan-out is the CALLER —
-// NavigationContext.ProjectsByWorkspace, already filtered to their own memberships (sysadmin sees
-// all), which CrossScopeTaskSearchService's own header calls out as the reason the fan-out is legal.
+// NavigationContext.ProjectsByWorkspace, already filtered to their own memberships, which
+// CrossScopeTaskSearchService's own header calls out as the reason the fan-out is legal. Since spec
+// tenant-visibility-by-membership that filter has NO sysadmin arm on this route: /ui/search is a
+// user-zone path, so the enumeration behind it is memberships even for a holder of the system
+// permission (the admin zone keeps the full catalog; this page is not in it).
 //
 // So the subject is the caller and the answer is a fact about their own reach, exactly like
 // /api/ui/board-filter-prefs and whoami. What this exemption does NOT do is loosen anything: were
