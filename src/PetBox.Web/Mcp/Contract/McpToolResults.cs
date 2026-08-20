@@ -247,6 +247,15 @@ public sealed record LogUpdatedResult(string Name, int? RetentionDays);
 
 public sealed record LogDeletedResult(bool Deleted, string Name);
 
+// ---- share_revoke -------------------------------------------------------------------------------
+
+// `Revoked` is always true on the success path — the failure path is an {error} envelope
+// ("share link not found"), the same indistinguishable answer the REST twin's 404 gives an unknown,
+// an already-revoked and a foreign-tenant token alike. The field is kept rather than returning a bare
+// token so the shape matches the other lifecycle acks (LogDeletedResult, AgentDefDeleteResult) an
+// agent already parses. `Token` echoes what was revoked, so a batch of calls is attributable.
+public sealed record ShareRevokedResult(bool Revoked, string Token);
+
 // ---- log_query -----------------------------------------------------------------------
 
 // A single log event as projected onto the MCP wire (timestamp pre-formatted, level

@@ -358,6 +358,9 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			// mcp-surface-naming-cleanup retired its found:false dialect); delete miss → deleted:false.
 			("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def" }),
 			("agent_def_delete", new { projectKey = ProjectKey, key = "no-such-def" }),
+			// share_revoke on a token that never existed: the SAME {error} a foreign-tenant token gets
+			// (ShareTools deliberately collapses the two so the verb is not an existence oracle).
+			("share_revoke", new { projectKey = ProjectKey, token = "no-such-share-token" }),
 		};
 		foreach (var (tool, args) in edge)
 			await StrictOk(failures, tool, args);
@@ -513,6 +516,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete",
 		"tasks_methodology_template_delete",
 		"agent_def_get", "agent_def_delete",
+		"share_revoke",
 	};
 
 	// ── assertion helpers ──────────────────────────────────────────────────────
