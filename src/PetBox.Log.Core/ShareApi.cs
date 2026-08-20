@@ -5,6 +5,7 @@ using System.Text.Json;
 using Kusto.Language;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
@@ -26,6 +27,11 @@ public sealed record ShareCreateRequest(
 	Dictionary<string, MaskMode>? Modes,
 	string? LogName = null);
 
+// The revoke body carries the SAME field CreateShareAsync's body carries — deliberately, so the
+// [TenantFrom(BodyField, "projectKey")] declaration below reuses the identical mechanism rather than
+// inventing a second way to name a tenant on this class.
+public sealed record ShareDeleteRequest(string ProjectKey);
+
 public static class ShareApi
 {
 	public static void MapShareEndpoints(this IEndpointRouteBuilder app)
@@ -36,6 +42,12 @@ public static class ShareApi
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.RequireAuthorization();
 		app.MapGet("/api/share/{token}/tsv", GetTsvAsync).AllowAnonymous();
+		app.MapDelete("/api/share/{token}", DeleteShareAsync)
+			.Accepts<ShareDeleteRequest>("application/json")
+			.Produces<DeletedResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization();
 	}
 
 	// req.ProjectKey comes from the JSON BODY, and bare .RequireAuthorization() only proves SOME
@@ -82,6 +94,41 @@ public static class ShareApi
 
 		await shareLinks.CreateAsync(entity, ct);
 		return Results.Ok(new ShareCreatedResponse(id, entity.ExpiresAt));
+	}
+
+	// Revoke (spec `share-link-revocable`): "explicit action by someone entitled to mint the same
+	// token, independent of TTL". `[TenantFrom(BodyField, "projectKey")]` proves the CALLER is
+	// authorized for the project they claim — the exact same proof CreateShareAsync requires to mint a
+	// link in the first place, so only someone who could issue an equivalent token can revoke this one.
+	//
+	// That proof alone is NOT enough, though — it establishes the caller owns SOME project, not that
+	// they own THIS share's project. A caller honestly declaring their own (authorized) projectKey
+	// would sail past the PEP above even when aimed at a token that belongs to someone else's project;
+	// closing that second half is IShareLinkDirectory.DeleteAsync's job — it matches the row on
+	// (token, projectKey) TOGETHER, so a foreign token simply is not found. "Not found" and "wrong
+	// tenant" collapse to the identical response on purpose: the alternative (say the projectKey is the
+	// mismatch) would let a caller enumerate which tokens exist under a project they cannot reach — a
+	// cross-tenant existence oracle. This also happens to be the SAME shape neighbouring deletes already
+	// answer with (DataDbsApi.DeleteAsync, ConfigApi.Delete, AgentKeyAdminService.RevokeAsync) — a
+	// deliberate reuse of the tree's one way to answer "no such row here", not a new one.
+	//
+	// Hard delete, not soft: the row must stop being READABLE immediately, and there is no second
+	// consumer of a "revoked but still present" ShareLinks row anywhere in the tree — a soft-delete flag
+	// would just be one more place GetTsvAsync/Share.cshtml.cs could forget to check.
+	[TenantFrom(TenantSource.BodyField, "projectKey")]
+	static async Task<IResult> DeleteShareAsync(
+		IShareLinkDirectory shareLinks,
+		string token,
+		[FromBody] ShareDeleteRequest req,
+		CancellationToken ct)
+	{
+		if (string.IsNullOrWhiteSpace(req.ProjectKey))
+			return Results.BadRequest(new ErrorResponse("ProjectKey required"));
+
+		var deleted = await shareLinks.DeleteAsync(token, req.ProjectKey, ct);
+		return deleted
+			? Results.Ok(new DeletedResponse(true))
+			: Results.NotFound(new ErrorResponse("share link not found"));
 	}
 
 	// `capability-token` in its textbook form, and the one surface in the tree the class was written for:
