@@ -999,6 +999,21 @@
 			"note": "page:/Share (Pages/Share.cshtml.cs) — браузерная половина той же поверхности capability-token: [AllowAnonymous] + [TenantExempt(CapabilityToken)], читает IShareLinkDirectory.FindAsync тем же токеном, что и ShareApi.GetTsvAsync."
 		},
 		{
+			"id": "share.revoke",
+			"source": "spec share-link-revocable @3deeb4a7 (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "share",
+			"action": "отозвать share-token",
+			"target": "project",
+			"targetNote": "Цель читается из ТЕЛА (`projectKey`, [TenantFrom(BodyField)], §3 вид (д)) — тот же довод, что у создания: доказать, что вызывающий вправе выпустить эквивалентный токен. Вторая половина проверки не в PEP, а в IShareLinkDirectory.DeleteAsync: строка ищется по (token, projectKey) ВМЕСТЕ, поэтому чужой токен просто не находится, а «нет строки» и «чужой арендатор» намеренно дают один ответ, чтобы не получился оракул существования.",
+			"targetSource": "body",
+			"surfaces": [
+				"rest:DELETE /api/share/{token}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Действие ПОЯВИЛОСЬ ПОСЛЕ переноса и в источнике его нет — 08-summary §5 наоборот фиксировала его отсутствие как дыру: «Share-link: удаления НЕТ ни на одной поверхности… бирер-кредненшл, который нельзя отозвать до истечения». Дыру закрыл коммит 3deeb4a7 (spec `share-link-revocable`), и ратчет полноты поймал новую поверхность как незаявленную — это первое срабатывание механизма на живом изменении, а не на подстроенном."
+		},
+		{
 			"id": "health.report-push",
 			"source": "08-summary §1 #62",
 			"subdomain": "health",
