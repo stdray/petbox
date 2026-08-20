@@ -14,14 +14,23 @@ sealed class SystemLogger : ILogger
 	readonly SystemLoggerOptions _options;
 	readonly ChannelWriter<LogEntryCandidate> _writer;
 	readonly TimeProvider _time;
+	// Ambient BeginScope chain (standard MEL ISupportExternalScope pattern — see
+	// SystemLoggerProvider). Mutable, not readonly: the provider assigns it once the host's
+	// LoggerFactory calls SetScopeProvider, which can happen after this logger was already
+	// created and cached. `scopeProvider` ctor param lets a unit test push a scope (e.g.
+	// background-invoker attribution) without going through a full provider/host.
+	IExternalScopeProvider? _scopeProvider;
 
-	public SystemLogger(string category, SystemLoggerOptions options, ChannelWriter<LogEntryCandidate> writer, TimeProvider time)
+	public SystemLogger(string category, SystemLoggerOptions options, ChannelWriter<LogEntryCandidate> writer, TimeProvider time, IExternalScopeProvider? scopeProvider = null)
 	{
 		_category = category;
 		_options = options;
 		_writer = writer;
 		_time = time;
+		_scopeProvider = scopeProvider;
 	}
+
+	internal void SetScopeProvider(IExternalScopeProvider? scopeProvider) => _scopeProvider = scopeProvider;
 
 	public bool IsEnabled(MelLogLevel logLevel) =>
 		logLevel != MelLogLevel.None
@@ -45,8 +54,8 @@ sealed class SystemLogger : ILogger
 
 		// Activity.Current — set by AspNetCoreInstrumentation root span; domain code extends
 		// via ActivitySource.StartActivity. Reading directly here bypasses MEL scope plumbing
-		// (SystemLogger returns null from BeginScope) but stamps the same TraceId/SpanId
-		// ActivityTrackingOptions would produce.
+		// (distinct from the ILogger.BeginScope-based ambient properties merged below) but
+		// stamps the same TraceId/SpanId ActivityTrackingOptions would produce.
 		var activity = Activity.Current;
 		var traceId = activity?.TraceId.ToHexString();
 		var spanId = activity?.SpanId.ToHexString();
@@ -61,6 +70,13 @@ sealed class SystemLogger : ILogger
 			props["SpanId"] = JsonSerializer.SerializeToElement(spanId);
 		if (eventId.Id != 0)
 			props["EventId"] = JsonSerializer.SerializeToElement(eventId.Id);
+
+		// The writer's explicit attribution (e.g. "Invoker" = "background:<ServiceName>" pushed
+		// by a BackgroundService — see BackgroundInvokerScope in PetBox.Core.Observability).
+		// Deliberately NOT derived here from EventId/category — the writing side asserts it via
+		// ILogger.BeginScope, same "one door" principle as ApiKeys.CreatedBy. A per-call template
+		// argument below can still shadow a scope key of the same name (more specific wins).
+		_scopeProvider?.ForEachScope(MergeScopeIntoProps, props);
 
 		// Best-effort: extract named template arguments (excluding {OriginalFormat}) into properties.
 		if (state is IReadOnlyList<KeyValuePair<string, object?>> kvs)
@@ -93,7 +109,23 @@ sealed class SystemLogger : ILogger
 		_writer.TryWrite(candidate);
 	}
 
-	public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+	public IDisposable? BeginScope<TState>(TState state) where TState : notnull =>
+		_scopeProvider?.Push(state);
+
+	static void MergeScopeIntoProps(object? scope, Dictionary<string, JsonElement> props)
+	{
+		if (scope is not IEnumerable<KeyValuePair<string, object?>> kvs)
+			return;
+		foreach (var kv in kvs)
+		{
+			if (kv.Value is null) continue;
+			try { props[kv.Key] = JsonSerializer.SerializeToElement(kv.Value); }
+			catch (NotSupportedException)
+			{
+				props[kv.Key] = JsonSerializer.SerializeToElement(kv.Value.ToString());
+			}
+		}
+	}
 
 	static string? ExtractTemplate<TState>(TState state)
 	{

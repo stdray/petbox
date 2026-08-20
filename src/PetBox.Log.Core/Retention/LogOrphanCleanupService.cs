@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 using PetBox.Log.Core.Data;
 
 namespace PetBox.Log.Core.Retention;
@@ -19,6 +20,9 @@ public sealed partial class LogOrphanCleanupService(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(LogOrphanCleanupService));
+
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); }
 		catch (OperationCanceledException) { return; }
 

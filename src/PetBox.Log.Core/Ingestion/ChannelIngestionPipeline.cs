@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 using PetBox.Core.Settings;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Models;
@@ -66,6 +67,11 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 
 	async Task WriterLoopAsync(string projectKey, string logName, ChannelReader<LogEntryCandidate> reader)
 	{
+		// chore background-invoker-not-tagged-in-logs: this loop is IHostedService-driven (not a
+		// BackgroundService), started from StartChannel via Task.Run — tag it at its own top so
+		// IngestionLog.AppendBatchFailed below carries the attribution regardless of whatever
+		// ambient scope (if any) the calling HTTP request that triggered StartChannel had.
+		using var invokerScope = BackgroundInvokerScope.Begin(_logger, nameof(ChannelIngestionPipeline));
 		var batch = new List<LogEntryCandidate>(_settings.MaxBatchSize);
 		while (await reader.WaitToReadAsync().ConfigureAwait(false))
 		{
@@ -105,6 +111,7 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 
 	public async Task StopAsync(CancellationToken cancellationToken)
 	{
+		using var invokerScope = BackgroundInvokerScope.Begin(_logger, nameof(ChannelIngestionPipeline));
 		foreach (var wc in _channels.Values)
 			wc.Writer.TryComplete();
 
