@@ -161,7 +161,8 @@ public sealed class WorkspaceMembershipServiceTests : IDisposable
 		var b = SeedUser(dbf, "bob", quota: 2);
 		SeedWorkspace(dbf, "alpha");
 		await svc.ClaimAdminSlotAsync(a, "alpha", bypassQuota: false);
-		(await svc.AddMemberAsync("alpha", "bob", null, WorkspaceRole.Member)).Should().Be(AddMemberOutcome.Added);
+		(await svc.AddMemberAsync("alpha", "bob", AddMemberMode.AddExisting, null, null, WorkspaceRole.Member))
+			.Should().Be(AddMemberOutcome.Added);
 
 		var all = await svc.ListAllAsync();
 

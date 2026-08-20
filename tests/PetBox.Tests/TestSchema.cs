@@ -67,7 +67,8 @@ public static class TestCoreDb
 	// Seed a membership for an ALREADY-SEEDED user, through the production service. Tests hold a user
 	// id (they just inserted the User row); AddMemberAsync is keyed by username because that is what
 	// the admin page posts — so resolve the one to the other and go through the real door.
-	// `password: null` is deliberate: the account exists, and AddMemberAsync must never overwrite it.
+	// AddExisting is the mode that matches the fact: the account is already there, nothing is being
+	// created, and no password or workspace allowance is asked for or overwritten.
 	public static async Task SeedMemberAsync(
 		this ICoreDbFactory dbf, long userId, string workspaceKey, WorkspaceRole role)
 	{
@@ -77,7 +78,8 @@ public static class TestCoreDb
 				?? throw new InvalidOperationException(
 					$"SeedMemberAsync: no User row with id {userId} — seed the user before its membership.");
 
-		var outcome = await dbf.Memberships().AddMemberAsync(workspaceKey, username, null, role);
+		var outcome = await dbf.Memberships().AddMemberAsync(
+			workspaceKey, username, AddMemberMode.AddExisting, password: null, workspaceQuota: null, role);
 		if (outcome != AddMemberOutcome.Added)
 			throw new InvalidOperationException(
 				$"SeedMemberAsync: '{username}' → '{workspaceKey}' as {role} returned {outcome}, not Added.");

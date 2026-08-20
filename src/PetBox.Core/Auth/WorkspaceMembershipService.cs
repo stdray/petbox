@@ -15,9 +15,71 @@ public sealed record WorkspaceMemberOf(long UserId, string WorkspaceKey, Workspa
 // (the page renders names, not user ids). "?" when the user row is missing.
 public sealed record WorkspaceMemberRow(long UserId, string Username, WorkspaceRole Role);
 
+// WHAT THE CALLER SAYS IT IS DOING — declared up front, before the server has looked at anything.
+//
+// This enum is the fix for an account-enumeration oracle (spec composite-write-branch-opaque). The
+// method used to DERIVE its shape from the Users table: hand it a name it knew and it added the
+// membership, hand it a name it did not and it demanded a password. A workspace admin therefore
+// learned, from the answer alone, whether an account exists in this instance — including accounts a
+// sysadmin created elsewhere that this admin has no business knowing about.
+//
+// With the intent DECLARED, the answer is a function of the declaration, not of the table. Every
+// refusal is decided from the submitted form before the first row is read, and every non-refusal
+// collapses into one class. Two posts of the SAME mode — one naming a real account, one naming a
+// name nobody holds — are indistinguishable in status, text, field set, and (see the unconditional
+// hash in AddMemberAsync) in wall-clock time.
+public enum AddMemberMode
+{
+	// "I am creating an account that does not exist yet." Password AND workspace allowance are
+	// mandatory — the same two decisions UserAdminService.CreateAsync demands, because this creates
+	// the same kind of row. If the name turns out to be taken, the existing account simply gains the
+	// membership: its password and its allowance are NEVER overwritten, and the caller is told
+	// nothing about which of the two happened.
+	CreateNew,
+
+	// "I am granting membership to an account that already exists." No password (this must not read
+	// as a password reset — that is the sysadmin's verb, not this page's) and no allowance: nothing
+	// is created, so there is no allowance to decide. A name nobody holds writes nothing and answers
+	// exactly as a name somebody holds does.
+	AddExisting,
+}
+
 // Why a mutation did not happen — the page turns these into its error text. An enum rather than an
 // exception because none of them is exceptional: they are the normal answers to a form post.
-public enum AddMemberOutcome { Added, AlreadyMember, PasswordRequired }
+//
+// ORACLE CONTRACT — read this before adding a member or changing how a page renders these. They
+// fall into two groups that must never be mixed:
+//
+//  * FORM-SHAPED refusals — PasswordRequired, QuotaRequired, QuotaInvalid. Decided from the POSTed
+//    fields ALONE, before any read of Users, and only ever in CreateNew mode. They carry zero bits
+//    about who exists, so a page may render each with its own text.
+//  * TABLE-SHAPED answers — Added, AlreadyMember, NoSuchUser. WHICH of the three comes back does
+//    depend on the table, so a page MUST render all three identically: same status, same text, same
+//    redirect. WorkspaceUsersModel.OnPostAddAsync is the reference mapping. Rendering NoSuchUser as
+//    an error, or AlreadyMember as a warning, re-opens the oracle this enum exists to close.
+public enum AddMemberOutcome
+{
+	// The membership row is there and this call wrote it.
+	Added,
+
+	// The membership row was already there. Nothing written; the caller's goal holds either way.
+	AlreadyMember,
+
+	// AddExisting mode and no account holds that name, so there was nothing to grant membership to.
+	// Nothing written. Indistinguishable from Added/AlreadyMember to the page, ON PURPOSE.
+	NoSuchUser,
+
+	// CreateNew mode with no password. An empty PasswordHash cannot authenticate (M008_Users).
+	PasswordRequired,
+
+	// CreateNew mode with no workspace allowance. The SAME refusal UserAdminService.CreateAsync
+	// makes, for the same reason: "nobody decided" and "decided: none" are different facts and only
+	// the second may be written to an account (M044_UserWorkspaceQuota).
+	QuotaRequired,
+
+	// CreateNew mode with a negative workspace allowance.
+	QuotaInvalid,
+}
 
 // LastAdmin: the change would leave the workspace with zero admins, which makes it unmanageable by
 // its own members (only a sysadmin could recover it) — workspace-member-role-edit.
@@ -62,11 +124,21 @@ public interface IWorkspaceMembershipService
 	// table shows it next to the quota so an admin sets a number against a fact, not a guess.
 	Task<int> CountOwnedWorkspacesAsync(long userId, CancellationToken ct = default);
 
-	// Adds `username` to the workspace, creating the user when it does not exist (then `password` is
-	// mandatory — an empty PasswordHash cannot authenticate, see M008_Users). An EXISTING account
-	// keeps its password: a supplied one is ignored, never an overwrite.
+	// Adds `username` to the workspace. `mode` is the CALLER'S DECLARED INTENT, and it — not the
+	// contents of the Users table — decides what this call requires and what class of answer it
+	// gives. See AddMemberMode, and the oracle contract on AddMemberOutcome.
+	//
+	// CreateNew needs `password` AND `workspaceQuota`; both are refused when missing, before any
+	// read. AddExisting needs neither and ignores both. An EXISTING account keeps its password and
+	// its allowance in BOTH modes: a supplied one is ignored, never an overwrite.
 	Task<AddMemberOutcome> AddMemberAsync(
-		string workspaceKey, string username, string? password, WorkspaceRole role, CancellationToken ct = default);
+		string workspaceKey,
+		string username,
+		AddMemberMode mode,
+		string? password,
+		int? workspaceQuota,
+		WorkspaceRole role,
+		CancellationToken ct = default);
 
 	Task<MemberChangeOutcome> RemoveMemberAsync(string workspaceKey, long userId, CancellationToken ct = default);
 
@@ -168,36 +240,102 @@ public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceM
 			&& m.Role == WorkspaceRole.Admin
 			&& m.WorkspaceKey != WorkspaceMemory.SystemWorkspace);
 
+	// Three defects lived in this one method; all three are answered here — add-member-composite-fix.
+	// Read the three numbered blocks as one design: each undoes a way this method used to leak or
+	// lose something.
 	public async Task<AddMemberOutcome> AddMemberAsync(
-		string workspaceKey, string username, string? password, WorkspaceRole role, CancellationToken ct = default)
+		string workspaceKey,
+		string username,
+		AddMemberMode mode,
+		string? password,
+		int? workspaceQuota,
+		WorkspaceRole role,
+		CancellationToken ct = default)
 	{
+		// 1. EVERY refusal is decided before the first read.
+		//
+		// Nothing past this block can refuse. That ordering is the oracle fix itself, not tidiness:
+		// a refusal issued after the Users lookup is a refusal that CAN depend on the lookup, and
+		// the next edit to this method would make it so without anyone noticing. Decide from the
+		// form, then touch the table.
+		string? passwordHash = null;
+		if (mode == AddMemberMode.CreateNew)
+		{
+			if (string.IsNullOrWhiteSpace(password))
+				return AddMemberOutcome.PasswordRequired;
+
+			// The same two refusals, in the same order and with the same meaning, as
+			// UserAdminService.CreateAsync — this branch writes the same row, so it owes the same
+			// decision. A missing allowance is a REFUSAL and never a silent 0: an account quietly
+			// given 0 can create no workspace of its own, and nobody ever chose that for it
+			// (M044_UserWorkspaceQuota).
+			if (workspaceQuota is not { } quota)
+				return AddMemberOutcome.QuotaRequired;
+			if (quota < 0)
+				return AddMemberOutcome.QuotaInvalid;
+
+			// Hashed UNCONDITIONALLY, here, before we know whether the name is taken — and thrown
+			// away below if it is. PBKDF2 at 100_000 iterations costs tens of milliseconds, far
+			// above HTTP jitter: hashing only on the create path would leave "the answer came back
+			// fast" as a perfectly readable second oracle, the same secret restated in the time
+			// domain after it was closed in the status/text domain.
+			passwordHash = AdminPasswordHasher.Hash(password);
+		}
+
 		using var db = dbf.Open();
+
+		// 2. Both inserts AND the read between them are one transaction.
+		//
+		// The account row and the membership row are two halves of one act. Written unwrapped, a
+		// failure in the gap (the AlreadyMember read sits right in it) left an account with no
+		// membership at all: invisible on this page, unreachable through it, and holding whatever
+		// allowance it was created with. Safe HERE specifically because this method calls no other
+		// core-db service while the transaction is open — that is the one thing core.db's
+		// Cache=Shared answers with an un-retried SQLITE_LOCKED (AGENTS.md, "Database").
+		using var tx = await db.BeginTransactionAsync(ct);
 
 		var existing = await db.Users.FirstOrDefaultAsync(u => u.Username == username, ct);
 		long userId;
 		if (existing is not null)
 		{
+			// Taken name. In BOTH modes this is a membership grant and nothing else: the account
+			// keeps its password (a CreateNew password is discarded, never an overwrite — that
+			// would be a password reset the admin did not ask for) and keeps its allowance.
 			userId = existing.Id;
+		}
+		else if (mode == AddMemberMode.AddExisting)
+		{
+			// Nobody holds this name, and this mode creates nothing. Write nothing, and answer in
+			// the same class as the two branches that do write — see the oracle contract on the
+			// outcome enum. The caller learns its own goal state, not who exists.
+			await tx.RollbackAsync(ct);
+			return AddMemberOutcome.NoSuchUser;
 		}
 		else
 		{
-			if (string.IsNullOrWhiteSpace(password))
-				return AddMemberOutcome.PasswordRequired;
-
+			// 3. The allowance is a DECISION carried in, never a CLR default.
 			userId = await db.InsertWithInt64IdentityAsync(new User
 			{
 				Username = username,
-				PasswordHash = AdminPasswordHasher.Hash(password),
+				PasswordHash = passwordHash!,
 				CreatedAt = DateTime.UtcNow,
+				WorkspaceQuota = workspaceQuota!.Value,
 			}, token: ct);
 		}
 
 		var already = await db.WorkspaceMembers.AnyAsync(
 			m => m.UserId == userId && m.WorkspaceKey == workspaceKey, ct);
 		if (already)
+		{
+			// Reachable only for a pre-existing account (a row inserted a few lines up has no
+			// memberships yet), so this rollback undoes nothing today. It is here so no future edit
+			// can leave the path committing half an act.
+			await tx.RollbackAsync(ct);
 			return AddMemberOutcome.AlreadyMember;
+		}
 
 		await db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = role }, token: ct);
+		await tx.CommitAsync(ct);
 		return AddMemberOutcome.Added;
 	}
 
