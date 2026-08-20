@@ -47,6 +47,18 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// emits it; TenantAuthorizer reads it off THIS identity rather than off the merged principal.
 	public const string ProjectClaim = "project";
 
+	// The claim carrying ApiKey.HostId — the FLEET HOST a node-agent key is bound to (spec
+	// node-grant-own-carrier). Present ONLY on a key that has one, which today is only a node key.
+	//
+	// A SEPARATE CLAIM FROM `project`, and that separation IS the fix. The deploy plane used to read
+	// the node id out of `project`, so the node axis and the tenant axis shared one slot: a key
+	// claiming project `vdsina-1` and a key bound to host `vdsina-1` were indistinguishable, and
+	// whichever meaning the reader assumed is the one it got. Two claims cannot be confused for one
+	// another, so the ambiguity is gone by construction rather than by anyone naming things
+	// carefully. Nothing on the tenant axis reads this claim, and nothing on the node axis reads
+	// `project` any more (DeployApi).
+	public const string HostClaim = "host";
+
 	// The claim carrying ApiKey.DefaultProjectKey — the project a cross-project ("*") key falls
 	// back to when a tool's optional projectKey is omitted. Present only when the key has one.
 	public const string DefaultProjectClaim = "project_default";
@@ -109,6 +121,11 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 			new("project", key.ProjectKey),
 			new("scopes", key.Scopes),
 		};
+		// `host` is emitted ONLY for a key bound to a fleet host — a node-agent key. Its absence is
+		// what tells /agent/* that the caller is not a node, which is now a real answer rather than
+		// an unanswerable question about whose id happens to be sitting in `project`.
+		if (!string.IsNullOrWhiteSpace(key.HostId))
+			claims.Add(new Claim(HostClaim, key.HostId.Trim()));
 		if (!string.IsNullOrWhiteSpace(key.DefaultProjectKey))
 			claims.Add(new Claim(DefaultProjectClaim, key.DefaultProjectKey.Trim()));
 		if (key.SandboxOnly)

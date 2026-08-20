@@ -532,8 +532,10 @@ public sealed class AgentKeyAdminService(
 
 	// The node-agent key of the deploy control-plane: ONE live key per node, addressed by its
 	// `node:<id>` name. Re-minting ROTATES it — the previous one is dropped in the same call, so a
-	// node can never end up with two live keys. Its "project" is the node id (the deploy plane is
-	// fleet-wide, not project-scoped); the scopes are fixed by the caller (poll + heartbeat + logs).
+	// node can never end up with two live keys. Its HOST is the node id and its PROJECT is empty —
+	// the deploy plane is fleet-wide, not project-scoped, and since M050 that is said in a column of
+	// its own instead of borrowed from the tenant one; the scopes are fixed by the caller (poll +
+	// heartbeat + logs).
 	//
 	// DELIBERATELY NOT GATED, and it is not an escape hatch. `agent:poll`/`agent:heartbeat` are
 	// classified Privileged, but this path takes no caller-chosen scope set — the constant is baked
@@ -549,7 +551,11 @@ public sealed class AgentKeyAdminService(
 		await db.InsertAsync(new ApiKey
 		{
 			Key = key,
-			ProjectKey = nodeId,
+			// Same carrier as the REST enroll path (M050): the node id goes in HostId, and
+			// ProjectKey stays EMPTY because a node is not a tenant. These two mint sites must not
+			// drift — a node minted through MCP and one minted through REST are the same key shape.
+			HostId = nodeId,
+			ProjectKey = string.Empty,
 			Scopes = scopes,
 			Name = keyRef,
 			CreatedAt = DateTime.UtcNow,

@@ -24,11 +24,17 @@ namespace PetBox.Tests.Web;
 public sealed class DeployApiFixture : IAsyncLifetime
 {
 	public const string AdminKey = "yb_key_deploy_admin_test";   // deploy:write
-	public const string NodeKey = "yb_key_deploy_node_test";     // agent:poll,agent:heartbeat
+	public const string NodeKey = "yb_key_deploy_node_test";     // agent:poll,agent:heartbeat, bound to Node
+																 // A key that is NOT a node key but whose PROJECT is named exactly like the node, and which
+																 // carries the agent scopes so nothing but the carrier can be what separates it from NodeKey.
+																 // Pre-M050 this key and NodeKey were byte-identical to /agent/* — same value, same claim.
+	public const string TwinProjectKey = "yb_key_deploy_twin_project_test";
 
 	public string Node { get; } = "node-" + Guid.NewGuid().ToString("N")[..8];
 	WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
+	// Exposed so a test can assert the SHAPE of a minted key row, not only its behaviour.
+	public IServiceProvider Services => Factory.Services;
 
 	public DeployApiFixture()
 	{
@@ -56,7 +62,10 @@ public sealed class DeployApiFixture : IAsyncLifetime
 		using var scope = Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new ApiKey { Key = AdminKey, ProjectKey = "ops", Scopes = "deploy:read,deploy:write", CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new ApiKey { Key = NodeKey, ProjectKey = Node, Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
+		// The node key carries its host in HostId and NO project — the shape M050 introduced and the
+		// enroll path now mints.
+		await db.InsertAsync(new ApiKey { Key = NodeKey, HostId = Node, ProjectKey = "", Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
+		await db.InsertAsync(new ApiKey { Key = TwinProjectKey, ProjectKey = Node, Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
 
 		// deploy.db is shared across test instances (same temp dir) — clear it for isolation.
 		// DeployDb is no longer in DI (only IDeployDbFactory is) — open a connection and own it.
@@ -95,14 +104,17 @@ public sealed class DeployApiTests : IClassFixture<DeployApiFixture>
 {
 	const string AdminKey = DeployApiFixture.AdminKey;
 	const string NodeKey = DeployApiFixture.NodeKey;
+	const string TwinProjectKey = DeployApiFixture.TwinProjectKey;
 
 	readonly HttpClient _client;
 	readonly string _node;
+	readonly IServiceProvider _services;
 
 	public DeployApiTests(DeployApiFixture fx)
 	{
 		_client = fx.Client;
 		_node = fx.Node;
+		_services = fx.Services;
 	}
 
 	static HttpRequestMessage Req(HttpMethod m, string path, string key)
@@ -188,5 +200,66 @@ public sealed class DeployApiTests : IClassFixture<DeployApiFixture>
 		req.Content = JsonContent.Create(new { id = "nope", mintKey = false });
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	// THE CLOSED COLLISION (spec node-grant-own-carrier).
+	//
+	// TwinProjectKey is a PROJECT key whose ProjectKey is the node's id, and it carries agent:poll —
+	// so scope cannot be what refuses it. Pre-M050 /agent/poll read the node id out of the `project`
+	// claim, which means this key and the real node key presented the deploy plane with the SAME
+	// string in the SAME claim: this request would have succeeded and returned the node's
+	// deployments to a caller that is not that node. It is refused now because the node axis lives
+	// in a different claim, not because the two are spelled differently — no rename could have
+	// produced this refusal, and no rename can undo it.
+	[Fact]
+	public async Task Poll_With_ProjectKey_Named_Like_The_Node_Does_Not_Resolve_As_That_Node()
+	{
+		using var resp = await _client.SendAsync(Req(HttpMethod.Get, "/agent/poll", TwinProjectKey));
+
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("host claim");
+
+		// And the control: the same request with the real node key — same node id, different
+		// carrier — does resolve. The two differ in nothing but which column the id lives in.
+		using var ok = await _client.SendAsync(Req(HttpMethod.Get, "/agent/poll", NodeKey));
+		ok.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var doc = JsonDocument.Parse(await ok.Content.ReadAsStringAsync());
+		doc.RootElement.GetProperty("nodeId").GetString().Should().Be(_node);
+	}
+
+	// Same closure on the write half of the agent contract: heartbeat is what stamps a node online,
+	// so a project key resolving as a node here would let a stranger keep a dead node looking alive.
+	[Fact]
+	public async Task Heartbeat_With_ProjectKey_Named_Like_The_Node_Is_Refused()
+	{
+		var req = Req(HttpMethod.Post, "/agent/heartbeat", TwinProjectKey);
+		req.Content = JsonContent.Create(new { actual = Array.Empty<object>() });
+		using var resp = await _client.SendAsync(req);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("host claim");
+	}
+
+	// The minted key's SHAPE, not just its behaviour: the enroll path must put the node id in HostId
+	// and leave ProjectKey empty. Asserting the row is what stops a later "harmless" revert to
+	// ProjectKey = node.Id from passing the behavioural tests above by accident.
+	[Fact]
+	public async Task EnrollNode_Mints_A_Key_Carrying_HostId_And_No_ProjectKey()
+	{
+		var newNode = "node-" + Guid.NewGuid().ToString("N")[..8];
+		var req = Req(HttpMethod.Post, "/api/deploy/nodes", AdminKey);
+		req.Content = JsonContent.Create(new { id = newNode, mintKey = true });
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+		var minted = doc.RootElement.GetProperty("key").GetString()!;
+
+		using var scope = _services.CreateScope();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+		var row = db.ApiKeys.First(k => k.Key == minted);
+
+		row.HostId.Should().Be(newNode);
+		row.ProjectKey.Should().BeEmpty();
 	}
 }

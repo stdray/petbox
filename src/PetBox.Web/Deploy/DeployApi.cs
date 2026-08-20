@@ -20,11 +20,13 @@ namespace PetBox.Web.Deploy;
 // named for, and the reason is visible in the code rather than assumed:
 //
 //   * These endpoints are addressed by NODE, never by tenant. There is no {projectKey} and no
-//     {workspaceKey} in any of the three routes, and no tenant in any body. What Poll and Heartbeat
-//     read out of the `project` claim is a NODE ID — the deploy plane reuses that claim slot for a
-//     node-scoped key — so a project-shaped check here would compare a node id against a project row
-//     and mean nothing. A `[TenantFrom(CallerDefault)]` would be actively wrong: it would send the
-//     node id to ITenantAuthorizer as a project key and refuse every node agent in the fleet.
+//     {workspaceKey} in any of the three routes, and no tenant in any body. Poll and Heartbeat read
+//     the node id out of the `host` claim — its OWN carrier since M050 (spec node-grant-own-carrier);
+//     it used to be read out of `project`, which meant the deploy plane and the tenant axis shared
+//     one claim slot and a node named like a project was the same value to both readers. A
+//     project-shaped check here would still mean nothing, because a node key now carries an EMPTY
+//     project claim, and a blank claim authorizes no project (ProjectScope.Authorizes). A
+//     `[TenantFrom(CallerDefault)]` would be actively wrong for the same reason it always was.
 //   * The enrol route mints a node-scoped key and needs `deploy:write`, which ApiKeyScopes itself
 //     documents as NEAR-ROOT, FLEET-WIDE. The MCP deploy_* verbs declared the same class in the MCP
 //     wave for the same reason (nine of them), and the cross-tenant probe measured the effect rather
@@ -40,7 +42,8 @@ public static class DeployApi
 {
 	const string FleetWideReason =
 		"the deploy control plane is addressed by node id, not by tenant: no route or body here names a "
-		+ "project or a workspace, and the `project` claim on a node-scoped key carries the NODE id";
+		+ "project or a workspace, and a node-scoped key carries its node in the `host` claim with an "
+		+ "empty `project` claim";
 
 	public static void MapDeployEndpoints(this IEndpointRouteBuilder app)
 	{
@@ -62,8 +65,10 @@ public static class DeployApi
 	static async Task<IResult> PollAsync(HttpContext ctx, IDeployAgentService agents, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
-		var nodeId = Claim(ctx, "project");
-		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
+		// The `host` claim, NOT `project`: a key that names a project is not a node, and since M050
+		// it cannot pretend to be one by being named after it.
+		var nodeId = Claim(ctx, ApiKeyAuthenticationHandler.HostClaim);
+		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no host claim"));
 
 		return TypedResults.Ok(await agents.PollAsync(nodeId, ct));
 	}
@@ -72,8 +77,8 @@ public static class DeployApi
 	static async Task<IResult> HeartbeatAsync(HttpContext ctx, IDeployService svc, HeartbeatReport req, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentHeartbeat)) return Results.Forbid();
-		var nodeId = Claim(ctx, "project");
-		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
+		var nodeId = Claim(ctx, ApiKeyAuthenticationHandler.HostClaim);
+		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no host claim"));
 		await svc.ApplyHeartbeatAsync(nodeId, req ?? new HeartbeatReport([]), ct);
 		return TypedResults.Ok(new OkResponse(true));
 	}
