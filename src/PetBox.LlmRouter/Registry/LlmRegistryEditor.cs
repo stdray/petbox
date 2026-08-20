@@ -80,6 +80,7 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		IReadOnlyList<LlmRoute>? routes,
 		IReadOnlyDictionary<string, string> apiKeys,
 		long version,
+		bool acknowledgeShadow = false,
 		CancellationToken ct = default)
 	{
 		var level = await OwnLevelAsync(projectKey, ct);
@@ -87,6 +88,21 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		// What the level holds now — the base an omitted part is kept from. Read on its own
 		// connection, which is closed before the write opens its transaction (see the class comment).
 		var snapshot = await _admin.GetSnapshotAsync(level.Scope, level.ScopeKey, ct);
+
+		// SHADOW CHECK — must run BEFORE the write, not after. `version` 0 is the caller declaring
+		// "this level has nothing of its own yet"; that is only true when the snapshot just read
+		// really is empty (a stale/wrong 0 against a level that already has rows falls through to
+		// the ordinary CAS conflict below, unchanged). A genuinely first declaration does not "add"
+		// — it SHADOWS whatever the workspace currently inherits, WHOLE, for every OTHER project of
+		// the SAME workspace, not only the one named by `projectKey` (see the class comment). The
+		// only way to make that checkable before it happens is to count those other projects here,
+		// on their own connection, and refuse before SetSnapshotAsync ever opens its transaction.
+		if (version == 0 && !acknowledgeShadow && snapshot.Endpoints.Count == 0 && snapshot.Routes.Count == 0)
+		{
+			var siblings = await SiblingProjectKeysAsync(projectKey, ct);
+			if (siblings.Count > 0)
+				throw new InvalidOperationException(ShadowRefusalMessage(level, siblings));
+		}
 
 		var mergedEndpoints = endpoints ?? snapshot.Endpoints;
 		// Omitted routes keep their ROWS, ids included, so an edit that only touches endpoints does
@@ -169,4 +185,38 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 			? RegistryLevel.System
 			: RegistryLevel.Workspace(workspaceKey);
 	}
+
+	// The OTHER projects of `projectKey`'s own workspace — the radius a `version` 0 write would
+	// shadow. Deliberately workspace-scoped, not full-cascade: a `System:$` write is also inherited
+	// by every OTHER workspace that declares nothing of its own, but folding that in is the general
+	// "write radius = shadow radius" model question this card explicitly defers (see the class
+	// comment and work llm-config-upsert-shadow-radius-mismatch) — not a per-project override, and
+	// not this. Own connection, closed before it returns — same rule as OwnLevelAsync, and this is
+	// only ever called before SetSnapshotAsync opens its transaction.
+	async Task<IReadOnlyList<string>> SiblingProjectKeysAsync(string projectKey, CancellationToken ct)
+	{
+		using var db = _factory.Open();
+
+		var workspaceKey = await db.Projects
+			.Where(p => p.Key == projectKey)
+			.Select(p => p.WorkspaceKey)
+			.FirstOrDefaultAsync(ct)
+			?? throw new InvalidOperationException($"unknown project '{projectKey}'");
+
+		return await db.Projects
+			.Where(p => p.WorkspaceKey == workspaceKey && p.Key != projectKey)
+			.Select(p => p.Key)
+			.OrderBy(k => k)
+			.ToListAsync(ct);
+	}
+
+	// Worded like the CAS Conflict message this sits next to (LlmRegistryLevelAdmin.Conflict): name
+	// the count AND the projects, not just "some" — a caller staring at a refusal should not have to
+	// go query who else is in its workspace to decide whether `acknowledgeShadow: true` is safe.
+	static string ShadowRefusalMessage(RegistryLevel level, IReadOnlyList<string> siblings) =>
+		$"llm registry level {level} declares nothing yet — writing version 0 here would SHADOW the " +
+		$"inherited registry WHOLE for {siblings.Count} other project{(siblings.Count == 1 ? "" : "s")} " +
+		$"of this workspace ({string.Join(", ", siblings)}), not just the project you called with. " +
+		"Pass acknowledgeShadow: true to confirm you intend that, or write to a level that already " +
+		"declares something of its own.";
 }

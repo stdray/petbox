@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PetBox.Core.Observability;
 
 namespace PetBox.Core.Data;
 
@@ -13,6 +14,9 @@ public sealed partial class BackupService(string dataDir, ILogger<BackupService>
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(BackupService));
+
 		try { await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); }
 		catch (OperationCanceledException) { return; }
 
