@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Observability;
 using PetBox.Core.Settings;
 
 namespace PetBox.Dashboard;
@@ -23,6 +24,9 @@ public sealed partial class HealthPoller(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(HealthPoller));
+
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false); }
 		catch (OperationCanceledException) { return; }
 

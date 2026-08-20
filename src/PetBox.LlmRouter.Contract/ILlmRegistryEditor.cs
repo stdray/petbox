@@ -76,7 +76,7 @@ public interface ILlmRegistryEditor
 	// the level that serves the project instead (see LlmRegistryDeclaration).
 	Task<LlmRegistryDeclaration> GetDeclaredAsync(string projectKey, CancellationToken ct = default);
 
-	// THE CHECKED EDIT behind llm_config_upsert. Two things distinguish it from SetAsync:
+	// THE CHECKED EDIT behind llm_config_upsert. Three things distinguish it from SetAsync:
 	//
 	//   * OMISSION MEANS "KEEP", not "clear". `endpoints`/`routes` are nullable: null leaves that
 	//     part of the level exactly as it is (routes keep their row ids too), an EMPTY list clears
@@ -85,6 +85,16 @@ public interface ILlmRegistryEditor
 	//     card: a caller sending only `routes` silently wiped every endpoint, api keys and all.
 	//   * `version` is the CAS baseline from GetDeclaredAsync (0 = the level declares nothing yet).
 	//     A baseline that is not the level's current version refuses the whole write.
+	//   * `acknowledgeShadow` gates the FIRST declaration of a level (`version` 0 against a level
+	//     that is currently and genuinely empty — see below). Such a write does not "add" to what
+	//     serves the project, it SHADOWS the inherited level WHOLE for every OTHER project of the
+	//     same workspace, not just the caller's. Without `acknowledgeShadow: true` that write is
+	//     REFUSED — nothing is written — naming how many sibling projects it would have shadowed.
+	//     The check runs BEFORE the write (a snapshot read, same as the merge below), because a
+	//     field reported back AFTER the write cannot undo a shadow that already happened. It is a
+	//     no-op (no flag needed) when nothing would be shadowed — a level serving only the caller's
+	//     own project, or a `version` baseline that is not 0 to begin with (work
+	//     llm-config-upsert-shadow-radius-mismatch).
 	//
 	// The merged registry is validated as a WHOLE before anything is written, so "keep the endpoints,
 	// replace the routes" cannot land a route pointing at an endpoint that is not there.
@@ -94,6 +104,7 @@ public interface ILlmRegistryEditor
 		IReadOnlyList<LlmRoute>? routes,
 		IReadOnlyDictionary<string, string> apiKeys,
 		long version,
+		bool acknowledgeShadow = false,
 		CancellationToken ct = default);
 
 	// Replace this project's own level with `registry`. Routes get fresh ids (a whole-registry

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PetBox.Core.Observability;
 using PetBox.Deploy.Contract;
 
 namespace PetBox.Deploy.Services;
@@ -18,6 +19,9 @@ public sealed partial class DeployFailoverSweeper(IServiceScopeFactory scopes, I
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(DeployFailoverSweeper));
+
 		while (!stoppingToken.IsCancellationRequested)
 		{
 			try

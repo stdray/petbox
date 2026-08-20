@@ -2,6 +2,7 @@ using LinqToDB.Data;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 
 namespace PetBox.Core.Auth;
 
@@ -29,6 +30,10 @@ public sealed partial class KeyStatFlusher(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs: covers LogFlushFailed below too (outside
+		// FlushAsync's own narrower scope).
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(KeyStatFlusher));
+
 		while (!stoppingToken.IsCancellationRequested)
 		{
 			try { await Task.Delay(Interval, stoppingToken); }
@@ -59,6 +64,8 @@ public sealed partial class KeyStatFlusher(
 	// Returns the number of keys written — the tests' handle on "the batch actually landed".
 	public async Task<int> FlushAsync(CancellationToken ct = default)
 	{
+		// Narrower scope so a direct test call (bypassing ExecuteAsync/StopAsync) still tags it.
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(KeyStatFlusher));
 		var batch = stats.DrainDirty();
 		if (batch.Count == 0) return 0;
 

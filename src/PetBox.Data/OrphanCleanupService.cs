@@ -2,6 +2,7 @@ using LinqToDB.Async;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
+using PetBox.Core.Observability;
 
 namespace PetBox.Data;
 
@@ -24,6 +25,10 @@ public sealed partial class OrphanCleanupService(
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs: covers LogPassFailed below (outside
+		// RunOncePassAsync's own narrower scope).
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(OrphanCleanupService));
+
 		// Grace period — let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken); }
 		catch (OperationCanceledException) { return; }
@@ -49,6 +54,8 @@ public sealed partial class OrphanCleanupService(
 	// without waiting on the 1-minute interval.
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
+		// Narrower scope so a direct test call (bypassing ExecuteAsync) still tags it.
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(OrphanCleanupService));
 		using var db = coreDb.Open();
 
 		// Every project that has either metadata rows OR on-disk files.

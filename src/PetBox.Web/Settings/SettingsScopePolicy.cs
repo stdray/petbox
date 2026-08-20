@@ -8,7 +8,7 @@ namespace PetBox.Web.Settings;
 // (Sys/Workspace/Project Settings) is editable at ANY of System/Workspace/Project, deeper-wins on
 // read via the (untouched) SettingsResolver cascade. This is a deliberate, temporary widening of
 // SettingAttribute.TopLevel's original "write-depth ceiling" meaning — kept ONLY for this policy;
-// scopes outside System/Workspace/Project (Service/User/Membership — e.g. Me/Preferences) keep the
+// scopes outside System/Workspace/Project (Service/User — e.g. Me/Preferences) keep the
 // original TopLevel-is-a-ceiling behavior untouched, and SettingsResolver's own read-cascade depth
 // (BuildChainAsync) is not touched either.
 //
@@ -35,7 +35,7 @@ public static class SettingsScopePolicy
 		typeof(LlmRegistryInheritanceSettings),
 	];
 
-	// The scope range this interim policy governs. Service/User/Membership pages (just
+	// The scope range this interim policy governs. Service/User pages (just
 	// Me/Preferences today, at Scope.User) are deliberately left on the original semantics below.
 	static bool IsUniformScope(Scope scope) => scope is Scope.System or Scope.Workspace or Scope.Project;
 
@@ -47,7 +47,7 @@ public static class SettingsScopePolicy
 	//   SettingAttribute.HasMinScope).
 	// - Otherwise, at System/Workspace/Project every field is editable regardless of TopLevel — B's
 	//   ceiling-lift.
-	// - Outside that range (Service/User/Membership), TopLevel is still the write-depth ceiling
+	// - Outside that range (Service/User), TopLevel is still the write-depth ceiling
 	//   (original, pre-B semantics): editable only where currentScope is no finer than TopLevel.
 	public static bool IsEditableAt(SettingAttribute attr, Scope currentScope)
 	{

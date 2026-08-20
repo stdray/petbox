@@ -37,6 +37,9 @@ public sealed partial class SearchEnrichmentService : BackgroundService
 
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs
+		using var invokerScope = BackgroundInvokerScope.Begin(_logger, nameof(SearchEnrichmentService));
+
 		try { await Task.Delay(InitialDelay, stoppingToken); }
 		catch (OperationCanceledException) { return; }
 

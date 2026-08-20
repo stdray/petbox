@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Observability;
 using PetBox.Core.Settings;
 using PetBox.Log.Core.Data;
 
@@ -16,6 +17,10 @@ public sealed partial class RetentionService(
 {
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// chore background-invoker-not-tagged-in-logs: covers the whole hosted lifetime,
+		// including LogPassFailed below (outside RunPassAsync's own narrower scope).
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(RetentionService));
+
 		// Grace period — let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false); }
 		catch (OperationCanceledException) { return; }
@@ -41,6 +46,11 @@ public sealed partial class RetentionService(
 
 	public async Task<TimeSpan> RunPassAsync(DateTime now, CancellationToken ct)
 	{
+		// chore background-invoker-not-tagged-in-logs: every self-log record this pass emits
+		// (LogSwept/LogProjectFailed/etc.) carries Invoker="background:RetentionService" —
+		// stamped here, at the one place a pass begins, so a test calling RunPassAsync directly
+		// (RetentionServiceTests) observes the exact same attribution as the hosted loop.
+		using var invokerScope = BackgroundInvokerScope.Begin(logger, nameof(RetentionService));
 		using var scope = services.CreateScope();
 		using var db = coreDb.Open();
 		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
