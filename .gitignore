@@ -102,6 +102,7 @@ secrets.local.env
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/petbox-methodology/
+!.claude/skills/analysis-workspace/
 
 # opencode (personal)
 .opencode/
