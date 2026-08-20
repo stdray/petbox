@@ -100,6 +100,11 @@ public static class LlmRouterTools
 		Writing to a level that currently declares nothing (`version` 0, `servedBy` set) does not
 		"add" to what serves the project: the new level SHADOWS the inherited one WHOLE — routes and
 		api keys gone — for every project of that workspace.
+		SHADOW GUARD (checked, not just prose): a `version` 0 call against a level that is genuinely
+		empty and currently shadows 1+ OTHER projects of the same workspace through inheritance is
+		REFUSED — nothing written — unless you pass `acknowledgeShadow: true`. The refusal names how
+		many sibling projects and which ones. This is a NEW required flag for that one case; every
+		other call (a level with no siblings, or `version` > 0) is unaffected and needs no flag.
 		WRITE SEMANTICS, in full — this edits the LIVE router configuration and there is no undo:
 		  * An OMITTED top-level part stays UNCHANGED. Omit `endpoints` and the stored endpoints
 		    (and their api keys) are kept; omit `routes` and the stored routes are kept, ids and all.
@@ -130,6 +135,7 @@ public static class LlmRouterTools
 		[McpJsonShape("object")]
 		[Description("JSON object { endpoints[]?, routes[]?, apiKeys? } — an omitted part is KEPT, a sent part REPLACES that whole list, [] clears it.")] JsonElement config,
 		[Description("CAS baseline: the `version` from your last llm_config_get (0 = this level declares nothing yet). A stale baseline refuses the whole call.")] long version = 0,
+		[Description("Required ONLY when version=0 against a level that is currently empty AND shadows 1+ sibling projects of the same workspace through inheritance — pass true to confirm you intend to shadow them. Ignored/unneeded otherwise.")] bool acknowledgeShadow = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
@@ -143,7 +149,7 @@ public static class LlmRouterTools
 		// being silently replaced with nothing.
 		var written = await registry.PatchAsync(
 			projectKey, input.Endpoints, input.Routes,
-			input.ApiKeys ?? new Dictionary<string, string>(), version, ct);
+			input.ApiKeys ?? new Dictionary<string, string>(), version, acknowledgeShadow, ct);
 		return new LlmConfigSetResult(
 			true, written.Registry.Endpoints.Count, written.Registry.Routes.Count, written.Version,
 			written.Level);
