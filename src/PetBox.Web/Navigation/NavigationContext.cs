@@ -56,7 +56,9 @@ public sealed class NavigationContext(
 	const string WorkspaceCookie = "yb_ws";
 	const string ProjectCookie = "yb_project";
 
-	IReadOnlyList<WorkspaceOption>? _workspaces;
+	IReadOnlyList<WorkspaceOption>? _catalog;
+	IReadOnlyList<WorkspaceOption>? _membership;
+	IReadOnlyList<WorkspaceOption>? _reachable;
 	IReadOnlyList<Project>? _projects;
 	IReadOnlyDictionary<string, IReadOnlyList<Project>>? _projectsByWs;
 	string? _resolvedWorkspace;
@@ -139,38 +141,88 @@ public sealed class NavigationContext(
 
 	bool IsProjectRoute() => Http?.GetRouteValue("projectKey") is not null;
 
-	public IReadOnlyList<WorkspaceOption> AvailableWorkspaces
+	// THE ZONE. /ui/admin/* is the administrative zone; everything else is the caller's own zone.
+	// This is the SAME path test both shared selectors already make (they use it to keep a workspace
+	// switch inside the zone it was made in), and it is exhaustive: every page rendering _AdminSidebar
+	// declares an "/ui/admin/..." route in its own @page directive.
+	//
+	// It lives HERE rather than in the partials on purpose. _WorkspaceSelector and _ProjectSelector are
+	// SHARED by both zones, so "which tenants does this list show" cannot be a property of the partial —
+	// it is a property of the REQUEST. Deciding it once, at the source of the enumeration, is what makes
+	// it impossible for a consumer to pick the wrong list: a page under /ui gets the membership list
+	// without asking for it, a page under /ui/admin gets the reachable one, and a NEW page is
+	// fail-safe either way (the narrow list is the default, the wide one needs the admin route).
+	bool IsAdminZone =>
+		Http?.Request.Path.Value?.StartsWith("/ui/admin", StringComparison.OrdinalIgnoreCase) == true;
+
+	// ONE read of the catalog per request (ordered by key, as the selector renders it); both lists
+	// below are in-memory filters of it. The workspace table is an operator-sized list — the filter
+	// that used to run in SQL cost a second query on the same connection, and there is no service
+	// door for "the workspaces of this user" to replace it with.
+	IReadOnlyList<WorkspaceOption> Catalog =>
+		_catalog ??= [.. Sync(workspaces.ListAsync()).Select(w => new WorkspaceOption(w.Key, w.Name))];
+
+	// VISIBILITY — the tenants the caller's OWN zone shows them: the ones they are a member of, and
+	// nothing else. Spec tenant-visibility-by-membership: this list is decided by MEMBERSHIP and never
+	// by the system permission, so a sysadmin who is not a member of W does not find W here. That is
+	// not a denial — the right to reach W is a different list (ReachableWorkspaces) and is unchanged.
+	IReadOnlyList<WorkspaceOption> MembershipWorkspaces
 	{
 		get
 		{
-			if (_workspaces is not null) return _workspaces;
-			if (!IsAuthenticated)
-				return _workspaces = [];
+			if (_membership is not null) return _membership;
+			if (!IsAuthenticated) return _membership = [];
 
-			// ONE read of the catalog (ordered by key, as the selector renders it); the membership
-			// filter is applied to it in memory. The workspace table is an operator-sized list — the
-			// filter that used to run in SQL cost a second query on the same connection, and there is
-			// no service door for "the workspaces of this user" to replace it with.
-			var all = Sync(workspaces.ListAsync());
-
-			// Sysadmin sees everything regardless of membership.
-			var isSysAdmin = Http!.User.HasClaim(PetBoxClaims.IsSysAdmin, "true");
+			// No usable identity means there is nothing to filter BY, and the honest answer to "which
+			// tenants is this caller a member of" is NONE. This arm used to return the WHOLE CATALOG
+			// instead — a free pass defended as "a legacy admin with no User row would otherwise get an
+			// empty sidebar". That premise does not hold: CredentialAuthenticator cannot sign anyone in
+			// without a Users row (it reads db.Users and rejects a miss), and AdminBootstrapper seeds
+			// the bootstrap admin's Users row together with its $system Admin membership in ONE
+			// transaction — so no cookie session can arrive here, and the bootstrap admin keeps a
+			// populated /ui sidebar through its $system membership like any other member. What DID
+			// arrive here is an api-key principal rendering a /ui page (that scheme mints no yb:user_id
+			// — see WorkspaceClaimsRefresher), and the free pass showed it every tenant in the install.
 			var userIdRaw = Http!.User.FindFirst(PetBoxClaims.UserId)?.Value;
-
-			// Second arm: a legacy admin with no User row yet — no identity to filter BY, so it keeps
-			// its historical free pass (show everything) rather than an empty sidebar.
-			if (isSysAdmin || !long.TryParse(userIdRaw, out var userId))
-				return _workspaces = [.. all.Select(w => new WorkspaceOption(w.Key, w.Name))];
+			if (!long.TryParse(userIdRaw, out var userId)) return _membership = [];
 
 			var memberKeys = MembershipKeys(userId);
-			return _workspaces =
-			[
-				.. all
-					.Where(w => memberKeys.Contains(w.Key))
-					.Select(w => new WorkspaceOption(w.Key, w.Name)),
-			];
+			return _membership = [.. Catalog.Where(w => memberKeys.Contains(w.Key))];
 		}
 	}
+
+	// THE RIGHT — the tenants this caller may REACH: their memberships, plus, for a holder of the
+	// system permission, every tenant in the catalog. This is spec workspace-read-isolation ("its
+	// participants and the holder of the system permission") expressed as a list, and
+	// tenant-visibility-by-membership deliberately does NOT narrow it: that node governs what the user
+	// zone SHOWS, never what the caller may open.
+	//
+	// Two consumers, and they are the reason the split has to exist at all:
+	//   * the ADMIN ZONE's selectors — enumerating every tenant is that zone's SUBJECT, not a leak;
+	//   * CanReachWorkspace/ResolveWorkspace — an addressed /ui/{W}/... URL must still resolve W for an
+	//     operator who is not a member of it. Narrowing this to membership would silently convert a
+	//     visibility change into a loss of access, i.e. exactly the half of the decision NOT changing.
+	//
+	// Deliberately NOT on INavigationContext: nothing outside this class needs it by name (the admin
+	// zone reaches it through AvailableWorkspaces), and putting it on the interface would oblige five
+	// unrelated test fakes to implement a second enumeration they have no opinion about.
+	public IReadOnlyList<WorkspaceOption> ReachableWorkspaces
+	{
+		get
+		{
+			if (_reachable is not null) return _reachable;
+			if (!IsAuthenticated) return _reachable = [];
+			return _reachable = Http!.User.HasClaim(PetBoxClaims.IsSysAdmin, "true")
+				? Catalog
+				: MembershipWorkspaces;
+		}
+	}
+
+	// What the CURRENT ZONE lists. Both zones read this one property and get different answers — that
+	// IS the mechanism: the shared partials keep no zone logic of their own, and no consumer can pick
+	// the wrong list by accident. /ui/search rides on it too, through ProjectsByWorkspace.
+	public IReadOnlyList<WorkspaceOption> AvailableWorkspaces =>
+		IsAdminZone ? ReachableWorkspaces : MembershipWorkspaces;
 
 	// The workspaces this account belongs to — WITHOUT reading WorkspaceMembers, in the normal case.
 	//
@@ -203,9 +255,11 @@ public sealed class NavigationContext(
 		return [.. Sync(memberships.GetRolesAsync(userId)).Select(m => m.WorkspaceKey)];
 	}
 
-	// Sliced from the one grouped read below — never a query of its own. The current workspace is by
-	// construction one the user may see (ResolveWorkspace returns nothing else), so it is a key of that
-	// dictionary; the empty list is the answer for a workspace with no user projects.
+	// Sliced from the one grouped read below — never a query of its own. The empty list is the answer
+	// both for a workspace with no user projects AND for a workspace the current zone does not list:
+	// since tenant-visibility-by-membership, CurrentWorkspaceKey can be a tenant the caller REACHED by
+	// URL without being a member of it (ResolveWorkspace authorizes reach, not listing), and such a
+	// workspace is deliberately absent from ProjectsByWorkspace in the /ui zone.
 	public IReadOnlyList<Project> ProjectsInCurrentWorkspace
 	{
 		get
@@ -217,9 +271,19 @@ public sealed class NavigationContext(
 		}
 	}
 
-	// The whole project tree of every workspace the user can see, in ONE read. Workspace memory
-	// containers ($workspace / $ws-*) are not user projects — they have no logs/dbs/tasks — and
-	// IProjectDirectory drops them by default, which is the one definition of that rule now.
+	// The whole project tree of every workspace THIS ZONE lists, in ONE read — it is keyed off
+	// AvailableWorkspaces, so it inherits the zone split for free and there is no second place where
+	// projects could leak. That transitivity is the whole reason /ui/search needed no change of its
+	// own: CrossScopeTaskSearchService fans out over exactly this dictionary, /ui/search is not an
+	// /ui/admin route, so its fan-out is now the caller's memberships even for a sysadmin.
+	//
+	// Consequence worth stating: on an ADDRESSED /ui/{W}/... page where W is reachable but not a
+	// membership, W is not a key here, so the project selector renders empty. The page itself works
+	// (CurrentProjectKey comes from the route) — the personal zone simply does not adopt a tenant the
+	// caller has no membership in. Browsing W's project list is what the admin zone is for.
+	//
+	// Workspace memory containers ($workspace / $ws-*) are not user projects — they have no
+	// logs/dbs/tasks — and IProjectDirectory drops them by default, the one definition of that rule.
 	public IReadOnlyDictionary<string, IReadOnlyList<Project>> ProjectsByWorkspace =>
 		_projectsByWs ??= Sync(projects.ListByWorkspaceAsync(
 			[.. AvailableWorkspaces.Select(w => w.Key)]));
@@ -230,7 +294,7 @@ public sealed class NavigationContext(
 	{
 		// 1. Route param wins (page explicitly scoped to a workspace)
 		var routeWs = Http?.GetRouteValue("workspaceKey")?.ToString();
-		if (!string.IsNullOrEmpty(routeWs) && IsMember(routeWs))
+		if (!string.IsNullOrEmpty(routeWs) && CanReachWorkspace(routeWs))
 			return routeWs;
 
 		// 2. Project route → resolve from project's workspace
@@ -238,9 +302,12 @@ public sealed class NavigationContext(
 			?? (IsProjectRoute() ? Http?.GetRouteValue("key")?.ToString() : null);
 		if (!string.IsNullOrEmpty(routeProject))
 		{
-			// The tree the sidebar needs anyway already answers this for every project the user can
-			// see — and a hit is, BY CONSTRUCTION, in a workspace they are a member of (the tree is
-			// built from AvailableWorkspaces), so the membership test is not skipped, it is implied.
+			// The tree the sidebar needs anyway already answers this for every project this zone
+			// lists — and a hit is, BY CONSTRUCTION, in a workspace the caller may reach (the tree is
+			// built from AvailableWorkspaces, itself a subset of ReachableWorkspaces in either zone),
+			// so the access test is not skipped here, it is implied. A project of a reachable but
+			// NON-listed workspace (a sysadmin's addressed /ui/{W}/{P}/... in the user zone) misses
+			// the tree and falls through to the cold path below, which authorizes it explicitly.
 			foreach (var (wsKey, list) in ProjectsByWorkspace)
 				foreach (var p in list)
 					if (string.Equals(p.Key, routeProject, StringComparison.Ordinal))
@@ -252,18 +319,18 @@ public sealed class NavigationContext(
 			// so the cold path asks the directory — one open, exactly as before, and never on a
 			// normal project page.
 			var project = Sync(projects.GetAsync(routeProject));
-			if (project is not null && IsMember(project.WorkspaceKey))
+			if (project is not null && CanReachWorkspace(project.WorkspaceKey))
 				return project.WorkspaceKey;
 		}
 
 		// 3. Cookie
 		if (Http?.Request.Cookies.TryGetValue(WorkspaceCookie, out var cookieWs) == true
-			&& !string.IsNullOrEmpty(cookieWs) && IsMember(cookieWs))
+			&& !string.IsNullOrEmpty(cookieWs) && CanReachWorkspace(cookieWs))
 			return cookieWs;
 
 		// 4. Active-workspace claim from login
 		var claimWs = Http?.User.FindFirst(PetBoxClaims.ActiveWorkspace)?.Value;
-		if (!string.IsNullOrEmpty(claimWs) && IsMember(claimWs))
+		if (!string.IsNullOrEmpty(claimWs) && CanReachWorkspace(claimWs))
 			return claimWs;
 
 		// 5. First available membership — or none at all.
@@ -271,11 +338,15 @@ public sealed class NavigationContext(
 		return available.Count > 0 ? available[0].Key : null;
 	}
 
-	bool IsMember(string wsKey)
+	// REACHABILITY, not visibility — it reads ReachableWorkspaces and pointedly not the zone's list.
+	// A sysadmin who opens /ui/{W}/... while not a member of W must still resolve W: the tenant is
+	// absent from their sidebar and the page still works. Reading AvailableWorkspaces here instead
+	// would make the /ui zone's narrowing decide ACCESS, which is the one thing this change must not
+	// do — and in the admin zone it would leave the operator unable to open another tenant at all.
+	bool CanReachWorkspace(string wsKey)
 	{
 		if (!IsAuthenticated) return false;
-		// Free-pass for legacy admin without claims (AvailableWorkspaces falls back to all)
-		foreach (var w in AvailableWorkspaces)
+		foreach (var w in ReachableWorkspaces)
 			if (string.Equals(w.Key, wsKey, StringComparison.Ordinal))
 				return true;
 		return false;

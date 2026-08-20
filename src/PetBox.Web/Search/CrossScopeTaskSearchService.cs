@@ -9,11 +9,16 @@ using PetBox.Web.Settings;
 namespace PetBox.Web.Search;
 
 // Cross-scope task search (spec cross-scope-task-search): the user pastes a slug/NodeId an
-// agent handed them, or free text, and this fans the read out across EVERY workspace/project
-// they can reach — not just the active one. Access scoping is free: `projectsByWorkspace`
-// (NavigationContext.ProjectsByWorkspace for the real page) is already filtered to the
-// caller's memberships (sysadmin sees all), so the fan-out never touches a project the
-// caller can't see.
+// agent handed them, or free text, and this fans the read out across every workspace/project the
+// caller's OWN zone lists — not just the active one. Access scoping is free: `projectsByWorkspace`
+// (NavigationContext.ProjectsByWorkspace for the real page) is already filtered to the caller's
+// memberships, so the fan-out never touches a project the caller can't see.
+//
+// "sysadmin sees all" used to be the parenthetical here, and it was true: the enumeration handed a
+// holder of the system permission every project in the installation, so this page searched them.
+// Spec tenant-visibility-by-membership ended that — /ui/search is a user-zone route, so its fan-out
+// is now the caller's memberships whether or not they hold the system permission. The right to open
+// another tenant is untouched; it is simply no longer exercised by a search nobody scoped to it.
 //
 // Per project TWO legs run and merge:
 //   IDENTIFIER fast-path — tasks.ExactIdentifierHitsAsync(q) (resolved like tasks_node_get: a
