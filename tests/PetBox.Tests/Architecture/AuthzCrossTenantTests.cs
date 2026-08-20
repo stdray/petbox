@@ -3,7 +3,8 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 219 surfaces: 58 REST, 65 Razor, 96 MCP; was 218/57 REST before
+// ratchet guards (AuthzSurfaces — 220 surfaces: 58 REST, 65 Razor, 97 MCP; was 219/96 MCP before
+// share-link-revocation-finish added the mcp:share_revoke verb; 218/57 REST before
 // share-link-no-revocation added DELETE /api/share/{token}; 217/95 MCP before
 // report-issue-has-no-reply-channel added petbox_report_issue_status; 215/55 REST before
 // doc-surface-undiscoverable-from-ui added the /docs and /help redirects, and 217/97 MCP before that
@@ -16,10 +17,10 @@ namespace PetBox.Tests.Architecture;
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 218 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 220 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 147 addressed surfaces that already deny a foreign tenant today.
+//   * REFUSED               — 148 addressed surfaces that already deny a foreign tenant today.
 //   * KnownDeviations       —   5 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
@@ -30,7 +31,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 147 + 5 + 67 = 219, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 148 + 5 + 67 = 220, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -416,9 +417,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(219,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 65 Razor + 96 MCP "
-			+ "(was 57 REST / 218 before share-link-no-revocation added DELETE /api/share/{{token}}; "
+		_host.Surfaces.Should().HaveCount(220,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 65 Razor + 97 MCP "
+			+ "(was 96 MCP / 219 before share-link-revocation-finish added mcp:share_revoke, the agent-facing "
+			+ "half of the DELETE /api/share/{{token}} below; "
+			+ "57 REST / 218 before share-link-no-revocation added DELETE /api/share/{{token}}; "
 			+ "95 MCP / 217 before report-issue-has-no-reply-channel added petbox_report_issue_status; "
 			+ "55 REST / 215 before doc-surface-undiscoverable-from-ui added /docs and /help; "
 			+ "97 MCP / 217 before that when batch3 removed session_delta and config_binding_delta). "
@@ -434,7 +437,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(147,
+		refused.Should().Be(148,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -450,6 +453,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "declaring [TenantFrom(Argument, \"workspaceKey\", TenantKind.Workspace)] — the largest "
 			+ "single rise this line has seen, and the one that finally makes the MCP and REST halves of "
 			+ "the config bindings answer alike. "
+			+ "147 -> 148 with mcp:share_revoke (share-link-revocation-finish): a NEW surface that denies from "
+			+ "its first commit — it declares [TenantFrom(Argument, \"projectKey\")] and the MCP PEP refuses the "
+			+ "probe before the tool body runs, so this rise ADDS to what is protected rather than repairing a "
+			+ "deviation. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
@@ -480,13 +487,15 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	{
 		// The scope axis is already centralised and already works. If the probe key were short a scope,
 		// the surfaces guarded by it would deny for the WRONG reason and read as passes.
-		_host.ToolsVisibleToAttacker.Should().HaveCount(96,
+		_host.ToolsVisibleToAttacker.Should().HaveCount(97,
 			"McpToolScopeFilter trims tools/list to what the key's scopes allow. A key missing a scope sees "
-			+ "fewer than the full 96 verbs (was 95 before report-issue-has-no-reply-channel added "
-			+ "petbox_report_issue_status; 97 before batch3 removed session_delta and "
-			+ "config_binding_delta), and every tool it cannot see would deny on the scope axis — a "
-			+ "field of false greens. Seeing all 96 is the proof that every MCP denial above is about the "
-			+ "TENANT");
+			+ "fewer than the full 97 verbs (was 96 before share-link-revocation-finish added share_revoke, "
+			+ "which McpToolScopeFilter leaves UNCLASSIFIED — there is no share:* scope module, so it is "
+			+ "shown to every key and gated on the tenant axis alone; 95 before "
+			+ "report-issue-has-no-reply-channel added petbox_report_issue_status; 97 before batch3 removed "
+			+ "session_delta and config_binding_delta), and every tool it cannot see would deny on the scope "
+			+ "axis — a field of false greens. Seeing all 97 is the proof that every MCP denial above is "
+			+ "about the TENANT");
 
 		// The two scopes the deviation list BLAMES for the surfaces a foreign tenant still reaches. If
 		// the probe key did not actually carry them, those entries would be describing a denial that

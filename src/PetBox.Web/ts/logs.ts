@@ -593,7 +593,10 @@ document.addEventListener("change", (event) => {
 // ---------- Share modal ----------
 // The link must not expose the KQL text: the query is stored server-side
 // (POST /api/share) and the URL carries only the opaque token.
-let shareLinkCache: { key: string; url: string; expiresAt: string } | null = null;
+// `token` and `project` are what the REVOKE call addresses (DELETE /api/share/{token} with
+// {projectKey} in the body) — the URL alone would have to be re-parsed for the token, and the
+// project is not in the URL at all.
+let shareLinkCache: { key: string; url: string; expiresAt: string; token: string; project: string } | null = null;
 
 async function createShareLink(project: string, log: string, kql: string): Promise<void> {
 	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
@@ -604,12 +607,15 @@ async function createShareLink(project: string, log: string, kql: string): Promi
 	if (shareLinkCache?.key === cacheKey) {
 		urlInput.value = shareLinkCache.url;
 		if (expiryEl) expiryEl.textContent = `Expires ${new Date(shareLinkCache.expiresAt).toLocaleString()}`;
+		setRevokeEnabled(true);
 		return;
 	}
 
 	urlInput.value = "";
 	urlInput.placeholder = "Creating link…";
 	if (expiryEl) expiryEl.textContent = "";
+	setRevokeEnabled(false);
+	setRevokeStatus("");
 	try {
 		const resp = await fetch("/api/share", {
 			method: "POST",
@@ -619,12 +625,64 @@ async function createShareLink(project: string, log: string, kql: string): Promi
 		if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 		const created = (await resp.json()) as { id: string; expiresAt: string };
 		const url = `${window.location.origin}/ui/share/${created.id}`;
-		shareLinkCache = { key: cacheKey, url, expiresAt: created.expiresAt };
+		shareLinkCache = { key: cacheKey, url, expiresAt: created.expiresAt, token: created.id, project };
 		urlInput.value = url;
 		if (expiryEl) expiryEl.textContent = `Expires ${new Date(created.expiresAt).toLocaleString()}`;
+		setRevokeEnabled(true);
 	} catch {
 		urlInput.placeholder = "Failed to create share link";
 		if (expiryEl) expiryEl.textContent = "";
+		setRevokeEnabled(false);
+	}
+}
+
+function revokeButton(): HTMLButtonElement | null {
+	return document.querySelector("[data-share-revoke]") as HTMLButtonElement | null;
+}
+
+function setRevokeEnabled(enabled: boolean): void {
+	const btn = revokeButton();
+	if (btn) btn.disabled = !enabled;
+}
+
+function setRevokeStatus(text: string): void {
+	const status = document.getElementById("share-revoke-status");
+	if (status) status.textContent = text;
+}
+
+// Revoke = DELETE /api/share/{token} (spec `share-link-revocable`). The row is HARD-deleted server
+// side, so the anonymous TSV export AND the anonymous /ui/share/{token} page both stop serving on
+// the next request — there is nothing left to "un-revoke", which is why this asks first.
+//
+// The cache is dropped on success rather than kept: without that, reopening the modal on the same
+// project+log+KQL would hand the user back the URL of a token that no longer exists (the cache key
+// is the QUERY, not the token). Cleared, the next open mints a fresh link.
+async function revokeShareLink(): Promise<void> {
+	const link = shareLinkCache;
+	if (!link) return;
+	if (!window.confirm("Revoke this share link? Anyone holding it loses access immediately.")) return;
+
+	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
+	const expiryEl = document.getElementById("share-expiry");
+	setRevokeEnabled(false);
+	setRevokeStatus("Revoking…");
+	try {
+		const resp = await fetch(`/api/share/${encodeURIComponent(link.token)}`, {
+			method: "DELETE",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ projectKey: link.project }),
+		});
+		if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+		shareLinkCache = null;
+		if (urlInput) {
+			urlInput.value = "";
+			urlInput.placeholder = "Link revoked";
+		}
+		if (expiryEl) expiryEl.textContent = "";
+		setRevokeStatus("Revoked — this link no longer works.");
+	} catch {
+		setRevokeStatus("Failed to revoke the link.");
+		setRevokeEnabled(true);
 	}
 }
 
@@ -647,6 +705,11 @@ document.addEventListener("click", (event) => {
 	if (target.closest("[data-share-copy]")) {
 		const url = (document.getElementById("share-url") as HTMLInputElement | null)?.value ?? "";
 		if (url) void navigator.clipboard.writeText(url);
+		return;
+	}
+
+	if (target.closest("[data-share-revoke]")) {
+		void revokeShareLink();
 		return;
 	}
 });

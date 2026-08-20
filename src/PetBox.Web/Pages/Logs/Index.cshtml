@@ -188,7 +188,20 @@
 			<button type="button" class="btn btn-sm join-item" data-share-copy>Copy</button>
 		</div>
 		<p id="share-expiry" class="text-xs opacity-60 mt-2"></p>
-		<form method="dialog" class="mt-3"><button class="btn btn-sm btn-ghost">Close</button></form>
+		@* Revoke (spec `share-link-revocable`, card share-link-revocation-finish). Until this button
+		   existed the ONLY way to withdraw a minted link was a hand-written curl against
+		   DELETE /api/share/{token} — the endpoint was live and unreachable from the product.
+		   It starts disabled and is enabled by logs.ts once a token actually exists to revoke, so it
+		   can never fire against an empty/failed modal. There is deliberately no LIST of outstanding
+		   links next to it: IShareLinkDirectory has no enumeration on purpose (a token is addressable
+		   by value only), so this revokes the link this modal is currently showing. *@
+		<div class="mt-3 flex items-center gap-2">
+			<button type="button" class="btn btn-sm btn-error btn-outline" data-share-revoke
+				data-testid="share-revoke" disabled
+				title="Revoke this link — anyone holding it loses access immediately">Revoke</button>
+			<span id="share-revoke-status" data-testid="share-revoke-status" class="text-xs opacity-70"></span>
+			<form method="dialog" class="ml-auto"><button class="btn btn-sm btn-ghost">Close</button></form>
+		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
