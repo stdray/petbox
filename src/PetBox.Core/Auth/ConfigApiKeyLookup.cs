@@ -11,6 +11,16 @@ public sealed record ConfigApiKeyEntry
 	public string Scopes { get; init; } = string.Empty;
 	// Optional fallback project for a cross-project ("*") key — see ApiKey.DefaultProjectKey.
 	public string? DefaultProjectKey { get; init; }
+	// Grant, not credential (spec auth-key-expiry / work config-keys-lifecycle-gaps): the secret
+	// still lives in appsettings/env and can only be rotated by editing the file and restarting the
+	// process, but the LIFECYCLE around it — when it stops being valid, whether it is sandbox-only —
+	// is now expressible without touching the credential itself. NULL = never expires (same default
+	// as ApiKey.ExpiresAt), matching the letter of spec auth-key-expiry: "absence of an expiry means
+	// an unbounded key".
+	public DateTime? ExpiresAt { get; init; }
+	// See ApiKey.SandboxOnly for the containment semantics; ConfigApiKeyLookup projects it
+	// unchanged. Defaults false, so every existing Auth:ApiKeys[] entry keeps its current reach.
+	public bool SandboxOnly { get; init; }
 }
 
 public sealed record ConfigApiKeyOptions
@@ -40,6 +50,8 @@ public sealed class ConfigApiKeyLookup : IApiKeyLookup
 				ProjectKey = entry.ProjectKey,
 				Scopes = entry.Scopes,
 				DefaultProjectKey = entry.DefaultProjectKey,
+				ExpiresAt = entry.ExpiresAt,
+				SandboxOnly = entry.SandboxOnly,
 				CreatedAt = now,
 			};
 		}
