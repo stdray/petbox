@@ -1,5 +1,0 @@
-// D8/провал-1a: сколько типов используют класс PetBoxClaims (const-класс, IL инлайнит const).
-// Ожидание по грепу: 45 упоминаний в 24 файлах. Граф ожидаемо даст 0.
-from t in Application.Types
-where t.FullName == "PetBox.Core.Auth.PetBoxClaims"
-select new { t, t.NbTypesUsingMe, t.NbLinesOfCode }

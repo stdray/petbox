@@ -1,6 +1,0 @@
-// D8/провал-2: член enum Scope.Membership в switch компилируется в сравнение с int (IL не хранит case-метку
-// как использование поля). Поле ещё в МОДЕЛИ (см. q3b) — модель отстаёт от исходников (см. baseline-файл).
-// Ожидание по прежнему полевому отчёту: 0 методов используют поле напрямую.
-from m in Application.Methods
-where m.IsUsingField("PetBox.Core.Settings.Scope.Membership")
-select m

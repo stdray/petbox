@@ -1,4 +1,0 @@
-// D2/провал-3a: атрибут McpServerToolAttribute на МЕТОДАХ. Ожидание из полевого отчёта: 96.
-from m in Application.Methods
-where m.HasAttribute("ModelContextProtocol.Server.McpServerToolAttribute")
-select m

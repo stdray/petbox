@@ -1,5 +1,0 @@
-// D3: у каких типов есть поле типа Microsoft.Extensions.Logging.ILogger.
-// Первая версия (без null-guard на FieldType) падала runtime NRE — см. baseline-файл.
-from f in Application.Fields
-where f.FieldType != null && f.FieldType.FullName == "Microsoft.Extensions.Logging.ILogger"
-select new { f, f.ParentType }

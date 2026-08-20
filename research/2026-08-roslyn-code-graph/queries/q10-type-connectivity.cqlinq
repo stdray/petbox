@@ -1,4 +1,0 @@
-// D6: связность типа - NbTypesUsingMe (кто зависит от меня) / NbTypesUsed (от кого завишу я).
-from t in Application.Types
-where t.FullName == "PetBox.Core.Auth.TenantAuthorizer" || t.FullName == "PetBox.Core.Auth.WorkspaceMembershipService"
-select new { t, t.NbTypesUsingMe, t.NbTypesUsed }

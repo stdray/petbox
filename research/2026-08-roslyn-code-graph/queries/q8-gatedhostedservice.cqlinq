@@ -1,7 +1,0 @@
-// D4: "кто реализует/наследует GatedHostedService<T>" - ЧЕСТНЫЙ 0: класс sealed, никто его не
-// наследует по дизайну (13 фоновых сервисов подключаются как ЗАКРЫТЫЙ generic-АРГУМЕНТ метода
-// AddGatedHostedService<T>() в Program.cs, а не через наследование). Implement/DeriveFrom эту форму
-// не покрывают вообще - см. q8b на "кто использует открытый generic-тип".
-from t in Application.Types
-where t.Implement("PetBox.Web.GatedHostedService<T>") || t.DeriveFrom("PetBox.Web.GatedHostedService<T>")
-select t
