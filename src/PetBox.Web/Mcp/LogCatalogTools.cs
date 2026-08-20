@@ -79,9 +79,7 @@ public static class LogCatalogTools
 	static void AssertScope(IHttpContextAccessor accessor, string required)
 	{
 		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		var parts = scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		if (!parts.Contains(required, StringComparer.Ordinal))
+		if (!ApiKeyScopes.Granted(ctx.User, required))
 			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
 }

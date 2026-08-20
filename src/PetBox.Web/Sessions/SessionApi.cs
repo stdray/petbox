@@ -75,8 +75,7 @@ public static class SessionApi
 	static async Task<IResult> ListAsync(
 		HttpContext ctx, string projectKey, ISessionService sessions, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:read"))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.TasksRead))
 			return TypedResults.Forbid();
 
 		var cursor = ctx.Request.Query["cursor"].FirstOrDefault();
@@ -106,8 +105,7 @@ public static class SessionApi
 	static async Task<IResult> UpsertAsync(
 		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.TasksWrite))
 			return TypedResults.Forbid();
 
 		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
@@ -136,8 +134,7 @@ public static class SessionApi
 	static async Task<IResult> AppendAsync(
 		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.TasksWrite))
 			return TypedResults.Forbid();
 
 		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
@@ -189,8 +186,7 @@ public static class SessionApi
 	static async Task<IResult> DeleteAsync(
 		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.TasksWrite))
 			return TypedResults.Forbid();
 
 		return await sessions.DeleteAsync(projectKey, sessionId, ct)

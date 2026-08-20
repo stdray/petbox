@@ -157,7 +157,7 @@ public static class ApiKeyTools
 		if (logger.IsEnabled(LogLevel.Information))
 			logger.LogInformation("apikey_update target={TargetKey} fields={Fields} actor={ActorKey} actorProject={ActorProject}",
 				Tail(keyValue), string.Join(',', patched.Touched), Tail(ctx.Request.Headers[ApiKeyAuthenticationHandler.ApiKeyHeader].FirstOrDefault()),
-				ctx.User.FindFirst("project")?.Value);
+				ctx.User.FindFirst(ApiKeyAuthenticationHandler.ProjectClaim)?.Value);
 
 		return new ApiKeyUpdatedResult(
 			updated.Key, updated.ProjectKey,

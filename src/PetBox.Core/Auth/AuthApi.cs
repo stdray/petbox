@@ -46,8 +46,8 @@ public static class AuthApi
 		if (user.Identity is not { IsAuthenticated: true })
 			return Results.Json(new AuthInvalidResponse(false), statusCode: 401);
 
-		var projectKey = user.FindFirstValue("project");
-		var scopes = user.FindFirstValue("scopes");
+		var projectKey = user.FindFirstValue(ApiKeyAuthenticationHandler.ProjectClaim);
+		var scopes = user.FindFirstValue(ApiKeyAuthenticationHandler.ScopesClaim);
 
 		if (string.IsNullOrEmpty(projectKey))
 			return Results.Json(new AuthInvalidResponse(false), statusCode: 401);

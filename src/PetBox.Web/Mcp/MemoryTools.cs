@@ -411,7 +411,8 @@ public static class MemoryTools
 			return;
 		}
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		var claim = ctx.User.Claims
+			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ProjectClaim)?.Value;
 
 		// IDENTITY FIRST, exactly as ProjectScope.EvaluateAsync orders it, so a key from another
 		// workspace still reads "not scoped" rather than being told about the sandbox.

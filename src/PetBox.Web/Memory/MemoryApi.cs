@@ -78,8 +78,7 @@ public static class MemoryApi
 		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects,
 		IProjectCatalog catalog, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains(ApiKeyScopes.MemoryRead))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.MemoryRead))
 			return TypedResults.Forbid();
 
 		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);

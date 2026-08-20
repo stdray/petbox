@@ -38,9 +38,7 @@ public static class HealthApi
 	[TenantFrom(TenantSource.BodyField, "tags.project")]
 	static async Task<IResult> PushAsync(HttpContext ctx, IHealthReportService health, HealthPushRequest req, CancellationToken ct)
 	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		if (!scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-				.Contains(ApiKeyScopes.HealthWrite, StringComparer.Ordinal))
+		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.HealthWrite))
 			return Results.Forbid();
 
 		if (req is null || string.IsNullOrWhiteSpace(req.Svc) || string.IsNullOrWhiteSpace(req.Status))

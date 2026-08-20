@@ -115,7 +115,8 @@ static class McpProjectExistsFilter
 		// deserves, and it keeps the registry from becoming an existence oracle for foreign keys.
 		// What remains for the existence check is exactly the surface that could create storage:
 		// every project a "*" key names, and a scoped key's own claim (which a deletion can strip).
-		var claim = request.User?.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		var claim = request.User?.Claims
+			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ProjectClaim)?.Value;
 		if (!ProjectScope.Authorizes(claim, project)) return;
 
 		await AssertKnownAsync(request, project, ct);
