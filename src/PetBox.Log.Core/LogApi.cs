@@ -155,7 +155,7 @@ public static class LogApi
 	// two branches those methods kept strictly apart by hand.
 
 	static bool HasScope(HttpContext ctx, string required) =>
-		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
+		ApiKeyScopes.Granted(ctx.User, required);
 
 	// THE ONE GATE THAT DID NOT MOVE TO A DECLARATION, on the two browser-facing, workspaceKey-less log
 	// surfaces — live-tail (mapped here) and PetBox.Web's Pages/Logs/EventDetails. It is the SCOPE axis,
@@ -181,11 +181,8 @@ public static class LogApi
 		ctx.User.Identities.Any(i => i.IsAuthenticated
 			&& string.Equals(i.AuthenticationType, ApiKeyAuthenticationHandler.SchemeName, StringComparison.Ordinal));
 
-	// scopes is provably non-null: the one caller (HasScope(HttpContext, string) above) already
-	// coalesces the claim value before calling in.
-	static bool HasScope(string scopes, string required) =>
-		scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.Contains(required, StringComparer.Ordinal);
+	// The string overload is gone with the hand-rolled split it existed to hold: both callers now
+	// end in ApiKeyScopes.Granted, the catalog's one reading (spec `access-permission-uniform`).
 
 	// Parse a CLEF ingest body into per-event results. Two wire formats are accepted
 	// (parity with yobalog's ingest, lost in the merge to PetBox):

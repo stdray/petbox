@@ -47,6 +47,16 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// emits it; TenantAuthorizer reads it off THIS identity rather than off the merged principal.
 	public const string ProjectClaim = "project";
 
+	// The claim carrying ApiKey.Scopes — the comma/space/semicolon-separated grant set every scope
+	// gate reads. Always emitted (possibly empty). Named here for the same reason ProjectClaim is:
+	// this handler is what EMITS it, so the emitter owns the spelling and every reader imports it.
+	//
+	// NOTE THE ABSENT PREFIX, and do not "fix" it. PetBoxClaims declares `yb:project`/`yb:scopes`
+	// and both are [Obsolete] dead letters — they never matched the wire. What is actually in the
+	// token is bare `project`/`scopes`, which is what these two constants say. Swapping a reader
+	// onto a `yb:`-prefixed name silently denies every live key.
+	public const string ScopesClaim = "scopes";
+
 	// The claim carrying ApiKey.DefaultProjectKey — the project a cross-project ("*") key falls
 	// back to when a tool's optional projectKey is omitted. Present only when the key has one.
 	public const string DefaultProjectClaim = "project_default";
@@ -106,8 +116,8 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		// "no default", so the wildcard-key behavior is unchanged for every existing key.
 		var claims = new List<Claim>
 		{
-			new("project", key.ProjectKey),
-			new("scopes", key.Scopes),
+			new(ProjectClaim, key.ProjectKey),
+			new(ScopesClaim, key.Scopes),
 		};
 		if (!string.IsNullOrWhiteSpace(key.DefaultProjectKey))
 			claims.Add(new Claim(DefaultProjectClaim, key.DefaultProjectKey.Trim()));

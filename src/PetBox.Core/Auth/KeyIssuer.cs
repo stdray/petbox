@@ -53,7 +53,7 @@ public sealed record KeyIssuer(string Actor, bool MayGrantPrivileged)
 		{
 			var name = user.FindFirst(ApiKeyAuthenticationHandler.KeyNameClaim)?.Value;
 			var actor = string.IsNullOrWhiteSpace(name) ? "key:(unnamed)" : $"key:{name.Trim()}";
-			return new KeyIssuer(actor, HasScope(user, ApiKeyScopes.AdminProvision));
+			return new KeyIssuer(actor, ApiKeyScopes.Granted(user, ApiKeyScopes.AdminProvision));
 		}
 
 		// A sysadmin whose identity carries no name (test principals, future schemes) still gets the
@@ -69,10 +69,9 @@ public sealed record KeyIssuer(string Actor, bool MayGrantPrivileged)
 	static bool IsApiKeyPrincipal(ClaimsPrincipal user) =>
 		user.FindFirst(ApiKeyAuthenticationHandler.ProjectClaim) is not null;
 
-	// The same split ScopeAuthorizationHandler/ModuleMcp read the `scopes` claim with. Ordinal, like
-	// the catalog: scope values are identifiers, not prose.
-	static bool HasScope(ClaimsPrincipal user, string scope) =>
-		(user.FindFirst("scopes")?.Value ?? "")
-			.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.Contains(scope, StringComparer.Ordinal);
+	// The scope reading used to be a THIRD private copy right here, with the comment "Ordinal, like
+	// the catalog: scope values are identifiers, not prose." The comment was right and the copy was
+	// the problem — it stated the catalog's rule instead of asking the catalog for it, which is how
+	// ScopeAuthorizationHandler could hold a different one without anything noticing. It is now
+	// ApiKeyScopes.Granted, so this file no longer has a scope-comparison of its own to drift.
 }

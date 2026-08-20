@@ -7,8 +7,9 @@ namespace PetBox.Web.Mcp;
 
 // Shared guards + JSON helpers for the tasks_*/memory_*/session_* MCP tools.
 // Mirrors the private AssertProject/AssertScope helpers in DataTools/LogTools,
-// factored out so the three new tool classes don't each copy them. Claims
-// ("project", "scopes") are set by ApiKeyAuthenticationHandler.
+// factored out so the three new tool classes don't each copy them. The claims
+// (ApiKeyAuthenticationHandler.ProjectClaim / .ScopesClaim) are set by that handler;
+// the scope reading itself is ApiKeyScopes' — see spec `access-permission-uniform`.
 static class ModuleMcp
 {
 	// IProjectCatalog is resolved from the request's own DI container (same pattern
@@ -82,9 +83,7 @@ static class ModuleMcp
 	public static bool HasScope(IHttpContextAccessor http, string scope)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		var parts = scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		return parts.Contains(scope, StringComparer.Ordinal);
+		return ApiKeyScopes.Granted(ctx.User, scope);
 	}
 
 	public static void AssertFeature(FeatureFlags features, Feature feature)

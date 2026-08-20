@@ -62,7 +62,7 @@ public static class DeployApi
 	static async Task<IResult> PollAsync(HttpContext ctx, IDeployAgentService agents, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
-		var nodeId = Claim(ctx, "project");
+		var nodeId = Claim(ctx, ApiKeyAuthenticationHandler.ProjectClaim);
 		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
 
 		return TypedResults.Ok(await agents.PollAsync(nodeId, ct));
@@ -72,7 +72,7 @@ public static class DeployApi
 	static async Task<IResult> HeartbeatAsync(HttpContext ctx, IDeployService svc, HeartbeatReport req, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentHeartbeat)) return Results.Forbid();
-		var nodeId = Claim(ctx, "project");
+		var nodeId = Claim(ctx, ApiKeyAuthenticationHandler.ProjectClaim);
 		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
 		await svc.ApplyHeartbeatAsync(nodeId, req ?? new HeartbeatReport([]), ct);
 		return TypedResults.Ok(new OkResponse(true));
@@ -100,7 +100,5 @@ public static class DeployApi
 		ctx.User.Claims.FirstOrDefault(c => c.Type == type)?.Value;
 
 	static bool HasScope(HttpContext ctx, string scope) =>
-		(Claim(ctx, "scopes") ?? "")
-			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.Contains(scope, StringComparer.Ordinal);
+		ApiKeyScopes.Granted(ctx.User, scope);
 }

@@ -46,13 +46,7 @@ static class McpToolScopeFilter
 			return result;
 		});
 
-	static HashSet<string> ScopesOf(ClaimsPrincipal? user)
-	{
-		var raw = user?.FindFirst("scopes")?.Value ?? string.Empty;
-		return new HashSet<string>(
-			raw.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-			StringComparer.Ordinal);
-	}
+	static IReadOnlySet<string> ScopesOf(ClaimsPrincipal? user) => ApiKeyScopes.GrantedSet(user);
 
 	// The scope-module a tool belongs to. Returns the scope prefix the key needs ANY
 	// of ("tasks" → any tasks:* scope), or the literal "admin:provision" for tools
@@ -71,7 +65,7 @@ static class McpToolScopeFilter
 		: tool.StartsWith("config_", StringComparison.Ordinal) ? "config"
 		: null; // project_* / apikey_* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
 
-	static bool Allowed(string tool, HashSet<string> granted)
+	static bool Allowed(string tool, IReadOnlySet<string> granted)
 	{
 		var module = ModuleOf(tool);
 		if (module is null) return true;                              // unclassified → show

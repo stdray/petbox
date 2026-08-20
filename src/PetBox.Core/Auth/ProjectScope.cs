@@ -73,7 +73,8 @@ public static class ProjectScope
 		ClaimsPrincipal? user, string projectKey, IProjectCatalog catalog, CancellationToken ct = default) =>
 		EvaluateAsync(ClaimOf(user), projectKey, SandboxOnlyOf(user), catalog, ct);
 
-	static string? ClaimOf(ClaimsPrincipal? user) => user?.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+	static string? ClaimOf(ClaimsPrincipal? user) =>
+		user?.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ProjectClaim)?.Value;
 
 	static bool SandboxOnlyOf(ClaimsPrincipal? user) =>
 		user?.Claims.Any(c => c.Type == ApiKeyAuthenticationHandler.SandboxOnlyClaim) ?? false;

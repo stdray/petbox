@@ -24,9 +24,12 @@ public static class WhoAmITools
 	public static WhoAmIResult WhoAmI(IHttpContextAccessor http)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var project = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		var scopes = (ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? string.Empty)
-			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var project = ctx.User.Claims
+			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ProjectClaim)?.Value;
+		// The catalog's tokenizer, so what whoami REPORTS as granted is exactly what the gates will
+		// honour — it used to split on ',' alone and hid the space-separated half of a grant set.
+		var scopes = ApiKeyScopes.Split(
+			ctx.User.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ScopesClaim)?.Value);
 		var defaultProject = ctx.User.Claims
 			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value;
 		return new WhoAmIResult(project, scopes, defaultProject);

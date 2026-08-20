@@ -139,12 +139,8 @@ public static class AgentDefsApi
 	// against the {projectKey} route value — is now the [TenantFrom(Route, "projectKey")] declaration on
 	// each handler, decided by TenantEnforcementMiddleware before the handler (and before the PUT body is
 	// deserialized).
-	static IResult? RequireScope(HttpContext ctx, string scope)
-	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		var parts = scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		return parts.Contains(scope, StringComparer.Ordinal) ? null : Results.Forbid();
-	}
+	static IResult? RequireScope(HttpContext ctx, string scope) =>
+		ApiKeyScopes.Granted(ctx.User, scope) ? null : Results.Forbid();
 
 	static bool IsConflict(string message) =>
 		message.Contains("conflict", StringComparison.OrdinalIgnoreCase);

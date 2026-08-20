@@ -1,3 +1,5 @@
+using System.Security.Claims;
+
 namespace PetBox.Core.Auth;
 
 // How far a scope reaches RELATIVE TO THE TENANT AXIS. This is the classification the catalog was
@@ -118,12 +120,67 @@ public static class ApiKeyScopes
 	];
 
 	static readonly HashSet<string> Allowed =
-		new(All.Select(s => s.Value), StringComparer.Ordinal);
+		new(All.Select(s => s.Value), Comparer);
+
+	// ── THE ONE READING OF A GRANTED SCOPE SET (spec access-permission-uniform) ───────────────────
+	//
+	// "Одно и то же полномочие одного и того же ключа ДОЛЖНО давать одинаковое решение о доступе
+	// независимо от поверхности, через которую пришёл вызов; каноническая запись полномочия
+	// объявляется каталогом полномочий, а не местом сравнения." So the tokenizer AND the comparer
+	// live HERE, in the catalog, and every enforcement point calls in instead of rolling its own.
+	//
+	// There were SIXTEEN hand-rolled copies before this, disagreeing on TWO axes at once — which is
+	// why "the same key, the same scope, a different answer" was reachable two different ways:
+	//
+	//   * SEPARATORS. ScopeAuthorizationHandler, DeployApi, HealthApi, Data*/Log*Tools and WhoAmI
+	//     split on ',' ALONE; ModuleMcp, KeyIssuer, AgentDefsApi, McpToolScopeFilter, MemoryApi and
+	//     SessionApi split on ',' ' ' ';'. A key stored as "data:read logs:query" — which Validate
+	//     below accepts verbatim, because it splits on all three — was ONE opaque token to the first
+	//     group and TWO scopes to the second. MemoryApi/SessionApi additionally omitted TrimEntries,
+	//     so " data:read" was a third answer again.
+	//   * CASE. ScopeAuthorizationHandler compared OrdinalIgnoreCase; the other fifteen Ordinal.
+	//
+	// ORDINAL IS THE ANSWER, and the CATALOG decides it rather than taste: `Allowed`,
+	// `PrivilegedValues`, `IsPrivileged` and `PrivilegedIn` are Ordinal sets already. An enforcement
+	// point matching case-insensitively would recognize a permission the catalog does not — a key
+	// carrying "Admin:Provision" would ENFORCE as admin:provision on the REST policy while
+	// IsPrivileged() called that same string unprivileged, so the grant gate and the enforcement
+	// gate would classify one string two ways. That is precisely the escalation shape
+	// `workspaceadmin-self-issue-admin-provision-root` closed, re-opened through casing. Scope
+	// values are identifiers, not prose (KeyIssuer said so in a comment; now it is enforced).
+	public static readonly StringComparer Comparer = StringComparer.Ordinal;
+
+	// The catalog's own separator set — the SAME one Validate() tokenizes a submitted scope string
+	// with, so what a key is MINTED with and what enforcement later READS BACK cannot disagree.
+	static readonly char[] Separators = [',', ' ', ';'];
+
+	// The canonical tokenization of a raw `scopes` claim / ApiKeys.Scopes column value.
+	public static string[] Split(string? raw) =>
+		string.IsNullOrWhiteSpace(raw)
+			? []
+			: raw.Split(Separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+	// THE predicate. The REST policy, the MCP guard, every minimal-API handler and KeyIssuer all end
+	// here, so there is exactly one place left that can answer Allow/Deny for a scope.
+	public static bool Granted(string? raw, string required) =>
+		Split(raw).Contains(required, Comparer);
+
+	// The same question asked of a principal — off the `scopes` claim ApiKeyAuthenticationHandler
+	// emits. A COOKIE identity carries no such claim at all, so it grants nothing; that is the
+	// existing behaviour on every surface (a browser session is authorized by workspace membership,
+	// never by scopes) and not a new refusal.
+	public static bool Granted(ClaimsPrincipal? user, string required) =>
+		Granted(user?.FindFirst(ApiKeyAuthenticationHandler.ScopesClaim)?.Value, required);
+
+	// The principal's whole granted set, for callers that ask many questions at once
+	// (McpToolScopeFilter's tools/list filtering) or that render it (whoami).
+	public static IReadOnlySet<string> GrantedSet(ClaimsPrincipal? user) =>
+		new HashSet<string>(Split(user?.FindFirst(ApiKeyAuthenticationHandler.ScopesClaim)?.Value), Comparer);
 
 	// DERIVED from the catalog, never a second hand-maintained list — a privileged scope added to
 	// `All` is gated the moment it is added, and cannot be forgotten here.
 	static readonly HashSet<string> PrivilegedValues =
-		new(All.Where(s => s.Authority == ScopeAuthority.Privileged).Select(s => s.Value), StringComparer.Ordinal);
+		new(All.Where(s => s.Authority == ScopeAuthority.Privileged).Select(s => s.Value), Comparer);
 
 	// An UNKNOWN scope is not privileged — it is not grantable at all (Validate rejects it first).
 	// Answering "true" here would turn every typo into a confusing privilege refusal instead of the
@@ -134,7 +191,7 @@ public static class ApiKeyScopes
 	// caller so the message says WHICH scope was the problem rather than merely that one was.
 	public static IReadOnlyList<string> PrivilegedIn(IEnumerable<string> scopes)
 	{
-		var set = new HashSet<string>(scopes, StringComparer.Ordinal);
+		var set = new HashSet<string>(scopes, Comparer);
 		return [.. All.Where(s => s.Authority == ScopeAuthority.Privileged && set.Contains(s.Value)).Select(s => s.Value)];
 	}
 
@@ -153,7 +210,7 @@ public static class ApiKeyScopes
 		if (string.IsNullOrWhiteSpace(input))
 			return (valid, invalid);
 
-		var parts = input.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var parts = Split(input);
 		foreach (var p in parts)
 		{
 			if (Allowed.Contains(p))

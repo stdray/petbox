@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using PetBox.Core.Auth;
 
 namespace PetBox.Web.Logging;
 
@@ -32,7 +33,8 @@ public sealed partial class RequestLoggingMiddleware(RequestDelegate next, ILogg
 		{
 			await next(ctx);
 			sw.Stop();
-			var project = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+			var project = ctx.User.Claims
+				.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.ProjectClaim)?.Value;
 			var status = ctx.Response.StatusCode;
 			var ms = sw.ElapsedMilliseconds;
 			if (status >= 500) LogError(log, ctx.Request.Method, path, status, ms, project);

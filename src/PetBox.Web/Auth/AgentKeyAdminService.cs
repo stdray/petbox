@@ -162,8 +162,7 @@ public sealed class AgentKeyAdminService(
 		// The privileged scopes the key ALREADY carries — the set this issuer may keep but not change.
 		// Empty for a mint (there is no existing key), which is what makes a fresh privileged scope a
 		// refusal there and never a carry-over.
-		var held = ApiKeyScopes.PrivilegedIn(
-			(existingScopes ?? "").Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+		var held = ApiKeyScopes.PrivilegedIn(ApiKeyScopes.Split(existingScopes));
 
 		var adding = ApiKeyScopes.PrivilegedIn(requested).Except(held, StringComparer.Ordinal).ToList();
 		if (adding.Count > 0)
