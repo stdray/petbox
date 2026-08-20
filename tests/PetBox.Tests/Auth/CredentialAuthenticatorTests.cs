@@ -56,6 +56,14 @@ public sealed class CredentialAuthenticatorTests : IDisposable
 	static Task SeedMembership(ICoreDbFactory dbf, long userId, string workspaceKey, WorkspaceRole role) =>
 		dbf.SeedMemberAsync(userId, workspaceKey, role);
 
+	// add-member-hardening-cluster #2: AddMemberAsync (which SeedMemberAsync walks through) now
+	// refuses a workspaceKey with no Workspaces row.
+	static void SeedWorkspace(ICoreDbFactory dbf, string key)
+	{
+		using var db = dbf.Open();
+		db.Insert(new Workspace { Key = key, Name = key, Description = "", CreatedAt = DateTime.UtcNow });
+	}
+
 	static ClaimsPrincipal PrincipalFor(long userId) =>
 		new(new ClaimsIdentity(
 			[new Claim(PetBoxClaims.UserId, userId.ToString(System.Globalization.CultureInfo.InvariantCulture))],
@@ -74,6 +82,7 @@ public sealed class CredentialAuthenticatorTests : IDisposable
 	{
 		var (auth, _, _, dbf) = New();
 		var uid = SeedUser(dbf, "alice");
+		SeedWorkspace(dbf, "alpha");
 		await SeedMembership(dbf, uid, "alpha", WorkspaceRole.Member);
 
 		var user = (await auth.AuthenticateAsync("alice", Password))

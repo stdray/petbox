@@ -232,6 +232,9 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "bob", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
+		// add-member-hardening-cluster #2: SeedMemberAsync walks through AddMemberAsync, which now
+		// refuses a workspaceKey with no Workspaces row.
+		await _db.InsertAsync(new Workspace { Key = "ws", Name = "ws", Description = "", CreatedAt = DateTime.UtcNow });
 		await _db.SeedMemberAsync(uid, "ws", WorkspaceRole.Member);
 		var page = new WorkspaceUsersModel(new WorkspaceMembershipService(_db.Factory()));
 		Wire(page);

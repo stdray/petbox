@@ -67,10 +67,15 @@ public sealed class WorkspaceUsersModel : PageModel
 
 		var outcome = await _members.AddMemberAsync(workspaceKey, Username, mode, Password, WorkspaceQuota, Role, ct);
 
-		// FORM-SHAPED refusals only. Each is decided from the POSTed fields before the service reads
-		// a single row, so distinct text here reveals nothing about who exists.
+		// FORM-SHAPED refusals only. Each is decided from the route/POSTed fields before the service
+		// reads a row of Users, so distinct text here reveals nothing about who exists. NoSuchWorkspace
+		// reads Workspaces, not Users — same class. In practice this page never sees it: the route's
+		// [FromRoute] + the WorkspaceAdmin policy already require workspaceKey to be a real, authorized
+		// workspace before OnPostAddAsync runs. The branch exists so an unhandled outcome cannot fall
+		// through to the success path below.
 		var refusal = outcome switch
 		{
+			AddMemberOutcome.NoSuchWorkspace => "Workspace not found.",
 			AddMemberOutcome.PasswordRequired => "A password is required to create a new account.",
 			AddMemberOutcome.QuotaRequired =>
 				"Workspace allowance is required — enter 0 if this account may not create workspaces.",
