@@ -62,6 +62,15 @@ public static class MethodologyGuide
 		if (!builtinCatalog)
 			AppendUndeclaredKinds(md, runtime, rendered);
 
+		// Independent of whether "Other kinds this server knows" rendered above (that section
+		// is about builtin presets and can legitimately be silent — e.g. a project that already
+		// declares every preset kind) — the catalog above is never closed. Without this line the
+		// only escape hatch is the two verb names, and a project whose declared kinds happen to
+		// cover the full preset set would otherwise carry no hint that a NEW kind can be
+		// declared at all (the defect this guide previously had: it read as a closed world of
+		// server presets).
+		AppendKindExtensibility(md);
+
 		AppendRelationKinds(md, runtime);
 		AppendBodyConventions(md);
 		// A kind whose workflow is split into several blocks (types sharing one FSM each) can
@@ -353,6 +362,19 @@ public static class MethodologyGuide
 		md.AppendLine("## Other kinds this server knows");
 		md.AppendLine();
 		md.AppendLine($"- {string.Join(", ", others)} — built-in preset kinds this project's methodology does NOT declare. NONE of their rules apply here and this project has no board of these kinds; nothing above and nothing in `invariants` comes from them. Listed by name only because a board of one of these kinds would still resolve (it falls back to the server preset). To read a preset's actual rules, call tasks_methodology_template_get with a builtin key (quartet|classic|simple).");
+	}
+
+	// The catalog above (declared kinds, plus whatever "Other kinds this server knows" named)
+	// is NOT closed — a project can author its own kind. Deliberately NAMES ONLY THE VERBS,
+	// never an authored kind (e.g. this project's own `wiki`, if it has one): that data is
+	// owned by whoever declared it and belongs on that kind's own board, not hardcoded into
+	// every project's guide.
+	static void AppendKindExtensibility(StringBuilder md)
+	{
+		md.AppendLine();
+		md.AppendLine("## Declaring your own kind");
+		md.AppendLine();
+		md.AppendLine("The kinds above are not the full catalog — a project can author its own: declare one with `tasks_methodology_utility_upsert` (project-homed, survives a methodology switch) or `tasks_methodology_rules_upsert` (instance-homed, goes with this instance).");
 	}
 
 	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime)

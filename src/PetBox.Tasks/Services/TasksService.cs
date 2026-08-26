@@ -171,7 +171,12 @@ public sealed partial class TasksService : ITasksService
 				" tasks_methodology_create/tasks_methodology_rules_upsert for a process kind, or on" +
 				" the project's utility layer via tasks_methodology_utility_upsert for a project-homed one)");
 		}
-		await ValidateWiredBoardAsync(projectKey, canonical, wiredBoard, ct);
+		// `runtime` here is ALREADY the board's own (isUtilitySentinel/instanceKey-aware) resolution
+		// from above — pass it through rather than letting the validator re-derive a project-level
+		// one (custom-kind-route-undiscoverable's WiredBoard-validation sibling: a work-like kind
+		// declared only in the utility layer or a non-active instance must not read as "not a work
+		// board" here).
+		await ValidateWiredBoardAsync(projectKey, runtime, canonical, wiredBoard, ct);
 		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
@@ -273,6 +278,30 @@ public sealed partial class TasksService : ITasksService
 		return await RuntimeAsync(projectKey, ct);
 	}
 
+	// custom-kind-route-undiscoverable (search-kind-resolution-ignores-utility-layer): a read that
+	// spans SEVERAL boards (tasks_search's listing/query modes) can span several WORLDS too — one
+	// board homed in the project's utility layer, another in an instance, a third in a DIFFERENT
+	// instance than whichever is active. RuntimeAsync's single project-level answer (the active
+	// instance, or presets) is the wrong authority for any board whose own membership disagrees
+	// with it; RuntimeForBoardAsync is the one place that already gets this right per board
+	// (tasks_board_list / tasks_workflow / tasks_node_get all resolve through it). This collects
+	// that SAME per-board answer for a whole board set, loading each distinct membership bucket
+	// (an instance key, the utility sentinel, or the legacy null bucket) only once.
+	async Task<Dictionary<string, MethodologyRuntime>> RuntimesByBoardAsync(
+		string projectKey, IReadOnlyList<TaskBoardMeta> boardsMeta, CancellationToken ct)
+	{
+		var byMembership = new Dictionary<string, MethodologyRuntime>(StringComparer.OrdinalIgnoreCase);
+		var byBoard = new Dictionary<string, MethodologyRuntime>(StringComparer.Ordinal);
+		foreach (var meta in boardsMeta)
+		{
+			var membershipKey = meta.MethodologyInstance ?? "";
+			if (!byMembership.TryGetValue(membershipKey, out var runtime))
+				byMembership[membershipKey] = runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
+			byBoard[meta.Name] = runtime;
+		}
+		return byBoard;
+	}
+
 	async Task<MethodologyRuntime> RuntimeForInstanceAsync(string projectKey, string instanceKey, CancellationToken ct)
 	{
 		var def = await _methodologyInstances.GetDefinitionAsync(projectKey, instanceKey, allowClosed: true, ct);
@@ -338,7 +367,11 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		await ValidateWiredBoardAsync(projectKey, meta.Kind, wiredBoard, ct);
+		// This board's OWN runtime (utility layer / its instance / the legacy heuristic) — the
+		// same custom-kind-route-undiscoverable reasoning as CreateBoardAsync's call above applies
+		// here too, and this is the path with an EXISTING board's meta already in hand for it.
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
+		await ValidateWiredBoardAsync(projectKey, runtime, meta.Kind, wiredBoard, ct);
 		var norm = string.IsNullOrWhiteSpace(wiredBoard) ? null : wiredBoard;
 		var set = await _boards.UpdateAsync(projectKey, board, m => m with { WiredBoard = norm }, ct);
 		return (set, norm);
@@ -724,10 +757,13 @@ public sealed partial class TasksService : ITasksService
 	// precise set-target check (it accepts a custom-named target kind and rejects any other kind),
 	// not "is the target named spec": ParseKind == BoardKind.Spec reads wrong for a custom-named
 	// target, and a bare name check would accept a spec board that isn't THIS work kind's target.
-	async Task ValidateWiredBoardAsync(string projectKey, string kind, string? wiredBoard, CancellationToken ct)
+	// `runtime` is the CALLER's responsibility now (custom-kind-route-undiscoverable): this board's
+	// own resolution, not a fresh project-level RuntimeAsync — a work-like kind whose AutoWireFrom
+	// is declared only in the project's utility layer, or in an instance other than the active one,
+	// must still validate correctly here.
+	async Task ValidateWiredBoardAsync(string projectKey, MethodologyRuntime runtime, string kind, string? wiredBoard, CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(wiredBoard)) return;
-		var runtime = await RuntimeAsync(projectKey, ct);
 		var wanted = runtime.AutoWireFrom(kind);
 		if (wanted is null)
 			throw new ArgumentException($"wiredBoard applies only to a work board (this board's kind is '{kind}')");
@@ -2001,8 +2037,14 @@ public sealed partial class TasksService : ITasksService
 				underRoots.Add(id);
 		}
 		var parentOf = underRoots is null ? null : await ParentMapAsync(projectKey, ct);
+		// `runtime` here is the PROJECT-LEVEL resolution (active instance, or presets) — it stays
+		// the right authority for the generic index-backfill calls below (EnsureLexicalBackfillAsync/
+		// EnsureMetaBackfillAsync run once per project file, not per board), but it must NOT be read
+		// as "the kind rules for board X" — see RuntimesByBoardAsync for why and RuntimeForBoardAsync
+		// for the per-board answer every OTHER per-board kind resolution in this file already uses.
 		var runtime = await RuntimeAsync(projectKey, ct);
-		var statusFilter = TaskSearchFilter.ResolveStatusAcross(f.Status, runtime, boardsMeta.Select(b => b.Kind));
+		var runtimeByBoard = await RuntimesByBoardAsync(projectKey, boardsMeta, ct);
+		var statusFilter = TaskSearchFilter.ResolveStatusAcross(f.Status, boardsMeta.Select(b => (b.Kind, runtimeByBoard[b.Name])));
 
 		// Reverse commit lookup (node-commits-impl): NodeIds carrying the commit, resolved once
 		// into criteria so the post-select applicator stays pure.
@@ -2203,7 +2245,7 @@ public sealed partial class TasksService : ITasksService
 				// question left is what each row's current body says. Storing addresses rather than rows
 				// was always what made this possible — this is that decision being cashed in. It is also
 				// strictly cheaper: no second index query and no reranker, ever.
-				hits = await HydratePoolAsync(projectKey, lookup.Pool, urlPrefix, runtime,
+				hits = await HydratePoolAsync(projectKey, lookup.Pool, urlPrefix,
 					PoolKeepsTerminalCancel(queryFacet), ct);
 				// Provenance describes the pass that actually DECIDED this order — the cached one, which by
 				// the cacheable guard above is never a degraded pool.
@@ -2250,8 +2292,12 @@ public sealed partial class TasksService : ITasksService
 		if (query is not null && (req.Sort is null || req.Sort.Value.By == TaskSortBy.Relevance))
 		{
 			var kindByBoard = boardsMeta.ToDictionary(b => b.Name, b => b.Kind, StringComparer.Ordinal);
+			// Per-board runtime (not the single project-level `runtime` — same reasoning as
+			// RuntimesByBoardAsync's doc comment): a hit's own board may be utility-homed or on a
+			// non-active instance, and StatusKindOf must classify it against the world it actually
+			// belongs to, or a custom terminal status silently tiers as StatusKind.Open's default.
 			hits = Tiering.StablePartition(hits, h => TasksSearchDocs.StatusKindTier(
-				runtime.StatusKindOf(kindByBoard.GetValueOrDefault(h.Board), h.Node.Status) ?? StatusKind.Open));
+				runtimeByBoard.GetValueOrDefault(h.Board, runtime).StatusKindOf(kindByBoard.GetValueOrDefault(h.Board), h.Node.Status) ?? StatusKind.Open));
 		}
 		// WholePool (spec: result-set-pageable) suppresses the truncation entirely — the caller is paging
 		// and will seek + slice the full order itself. `Limit` still did its OTHER job upstream (it sized
@@ -2262,10 +2308,14 @@ public sealed partial class TasksService : ITasksService
 			hits = hits.Select(h => h with { Node = h.Node with { Body = SnippetBody(h.Node.Body, req.BodyLen) } }).ToList();
 
 		var meta = boardFilter is null || boardsMeta.Count == 0 ? null : boardsMeta[0];
+		// custom-kind-route-undiscoverable: this board's OWN runtime (RuntimesByBoardAsync), not the
+		// project-level `runtime` above — the defect this fixes was exactly this field reporting
+		// "simple" for a board whose kind is declared only in the project's utility layer, because
+		// the active-instance-only `runtime` never looks there.
 		return new TaskSearchResult(
 			hits,
 			Board: meta?.Name,
-			Kind: meta is null ? null : runtime.KindName(meta.Kind),
+			Kind: meta is null ? null : runtimeByBoard.GetValueOrDefault(meta.Name, runtime).KindName(meta.Kind),
 			WiredBoard: meta?.WiredBoard,
 			CurrentVersion: currentVersion,
 			Retrievers: retrievers,
@@ -2396,7 +2446,7 @@ public sealed partial class TasksService : ITasksService
 			// (pre-fix orphans / delete races) — skip the stale group instead of throwing.
 			var meta = await _boards.FindAsync(projectKey, g.Key, ct);
 			if (meta is null) continue;
-			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, poolKeepsTerminalCancel, ct);
+			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, meta, urlPrefix, poolKeepsTerminalCancel, ct);
 			foreach (var (h, rank) in g)
 			{
 				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);
@@ -2438,7 +2488,7 @@ public sealed partial class TasksService : ITasksService
 	// here. What it must never do is what the old re-derivation did — drop a row because a RETRIEVER was
 	// briefly unavailable, which is not a fact about the row at all.
 	async Task<List<TaskSearchHit>> HydratePoolAsync(string projectKey, SearchPool pool, string? urlPrefix,
-		MethodologyRuntime runtime, bool keepsTerminalCancel, CancellationToken ct)
+		bool keepsTerminalCancel, CancellationToken ct)
 	{
 		var hits = new List<TaskSearchHit>(pool.Count);
 		// One lean projection per board, reused across every address on it.
@@ -2454,7 +2504,7 @@ public sealed partial class TasksService : ITasksService
 				// rather than throwing, exactly as the fresh resolve path does.
 				bySlug = meta is null
 					? new Dictionary<string, TaskNodeView>(StringComparer.Ordinal)
-					: (await ProjectBoardLeanOpenAsync(projectKey, addr.Type, meta.Kind, runtime, urlPrefix, keepsTerminalCancel, ct)).BySlug;
+					: (await ProjectBoardLeanOpenAsync(projectKey, meta, urlPrefix, keepsTerminalCancel, ct)).BySlug;
 				byBoard[addr.Type] = bySlug;
 			}
 			if (!bySlug.TryGetValue(addr.Id, out var node)) continue;
@@ -2468,16 +2518,24 @@ public sealed partial class TasksService : ITasksService
 	// from this pool UNLESS includeClosed widened the ask; terminal-OK (accepted/Done) always
 	// stays — it's a success state search-before-rework must reach, not "closed". No
 	// terminal-ancestor keep here (query hits never address pure terminal ancestors via FTS).
+	//
+	// Takes the board's OWN meta (not a bare kindSlug + a caller-supplied runtime,
+	// custom-kind-route-undiscoverable / search-kind-resolution-ignores-utility-layer): resolving
+	// this board's runtime HERE, from its own MethodologyInstance membership, is what keeps a
+	// utility-homed or non-active-instance board's terminal-CANCEL classification correct instead
+	// of silently falling back through whatever world a single shared runtime happened to be built
+	// from.
 	async Task<(Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)>
 		ProjectBoardLeanOpenAsync(
-			string projectKey, string board, string kindSlug, MethodologyRuntime runtime,
-			string? urlPrefix, bool includeClosed, CancellationToken ct)
+			string projectKey, TaskBoardMeta meta, string? urlPrefix, bool includeClosed, CancellationToken ct)
 	{
+		var board = meta.Name;
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		var open = ctx.TaskNodes
 			.Where(n => n.Board == board && n.ActiveTo == null)
 			.ToList()
-			.Where(n => includeClosed || !runtime.IsTerminalCancelStatus(kindSlug, n.Status))
+			.Where(n => includeClosed || !runtime.IsTerminalCancelStatus(meta.Kind, n.Status))
 			.ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		// One extra board-wide read, the same shape and cost class as BoardTagsAsync above (not a

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -183,8 +184,12 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 		// Addressed read: no utility layer defined yet is a clear error, not Found=false
 		// (batch2 not-found-two-contracts-under-tasks — tasks_methodology_utility_get now
 		// matches tasks_node_get's contract instead of the old nullable-get one).
+		// custom-kind-route-undiscoverable: the addressed-read contract stays an error (not
+		// found:false / an empty document) — only the text changes, to name the fix instead of
+		// just the absence.
 		var miss = () => TasksTools.MethodologyUtilityGetAsync(http, flags, _tasks, Proj);
-		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage($"*{Proj}*");
+		(await miss.Should().ThrowAsync<ArgumentException>())
+			.WithMessage($"*{Proj}*has no utility-kind layer defined*tasks_methodology_utility_upsert*version: 0*");
 
 		var input = new MethodologyDefInput
 		{
@@ -231,5 +236,138 @@ public sealed class MethodologyUtilityKindsTests : IDisposable
 		var noScope = () => TasksTools.BoardAdoptAsync(httpNoGov, flags, _tasks, Proj, "main-spec", TaskBoardMeta.UtilityWorld);
 		// Board name unknown here — the scope assertion must fire before any lookup either way.
 		await noScope.Should().ThrowAsync<Exception>();
+	}
+
+	// custom-kind-route-undiscoverable (search-kind-resolution-ignores-utility-layer): the LIVE
+	// defect. tasks_board_list and tasks_workflow both resolve a board's kind through
+	// RuntimeForBoardAsync (per-board: utility sentinel -> utility layer, else the board's own
+	// instance) and got it right; tasks_search's listing/query response header used a SINGLE
+	// project-level runtime (RuntimeAsync — the ACTIVE instance, or presets) for every board in
+	// scope, which is simply the wrong authority for a board whose own membership disagrees with
+	// it. `$system` never showed this because it declares `wiki` TWICE (utility layer AND the
+	// active `quartet` instance's own rules) — the active-instance copy quietly caught what would
+	// otherwise have missed, which is exactly why this test declares the kind in the utility layer
+	// ONLY and puts a DIFFERENT active instance (`classic`, which does not know `wiki` at all) in
+	// play: the one shape that actually reproduces the report from `petsonde`.
+	[Fact]
+	public async Task Search_BoardScopedKind_ResolvesUtilityOnlyCustomKind_NotShadowedByActiveInstance()
+	{
+		var def = new MethodologyDefinition("utility",
+		[
+			new MethodologyKindDef("wiki", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(["page"],
+				[
+					new WorkflowStatus("draft", "Draft", StatusKind.Open),
+					new WorkflowStatus("live", "Live", StatusKind.Open),
+				],
+				[
+					new MethodologyTransitionDef("draft", "live"),
+				]),
+			]),
+		]);
+		await _tasks.DefineMethodologyAsync(Proj, def, 0);
+
+		// The ACTIVE instance is "classic" — it declares no "wiki" kind anywhere, so a fix that
+		// merely widened the active instance's OWN kind set would not catch this.
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "builtin", "classic");
+		var board = await _tasks.CreateBoardAsync(Proj, "wiki", "wiki", null, null, TaskBoardMeta.UtilityWorld);
+		board.Kind.Should().Be("wiki");
+
+		await _tasks.UpsertAsync(Proj, "wiki",
+		[
+			new NodePatch { Key = "p1", Title = "Page 1", Type = "page", Status = "draft", Body = "x" },
+		]);
+
+		var boardScoped = await _tasks.SearchNodesAsync(Proj, new SearchRequest<TaskNodeFilter, TaskSortBy>
+		{
+			Filter = new TaskNodeFilter(Board: "wiki"),
+		});
+		boardScoped.Kind.Should().Be("wiki",
+			"the board's kind is declared ONLY in the project's utility layer — a project-level " +
+			"(active-instance) runtime must not shadow it back to the 'simple' preset default");
+
+		// The same defect class, in query mode (q != null runs a DIFFERENT resolve path —
+		// HybridCandidatesAsync/ProjectBoardLeanOpenAsync — that carried the identical bug).
+		var queried = await _tasks.SearchNodesAsync(Proj, new SearchRequest<TaskNodeFilter, TaskSortBy>
+		{
+			Query = "Page 1",
+			Filter = new TaskNodeFilter(Board: "wiki"),
+		});
+		queried.Kind.Should().Be("wiki");
+		queried.Hits.Should().Contain(h => h.Node.Key == "p1");
+	}
+
+	// Sibling of the regression above, in the PRESET-ONLY shape (board-kind-dependent behavior is
+	// covered in both forms per project convention): a bare preset kind, declared NOWHERE as data
+	// (neither the utility layer nor any instance), homed in the utility world. `KindName` falls
+	// back to `MethodologyPresets.ParseKind` for an undeclared slug regardless of which runtime
+	// resolved it, so this shape never actually exercised the bug — it pins that the fix's
+	// per-board runtime resolution does not regress the already-working preset case.
+	[Fact]
+	public async Task Search_BoardScopedKind_ResolvesPresetKind_OnUtilityHomedPresetOnlyBoard()
+	{
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "builtin", "quartet");
+		var board = await _tasks.CreateBoardAsync(Proj, "scratch", "simple", null, null, TaskBoardMeta.UtilityWorld);
+		board.Kind.Should().Be("simple");
+
+		await _tasks.UpsertAsync(Proj, "scratch",
+		[
+			new NodePatch { Key = "n1", Title = "Note", Body = "x" },
+		]);
+
+		var res = await _tasks.SearchNodesAsync(Proj, new SearchRequest<TaskNodeFilter, TaskSortBy>
+		{
+			Filter = new TaskNodeFilter(Board: "scratch"),
+		});
+		res.Kind.Should().Be("simple");
+	}
+
+	// Sibling defect found while fixing the search one above (same root cause, a different
+	// caller of the single project-level runtime): ValidateWiredBoardAsync — the gate behind
+	// both tasks_board_create's wiredBoard argument and tasks_board_set_wire — resolved
+	// AutoWireFrom against RuntimeAsync (the active instance) instead of the WIRING board's own
+	// world, so a work-like kind whose AutoWireFrom is declared only in the utility layer (or a
+	// non-active instance) was rejected with "wiredBoard applies only to a work board" even
+	// though its own world says otherwise. Covers BOTH call sites: CreateBoardAsync's inline
+	// wiredBoard and SetWiredBoardAsync's post-hoc one.
+	[Fact]
+	public async Task WiredBoardValidation_ResolvesAutoWireFrom_ForKindDeclaredOnlyInUtilityLayer()
+	{
+		var def = new MethodologyDefinition("utility",
+		[
+			new MethodologyKindDef("myspec", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(["spec-item"],
+				[
+					new WorkflowStatus("defined", "Defined", StatusKind.Open),
+				], []),
+			]),
+			new MethodologyKindDef("mywork", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(["task"],
+				[
+					new WorkflowStatus("todo", "Todo", StatusKind.Open),
+				], []),
+			])
+			{
+				AutoWireFrom = "myspec",
+			},
+		]);
+		await _tasks.DefineMethodologyAsync(Proj, def, 0);
+
+		// The active instance is "classic" — it knows neither "myspec" nor "mywork".
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "builtin", "classic");
+		var specBoard = await _tasks.CreateBoardAsync(Proj, "myspec-board", "myspec", null, null, TaskBoardMeta.UtilityWorld);
+
+		// First call site: CreateBoardAsync's own inline wiredBoard validation.
+		var workBoard = await _tasks.CreateBoardAsync(Proj, "mywork-board", "mywork", null, specBoard.Name, TaskBoardMeta.UtilityWorld);
+		workBoard.WiredBoard.Should().Be(specBoard.Name);
+
+		// Second call site: SetWiredBoardAsync, on an already-existing board.
+		var otherWork = await _tasks.CreateBoardAsync(Proj, "mywork-board-2", "mywork", null, null, TaskBoardMeta.UtilityWorld);
+		var (set, wired) = await _tasks.SetWiredBoardAsync(Proj, otherWork.Name, specBoard.Name);
+		set.Should().BeTrue();
+		wired.Should().Be(specBoard.Name);
 	}
 }

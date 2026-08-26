@@ -83,14 +83,23 @@ public static class TaskSearchFilter
 		return anyProvided ? set : null;
 	}
 
-	// Status filter spanning boards of several kinds: a slug is valid if ANY kind in scope
-	// knows it. Kinds are stored slugs (preset- or definition-resolved).
+	// Status filter spanning boards of several kinds AND POSSIBLY SEVERAL METHODOLOGY WORLDS: a
+	// slug is valid if ANY (kind, that board's OWN runtime) pair in scope knows it.
+	// custom-kind-route-undiscoverable (search-kind-resolution-ignores-utility-layer): a single
+	// shared runtime is wrong here — a board homed in the project's utility layer (or in an
+	// instance other than the active one) declares kinds a project-level runtime never sees, so
+	// its statuses would silently read as "unknown slug" and drop out of the filter. Each board
+	// therefore carries the runtime that actually resolves ITS kind (RuntimeForBoardAsync,
+	// collected per board by the caller); `Distinct()` dedups by (runtime reference, kind name),
+	// so boards sharing one world and kind still cost one Types() lookup, not N.
 	public static HashSet<string>? ResolveStatusAcross(
-		IReadOnlyList<string>? status, MethodologyRuntime runtime, IEnumerable<string> kindSlugs)
+		IReadOnlyList<string>? status, IEnumerable<(string Kind, MethodologyRuntime Runtime)> boards)
 	{
 		if (status is null || status.Count == 0) return null;
-		var known = kindSlugs.Select(runtime.KindName).Distinct(StringComparer.Ordinal)
-			.SelectMany(runtime.Types).SelectMany(w => w.Statuses).Select(s => s.Slug);
+		var known = boards
+			.Select(b => (b.Runtime, Name: b.Runtime.KindName(b.Kind)))
+			.Distinct()
+			.SelectMany(b => b.Runtime.Types(b.Name)).SelectMany(w => w.Statuses).Select(s => s.Slug);
 		return ResolveStatusSlugs(status, known);
 	}
 

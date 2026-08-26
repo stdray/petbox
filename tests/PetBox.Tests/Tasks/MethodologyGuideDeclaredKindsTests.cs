@@ -68,6 +68,22 @@ public sealed class MethodologyGuideDeclaredKindsTests
 		guide.Markdown.Should().Contain("NONE of their rules apply here");
 	}
 
+	// custom-kind-route-undiscoverable: the guide must not read as a closed world of server
+	// presets — a project can always author its own kind. This line names the two verbs
+	// (tasks_methodology_utility_upsert / tasks_methodology_rules_upsert) and must appear
+	// whether or not "Other kinds this server knows" itself rendered — see the sibling
+	// assertion on NoDeclaredKinds_RenderTheFullBuiltinCatalog_HeadedAsDefaults below for the
+	// case where that section is absent.
+	[Fact]
+	public void ClassicInstance_NamesTheExtensibilityVerbs()
+	{
+		var guide = Guide(Classic());
+
+		guide.Markdown.Should().Contain("## Declaring your own kind");
+		guide.Markdown.Should().Contain("tasks_methodology_utility_upsert");
+		guide.Markdown.Should().Contain("tasks_methodology_rules_upsert");
+	}
+
 	[Fact]
 	public void InstanceGuide_KeepsTheProjectHeading()
 	{
@@ -112,6 +128,12 @@ public sealed class MethodologyGuideDeclaredKindsTests
 		guide.Markdown.Should().Contain("NO methodology is chosen for this project");
 		guide.Markdown.Should().NotContain("How to work this project's boards");
 		guide.Markdown.Should().NotContain("## Other kinds this server knows", "nothing is undeclared when everything is a default");
+		// custom-kind-route-undiscoverable: extensibility is NOT nested inside "Other kinds"
+		// (which legitimately renders nothing here) — it must still tell the reader a new kind
+		// can be authored, and by which verbs.
+		guide.Markdown.Should().Contain("## Declaring your own kind");
+		guide.Markdown.Should().Contain("tasks_methodology_utility_upsert");
+		guide.Markdown.Should().Contain("tasks_methodology_rules_upsert");
 		guide.Invariants.Should().Contain(new MethodologyInvariant("work", "approval_gate", "Review -> Done"));
 		guide.Source.Should().Be("presets");
 	}

@@ -223,6 +223,12 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		md.Should().NotContain("must carry a `task_spec` link");
 		md.Should().Contain("## Other kinds this server knows");
 		md.Should().Contain("intake, ideas, spec, work, classic, simple");
+		// custom-kind-route-undiscoverable: the guide names the verbs a project uses to author
+		// its own kind (this instance's own `support` kind is exactly such a case), independent
+		// of the "Other kinds" section above.
+		md.Should().Contain("## Declaring your own kind");
+		md.Should().Contain("tasks_methodology_utility_upsert");
+		md.Should().Contain("tasks_methodology_rules_upsert");
 
 		var inv = Invariants(guide);
 		inv.Should().Contain(("support", "approval_gate", "Open -> Resolved"));

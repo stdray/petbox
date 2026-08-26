@@ -30,7 +30,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance `key` (its slug address, the same string every methodology verb takes as `key`), or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare; declare one with tasks_methodology_utility_upsert, project-homed and surviving a methodology switch, or tasks_methodology_rules_upsert, instance-homed). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance `key` (its slug address, the same string every methodology verb takes as `key`), or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? wiredBoard = null,
@@ -414,7 +414,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
-			throw new ArgumentException($"project '{projectKey}' has no utility-kind layer defined");
+			throw new ArgumentException($"project '{projectKey}' has no utility-kind layer defined; create one with tasks_methodology_utility_upsert (version: 0)");
 		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 		return new MethodologyUtilityGetResult(
 			DefinitionName: doc.Name,
