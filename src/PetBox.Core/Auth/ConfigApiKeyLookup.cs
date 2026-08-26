@@ -54,13 +54,39 @@ public sealed class ConfigApiKeyLookup : IApiKeyLookup
 				ProjectKey = entry.ProjectKey,
 				Scopes = entry.Scopes,
 				DefaultProjectKey = entry.DefaultProjectKey,
-				ExpiresAt = entry.ExpiresAt,
+				ExpiresAt = NormalizeToUtc(entry.ExpiresAt),
 				SandboxOnly = entry.SandboxOnly,
 				CreatedAt = now,
 			};
 		}
 		_byKey = builder.ToImmutable();
 	}
+
+	// work config-key-expiry-timezone-normalization: Microsoft.Extensions.Configuration.Binder
+	// materializes `Auth:ApiKeys[N]:ExpiresAt` via plain `DateTime.Parse` — no
+	// `DateTimeStyles.RoundtripKind`/`AdjustToUniversal`. That means a value WITH an offset/`Z`
+	// (e.g. "2026-08-26T09:33:13Z") comes back `Kind=Local` with the clock digits already
+	// SHIFTED to the host's zone, and a value withOUT one comes back `Kind=Unspecified` with the
+	// digits taken literally. `ApiKeyAuthenticationHandler`'s `expiresAt <= DateTime.UtcNow` check
+	// then compares raw Ticks — DateTime's comparison operators ignore Kind — so on a host with a
+	// non-zero UTC offset a key lives `offset` longer than its declared expiry, for BOTH forms.
+	//
+	// Decided semantics (owner-approved, not re-litigated here): a config moment with NO zone
+	// suffix means UTC, not "host-local". So the fix is explicit at THIS materialization point,
+	// not a host-timezone workaround:
+	//   Unspecified -> the digits ARE the UTC instant (SpecifyKind, no shift)
+	//   Local       -> the Binder already shifted the digits to host-local; undo that (ToUniversalTime)
+	//   Utc         -> already correct (defensive; the Binder does not produce this Kind today)
+	// The result is always Kind=Utc, matching DbApiKeyLookup's DB-sourced keys (see that type for
+	// why a value read back from SQLite needs the analogous normalization even though it was never
+	// mis-parsed — linq2db/Microsoft.Data.Sqlite drops Kind entirely on the way out).
+	static DateTime? NormalizeToUtc(DateTime? value) => value switch
+	{
+		null => null,
+		{ Kind: DateTimeKind.Utc } dt => dt,
+		{ Kind: DateTimeKind.Local } dt => dt.ToUniversalTime(),
+		{ } dt => DateTime.SpecifyKind(dt, DateTimeKind.Utc), // Unspecified
+	};
 
 	// EVERY OTHER DOOR into ApiKeys.Scopes runs ApiKeyScopes.Validate first — mint (KeyIssuer), the
 	// admin form (AgentKeyAdminService), the project-page re-scope (Pages/Admin/ProjectKeys), the MCP

@@ -16,6 +16,18 @@ public sealed class DbApiKeyLookup(ICoreDbFactory factory) : IApiKeyLookup
 	public ApiKey? FindByKey(string key)
 	{
 		using var db = factory.Open();
-		return db.ApiKeys.FirstOrDefault(k => k.Key == key);
+		var found = db.ApiKeys.FirstOrDefault(k => k.Key == key);
+		// work config-key-expiry-timezone-normalization: every writer of ApiKeys.ExpiresAt
+		// (AgentKeyAdminService.MintAsync/PatchAsync) stores a value derived from
+		// `DateTime.UtcNow` — Kind=Utc going IN. But linq2db over Microsoft.Data.Sqlite drops
+		// Kind entirely on the way OUT (measured: a Utc write reads back Kind=Unspecified,
+		// same Ticks); PetBox.Log.Core's KqlSqlExpressions and Mcp/HealthTools.cs already carry
+		// the identical SpecifyKind workaround for the same SQLite behavior. The numeric value
+		// was never wrong here (unlike ConfigApiKeyLookup's Binder defect), only the label — but
+		// ApiKey.ExpiresAt must read Kind=Utc regardless of source, so a caller that reasonably
+		// calls .ToUniversalTime() on it later cannot silently reinterpret it as host-local.
+		return found is null || found.ExpiresAt is not { Kind: not DateTimeKind.Utc } expiresAt
+			? found
+			: found with { ExpiresAt = DateTime.SpecifyKind(expiresAt, DateTimeKind.Utc) };
 	}
 }
