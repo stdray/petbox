@@ -2,8 +2,9 @@
 name: analysis-workspace
 description: >-
   Run a voluminous, multi-part investigation (a cross-cutting audit, a large refactor
-  survey, "what's the state of X across the codebase") as staged files in an external
-  working folder instead of hundreds of MCP/tool calls or a sprawling chat transcript.
+  survey, "what's the state of X across the codebase") as staged files in a versioned
+  working folder under `research/` on its own branch, instead of hundreds of MCP/tool
+  calls or a sprawling chat transcript.
   Use when the task has multiple independent areas to cover, needs a fan-out of several
   subagents, or would otherwise blow the context budget re-deriving the same ground truth
   repeatedly. Not for a small task, a single file, or a short question — see "When not to
@@ -13,9 +14,16 @@ description: >-
 # Analysis workspace — staged files over repeated calls
 
 For a big, many-part investigation, do the thinking in **numbered files in a working
-folder outside the repo**, not in chat turns or by re-querying the same sources hundreds
-of times. Files are cheap to read, cheap to diff, cheap to hand to a subagent, and — unlike
-a chat transcript — they can be *edited in place* as understanding improves.
+folder**, not in chat turns or by re-querying the same sources hundreds of times. Files
+are cheap to read, cheap to diff, cheap to hand to a subagent, and — unlike a chat
+transcript — they can be *edited in place* as understanding improves.
+
+**Where the folder lives: `research/<topic>/` in the repo, on a branch `research/<topic>`.**
+See `research/README.md` for the convention. Not in `doc/` — that is maintained
+documentation and a draft space would rot it. Not outside the repo either: that was the
+old advice, and it traded the `git clean` risk for a worse one — the work lives on one
+machine and the next session cannot find it. On a branch it is versioned, findable, and
+reaches `main` only by an explicit decision.
 
 ## The stages
 
@@ -87,6 +95,24 @@ first. A folder full of numbered files nobody can navigate is worse than a chat 
 - **Terminology collisions poison downstream artifacts.** One word carrying two meanings
   will corrupt a decision registry or a questionnaire before anyone notices — this is why
   the legend/terms file comes first, not last.
+- **A homogeneous snapshot is a STATE, not a PROPERTY.** The single most expensive error of
+  the last run: a flag was found set the same way on 7 of 7 live transitions, and the
+  orchestrator concluded it was therefore redundant and proposed removing the degree of
+  freedom. The owner rejected it — that uniformity was today's configuration, not a fact
+  about the model, and the ability to set it per-item was exactly the point of the feature.
+  Before proposing to remove any knob because "it only ever takes one value", find out
+  *why* it takes that value, and search memory for a prior decision about it — in that case
+  the correct answer had been recorded four months earlier and was contradicted by a fresh
+  measurement.
+- **Don't "correct" a citation before checking it.** A subagent's file:line references
+  looked wrong (they pointed at something other than the symbol named next to them) and
+  were nearly reported as an error; they were correct — they pointed at where a value was
+  *acquired*, not where it was *used*. Verifying a report includes verifying your own
+  reading of it.
+- **A live sandbox mutates under you.** When several agents probe the same throwaway
+  project, any file sentence of the form "the sandbox currently contains X" is stale within
+  minutes. Write what the sandbox *demonstrates* (a reproduction, an invariant), not what
+  it currently holds; re-check state at the moment you need it.
 
 ## When not to use this
 
