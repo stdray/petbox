@@ -105,6 +105,25 @@ history now, while the current plan and status are the boards above.
    local check — the Cake gate builds the whole source tree, the image build does not. If
    a change adds a root-level build input (a new props/analyzer file, a new top-level
    directory), build the image (`docker build .`) before moving the deploy tag.
+   **The Cake gate is not the only gate `git push` has to clear.** `core.hooksPath` is set
+   to `.githooks`, and `.githooks/pre-push` runs `dotnet run scripts/inspect-gate.cs` —
+   `jb inspectcode` against the whole solution, failing (exit 1) if anything survives at
+   ERROR severity — on every push that isn't a pure ref deletion. This is invoked ONLY from
+   the hook: it is not a dependency of `Test`, `Verify`, or any other Cake target in
+   `build.cs`, so a green `./build.ps1 -Target Test` (or even `-Target Verify`) proves
+   nothing about it. Incident 2026-08-26: a worker ran the Cake gate in the foreground, exit
+   0, 4460 tests green, and still had the push rejected — `inspect-gate: 1 finding(s)
+   survived` (`RedundantUsingDirective`). Run it yourself before pushing:
+   `dotnet run scripts/inspect-gate.cs` (~45-110s; nothing else may build in the checkout
+   while it runs — `jb inspectcode` fails if a concurrent `dotnet build` touches the same
+   checkout; bypass with `git push --no-verify`, but that just defers the failure to the
+   next push or to whoever reviews it). If it reports something mechanically fixable, the
+   fixer is `./build.ps1 -Target CleanupCode` (`jb cleanupcode --profile=PetBoxSafe`) — also
+   deliberately wired into NEITHER a hook nor `Test`/`Verify` (it rewrites files, so it must
+   be run and its diff reviewed BEFORE committing, never after — see `build.cs` for the full
+   rationale). `.githooks/pre-commit` runs a separate, much cheaper check on every commit:
+   `dotnet run scripts/pre-commit.cs`, which runs `dotnet format whitespace` on the staged
+   `.cs` files and re-stages what it touched — no build, no test, no `jb`.
    **Run the gate in the FOREGROUND and block on its exit code.** A gate started in the
    background dies with the turn that started it: a subagent that ends its turn saying "the
    gate is running, I'll report when it finishes" never reports — its process is gone. This

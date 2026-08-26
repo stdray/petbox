@@ -792,8 +792,13 @@ Task("SdkChecks")
 	.IsDependentOn("TsWireTest")
 	.IsDependentOn("TsWireTypecheck");
 
-// Everything Test covers, plus the client SDKs (bun + uv toolchains). This is the full
-// pre-push sweep — the local equivalent of CI's two jobs (`test` + `sdk`) taken together.
+// Everything Test covers, plus the client SDKs (bun + uv toolchains) — the local equivalent
+// of CI's two jobs (`test` + `sdk`) taken together. It is NOT the full pre-push sweep, and
+// the comment used to claim it was (work agents-md-omits-inspect-gate, 2026-08-26):
+// `.githooks/pre-push` also runs `dotnet run scripts/inspect-gate.cs` (jb inspectcode at
+// ERROR severity), which is deliberately a dependency of NO Cake target — same reasoning as
+// CleanupCode above. So a green Verify can still have its push rejected; run inspect-gate
+// yourself before pushing (AGENTS.md's gate section spells this out).
 Task("Verify")
 	.IsDependentOn("Test")
 	.IsDependentOn("SdkChecks");
