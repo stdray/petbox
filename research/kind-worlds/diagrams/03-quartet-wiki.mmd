@@ -1,0 +1,44 @@
+---
+title: Как раскладывается quartet с вики
+---
+flowchart LR
+  classDef cat fill:#D8E9ED,stroke:#2F6F7E,color:#0E2A31
+  classDef proc fill:#E8E4F0,stroke:#5B4E7A,color:#241E36
+  classDef board fill:#FFFFFF,stroke:#5A6570,color:#12181F
+  classDef out fill:#F0F2F4,stroke:#8A939C,color:#2A323A
+
+  subgraph CATALOG["КАТАЛОГ KINDS — принадлежит проекту $system"]
+    direction TB
+    CI["intake<br/>issue"]:::cat
+    CD["ideas<br/>idea"]:::cat
+    CS["spec<br/>spec"]:::cat
+    CW["work<br/>feature/bug/chore"]:::cat
+    CK["wiki<br/>page"]:::cat
+  end
+
+  subgraph PROCESS["ПРОЦЕСС quartet — конфигурация, не владелец"]
+    direction TB
+    R1["роль: приём<br/>intake"]:::proc
+    R2["роль: замысел<br/>ideas, гейт accepted OWNER"]:::proc
+    R3["роль: контракт<br/>spec, требует idea_spec"]:::proc
+    R4["роль: поставка<br/>work, гейт Done OWNER"]:::proc
+  end
+
+  R1 -.-> CI
+  R2 -.-> CD
+  R3 -.-> CS
+  R4 -.-> CW
+
+  BI["доска intake"]:::board --> CI
+  BD["доска ideas"]:::board --> CD
+  BS["доска spec"]:::board --> CS
+  BW["доска work"]:::board --> CW
+  BK["доска wiki"]:::out --> CK
+
+  BI -.-> PROCESS
+  BD -.-> PROCESS
+  BS -.-> PROCESS
+  BW -.-> PROCESS
+  BK -.->|"ВНЕ ПРОЦЕССА<br/>вопрос членства не возникает"| PROCESS
+
+  CK -.->|"kind wiki просто есть в каталоге:<br/>дубля объявить невозможно"| CATALOG

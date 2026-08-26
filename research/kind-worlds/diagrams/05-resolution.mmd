@@ -1,0 +1,37 @@
+---
+title: Резолвинг правил доски — где упростится реализация
+---
+flowchart TB
+  classDef today fill:#F5E6CE,stroke:#8A5A2B,color:#3A2A12
+  classDef trap fill:#F2D6D8,stroke:#96343B,color:#3B1518
+  classDef target fill:#D8E9ED,stroke:#2F6F7E,color:#0E2A31
+
+  subgraph A["СЕГОДНЯ — два алгоритма, три ветки"]
+    direction TB
+    Q["нужны правила для узла или доски"]:::today
+    ALG1["АЛГОРИТМ 1 — пер-борд<br/>RuntimeForBoardAsync"]:::today
+    ALG2["АЛГОРИТМ 2 — проектный<br/>RuntimeAsync"]:::today
+    Q --> ALG1
+    Q --> ALG2
+    ALG1 --> BR1["ветка: членство = $utility<br/>читать утилитарный слой"]:::today
+    ALG1 --> BR2["ветка: членство = инстанс<br/>читать правила инстанса"]:::today
+    ALG1 --> BR3["ветка: членство пусто<br/>легаси-null, затем пресеты"]:::today
+    ALG2 --> H["эвристика: активный указатель,<br/>иначе единственный открытый,<br/>иначе пресеты"]:::today
+    H --> ERR["ШЕСТЬ путей применяли АЛГОРИТМ 2 там,<br/>где доска была в руках<br/>5 починено в 4d956ad5, 1 открыт: meta-backfill"]:::trap
+  end
+
+  subgraph B["ЦЕЛЬ — один путь"]
+    direction TB
+    Q2["нужны правила для узла или доски"]:::target
+    L1["доска знает свой kind"]:::target
+    L2["каталог проекта знает правила kind'а"]:::target
+    Q2 --> L1 --> L2
+    D1["УМИРАЕТ: UtilityRuntimeAsync"]:::target
+    D2["УМИРАЕТ: третья ветка легаси-null"]:::target
+    D3["УМИРАЕТ: эвристика проектного runtime для досок"]:::target
+    D4["УМИРАЕТ: dual-read оговорки по всему файлу"]:::target
+    L2 --> D1
+    L2 --> D2
+    L2 --> D3
+    L2 --> D4
+  end

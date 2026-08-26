@@ -1,0 +1,39 @@
+---
+title: Жизненный цикл — что перестаёт быть возможным
+---
+flowchart TB
+  classDef today fill:#F5E6CE,stroke:#8A5A2B,color:#3A2A12
+  classDef trap fill:#F2D6D8,stroke:#96343B,color:#3B1518
+  classDef target fill:#D8E9ED,stroke:#2F6F7E,color:#0E2A31
+
+  subgraph NOW["СЕГОДНЯ — три легальных шага до вечно застрявших данных"]
+    direction TB
+    S0["доска wiki2 в инстансе classic<br/>узел n1: тип note, статус final"]:::today
+    S1["ШАГ 1 — methodology_close classic<br/>каскадом гасит доски С ЖИВЫМИ УЗЛАМИ<br/>без предупреждения и без dry-run"]:::today
+    S2["ШАГ 2 — board_reopen wiki2<br/>доска открыта и работает,<br/>правила заморожены НАВСЕГДА"]:::today
+    S3["ШАГ 3 — board_adopt wiki2 в $utility<br/>прошёл БЕЗ валидации узлов<br/>в отличие от rules_upsert с его migration"]:::today
+    S4["УЗЕЛ n1 ЗАСТРЯЛ<br/>правка: needs a known type page, got note<br/>сменить тип: type is immutable<br/>вернуть назад: прежних правил больше нет"]:::trap
+    S0 --> S1 --> S2 --> S3 --> S4
+    HIST["ЭТО ИСТОРИЯ, не текущее состояние:<br/>wiki2 сейчас в $utility, closed:false"]:::target
+    S4 -.-> HIST
+  end
+
+  subgraph OTHER["ВТОРАЯ ЦЕПОЧКА — без закрытия инстанса, C её НЕ устраняет"]
+    direction TB
+    O1["board_close доски<br/>закрытая доска выпадает из области<br/>валидации живых узлов"]:::today
+    O2["rules_upsert выкидывает тип<br/>принято молча — узлов в области нет"]:::today
+    O3["board_reopen<br/>ноль валидации"]:::today
+    O4["узел write-dead<br/>обратимо, ПОКА инстанс открыт"]:::trap
+    O1 --> O2 --> O3 --> O4
+  end
+
+  subgraph GOAL["ЦЕЛЬ — ПЕРВАЯ цепочка неконструируема"]
+    direction TB
+    G0["доска wiki2, kind wiki из каталога проекта"]:::target
+    G1["закрыть процесс classic<br/>правила остаются проектными,<br/>закрывается только процесс"]:::target
+    G2["перенести доску в другой процесс<br/>ПРАВИЛА НЕ МЕНЯЮТСЯ —<br/>менять нечего, kind тот же"]:::target
+    G3["узел n1 легален всегда"]:::target
+    G0 --> G1 --> G2 --> G3
+    NOTE["adopt-застревание и зомби-заморозка<br/>РАСТВОРЯЮТСЯ, а не чинятся"]:::target
+    G3 --> NOTE
+  end

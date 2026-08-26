@@ -1,0 +1,42 @@
+---
+title: Сценарий petsonde — classic плюс вики и доска решений
+---
+flowchart TB
+  classDef today fill:#F5E6CE,stroke:#8A5A2B,color:#3A2A12
+  classDef trap fill:#F2D6D8,stroke:#96343B,color:#3B1518
+  classDef target fill:#D8E9ED,stroke:#2F6F7E,color:#0E2A31
+  classDef board fill:#FFFFFF,stroke:#5A6570,color:#12181F
+
+  subgraph NOW["СЕГОДНЯ — 8 понятий до первой доски"]
+    direction TB
+    N0["нужна доска вики и доска решений"]:::board
+    N1["1. понять, что kind не равен доске"]:::today
+    N2["2. понять, что есть rule source"]:::today
+    N3["3. узнать: board_create ТРЕБУЕТ membership,<br/>раз в проекте есть инстанс classic"]:::today
+    N4["4. узнать про утилитарный слой"]:::today
+    N5["5. узнать сентинел $utility"]:::today
+    N6["6. понять семантику ДОМОМ объявления<br/>процессный или сквозной — решить ДО того,<br/>как понял само различие"]:::today
+    N7["7. выбрать верб: rules_upsert или utility_upsert"]:::today
+    N8["8. узнать про активный указатель,<br/>иначе непонятно, про что guide"]:::today
+    T1["ЛОВУШКА: utility_get на проекте без слоя<br/>отвечает ошибкой, читается как отсутствие машинерии"]:::trap
+    T2["ЛОВУШКА: board_create с членством в инстансе<br/>говорит unknown board kind wiki,<br/>хотя wiki объявлен, и предлагает объявить ДУБЛЬ"]:::trap
+    T3["ЛОВУШКА: guide вообще не знает, что kinds авторятся"]:::trap
+    N0 --> N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7 --> N8
+    N4 -.-> T1
+    N7 -.-> T2
+    N2 -.-> T3
+  end
+
+  subgraph GOAL["ЦЕЛЬ — 3-4 понятия"]
+    direction TB
+    G0["нужна доска вики и доска решений"]:::board
+    G1["1. проект"]:::target
+    G2["2. каталог kinds проекта"]:::target
+    G3["3. объявить kind wiki и kind decision<br/>одним вербом, дом не выбирается"]:::target
+    G4["4. board_create kind=wiki<br/>БЕЗ членства"]:::target
+    G5["процесс classic узнаётся позже,<br/>когда он реально понадобится"]:::target
+    G0 --> G1 --> G2 --> G3 --> G4
+    G4 -.-> G5
+    GD["доска decisions:<br/>терминальный статус — норма,<br/>гейта нет, потому что kind его не объявляет"]:::target
+    G4 --> GD
+  end

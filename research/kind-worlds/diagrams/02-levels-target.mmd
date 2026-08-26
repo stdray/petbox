@@ -1,0 +1,32 @@
+---
+title: Уровни цели — каталог вместо rule source
+---
+flowchart TB
+  classDef target fill:#D8E9ED,stroke:#2F6F7E,color:#0E2A31
+  classDef board fill:#FFFFFF,stroke:#5A6570,color:#12181F
+  classDef proc fill:#E8E4F0,stroke:#5B4E7A,color:#241E36
+
+  PRJ["ПРОЕКТ"]:::target
+  CAT["КАТАЛОГ KINDS проекта<br/>слаг уникален в проекте<br/>одно хранилище, одна поверхность чтения"]:::target
+
+  PRJ --> CAT
+  CAT --> K1["intake"]:::target
+  CAT --> K2["ideas"]:::target
+  CAT --> K3["spec"]:::target
+  CAT --> K4["work"]:::target
+  CAT --> K5["wiki"]:::target
+
+  B1["доска work"]:::board
+  B2["доска wiki"]:::board
+  B1 -->|"kind"| K4
+  B2 -->|"kind"| K5
+
+  PROC["ПРОЦЕСС — бывший инстанс<br/>роли kinds в цепочке, гейты,<br/>синглтон-скоуп, активный по умолчанию<br/>ПРАВИЛАМИ НЕ ВЛАДЕЕТ"]:::proc
+  PRJ --> PROC
+  PROC -.->|"назначает роли"| K1
+  PROC -.->|"назначает роли"| K2
+  PROC -.->|"назначает роли"| K3
+  PROC -.->|"назначает роли"| K4
+
+  B1 -.->|"участвует, опционально"| PROC
+  B2 -.->|"вне процесса — легально"| PROC

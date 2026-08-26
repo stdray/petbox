@@ -1,0 +1,31 @@
+---
+title: Уровни сегодня — четыре rule source
+---
+flowchart TB
+  classDef today fill:#F5E6CE,stroke:#8A5A2B,color:#3A2A12
+  classDef board fill:#FFFFFF,stroke:#5A6570,color:#12181F
+  classDef ghost fill:#EFEFEF,stroke:#9AA3AC,color:#4A535C,stroke-dasharray:4 3
+
+  B1["доска work<br/>членство: quartet"]:::board
+  B2["доска wiki<br/>членство: $utility"]:::board
+  B3["доска без членства<br/>создать больше нельзя"]:::board
+
+  I["RULE SOURCE 1 — инстанс методологии<br/>quartet<br/>хранит: kinds + workflows + гейты"]:::today
+  U["RULE SOURCE 2 — утилитарный слой<br/>сентинел $utility<br/>ОТДЕЛЬНОЕ хранилище, свои вербы"]:::today
+  P["RULE SOURCE 3 — пресеты сервера<br/>simple / classic / spec / ideas / intake / work<br/>fallback для необъявленного kind"]:::ghost
+  N["RULE SOURCE 4 — легаси-null<br/>без имени<br/>в $system пуст"]:::ghost
+
+  B1 --> I
+  B2 --> U
+  B3 --> N
+  I -.->|"kind не найден"| P
+  U -.->|"kind не найден"| P
+
+  I --> KW["kind work<br/>feature / bug / chore"]:::today
+  U --> KK["kind wiki<br/>page: draft/live/promoted/stale"]:::today
+  I --> KD["kind wiki ДУБЛЬ<br/>копия в правилах quartet"]:::today
+
+  KW --> NW["узлы"]:::board
+  KK --> NK["узлы"]:::board
+
+  KD -.->|"маскировал 2 бага"| KK
