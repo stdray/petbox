@@ -13,11 +13,16 @@ public static class UsageSourceKind
 }
 
 // Usage telemetry intake for memory entries (spec: memory-usage-observability).
-// Called ONLY by the agent/human-facing adapters (MCP tools, UI) — never by internal
-// machine consumers (distillation judge, digest discovery), which reach IMemoryService
-// directly; that placement is what keeps the counters honest. Both calls are
-// fire-and-forget enqueues: the read path never waits on a counter write, and a lost
-// increment on crash costs statistics, not state.
+// Called ONLY by the adapters that hand content to a caller (MCP tools, UI) — never by
+// internal WRITE-side machine consumers (the distillation judge, SessionDigestJob's own
+// digest-composition upserts), which reach IMemoryService directly; that placement is what
+// keeps the counters honest. This does NOT exempt every internal reader: SessionTools'
+// session_search calls Surfaced (deliberate:false — UsageSourceKind.Machine) for the
+// session-digests entries its digest-discovery leg actually delivers, because that leg's
+// result DOES reach a caller (card memory-telemetry-blind-paths #2) — the exemption above is
+// for consumers whose read/write never leaves the server, not for every path with "digest" in
+// its name. Both Surfaced/Opened calls are fire-and-forget enqueues: the read path never waits
+// on a counter write, and a lost increment on crash costs statistics, not state.
 public interface IMemoryUsageRecorder
 {
 	// The entry keys actually RETURNED in a recall/search answer (post-limit) — an impression.

@@ -190,7 +190,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		got.LastOrdinal.Should().Be(1); // the ordinal cursor is always reported, not only when polling
 
 		// list = session_search without q (the former session.list); rows carry version.
-		var list = await SessionTools.SearchAsync(http, Flags(), _sessionSvc, null!, Proj);
+		var list = await SessionTools.SearchAsync(http, Flags(), _sessionSvc, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj);
 		list.Items.Should().ContainSingle();
 		list.Items[0].Version.Should().Be(1);
 		list.Items[0].Hits.Should().BeNull(); // no query — no episodic arm
@@ -430,7 +430,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var other = Http("tasks:read,memory:read", project: "other");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			SessionTools.SearchAsync(other, Flags(), null!, null!, Proj, "q"));
+			SessionTools.SearchAsync(other, Flags(), null!, null!, null!, Proj, "q"));
 	}
 
 	[Fact]

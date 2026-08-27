@@ -4,8 +4,10 @@ using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Core.Search;
+using PetBox.Memory.Contract;
 using PetBox.Sessions.Contract;
 using PetBox.Web.Mcp.Contract;
+using PetBox.Web.Search;
 
 namespace PetBox.Web.Mcp;
 
@@ -268,6 +270,7 @@ public static class SessionTools
 		""")]
 	public static async Task<SessionSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessionSvc, PetBox.Web.Search.SessionSearchService search,
+		IMemoryUsageRecorder usage,
 		string? projectKey = null,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
 		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
@@ -331,6 +334,27 @@ public static class SessionTools
 				c.Retrievers.SemanticLag, c.Retrievers.Ranking),
 			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
+
+		// Discovery-tier telemetry (spec: memory-usage-observability, card
+		// memory-telemetry-blind-paths #2). The digest leg reads the `session-digests` memory
+		// store as one of three RRF legs (see SessionSearchService.SearchAsync) but never told
+		// entry_usage a digest was ever reached — 289/352 digests read as a dead tail purely
+		// from missing telemetry, not from disuse (superseded card
+		// usage-counters-blind-to-session-search). Record ONLY the candidates that (a) actually
+		// carry a session-digests entry (Sources contains "digest" — a term/fullscan-only
+		// candidate has no digest row to credit; see the synthetic MemoryEntryView
+		// SessionSearchService builds for those) and (b) survived ResponseBudget.Take, the same
+		// "record what was actually delivered" contract MemoryTools.cs's search path uses.
+		//
+		// Source is MACHINE, not deliberate (owner decision 2026-08-27, not to be reopened
+		// without a new fact): the agent searched SESSIONS, not facts — the digest is
+		// discovery's own internal mechanism, and its description riding along in the answer
+		// must not inflate the deliberate signal MemoryQuarantineGcJob trusts. This also keeps
+		// the deliberate-filtered rollup unchanged by this fix (card acceptance criterion 3).
+		var digestKeys = kept.Where(i => i.Sources?.Contains("digest") == true).Select(i => i.SessionId).ToList();
+		if (digestKeys.Count > 0)
+			usage.Surfaced(projectKey, SessionDigestJob.Store, digestKeys, deliberate: false);
+
 		// Rows remain if the pool has more behind this page OR the budget cut rows off this one.
 		var more = o.MoreInPool || omitted > 0;
 		// RESUME FROM THE LAST ROW ACTUALLY SENT, not from the end of the slice we considered. When the
