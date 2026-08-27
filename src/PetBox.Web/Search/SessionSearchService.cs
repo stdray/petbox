@@ -59,10 +59,22 @@ public sealed class SessionSearchService
 	// reuses the exact primitives. There is NO semantic floor: a vector-only digest hit enters as a
 	// peer (spec: search-leg-classification — the tau membership threshold is gone).
 	readonly SearchOrderingPolicies _ordering;
+	// THE MATERIALIZED DISCOVERY POOL, and the reason this surface can be paged at all — the SAME cache
+	// memory and tasks page against (spec: result-set-pageable, requirement 5).
+	//
+	// Sessions were the one ranked surface wired WITHOUT it, and that was not a missing optimization: it
+	// was the defect. The digest leg carries a cross-encoder rerank (spec: search-rerank-for-sessions),
+	// the live rerank route is not order-stable across two identical calls (measured: adjacent ranks swap
+	// between back-to-back requests on the same eight documents), and an uncached pool is REBUILT on every
+	// page. So every page re-ranked, came out ordered differently, minted a different order stamp, and the
+	// cursor guard refused the walk it had itself issued one call earlier — page 2 did not exist.
+	// Computing the order ONCE and keeping it is what makes the stamp reproducible; the guard is untouched.
+	// The fallback is SearchPoolCache.Disabled, which stores nothing and says so by name.
+	readonly SearchPoolCache _poolCache;
 
 	public SessionSearchService(IMemoryService memory, ISessionEpisodicIndex episodic,
 		ISessionTermIndex termIndex, ISessionFullScanIndex fullScanIndex, ISettingsResolver settings,
-		ISessionService sessionsSvc, SearchOrderingPolicies? rerank = null)
+		ISessionService sessionsSvc, SearchOrderingPolicies? rerank = null, SearchPoolCache? poolCache = null)
 	{
 		_memory = memory;
 		_episodic = episodic;
@@ -71,6 +83,7 @@ public sealed class SessionSearchService
 		_settings = settings;
 		_sessionsSvc = sessionsSvc;
 		_ordering = rerank ?? new SearchOrderingPolicies();
+		_poolCache = poolCache ?? SearchPoolCache.Disabled;
 	}
 
 	// How deep the DISCOVERY pool is allowed to be paged (spec: result-set-pageable) — sessions' analogue
@@ -112,16 +125,190 @@ public sealed class SessionSearchService
 		sessions = ClampSessions(sessions);
 		hitsPerSession = ClampHitsPerSession(hitsPerSession);
 
-		// DISCOVERY leg 1: the digest store's own hybrid (lexical ⊕ semantic, RRF-fused) search,
-		// keeping the raw re-ranking signals (per-hit fused score, freshness, lexical-confirmation
-		// provenance, vector) — the outer fusion below treats this leg's ORDER as one ranking.
-		//
 		// No digest store yet = distillation hasn't reached this project. We report that honestly
-		// (Distilled=false + Reason) but do NOT bail: the verbatim term leg is the DECLARED lower
-		// bound of recall (spec: session-discovery-verbatim) and must run even with no digest —
-		// "distillation hasn't run" ≠ "nothing to find". The digest leg is simply skipped (empty
-		// ranking); SearchScoredAsync THROWS on a missing store, so it is gated behind the check.
+		// (Distilled=false + Reason) but do NOT bail: the verbatim term leg is the DECLARED lower bound of
+		// recall (spec: session-discovery-verbatim) and must run even with no digest — "distillation
+		// hasn't run" is not "nothing to find". The digest leg is simply skipped (empty ranking);
+		// SearchScoredAsync THROWS on a missing store, so it is gated behind this check.
+		//
+		// Probed OUTSIDE the pool computation because it is also an OUTCOME field: a page served from a
+		// cached pool must still answer "is this project distilled" about TODAY, not about whenever the
+		// pool was built. It is one scalar catalog lookup, so paying it per page costs nothing.
 		var distilled = await _memory.StoreExistsAsync(projectKey, SessionDigestJob.Store, ct);
+
+		// The full-scan PERMISSION (spec: session-fullscan-optin) is decided per call for the same reason:
+		// two settings reads, and a deployment that revokes the permission mid-walk must be obeyed on the
+		// NEXT page rather than inherited from a pool built while it was still granted. Only the scan
+		// ITSELF is expensive, and only it lives inside the pool below.
+		bool? fullScanRequested = null, fullScanRan = null;
+		string? fullScanReason = null;
+		if (fullScan)
+		{
+			fullScanRequested = true;
+			fullScanRan = await FullScanAllowedAsync(projectKey, ct);
+			if (fullScanRan == false) fullScanReason = "not-allowed";
+		}
+		var scanLeg = fullScanRan == true;
+
+		// The term leg's over-fetch depth. It decides WHICH sessions are candidates, so it is part of the
+		// pool's identity below — lifted up here from the leg itself for exactly that reason.
+		var termPool = Math.Max(3 * sessions, TermPoolFloor);
+
+		// THE POOL KEY — everything that decides the pool's MEMBERSHIP and ORDER, and nothing that decides
+		// only how one page is rendered (`hitsPerSession`, `bodyLen`, and `sessions` except through the
+		// candidate depth it implies, which IS included).
+		//
+		// NO DATA-VERSION COMPONENT, unlike tasks/memory, and that is a consequence rather than an
+		// oversight: this surface's data version IS the discovery order (see `dataVersion` below), which
+		// does not exist until the pool has been built — it cannot key the thing it is derived from.
+		// What follows, stated plainly: inside the TTL a walk pages a SNAPSHOT, so a session appended
+		// mid-walk joins the NEXT walk instead of refusing this one. That is strictly safer than what it
+		// replaces (a walk spliced across two rerank orderings), it is one coherent ordering throughout,
+		// and the refusal that matters is untouched — once the pool is gone (TTL, restart, eviction) the
+		// rebuild's order hash is compared as before and a genuinely different order is still refused.
+		var poolKey = KeysetCursor.FingerprintOf(
+			"sessions-pool", projectKey, query,
+			distilled ? "digest" : "no-digest",
+			scanLeg ? "scan" : "no-scan",
+			termPool.ToString(System.Globalization.CultureInfo.InvariantCulture),
+			mode.ToString());
+
+		var lookup = await _poolCache.GetOrComputeAsync(poolKey, async innerCt =>
+		{
+			var (rows, discoveryRetrievers, bounded, scanCapped) =
+				await DiscoverAsync(projectKey, query, distilled, scanLeg, termPool, mode, innerCt);
+			// A DEGRADED pool is never KEPT — the rule tasks/memory already follow. It is cheap to
+			// recompute (the reranker did not run anyway) and expensive to keep: storing it pins a
+			// half-answer plus its now-stale provenance for the whole TTL, so every repeat of the query
+			// keeps hitting an outage that has already healed.
+			var cacheable = !discoveryRetrievers.Degraded && discoveryRetrievers.Ranking != SearchRankingOutcome.DegradedRrf;
+			return new SearchPoolCache.PoolComputation(
+				ToPool(rows, discoveryRetrievers, bounded, scanCapped), cacheable);
+		}, ct);
+
+		// From here on there is ONE representation of the discovery order — the pool — whether this call
+		// built it or read it. That is the point: the stamp, the seek and the page all read the same
+		// object, so no two of them can disagree about what the order was.
+		var pool = lookup.Pool;
+		var ranked = FromPool(pool);
+		var retrievers = pool.Retrievers;
+		var poolBounded = pool.PoolBounded;
+		// Whether the opt-in scan hit its cap belongs to the PASS that built this pool, so it rides with
+		// the pool rather than being recomputed (page 2 never re-runs the scan). Null unless the scan ran,
+		// which is the wire meaning of "never requested".
+		bool? fullScanCapped = scanLeg ? pool.PoolAnnotation == ScanCappedNote : null;
+
+		// The DATA VERSION of this walk is a hash of the discovery order ITSELF (session address + fused
+		// score, in order). That is exact rather than approximate: the basis of the ordering is precisely
+		// what a cursor must stay bound to, and every input that could move a row — a new session, a fresh
+		// digest, a term-index update, a changed leg — shows up here by construction.
+		//
+		// It now comes off SearchPool.OrderHash, i.e. off the SAME object the cache stored, and THAT is
+		// the fix. Minted from a freshly recomputed pool it was not reproducible at all: the digest leg
+		// reranks through a cross-encoder route that returns the same documents in a different order on
+		// two back-to-back calls, so every page stamped a new value and the cursor guard refused a walk in
+		// which nothing whatsoever had changed. Reading page 2's stamp off the pool page 1 was issued
+		// against makes it reproducible for the only reason that can ever make it reproducible — it is the
+		// same list, not a second attempt at the same list.
+		var dataVersion = pool.OrderHash;
+
+		// KEYSET SEEK by IDENTITY: resume strictly after the session the token names, wherever it now
+		// sits. Identity is the whole key — a session id is unique in the pool, so a repeated score cannot
+		// make the boundary ambiguous. A resume point that is no longer in the pool cannot occur inside a
+		// valid walk (the stamp above would have refused the token first); if it somehow does, we refuse
+		// rather than silently restarting at the top, which is the failure this design exists to prevent.
+		var start = 0;
+		if (afterSessionId is not null)
+		{
+			var at = ranked.FindIndex(h => string.Equals(h.SessionId, afterSessionId, StringComparison.Ordinal));
+			if (at < 0)
+				throw new ArgumentException(
+					"session_search: the session this cursor names is no longer in the discovery pool — "
+					+ "drop the cursor and start the query over.");
+			start = at + 1;
+		}
+
+		var candidates = new List<SessionSearchCandidate>();
+		var pageSlice = ranked.Skip(start).Take(sessions).ToList();
+		// Rows remaining in the pool AFTER this page — the "more" signal, computed on the POOL (before
+		// hydration can drop a stale candidate) so it describes the walk, not this page's luck.
+		var moreInPool = start + pageSlice.Count < ranked.Count;
+		foreach (var row in pageSlice)
+		{
+			ct.ThrowIfCancellationRequested();
+			var inner = await _episodic.SearchAsync(projectKey, row.SessionId, query, hitsPerSession, bodyLen, mode: mode, ct: ct);
+			if (inner is null) continue; // session deleted after distillation — stale digest
+			candidates.Add(new SessionSearchCandidate(row.SessionId, row.Agent, row.Description, inner.Hits, inner.Retrievers, row.Sources));
+		}
+
+		// Distilled/Reason stay an HONEST informational signal — but candidates are no longer
+		// gated on it: the term (and opt-in fullscan) legs answer regardless of the digest store.
+		return new SessionSearchOutcome(distilled, distilled ? null : "no-digest-store", candidates, retrievers,
+			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped,
+			DiscoveryPoolLimit, poolBounded, moreInPool, dataVersion,
+			// The resume point is the last candidate this page CONSIDERED, not the last it managed to
+			// hydrate. A stale candidate (session deleted after distillation) is skipped, and resuming
+			// before it would re-consider it forever; resuming after the slice also keeps a page whose
+			// every candidate went stale from ending the walk while the pool still has rows.
+			pageSlice.Count > 0 ? pageSlice[^1].SessionId : null);
+	}
+
+	// ONE ROW of the discovery pool: the session a caller navigates, plus the three facts a page needs
+	// that its ADDRESS alone no longer says (the agent and the digest description it displays, and which
+	// discovery leg raised it). Everything else the legs produced — the digest entry, its vector, its
+	// lexical-confirmation flag — is spent by the time RankDiscovery has run and is deliberately not kept.
+	readonly record struct DiscoveredSession(
+		string SessionId, string Agent, string Description, IReadOnlyList<string> Sources, double Score);
+
+	// The pool's ADDRESS type. Tasks address a board, memory a store; a session is its own container, so
+	// this is a constant — it is here because SearchPool.OrderHash hashes (Type, Id) and an address needs
+	// both halves, not because sessions have a second axis.
+	const string PoolRowType = "session";
+	// The per-row annotation packs the two DISPLAY facts into the one opaque slot SearchPool gives a
+	// consumer, on the US control character FingerprintOf joins its parts with and for the same reason:
+	// no agent name and no digest description contains it, so neither field can impersonate the boundary.
+	const char RowFieldSeparator = '\u001f';
+	// The pool-level annotation: whether the opt-in full scan hit its cap. Two spellings rather than one
+	// plus null, so "the scan ran and was not capped" stays distinguishable from "no note stored".
+	const string ScanCappedNote = "scan:capped";
+	const string ScanUncappedNote = "scan:uncapped";
+
+	static SearchPool ToPool(IReadOnlyList<DiscoveredSession> rows, SearchRetrievers retrievers, bool bounded, bool? scanCapped) =>
+		new([.. rows.Select(r => new Hit(PoolRowType, r.SessionId, r.Score, string.Join(',', r.Sources)))],
+			DiscoveryPoolLimit, bounded, retrievers,
+			[.. rows.Select(r => (string?)(r.Agent + RowFieldSeparator + r.Description))],
+			scanCapped is null ? null : scanCapped.Value ? ScanCappedNote : ScanUncappedNote);
+
+	static List<DiscoveredSession> FromPool(SearchPool pool)
+	{
+		var rows = new List<DiscoveredSession>(pool.Count);
+		for (var i = 0; i < pool.Count; i++)
+		{
+			var hit = pool.Ordered[i];
+			var packed = pool.AnnotationAt(i) ?? "";
+			var cut = packed.IndexOf(RowFieldSeparator);
+			IReadOnlyList<string> sources = string.IsNullOrEmpty(hit.Retriever)
+				? []
+				: hit.Retriever!.Split(',', StringSplitOptions.RemoveEmptyEntries);
+			rows.Add(new DiscoveredSession(hit.Id,
+				cut < 0 ? "" : packed[..cut],
+				cut < 0 ? packed : packed[(cut + 1)..],
+				sources, hit.Score));
+		}
+		return rows;
+	}
+
+	// THE POOL COMPUTATION: the three discovery legs, their RRF fusion, the presentation reshape and the
+	// depth cut — everything whose result a cursor is bound to, and nothing else. It runs ONCE per pool
+	// (see _poolCache); a later page of the same walk never reaches it.
+	async Task<(List<DiscoveredSession> Rows, SearchRetrievers Retrievers, bool PoolBounded, bool? ScanCapped)> DiscoverAsync(
+		string projectKey, string query, bool distilled, bool scanLeg, int termPool, SearchRankingMode mode,
+		CancellationToken ct)
+	{
+		// DISCOVERY leg 1: the digest store's own hybrid (lexical + semantic, RRF-fused) search,
+		// keeping the raw re-ranking signals (per-hit fused score, freshness, lexical-confirmation
+		// provenance, vector) — the outer fusion below treats this leg's ORDER as one ranking. This is
+		// also the ONLY leg that is not order-stable: it is the one that reranks.
 		var digestRanking = new List<string>();
 		var bySession = new Dictionary<string, MemoryScoredHit>(StringComparer.Ordinal);
 		var digestRetrievers = new SearchRetrievers(false, false, false);
@@ -138,31 +325,19 @@ public sealed class SessionSearchService
 		}
 
 		// DISCOVERY leg 2: verbatim term-FTS over the raw transcript (spec: session-discovery-verbatim).
-		var termPool = Math.Max(3 * sessions, TermPoolFloor);
 		var termRanking = await _termIndex.SearchAsync(projectKey, query, termPool, ct);
 		var termSet = new HashSet<string>(termRanking, StringComparer.Ordinal);
 
-		// DISCOVERY leg 3: the full-scan escape hatch (spec: session-fullscan-optin) — OPT-IN
-		// ONLY. Requested is honest about what the caller asked; Ran/Reason/Capped report what
-		// actually happened (denied ≠ silently ignored).
+		// DISCOVERY leg 3: the full-scan escape hatch (spec: session-fullscan-optin) — OPT-IN ONLY, and
+		// already permission-checked by the caller: `scanLeg` is "asked AND allowed". `Capped` rides back
+		// out because it is a fact about THIS pool that no later page can re-derive.
 		var scanRanking = (IReadOnlyList<string>)[];
-		bool? fullScanRequested = null, fullScanRan = null, fullScanCapped = null;
-		string? fullScanReason = null;
-		if (fullScan)
+		bool? scanCapped = null;
+		if (scanLeg)
 		{
-			fullScanRequested = true;
-			var allowed = await FullScanAllowedAsync(projectKey, ct);
-			fullScanRan = allowed;
-			if (!allowed)
-			{
-				fullScanReason = "not-allowed";
-			}
-			else
-			{
-				var scan = await _fullScanIndex.ScanAsync(projectKey, query, ct);
-				scanRanking = scan.SessionIds;
-				fullScanCapped = scan.Capped;
-			}
+			var scan = await _fullScanIndex.ScanAsync(projectKey, query, ct);
+			scanRanking = scan.SessionIds;
+			scanCapped = scan.Capped;
 		}
 		var scanSet = new HashSet<string>(scanRanking, StringComparer.Ordinal);
 
@@ -215,62 +390,23 @@ public sealed class SessionSearchService
 		var poolBounded = rankedAll.Count > DiscoveryPoolLimit;
 		var ranked = rankedAll.Count > DiscoveryPoolLimit ? rankedAll.Take(DiscoveryPoolLimit).ToList() : rankedAll;
 
-		// The DATA VERSION of this walk is a hash of the discovery order ITSELF (session id + fused score,
-		// in order). That is exact rather than approximate: the basis of the ordering is precisely what a
-		// cursor must stay bound to, and every input that could move a row — a new session, a fresh
-		// digest, a term-index update, a changed leg — shows up here by construction. It also costs
-		// nothing: the fused ranking is already in hand, so no extra query is needed to stamp it, which is
-		// what makes it affordable on EVERY call (a stale stamp would certify an order that has moved).
-		var dataVersion = KeysetCursor.FingerprintOf(
-			[.. ranked.Select(h => h.Entry.Key + "=" + h.Score.ToString("R", System.Globalization.CultureInfo.InvariantCulture))]);
-
-		// KEYSET SEEK by IDENTITY: resume strictly after the session the token names, wherever it now
-		// sits. Identity is the whole key — a session id is unique in the pool, so a repeated score cannot
-		// make the boundary ambiguous. A resume point that is no longer in the pool cannot occur inside a
-		// valid walk (the stamp above would have refused the token first); if it somehow does, we refuse
-		// rather than silently restarting at the top, which is the failure this design exists to prevent.
-		var start = 0;
-		if (afterSessionId is not null)
-		{
-			var at = ranked.FindIndex(h => string.Equals(h.Entry.Key, afterSessionId, StringComparison.Ordinal));
-			if (at < 0)
-				throw new ArgumentException(
-					"session_search: the session this cursor names is no longer in the discovery pool — "
-					+ "drop the cursor and start the query over.");
-			start = at + 1;
-		}
-
-		var candidates = new List<SessionSearchCandidate>();
-		var pageSlice = ranked.Skip(start).Take(sessions).ToList();
-		// Rows remaining in the pool AFTER this page — the "more" signal, computed on the POOL (before
-		// hydration can drop a stale candidate) so it describes the walk, not this page's luck.
-		var moreInPool = start + pageSlice.Count < ranked.Count;
-		foreach (var digest in pageSlice)
-		{
-			ct.ThrowIfCancellationRequested();
-			var (sessionId, agent) = Provenance(digest.Entry);
-			if (agent.Length == 0 && headers is not null && headers.TryGetValue(sessionId, out var hdr))
-				agent = hdr.Agent; // term/fullscan-only candidate — the digest metadata never carried an agent
-			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, bodyLen, mode: mode, ct: ct);
-			if (inner is null) continue; // session deleted after distillation — stale digest
-			var sources = sourcesBySession.GetValueOrDefault(sessionId, (IReadOnlyList<string>)["digest"]);
-			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Entry.Description, inner.Hits, inner.Retrievers, sources));
-		}
-
 		// Discovery retrievers: OR the term/fullscan legs' lexical confirmation into the digest
 		// leg's provenance — a verbatim-only match is still a LEXICAL discovery signal, just from
 		// a different index (and the whole digest provenance is off when distillation never ran).
+		// Folded in HERE, inside the pool, because it describes the pass that DECIDED this order and must
+		// be reported identically by every page served from it.
 		var retrievers = digestRetrievers with { Lexical = digestRetrievers.Lexical || termRanking.Count > 0 || scanRanking.Count > 0 };
-		// Distilled/Reason stay an HONEST informational signal — but candidates are no longer
-		// gated on it: the term (and opt-in fullscan) legs answer regardless of the digest store.
-		return new SessionSearchOutcome(distilled, distilled ? null : "no-digest-store", candidates, retrievers,
-			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped,
-			DiscoveryPoolLimit, poolBounded, moreInPool, dataVersion,
-			// The resume point is the last candidate this page CONSIDERED, not the last it managed to
-			// hydrate. A stale candidate (session deleted after distillation) is skipped, and resuming
-			// before it would re-consider it forever; resuming after the slice also keeps a page whose
-			// every candidate went stale from ending the walk while the pool still has rows.
-			pageSlice.Count > 0 ? pageSlice[^1].Entry.Key : null);
+
+		var rows = new List<DiscoveredSession>(ranked.Count);
+		foreach (var hit in ranked)
+		{
+			var (sessionId, agent) = Provenance(hit.Entry);
+			if (agent.Length == 0 && headers is not null && headers.TryGetValue(sessionId, out var hdr))
+				agent = hdr.Agent; // term/fullscan-only candidate — the digest metadata never carried an agent
+			rows.Add(new DiscoveredSession(sessionId, agent, hit.Entry.Description,
+				sourcesBySession.GetValueOrDefault(sessionId, (IReadOnlyList<string>)["digest"]), hit.Score));
+		}
+		return (rows, retrievers, poolBounded, scanCapped);
 	}
 
 	// allowed = system.SystemEnabled AND project.ProjectEnabled — TWO independent switches
