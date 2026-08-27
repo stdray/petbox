@@ -184,6 +184,72 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 		e.UsageSource.Should().Be("deliberate");
 	}
 
+	// Card usage-delivery-mixes-machine-traffic: memory_get had NO usageSource parameter at all
+	// before this — every get, deliberate or not, wrote UsageSource "deliberate" unconditionally.
+	// The one real automated (non-deliberate) pull that exists — protocol.ts's canon fallback —
+	// is exactly a memory_get, so leaving it unmarkable made the deliberate/machine split's
+	// machine side permanently zero. `usageSource` on memory_get mirrors memory_search's contract
+	// byte for byte: default deliberate, "machine" accepted, garbage rejected naming both.
+	[Fact]
+	public async Task MachineGet_RecordsEvent_TaggedMachine()
+	{
+		await Seed("u1");
+
+		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes", "u1", usageSource: "machine");
+		await _recorder.FlushAsync();
+
+		var e = Events().Should().ContainSingle().Subject;
+		e.UsageSource.Should().Be("machine");
+		// Everything else about the delivery is untouched by the source — same cost/fit shape as
+		// a deliberate get.
+		e.Tool.Should().Be("get");
+		e.KRel.Should().Be(1);
+		e.DeliveredChars.Should().Be(LongBody.Length);
+	}
+
+	[Fact]
+	public async Task Get_UsageSource_Garbage_IsRejected_NamingBothValidValues()
+	{
+		await Seed("u1");
+
+		var act = () => MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder,
+			Proj, "notes", "u1", usageSource: "bogus");
+
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.Which.Message.Should().Contain("bogus").And.Contain("deliberate").And.Contain("machine");
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData("deliberate")]
+	[InlineData("machine")]
+	[InlineData("MACHINE")]
+	[InlineData(" Deliberate ")]
+	[InlineData("  machine  ")]
+	public async Task Get_UsageSource_LegalValues_AreAccepted_CaseAndWhitespaceInsensitive(string? usageSource)
+	{
+		await Seed("u1");
+
+		var res = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder,
+			Proj, "notes", "u1", usageSource: usageSource);
+
+		res.Entries.Should().ContainSingle();
+	}
+
+	// The default (no argument at all — the shape every EXISTING caller uses) must stay
+	// "deliberate", exactly like it was hardcoded before this card, so this is a regression guard
+	// on the omitted-argument path specifically (not just the explicit-null path above).
+	[Fact]
+	public async Task Get_UsageSource_Omitted_DefaultsToDeliberate()
+	{
+		await Seed("u1");
+
+		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes", "u1");
+		await _recorder.FlushAsync();
+
+		Events().Should().OnlyContain(e => e.UsageSource == "deliberate");
+	}
+
 	// A listing is curation, not retrieval: it delivers rows (a cost) with no relevance behind
 	// them (no fit). Recorded as such — never with a fabricated score.
 	[Fact]

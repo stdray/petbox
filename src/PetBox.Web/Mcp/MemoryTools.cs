@@ -153,6 +153,11 @@ public static class MemoryTools
 		exactly like one that holds nothing (the memory-family read contract): batch keys are
 		dropped, a single `key` gets the SAME not-found error a missing entry gets — a refusal
 		is never distinguishable from absence. Requires memory:read.
+		`usageSource`: same telemetry-source split as memory_search — "deliberate" (default — a
+		human/agent intentionally read this entry) or "machine" (an automatic hook/context pull —
+		e.g. a canon-fallback read). Automated wiring-kit pulls should pass "machine". Case-
+		insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently
+		folded into "deliberate".
 		""")]
 	public static async Task<MemoryGetResultView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -161,10 +166,14 @@ public static class MemoryTools
 		[Description("Batch of keys read in ONE call; a key that matches nothing is silently dropped (soft filter).")] string[]? keys = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("Usage-signal source of this read: \"deliberate\" (default — a human/agent intentionally read this entry) or \"machine\" (an automatic hook/context pull — bumps only the raw cost, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
+		// Validated up front (never a silent fold into "deliberate" on a typo) — the same
+		// posture memory_search's usageSource takes (card usage-delivery-mixes-machine-traffic).
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 
 		// The ask: `key` ⊕ `keys`, de-duped, order preserved. A BATCH ask (any `keys` supplied)
 		// tolerates misses; a lone `key` keeps the historic not-found error.
@@ -231,7 +240,7 @@ public static class MemoryTools
 				DeliveredChars: x.Wire.Body.Length, BodyChars: x.Entry.Body.Length,
 				RowChars: ResponseBudget.CostOf(x.Wire),
 				Rank: x.Rank, ScoreRaw: null, KRel: 1, SessionId: McpSessionId(http),
-				UsageSource: DeliberateSource))]);
+				UsageSource: resolvedUsageSource))]);
 
 		return new MemoryGetResultView(wireEntries);
 	}
@@ -676,19 +685,12 @@ public static class MemoryTools
 		int? poolLimit = null;
 		var poolBounded = false;
 		// usageSource is telemetry, not free text: it separates the honest deliberate-search signal
-		// GC trusts from a machine pull's softer surfaced-only count. Left unvalidated, any typo used
-		// to fall through to "deliberate" silently and forever — a defect nobody could see on the
-		// wire. null | "deliberate" | "machine" (case-insensitive, trimmed) are the only legal values;
-		// anything else is a caller mistake, rejected the same way memory_upsert's `type` taxonomy is
-		// (name both valid values, never a silent typo).
-		var usageSourceTrimmed = usageSource?.Trim();
-		if (usageSourceTrimmed is not null
-			&& !string.Equals(usageSourceTrimmed, DeliberateSource, StringComparison.OrdinalIgnoreCase)
-			&& !string.Equals(usageSourceTrimmed, MachineSource, StringComparison.OrdinalIgnoreCase))
-			throw new ArgumentException($"invalid usageSource '{usageSource}' ({DeliberateSource}|{MachineSource})");
+		// GC trusts from a machine pull's softer surfaced-only count. ResolveUsageSource validates
+		// (never silently folds a typo into "deliberate") and normalizes to the canonical wire value.
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
-		var deliberate = !string.Equals(usageSourceTrimmed, MachineSource, StringComparison.OrdinalIgnoreCase);
+		var deliberate = resolvedUsageSource != MachineSource;
 
 		// Each collected row carries its scope RANK (cascade order — project first), the fused
 		// relevance Score (so we can HONESTLY merge across scopes below) and the delivery FACTS
@@ -857,7 +859,7 @@ public static class MemoryTools
 		RecordDeliveries(usage, delivered, scored,
 			tool: hasQuery ? "search" : "listing",
 			sessionId: McpSessionId(http),
-			usageSource: deliberate ? DeliberateSource : MachineSource);
+			usageSource: resolvedUsageSource);
 
 		// A resume token only when rows were actually withheld (by `limit` or by the budget) AND this page
 		// has a last row to resume from.
@@ -988,6 +990,23 @@ public static class MemoryTools
 	// MemoryQuarantineGcJob's config-driven cost axis (card usage-delivery-mixes-machine-traffic).
 	const string DeliberateSource = PetBox.Memory.Contract.UsageSourceKind.Deliberate;
 	const string MachineSource = PetBox.Memory.Contract.UsageSourceKind.Machine;
+
+	// Validates + resolves a caller-supplied `usageSource` argument — shared by memory_search AND
+	// memory_get (card usage-delivery-mixes-machine-traffic: the only two verbs that record a
+	// delivery event on behalf of a caller-named intent). null | "deliberate" | "machine"
+	// (case-insensitive, trimmed) are the only legal values; anything else is a caller mistake,
+	// rejected naming both valid values — never silently folded into "deliberate" (the same
+	// posture memory_upsert's `type` taxonomy takes on an unrecognized value). Returns the
+	// CANONICAL wire value (exactly DeliberateSource or MachineSource) the delivery event carries.
+	static string ResolveUsageSource(string? usageSource)
+	{
+		var trimmed = usageSource?.Trim();
+		if (trimmed is not null
+			&& !string.Equals(trimmed, DeliberateSource, StringComparison.OrdinalIgnoreCase)
+			&& !string.Equals(trimmed, MachineSource, StringComparison.OrdinalIgnoreCase))
+			throw new ArgumentException($"invalid usageSource '{usageSource}' ({DeliberateSource}|{MachineSource})");
+		return string.Equals(trimmed, MachineSource, StringComparison.OrdinalIgnoreCase) ? MachineSource : DeliberateSource;
+	}
 
 	// What a delivered row costs and how well it fitted — the parts that never reach the wire:
 	// the CONTAINER it came from (the events land in that container's file), the entry's FULL

@@ -110,7 +110,7 @@ ${intro}
 
 - **Facts — \`${memorySearch}\`** (no \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\`); full body: \`${memoryGet}\`.
 - **Conversations — \`${sessionSearch}\`**: HOW something was decided, error text, detail a fact wouldn't carry; each hit carries the message ordinal → \`${sessionGet}\`.
-- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace).
+- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace) — you MUST pass \`usageSource:"machine"\` on this call: it is an automated protocol-mandated pull, not a deliberate search, and omitting the argument silently mis-records it as deliberate.
 
 **Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts). Curated/temporal edits: \`${memoryUpsert}\`. The server also autocaptures after each session — don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
 

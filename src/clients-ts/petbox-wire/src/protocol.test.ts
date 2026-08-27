@@ -48,6 +48,22 @@ test("orchestrationPrescriptionsAllowed tracks spawn_subagents for all three har
   assert.equal(orchestrationPrescriptionsAllowed("unknown"), false);
 });
 
+// Card usage-delivery-mixes-machine-traffic: the canon-fallback memory_get call is the one
+// real automated (non-deliberate) pull that exists in the wiring kit — pull-memory.ts /
+// droid-pull-memory.ts fetch canon over REST and never touch this instruction at all, so this
+// protocol text is the ONLY place that can mark it. It must mandate usageSource:"machine"
+// unambiguously (not merely mention it as optional), or the delivery event silently defaults
+// to "deliberate" and the deliberate/machine split stays permanently zero on the machine side.
+test("buildProtocol's canon-fallback memory_get instruction MANDATES usageSource machine", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
+  const fallbackLine = text.split("\n").find((l) => l.includes("No canon section below"));
+  assert.ok(fallbackLine, `protocol must carry the canon-fallback line:\n${text}`);
+  assert.match(fallbackLine!, /usageSource:\s*"machine"/);
+  // "MUST" (or equivalently strong, non-optional wording) — not just a passing mention, so an
+  // agent cannot read the argument as take-it-or-leave-it.
+  assert.match(fallbackLine!, /MUST pass/);
+});
+
 test("buildProtocol for droid CONTAINS spawn/orchestrator prose (Factory spawns via Task)", () => {
   const text = buildProtocol(project, mcpPetboxTool, { harness: "droid" });
   const lower = text.toLowerCase();
