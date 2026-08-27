@@ -1,4 +1,5 @@
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Memory.Contract;
 using PetBox.Web.Auth;
@@ -76,12 +77,12 @@ public static class MemoryApi
 	[TenantFrom(TenantSource.Route, "projectKey")]
 	static async Task<IResult> CanonAsync(
 		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects,
-		IProjectCatalog catalog, CancellationToken ct)
+		IProjectCatalog catalog, IMemoryUsageRecorder usage, CancellationToken ct)
 	{
 		if (!ApiKeyScopes.Granted(ctx.User, ApiKeyScopes.MemoryRead))
 			return TypedResults.Forbid();
 
-		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
+		var project = await ReadCanonAsync(memory, usage, projectKey, "project", CanonKey, ct);
 
 		// Workspace leg = the project's own workspace container — never a hardcoded global. An
 		// unknown project has no row, so there is no container to even ask about — the workspace
@@ -102,7 +103,7 @@ public static class MemoryApi
 			// had it been asked). A null workspace part is already a valid 200 shape, so the wiring
 			// hook needs no new contract and simply injects no shared canon.
 			if (await SandboxContainment.PermitsAsync(ctx.User, container, catalog, ct))
-				workspace = await ReadCanonAsync(memory, container, CanonKey, ct);
+				workspace = await ReadCanonAsync(memory, usage, container, "workspace", CanonKey, ct);
 		}
 
 		return TypedResults.Ok(new CanonResponse(project, workspace));
@@ -117,15 +118,43 @@ public static class MemoryApi
 	// "refusal indistinguishable from absence" posture elsewhere in this file's auth checks).
 	// Never returns null — a genuinely absent LEG (workspace suppressed/not applicable) is
 	// CanonAsync's decision, made BEFORE this is even called, not this method's.
-	static async Task<CanonPart> ReadCanonAsync(IMemoryService memory, string projectKey, string key, CancellationToken ct)
+	//
+	// Card memory-telemetry-blind-paths item 1: this route used to read through
+	// ListActiveEntriesAsync and record NOTHING — the SessionStart hook injects the canon into
+	// EVERY session (canon.ts's fetchCanon), making this the canon's single biggest consumer and
+	// its real cost, and that cost was invisible to usage telemetry entirely. It is now recorded
+	// exactly like an MCP `memory_get` of the same entry would be — one Surfaced impression, one
+	// Delivered event (Tool "canon", a perfect fit by construction: the caller always names
+	// exactly `index`, kRel 1) — but sourced `machine` unconditionally: nothing here is a
+	// deliberate agent query, it is the wiring hook's automatic pull, so ONLY SurfacedCount may
+	// grow — DeliberateCount (the honest value signal MemoryQuarantineGcJob's cost/fit axis
+	// trusts, card usage-delivery-mixes-machine-traffic) must never move for this path. Recorded
+	// only when a real entry was found: a curated-empty leg (Version 0, "" Body) delivered
+	// nothing, so — mirroring memory_search/memory_get, which record no event for an empty
+	// answer — there is nothing to bill for the offline-cache fallback (canon.ts's
+	// ~/.petbox/cache/): that path never reaches the server on a 200, so it never reaches here
+	// either, by construction.
+	static async Task<CanonPart> ReadCanonAsync(IMemoryService memory, IMemoryUsageRecorder usage,
+		string projectKey, string scope, string key, CancellationToken ct)
 	{
 		if (!await memory.StoreExistsAsync(projectKey, CanonStore, ct))
 			return new CanonPart("", DateTime.UtcNow, 0);
 		var entry = (await memory.ListActiveEntriesAsync(projectKey, CanonStore, ct))
 			.FirstOrDefault(e => e.Key == key);
-		return entry is null
-			? new CanonPart("", DateTime.UtcNow, 0)
-			: new CanonPart(entry.Body, entry.Updated, entry.Version);
+		if (entry is null)
+			return new CanonPart("", DateTime.UtcNow, 0);
+
+		var part = new CanonPart(entry.Body, entry.Updated, entry.Version);
+
+		usage.Surfaced(projectKey, CanonStore, [key], deliberate: false);
+		usage.Delivered(projectKey, [new MemoryDeliveryEvent(
+			Tool: "canon", Scope: scope, Store: CanonStore, Key: key,
+			DeliveredChars: part.Body.Length, BodyChars: entry.Body.Length,
+			RowChars: ResponseBudget.CostOf(part),
+			Rank: 1, ScoreRaw: null, KRel: 1, SessionId: null,
+			UsageSource: UsageSourceKind.Machine)]);
+
+		return part;
 	}
 }
 

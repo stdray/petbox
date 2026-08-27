@@ -103,6 +103,15 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 	{
 		Client.DefaultRequestHeaders.Remove("X-Api-Key");
 
+		// Card memory-telemetry-blind-paths item 1: CanonAsync now writes usage telemetry
+		// (fire-and-forget, drained on a background thread) on every read. Before that fix a
+		// canon GET never touched the memory db at all, so evict+delete below never raced a
+		// writer; now it can — the background drain may still hold the file open while this
+		// method tries to delete it ("still locked"). Flush the singleton recorder FIRST so its
+		// queued writes land (or are proven to have nothing queued) before eviction.
+		var recorder = Factory.Services.GetRequiredService<IMemoryUsageRecorder>();
+		await recorder.FlushAsync();
+
 		// The factory caches per (scope, store) — evict the canon store of both scopes so
 		// the cached contexts release their file handles before the deletes below.
 		// Test project lives in workspace "test" → container is "$ws-test" (not global $workspace).
@@ -305,5 +314,105 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 	{
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+
+	// ── USAGE TELEMETRY (card memory-telemetry-blind-paths item 1) ──────────────────────────────
+	//
+	// The SessionStart hook (canon.ts's fetchCanon) hits this route on EVERY session, making it
+	// the canon's biggest consumer — and until this card, that cost was entirely invisible to
+	// usage telemetry (no Surfaced, no delivery_events row, nothing). Fixed to record exactly
+	// like an MCP `memory_get` would, but sourced `machine` unconditionally per the owner's
+	// decision: an automatic hook pull is not a deliberate agent query, so only SurfacedCount may
+	// grow — DeliberateCount, the honest value signal MemoryQuarantineGcJob's cost/fit axis
+	// trusts (card usage-delivery-mixes-machine-traffic), must stay at zero.
+	[Fact]
+	public async Task Canon_Read_GrowsMachineSurfaced_ButNotDeliberate_OnBothLegs()
+	{
+		await WriteCanonAsync(TestProjectKey, "PROJECT canon index");
+		await WriteCanonAsync(TestWorkspaceContainer, "WORKSPACE canon index");
+
+		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		using var scope = _factory.Services.CreateScope();
+		var recorder = scope.ServiceProvider.GetRequiredService<IMemoryUsageRecorder>();
+		await recorder.FlushAsync();
+		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
+
+		var projUsage = (await memory.GetUsageAsync(TestProjectKey, "canon"))["index"];
+		projUsage.Surfaced.Should().Be(1, "the automatic canon pull must grow the MACHINE-visible surfaced counter");
+		projUsage.Deliberate.Should().Be(0, "an automatic pull must never bump the honest deliberate signal GC trusts");
+
+		var wsUsage = (await memory.GetUsageAsync(TestWorkspaceContainer, "canon"))["index"];
+		wsUsage.Surfaced.Should().Be(1, "the workspace leg is injected too — it must be counted the same way");
+		wsUsage.Deliberate.Should().Be(0);
+	}
+
+	// The delivery-event side of the same fix (spec usage-cost-and-fit-separate): the canon's
+	// real CONTEXT COST — the symbols that actually rode into the session — only exists in
+	// delivery_events (DeliveredChars). One Surfaced counter fixes half of "the canon's price is
+	// invisible"; without this row the price itself is still nowhere.
+	[Fact]
+	public async Task Canon_Read_RecordsDeliveryEvent_TaggedCanonAndMachine_PerfectFit()
+	{
+		var projectBody = "PROJECT canon index";
+		var wsBody = "WORKSPACE canon index — longer than the project leg";
+		await WriteCanonAsync(TestProjectKey, projectBody);
+		await WriteCanonAsync(TestWorkspaceContainer, wsBody);
+
+		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		using var scope = _factory.Services.CreateScope();
+		var recorder = scope.ServiceProvider.GetRequiredService<IMemoryUsageRecorder>();
+		await recorder.FlushAsync();
+		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
+
+		var projStats = (await memory.GetDeliveryStatsAsync(TestProjectKey, "canon", window: TimeSpan.FromDays(1)))["index"];
+		projStats.Deliveries.Should().Be(1);
+		projStats.DeliveredChars.Should().Be(projectBody.Length);
+		projStats.AvgKRel.Should().Be(1, "the caller always names exactly `index` — a perfect fit by construction");
+		// The rollup's UsageSource split (card usage-delivery-mixes-machine-traffic,
+		// MemoryService.DeliveryRollup) must put this event ENTIRELY on the machine axis: the
+		// deliberate axis is what a filtered rollup reads, and it must not move.
+		projStats.MachineDeliveries.Should().Be(1);
+		projStats.DeliberateDeliveries.Should().Be(0,
+			"a filtered (deliberate-only) rollup must be UNCHANGED by this fix — otherwise the filter doesn't work");
+
+		var wsStats = (await memory.GetDeliveryStatsAsync(TestWorkspaceContainer, "canon", window: TimeSpan.FromDays(1)))["index"];
+		wsStats.Deliveries.Should().Be(1);
+		wsStats.DeliveredChars.Should().Be(wsBody.Length);
+		wsStats.MachineDeliveries.Should().Be(1);
+		wsStats.DeliberateDeliveries.Should().Be(0);
+	}
+
+	// A sandbox-contained key never even asks for the workspace leg (SandboxContainment
+	// suppression, see CanonAsync) — ReadCanonAsync is never called for it, so it must record
+	// NOTHING for that leg. Only the project leg it legitimately owns gets an event.
+	[Fact]
+	public async Task Canon_SandboxOnlyKey_RecordsUsage_OnlyForItsOwnProjectLeg()
+	{
+		await WriteCanonAsync(SandboxProjectKey, "SANDBOX project canon");
+		await WriteCanonAsync(TestWorkspaceContainer, "WORKSPACE canon index");
+
+		_client.DefaultRequestHeaders.Add("X-Api-Key", SandboxApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{SandboxProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		using var scope = _factory.Services.CreateScope();
+		var recorder = scope.ServiceProvider.GetRequiredService<IMemoryUsageRecorder>();
+		await recorder.FlushAsync();
+		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
+
+		var sandboxUsage = (await memory.GetUsageAsync(SandboxProjectKey, "canon"))["index"];
+		sandboxUsage.Surfaced.Should().Be(1);
+		sandboxUsage.Deliberate.Should().Be(0);
+
+		// The workspace leg was withheld before ReadCanonAsync ever ran for it — no store was
+		// even opened, so GetUsageAsync must not find a usage row (and must not throw looking).
+		(await memory.GetUsageAsync(TestWorkspaceContainer, "canon")).Should().BeEmpty(
+			"a suppressed leg is never read, so it must never be billed");
 	}
 }
