@@ -95,15 +95,22 @@ public sealed class NodeDecisionFlagAndProvenanceTests : IClassFixture<NodeDecis
 
 	readonly NodeDecisionFlagAndProvenanceFixture _fx;
 	readonly TasksService _tasks;
+	// M022 (task-usage-layer-declared-role) made the usage recorder/reader required collaborators
+	// of SearchAsync. This suite asserts nothing about usage — it needs them only to call the tool.
+	readonly TaskUsageRecorder _usage;
+	readonly TaskUsageReader _usageReader;
 	readonly CapturingLogger<TasksService> _log = new();
 
 	public NodeDecisionFlagAndProvenanceTests(NodeDecisionFlagAndProvenanceFixture fx)
 	{
 		fx.Reset();
 		_fx = fx;
-		_tasks = new TasksService(new TaskBoardStore(fx.Db.Factory(), fx.Factory),
+		var boards = new TaskBoardStore(fx.Db.Factory(), fx.Factory);
+		_tasks = new TasksService(boards,
 			new RelationStore(fx.Factory), new TagStore(fx.Factory), new CommentService(fx.Factory),
 			llm: null, log: _log);
+		_usage = new TaskUsageRecorder(fx.Factory, fx.Db.Factory());
+		_usageReader = new TaskUsageReader(boards);
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────────────────────
@@ -142,8 +149,9 @@ public sealed class NodeDecisionFlagAndProvenanceTests : IClassFixture<NodeDecis
 
 	Task<TaskSearchResultView> Search(string? q = null, bool? decisionPending = null,
 		int? limit = null, string? cursor = null) =>
-		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, Board, null, null, null,
-			null, null, 0, limit, false, null, null, cursor, decisionPending);
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, _usage, _usageReader, Proj,
+			q: q, board: Board, bodyLen: 0, limit: limit, includeUrl: false,
+			cursor: cursor, decisionPending: decisionPending);
 
 	// ── the flag is a FIELD, orthogonal to status ────────────────────────────────────────────
 
