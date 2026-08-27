@@ -76,13 +76,18 @@ public sealed class MemoryUsage2dTests : IDisposable
 			}).ToList(), []);
 
 	// A delivery through the real writer (Ts = now → inside every window).
-	void Deliver(string key, int chars, double? kRel, int times = 1)
+	void Deliver(string key, int chars, double? kRel, int times = 1) =>
+		DeliverWithSource(key, chars, kRel, "deliberate", times);
+
+	// Same as Deliver, but the UsageSource is a caller choice (card
+	// usage-delivery-mixes-machine-traffic) — used to exercise the deliberate/machine split.
+	void DeliverWithSource(string key, int chars, double? kRel, string source, int times = 1)
 	{
 		for (var i = 0; i < times; i++)
 			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
 				Tool: "search", Scope: "project", Store: Store, Key: key,
 				DeliveredChars: chars, BodyChars: chars * 2, RowChars: chars + 100,
-				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: "deliberate")]);
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: source)]);
 	}
 
 	// An OLD delivery — the recorder always stamps `now`, so a past event is written straight to
@@ -251,5 +256,79 @@ public sealed class MemoryUsage2dTests : IDisposable
 													   // row here — its cost is not lost, the store aggregate reads delivery_events directly.
 		usage.Should().NotContainKey("listed");
 		(await _memory.GetUsageAggregateAsync(Proj, Store)).Cost.DeliveredChars.Should().Be(1_150);
+	}
+
+	// --- deliberate/machine cost split (card usage-delivery-mixes-machine-traffic) ----------
+	// DeliveryRollup returns BOTH the combined total (unchanged, every reader before this card
+	// keeps working) and the same pair split by UsageSourceKind — additive, never a filter that
+	// makes machine cost invisible.
+
+	[Fact]
+	public async Task Aggregate_CostAndFit_SplitByUsageSource()
+	{
+		await Seed("k");
+		DeliverWithSource("k", chars: 100, kRel: 1.0, source: "deliberate", times: 2); // 200 chars, fit 1.0
+		DeliverWithSource("k", chars: 1_000, kRel: 0.2, source: "machine", times: 3);  // 3 000 chars, fit 0.2
+		await _recorder.FlushAsync();
+
+		var agg = await _memory.GetUsageAggregateAsync(Proj, Store);
+
+		// The COMBINED numbers are exactly what they were before this card — unfiltered, every
+		// UsageSource pooled together (the pre-existing contract every other reader relies on).
+		agg.Cost.Deliveries.Should().Be(5);
+		agg.Cost.DeliveredChars.Should().Be(3_200);
+		agg.Cost.AvgKRel.Should().BeApproximately(0.52, 1e-9); // (2×1.0 + 3×0.2) / 5
+
+		// The split is additive, not a replacement.
+		agg.Cost.DeliberateDeliveries.Should().Be(2);
+		agg.Cost.DeliberateDeliveredChars.Should().Be(200);
+		agg.Cost.DeliberateAvgKRel.Should().BeApproximately(1.0, 1e-9);
+
+		agg.Cost.MachineDeliveries.Should().Be(3);
+		agg.Cost.MachineDeliveredChars.Should().Be(3_000);
+		agg.Cost.MachineAvgKRel.Should().BeApproximately(0.2, 1e-9);
+	}
+
+	[Fact]
+	public async Task GetDeliveryStats_SplitsPerKeyByUsageSource()
+	{
+		await Seed("k");
+		DeliverWithSource("k", chars: 500, kRel: 0.9, source: "deliberate");
+		DeliverWithSource("k", chars: 700, kRel: 0.1, source: "machine");
+		await _recorder.FlushAsync();
+
+		var stats = (await _memory.GetDeliveryStatsAsync(Proj, Store))["k"];
+
+		stats.Deliveries.Should().Be(2);
+		stats.DeliveredChars.Should().Be(1_200);
+		stats.AvgKRel.Should().BeApproximately(0.5, 1e-9); // (0.9+0.1)/2, unfiltered
+
+		stats.DeliberateDeliveries.Should().Be(1);
+		stats.DeliberateDeliveredChars.Should().Be(500);
+		stats.DeliberateAvgKRel.Should().BeApproximately(0.9, 1e-9);
+
+		stats.MachineDeliveries.Should().Be(1);
+		stats.MachineDeliveredChars.Should().Be(700);
+		stats.MachineAvgKRel.Should().BeApproximately(0.1, 1e-9);
+	}
+
+	[Fact]
+	public async Task StoreList_IncludeUsage_CarriesDeliberateMachineSplit()
+	{
+		await Seed("k");
+		DeliverWithSource("k", chars: 300, kRel: 0.9, source: "deliberate");
+		DeliverWithSource("k", chars: 700, kRel: 0.1, source: "machine");
+		await _recorder.FlushAsync();
+
+		var res = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, includeUsage: true);
+		var usage = res.Stores.Single(s => s.Name == Store).Usage!;
+
+		usage.DeliveredChars.Should().Be(1_000); // combined, unchanged wire shape
+
+		usage.DeliberateDeliveredChars.Should().Be(300);
+		usage.DeliberateAvgKRel.Should().BeApproximately(0.9, 1e-4);
+
+		usage.MachineDeliveredChars.Should().Be(700);
+		usage.MachineAvgKRel.Should().BeApproximately(0.1, 1e-4);
 	}
 }

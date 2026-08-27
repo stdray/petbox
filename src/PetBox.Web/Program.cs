@@ -343,7 +343,12 @@ public partial class Program
 			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>(),
 			usageWindow: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:UsageWindowDays") is { } wd ? TimeSpan.FromDays(wd) : null,
 			minDeliveredChars: builder.Configuration.GetValue<long?>("Memory:QuarantineGc:MinDeliveredChars"),
-			maxAvgKRel: builder.Configuration.GetValue<double?>("Memory:QuarantineGc:MaxAvgKRel")));
+			maxAvgKRel: builder.Configuration.GetValue<double?>("Memory:QuarantineGc:MaxAvgKRel"),
+				// Card usage-delivery-mixes-machine-traffic: the cost/fit axis this job judges
+				// candidates on. Defaults to false (unchanged: combined over every UsageSource) —
+				// an operator opts into deliberate-only after reviewing a report-only before/after
+				// candidate diff on live data (see the job's own header comment).
+				excludeMachineFromCost: builder.Configuration.GetValue("Memory:QuarantineGc:ExcludeMachineFromCost", false)));
 		// Two-stage session search: digest discovery (memory) → episodic hydration. Discovery
 		// re-ranking reuses the shared `Search:Recency`/`Search:Diversity` policy (already a
 		// singleton above) for decay + MMR. No semantic floor — removed (spec:

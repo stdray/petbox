@@ -211,6 +211,80 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 		(await _memory.GetAsync(Proj, Store, "boar")).Should().NotBeNull();
 	}
 
+	// --- cost/fit axis: combined (default) vs deliberate-only (card usage-delivery-mixes-
+	// machine-traffic, spec memory-usage-observability) ------------------------------------
+	// A pure-machine delivery: `usage.Delivered` tagged UsageSource "machine" — never through
+	// `usage.Surfaced`/`Opened`, so entry_usage stays empty for it (no counter row at all),
+	// exactly like a real automated wiring-kit pull.
+	void DeliverMachine(string key, int chars, double? kRel, int times = 1)
+	{
+		for (var i = 0; i < times; i++)
+			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
+				Tool: "search", Scope: "project", Store: Store, Key: key,
+				DeliveredChars: chars, BodyChars: chars, RowChars: chars + 100,
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: "machine")]);
+	}
+
+	[Fact]
+	public async Task Enforce_DefaultAxis_CountsMachineCost_AutomatedHighFitEntryIsSpared()
+	{
+		await Seed(Store, "auto");
+		// Automated (machine) traffic only, but a GOOD fit — 5k chars (under the 10k boar floor)
+		// at 0.9 fit. Under today's unchanged default (combined axis) this reads as "reached and
+		// on-target", same as if a human had searched for it.
+		DeliverMachine("auto", chars: 5_000, kRel: 0.9);
+		await _recorder.FlushAsync();
+
+		var retired = await Job(enforce: true).DrainAllAsync(CancellationToken.None); // excludeMachineFromCost defaults false
+
+		retired.Should().Be(0);
+		(await _memory.GetAsync(Proj, Store, "auto")).Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task Enforce_ExcludeMachineFromCost_SameAutomatedEntry_LooksNeverReached_RiskDemonstrated()
+	{
+		await Seed(Store, "auto");
+		// The exact same entry/delivery as the test above.
+		DeliverMachine("auto", chars: 5_000, kRel: 0.9);
+		await _recorder.FlushAsync();
+
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,
+			minAge: AllOld, enforce: true, scanInterval: NoThrottle, excludeMachineFromCost: true);
+		var retired = await job.DrainAllAsync(CancellationToken.None);
+
+		// This is the card's stated Risk, reproduced: narrowing cost/fit to deliberate-only makes
+		// this entry's real (high-fit) cost invisible — its deliberate-cut deliveredChars is 0 and
+		// it was never Surfaced/Opened either, so it now reads as "never reached" and IS retired,
+		// even though it is a precise, actively-used (if automated) entry. This is exactly why the
+		// config defaults to false: an operator must review a before/after report on live data
+		// before opting a store/GC into this axis.
+		retired.Should().Be(1);
+		(await _memory.GetAsync(Proj, Store, "auto")).Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Enforce_ExcludeMachineFromCost_DeliberateNoiseBoar_IsStillRetired()
+	{
+		await Seed(Store, "boar");
+		// The SAME noise-boar shape as Enforce_RetiresExpensiveOffTargetEntry_ButSparesCheapPreciseOne
+		// (12k chars at fit 0.2), but tagged deliberate this time — the deliberate-only axis must
+		// still catch a genuinely deliberate noise boar, not just skip judging it.
+		for (var i = 0; i < 6; i++)
+			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
+				Tool: "search", Scope: "project", Store: Store, Key: "boar",
+				DeliveredChars: 2_000, BodyChars: 2_000, RowChars: 2_100,
+				Rank: 1, ScoreRaw: 0.02, KRel: 0.2, SessionId: null, UsageSource: "deliberate")]);
+		await _recorder.FlushAsync();
+
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,
+			minAge: AllOld, enforce: true, scanInterval: NoThrottle, excludeMachineFromCost: true);
+		var retired = await job.DrainAllAsync(CancellationToken.None);
+
+		retired.Should().Be(1);
+		(await _memory.GetAsync(Proj, Store, "boar")).Should().BeNull();
+	}
+
 	[Fact]
 	public async Task Throttle_SecondPassWithinInterval_IsSkipped()
 	{

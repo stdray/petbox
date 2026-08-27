@@ -318,6 +318,12 @@ public sealed record MemoryStoreRow(string Scope, string Name, string? Descripti
 // trailing `WindowDays`: DeliveredChars/RowChars = the context this store spent, AvgKRel = the
 // event-weighted mean fit of what it spent it on. Additive: null on a store with no deliveries
 // in the window (and on any client that never asked).
+// DeliberateDeliveries/DeliberateDeliveredChars/DeliberateAvgKRel and MachineDeliveries/
+// MachineDeliveredChars/MachineAvgKRel (card usage-delivery-mixes-machine-traffic) are the SAME
+// Cost/Fit pair split by UsageSourceKind — additive alongside the combined fields above, never a
+// replacement: hard-filtering the combined numbers down to deliberate-only would make a store
+// served mostly by automation read as dead. Null on a client too old to ask, exactly like the
+// combined fields.
 public sealed record MemoryStoreUsageRow(
 	int TotalEntries,
 	int SurfacedAtLeastOnce,
@@ -332,7 +338,13 @@ public sealed record MemoryStoreUsageRow(
 	long? DeliveredChars = null,
 	long? RowChars = null,
 	double? AvgKRel = null,
-	int? EntriesDelivered = null);
+	int? EntriesDelivered = null,
+	long? DeliberateDeliveries = null,
+	long? DeliberateDeliveredChars = null,
+	double? DeliberateAvgKRel = null,
+	long? MachineDeliveries = null,
+	long? MachineDeliveredChars = null,
+	double? MachineAvgKRel = null);
 
 public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores);
 
