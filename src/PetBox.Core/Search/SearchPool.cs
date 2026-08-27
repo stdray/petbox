@@ -26,12 +26,21 @@ namespace PetBox.Core.Search;
 // (tasks: whether the row surfaced through a COMMENT doc, which the resolved node address no longer
 // says). Without a slot for it, a later page would quietly drop that fact — a small version of the same
 // "page 2 is not page 1" defect this whole design exists to prevent. Null when the consumer has none.
+//
+// `PoolAnnotation` is the same idea one level up: a WHOLE-POOL opaque label, for a fact that belongs to
+// the PASS that built the pool rather than to any one row. Sessions needs it — the opt-in full-scan leg
+// reports whether the scan hit its cap (spec: session-fullscan-optin), and that is a property of the
+// scan that produced this order, not of a session in it. Without a slot for it, page 2 off a cached pool
+// would have to report `fullScanCapped: null`, which on the wire means "never requested" — a flat lie
+// next to `fullScanRequested: true`, and precisely the "the boundary must stay VISIBLE" rule this file's
+// SearchPoolStop comment exists to enforce. Null when the consumer has none.
 public sealed record SearchPool(
 	IReadOnlyList<Hit> Ordered,
 	int PoolLimit,
 	bool PoolBounded,
 	SearchRetrievers Retrievers,
-	IReadOnlyList<string?>? Annotations = null)
+	IReadOnlyList<string?>? Annotations = null,
+	string? PoolAnnotation = null)
 {
 	public int Count => Ordered.Count;
 

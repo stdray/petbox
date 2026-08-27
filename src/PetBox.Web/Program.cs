@@ -366,7 +366,13 @@ public partial class Program
 			sp.GetRequiredService<PetBox.Sessions.Search.ISessionFullScanIndex>(),
 			sp.GetRequiredService<PetBox.Core.Settings.ISettingsResolver>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
-			sp.GetRequiredService<PetBox.Core.Search.SearchOrderingPolicies>()));
+			sp.GetRequiredService<PetBox.Core.Search.SearchOrderingPolicies>(),
+			// The SAME materialized-pool cache memory and tasks page against (registered above). Without
+			// it session_search re-ran the digest leg's cross-encoder on every page, and since that route
+			// is not order-stable across two identical calls, every page minted a different order stamp
+			// and the cursor guard refused the walk it had just issued — page 2 did not exist
+			// (work/session-search-cursor-invalidates-immediately).
+			sp.GetRequiredService<PetBox.Core.Search.SearchPoolCache>()));
 		// The sessions UI's OUTCOME memo (card: ui-search-render-memoized). SINGLETON for the same
 		// reason SearchPoolCache is one — the page model that reads it is SCOPED, so anything narrower
 		// would be born empty on every render and memoize nothing. It rides the SAME HybridCache over

@@ -249,7 +249,8 @@ public sealed class SearchPoolCache
 				new RetrieversPayload(
 					pool.Retrievers.Lexical, pool.Retrievers.Semantic, pool.Retrievers.Degraded,
 					pool.Retrievers.DegradedReason, pool.Retrievers.SemanticLag, pool.Retrievers.Ranking),
-				pool.Annotations),
+				pool.Annotations,
+				pool.PoolAnnotation),
 			PayloadJson);
 
 	// Returns null for ANY payload this build cannot honour — a foreign version, a truncated blob,
@@ -278,7 +279,8 @@ public sealed class SearchPoolCache
 				new SearchRetrievers(
 					payload.Retrievers.Lexical, payload.Retrievers.Semantic, payload.Retrievers.Degraded,
 					payload.Retrievers.DegradedReason, payload.Retrievers.SemanticLag, payload.Retrievers.Ranking),
-				payload.Annotations);
+				payload.Annotations,
+				payload.PoolAnnotation);
 		}
 		catch (JsonException ex)
 		{
@@ -301,7 +303,18 @@ public sealed class SearchPoolCache
 		[property: JsonPropertyName("pl")] int PoolLimit,
 		[property: JsonPropertyName("pb")] bool PoolBounded,
 		[property: JsonPropertyName("r")] RetrieversPayload Retrievers,
-		[property: JsonPropertyName("a")] IReadOnlyList<string?>? Annotations);
+		[property: JsonPropertyName("a")] IReadOnlyList<string?>? Annotations,
+		// ADDED WITHOUT bumping PayloadFormatVersion, deliberately — and the rule above is not being
+		// waived, it is being applied. What the version exists to prevent is a foreign payload read as
+		// if it were ours, "which would serve a wrong order under a fingerprint that says it is right".
+		// This field cannot do that in either direction: it is optional, it touches no ordering field, a
+		// v1 payload parses byte-for-byte the same and simply lands `null` here (which is what every
+		// tasks/memory pool means anyway), and an older build reading a payload we wrote ignores the
+		// unknown property. The only reader that could MISS something is the sessions pool, and no v1
+		// bytes for one can exist — the sessions pool key is new with this field. Bumping instead would
+		// cost a real thing for no gain: every live pool goes cold on deploy, so for one TTL every
+		// in-flight page 2 is refused — a transient outage of the exact feature this field ships for.
+		[property: JsonPropertyName("pa")] string? PoolAnnotation = null);
 
 	sealed record HitPayload(
 		[property: JsonPropertyName("t")] string Type,
