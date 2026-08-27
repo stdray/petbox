@@ -16,11 +16,11 @@ namespace PetBox.Web.Mcp;
 // ITasksService (the single door to the task store). It must not touch the store or
 // DB context directly (a NetArchTest enforces this). Scopes: tasks:read / tasks:write.
 // TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT — ONE declaration for
-// all 29 verbs, which is the case the type-level carrier exists for. The alternative is 29 copies of
+// all 30 verbs, which is the case the type-level carrier exists for. The alternative is 29 copies of
 // the same attribute, and 29 copies of one sentence is how a family ends up different by accident
 // (the ratchet's own carrier test says as much about exactly this family).
 //
-// Manual coverage was already complete: every one of the 29 opened with
+// Manual coverage was already complete: every one of the 29 that existed at the wave opened with
 // ModuleMcp.AssertProject(http, projectKey) — the same ProjectScope.EvaluateAsync ITenantAuthorizer
 // runs — so enforcement moves no allow/deny outcome. It moves only WHERE: the refusal now precedes
 // the Feature.Tasks gate and the tool body, and precedes McpProjectExistsFilter, so a foreign key can
@@ -1633,6 +1633,69 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
+	}
+
+	[McpServerTool(Name = "tasks_owner_digest", Title = "Owner-away digest for a board", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(OwnerDigestView))]
+	[Description("""
+		"What happened while I was away" for ONE board, ordered by WHAT IT ASKS OF YOU — not chronologically.
+		Sections, in this fixed order: (1) `awaitingDecision` — nodes waiting on YOUR decision; (2) `closed`
+		— nodes in the period whose status is now terminal; (3) `newCohorts` — nodes born in the period,
+		grouped on the `area` tag; (4) `timeline` — chronology, only when `includeTimeline` is true.
+		PERIOD: `sinceVersion` (a `currentVersion` from an earlier digest or tasks_delta), else the last
+		`days` days (default 7). Section (1) is deliberately NOT clipped to the period — it is your whole
+		open decision queue, because a decision that waited longer than your absence is more urgent, not
+		less. CLOSURE DATES ARE A PROXY: the server does not store when a status changed, so a closed node
+		is dated by its `updatedAt` — the last revision of anything on it. Cycle time is NOT measurable
+		from this, and `closureDatingCaveat` repeats it in the payload. Requires tasks:read.
+		[[full]]
+		The digest is assembled ONCE, in the Tasks module (IOwnerDigestService), and this verb and the
+		/ui/{workspaceKey}/{projectKey}/digest/{board} page are two doors onto that same assembly — the
+		page does not build a digest of its own, so the two can never disagree about what waits on you.
+
+		WHY THE ORDER IS NOT CHRONOLOGICAL. A chronological feed is pleasant for a one-day absence and
+		useless for a two-week one, where it is a couple of hundred events nobody reads. So the digest
+		leads with what needs a decision, then what finished, then what is new by theme, and offers the
+		chronology only on request.
+
+		TWO CURSORS, NOT ONE. Task nodes and comments are separate temporal stores with independent
+		version spaces, so the digest carries `sinceVersion` (nodes) and `sinceCommentVersion` (comments,
+		read only for the timeline) and returns `currentVersion` / `currentCommentVersion` to feed the
+		next call. Passing `sinceVersion` also switches the period OFF the clock: `windowStart` then comes
+		back null, because a version cursor names a revision and not an instant.
+
+		SECTION SHAPES. Every section reports both its rows and its untruncated `...Total`, so a section
+		clipped by `sectionLimit` says so with a number instead of just ending. `newCohorts[].area` is the
+		bare `area:` tag value; a node with two area tags appears in two cohorts, and nodes with none land
+		in a single "(no area)" cohort listed last. `removedKeys` names nodes that were DELETED in the
+		period (there is no row left to enrich). `statusKind` on every item is resolved from the board's
+		own workflow (open|terminalok|terminalcancel), never guessed from how the status is spelled.
+
+		Memory is NOT covered: memory_delta is cursored per STORE, so including it would need a composite
+		cursor, and none of sections (1)-(3) has a memory row to put in.
+		""")]
+	public static async Task<OwnerDigestView> OwnerDigestAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks, IOwnerDigestService digest,
+		string projectKey, string board,
+		[Description("Node cursor: a `currentVersion` from an earlier digest or tasks_delta. Omit to use the `days` window instead — passing it makes `windowStart` null, because a version cursor names a revision, not an instant.")] long? sinceVersion = null,
+		[Description("Comment cursor, in the comments' OWN version space (they are a separate temporal store). Only read when includeTimeline is true.")] long? sinceCommentVersion = null,
+		[Description("The cursor-less period, in days (default 7). Ignored when sinceVersion is given.")] int? days = null,
+		[Description("Include section (4), the chronology. Off by default — it is the section that does not survive a long absence.")] bool includeTimeline = false,
+		[Description("Rows per section (default 20). Each section still reports its untruncated total.")] int? sectionLimit = null,
+		[Description("Include an absolute `url` permalink on each item (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return await digest.DigestAsync(projectKey, new OwnerDigestRequest
+		{
+			Board = board,
+			SinceVersion = sinceVersion,
+			SinceCommentVersion = sinceCommentVersion,
+			Days = days ?? OwnerDigestRequest.DefaultDays,
+			IncludeTimeline = includeTimeline,
+			SectionLimit = sectionLimit ?? OwnerDigestRequest.DefaultSectionLimit,
+		}, urlPrefix, ct);
 	}
 
 	[McpServerTool(Name = "tasks_workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]

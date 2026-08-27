@@ -2128,4 +2128,94 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			"every view mode of the same board must render the identical drawer class on its first response — " +
 			"a mismatch here would be a genuine server-side cause of the sidebar appearing to change on a view switch");
 	}
+	// ── THE OWNER-AWAY DIGEST PAGE (spec owner-away-digest) ──────────────────────────────────────
+	//
+	// The page is the human half of a deliverable whose other half is the `tasks_owner_digest` MCP
+	// verb, and both render ONE service (IOwnerDigestService). What can still break here is what the
+	// PAGE is responsible for: that the route answers at all, and that the sections come out in the
+	// order the owner fixed. The order is asserted on the RENDERED DOM rather than on the model,
+	// because the markup is where a well-meaning "let's put the timeline first" actually lands.
+	[Fact]
+	public async Task OwnerDigest_RendersTheSections_InTheOwnersOrder_AndNamesTheProxyCaveat()
+	{
+		const string board = "ownerdigestorder";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "owner digest order smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "od1", Title = "OD1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/digest/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		var awaiting = html.IndexOf("data-testid=\"digest-awaiting\"", StringComparison.Ordinal);
+		var closed = html.IndexOf("data-testid=\"digest-closed\"", StringComparison.Ordinal);
+		var cohorts = html.IndexOf("data-testid=\"digest-cohorts\"", StringComparison.Ordinal);
+		var timeline = html.IndexOf("data-testid=\"digest-timeline\"", StringComparison.Ordinal);
+
+		awaiting.Should().BeGreaterThan(-1, "the page must render section (1) at all");
+		closed.Should().BeGreaterThan(awaiting, "(1) waiting on your decision leads — this order is the product");
+		cohorts.Should().BeGreaterThan(closed, "(2) what closed precedes (3) new cohorts");
+		timeline.Should().BeGreaterThan(cohorts, "(4) chronology is last, and off unless asked");
+
+		html.Should().Contain("data-testid=\"digest-caveat\"")
+			.And.Contain("PROXY", "the closure-dating limitation is stated on the page, not only in the payload");
+		html.Should().Contain("data-testid=\"digest-timeline-off\"",
+			"chronology is opt-in, so an unasked-for section says so instead of rendering a silent void");
+	}
+
+	// The decision queue on the page, in BOTH directions plus the empty case — the three ways this
+	// section can be wrong: it can miss the flagged node, it can show the unflagged one (a board dump
+	// wearing a section header), and it can render "everything" when nothing waits.
+	[Fact]
+	public async Task OwnerDigest_AwaitingSection_ShowsTheFlagged_NotTheUnflagged_AndIsEmptyWhenNoneWait()
+	{
+		const string instance = "ownerdigestqueue";   // the board with a flagged node
+		const string spec = "ownerdigestnoqueue";     // a board where nothing waits
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", instance))
+				await boards.CreateAsync("$system", instance, "owner digest queue smoke");
+			if (!await boards.ExistsAsync("$system", spec))
+				await boards.CreateAsync("$system", spec, "owner digest empty-queue smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", instance,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "odflagged", Title = "ODFLAGGED", Body = "x", DecisionPending = true },
+				new PetBox.Tasks.Contract.NodePatch { Key = "odplain", Title = "ODPLAIN", Body = "x" },
+			]);
+			await tasks.UpsertAsync("$system", spec,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "odquiet", Title = "ODQUIET", Body = "x" },
+			]);
+		}
+
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/digest/{instance}"))
+		{
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"digest-awaiting-row\" data-node-key=\"odflagged\"");
+			html.Should().NotContain("data-testid=\"digest-awaiting-row\" data-node-key=\"odplain\"",
+				"an unflagged node is not waiting on the owner — showing it would make the section a board dump");
+		}
+
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/digest/{spec}"))
+		{
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"digest-awaiting-empty\"",
+				"nothing waits, so the section says so — it does not fall back to listing the board");
+			html.Should().NotContain("data-testid=\"digest-awaiting-row\"");
+			html.Should().Contain("data-node-key=\"odquiet\"",
+				"the board is not empty — the node still shows up as new, just not as a decision waiting on you");
+		}
+	}
 }

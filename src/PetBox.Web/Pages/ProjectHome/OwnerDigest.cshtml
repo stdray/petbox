@@ -1,0 +1,211 @@
+@page "/ui/{workspaceKey}/{projectKey}/digest/{board}"
+@model PetBox.Web.Pages.ProjectHome.OwnerDigestModel
+@{
+	ViewData["Title"] = $"Digest — {Model.Board} — {Model.Project?.Name ?? Model.ProjectKey}";
+}
+
+@* THE SECTION ORDER BELOW IS THE PRODUCT, not a layout choice (spec owner-away-digest, owner's
+   decision of 2026-08-27): (1) waiting on your decision, (2) what closed, (3) new cohorts by theme,
+   (4) chronology on request. It is deliberately NOT chronological — a feed is fine for a one-day
+   absence and useless for a two-week one. Do not reorder these blocks. *@
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="digest-title">
+		@(Model.Project?.Name ?? Model.ProjectKey) · @Model.Board · while you were away
+	</h1>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="digest-notfound">Project not found.</div>
+	return;
+}
+
+@if (!Model.TasksEnabled)
+{
+	<div class="alert" data-testid="digest-disabled">The Tasks module is disabled.</div>
+	return;
+}
+
+@if (Model.Error is not null)
+{
+	<div class="alert alert-error" data-testid="digest-error">@Model.Error</div>
+	return;
+}
+
+@if (Model.Digest is null)
+{
+	<div class="alert" data-testid="digest-empty">Nothing to show.</div>
+	return;
+}
+
+@{
+	var d = Model.Digest;
+}
+
+<form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="digest-period-form">
+	<label class="form-control">
+		<span class="label-text text-xs">Days away</span>
+		<input type="number" name="days" min="1" value="@Model.EffectiveDays" class="input input-bordered input-sm w-24" data-testid="digest-days" />
+	</label>
+	<label class="form-control">
+		<span class="label-text text-xs">Rows per section</span>
+		<input type="number" name="size" min="1" value="@Model.EffectiveSize" class="input input-bordered input-sm w-24" data-testid="digest-size" />
+	</label>
+	<label class="label cursor-pointer gap-2">
+		<input type="checkbox" name="timeline" value="true" class="checkbox checkbox-sm" checked="@(Model.Timeline ? "checked" : null)" data-testid="digest-timeline-toggle" />
+		<span class="label-text">Show chronology</span>
+	</label>
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="digest-apply">Apply</button>
+</form>
+
+<div class="text-xs opacity-70 mb-4" data-testid="digest-window">
+	@if (d.WindowStart is { } start)
+	{
+		<span>Period: since @start.ToString("yyyy-MM-dd HH:mm") UTC (last @Model.EffectiveDays day(s)).</span>
+	}
+	else
+	{
+		<span>Period: since board revision @d.SinceVersion — a cursor names a revision, not an instant, so there is no start date to show.</span>
+	}
+	<span>Next cursor: @d.CurrentVersion (nodes), @d.CurrentCommentVersion (comments).</span>
+</div>
+
+@* THE KNOWN LIMITATION, said out loud on the page and carried in the payload so the MCP verb says
+   the same thing. Never present a proxy as a measurement. *@
+<div class="alert alert-warning mb-4" data-testid="digest-caveat">@d.ClosureDatingCaveat</div>
+
+@* ── (1) waiting on your decision ───────────────────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-awaiting">
+	<h2 class="text-lg font-semibold mb-2">
+		1 · Waiting on your decision
+		<span class="badge badge-ghost" data-testid="digest-awaiting-total">@d.AwaitingDecisionTotal</span>
+	</h2>
+	<p class="text-xs opacity-70 mb-2">Your whole open decision queue on this board — deliberately NOT clipped to the period: a decision that waited longer than your absence is more urgent, not less.</p>
+	@if (d.AwaitingDecision.Count == 0)
+	{
+		<div class="alert" data-testid="digest-awaiting-empty">Nothing is waiting on you.</div>
+	}
+	else
+	{
+		<ul class="menu bg-base-200 rounded-box">
+			@foreach (var item in d.AwaitingDecision)
+			{
+				<li data-testid="digest-awaiting-row" data-node-key="@item.Key">
+					<a href="@Model.NodeHref(item)">
+						<span class="font-medium">@item.Title</span>
+						<span class="badge badge-sm">@item.Status</span>
+						<span class="text-xs opacity-60">@item.Key</span>
+					</a>
+				</li>
+			}
+		</ul>
+	}
+</section>
+
+@* ── (2) what closed ────────────────────────────────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-closed">
+	<h2 class="text-lg font-semibold mb-2">
+		2 · What closed
+		<span class="badge badge-ghost" data-testid="digest-closed-total">@d.ClosedTotal</span>
+	</h2>
+	@if (d.Closed.Count == 0)
+	{
+		<div class="alert" data-testid="digest-closed-empty">Nothing closed in this period.</div>
+	}
+	else
+	{
+		<ul class="menu bg-base-200 rounded-box">
+			@foreach (var item in d.Closed)
+			{
+				<li data-testid="digest-closed-row" data-node-key="@item.Key">
+					<a href="@Model.NodeHref(item)">
+						<span class="font-medium">@item.Title</span>
+						<span class="badge badge-sm">@item.Status</span>
+						@* ~ marks the date as the PROXY it is (see the caveat above). *@
+						<span class="text-xs opacity-60" title="proxy: updatedAt, not the moment the status changed">~@item.UpdatedAt.ToString("yyyy-MM-dd")</span>
+					</a>
+				</li>
+			}
+		</ul>
+	}
+</section>
+
+@* ── (3) new cohorts by theme ───────────────────────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-cohorts">
+	<h2 class="text-lg font-semibold mb-2">
+		3 · New, by theme
+		<span class="badge badge-ghost" data-testid="digest-new-total">@d.NewTotal</span>
+	</h2>
+	@if (d.NewCohorts.Count == 0)
+	{
+		<div class="alert" data-testid="digest-cohorts-empty">Nothing new in this period.</div>
+	}
+	else
+	{
+		@foreach (var cohort in d.NewCohorts)
+		{
+			<div class="mb-3" data-testid="digest-cohort" data-area="@cohort.Area">
+				<h3 class="font-medium">@cohort.Area <span class="badge badge-sm badge-ghost">@cohort.Total</span></h3>
+				<ul class="menu bg-base-200 rounded-box">
+					@foreach (var item in cohort.Items)
+					{
+						<li data-testid="digest-cohort-row" data-node-key="@item.Key">
+							<a href="@Model.NodeHref(item)">
+								<span class="font-medium">@item.Title</span>
+								<span class="badge badge-sm">@item.Status</span>
+							</a>
+						</li>
+					}
+				</ul>
+			</div>
+		}
+	}
+</section>
+
+@* ── (4) chronology, on request ─────────────────────────────────────────────────────────────── *@
+<section class="mb-6" data-testid="digest-timeline">
+	<h2 class="text-lg font-semibold mb-2">4 · Chronology</h2>
+	@if (d.Timeline is null)
+	{
+		<div class="alert" data-testid="digest-timeline-off">
+			Off by default. A chronological feed is the section that does not survive a long absence —
+			ask for it above when you actually want it.
+		</div>
+	}
+	else if (d.Timeline.Count == 0)
+	{
+		<div class="alert" data-testid="digest-timeline-empty">No events in this period.</div>
+	}
+	else
+	{
+		<ul class="menu bg-base-200 rounded-box">
+			@foreach (var e in d.Timeline)
+			{
+				<li data-testid="digest-timeline-row" data-kind="@e.Kind">
+					<span>
+						<span class="text-xs opacity-60">@e.At.ToString("yyyy-MM-dd HH:mm")</span>
+						<span class="badge badge-sm">@e.Kind</span>
+						<span class="font-medium">@e.Title</span>
+						@if (!string.IsNullOrEmpty(e.Author))
+						{
+							<span class="text-xs opacity-60">@e.Author</span>
+						}
+						@if (!string.IsNullOrEmpty(e.Excerpt))
+						{
+							<span class="text-xs opacity-70">@e.Excerpt</span>
+						}
+					</span>
+				</li>
+			}
+		</ul>
+	}
+</section>
+
+@if (d.RemovedKeys.Count > 0)
+{
+	<section class="mb-6" data-testid="digest-removed">
+		<h2 class="text-lg font-semibold mb-2">Deleted in this period</h2>
+		<p class="text-xs opacity-70">@string.Join(", ", d.RemovedKeys)</p>
+	</section>
+}

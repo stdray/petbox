@@ -271,6 +271,11 @@ public partial class Program
 		builder.Services.AddSingleton<PetBox.Core.Search.SearchPoolCache>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ICommentService, PetBox.Tasks.Services.CommentService>();
+		// The owner-away digest (spec owner-away-digest) — ONE assembly behind BOTH doors, the
+		// `tasks_owner_digest` verb and the /digest/{board} page. Scoped, because it holds nothing and
+		// composes the two scoped services above; a singleton here would capture them (see
+		// CaptiveDependencyTests).
+		builder.Services.AddScoped<PetBox.Tasks.Contract.IOwnerDigestService, PetBox.Tasks.Services.OwnerDigestService>();
 		// Task-node usage telemetry (spec: task-usage-layer-with-declared-role) — the delivery-side
 		// twin of memory's recorder. The WRITER is a singleton queue+drain (the read path enqueues
 		// and returns; nothing waits on SQLite), called ONLY by the MCP adapters, so internal

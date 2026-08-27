@@ -338,6 +338,22 @@
 			"note": "page:/Search — кросс-скоуп поиск по узлам задач (CrossScopeTaskSearchService.SearchAsync), тот же доменный read, что tasks_search, только веером по проектам вызывающего (Search.cshtml.cs:82-90). Добавлено при гашении долга 2026-08-20."
 		},
 		{
+			"id": "nodes.owner-digest",
+			"source": "spec owner-away-digest / work owner-away-digest-delivery (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "nodes",
+			"action": "получить дайджест «что было, пока меня не было» по доске",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_owner_digest",
+				"page:/ProjectHome/OwnerDigest"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Отдельное действие, а не поверхность nodes.read: это НЕ чтение узлов, а сборка сводки за период отсутствия владельца (очередь решений + закрытое + новые когорты + хронология по запросу) — один сервис IOwnerDigestService за обеими дверями."
+		},
+		{
 			"id": "nodes.relations-create",
 			"source": "08-summary §1 #19",
 			"subdomain": "nodes",

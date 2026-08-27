@@ -75,6 +75,10 @@ public static class Routes
 	// the literal-segment route can't collide with a board called "node".
 	public static string TaskBoardNodeBySlug(string ws, string key, string board, string slug) => $"{ProjectTaskBoard(ws, key, board)}/{slug}";
 	public static string TaskBoardNode(string ws, string key, string nodeId) => $"{ProjectTasks(ws, key)}/node/{nodeId}";
+	// The owner-away digest of one board (spec owner-away-digest). Its own top-level segment rather
+	// than /tasks/{board}/digest: the latter would sit under TaskBoardNodeBySlug's {slug} and quietly
+	// make "digest" an unreachable node slug on every board in the system.
+	public static string ProjectOwnerDigest(string ws, string key, string board) => $"{Project(ws, key)}/digest/{board}";
 	public static string ProjectMemory(string ws, string key) => $"{Project(ws, key)}/memory";
 	public static string ProjectMemoryStore(string ws, string key, string store) => $"{Project(ws, key)}/memory/{store}";
 	public static string ProjectSessions(string ws, string key) => $"{Project(ws, key)}/sessions";
