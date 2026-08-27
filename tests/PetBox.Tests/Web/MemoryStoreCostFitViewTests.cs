@@ -88,6 +88,13 @@ public sealed class MemoryStoreCostFitViewTests : IClassFixture<ModuleViewsFixtu
 		html.Should().MatchRegex("""data-testid="agg-cost"[^>]*>\s*500""");
 		html.Should().MatchRegex("""data-testid="agg-fit"[^>]*>\s*80\s*%""");
 
+		// Card usage-delivery-mixes-machine-traffic item 4: the Surfaced caption used to claim
+		// "ever returned in search", but a LISTING (no query) bumps the same SurfacedCount — the
+		// caption was lying about what the counter measures, not the counter itself. The wording
+		// must name both paths, not just search.
+		html.Should().Contain("ever delivered (search or listing)");
+		html.Should().NotContain("ever returned in search");
+
 		// The Opened caption no longer reads as a value verdict on its own.
 		html.Should().Contain("not a value verdict");
 	}

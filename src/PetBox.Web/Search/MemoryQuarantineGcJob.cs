@@ -31,6 +31,16 @@ namespace PetBox.Web.Search;
 // never ops, never a system store. A machine write's home is the only place a machine may prune.
 // Runs on the shared enrichment tick like the other jobs, but throttled to ScanInterval so it
 // doesn't re-log the same stable candidate set every 60s.
+//
+// COST/FIT AXIS (card usage-delivery-mixes-machine-traffic, spec memory-usage-observability
+// "Учёт НЕ ДОЛЖЕН включать внутренний машинный трафик"): DeliveredChars/AvgKRel above are
+// computed BOTH ways by MemoryService's DeliveryRollup — combined (every UsageSource) and
+// deliberate-only — and this job picks which one it judges on via ExcludeMachineFromCost
+// (config `Memory:QuarantineGc:ExcludeMachineFromCost`, default false = unchanged combined
+// behaviour). Config, not a hardcoded switch: a hard deliberate-only filter would make an
+// entry's MACHINE-driven cost invisible and a store served mostly by automation would start
+// reading as "never reached" — the config default keeps today's behaviour until an operator has
+// reviewed a report-only before/after candidate diff on live data and opts in deliberately.
 
 // Shared last-scan clock for the throttle. The job is scoped (a fresh instance per enrichment
 // tick), so the "when did we last scan" state must live in a singleton injected across ticks
@@ -77,11 +87,22 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	readonly long _minDeliveredChars;
 	readonly double _maxAvgKRel;
 	readonly MemoryQuarantineGcClock _clock;
+	// The cost/fit AXIS this verdict judges on (card usage-delivery-mixes-machine-traffic, spec
+	// memory-usage-observability "Учёт НЕ ДОЛЖЕН включать внутренний машинный трафик"). false
+	// (default, config Memory:QuarantineGc:ExcludeMachineFromCost) = the pre-existing behaviour,
+	// unchanged: cost/fit are the COMBINED totals over every UsageSource. true = cost/fit are the
+	// DELIBERATE-ONLY split — a store/entry kept alive mostly by automated (machine) pulls no
+	// longer has that traffic count toward "reached" or toward "fits". Config-driven, not
+	// hardcoded: the owner reviews a report-only before/after candidate diff on live data before
+	// ever flipping this (see the card's Risk section — narrowing blind risks marking an
+	// automation-served store "never reached").
+	readonly bool _excludeMachineFromCost;
 
 	public MemoryQuarantineGcJob(IProjectCatalog catalog, IMemoryService memory,
 		ILogger<MemoryQuarantineGcJob>? logger = null, TimeSpan? minAge = null, bool enforce = false,
 		TimeSpan? scanInterval = null, MemoryQuarantineGcClock? clock = null,
-		TimeSpan? usageWindow = null, long? minDeliveredChars = null, double? maxAvgKRel = null)
+		TimeSpan? usageWindow = null, long? minDeliveredChars = null, double? maxAvgKRel = null,
+		bool excludeMachineFromCost = false)
 	{
 		_catalog = catalog;
 		_memory = memory;
@@ -93,6 +114,7 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 		_usageWindow = usageWindow ?? DefaultUsageWindow;
 		_minDeliveredChars = minDeliveredChars ?? DefaultMinDeliveredChars;
 		_maxAvgKRel = maxAvgKRel ?? DefaultMaxAvgKRel;
+		_excludeMachineFromCost = excludeMachineFromCost;
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
@@ -178,9 +200,13 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	// spared: a listing is curation, and we do not retire on evidence we never gathered.
 	bool IsCandidate(MemoryUsageView? u, MemoryDeliveryStats? d)
 	{
-		var deliveredChars = d?.DeliveredChars ?? 0;
+		// The AXIS: combined (every UsageSource, unchanged default) or deliberate-only, per
+		// _excludeMachineFromCost. Picking the pair up front keeps the two verdict legs below
+		// blind to which axis is live — same formulas either way.
+		var deliveredChars = _excludeMachineFromCost ? d?.DeliberateDeliveredChars ?? 0 : d?.DeliveredChars ?? 0;
+		var avgKRel = _excludeMachineFromCost ? d?.DeliberateAvgKRel : d?.AvgKRel;
 		var neverReached = deliveredChars == 0 && (u is null || (u.Deliberate == 0 && u.Opened == 0));
-		var noiseBoar = deliveredChars >= _minDeliveredChars && d?.AvgKRel is { } fit && fit < _maxAvgKRel;
+		var noiseBoar = deliveredChars >= _minDeliveredChars && avgKRel is { } fit && fit < _maxAvgKRel;
 		return neverReached || noiseBoar;
 	}
 }

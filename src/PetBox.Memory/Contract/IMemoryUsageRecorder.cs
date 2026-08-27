@@ -1,5 +1,17 @@
 namespace PetBox.Memory.Contract;
 
+// The two UsageSource wire values (spec: memory-usage-observability, card
+// usage-delivery-mixes-machine-traffic) — the ONE place the literal strings "deliberate" /
+// "machine" are spelled out. Both the write side (MemoryTools.cs's memory_search `usageSource`
+// argument, which validates against exactly these two) and the read/split side
+// (MemoryService.cs's DeliveryRollup, MemoryQuarantineGcJob's cost/fit axis) match against
+// these constants instead of each re-declaring its own copy of the same two strings.
+public static class UsageSourceKind
+{
+	public const string Deliberate = "deliberate";
+	public const string Machine = "machine";
+}
+
 // Usage telemetry intake for memory entries (spec: memory-usage-observability).
 // Called ONLY by the agent/human-facing adapters (MCP tools, UI) — never by internal
 // machine consumers (distillation judge, digest discovery), which reach IMemoryService
@@ -72,7 +84,20 @@ public sealed record MemoryUsageView(
 // Deliveries = how many rows this entry was sent as; DeliveredChars = the body chars those
 // rows actually carried; RowChars = their whole serialized wire price; AvgKRel = the mean of
 // the deliveries that carried a fit (null when none did — a listing runs no relevance leg).
-public sealed record MemoryDeliveryStats(long Deliveries, long DeliveredChars, long RowChars, double? AvgKRel);
+// The leading four fields are the COMBINED total over every UsageSource — unchanged meaning,
+// so every pre-existing reader (the store aggregate, memory_search's per-row includeUsage) keeps
+// working exactly as before.
+//
+// Deliberate*/Machine* (card usage-delivery-mixes-machine-traffic, spec
+// memory-usage-observability "Учёт НЕ ДОЛЖЕН включать внутренний машинный трафик") are the SAME
+// four numbers split by UsageSourceKind — additive, never a replacement: a hard filter down to
+// deliberate-only would make machine cost invisible and a store serviced mostly by automation
+// would read as dead. Keeping both means MemoryQuarantineGcJob can judge on either axis (picked
+// by config, not hardcoded) and a human/report can compare the two without a second query.
+public sealed record MemoryDeliveryStats(
+	long Deliveries, long DeliveredChars, long RowChars, double? AvgKRel,
+	long DeliberateDeliveries, long DeliberateDeliveredChars, double? DeliberateAvgKRel,
+	long MachineDeliveries, long MachineDeliveredChars, double? MachineAvgKRel);
 
 // Store-wide usage aggregate (spec: memory-usage-aggregate) — a single glance at how a
 // store's entries are actually reached. Coverage (how many entries ever surfaced/opened
@@ -110,7 +135,13 @@ public sealed record MemoryStoreCost(
 	long RowChars,
 	double? AvgKRel,
 	// Distinct active entries that were delivered at least once in the window.
-	int EntriesDelivered);
+	int EntriesDelivered,
+	// The same cost/fit, split by UsageSourceKind (card usage-delivery-mixes-machine-traffic) —
+	// additive, the combined fields above are untouched. A store serviced mostly by automation
+	// must not read as dead just because its DELIBERATE numbers are small: both cuts stay
+	// visible side by side rather than one silently replacing the other.
+	long DeliberateDeliveries = 0, long DeliberateDeliveredChars = 0, double? DeliberateAvgKRel = null,
+	long MachineDeliveries = 0, long MachineDeliveredChars = 0, double? MachineAvgKRel = null);
 
 // The never-surfaced tail: the total count plus an oldest-first sample of their keys (by
 // entry Created — the most stale entries first, the best pruning candidates), capped at N.

@@ -886,10 +886,22 @@ public sealed class MemoryService : IMemoryService
 	// One entry's delivery roll-up plus the RAW fit parts. AvgKRel must stay decomposed here:
 	// a store-level mean is Σscore/Σn over EVENTS — averaging the per-entry means would weight a
 	// once-delivered entry the same as a hundred-times-delivered one.
-	sealed record Rollup(long Deliveries, long DeliveredChars, long RowChars, double KRelSum, long KRelCount)
+	//
+	// The Deliberate*/Machine* fields are the SAME roll-up, split by UsageSourceKind (card
+	// usage-delivery-mixes-machine-traffic, spec memory-usage-observability "Учёт НЕ ДОЛЖЕН
+	// включать внутренний машинный трафик"). Computed alongside the combined totals in the SAME
+	// grouped SQL pass below — never a second query — so a caller (MemoryQuarantineGcJob, the
+	// store aggregate) can read either axis, or both, from one roll-up.
+	sealed record Rollup(long Deliveries, long DeliveredChars, long RowChars, double KRelSum, long KRelCount,
+		long DeliberateDeliveries, long DeliberateDeliveredChars, double DeliberateKRelSum, long DeliberateKRelCount,
+		long MachineDeliveries, long MachineDeliveredChars, double MachineKRelSum, long MachineKRelCount)
 	{
 		public double? AvgKRel => KRelCount == 0 ? null : KRelSum / KRelCount;
-		public MemoryDeliveryStats Stats => new(Deliveries, DeliveredChars, RowChars, AvgKRel);
+		public double? DeliberateAvgKRel => DeliberateKRelCount == 0 ? null : DeliberateKRelSum / DeliberateKRelCount;
+		public double? MachineAvgKRel => MachineKRelCount == 0 ? null : MachineKRelSum / MachineKRelCount;
+		public MemoryDeliveryStats Stats => new(Deliveries, DeliveredChars, RowChars, AvgKRel,
+			DeliberateDeliveries, DeliberateDeliveredChars, DeliberateAvgKRel,
+			MachineDeliveries, MachineDeliveredChars, MachineAvgKRel);
 	}
 
 	// delivery_events → per-key cost/fit, grouped in SQL (the table is append-only and grows with
@@ -905,6 +917,8 @@ public sealed class MemoryService : IMemoryService
 		}
 
 		if (keys is not null) q = q.Where(d => keys.Contains(d.Key));
+		const string deliberate = UsageSourceKind.Deliberate;
+		const string machine = UsageSourceKind.Machine;
 		return q.GroupBy(d => d.Key)
 			.Select(g => new
 			{
@@ -916,10 +930,22 @@ public sealed class MemoryService : IMemoryService
 				// but no fit, so the fit denominator counts only the events that HAVE one.
 				KRelSum = g.Sum(d => d.KRel ?? 0d),
 				KRelCount = g.Sum(d => d.KRel != null ? 1L : 0L),
+				// Same shape, filtered to one UsageSource — a CASE WHEN inside the same grouped
+				// query, not a second round-trip.
+				DeliberateDeliveries = g.Sum(d => d.UsageSource == deliberate ? 1L : 0L),
+				DeliberateDeliveredChars = g.Sum(d => d.UsageSource == deliberate ? d.DeliveredChars : 0),
+				DeliberateKRelSum = g.Sum(d => d.UsageSource == deliberate ? (d.KRel ?? 0d) : 0d),
+				DeliberateKRelCount = g.Sum(d => d.UsageSource == deliberate && d.KRel != null ? 1L : 0L),
+				MachineDeliveries = g.Sum(d => d.UsageSource == machine ? 1L : 0L),
+				MachineDeliveredChars = g.Sum(d => d.UsageSource == machine ? d.DeliveredChars : 0),
+				MachineKRelSum = g.Sum(d => d.UsageSource == machine ? (d.KRel ?? 0d) : 0d),
+				MachineKRelCount = g.Sum(d => d.UsageSource == machine && d.KRel != null ? 1L : 0L),
 			})
 			.ToList()
 			.ToDictionary(r => r.Key,
-				r => new Rollup(r.Deliveries, r.DeliveredChars, r.RowChars, r.KRelSum, r.KRelCount),
+				r => new Rollup(r.Deliveries, r.DeliveredChars, r.RowChars, r.KRelSum, r.KRelCount,
+					r.DeliberateDeliveries, r.DeliberateDeliveredChars, r.DeliberateKRelSum, r.DeliberateKRelCount,
+					r.MachineDeliveries, r.MachineDeliveredChars, r.MachineKRelSum, r.MachineKRelCount),
 				StringComparer.Ordinal);
 	}
 
@@ -973,6 +999,11 @@ public sealed class MemoryService : IMemoryService
 		var kRelCount = 0L;
 		long deliveries = 0, deliveredChars = 0, rowChars = 0;
 		var entriesDelivered = 0;
+		// The same combined totals, split by UsageSourceKind (card usage-delivery-mixes-machine-
+		// traffic) — additive, so the aggregate can report "cost/fit excluding machine traffic"
+		// (spec: memory-usage-observability) without making the machine cost invisible.
+		long delibDeliveries = 0, delibChars = 0; var delibKRelSum = 0d; var delibKRelCount = 0L;
+		long machDeliveries = 0, machChars = 0; var machKRelSum = 0d; var machKRelCount = 0L;
 		foreach (var (key, r) in rollup)
 		{
 			// Cost counts every row the store SENT — including one whose entry has since been
@@ -983,6 +1014,14 @@ public sealed class MemoryService : IMemoryService
 			rowChars += r.RowChars;
 			kRelSum += r.KRelSum;
 			kRelCount += r.KRelCount;
+			delibDeliveries += r.DeliberateDeliveries;
+			delibChars += r.DeliberateDeliveredChars;
+			delibKRelSum += r.DeliberateKRelSum;
+			delibKRelCount += r.DeliberateKRelCount;
+			machDeliveries += r.MachineDeliveries;
+			machChars += r.MachineDeliveredChars;
+			machKRelSum += r.MachineKRelSum;
+			machKRelCount += r.MachineKRelCount;
 			if (active.Contains(key)) entriesDelivered++;
 		}
 
@@ -1001,7 +1040,13 @@ public sealed class MemoryService : IMemoryService
 				DeliveredChars: deliveredChars,
 				RowChars: rowChars,
 				AvgKRel: kRelCount == 0 ? null : kRelSum / kRelCount,
-				EntriesDelivered: entriesDelivered));
+				EntriesDelivered: entriesDelivered,
+				DeliberateDeliveries: delibDeliveries,
+				DeliberateDeliveredChars: delibChars,
+				DeliberateAvgKRel: delibKRelCount == 0 ? null : delibKRelSum / delibKRelCount,
+				MachineDeliveries: machDeliveries,
+				MachineDeliveredChars: machChars,
+				MachineAvgKRel: machKRelCount == 0 ? null : machKRelSum / machKRelCount));
 	}
 
 	// Median of an unordered timestamp list: null when empty, the middle element for an odd

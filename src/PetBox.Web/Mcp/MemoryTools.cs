@@ -72,6 +72,11 @@ public static class MemoryTools
 		Read the two together — high chars + low fit is a noise boar worth pruning; low chars +
 		high fit is a precise index worth keeping; the impression counters alone cannot tell those
 		apart. Reading this does NOT count as usage (curation, not an impression).
+		The same cost/fit pair is ALSO reported split by source: deliberateDeliveredChars/
+		deliberateAvgKRel (a human/agent intentionally searched or read) vs machineDeliveredChars/
+		machineAvgKRel (an automated hook/context pull, `usageSource:"machine"` on memory_search) —
+		additive alongside the combined numbers above, never a replacement, so a store served
+		mostly by automation never reads as dead just because its deliberate cut is small.
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -103,7 +108,13 @@ public static class MemoryTools
 						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys,
 						// Cost and fit, kept separate and raw — the pair the impression counters cannot express.
 						a.Cost.WindowDays, a.Cost.Deliveries, a.Cost.DeliveredChars, a.Cost.RowChars,
-						a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.EntriesDelivered);
+						a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.EntriesDelivered,
+						// The same pair, split by UsageSourceKind (card usage-delivery-mixes-machine-
+						// traffic) — additive, never replacing the combined numbers above.
+						a.Cost.DeliberateDeliveries, a.Cost.DeliberateDeliveredChars,
+						a.Cost.DeliberateAvgKRel is { } dk ? Math.Round(dk, 4) : null,
+						a.Cost.MachineDeliveries, a.Cost.MachineDeliveredChars,
+						a.Cost.MachineAvgKRel is { } mk ? Math.Round(mk, 4) : null);
 				}
 				rows.Add(new MemoryStoreRow(scopeName, s.Name, s.Description, s.CreatedAt, usage));
 			}
@@ -971,9 +982,12 @@ public static class MemoryTools
 	const int DescriptionSnippet = 160;
 
 	// The usage-signal split, as recorded on a delivery event (mirrors entry_usage's
-	// deliberate/machine cut — see the `usageSource` argument of memory_search).
-	const string DeliberateSource = "deliberate";
-	const string MachineSource = "machine";
+	// deliberate/machine cut — see the `usageSource` argument of memory_search). Local aliases
+	// for PetBox.Memory.Contract.UsageSourceKind — the single source of truth for these two
+	// literal strings, shared with MemoryService's DeliveryRollup split and
+	// MemoryQuarantineGcJob's config-driven cost axis (card usage-delivery-mixes-machine-traffic).
+	const string DeliberateSource = PetBox.Memory.Contract.UsageSourceKind.Deliberate;
+	const string MachineSource = PetBox.Memory.Contract.UsageSourceKind.Machine;
 
 	// What a delivered row costs and how well it fitted — the parts that never reach the wire:
 	// the CONTAINER it came from (the events land in that container's file), the entry's FULL
