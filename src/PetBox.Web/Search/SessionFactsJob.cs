@@ -29,7 +29,6 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 {
 	public const string Store = "autocaptured";
 	public const string Tag = "autocaptured";
-	const string CuratedStore = "notes";
 
 	// The candidate/neighbour facts are serialized INTO the LLM judge prompt. PetBox content is
 	// largely Cyrillic; the default encoder would escape it to \uXXXX and hand the model gibberish.
@@ -41,7 +40,34 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	internal const int MaxCandidatesPerSession = 8;
 	private const int MessageCharCap = 4000;
 	private const int BatchCharCap = 48_000;
+	// Neighbours per STORE (not a global top-K — see CollectNeighborsAsync for why).
 	private const int NeighborK = 3;
+	// Global cap on neighbours reaching ONE judge prompt. Without it, widening the sweep from two
+	// hard-coded stores to "every store the project has" would make the prompt a function of how
+	// many stores a client happens to keep — 20 stores would be 60 neighbours. 8 ≈ the old ceiling
+	// (2 stores x NeighborK = 6) plus room for the store that used to be missing entirely, and it
+	// bounds the prompt: MaxNeighbors x (NeighborBodyClip + NeighborDescriptionClip) = 18.4k chars
+	// worst case, against the 48k (BatchCharCap) this same job already sends the same model per
+	// extraction call.
+	// KNOWN BOUND: a project with more than MaxNeighbors sweepable stores cannot give every store a
+	// rank-1 slot; the tail of the catalog order loses. The quarantine store and the first stores by
+	// name never do — see the round-robin in CollectNeighborsAsync.
+	internal const int MaxNeighbors = 8;
+	// Descriptions are one-liners by the extractor's contract, but a CURATED entry's description is
+	// written by a human and has no such cap — so the prompt bound above needs this leg too.
+	internal const int NeighborDescriptionClip = 300;
+	// How much of a neighbour's BODY the judge gets to see. Was 400, which is measurably too
+	// small for curated prose: the three canon entries of the reporting project in
+	// kek-devices-classic-canon-498281 are 629 / 1792 / 4793 chars, so 400 delivered 64% / 22% / 8%
+	// of them — and on the 629-char entry it cut away exactly the half that said what was DONE,
+	// leaving the judge a symptom with no resolution. Both failure modes of a truncated neighbour
+	// are decision errors: a stub that still reads as on-topic invites a false `skip`, and one that
+	// lost its conclusion invites a false `add`.
+	// 2000 covers two of those three outright plus the sampled $system curated notes, and lifts the
+	// 4793-char outlier from 8% to 42%. It is bounded by prompt cost, not by taste:
+	// MaxNeighbors x this = 16k chars worst case per judge call — a third of BatchCharCap (48k),
+	// the per-call envelope this same job already sends to the same model during extraction.
+	internal const int NeighborBodyClip = 2000;
 
 	const string ExtractPrompt =
 		"""
@@ -76,8 +102,8 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		DOUBT, output {"facts":[]}. When nothing qualifies, output {"facts":[]}.
 		""";
 
-	const string JudgePrompt =
-		"""
+	static readonly string JudgePrompt =
+		$$"""
 		You are the write-gate for an agent's long-term memory. Given a CANDIDATE fact and
 		EXISTING entries (each with store, key, description, body), answer with STRICT JSON only.
 		Your response MUST START with the object's opening `{` as its very first character — no
@@ -91,13 +117,17 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		   durable knowledge → "drop".
 		2. If worth keeping, deduplicate against EXISTING:
 		   • an existing entry already covers the candidate's knowledge → "skip";
-		   • an AUTOCAPTURED entry covers it but the candidate adds material new detail →
+		   • an entry in YOUR OWN store covers it but the candidate adds material new detail →
 		     "update" that entry (key + merged description/body);
-		   • an AUTOCAPTURED entry is now STALE or contradicted by the candidate → "delete"
+		   • an entry in YOUR OWN store is now STALE or contradicted by the candidate → "delete"
 		     (key = that entry) to invalidate it;
 		   • otherwise → "add".
-		Never pick an entry from the notes store for update or delete — those are human-curated
-		and off-limits to the machine.
+		YOUR OWN store is the one named "{{Store}}" — the machine's quarantine. Every OTHER store in
+		EXISTING is CURATED: a human wrote and maintains it, and it is READ-ONLY to you. Weigh a
+		curated entry fully when deciding "skip" or "add" — it is knowledge that already exists, and
+		a candidate it already covers is a repeat — but NEVER name a curated entry's key for
+		"update" or "delete". The rule is the entry's store, not the entry's wording: if EXISTING
+		shows a store you do not recognise, it is curated, so treat it as read-only.
 		""";
 
 	// The corrective retry turn (ChatParseWithRetryAsync): replayed as a user message after the
@@ -291,11 +321,19 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			? [Tag]
 			: [Tag, .. candidate.Tags!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
 
-		if (verdict.Action == "update" && verdict.Key is not null && await _memory.StoreExistsAsync(project, Store, ct))
+		if (verdict.Action == "update" && verdict.Key is not null)
 		{
 			// Quarantine invariant: the machine may merge ONLY into its own store. A judge
 			// pointing anywhere else degrades to add — knowledge is kept, curation isn't touched.
-			var existing = await _memory.GetAsync(project, Store, verdict.Key, ct);
+			// The degradation is LOGGED, exactly as the `delete` branch logs its own miss: now that
+			// curated stores are in the prompt the judge has more chances to name a key outside
+			// quarantine, and a silent degrade would hide the one signal that says so.
+			var existing = await _memory.StoreExistsAsync(project, Store, ct)
+				? await _memory.GetAsync(project, Store, verdict.Key, ct)
+				: null;
+			if (existing is null)
+				_logger?.LogWarning("facts judge UPDATE pointed at a non-quarantine or missing key for {Project}; degraded to add. key={Key}",
+					project, verdict.Key);
 			if (existing is not null)
 			{
 				await _memory.UpsertAsync(project, Store, [new MemoryEntryInput
@@ -355,13 +393,60 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		var query = string.IsNullOrWhiteSpace(candidate.Description) ? (candidate.Body ?? "") : candidate.Description;
 		query = query.Trim();
 		if (query.Length > 200) query = query[..200];
-		var neighbors = new List<Neighbor>();
-		foreach (var store in new[] { CuratedStore, Store })
+
+		// WHICH stores (spec: autocapture-dedup, work `autocapture-dedup-blind-to-canon`). This used
+		// to be the literal { "notes", "autocaptured" }, which made the judge structurally blind to
+		// `canon` — and to every store a project curates under a name of its own. The sweep is now
+		// EVERY store of the project minus an explicit exclusion set, so a client's custom curated
+		// store is picked up with no configuration and no name of ours to keep in sync.
+		//
+		// The two filters below are DELIBERATELY REDUNDANT — AutoSweepExcludedNames already contains
+		// the sensitive names. The sensitive leg is spelled out anyway because it is the one that may
+		// never be relaxed: neighbour bodies are serialized into a prompt for an EXTERNAL LLM, and
+		// MemoryStores forbids auto-pulling a store that has held secrets. The excluded-set is a
+		// RECALL policy someone may reasonably tune one day; this line makes sure that tuning it
+		// cannot silently reopen `ops`. Reading it as "SearchAsync filters for us anyway" is exactly
+		// the implicitness the card refuses.
+		var catalog = await _memory.ListStoresAsync(project, ct);
+		var swept = catalog
+			.Select(m => m.Name)
+			.Where(n => !MemoryStores.IsSensitive(n))
+			.Where(n => MemoryStores.IsAutoSweepable(n))
+			.ToList();
+
+		// Own store FIRST — deduplicating against its own quarantine is the function this job has
+		// always had, so it never loses its slot to the widening. The rest keep catalog order, which
+		// is deterministic (MemoryStore.ListAsync orders by name).
+		var stores = swept
+			.Where(n => string.Equals(n, Store, StringComparison.OrdinalIgnoreCase))
+			.Concat(swept.Where(n => !string.Equals(n, Store, StringComparison.OrdinalIgnoreCase)))
+			.ToList();
+
+		var perStore = new List<IReadOnlyList<Neighbor>>();
+		foreach (var store in stores)
 		{
-			if (!await _memory.StoreExistsAsync(project, store, ct)) continue;
 			var res = await _memory.SearchAsync(project, store, query, type: null, ct: ct);
-			neighbors.AddRange(res.Hits.Take(NeighborK).Select(h => new Neighbor(store, h.Key, h.Description, Clip(h.Body, 400))));
+			perStore.Add(res.Hits.Take(NeighborK)
+				.Select(h => new Neighbor(store, h.Key,
+					Clip(h.Description, NeighborDescriptionClip), Clip(h.Body, NeighborBodyClip)))
+				.ToList());
 		}
+
+		// TOP-K IS PER STORE, THEN INTERLEAVED BY RANK — deliberately not a global top-K over the
+		// union. A global ranking would let a burst of fresh autocapture outrank the one curated
+		// entry on the topic and push it past MaxNeighbors, which would make this whole card a
+		// no-op exactly in the case it exists for. Round-robin gives every swept store its rank-1
+		// hit before any store gets its rank-2, so a curated store can only be starved when the
+		// project has more stores than MaxNeighbors slots — and then it is the LAST stores in
+		// catalog order that lose, never the quarantine and never the first curated ones.
+		var neighbors = new List<Neighbor>();
+		for (var rank = 0; rank < NeighborK && neighbors.Count < MaxNeighbors; rank++)
+			foreach (var bucket in perStore)
+			{
+				if (rank >= bucket.Count) continue;
+				neighbors.Add(bucket[rank]);
+				if (neighbors.Count >= MaxNeighbors) break;
+			}
 		return neighbors;
 	}
 
