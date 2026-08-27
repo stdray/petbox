@@ -271,6 +271,14 @@ public partial class Program
 		builder.Services.AddSingleton<PetBox.Core.Search.SearchPoolCache>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ICommentService, PetBox.Tasks.Services.CommentService>();
+		// Task-node usage telemetry (spec: task-usage-layer-with-declared-role) — the delivery-side
+		// twin of memory's recorder. The WRITER is a singleton queue+drain (the read path enqueues
+		// and returns; nothing waits on SQLite), called ONLY by the MCP adapters, so internal
+		// machine traffic never counts as a delivery. The READER is scoped like every other read
+		// service. Registered unconditionally, like the stores they serve — feature flags gate the
+		// MCP tools, not DI.
+		builder.Services.AddSingleton<PetBox.Tasks.Contract.ITaskUsageRecorder, PetBox.Tasks.Services.TaskUsageRecorder>();
+		builder.Services.AddScoped<PetBox.Tasks.Contract.ITaskUsageReader, PetBox.Tasks.Services.TaskUsageReader>();
 		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(sp => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));

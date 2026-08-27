@@ -35,12 +35,17 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? wiredBoard = null,
 		[Description("The board's world: a methodology instance `key` (its slug address), or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
+		[Description("The board's DELIVERY role for usage telemetry: \"corpus\" (default — the board's nodes ARE the answer, so a node that is never opened is waste) or \"index\" (the board is an ENTRY POINT — its nodes are supposed to be surfaced far more often than opened, so a dead tail there is coverage, not waste). Declared, never guessed from the board's name. Case-insensitive; an unrecognized value is REJECTED naming both valid ones, never silently folded into \"corpus\".")] string? declaredRole = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, ct);
-		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance);
+		// STRICT at the boundary (the store itself normalizes leniently): a typo here would be
+		// filed as `corpus` and the board would then be measured by the wrong expectations for the
+		// rest of its life — silently, which is the exact failure this declaration exists to end.
+		var role = ResolveDeclaredRole(declaredRole);
+		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, role, ct);
+		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance, meta.DeclaredRole);
 	}
 
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance, or release it to the utility layer", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
@@ -80,15 +85,73 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
-	[Description("List task boards in a project, each with its kind, wiredBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
+	[Description("""
+		List task boards in a project, each with its kind, wiredBoard (work->spec link, if set),
+		closed flag and `declaredRole` — "index" or "corpus", the board's DELIVERY role (spec:
+		task-usage-layer-with-declared-role).
+
+		`includeUsage` (default false) attaches a per-board usage aggregate: totalNodes,
+		surfacedAtLeastOnce / deliberatelySurfacedAtLeastOnce / openedAtLeastOnce and their
+		fractions, medianLastHitAt, the never-surfaced deadTail (count + oldest-first sample), and
+		what the board COST over a trailing window (`usageWindowDays`, default 30) — deliveries,
+		deliveredChars, rowChars — next to how well it FIT (avgKRel). Cost and fit are reported
+		SEPARATELY on purpose: "expensive and off-target" and "cheap and dead-on" are opposite
+		outcomes that one number would smear together. The same cost/fit pair is ALSO reported
+		split by source: deliberate* (a human/agent deliberately searched or opened) vs machine*
+		(an automatic context pull, `usageSource:"machine"`), because automated traffic is real
+		context cost but is not evidence that anything was worth reading.
+
+		READ EVERY NUMBER AGAINST `declaredRole`. On a `corpus` board a large deadTail and a low
+		openedFraction mean waste. On an `index` board the SAME numbers mean the board is doing its
+		job — it exists to be surfaced and route the reader onward, not to be opened. Judging an
+		index by corpus expectations is not hypothetical: memory's `session-digests` store read as
+		the worst surface in the system on exactly that shape.
+
+		`droppedEvents` is the honesty knob: telemetry events discarded because the writer's queue
+		overflowed, since process start. Non-zero means every counter here UNDERCOUNTS.
+		Requires tasks:read.
+		""")]
 	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		ITaskUsageReader usageReader, ITaskUsageRecorder usage,
+		string projectKey,
+		[Description("Attach a per-board usage aggregate (coverage, median recency, dead tail, window cost/fit) alongside the board's declaredRole (default false).")] bool includeUsage = false,
+		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
-		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
+		var window = usageWindowDays is { } d && d > 0 ? TimeSpan.FromDays(d) : (TimeSpan?)null;
+		var rows = new List<BoardRow>(list.Count);
+		foreach (var b in list)
+		{
+			BoardUsageRow? usageRow = null;
+			if (includeUsage)
+			{
+				// The counters are written in the BACKGROUND (the read path never waits on them);
+				// flush first so a read that immediately follows a delivery sees it, instead of
+				// reporting a zero that is really "not drained yet".
+				await usage.FlushAsync(ct);
+				var a = await usageReader.GetBoardUsageAsync(projectKey, b.Name, window: window, ct: ct);
+				usageRow = new BoardUsageRow(
+					a.TotalNodes, a.SurfacedAtLeastOnce, a.DeliberatelySurfacedAtLeastOnce, a.OpenedAtLeastOnce,
+					Math.Round(a.SurfacedFraction, 4), Math.Round(a.OpenedFraction, 4), a.MedianLastHitAt,
+					a.DeadTail.Count, a.DeadTail.TopKeys,
+					a.Cost.WindowDays, a.Cost.Deliveries, a.Cost.DeliveredChars, a.Cost.RowChars,
+					a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.NodesDelivered,
+					a.Cost.DeliberateDeliveries, a.Cost.DeliberateDeliveredChars,
+					a.Cost.DeliberateAvgKRel is { } dk ? Math.Round(dk, 4) : null,
+					a.Cost.MachineDeliveries, a.Cost.MachineDeliveredChars,
+					a.Cost.MachineAvgKRel is { } mk ? Math.Round(mk, 4) : null,
+					usage.DroppedEvents);
+			}
+
+			rows.Add(new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null,
+				b.MethodologyInstance, PetBox.Core.Models.BoardDeclaredRole.Normalize(b.DeclaredRole), usageRow));
+		}
+
+		return new BoardListResult(rows);
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
@@ -752,16 +815,20 @@ public static class TasksTools
 		whole board when you need one or a few nodes' full bodies. Requires tasks:read.
 		""")]
 	public static async Task<NodeGetResultView> NodeGetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks, ITaskUsageRecorder usage,
 		string projectKey, string board,
 		[Description("One node: a node reference — its slug key on the board or its 32-hex NodeId (both accepted). Named `node`, not `key`, because it is a REFERENCE that takes either form — tasks_upsert's `key` is the slug field itself and takes the slug only. Combine with `nodes` or use either alone.")] string? node = null,
 		[Description("Batch of nodes read in ONE call: each entry is a node reference — a slug key or a 32-hex NodeId (both accepted, mixed in one list). A node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
+		[Description("Usage-signal source of this read: \"deliberate\" (default — a human/agent intentionally opened this node) or \"machine\" (an automatic hook/context pull — bumps only the raw cost, never the deliberate cut). Automated wiring should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// usageSource is telemetry, not free text — resolved BEFORE any work, so a typo fails the
+		// call instead of quietly filing machine traffic as deliberate.
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 
 		// The ask: `node` ⊕ `nodes`, de-duped, order preserved — exactly memory_get's key/keys
@@ -788,8 +855,34 @@ public static class TasksTools
 		}
 
 		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only.
-		return new NodeGetResultView([.. details.Select(d =>
+		var result = new NodeGetResultView([.. details.Select(d =>
 			d with { Node = d.Node with { Body = ModuleMcp.Body(d.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } })]);
+
+		// THE ENGAGEMENT SIGNAL. tasks_node_get is the task-side mirror of memory_get: an
+		// addressed read of one node is the strongest evidence that the node was actually WANTED,
+		// which is why `opened` is defined as this call and NOT as a click in the UI (owner
+		// decision) — the UI opens nodes for navigation reasons that say nothing about whether an
+		// agent's context needed the text. Fire-and-forget: the answer above is already built, and
+		// nothing below can delay or fail it.
+		//
+		// An addressed open is a PERFECT FIT by definition (KRel = 1) and carries no relevance
+		// leg, so ScoreRaw stays null — rank is the row's position in the requested order.
+		var sessionId = McpSessionId(http);
+		var events = new List<TaskDeliveryEvent>(result.Nodes.Count);
+		for (var i = 0; i < result.Nodes.Count; i++)
+		{
+			var d = result.Nodes[i];
+			var full = details[i].Node.Body;
+			usage.Opened(projectKey, d.Board, d.Node.NodeId);
+			events.Add(new TaskDeliveryEvent(
+				Tool: "get", Board: d.Board, NodeId: d.Node.NodeId, Key: d.Node.Key,
+				DeliveredChars: d.Node.Body.Length, BodyChars: full.Length,
+				RowChars: ResponseBudget.CostOf(d), Rank: i + 1,
+				ScoreRaw: null, KRel: 1, SessionId: sessionId, UsageSource: resolvedUsageSource));
+		}
+
+		if (events.Count > 0) usage.Delivered(projectKey, events);
+		return result;
 	}
 
 	[McpServerTool(Name = "tasks_search", Title = "Read task nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
@@ -951,6 +1044,7 @@ public static class TasksTools
 		""")]
 	public static async Task<TaskSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		ITaskUsageRecorder usage, ITaskUsageReader usageReader,
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board (listing then carries kind/wiredBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
@@ -969,10 +1063,15 @@ public static class TasksTools
 		// ORDER is not part of this tool's contract, and appending keeps every existing
 		// positional in-process call site (the test suite's) binding to the same parameters.
 		[Description("Keep only nodes whose owner-decision-pending flag matches: true = ONLY nodes waiting on a decision from the owner, false = ONLY nodes that are NOT. Omit = no filter at all (the flag never narrows a read that did not ask about it). Independent of `status` and `type` — a node can be InProgress AND waiting — so this is the cheap way to ask \"what is waiting on me\" without scanning a board. Applies in BOTH modes (listing and query), and the flag is returned on every row in both modes too.")] bool? decisionPending = null,
+		[LogArg][Description("Include usage per row: the counters (surfaced/opened/deliberate/lastHitAt) AND the node's own cost/fit (deliveredChars/avgKRel) (default false). Read them against the board's declaredRole from tasks_board_list.")] bool includeUsage = false,
+		[Description("Usage-signal source of the impression this read records: \"deliberate\" (default — a human/agent intentionally searched or listed, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut). Automated wiring should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// Resolved BEFORE any work: an unrecognized source fails the call rather than quietly
+		// filing automated traffic as deliberate, which is the one thing this split exists to stop.
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var hasCursor = !string.IsNullOrWhiteSpace(cursor);
@@ -1082,6 +1181,38 @@ public static class TasksTools
 			: more ? SearchPoolStop.More
 			: res.PoolBounded ? SearchPoolStop.PoolBoundary
 			: SearchPoolStop.Exhausted;
+
+		// THE IMPRESSION SIGNAL — recorded over `kept`, the rows that ACTUALLY went on the wire,
+		// never over the wider candidate set: a node the budget cut cost the caller nothing and
+		// must not be credited with an appearance. Fire-and-forget; the answer is already built.
+		//
+		// The groupBy projection above returns early and records nothing, on purpose: it delivers
+		// tag BUCKETS, not nodes, so no node was surfaced by it.
+		RecordSearchDeliveries(usage, projectKey, kept, page, hasQuery, resolvedUsageSource, McpSessionId(http));
+
+		// Per-row usage (opt-in). Counters say the node keeps APPEARING; deliveredChars/avgKRel say
+		// what the appearing COSTS and whether it lands — the two axes stay separate.
+		if (includeUsage && kept.Count > 0)
+		{
+			await usage.FlushAsync(ct); // include the impression just recorded, not a stale zero
+			var byBoard = new Dictionary<string, IReadOnlyDictionary<string, NodeUsageView>>(StringComparer.Ordinal);
+			foreach (var g in kept.GroupBy(r => r.Board, StringComparer.Ordinal))
+				byBoard[g.Key] = await usageReader.GetUsageAsync(projectKey, g.Key, g.Select(r => r.NodeId).ToList(), ct);
+			kept = [.. kept.Select(r =>
+			{
+				var u = byBoard.TryGetValue(r.Board, out var m) && m.TryGetValue(r.NodeId, out var uv) ? uv : null;
+				return r with
+				{
+					Surfaced = u?.Surfaced ?? 0,
+					Opened = u?.Opened ?? 0,
+					LastHitAt = u?.LastHitAt,
+					Deliberate = u?.Deliberate ?? 0,
+					DeliveredChars = u?.DeliveredChars ?? 0,
+					AvgKRel = u?.AvgKRel is { } k ? Math.Round(k, 4) : null,
+				};
+			})];
+		}
+
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Ranking) : null,
@@ -1273,6 +1404,90 @@ public static class TasksTools
 			// PROJECTION never read it (null = "not looked at", never "looked and found none").
 			OriginSessionId: lean ? null : n.OriginSessionId,
 			OriginSessions: lean ? null : n.OriginSessions);
+	}
+
+	// ---- usage telemetry helpers (spec: task-usage-layer-with-declared-role) ----
+
+	// Local aliases for the two UsageSource wire values and the two declared roles — each is
+	// declared in exactly ONE place, so this adapter cannot invent a third spelling of either.
+	const string DeliberateSource = PetBox.Tasks.Contract.NodeUsageSourceKind.Deliberate;
+	const string MachineSource = PetBox.Tasks.Contract.NodeUsageSourceKind.Machine;
+
+	// Validates + resolves a caller-supplied `usageSource` — shared by tasks_search AND
+	// tasks_node_get, so the two verbs cannot drift on what they accept. An unrecognized value is
+	// REFUSED rather than folded into the default: silently counting an unlabelled read as
+	// deliberate inflates the one number that is supposed to mean "somebody actually wanted this".
+	static string ResolveUsageSource(string? usageSource)
+	{
+		if (string.IsNullOrWhiteSpace(usageSource)) return DeliberateSource;
+		if (!PetBox.Tasks.Contract.NodeUsageSourceKind.TryNormalize(usageSource, out var normalized))
+			throw new ArgumentException($"invalid usageSource '{usageSource}' ({DeliberateSource}|{MachineSource})");
+		return normalized;
+	}
+
+	// Same posture for the board's declared role: an omitted argument defaults, a TYPO is refused.
+	// A mis-declared role is not a cosmetic error — it silently applies the wrong expectations to
+	// every usage number the board will ever produce.
+	static string? ResolveDeclaredRole(string? declaredRole)
+	{
+		if (string.IsNullOrWhiteSpace(declaredRole)) return null; // store defaults to corpus
+		if (!PetBox.Core.Models.BoardDeclaredRole.TryNormalize(declaredRole, out var normalized))
+			throw new ArgumentException(
+				$"invalid declaredRole '{declaredRole}' ({PetBox.Core.Models.BoardDeclaredRole.Index}|{PetBox.Core.Models.BoardDeclaredRole.Corpus})");
+		return normalized;
+	}
+
+	// The MCP streamable-HTTP session id, read off the request header — a tool method has no
+	// IMcpServer in scope, and it is null on a stateless transport, which the event stores as-is.
+	static string? McpSessionId(IHttpContextAccessor http) =>
+		http.HttpContext?.Request.Headers["Mcp-Session-Id"].FirstOrDefault();
+
+	// One impression + one delivery event per row that ACTUALLY went on the wire.
+	//
+	// kRel normalizes fit WITHIN the request: the row's score over the top-1 score of the same
+	// request. A rank-based fused score has no absolute scale, so a bare score is not comparable
+	// across requests; the denominator is taken over the whole PAGE (pre-budget-cut), so it is the
+	// page's true best hit even when the cut dropped it. Rank is the row's 1-based position in the
+	// delivered answer — rank and score are two different facts and BOTH are stored.
+	//
+	// A LISTING (no q) ran no relevance leg: ScoreRaw and KRel stay null, and the events carry
+	// cost without fit. That is not a gap — it is the honest reading, and the roll-up's fit
+	// denominator counts only events that actually have a fit.
+	static void RecordSearchDeliveries(
+		ITaskUsageRecorder usage, string projectKey,
+		IReadOnlyList<TaskSearchNodeView> kept, IReadOnlyList<TaskSearchHit> page,
+		bool hasQuery, string usageSource, string? sessionId)
+	{
+		if (kept.Count == 0) return;
+		var deliberate = string.Equals(usageSource, DeliberateSource, StringComparison.Ordinal);
+		foreach (var g in kept.GroupBy(r => r.Board, StringComparer.Ordinal))
+			usage.Surfaced(projectKey, g.Key, g.Select(r => r.NodeId).ToList(), deliberate);
+
+		// The page's best score, taken BEFORE the budget cut (see above). A degenerate top-1
+		// (no relevance leg, or a zero score) leaves fit unknown rather than dividing by zero and
+		// claiming a perfect 1.
+		var top = hasQuery ? page.Max(h => h.Score ?? 0) : 0;
+		var events = new List<TaskDeliveryEvent>(kept.Count);
+		for (var i = 0; i < kept.Count; i++)
+		{
+			var row = kept[i];
+			var hit = page[i];
+			var score = hasQuery ? hit.Score : null;
+			events.Add(new TaskDeliveryEvent(
+				Tool: hasQuery ? "search" : "listing",
+				Board: row.Board, NodeId: row.NodeId, Key: row.Key,
+				// The body as SENT (the bodyLen contract already applied) vs the whole node.
+				DeliveredChars: row.Body?.Length ?? 0, BodyChars: hit.Node.Body.Length,
+				// The row's whole wire price — title, tags, envelope and all.
+				RowChars: PetBox.Core.Contract.ResponseBudget.CostOf(row),
+				Rank: i + 1,
+				ScoreRaw: score,
+				KRel: score is { } sc && top > 0 ? sc / top : null,
+				SessionId: sessionId,
+				UsageSource: usageSource));
+		}
+
+		usage.Delivered(projectKey, events);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the

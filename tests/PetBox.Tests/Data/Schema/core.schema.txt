@@ -141,6 +141,7 @@ TABLE ShareLinks
 TABLE TaskBoards
   COL ClosedAt DATETIME NULL
   COL CreatedAt DATETIME NOT NULL
+  COL DeclaredRole TEXT NOT NULL DEFAULT 'corpus'
   COL Description TEXT NULL
   COL Kind TEXT NOT NULL DEFAULT 'free'
   COL MethodologyInstance TEXT NULL

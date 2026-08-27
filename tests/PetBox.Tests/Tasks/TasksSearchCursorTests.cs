@@ -138,7 +138,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 	Task<TaskSearchResultView> Search(
 		string? q = null, string? board = null, string[]? status = null, SortInput? sort = null,
 		string? groupBy = null, int? bodyLen = null, int? limit = null, string? cursor = null) =>
-		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, null, status, null,
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, q, board, null, status, null,
 			sort, groupBy, bodyLen, limit, false, null, null, cursor);
 
 	// Walk a listing to exhaustion, returning every key in page order. `page` runs one page for a
@@ -352,13 +352,13 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
-		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, null);
 		cache.Stores.Should().Be(1, "page 1 materializes and stores the ranked pool");
 		var passesAfterPageOne = llm.RerankCalls;
 		passesAfterPageOne.Should().BeGreaterThan(0, "the cross-encoder decided this order");
 
-		var second = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+		var second = await TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, first.NextCursor);
 
 		second.Nodes.Should().NotBeEmpty();
@@ -429,7 +429,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
 			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: cache);
 
-		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+		var first = await TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, null);
 		first.NextCursor.Should().NotBeNull();
 
@@ -441,7 +441,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 		cache.Invalidate();
 		llm.EmbedDown = true;
 
-		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+		var act = () => TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, first.NextCursor);
 
 		(await act.Should().ThrowAsync<ArgumentException>())
@@ -483,10 +483,10 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 			new TagStore(_factory), comments, llm: llm, poolCache: cache);
 
 		Task<TaskSearchResultView> Page(string? cursor) => TasksTools.SearchAsync(
-			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, cursor);
 
-		var whole = await TasksTools.SearchAsync(Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+		var whole = await TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 100, false, null, null, null);
 		var first = await Page(null);
 		first.NextCursor.Should().NotBeNull("the walk has to start for the refusal to be reachable at all");
@@ -515,7 +515,7 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 			new TagStore(_factory), comments, llm: llm, poolCache: cache);
 
 		Task<TaskSearchResultView> Call() => TasksTools.SearchAsync(
-			Http(), Flags(), tasks, Proj, "alpha", "b", null, null, null,
+			Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha", "b", null, null, null,
 			null, null, null, 2, false, null, null, null);
 
 		var one = await Call();   // cache MISS — the pool is built and stored

@@ -56,7 +56,7 @@ public sealed class QuartetTests : IDisposable
 		en.Boards.Should().OnlyContain(b => b.Name == b.Kind && !b.Closed);
 
 		// work board auto-wired to the spec board.
-		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
+		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, NoopTaskUsage.Reader, NoopTaskUsage.Recorder, Proj)).Boards;
 		var work = boards.Single(b => b.Kind == "work");
 		work.WiredBoard.Should().Be("spec");
 		work.MethodologyInstance.Should().Be("quartet");
@@ -64,7 +64,7 @@ public sealed class QuartetTests : IDisposable
 		// Re-create of the same name is rejected (create is not enable-style idempotent).
 		var again = () => TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		(await again.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*already exists*");
-		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(4);
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, NoopTaskUsage.Reader, NoopTaskUsage.Recorder, Proj)).Boards.Count.Should().Be(4);
 	}
 
 	// An unknown builtin sourceKey is rejected before any board is created.
@@ -88,7 +88,7 @@ public sealed class QuartetTests : IDisposable
 		// The BOARD keeps `name` — a board is addressed by `board`, never by `key`.
 		reported.Name.Should().Be("classic");
 
-		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
+		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, NoopTaskUsage.Reader, NoopTaskUsage.Recorder, Proj)).Boards;
 		var classic = boards.Should().ContainSingle().Subject;
 		classic.Kind.Should().Be("classic");
 		classic.WiredBoard.Should().BeNull("classic is outside the spec/work auto-wire");
@@ -96,7 +96,7 @@ public sealed class QuartetTests : IDisposable
 		// classic is NOT a process-role singleton — more boards may be created on the same instance.
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic",
 			methodologyInstance: "classic");
-		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(2);
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, NoopTaskUsage.Reader, NoopTaskUsage.Recorder, Proj)).Boards.Count.Should().Be(2);
 	}
 
 	// quick-add-stores-default-type: a single-FSM kind (every preset kind but Work) resolves
@@ -119,7 +119,7 @@ public sealed class QuartetTests : IDisposable
 		added.Type.Should().Be(defaultType, "the stored type must match the kind's runtime-resolved default, not \"\"");
 
 		// The persisted row agrees too (not just the write echo).
-		var read = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, board, "untyped-a");
+		var read = await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, board, "untyped-a");
 		read.Nodes.Single().Node.Type.Should().Be(defaultType);
 	}
 
@@ -189,7 +189,7 @@ public sealed class QuartetTests : IDisposable
 		var http = Http("tasks:read,tasks:write,methodology:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f1", "simple");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f2", "simple");
-		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, NoopTaskUsage.Reader, NoopTaskUsage.Recorder, Proj)).Boards
 			.Count.Should().Be(2);
 	}
 
@@ -419,23 +419,23 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
 		// Default (omitted): a ~240-char snippet + "…".
-		var dflt = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g"))
+		var dflt = (await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g"))
 			.Nodes.Single().Body!;
 		dflt.Length.Should().Be(241);
 		dflt.Should().EndWith("…");
 
 		// -1: the full body.
-		var full = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: -1))
+		var full = (await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", bodyLen: -1))
 			.Nodes.Single().Body!;
 		full.Length.Should().Be(500);
 
 		// 0: no body (null → omitted by the serializer).
-		var none = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 0))
+		var none = (await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", bodyLen: 0))
 			.Nodes.Single().Body;
 		none.Should().BeNull();
 
 		// N>0: first N chars + "…".
-		var snip = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 100))
+		var snip = (await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", bodyLen: 100))
 			.Nodes.Single().Body!;
 		snip.Length.Should().Be(101);
 		snip.Should().EndWith("…");
@@ -453,9 +453,9 @@ public sealed class QuartetTests : IDisposable
 			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n")).Nodes.Single().Node.Body.Length.Should().Be(400); // default = full
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 50)).Nodes.Single().Node.Body.Length.Should().Be(51); // snippet
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 0)).Nodes.Single().Node.Body.Should().BeEmpty(); // none
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "g", "n")).Nodes.Single().Node.Body.Length.Should().Be(400); // default = full
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "g", "n", bodyLen: 50)).Nodes.Single().Node.Body.Length.Should().Be(51); // snippet
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "g", "n", bodyLen: 0)).Nodes.Single().Node.Body.Should().BeEmpty(); // none
 	}
 
 	// spec upsert-ack-echo-clean: a write that did NOT apply echoes NOTHING. A FutureBaseline
@@ -484,6 +484,6 @@ public sealed class QuartetTests : IDisposable
 		res.Removed.Should().BeEmpty();
 
 		// The node was NOT mutated by the rejected write.
-		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "conf", "a")).Nodes.Single().Node.Title.Should().Be("A");
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "conf", "a")).Nodes.Single().Node.Title.Should().Be("A");
 	}
 }

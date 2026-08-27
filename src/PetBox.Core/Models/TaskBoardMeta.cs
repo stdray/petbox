@@ -24,6 +24,22 @@ public sealed record TaskBoardMeta
 	[Column, NotNull]
 	public string Kind { get; init; } = "simple";
 
+	// The board's DECLARED role in DELIVERY (spec: task-usage-layer-with-declared-role):
+	// `corpus` (the default — the board's nodes are the answer, so a node that never gets
+	// opened is waste) or `index` (the board is an ENTRY POINT — its nodes are supposed to be
+	// surfaced far more often than they are opened, so a dead tail there is coverage, not
+	// waste). Usage's cost/fit axes are read against this expectation; without it an index is
+	// mis-read as the worst surface in the system on exactly the numbers that prove it works.
+	//
+	// DECLARED, never inferred from `Name` or `Kind`. A board's name is the user's, and a
+	// hardcoded name list silently mis-measures every board it does not recognize — see
+	// BoardDeclaredRole for the precedent (memory's `session-digests` store).
+	//
+	// Values are validated through BoardDeclaredRole.Normalize; unknown/blank reads back as
+	// `corpus` (M051 backfills every pre-existing row to the same).
+	[Column, NotNull]
+	public string DeclaredRole { get; init; } = BoardDeclaredRole.Corpus;
+
 	[Column, NotNull]
 	public DateTime CreatedAt { get; init; }
 
@@ -85,4 +101,46 @@ public sealed record TaskBoardMeta
 	// null → the old active-instance/presets heuristic, untouched.
 	public static bool IsUtilityMembership(string? methodologyInstance) =>
 		string.Equals(methodologyInstance, UtilityWorld, StringComparison.OrdinalIgnoreCase);
+}
+
+// The two legal values of TaskBoardMeta.DeclaredRole — the ONE place these wire strings are
+// spelled out, so the migration default, the MCP argument validator, the usage reader and the
+// UI cannot drift into three different vocabularies (memory learned this the hard way with
+// UsageSourceKind).
+//
+// WHY A DECLARATION AND NOT A NAME LIST: this was decided against hardcoding roles by board
+// name. Boards are created by the user; in another project the same process roles carry
+// different names, and a hardcoded list mis-measures everything unfamiliar WITHOUT SAYING SO.
+// The precedent is memory's `session-digests` store: an entry point into session search, where
+// `opened: 0%` is the normal and correct reading, which by corpus expectations read as the
+// worst-performing store in the system. It is also deliberately NOT a property of the node
+// TYPE: the role is a property of the delivery SURFACE (what this board is FOR when it is
+// searched), not of the unit of work sitting on it.
+public static class BoardDeclaredRole
+{
+	// The board's nodes ARE the answer — surfaced and then opened. A never-opened node is waste.
+	public const string Corpus = "corpus";
+	// The board is an ENTRY POINT — surfaced to route the reader onward. Surfaced >> opened is
+	// the DESIGNED outcome here, not a failure, and a dead tail is coverage rather than waste.
+	public const string Index = "index";
+
+	// null/blank/unknown -> Corpus. The read side never throws and never returns null: a board
+	// whose column predates M051 (or carries a value some future writer did not know about)
+	// must still be measurable, and `corpus` is the conservative expectation. The WRITE side is
+	// strict instead (see TryNormalize) — a typo at declaration time is refused out loud rather
+	// than silently filed as `corpus`, which would reproduce the exact mis-measurement this
+	// field exists to prevent.
+	public static string Normalize(string? role) =>
+		TryNormalize(role, out var normalized) ? normalized : Corpus;
+
+	// Strict parse for a CALLER-SUPPLIED value: true + the canonical lowercase form, or false
+	// (blank included — an omitted argument is the caller's business to default, not ours).
+	public static bool TryNormalize(string? role, out string normalized)
+	{
+		var trimmed = role?.Trim();
+		if (string.Equals(trimmed, Corpus, StringComparison.OrdinalIgnoreCase)) { normalized = Corpus; return true; }
+		if (string.Equals(trimmed, Index, StringComparison.OrdinalIgnoreCase)) { normalized = Index; return true; }
+		normalized = Corpus;
+		return false;
+	}
 }
