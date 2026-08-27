@@ -78,7 +78,7 @@ public sealed class NodeGetTests : IDisposable
 			$$"""[{"key":"parent","status":"Todo","title":"P"},{"key":"leaf","status":"Todo","title":"Leaf","body":"{{body}}","partOf":"parent","tags":["area:tasks"]}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b", nodes);
 
-		var bySlug = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf")).Nodes.Single();
+		var bySlug = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", "leaf")).Nodes.Single();
 		bySlug.Board.Should().Be("b");
 		bySlug.Node.Key.Should().Be("leaf");
 		bySlug.Node.Title.Should().Be("Leaf");
@@ -90,12 +90,12 @@ public sealed class NodeGetTests : IDisposable
 		bySlug.Node.Url.Should().BeNull(); // includeUrl off by default
 
 		// The same node addressed by its 32-hex NodeId.
-		var byId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", bySlug.Node.NodeId)).Nodes.Single();
+		var byId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", bySlug.Node.NodeId)).Nodes.Single();
 		byId.Node.Key.Should().Be("leaf");
 		byId.Node.NodeId.Should().Be(bySlug.Node.NodeId);
 
 		// includeUrl: the canonical slug permalink.
-		var withUrl = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "leaf", includeUrl: true)).Nodes.Single();
+		var withUrl = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", "leaf", includeUrl: true)).Nodes.Single();
 		withUrl.Node.Url.Should().Be($"https://box.test/ui/ws/{Proj}/tasks/b/leaf");
 	}
 
@@ -109,11 +109,11 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"done-one","status":"Done","version":1}]"""));
 
 		// The default board read hides the terminal node…
-		(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b"))
+		(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b"))
 			.Nodes.Should().BeEmpty();
 
 		// …but the ADDRESSED read returns it regardless of terminality.
-		var got = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "done-one")).Nodes.Single();
+		var got = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", "done-one")).Nodes.Single();
 		got.Node.Status.Should().Be("Done");
 		got.Node.Body.Should().Be("finished work");
 	}
@@ -126,15 +126,15 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"real","status":"Todo","title":"R"}]"""));
 
 		// A single strict `node` miss THROWS — unchanged by the batch3 nodes[] addition.
-		var missing = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", "ghost");
+		var missing = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", "ghost");
 		(await missing.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*ghost*").WithMessage("*board 'b'*");
 
 		// A NodeId that resolves onto ANOTHER board is refused with both board names.
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "other",
 			McpInputs.NodesJson("""[{"key":"elsewhere","status":"Todo","title":"E"}]"""));
-		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
-		var wrongBoard = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", otherId);
+		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
+		var wrongBoard = () => TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", otherId);
 		(await wrongBoard.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*board 'other'*").WithMessage("*'b'*");
 	}
@@ -150,7 +150,7 @@ public sealed class NodeGetTests : IDisposable
 
 		// Requested order c, ghost, a, b-node → ghost silently dropped, the rest come back in
 		// the ORDER ASKED (not board/sort order).
-		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b",
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b",
 			nodes: ["c", "ghost", "a", "b-node"]);
 		res.Nodes.Select(n => n.Node.Key).Should().Equal("c", "a", "b-node");
 	}
@@ -162,7 +162,7 @@ public sealed class NodeGetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.NodesJson("""[{"key":"real","status":"Todo","title":"R"}]"""));
 
-		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", nodes: ["ghost-1", "ghost-2"]);
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", nodes: ["ghost-1", "ghost-2"]);
 		res.Nodes.Should().BeEmpty();
 	}
 
@@ -174,10 +174,10 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"here","status":"Todo","title":"H"}]"""));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "other",
 			McpInputs.NodesJson("""[{"key":"elsewhere","status":"Todo","title":"E"}]"""));
-		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
+		var otherId = (await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "other", "elsewhere")).Nodes.Single().Node.NodeId;
 
 		// In a BATCH, a NodeId resolving to a DIFFERENT board is a soft miss, not a thrown error.
-		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "b", nodes: ["here", otherId]);
+		var res = await TasksTools.NodeGetAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, Proj, "b", nodes: ["here", otherId]);
 		res.Nodes.Select(n => n.Node.Key).Should().Equal("here");
 	}
 
@@ -192,11 +192,11 @@ public sealed class NodeGetTests : IDisposable
 			 {"key":"w1","status":"InProgress","title":"W1"}]
 			"""));
 
-		var only = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["InProgress"]);
+		var only = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b", status: ["InProgress"]);
 		only.Nodes.Select(n => n.Key).Should().Equal("w1");
 
 		// Case-insensitive, multiple slugs.
-		var both = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["todo", "inprogress"]);
+		var both = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b", status: ["todo", "inprogress"]);
 		both.Nodes.Select(n => n.Key).Should().BeEquivalentTo("t1", "t2", "w1");
 	}
 
@@ -210,7 +210,7 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"closed-one","status":"Done","version":1}]"""));
 
 		// Naming the terminal status is the explicit ask — no includeClosed needed.
-		var done = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["Done"]);
+		var done = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b", status: ["Done"]);
 		done.Nodes.Select(n => n.Key).Should().Equal("closed-one");
 		done.Nodes.Single().Status.Should().Be("Done");
 	}

@@ -90,7 +90,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 	{
 		await SeedAsync("small", 3, 200);
 
-		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "small");
+		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "small");
 
 		view.Nodes.Count.Should().Be(3);
 		view.Truncated.Should().BeNull();
@@ -114,7 +114,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 		await SeedAsync("big", total, 1000); // ~60k chars of bodies alone > the 30k budget
 
 		// bodyLen:-1 = the full body (the default is now a compact snippet); full bodies overflow.
-		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: -1);
+		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "big", bodyLen: -1);
 
 		// Prefix-cut in board order (priority then key), the cut is explicit and adds up.
 		view.Nodes.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
@@ -134,8 +134,8 @@ public sealed class TasksGetBudgetTests : IDisposable
 		const int total = 60;
 		await SeedAsync("big", total, 1000);
 
-		var full = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: -1);
-		var snipped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: 20);
+		var full = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "big", bodyLen: -1);
+		var snipped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "big", bodyLen: 20);
 
 		// The budget measures the POST-slicing wire rows: snippets are cheap, so the whole
 		// board fits and the markers disappear.
@@ -158,13 +158,13 @@ public sealed class TasksGetBudgetTests : IDisposable
 			"""));
 
 		// `underNode` narrows below the budget → complete answer, no markers.
-		var under = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", underNode: "apex");
+		var under = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "big", underNode: "apex");
 		under.Nodes.Select(n => n.Key).Should().BeEquivalentTo("apex", "apex-leaf");
 		under.Truncated.Should().BeNull();
 		under.Hint.Should().BeNull();
 
 		// `groupBy` is the keys-only projection — a different (cheap) shape, no budget markers.
-		var grouped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", groupBy: "area");
+		var grouped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "big", groupBy: "area");
 		grouped.Groups.Should().NotBeEmpty();
 		grouped.Groups!.SelectMany(g => g.NodeKeys).Should().Contain("apex");
 		grouped.Truncated.Should().BeNull();

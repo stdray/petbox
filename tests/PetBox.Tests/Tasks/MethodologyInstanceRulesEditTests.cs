@@ -372,7 +372,7 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 		var http = Http("tasks:read");
 
 		async Task<string[]> Query(string[] statusKind) =>
-			(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, q: "flight", board: board,
+			(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, q: "flight", board: board,
 				underNode: null, status: null, nodes: null, sort: null, groupBy: null,
 				bodyLen: null, limit: null, includeUrl: false, statusKind: statusKind))
 			.Nodes.Select(n => n.Key).ToArray();

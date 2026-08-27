@@ -85,7 +85,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		// `includeClosed` survives as a TEST-LOCAL convenience only: the tool parameter of that name
 		// was removed (drop-legacy-aliases), so it is translated here into the explicit three-facet
 		// ask that replaced it. Nothing on the MCP surface accepts the boolean any more.
-		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, underNode, status, nodes,
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, q, board, underNode, status, nodes,
 			sort, groupBy, bodyLen, limit, includeUrl, commit: commit,
 			statusKind: statusKind ?? (includeClosed ? TestFacets.All : null));
 

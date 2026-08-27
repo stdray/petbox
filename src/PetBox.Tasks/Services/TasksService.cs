@@ -111,7 +111,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, string? declaredRole = null, CancellationToken ct = default)
 	{
 		// World: a real instance key, the reserved UtilityWorld sentinel (spec methodology-
 		// utility-kinds — always legal, first-class regardless of how many instances exist),
@@ -177,7 +177,7 @@ public sealed partial class TasksService : ITasksService
 		// declared only in the utility layer or a non-active instance must not read as "not a work
 		// board" here).
 		await ValidateWiredBoardAsync(projectKey, runtime, canonical, wiredBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, declaredRole, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
@@ -485,7 +485,7 @@ public sealed partial class TasksService : ITasksService
 			if (await _boards.ExistsAsync(projectKey, name, ct))
 				name = $"{instanceKey}-{name}";
 			if (await _boards.ExistsAsync(projectKey, name, ct)) continue;
-			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceKey, ct);
+			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceKey, ct: ct);
 			createdKinds.Add(kind);
 		}
 		await AutoWireSpecAsync(projectKey, ct);

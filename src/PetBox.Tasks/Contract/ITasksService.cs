@@ -28,7 +28,9 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// for a project with no methodology instance yet (pre-backfill bootstrap); once any
 	// instance exists, a caller MUST say which world explicitly. Process-role singleton
 	// is enforced inside whichever world is targeted (instance, or the utility bucket).
-	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default);
+	// `declaredRole` declares the board's DELIVERY role for usage telemetry — "index" or
+	// "corpus" (spec: task-usage-layer-with-declared-role); null = corpus.
+	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, string? declaredRole = null, CancellationToken ct = default);
 	// Move/adopt a board into a (different) open methodology instance, OR release it into
 	// the project's utility layer when `methodologyInstance` is the reserved
 	// `TaskBoardMeta.UtilityWorld` sentinel (spec methodology-utility-kinds) — the board's

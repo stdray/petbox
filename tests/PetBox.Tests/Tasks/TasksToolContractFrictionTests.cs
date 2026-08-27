@@ -110,7 +110,7 @@ public sealed class TasksToolContractFrictionTests : IClassFixture<TasksToolCont
 	}
 
 	Task<TaskSearchResultView> Search(string? q = null, string? board = null, string? commit = null, int? bodyLen = null) =>
-		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, null, null, null,
+		TasksTools.SearchAsync(Http(), Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, q, board, null, null, null,
 			null, null, bodyLen, null, false, commit, null, null);
 
 	// A node that carries commits plus one that does not — the production shape the reporter saw
