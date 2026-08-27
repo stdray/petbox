@@ -76,19 +76,47 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	readonly ScopedDbFactory<SessionsDb> _sessionsFactory;
 	readonly SessionService _sessions;
 	readonly MemoryService _memory;
+	// A SECOND view of the same files, wired with an embedder. The plain `_memory` above is
+	// lexical-only, and the lexical leg ANDs the query's tokens — fine for the tests that use a
+	// candidate description copied verbatim from the seeded entry, useless for a REAL duplicate
+	// pair, which is two different wordings of one fact and shares no full token set. Production
+	// has an embedder, so the neighbour-sweep tests use this one and retrieval is honest.
+	readonly MemoryService _semantic;
+	readonly ScopedDbFactory<MemoryDb> _memoryFactory;
 
 	public SessionFactsJobTests(SessionFactsJobFixture fx)
 	{
 		fx.Reset();
 		_db = fx.Db;
 		_sessionsFactory = fx.SessionsFactory;
+		_memoryFactory = fx.MemoryFactory;
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
 		_memory = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), llm: null);
+		_semantic = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), new BowEmbedder());
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null, ILogger<SessionFactsJob>? logger = null) =>
 		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, llm, logger,
 			quietPeriod: NoQuiet, budget: budget);
+
+	// Same job over the embedding-backed memory view. Seeding in those tests must go through
+	// `_semantic` too, and the vectors must be driven in by hand — see RunSemanticAsync.
+	SessionFactsJob SemanticJob(ILlmClient? llm, ILogger<SessionFactsJob>? logger = null) =>
+		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _semantic, llm, logger,
+			quietPeriod: NoQuiet);
+
+	// Drive the neighbour-sweep tests. The vector index is CLASS-B: MemoryVectorizationJob writes
+	// it on its own tick, not the upsert path — so a test that seeds entries and searches in the
+	// same breath finds nothing semantically, while production has long since vectorized the
+	// curated stores it is asking about. Running the real job here is what makes the retrieval in
+	// these tests the same retrieval prod does, rather than a lexical stand-in that only matches
+	// when the candidate repeats the neighbour's wording verbatim.
+	async Task<int> RunSemanticAsync(ILlmClient chat, ILogger<SessionFactsJob>? logger = null)
+	{
+		await new MemoryVectorizationJob(_memoryFactory, new ProjectCatalog(_db.Factory()), new BowEmbedder())
+			.DrainAllAsync(CancellationToken.None);
+		return await SemanticJob(chat, logger).DrainAllAsync(CancellationToken.None);
+	}
 
 	[Fact]
 	public async Task MultiBatchBacklog_DrainsFullyInOnePass()
@@ -528,6 +556,237 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		chat.EmbedInputs.Count(t => t == seed).Should().Be(1); // store text embedded once, cache reused it
 	}
 
+	// ---- the neighbour sweep is the project's stores, not a name literal -----------------------
+	// (spec: autocapture-dedup; work `autocapture-dedup-blind-to-canon`; client report
+	// kek-devices-classic-canon-498281 theme 3)
+	//
+	// The bug: CollectNeighborsAsync swept the literal { "notes", "autocaptured" }, so `canon` — and
+	// any store a project curates under its own name — could not reach the judge's EXISTING block at
+	// all. A repeat of curated knowledge was therefore not merely misjudged, it was UNJUDGEABLE.
+	// These tests assert on the PROMPT, because that is where the regression lives: with a scripted
+	// LLM the verdict is whatever the script says, but what the judge was ALLOWED TO SEE is real.
+
+	// The real pair from the client report, verbatim (kek-devices, incident "channel 12"): a curated
+	// canon entry and the autocaptured retelling of the same knowledge that was created anyway.
+	const string CanonWifiDescription =
+		"Дачный роутер после переезда стоял на канале 12 (2,4 ГГц) — устройства с US/world регуляторным доменом такую сеть вообще не видят";
+
+	const string CanonWifiBody =
+		"На роутере после переезда осталась домашняя настройка `channel 12` с шириной `40-below` " +
+		"на 2,4 ГГц. **Каналы 12 и 13 не поддерживаются устройствами с американским или «мировым» " +
+		"регуляторным доменом** — такое устройство сеть не видит вовсе, это выглядит как «сети нет», " +
+		"а не «не подключается». Типично для дешёвых IoT-устройств, ТВ-приставок и части телефонов. " +
+		"Исправлено: `no interface WifiMaster0 channel` (команда `channel auto` синтаксически неверна, " +
+		"роутер отвечает `argument parse error`) — включает автовыбор, роутер встал на канал 1. " +
+		"Ширина снижена до 20 МГц: на 2,4 ГГц 40 МГц почти всегда даёт больше помех, чем пользы.";
+
+	const string CandidateWifiDescription =
+		"Wi-Fi 2.4 GHz каналы 12/13 не видны устройствам с US/мировой регуляторной прошивкой";
+
+	const string CandidateWifiJson =
+		"""
+		[{"type":"Project","description":"Wi-Fi 2.4 GHz каналы 12/13 не видны устройствам с US/мировой регуляторной прошивкой","body":"Роутер на даче вещал на канале 12 с шириной 40 МГц, из-за чего часть устройств не видела сеть. Переведено на автовыбор канала и ширину 20 МГц."}]
+		""";
+
+	async Task SeedCanonWifiAsync()
+	{
+		await _semantic.CreateStoreAsync(Proj, "canon", null);
+		await _semantic.UpsertAsync(Proj, "canon", [new MemoryEntryInput
+		{
+			Key = "wifi-channel-12-invisible-to-devices", Version = 0, Type = "Feedback",
+			Description = CanonWifiDescription, Body = CanonWifiBody,
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs("роутер на даче: канал 12 и ширина 40 МГц, устройства не видят сеть"));
+	}
+
+	[Fact]
+	public async Task CanonEntry_ReachesTheJudge_AndItsSkipWritesNothing()
+	{
+		await SeedCanonWifiAsync();
+		var chat = new RecordingChat(CandidateWifiJson, """{"action":"skip"}""");
+
+		(await RunSemanticAsync(chat)).Should().Be(0);
+
+		// 1) The curated entry was IN the prompt — under the old literal sweep it could not be.
+		var prompt = chat.JudgePrompts.Should().ContainSingle().Subject;
+		prompt.Should().Contain("\"canon\"");
+		prompt.Should().Contain("wifi-channel-12-invisible-to-devices");
+		// 2) …with the half that says what was DONE, which Clip(400) used to cut away, leaving the
+		//    judge a symptom and no resolution.
+		prompt.Should().Contain("no interface WifiMaster0 channel");
+		prompt.Should().Contain("Ширина снижена до 20 МГц");
+		// 3) A judge that CAN see it can rule "skip" — and the write path then adds nothing.
+		(await _semantic.StoreExistsAsync(Proj, SessionFactsJob.Store)).Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task JudgeNamesCanonKey_ForUpdate_DegradesToAdd_AndSaysSoInTheLog()
+	{
+		// Curated stores are now visible to the judge, so it can NAME a canon key. The guarantee is
+		// code, not prompt: `update` resolves the key inside the quarantine store only, misses, and
+		// degrades to add — and (this card's acceptance point) now logs the miss the way `delete`
+		// always has, instead of degrading silently.
+		await SeedCanonWifiAsync();
+		var before = (await _semantic.GetAsync(Proj, "canon", "wifi-channel-12-invisible-to-devices"))!.Version;
+		var logger = new CapturingLogger();
+		var chat = new RecordingChat(CandidateWifiJson,
+			"""{"action":"update","key":"wifi-channel-12-invisible-to-devices","description":"x","body":"y"}""");
+
+		(await RunSemanticAsync(chat, logger)).Should().Be(1);
+
+		(await _semantic.GetAsync(Proj, "canon", "wifi-channel-12-invisible-to-devices"))!.Version
+			.Should().Be(before);                                                    // curation untouched
+		(await _semantic.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(1); // kept as add
+		logger.Warnings.Should().ContainSingle(w =>
+			w.Contains("UPDATE pointed at a non-quarantine", StringComparison.Ordinal)
+			&& w.Contains("wifi-channel-12-invisible-to-devices", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public async Task JudgeNamesCanonKey_ForDelete_IsIgnored_CurationSurvives()
+	{
+		await SeedCanonWifiAsync();
+		var before = (await _semantic.GetAsync(Proj, "canon", "wifi-channel-12-invisible-to-devices"))!.Version;
+		var chat = new RecordingChat(CandidateWifiJson,
+			"""{"action":"delete","key":"wifi-channel-12-invisible-to-devices"}""");
+
+		(await RunSemanticAsync(chat)).Should().Be(0);
+
+		(await _semantic.GetAsync(Proj, "canon", "wifi-channel-12-invisible-to-devices"))!.Version
+			.Should().Be(before); // a delete outside quarantine is never acted on
+	}
+
+	[Fact]
+	public async Task CustomCuratedStore_ReachesTheJudge_ProvingItIsNotANameList()
+	{
+		// The card refuses "just add canon to the literal": a CLIENT's own curated store must be
+		// visible too, and nobody will ever add its name to a set in our source. Sweeping the
+		// catalog minus exclusions is what makes that free — this store is picked up with no
+		// configuration anywhere.
+		await _semantic.CreateStoreAsync(Proj, "dacha-notes", null);
+		await _semantic.UpsertAsync(Proj, "dacha-notes", [new MemoryEntryInput
+		{
+			Key = "wifi-24-width", Version = 0, Type = "Project",
+			Description = "на 2,4 ГГц ширина 20 МГц предпочтительнее 40 МГц", Body = "меньше помех",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("ширина канала на 2,4 ГГц"));
+		var chat = new RecordingChat(
+			"""[{"type":"Project","description":"на 2,4 ГГц ширина 20 МГц предпочтительнее 40 МГц","body":"дубль"}]""",
+			"""{"action":"skip"}""");
+
+		await RunSemanticAsync(chat);
+
+		var prompt = chat.JudgePrompts.Should().ContainSingle().Subject;
+		prompt.Should().Contain("dacha-notes").And.Contain("wifi-24-width");
+	}
+
+	// ---- SECURITY: widening the sweep must not widen what leaves the box -----------------------
+	[Fact]
+	public async Task SensitiveStore_IsTheTopMatch_AndStillNeverReachesTheJudgePrompt()
+	{
+		// NON-NEGOTIABLE (card acceptance + MemoryStores contract): neighbour bodies are serialized
+		// into a prompt for an EXTERNAL LLM. `ops` has held secrets and must never be auto-pulled.
+		// The sweep is now "every store of the project", so `ops` is a store the sweep would reach
+		// were the exclusion not there — which is exactly what makes this test worth having.
+		await _semantic.CreateStoreAsync(Proj, "ops", null);
+		await _semantic.UpsertAsync(Proj, "ops", [new MemoryEntryInput
+		{
+			Key = "router-admin", Version = 0, Type = "Reference",
+			// Deliberately phrased to be the TOP lexical hit for the candidate below, so absence
+			// from the prompt cannot be explained away as "the search just didn't rank it".
+			Description = "роутер на даче канал 12 ширина 40 МГц пароль администратора",
+			Body = "admin/hunter2-SEKRET на 192.168.1.1",
+		}], []);
+		await SeedCanonWifiAsync();
+		var chat = new RecordingChat(CandidateWifiJson, """{"action":"skip"}""");
+
+		await RunSemanticAsync(chat);
+
+		chat.AllPrompts.Should().NotBeEmpty();
+		var everythingSentToTheModel = string.Join("\n", chat.AllPrompts);
+		everythingSentToTheModel.Should().NotContain("hunter2-SEKRET");
+		everythingSentToTheModel.Should().NotContain("router-admin");
+		everythingSentToTheModel.Should().NotContain("\"ops\"");
+		// Control: the non-sensitive curated store DID make it, so the assertion above is about the
+		// veto and not about a sweep that silently collected nothing.
+		string.Join("\n", chat.JudgePrompts).Should().Contain("wifi-channel-12-invisible-to-devices");
+	}
+
+	[Fact]
+	public async Task SessionDigestStore_IsExcluded_SoTheSourceIsNotCountedTwice()
+	{
+		// The OTHER leg of the exclusion set, and it is not about secrecy: `session-digests` holds
+		// summaries of the very sessions this job distills, so sweeping it would let the source
+		// corroborate itself. Excluded for double-counting — a digest is otherwise linkable.
+		await _semantic.CreateStoreAsync(Proj, "session-digests", null);
+		await _semantic.UpsertAsync(Proj, "session-digests", [new MemoryEntryInput
+		{
+			Key = "sd-1", Version = 0, Type = "Project",
+			Description = "Wi-Fi 2.4 GHz каналы 12/13 не видны устройствам", Body = "дайджест сессии",
+		}], []);
+		await SeedCanonWifiAsync();
+		var chat = new RecordingChat(CandidateWifiJson, """{"action":"skip"}""");
+
+		await RunSemanticAsync(chat);
+
+		var prompt = chat.JudgePrompts.Should().ContainSingle().Subject;
+		prompt.Should().NotContain("session-digests").And.NotContain("sd-1");
+		prompt.Should().Contain("wifi-channel-12-invisible-to-devices"); // control
+	}
+
+	[Fact]
+	public async Task CuratedStore_KeepsItsSlot_WhenQuarantineIsFullOfFresherMatches()
+	{
+		// The trap this card warns about: widening the sweep changes the top-K distribution. A
+		// GLOBAL top-K over the union would let a burst of fresh autocapture outrank the single
+		// curated entry and push it out — making the fix a no-op exactly where it was needed.
+		// Per-store K, interleaved by RANK, is what prevents that.
+		await SeedCanonWifiAsync();
+		await _semantic.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _semantic.UpsertAsync(Proj, SessionFactsJob.Store,
+			Enumerable.Range(1, 10).Select(i => new MemoryEntryInput
+			{
+				Key = $"ac-noise{i}",
+				Version = 0,
+				Type = "Project",
+				Description = $"Wi-Fi 2.4 GHz каналы 12/13 не видны устройствам, заметка {i}",
+				Body = "свежий автозахват",
+				Metadata = """{"sessionId":"s0"}""",
+			}).ToList(), []);
+		var chat = new RecordingChat(CandidateWifiJson, """{"action":"skip"}""");
+
+		await RunSemanticAsync(chat);
+
+		var prompt = chat.JudgePrompts.Should().ContainSingle().Subject;
+		prompt.Should().Contain("wifi-channel-12-invisible-to-devices"); // curated survived the crowd
+		prompt.Should().Contain("ac-noise");                             // quarantine still represented
+	}
+
+	[Fact]
+	public async Task NeighborBodies_AreClippedToTheDeclaredBudget()
+	{
+		// The clip is a prompt-cost bound, so it must actually bind: one pathological curated entry
+		// cannot spend the whole judge prompt. (The real canon entry of the incident is 629 chars
+		// and now arrives WHOLE — asserted in CanonEntry_ReachesTheJudge above.)
+		await _semantic.CreateStoreAsync(Proj, "canon", null);
+		var huge = new string('ж', SessionFactsJob.NeighborBodyClip * 3);
+		await _semantic.UpsertAsync(Proj, "canon", [new MemoryEntryInput
+		{
+			Key = "wall-of-text", Version = 0, Type = "Project",
+			Description = CandidateWifiDescription, Body = huge,
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("каналы 12 и 13 на 2,4 ГГц"));
+		var chat = new RecordingChat(CandidateWifiJson, """{"action":"skip"}""");
+
+		await RunSemanticAsync(chat);
+
+		var prompt = chat.JudgePrompts.Should().ContainSingle().Subject;
+		prompt.Should().Contain("wall-of-text");
+		prompt.Should().Contain(new string('ж', SessionFactsJob.NeighborBodyClip));
+		prompt.Should().NotContain(new string('ж', SessionFactsJob.NeighborBodyClip + 1));
+	}
+
 	// Captures every logged message by level so a test can assert a warning was (or, more often
 	// here, was NOT) raised — the tolerant-parse recovery paths must stay silent at Warning.
 	sealed class CapturingLogger : ILogger<SessionFactsJob>
@@ -570,6 +829,54 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 
 		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
 			Task.FromResult(Available);
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+	}
+
+	// Embed-only client for the MemoryService under the neighbour-sweep tests: deterministic
+	// bag-of-words vectors, and Rerank reported UNAVAILABLE so the search pipeline stays on RRF
+	// instead of reaching for a reranker this fake cannot serve.
+	sealed class BowEmbedder : ILlmClient
+	{
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException("the memory service never chats");
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(capability == LlmCapability.Embed);
+
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			Task.FromResult(HashedBagOfWords.Embed(request.Inputs));
+
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+	}
+
+	// Scripted chat that RECORDS what it was asked, so a test can assert on the PROMPT rather than
+	// on a verdict the script dictated anyway. `JudgePrompts` holds the user turn of every JUDGE
+	// call (the CANDIDATE + EXISTING block); `AllPrompts` holds every turn of every call, system
+	// messages included — the sweep for content that must never reach the model at all.
+	sealed class RecordingChat(params string[] responses) : ILlmClient
+	{
+		readonly Queue<string> _queue = new(responses);
+		string _last = responses[^1];
+		public List<string> JudgePrompts { get; } = [];
+		public List<string> AllPrompts { get; } = [];
+
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
+		{
+			var system = request.Messages[0].Content;
+			AllPrompts.AddRange(request.Messages.Select(m => m.Content));
+			if (!system.Contains("extract DURABLE", StringComparison.Ordinal))
+				JudgePrompts.Add(string.Join("\n", request.Messages.Skip(1).Select(m => m.Content)));
+			if (_queue.Count > 0) _last = _queue.Dequeue();
+			return Task.FromResult(new ChatResult(_last, new ModelIdentity("fake-chat", 0),
+				new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+		}
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
 		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
 			throw new NotSupportedException();
 		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
