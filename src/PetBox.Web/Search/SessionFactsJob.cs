@@ -287,10 +287,13 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 
 		// Worth-gate: the judge ruled this not durable (narration / session bookkeeping /
 		// derivable from code or boards). Dead-letter the body so the drop is findable.
+		// messages carries the same [fromVersion, toVersion] shape as a saved fact's
+		// metadata.messages below — without it "did the dropped fact come back?" is
+		// structurally unanswerable (no session range to re-check against later reads).
 		if (verdict.Action == "drop")
 		{
-			_logger?.LogWarning("facts judge DROPPED a candidate as not worth storing for {Project}/{Session}. description={Description} body={Body}",
-				project, sessionId, Clip(candidate.Description ?? "", 500), Clip(candidate.Body ?? "", 1000));
+			_logger?.LogWarning("facts judge DROPPED a candidate as not worth storing for {Project}/{Session}. description={Description} body={Body} messages={Messages}",
+				project, sessionId, Clip(candidate.Description ?? "", 500), Clip(candidate.Body ?? "", 1000), new[] { fromVersion, toVersion });
 			return false;
 		}
 

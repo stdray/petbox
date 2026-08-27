@@ -487,6 +487,31 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	}
 
 	[Fact]
+	public async Task JudgeDrop_LogsMessageVersionRange()
+	{
+		// W3 (memory-telemetry-blind-paths pt.3): the drop-vardict warning must carry the same
+		// [fromVersion, toVersion] shape a SAVED fact gets in metadata.messages — otherwise
+		// "did this dropped fact come back later?" has no session range to check against, in
+		// either direction. Two messages so fromVersion != toVersion — a fix that logs only one
+		// of the two versions (or the same one twice) must still fail this.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs("реализовал фичу и задеплоил ci.512", "прогнал смок-тест, всё зелёное"));
+		var (expectedFrom, expectedTo) = ((await _sessions.DeltaAsync(Proj, "s1", 0, CancellationToken.None))
+			is [var first, .., var last] delta ? (first.Version, last.Version)
+			: throw new InvalidOperationException("seeded session must have >=1 message"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"задеплоил ci.512 и прогнал смок","body":"нарратив о работе"}]""",
+			"""{"action":"drop"}""");
+		var logger = new CapturingLogger();
+
+		(await Job(chat, logger: logger).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		var props = logger.WarningProperties.Should().ContainSingle().Subject;
+		var messages = props.Should().ContainSingle(kv => kv.Key == "Messages").Subject.Value;
+		messages.Should().BeEquivalentTo(new[] { expectedFrom, expectedTo }, o => o.WithStrictOrdering());
+	}
+
+	[Fact]
 	public async Task JudgeDelete_InvalidatesStaleAutocapturedEntry()
 	{
 		// W2: the judge may invalidate a stale autocaptured entry — "delete" soft-removes it.
@@ -792,6 +817,11 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	sealed class CapturingLogger : ILogger<SessionFactsJob>
 	{
 		public List<string> Warnings { get; } = [];
+		// Structured properties per Warning call (same order as Warnings), for asserting on the
+		// actual logged VALUES (e.g. the messages version-range array) rather than the rendered
+		// text — mirrors how the real sink (SystemLogger) reads the templated state, not the
+		// formatter's ToString().
+		public List<IReadOnlyList<KeyValuePair<string, object?>>> WarningProperties { get; } = [];
 		List<string> Infos { get; } = [];
 		public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
@@ -799,7 +829,11 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 			Exception? exception, Func<TState, Exception?, string> formatter)
 		{
 			var message = formatter(state, exception);
-			if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) Warnings.Add(message);
+			if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning)
+			{
+				Warnings.Add(message);
+				if (state is IReadOnlyList<KeyValuePair<string, object?>> props) WarningProperties.Add(props);
+			}
 			else if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information) Infos.Add(message);
 		}
 
