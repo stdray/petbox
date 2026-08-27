@@ -99,6 +99,7 @@ public sealed class SessionSearchCursorTests : IClassFixture<SessionSearchCursor
 	readonly SessionFullScanIndex _fullScanIndex;
 	readonly ISettingsResolver _settingsResolver;
 	readonly SessionSearchService _search;
+	readonly MemoryUsageRecorder _usage;
 
 	public SessionSearchCursorTests(SessionSearchCursorFixture fx)
 	{
@@ -112,9 +113,14 @@ public sealed class SessionSearchCursorTests : IClassFixture<SessionSearchCursor
 		_fullScanIndex = new SessionFullScanIndex(_sessions);
 		_settingsResolver = new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets());
 		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
+		_usage = new MemoryUsageRecorder(fx.MemoryFactory);
 	}
 
-	public void Dispose() => _episodic.Dispose();
+	public void Dispose()
+	{
+		_episodic.Dispose();
+		_usage.DisposeAsync().AsTask().GetAwaiter().GetResult();
+	}
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
@@ -318,7 +324,7 @@ public sealed class SessionSearchCursorTests : IClassFixture<SessionSearchCursor
 
 	Task<PetBox.Web.Mcp.Contract.SessionSearchResultView> SearchTool(
 		int sessions = 0, int? bodyLen = null, string? cursor = null) =>
-		PetBox.Web.Mcp.SessionTools.SearchAsync(ToolHttp(), ToolFlags(), _sessions, _search, Proj,
+		PetBox.Web.Mcp.SessionTools.SearchAsync(ToolHttp(), ToolFlags(), _sessions, _search, _usage, Proj,
 			"векторизацию", sessions, 0, false, bodyLen, cursor);
 
 	static IHttpContextAccessor ToolHttp()

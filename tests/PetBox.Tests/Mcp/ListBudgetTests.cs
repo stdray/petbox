@@ -164,7 +164,7 @@ public sealed class ListBudgetTests : IDisposable
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj);
 
 		res.Items.Should().ContainSingle();
 		res.Truncated.Should().BeNull();
@@ -180,7 +180,7 @@ public sealed class ListBudgetTests : IDisposable
 		for (var i = 0; i < total; i++)
 			await _sessions.UpsertAsync(Proj, $"{i:d2}-{pad}", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj);
 
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Truncated.Should().BeTrue();
