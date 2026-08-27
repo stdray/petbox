@@ -740,7 +740,11 @@ public static class TasksTools
 		status, type, title, the `body` (COMPLETE by default — this is the pointed full read; the
 		uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full),
 		priority, version, tags, links (`spec`, `blockedBy`; on a spec node `linkedTasks` + the
-		computed `delivery`), plus `url` when includeUrl. `relations` is the EXHAUSTIVE two-way
+		computed `delivery`), `decisionPending` (is this node waiting on a decision from the
+		OWNER — independent of status, so a node can be InProgress and waiting), the write-once
+		`originSessionId` (the session it was created in; "" = none was recorded, permanently) and
+		`originSessions` (every session that has since touched it — a union, not a log), plus `url`
+		when includeUrl. `relations` is the EXHAUSTIVE two-way
 		relation panel — one labelled group per non-empty kind×direction (children, blocks/blocked
 		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by), each target
 		carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated
@@ -802,7 +806,10 @@ public static class TasksTools
 		WHY it stopped — `stop`: "more" | "exhausted" | "pool-boundary" — and "pool-boundary"
 		means ranking looked only `poolLimit` deep and MORE matched behind it, so narrow the query
 		rather than expecting another page. To enumerate EVERYTHING regardless of ranking depth,
-		list without `q` (filters + cursor) or use tasks_delta. `statusKind` visibility defaults
+		list without `q` (filters + cursor) or use tasks_delta. `decisionPending` filters on the
+		owner-decision-pending flag in both modes (true = only what waits on the owner, false =
+		only what does not, omitted = no filter); the flag itself is on every row, in both modes.
+		`statusKind` visibility defaults
 		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
 		applied set as `effectiveStatusKind`, so the default is never silent. Tracking changes
 		since a known version cursor (added/updated/removed, including tombstones this search
@@ -957,7 +964,11 @@ public static class TasksTools
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = the mode default (query: open+terminalok; listing: open) — a default read still finds accepted/Done. Pass all three values for the widest read (this replaces the removed includeClosed:true); an unknown value is an error.")] string[]? statusKind = null,
-		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, `decisionPending`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over.")] string? cursor = null,
+		// Appended AFTER `cursor` on purpose: MCP arguments are named on the wire, so parameter
+		// ORDER is not part of this tool's contract, and appending keeps every existing
+		// positional in-process call site (the test suite's) binding to the same parameters.
+		[Description("Keep only nodes whose owner-decision-pending flag matches: true = ONLY nodes waiting on a decision from the owner, false = ONLY nodes that are NOT. Omit = no filter at all (the flag never narrows a read that did not ask about it). Independent of `status` and `type` — a node can be InProgress AND waiting — so this is the cheap way to ask \"what is waiting on me\" without scanning a board. Applies in BOTH modes (listing and query), and the flag is returned on every row in both modes too.")] bool? decisionPending = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -990,7 +1001,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind),
+			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind, decisionPending),
 			Sort = parsedSort,
 			// LISTING: ask for the whole ordered set and apply `limit` HERE (below), after the
 			// cursor skip. The service's own Limit is a plain prefix Take over that same ordered
@@ -1020,7 +1031,7 @@ public static class TasksTools
 		// the next page is REFUSED with an instructive error, never quietly restarted against a new
 		// ordering — the failure mode the whole keyset design exists to avoid.
 		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
-			nodes, commit, statusKind, axis, desc, res.DataVersion);
+			nodes, commit, statusKind, decisionPending, axis, desc, res.DataVersion);
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
 		{
@@ -1163,12 +1174,18 @@ public static class TasksTools
 	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
 		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
-		string? commit, string[]? statusKind, TaskSortBy axis, bool desc,
+		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc,
 		string? dataVersion = null) =>
 		KeysetCursor.FingerprintOf(
 			"tasks_search", projectKey, query, board, underNode,
 			CursorFilterSet(status), CursorFilterSet(nodes),
-			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0", dataVersion);
+			commit, CursorFilterSet(statusKind),
+			// `decisionPending` SELECTS rows, so it belongs in the fingerprint with every other
+			// selector: a token issued for the waiting set must not be honoured against the whole
+			// board. Three distinct states — omitted, true, false — so null must NOT collapse onto
+			// "false" (that would silently accept a cursor across a filter change).
+			decisionPending is null ? null : decisionPending.Value ? "1" : "0",
+			axis.ToString(), desc ? "1" : "0", dataVersion);
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
 	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled
@@ -1246,7 +1263,16 @@ public static class TasksTools
 			Score: h.Score is { } s ? Math.Round(s, 6) : null,
 			Retriever: h.Retriever,
 			// Relevance provenance — survives the lean cut like Score/Retriever.
-			MatchedIn: h.MatchedIn);
+			MatchedIn: h.MatchedIn,
+			// NOT lean-cut, on the same rule the `commits` exemption states: `decisionPending` is a
+			// FILTER on this tool and it applies in query mode too, so a lean row that hid it would
+			// select by a field it then refuses to show — the exact friction that exemption ended.
+			DecisionPending: n.DecisionPending,
+			// LEAN-CUT, by the other half of that same rule: nothing selects on provenance, so it
+			// is enrichment. `originSessions` is additionally null in query mode because the lean
+			// PROJECTION never read it (null = "not looked at", never "looked and found none").
+			OriginSessionId: lean ? null : n.OriginSessionId,
+			OriginSessions: lean ? null : n.OriginSessions);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the
@@ -1303,7 +1329,11 @@ public static class TasksTools
 		supersedes (a node reference — the slug key or 32-hex NodeId, both accepted, of the node
 		this one replaces; the old one is moved to its terminal-cancel),
 		commits? (an ARRAY of commit SHAs — hex, 7..40 chars; null omits, [] clears, a list
-		REPLACES the node's full commit set, same PATCH semantics as tags), priority? (sparse
+		REPLACES the node's full commit set, same PATCH semantics as tags), decisionPending?
+		(bool — "this node is waiting on a decision from the OWNER"; null omits, true/false sets,
+		a new node starts false. ORTHOGONAL to status, not a status: a node can be InProgress AND
+		waiting, and either an agent or the owner may set it. Filterable via tasks_search's
+		`decisionPending`), priority? (sparse
 		int, lower first), version (WATERMARK baseline: pass the
 		board `currentVersion` from your last read OR the node's own version — both are valid; 0 =
 		new; a version above this board's cursor is rejected as a wrong-scope baseline). The guard
@@ -1350,6 +1380,7 @@ public static class TasksTools
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
+		[Description("YOUR session id (the same one session_upsert/session_get use), passed EXPLICITLY — the server cannot infer it: the MCP transport's own session id is empty on effectively every call, and the delivery-events id is a different identifier space, so nothing is auto-filled from either. Two effects: a node this call CREATES is stamped with it as write-once `originSessionId`, and this session is unioned into every touched node's provenance set (a repeat touch adds nothing — it is a union, not a log, and it never bumps the node's `version`). Omitting it is LEGAL and never refuses the write; the node is simply born with no origin, permanently, and the omission is logged as a warning naming the board and key.")] string? sessionId = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -1366,7 +1397,7 @@ public static class TasksTools
 		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, ct);
+		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, sessionId, ct);
 		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
 		// only warn about size on a write that actually landed — a refused/conflicted call already
 		// has its own signal (conflicts[]).
@@ -1479,7 +1510,11 @@ public static class TasksTools
 		Commits: n.Commits,
 		Priority: n.Priority,
 		Version: n.Version,
-		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
+		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key,
+		// owner-decision-pending-flag: a flip mints a node revision, so it arrives here — and
+		// tasks_delta is what the owner digest catches up on. A consumer that had to re-read every
+		// changed node just to learn whether it now waits on the owner would defeat the flag.
+		DecisionPending: n.DecisionPending);
 
 	// Map the typed node inputs into service NodePatches. Read-merge (inheriting omitted fields
 	// from the prior row) happens in the service; here an omitted field deserializes to null
@@ -1507,6 +1542,8 @@ public static class TasksTools
 				// node's full commit set — same semantics as Tags.
 				Commits = n.Commits,
 				Priority = n.Priority,
+				// null = omit (leave as-is); true/false = an explicit set/clear.
+				DecisionPending = n.DecisionPending,
 				// links:{kind:ref|ref[]} → kind -> normalized string list (the converter already
 				// flattened a bare ref to a one-element list). Empty-value kinds are dropped.
 				Links = n.Links is null ? null : n.Links

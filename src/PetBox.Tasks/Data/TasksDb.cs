@@ -14,6 +14,7 @@ public sealed class TasksDb : DataConnection
 	public ITable<NodeTag> NodeTags => this.GetTable<NodeTag>();
 	public ITable<TagVocab> TagVocab => this.GetTable<TagVocab>();
 	public ITable<TaskNodeCommit> TaskNodeCommits => this.GetTable<TaskNodeCommit>();
+	public ITable<TaskNodeOriginSession> TaskNodeOriginSessions => this.GetTable<TaskNodeOriginSession>();
 	// Lexical (search_fts) + vector (search_vec) live behind PetBox.Core.Search indexes, which
 	// own their own row mappings — no table props here. See the TasksService search seam.
 

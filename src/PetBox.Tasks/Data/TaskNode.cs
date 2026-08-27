@@ -26,13 +26,37 @@ public sealed record TaskNode : TemporalRow
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 	[Column] public long Priority { get; init; }
 
+	// owner-decision-pending-flag: "this node is waiting on a decision from the owner",
+	// ORTHOGONAL to Status — a node can be InProgress AND waiting. It is a real PAYLOAD field
+	// (see SamePayload below), so flipping it mints a node revision. That is the point, not a
+	// side effect: the flip is exactly the event the owner digest reads off tasks_delta, and a
+	// field the payload comparer could not see would be silently dropped as a no-op by the
+	// temporal layer.
+	[Column, NotNull] public bool DecisionPending { get; init; }
+
+	// node-origin-provenance, WRITE-ONCE half: the session this node was CREATED in. Set only
+	// on the create (TasksService.Merge), inherited verbatim by every later revision, and NEVER
+	// filled in afterwards — a node was not born in whichever session happened to edit it next,
+	// so an empty value is a permanent, honest property of that node, not a hole to backfill.
+	// Deliberately NOT in SamePayload/ChangedPayloadFields: it cannot change on an existing
+	// node, so listing it there would only add a field that can never appear in a conflict.
+	[Column, NotNull] public string OriginSessionId { get; init; } = string.Empty;
+
 	// Attached commits (node-commits-impl): NOT a stored column and NOT part of the payload
 	// (like tags, commits are an SCD-2 association in plan_node_commits, so editing them never
 	// mints a node revision). Read paths populate this for enrichment; empty by default.
 	[NotColumn] public IReadOnlyList<string> Commits { get; init; } = [];
 
+	// node-origin-provenance, ACCUMULATING half (plan_node_sessions): the UNION of sessions that
+	// have touched this node. Like Commits: NOT a stored column and NOT part of the payload, so
+	// growing it never mints a node revision — the whole reason recurrence provenance is an
+	// association and not a field (a bucket of N sessions as a field would be N revisions).
+	// Read paths populate this for enrichment; empty by default.
+	[NotColumn] public IReadOnlyList<string> OriginSessions { get; init; } = [];
+
 	public override bool SamePayload(TemporalRow other) =>
-		other is TaskNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority;
+		other is TaskNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority
+		&& p.DecisionPending == DecisionPending;
 
 	// Wire-facing names (title, not Name) — these land in a Stale conflict's
 	// ChangedFields. Mirrors SamePayload field-for-field.
@@ -45,6 +69,7 @@ public sealed record TaskNode : TemporalRow
 		if (p.Name != Name) fields.Add("title");
 		if (p.Body != Body) fields.Add("body");
 		if (p.Priority != Priority) fields.Add("priority");
+		if (p.DecisionPending != DecisionPending) fields.Add("decisionPending");
 		return fields;
 	}
 

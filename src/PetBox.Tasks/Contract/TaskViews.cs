@@ -27,7 +27,19 @@ public sealed record TaskNodeView(
 	// The symmetric counterpart of BlockedBy (kanban-blocked-signal review finding): outgoing
 	// "blocks" edges FROM this node (the nodes it holds up), vs BlockedBy's incoming edges (the
 	// nodes holding it up). Same relation kind, opposite direction — see GetAsync.
-	IReadOnlyList<LinkDto>? Blocks = null);
+	IReadOnlyList<LinkDto>? Blocks = null,
+	// owner-decision-pending-flag: "waiting on a decision from the owner", orthogonal to Status.
+	// Carried in EVERY projection, lean included — it is the axis `tasks_search`'s decisionPending
+	// filter selects on, and a row selected by a field the response then hides is exactly the
+	// friction the `commits` lean-cut exemption was written to end.
+	bool DecisionPending = false,
+	// node-origin-provenance, write-once half: the session the node was created in ("" = none
+	// recorded — a permanent property of that node, never backfilled).
+	string OriginSessionId = "",
+	// node-origin-provenance, accumulating half: the union of sessions that have touched this
+	// node. Enrichment, not a selector — nothing filters on it — so it is LEAN-CUT in query mode
+	// (see TasksTools.SearchRow); listing mode and tasks_node_get carry it.
+	IReadOnlyList<string>? OriginSessions = null);
 
 // A board's active task nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is
@@ -76,7 +88,12 @@ public sealed record NodeRelationGroup(string Label, IReadOnlyList<LinkDto> Link
 // when the caller passes bodyLen > 0.
 public sealed record TaskNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string? Body,
-	IReadOnlyList<string> Commits, long Priority, long Version, string? Url = null);
+	IReadOnlyList<string> Commits, long Priority, long Version, string? Url = null,
+	// owner-decision-pending-flag rides the delta projection because the flip IS a node revision
+	// and tasks_delta is what the owner digest catches up on — a consumer that had to re-read
+	// every changed node just to learn whether it now waits on the owner would defeat the point
+	// of having the flag be cheap to ask about.
+	bool DecisionPending = false);
 
 // One row the caller could not apply (optimistic-concurrency miss, or a domain-guard
 // refusal — then Reason says why), shaped for the wire. On a Stale conflict,
@@ -189,7 +206,15 @@ public sealed record TaskNodeFilter(
 	string? Commit = null,
 	// The statusKind visibility facet (see the doc above). null/empty = the mode default; a
 	// non-empty set is the caller's explicit ask.
-	IReadOnlyList<string>? StatusKind = null);
+	IReadOnlyList<string>? StatusKind = null,
+	// owner-decision-pending-flag: keep only nodes whose flag matches. null = NO FILTER (the
+	// default — the flag never narrows a read that did not ask about it); true = only nodes
+	// waiting on the owner; false = only nodes that are NOT. An ENTITY predicate like `under` and
+	// `commit`: the опорный слой (search_meta) does not carry this fact, so it is applied at the
+	// pipeline's re-filter step over the already-selected pool — it narrows, never widens, and
+	// never reaches a row the statusKind facet excluded. Applies in BOTH modes (listing and
+	// query); without it the owner digest's "waiting on you" section would be a full board scan.
+	bool? DecisionPending = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their
 // final order, the board context when the read was board-scoped (Kind/WiredBoard/

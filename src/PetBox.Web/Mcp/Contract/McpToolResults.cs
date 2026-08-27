@@ -693,7 +693,17 @@ public sealed record TaskSearchNodeView(
 	// "comment" when the row surfaced because a COMMENT under this node matched the query
 	// (tasks-search-comments); null when the node itself matched. Relevance provenance, so it
 	// survives the lean q-mode cut like Score/Retriever.
-	string? MatchedIn = null);
+	string? MatchedIn = null,
+	// owner-decision-pending-flag. NOT lean-cut — the same reason `commits` is exempt: it is a
+	// FILTER on this very tool (`decisionPending`) and that filter applies in BOTH modes, so
+	// hiding it would let a query select rows by a field the response then refuses to show.
+	bool DecisionPending = false,
+	// node-origin-provenance. Both ARE lean-cut (null → omitted by the serializer in query mode):
+	// nothing selects on them, so by the same criterion the commits exemption rests on they are
+	// enrichment, and enrichment is exactly what the lean row exists to drop. Listing mode and
+	// tasks_node_get carry them.
+	string? OriginSessionId = null,
+	IReadOnlyList<string>? OriginSessions = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/WiredBoard/

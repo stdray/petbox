@@ -22,4 +22,9 @@ public sealed record TaskSearchCriteria(
 	IReadOnlySet<string>? KeyNodeIds = null,
 	// Entity predicate: reverse commit lookup — NodeIds carrying the requested commit (exact or
 	// >=7-hex prefix). A tasks-only attribute the опорный слой does not index.
-	IReadOnlySet<string>? CommitNodeIds = null);
+	IReadOnlySet<string>? CommitNodeIds = null,
+	// Entity predicate: the owner-decision-pending flag (owner-decision-pending-flag). A node
+	// attribute the опорный слой does not index, so — like UnderRoots/CommitNodeIds — it is
+	// applied here at the re-filter step. null = no filter (the default: a read that did not ask
+	// about the flag is never narrowed by it).
+	bool? DecisionPending = null);

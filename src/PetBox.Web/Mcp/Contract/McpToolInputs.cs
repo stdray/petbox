@@ -109,6 +109,11 @@ public sealed record TaskNodeInput
 	// (incl. empty) REPLACES the node's full commit set — same semantics as Tags.
 	public IReadOnlyList<string>? Commits { get; init; }
 
+	// owner-decision-pending-flag: "this node is waiting on a decision from the owner". null =
+	// omit (leave as-is), true/false = an explicit set/clear; a new node starts false. Orthogonal
+	// to `status` — a node can be InProgress AND waiting — and settable by an agent or the owner.
+	public bool? DecisionPending { get; init; }
+
 	// Baseline version last seen (0 = new); sparse ordering int.
 	public long Version { get; init; }
 	public long? Priority { get; init; }

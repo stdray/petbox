@@ -38,6 +38,12 @@ public sealed record NodePatch
 	public string? Reason { get; init; }
 	public long? Priority { get; init; }
 
+	// owner-decision-pending-flag: the "waiting on the owner" flag. PATCH semantics like every
+	// other scalar here — null = OMIT (leave as-is), true/false = an explicit set/clear. On a NEW
+	// node an omitted value starts false. Both an agent and the owner may set it; it is
+	// independent of Status, so it neither implies nor is implied by any transition.
+	public bool? DecisionPending { get; init; }
+
 	// Attached commit SHAs (node-commits-impl). null = OMIT (leave the node's commits as-is);
 	// a non-null list (incl. empty) REPLACES the node's full commit set — same semantics as
 	// Tags. Values are normalized (trim, lowercase, dedupe, drop empties) and validated (hex,

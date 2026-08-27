@@ -34,3 +34,4 @@
 18 LIVE M018_SearchMeta
 19 LIVE M019_SearchMetaAliasIndex
 20 LIVE M020_SearchTitleColumn
+21 LIVE M021_NodeDecisionFlagAndOrigin
