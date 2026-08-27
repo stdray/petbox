@@ -194,7 +194,10 @@ internal static class AutocaptureDedup
 	// A merge ACCUMULATES provenance, never drops it: union every member's sources and every
 	// member's seenIn/sessionId, and keep the canonical's own sessionId+messages so the
 	// verbatim bridge (session_get) still resolves.
-	static string MergeMetadata(IReadOnlyList<MemoryEntryView> cluster, MemoryEntryView canonical)
+	// internal (not just used by CollapseAsync): SessionFactsJob's deterministic dedup net
+	// (dedup-drop-discards-recurrence) reuses this same merge shape when a fresh candidate
+	// collides with an existing quarantine entry, so the two call sites can't drift apart.
+	internal static string MergeMetadata(IReadOnlyList<MemoryEntryView> cluster, MemoryEntryView canonical)
 	{
 		var sources = new HashSet<string>();
 		var seenIn = new HashSet<string>();

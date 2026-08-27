@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
@@ -270,11 +271,13 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	}
 
 	[Fact]
-	public async Task ExactRepeat_JudgeSaysAdd_StructuralGuardSkips_NoDuplicate()
+	public async Task ExactRepeat_JudgeSaysAdd_StructuralGuardMergesProvenance_NoDuplicate()
 	{
 		// The judge is a SOFT filter: even when it hallucinates "add" (or the neighbor search
 		// never surfaced the twin), the deterministic guard behind it must catch an exact
-		// repeat and write nothing.
+		// repeat — and, since dedup-drop-discards-recurrence, MERGE the recurrence's provenance
+		// into the canonical entry instead of silently discarding it (no duplicate row either
+		// way, but the repeat must now be counted, not thrown away).
 		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
 		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
 		{
@@ -287,13 +290,19 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 			"""[{"type":"Feedback","description":"issue_task auto-close закрывает интейк issue на переходе work Done","body":"дубль"}]""",
 			"""{"action":"add"}"""); // judge lets it through
 
-		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		// The merge is a real write (sourcesCount moves), so it counts as captured — same
+		// "true = store changed" convention the judge's own "update" branch already uses.
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
 
-		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(1); // guard held
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().HaveCount(1); // guard held — no duplicate row
+		entries[0].Metadata.Should().Contain("\"sessionId\":\"s0\""); // canonical session PRESERVED, not overwritten
+		entries[0].Metadata.Should().Contain("seenIn").And.Contain("s1"); // recurrence recorded via seenIn
+		entries[0].Body.Should().Be("уже знаем"); // canonical text untouched by a pure dedup match
 	}
 
 	[Fact]
-	public async Task RephrasedRepeat_JudgeSaysAdd_SemanticGuardSkips_NoDuplicate()
+	public async Task RephrasedRepeat_JudgeSaysAdd_SemanticGuardMergesProvenance_NoDuplicate()
 	{
 		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
 		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
@@ -307,9 +316,73 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 			"""[{"type":"Feedback","description":"issue_task auto-close автоматически закрывает интейк issue на переходе work Done","body":"дубль иначе"}]""",
 			"""{"action":"add"}"""); // judge misses the rephrase, guard's semantic leg catches it
 
-		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
 
-		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(1);
+		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
+		entries.Should().HaveCount(1);
+		entries[0].Metadata.Should().Contain("\"sessionId\":\"s0\"");
+		entries[0].Metadata.Should().Contain("seenIn").And.Contain("s1");
+	}
+
+	[Fact]
+	public async Task DeterministicGuardMerge_UnionsProvenanceAcrossRepeatedSessions_KeepsCanonicalAndSources()
+	{
+		// Acceptance for dedup-drop-discards-recurrence: re-extracting the SAME fact in
+		// successive UNRELATED sessions must grow sourcesCount (McpToolResults union of
+		// sessionId ∪ seenIn ∪ sources) by UNION, never by replacement — and the canonical
+		// entry's own sessionId/body/description (the session_get verbatim bridge) must never
+		// be overwritten by a later recurrence's session.
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-known", Version = 0, Type = "Feedback",
+			Description = "issue_task auto-close закрывает интейк issue на переходе work Done",
+			Body = "первая формулировка",
+			// A pre-existing `sources` array (as BehaviorPatternJob would stamp) must survive
+			// a merge coming from the plain ac-* dedup path, not just the judge's update branch.
+			Metadata = """{"sessionId":"s0","sources":["bp-legacy"]}""",
+		}], []);
+
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("опять про issue_task auto-close"));
+		var chat1 = new ScriptedChat(
+			"""[{"type":"Feedback","description":"issue_task auto-close закрывает интейк issue на переходе work Done","body":"дубль 1"}]""",
+			"""{"action":"add"}""");
+		(await Job(chat1).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		var afterFirst = (await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().ContainSingle().Subject;
+		afterFirst.Metadata.Should().Contain("\"sessionId\":\"s0\"");
+		afterFirst.Metadata.Should().Contain("bp-legacy"); // pre-existing sources not lost
+		afterFirst.Body.Should().Be("первая формулировка");
+		ProvenanceIds(afterFirst.Metadata).Should().BeEquivalentTo(["s0", "s1", "bp-legacy"]);
+
+		// A SECOND, DIFFERENT unrelated session — the union must keep growing, s1 must not be
+		// dropped when s2 is folded in (a replace-not-union bug would make this assertion fail).
+		await _sessions.UpsertAsync(Proj, "s2", "claude-code", Msgs("снова issue_task auto-close"));
+		var chat2 = new ScriptedChat(
+			"""[{"type":"Feedback","description":"issue_task auto-close закрывает интейк issue на переходе work Done","body":"дубль 2"}]""",
+			"""{"action":"add"}""");
+		(await Job(chat2).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		var afterSecond = (await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().ContainSingle().Subject;
+		afterSecond.Metadata.Should().Contain("\"sessionId\":\"s0\""); // canonical session STILL preserved
+		afterSecond.Body.Should().Be("первая формулировка");           // canonical text still untouched
+		ProvenanceIds(afterSecond.Metadata).Should().BeEquivalentTo(["s0", "s1", "s2", "bp-legacy"]);
+	}
+
+	// Mirrors the union McpToolResults' SourcesCount computes (sessionId ∪ seenIn ∪ sources) but
+	// returns the actual id set instead of a bare count, so a replace-not-union regression shows
+	// up as a MISSING id rather than merely a wrong number.
+	static List<string> ProvenanceIds(string metadata)
+	{
+		using var doc = JsonDocument.Parse(metadata);
+		var root = doc.RootElement;
+		var ids = new List<string>();
+		if (root.TryGetProperty("sessionId", out var sid) && sid.ValueKind == JsonValueKind.String)
+			ids.Add(sid.GetString()!);
+		foreach (var field in new[] { "seenIn", "sources" })
+			if (root.TryGetProperty(field, out var arr) && arr.ValueKind == JsonValueKind.Array)
+				ids.AddRange(arr.EnumerateArray().Select(x => x.GetString()!));
+		return ids.Distinct().ToList();
 	}
 
 	[Fact]
