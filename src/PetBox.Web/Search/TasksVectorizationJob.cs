@@ -35,19 +35,38 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 	// in portions or it owns the tick. 200 docs ≈ 30 s.
 	private const int MaxDocsPerPass = 200;
 
+	// work vectorization-jobs-flood-selflog: mirrors MemoryVectorizationJob's heartbeat rationale —
+	// see that file for the full writeup. Summary: an empty pass is gated to Debug (below), and one
+	// Information heartbeat line per hour proves liveness without reintroducing a per-project/per-tick
+	// multiplier. The heartbeat is per JOB PASS, not per project, for the same reason.
+	static readonly TimeSpan HeartbeatInterval = TimeSpan.FromHours(1);
+
+	// Process-lifetime state: SearchEnrichmentService opens a fresh DI scope every 60s tick, so a new
+	// TasksVectorizationJob instance is constructed each pass — only a static field survives across
+	// ticks. Resets to null on restart, which correctly heartbeats once immediately, then resumes the
+	// hourly cadence (no burst: DrainAllAsync still runs at most once per tick).
+	static DateTimeOffset? s_lastHeartbeatUtc;
+	static readonly Lock s_heartbeatLock = new();
+
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
 	readonly ILogger<TasksVectorizationJob>? _logger;
+	readonly TimeProvider _time;
 
 	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, IProjectCatalog catalog,
-		ILlmClient? llm = null, ILogger<TasksVectorizationJob>? logger = null)
+		ILlmClient? llm = null, ILogger<TasksVectorizationJob>? logger = null, TimeProvider? time = null)
 	{
 		_factory = factory;
 		_catalog = catalog;
 		_llm = llm;
 		_logger = logger;
+		_time = time ?? TimeProvider.System;
 	}
+
+	// Test-only: see MemoryVectorizationJob.ResetHeartbeatClockForTests for why this exists. Internal
+	// via PetBox.Web's InternalsVisibleTo(PetBox.Tests).
+	internal static void ResetHeartbeatClockForTests() { lock (s_heartbeatLock) s_lastHeartbeatUtc = null; }
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
@@ -55,6 +74,7 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 
 		var indexed = 0;
 		var budget = MaxDocsPerPass; // per-PASS embed budget, shared by every project/board below
+		var passProjects = 0; var passBoards = 0; var passDead = 0; long passMaxLag = 0; // heartbeat rollup
 		foreach (var project in await _catalog.ListTaskProjectKeysAsync(ct))
 		{
 			if (budget <= 0) break; // spent — the remaining backlog drains on the next tick
@@ -102,11 +122,22 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 
 				// Same three counters as the memory job: vectors present, docs permanently dropped,
 				// how far the cursor trails the boards' version space (0 vectors + boards ⇒ dead index).
+				// work vectorization-jobs-flood-selflog: gated to Information ONLY when there is a signal
+				// (Indexed>0 or DeadLettered>0 or Lag>0) — an empty pass goes to Debug, which the
+				// self-log's global MinimumLevel=Information then drops. This was 91% of this job's
+				// self-log volume (405974/446135 events over the 2026-08-27 measurement window —
+				// log_query, SourceContext=TasksVectorizationJob, EventId=411).
 				if (_logger is not null && boards.Count > 0)
 				{
 					using var stats = _factory.NewEnsuredConnection(project);
 					var (vectors, dead) = await SearchIndexStatsReader.ReadAsync(stats, ct);
-					LogProjectStats(_logger, project, boards.Count, projectIndexed, projectDead, vectors, dead, maxLag);
+					var hasSignal = projectIndexed > 0 || projectDead > 0 || maxLag > 0;
+					LogProjectStats(_logger, hasSignal ? LogLevel.Information : LogLevel.Debug,
+						project, boards.Count, projectIndexed, projectDead, vectors, dead, maxLag);
+					passProjects++;
+					passBoards += boards.Count;
+					passDead += projectDead;
+					passMaxLag = Math.Max(passMaxLag, maxLag);
 				}
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
@@ -116,15 +147,34 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 				_logger?.LogError(ex, "tasks vectorization drain failed for {Project}; skipped", project);
 			}
 		}
+		MaybeLogHeartbeat(passProjects, passBoards, indexed, passDead, passMaxLag);
 		return indexed;
+	}
+
+	// One Information line per hour regardless of signal — see MemoryVectorizationJob.MaybeLogHeartbeat
+	// for the full rationale (identical here, board/project vocabulary aside).
+	void MaybeLogHeartbeat(int projects, int boards, int indexed, int deadLettered, long maxLag)
+	{
+		if (_logger is null) return;
+		var now = _time.GetUtcNow();
+		lock (s_heartbeatLock)
+		{
+			if (s_lastHeartbeatUtc is { } last && now - last < HeartbeatInterval) return;
+			s_lastHeartbeatUtc = now;
+		}
+		LogHeartbeat(_logger, projects, boards, indexed, deadLettered, maxLag);
 	}
 
 	[LoggerMessage(EventId = 413, Level = LogLevel.Information,
 		Message = "tasks vectorization {Project}: Embed unavailable (no route or circuit open) — skipping this pass, cursor untouched")]
 	static partial void LogEmbedUnavailable(ILogger logger, string project);
 
-	[LoggerMessage(EventId = 411, Level = LogLevel.Information,
+	[LoggerMessage(EventId = 411,
 		Message = "tasks vectorization {Project}: {Boards} board(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass; search_vec rows {VectorRows}, dead total {DeadTotal}, max cursor lag {Lag}")]
-	static partial void LogProjectStats(ILogger logger, string project, int boards, int indexed, int deadLettered,
-		long vectorRows, long deadTotal, long lag);
+	static partial void LogProjectStats(ILogger logger, LogLevel level, string project, int boards, int indexed,
+		int deadLettered, long vectorRows, long deadTotal, long lag);
+
+	[LoggerMessage(EventId = 416, Level = LogLevel.Information,
+		Message = "tasks vectorization heartbeat: job alive; last pass touched {Projects} project(s), {Boards} board(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass, max cursor lag {Lag}")]
+	static partial void LogHeartbeat(ILogger logger, int projects, int boards, int indexed, int deadLettered, long lag);
 }
