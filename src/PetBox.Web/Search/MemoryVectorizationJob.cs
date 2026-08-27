@@ -41,19 +41,47 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 	// continues on the next tick, and the projects behind it start moving once it is caught up.
 	private const int MaxDocsPerPass = 200;
 
+	// work vectorization-jobs-flood-selflog: a healthy pass on a quiet project has nothing to say
+	// (Indexed=0, DeadLettered=0, Lag=0) — that is not an Information-level fact, it is silence. The
+	// per-project stats line is still emitted every tick (below), just gated to Debug when there is
+	// no signal, so the global self-logging MinimumLevel=Information (SystemLoggerOptions) drops it.
+	// Complete silence would make a dead job indistinguishable from an idle one, so one heartbeat
+	// line per hour survives at Information regardless of signal. The unit of the heartbeat is the
+	// JOB'S PASS, not the project: DrainAllAsync visits every project on every 60s tick, so a
+	// per-project heartbeat would itself be the same N-events-per-tick multiplier this fix removes.
+	// One line per hour, summarizing the most recent pass, is enough to prove liveness.
+	static readonly TimeSpan HeartbeatInterval = TimeSpan.FromHours(1);
+
+	// Process-lifetime state, not per-instance: SearchEnrichmentService.RunOncePassAsync opens a
+	// FRESH DI scope every tick (`using var scope = _services.CreateScope()`), so a new
+	// MemoryVectorizationJob is constructed each pass — an instance field would forget the last
+	// heartbeat before the next tick ever ran. A restart resets this to null, which is the correct
+	// behavior (not a bug to guard against): the first pass after a restart heartbeats immediately
+	// (proving the job came back up), then the hourly cadence resumes — no burst, because
+	// DrainAllAsync (and so this check) still runs at most once per 60s tick.
+	static DateTimeOffset? s_lastHeartbeatUtc;
+	static readonly Lock s_heartbeatLock = new();
+
 	readonly IScopedDbFactory<MemoryDb> _factory;
 	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
 	readonly ILogger<MemoryVectorizationJob>? _logger;
+	readonly TimeProvider _time;
 
 	public MemoryVectorizationJob(IScopedDbFactory<MemoryDb> factory, IProjectCatalog catalog,
-		ILlmClient? llm = null, ILogger<MemoryVectorizationJob>? logger = null)
+		ILlmClient? llm = null, ILogger<MemoryVectorizationJob>? logger = null, TimeProvider? time = null)
 	{
 		_factory = factory;
 		_catalog = catalog;
 		_llm = llm;
 		_logger = logger;
+		_time = time ?? TimeProvider.System;
 	}
+
+	// Test-only: the heartbeat clock is process-lifetime static state (see s_lastHeartbeatUtc above),
+	// so tests that assert its behavior need to isolate themselves from whatever a previous test in
+	// the same process left behind. Internal via PetBox.Web's InternalsVisibleTo(PetBox.Tests).
+	internal static void ResetHeartbeatClockForTests() { lock (s_heartbeatLock) s_lastHeartbeatUtc = null; }
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
@@ -61,6 +89,7 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 
 		var indexed = 0;
 		var budget = MaxDocsPerPass; // per-PASS embed budget, shared by every project/store below
+		var passProjects = 0; var passStores = 0; var passDead = 0; long passMaxLag = 0; // heartbeat rollup
 		foreach (var project in await _catalog.ListMemoryProjectKeysAsync(ct))
 		{
 			if (budget <= 0) break; // out of budget — the rest of the backlog is next tick's
@@ -109,11 +138,22 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 				// vectors this project actually has (0 with entries present ⇒ it NEVER ran), how
 				// many docs were permanently dropped, and how far the cursor trails the data.
 				// Logged (the existing observability pipeline) — no new metric mechanism invented.
+				// work vectorization-jobs-flood-selflog: gated to Information ONLY when there is a
+				// signal (Indexed>0 or DeadLettered>0 or Lag>0) — an empty pass ("nothing happened")
+				// goes to Debug, which the self-log's global MinimumLevel=Information then drops. This
+				// was 93% of this job's self-log volume (576149/617446 events over the 2026-08-27
+				// measurement window — log_query, SourceContext=MemoryVectorizationJob, EventId=410).
 				if (_logger is not null && stores.Count > 0)
 				{
 					using var stats = _factory.NewEnsuredConnection(project);
 					var (vectors, dead) = await SearchIndexStatsReader.ReadAsync(stats, ct);
-					LogProjectStats(_logger, project, stores.Count, projectIndexed, projectDead, vectors, dead, maxLag);
+					var hasSignal = projectIndexed > 0 || projectDead > 0 || maxLag > 0;
+					LogProjectStats(_logger, hasSignal ? LogLevel.Information : LogLevel.Debug,
+						project, stores.Count, projectIndexed, projectDead, vectors, dead, maxLag);
+					passProjects++;
+					passStores += stores.Count;
+					passDead += projectDead;
+					passMaxLag = Math.Max(passMaxLag, maxLag);
 				}
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
@@ -123,15 +163,36 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 				_logger?.LogError(ex, "memory vectorization drain failed for {Project}; skipped", project);
 			}
 		}
+		MaybeLogHeartbeat(passProjects, passStores, indexed, passDead, passMaxLag);
 		return indexed;
+	}
+
+	// One Information line per hour regardless of signal, so a totally silent (gated-to-Debug)
+	// stretch stays distinguishable from a dead job. Summarizes the MOST RECENT pass, not a
+	// rolling hour total — good enough to prove "the job ran and this is what it saw", which is
+	// the only thing a liveness heartbeat needs to say.
+	void MaybeLogHeartbeat(int projects, int stores, int indexed, int deadLettered, long maxLag)
+	{
+		if (_logger is null) return;
+		var now = _time.GetUtcNow();
+		lock (s_heartbeatLock)
+		{
+			if (s_lastHeartbeatUtc is { } last && now - last < HeartbeatInterval) return;
+			s_lastHeartbeatUtc = now;
+		}
+		LogHeartbeat(_logger, projects, stores, indexed, deadLettered, maxLag);
 	}
 
 	[LoggerMessage(EventId = 412, Level = LogLevel.Information,
 		Message = "memory vectorization {Project}: Embed unavailable (no route or circuit open) — skipping this pass, cursor untouched")]
 	static partial void LogEmbedUnavailable(ILogger logger, string project);
 
-	[LoggerMessage(EventId = 410, Level = LogLevel.Information,
+	[LoggerMessage(EventId = 410,
 		Message = "memory vectorization {Project}: {Stores} store(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass; search_vec rows {VectorRows}, dead total {DeadTotal}, max cursor lag {Lag}")]
-	static partial void LogProjectStats(ILogger logger, string project, int stores, int indexed, int deadLettered,
-		long vectorRows, long deadTotal, long lag);
+	static partial void LogProjectStats(ILogger logger, LogLevel level, string project, int stores, int indexed,
+		int deadLettered, long vectorRows, long deadTotal, long lag);
+
+	[LoggerMessage(EventId = 415, Level = LogLevel.Information,
+		Message = "memory vectorization heartbeat: job alive; last pass touched {Projects} project(s), {Stores} store(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass, max cursor lag {Lag}")]
+	static partial void LogHeartbeat(ILogger logger, int projects, int stores, int indexed, int deadLettered, long lag);
 }
