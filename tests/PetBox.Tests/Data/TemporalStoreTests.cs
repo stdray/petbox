@@ -1,6 +1,10 @@
+using System.Data;
+using System.Data.Common;
 using System.Linq.Expressions;
 using LinqToDB;
+using LinqToDB.Common;
 using LinqToDB.Data;
+using LinqToDB.Interceptors;
 using LinqToDB.Mapping;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data.Temporal;
@@ -547,6 +551,65 @@ public sealed class TemporalStoreTests : IDisposable
 		p2after.Removed.Should().BeEmpty("P1's tombstone must not leak into P2's delta");
 	}
 
+	// ── watermark must not outrun its own delta (work changessince-watermark-can-outrun-its-delta) ──
+	// ChangesSinceAsync issues the watermark read (MaxVersionAsync) and the delta read
+	// (DeltaAsync) as two SEPARATE queries with no shared transaction. A write landing between
+	// them is the race under test. Reproduced DETERMINISTICALLY — not by timing — via a
+	// linq2db ICommandInterceptor that commits a competing write from a second connection at
+	// the exact moment between the two reads, identified by SQL shape (the watermark query is
+	// the MAX(...) aggregate; everything else in this call is the delta) rather than by call
+	// order, so the same interceptor catches the race regardless of which read the production
+	// code issues first — that is the one thing this test must not assume.
+	[Fact]
+	public async Task ChangesSince_ConcurrentWriteBetweenWatermarkAndDelta_IsDeliveredAtLeastOnce()
+	{
+		var born = await Upsert(Node("a", PlanStatus.Done, "A")); // v1
+		born.CurrentVersion.Should().Be(1);
+
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		var interceptor = new InterleavedWriteInterceptor(() =>
+		{
+			// The competing writer: a second connection, exactly like a concurrent caller.
+			using var db2 = new DataConnection(new DataOptions().UseSQLite(_cs));
+			TemporalStore.UpsertAsync(db2, [Node("b", PlanStatus.Pending, "B")]).GetAwaiter().GetResult();
+		});
+		db.AddInterceptor(interceptor);
+
+		var result = await TemporalStore.ChangesSinceAsync<PlanRow>(db, born.CurrentVersion);
+
+		// Guard against a silently-broken harness: if the interceptor never fired, the
+		// assertion below would pass for a completely different reason (no race happened at
+		// all), which is exactly the failure mode a red-proof must rule out.
+		interceptor.Injected.Should().BeTrue(
+			"the interceptor must have actually interleaved 'b's write between the watermark and delta reads for this test to prove anything");
+
+		// at-least-once: "b" (born at version 2) must either show up in THIS call's delta, or
+		// the watermark handed back must still be behind it so a future call (cursor advanced
+		// to CurrentVersion) picks it up. Failing both means "b" is gone forever — the bug.
+		var deliveredNow = result.Added.Any(x => x.Key == "b");
+		var watermarkStillBehindIt = result.CurrentVersion < 2;
+		(deliveredNow || watermarkStillBehindIt).Should().BeTrue(
+			"a write landing between the watermark read and the delta read must be delivered this call, " +
+			"or not yet be covered by the watermark — it must never be both missed here AND already covered");
+	}
+
+	// Control: the SAME shape of assertion, with NO interleaving at all — "b" is written and
+	// fully committed before ChangesSinceAsync is even called. This must pass regardless of the
+	// watermark-vs-delta ordering, so a green result here rules out "the harness/helpers are
+	// broken" as the explanation for a green result on the race test above.
+	[Fact]
+	public async Task ChangesSince_Control_NoInterleaving_DeliversNormally()
+	{
+		var born = await Upsert(Node("a", PlanStatus.Done, "A")); // v1
+		var next = await Upsert(Node("b", PlanStatus.Pending, "B")); // v2, fully committed, no race
+		next.CurrentVersion.Should().Be(2);
+
+		var result = await ChangesSince(born.CurrentVersion);
+
+		result.Added.Should().Contain(x => x.Key == "b", "with no interleaving, a normal write after the cursor must be delivered");
+		result.CurrentVersion.Should().Be(2);
+	}
+
 	// ---- helpers ----
 	static PlanRow Node(string key, PlanStatus status, string body,
 		long baseline = 0, string? commit = null, long priority = 0, string? prevKey = null) =>
@@ -727,4 +790,38 @@ public sealed record PartRow : TemporalRow
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
+}
+
+// A linq2db command interceptor that deterministically injects a competing write between
+// ChangesSinceAsync's two reads, regardless of which one the production code issues first.
+//
+// The watermark query (MaxVersionAsync) is identified by SQL shape — it is the only query in
+// this call whose text contains a MAX(...) aggregate — everything else intercepted during the
+// call is a delta query (DeltaAsync's changed/died/still-active selects). `_inject` fires the
+// FIRST time we see the "other side" of the pair after having already seen one side: watermark
+// after delta (the pre-fix order) or delta after watermark (the fixed order). Exactly one
+// injection per call, guarded by `Injected`.
+sealed class InterleavedWriteInterceptor(Action inject) : CommandInterceptor
+{
+	bool _sawWatermark;
+	bool _sawOther;
+
+	public bool Injected { get; private set; }
+
+	public override async Task<Option<DbDataReader>> ExecuteReaderAsync(
+		CommandEventData eventData, DbCommand command, CommandBehavior commandBehavior,
+		Option<DbDataReader> result, CancellationToken cancellationToken)
+	{
+		var isWatermark = command.CommandText.Contains("Max(", StringComparison.OrdinalIgnoreCase);
+
+		if (!Injected)
+		{
+			if (isWatermark && _sawOther) { inject(); Injected = true; }
+			else if (!isWatermark && _sawWatermark) { inject(); Injected = true; }
+		}
+
+		if (isWatermark) _sawWatermark = true; else _sawOther = true;
+
+		return await base.ExecuteReaderAsync(eventData, command, commandBehavior, result, cancellationToken);
+	}
 }
