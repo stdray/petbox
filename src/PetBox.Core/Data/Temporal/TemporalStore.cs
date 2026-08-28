@@ -324,8 +324,18 @@ public static class TemporalStore
 		where TRow : TemporalRow
 	{
 		var table = db.GetTable<TRow>();
-		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
+		// Watermark FIRST, delta SECOND — not just a stylistic pick. The two reads are not
+		// wrapped in one transaction (see the card that added this ordering: a write landing
+		// between them must never be counted in the watermark before it is counted in the
+		// delta, or the caller saves a cursor that already covers a row it was never handed —
+		// gone forever, not merely late). Reading the watermark first means the worst case a
+		// race can produce is a row committed after the watermark snapshot but before the delta
+		// query runs: the delta then still SEES it (delivered this call) and the watermark is
+		// already behind it (delivered again next call too) — at-least-once, never zero times.
+		// All known consumers (MemorySearchSource, TasksSearchSource, CommentService,
+		// AsyncVectorizationWorker.DrainAsync) are idempotent to a repeat delivery.
 		var current = await MaxVersionAsync(table, partition, ct);
+		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
 		return (added, updated, removed, current);
 	}
 
