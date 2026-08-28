@@ -485,3 +485,67 @@ public sealed record FragmentEditDto
 	public static IReadOnlyList<FragmentEdit>? ToCore(IReadOnlyList<FragmentEditDto>? dtos) =>
 		dtos?.Select(d => new FragmentEdit(d.Old, d.New)).ToList();
 }
+
+// One role as submitted to agent_def_upsert (typed array, like TaskNodeInput/CommentItemInput).
+//
+// TWO changes ride on this record, and they are the same change
+// (work/agent-def-upsert-typed-and-merge-by-role):
+//
+//   TYPED — `definition` used to be a bare `JsonElement` with `[McpJsonShape("object")]`, which
+//   stamps `"type":"object"` and nothing else: no `properties`, no `required`, so the document's
+//   real structure existed only in the prose of a description. That violates spec/typed-mcp-inputs
+//   («голый JsonElement запрещён») and, worse, left McpUnknownParameterFilter nothing to compare a
+//   field name against — a typo inside a role was not refused, it was silently DROPPED, and under
+//   the old full-replace semantics dropping a field meant deleting stored data.
+//
+//   MERGE — the roles a call carries are the roles it CHANGES. A role absent from the array is
+//   untouched, so editing one role costs one role (spec/write-cost-follows-change) instead of the
+//   10 520 B the six-role roster measured at.
+//
+// `slug` is the identity: which role this edit addresses. Every other field is nullable and means
+// "leave whatever the stored role has" (omit=keep, the surface-wide convention). An unknown slug
+// APPENDS a role; `deleted:true` removes one.
+//
+// FLAT where the stored document NESTS: the read shape carries `spawn:{allowed, allowedRoles}` and
+// `escalation:{available, targets}`, this write shape carries the four fields directly. That is
+// deliberate and is the whole reason a typo is catchable — McpUnknownParameterFilter walks exactly
+// ONE hop into a batch item, so a field on the item is policed and a field inside a nested object on
+// the item is not. A nested `spawn:{allwed:true}` would bind to Allowed=false and silently clear the
+// flag; flat, `allwed` is refused by name. AgentDefinitionJson.MergeRoles restores the nesting on
+// write, so the STORED document and agent_def_get are unchanged. (RoleFormEdit in
+// PetBox.Core.Contract already flattens the same four fields for the admin form — this is the shape
+// this codebase edits a role in.)
+//
+// There is no `model` member, and there never will be: model binding is LOCAL, not part of a
+// portable definition. `roles[].model` is refused by name by McpUnknownParameterFilter, and even if
+// that lookup ever failed open the field has nowhere to land — it cannot reach the store.
+public sealed record AgentDefRoleInput
+{
+	// Which role this edit addresses. Nullable in C# only so a missing value reaches MergeRoles'
+	// own sentence instead of an SDK bind error; the published schema lists it in `required`
+	// (McpOutputSchema.WithRequiredMembers).
+	[McpRequiredMember]
+	public string? Slug { get; init; }
+
+	public string? Tier { get; init; }
+
+	// null = keep the role's current set; a list (incl. []) REPLACES it.
+	public IReadOnlyList<string>? RequiredCapabilities { get; init; }
+
+	// spawn.allowed / spawn.allowedRoles, flattened. Either half may be sent alone: the other is
+	// read off the stored role, so `spawnAllowedRoles` does not silently reset `spawnAllowed`.
+	public bool? SpawnAllowed { get; init; }
+	public IReadOnlyList<string>? SpawnAllowedRoles { get; init; }
+
+	// escalation.available / escalation.targets, flattened; same either-half rule.
+	public bool? EscalationAvailable { get; init; }
+	public IReadOnlyList<string>? EscalationTargets { get; init; }
+
+	// Free-text role briefing. null = keep, "" = clear (the key is removed, never stored empty).
+	public string? Notes { get; init; }
+
+	// Explicit removal marker: { slug, deleted:true }. Mirrors TaskNodeInput.Deleted /
+	// MemoryEntryInputDto.Deleted. It exists BECAUSE absence no longer deletes — under the old
+	// full-replace, "delete a role" and "forgot to resend a role" were the same wire shape.
+	public bool Deleted { get; init; }
+}

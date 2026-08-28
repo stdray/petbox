@@ -245,13 +245,10 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			projectKey = ProjectKey,
 			key = "default",
 			version = 0,
-			definition = new
+			name = "default",
+			roles = new[]
 			{
-				name = "default",
-				roles = new[]
-				{
-					new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() },
-				},
+				new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() },
 			},
 		});
 		await Ok(failures, "agent_def_list", new { projectKey = ProjectKey });
@@ -379,8 +376,13 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	// agent_def_upsert was uncallable over MCP for exactly this reason (intake
 	// mcp-agent-def-upsert-definition-param-untyped). [McpJsonShape] + the schema transform in
 	// McpOutputSchema stamp the type; this locks it for every raw-payload param on the surface.
+	//
+	// agent_def_upsert is NO LONGER one of them. [McpJsonShape("object")] was only ever half a
+	// contract — it stamps "type":"object" and leaves the document's real structure in prose — so
+	// work/agent-def-upsert-typed-and-merge-by-role replaced its `definition` blob with a typed
+	// `roles` array (spec/typed-mcp-inputs: «голый JsonElement запрещён»). Its schema is now pinned,
+	// per field, in Mcp/AgentDefUpsertMergeTests.
 	[Theory]
-	[InlineData("agent_def_upsert", "definition", "object")]
 	[InlineData("llm_config_upsert", "config", "object")]
 	[InlineData("llm_embed", "inputs", "array")]
 	[InlineData("llm_rerank", "documents", "array")]
@@ -403,50 +405,33 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		actual.Should().Be(expected);
 	}
 
-	// The tolerance belt behind the schema fix: agent_def_upsert takes `definition` as an OBJECT
-	// (the schema-honest form) and, for a client on a stale/ignored schema, as a JSON STRING —
-	// and a string that is not a JSON object fails STRUCTURALLY (an actionable {error} envelope),
-	// never as a raw `JsonException … Path: $`.
+	// The tolerant JSON-STRING form of `definition` is GONE, and could not have stayed: the
+	// implementation note on spec/typed-mcp-inputs says tolerant-parse of a JSON string is MUTUALLY
+	// EXCLUSIVE with a typed schema at the SDK binding layer — the SDK deserializes a typed
+	// parameter before the tool body ever runs, so there is no seam left to be tolerant in. Nor is
+	// it wanted: strict clients sent the document as a string precisely BECAUSE the parameter had no
+	// type, so typing removes the cause the tolerance was compensating for. This test pins that the
+	// double-encoded form now fails LOUDLY (an {error} a caller can act on), never silently.
 	[Fact]
-	public async Task AgentDefUpsert_Takes_Definition_As_Object_Or_JsonString_And_Rejects_Garbage()
+	public async Task AgentDefUpsert_DoubleEncodedRoles_FailsLoudly_NotSilently()
 	{
-		static object Doc(string name) => new
-		{
-			name,
-			roles = new[] { new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() } },
-		};
-
-		// object — the shape the (now honest) schema asks for.
-		var asObject = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-obj", version = 0, definition = Doc("tolerant-obj") });
-		asObject.IsError.Should().NotBe(true, "an object definition must be accepted: " + Text(asObject));
-
-		// JSON string — the double-encoded form a strict client sent when the schema was typeless.
 		var asString = await Call("agent_def_upsert", new
 		{
 			projectKey = ProjectKey,
-			key = "tolerant-str",
+			key = "stale-client",
 			version = 0,
-			definition = JsonSerializer.Serialize(Doc("tolerant-str")),
+			roles = JsonSerializer.Serialize(new[]
+			{
+				new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() },
+			}),
 		});
-		asString.IsError.Should().NotBe(true, "a double-encoded (JSON-string) definition must be parsed, not rejected: " + Text(asString));
 
-		// Both landed: read them back through the surface.
-		var readBack = await Call("agent_def_get", new { projectKey = ProjectKey, key = "tolerant-str" });
-		readBack.StructuredContent?.GetProperty("name").GetString().Should().Be("tolerant-str");
+		asString.IsError.Should().BeTrue(
+			"a stale-schema client double-encoding the array must be TOLD, not silently ignored: " + Text(asString));
 
-		// Garbage string → a STRUCTURAL error (ArgumentException + an actionable message), not a
-		// raw JsonException about "Path: $".
-		var garbage = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-bad", version = 0, definition = "{not json at all" });
-		garbage.IsError.Should().BeTrue();
-		var err = JsonDocument.Parse(Text(garbage)).RootElement.GetProperty("error");
-		err.GetProperty("type").GetString().Should().Be(nameof(ArgumentException));
-		err.GetProperty("message").GetString().Should().Contain("definition must be a JSON object");
-
-		// A well-formed JSON string that is not an object → the same structural error.
-		var notAnObject = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-bad", version = 0, definition = "[1,2,3]" });
-		notAnObject.IsError.Should().BeTrue();
-		JsonDocument.Parse(Text(notAnObject)).RootElement.GetProperty("error").GetProperty("message").GetString()
-			.Should().Contain("definition must be a JSON object");
+		// And the write did not half-land: the key stores nothing.
+		var miss = await Call("agent_def_get", new { projectKey = ProjectKey, key = "stale-client" });
+		miss.IsError.Should().BeTrue();
 	}
 
 	// mcp-surface-naming-cleanup wave 5, task 2 — ONE contract for a missed addressed read.

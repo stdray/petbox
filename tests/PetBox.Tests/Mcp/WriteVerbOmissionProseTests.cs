@@ -46,8 +46,16 @@ public sealed class WriteVerbOmissionProseTests
 		// ── fixed by this card (work/patch-vs-put-class-needs-a-mechanical-gate) ──────────────
 		// comments_upsert: named the "Умолчания" gap — tags:[] now has an explicit sentinel sentence.
 		{ "comments_upsert", ["`tags:[]`", "CLEARS it, omit `tags` to leave it as-is"] },
-		// agent_def_upsert: named the "says nothing at all" gap — now states full-replace plainly.
-		{ "agent_def_upsert", ["Full-document REPLACE, not a per-field patch", "is GONE, not kept"] },
+		// agent_def_upsert: named the "says nothing at all" gap, answered first with an honest
+		// full-replace sentence and now — work/agent-def-upsert-typed-and-merge-by-role — with the
+		// merge contract that replaced it. Both halves are pinned: the role you omit AND the field
+		// you omit on a role you send, plus the on-create answer memory_upsert set the bar for.
+		{ "agent_def_upsert", [
+			"MERGE BY ROLE, not a document replace",
+			"A role you do NOT send is left exactly as it is",
+			"stays UNCHANGED; on a NEW role (a slug the document does not have yet) an omitted field",
+			"Deleting a role is EXPLICIT",
+		] },
 		// tasks_upsert: named the "silent on create" gap — now answers the on-create question too.
 		{ "tasks_upsert", ["on a NEW node (version 0) an omitted field starts empty"] },
 		// tasks_methodology_rules_upsert / template_upsert: named the "Replace" language contradicting

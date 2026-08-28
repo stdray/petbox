@@ -19,8 +19,10 @@ namespace PetBox.Tests.Mcp;
 // silently reported as applied:true (config_binding_upsert's old bug) or applied:false with no
 // conflict to explain why (relations_create's old bug on items:[]).
 //
-// Covers the five guarded verbs (tasks_upsert/nodes, memory_upsert/entries, comments_upsert/items,
-// config_binding_upsert/items, relations_create/items), the ONE documented exception
+// Covers the guarded verbs (tasks_upsert/nodes, memory_upsert/entries, comments_upsert/items,
+// config_binding_upsert/items, relations_create/items, and — since
+// work/agent-def-upsert-typed-and-merge-by-role turned it into a batch verb — agent_def_upsert/roles),
+// the ONE documented exception
 // (session_append: a batch filtered down to zero content is an idempotent cursor no-op, not an
 // error), and the honest partial-refusal case that must NOT be swept into this rule
 // (relations_create atomic:false with every item invalid — a real conflicts[] answer, not an
@@ -30,7 +32,7 @@ public sealed class EmptyBatchRejectionFixture : IAsyncLifetime
 	public const string ProjectKey = "ebatch";
 	public const string WorkspaceKey = "ebatch-ws";
 	const string ApiKey = "yb_key_ebatch_agent";
-	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write,config:read,config:write,admin:provision";
+	const string Scopes = "tasks:read,tasks:write,memory:read,memory:write,config:read,config:write,agents:read,agents:write,admin:provision";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;
@@ -181,6 +183,18 @@ public sealed class EmptyBatchRejectionTests : IClassFixture<EmptyBatchRejection
 		ErrorText(r).Should().Contain("'items': empty batch — nothing to write");
 	}
 
+	// agent_def_upsert became a batch verb when `definition` (an untyped whole-document replace)
+	// became `roles[]`. Under MERGE semantics an empty batch is exactly the client bug this rule
+	// exists for: "change nothing" and "my payload lost its items" are the same wire shape, and the
+	// old full-replace reading of the same call ("keep no roles") was worse still.
+	[Fact]
+	public async Task AgentDefUpsert_EmptyRoles_IsRejected_NamingRoles()
+	{
+		var r = await Call("agent_def_upsert", new { projectKey = Proj, key = "ebatch-def", version = 0, roles = Array.Empty<object>() });
+		r.IsError.Should().BeTrue();
+		ErrorText(r).Should().Contain("'roles': empty batch — nothing to write");
+	}
+
 	// ── the one documented exception: session_append ────────────────────────────────────────────
 
 	[Fact]
@@ -243,6 +257,7 @@ public sealed class EmptyBatchRejectionTests : IClassFixture<EmptyBatchRejection
 		["comments_upsert"] = "items",
 		["config_binding_upsert"] = "items",
 		["relations_create"] = "items",
+		["agent_def_upsert"] = "roles",
 	};
 
 	static readonly IReadOnlyDictionary<string, string> ExemptedVerbs = new Dictionary<string, string>

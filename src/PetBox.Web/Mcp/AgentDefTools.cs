@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
@@ -66,76 +65,57 @@ public static class AgentDefTools
 
 	[McpServerTool(Name = "agent_def_upsert", Title = "Upsert an agent definition", UseStructuredContent = true, OutputSchemaType = typeof(AgentDefUpsertResult))]
 	[Description("""
-		Store a portable agent-definition document (roles/tier/requiredCapabilities/spawn/
-		escalation/notes). Does NOT carry model binding — role.model is rejected. `key` is the
-		definition slug; `version` is the watermark baseline from agent_def_get (0 = create).
-		Full-document REPLACE, not a per-field patch: `definition` OVERWRITES the whole stored
-		document — a role or field present in the OLD document but ABSENT from THIS call's
-		`definition` is GONE, not kept (there is no merge, unlike memory_upsert/tasks_upsert).
-		Read via agent_def_get, edit, then resubmit the COMPLETE document.
+		Write roles into a portable agent-definition document (tier/requiredCapabilities/spawn/
+		escalation/notes). Does NOT carry model binding — role.model is rejected.
+		MERGE BY ROLE, not a document replace: `roles` carries only the roles you are CHANGING.
+		A role you do NOT send is left exactly as it is, and on a role you DO send an omitted field
+		stays UNCHANGED; on a NEW role (a slug the document does not have yet) an omitted field
+		starts empty, and tier/requiredCapabilities are required so a half-specified new role is
+		refused rather than stored. Deleting a role is EXPLICIT: `{ slug, deleted:true }` — absence
+		never deletes.
+		`requiredCapabilities`/`spawnAllowedRoles`/`escalationTargets`: omit to keep the current set,
+		`[]` CLEARS it, a non-empty list REPLACES it. `notes`: omit to keep, "" to clear.
+		spawn/escalation are FLAT here (`spawnAllowed`/`spawnAllowedRoles`/`escalationAvailable`/
+		`escalationTargets`) though agent_def_get returns them NESTED — send either half alone and
+		the other is kept.
+		`key` is the definition slug; `name` sets the document name (omit to keep it); `version` is
+		the watermark baseline from agent_def_get (0 = create) and covers the WHOLE document, so a
+		stale baseline is refused — re-read and resend only your roles.
 		Identical resubmit → changed:false. Returns { key, version, changed }. Requires agents:write.
 		""")]
 	public static async Task<AgentDefUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey,
 		[Description("Definition slug key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
-		[McpJsonShape("object")]
-		[Description("The portable definition document: { name, roles:[{ slug, tier, requiredCapabilities, spawn?, escalation?, notes? }] }.")] JsonElement definition,
+		[Description("The roles to write — ONLY the ones you are changing. Each: { slug, tier?, requiredCapabilities?, spawnAllowed?, spawnAllowedRoles?, escalationAvailable?, escalationTargets?, notes?, deleted? }. A role not listed is untouched.")]
+		AgentDefRoleInput[] roles,
+		[Description("Document name. Omit to keep the stored one (the key slug is used when a new document has none).")] string? name = null,
 		[Description("Watermark baseline: version from last agent_def_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
-		// Parse from JsonElement so role.model is rejected on the wire shape.
-		var def = ParseDefinition(definition);
-		var ack = await svc.UpsertAsync(projectKey, key, def, version, ct);
+		// No hand parser any more. The SDK binds `roles` against the PUBLISHED per-field schema, and
+		// McpUnknownParameterFilter refuses a field name that schema does not carry — including
+		// `model`, whose rejection was the sole stated reason the old JsonElement parse existed. That
+		// reason now has a mechanism instead of a bespoke parser, and it names the offending field
+		// rather than dropping it.
+		var edits = roles is null or { Length: 0 }
+			? throw new ArgumentException("'roles': empty batch — nothing to write. Send the role(s) you are changing; a role you omit is left untouched, and deleting one is explicit ({ slug, deleted:true }).")
+			: roles.Select(ToEdit).ToList();
+		var ack = await svc.MergeRolesAsync(projectKey, key, name, edits, version, ct);
 		return new AgentDefUpsertResult(ack.Key, ack.Version, ack.Changed);
 	}
 
-	// Parse the `definition` argument, tolerating the double-encoded form.
-	//
-	// The schema now declares `definition` as an object ([McpJsonShape]) — before that it was a
-	// typeless node and strict clients sent the document as a JSON *string*, which blew up as a raw
-	// `JsonException: The JSON value could not be converted to AgentDefinitionDoc. Path: $` (intake
-	// mcp-agent-def-upsert-definition-param-untyped). Clients that still double-encode (a stale
-	// cached schema, a hand-rolled caller) are accepted: a string is parsed first. Everything that
-	// is still not an object fails as a STRUCTURAL ArgumentException — the {error} envelope then
-	// carries a message a caller can act on, not a .NET stack trace about `Path: $`.
-	static AgentDefinitionDoc ParseDefinition(JsonElement definition)
-	{
-		switch (definition.ValueKind)
-		{
-			case JsonValueKind.Object:
-				return AgentDefinitionJson.Parse(definition);
-
-			case JsonValueKind.String:
-				var raw = definition.GetString() ?? "";
-				JsonDocument doc;
-				try
-				{
-					doc = JsonDocument.Parse(raw);
-				}
-				catch (JsonException ex)
-				{
-					throw new ArgumentException(
-						$"definition must be a JSON object {{ name, roles:[…] }} — got a string that is not valid JSON: {ex.Message}");
-				}
-				using (doc)
-				{
-					if (doc.RootElement.ValueKind != JsonValueKind.Object)
-						throw new ArgumentException(
-							$"definition must be a JSON object {{ name, roles:[…] }} — the string decoded to a JSON {doc.RootElement.ValueKind.ToString().ToLowerInvariant()}");
-					return AgentDefinitionJson.Parse(doc.RootElement);
-				}
-
-			case JsonValueKind.Undefined:
-			case JsonValueKind.Null:
-				throw new ArgumentException("definition is required: a JSON object { name, roles:[…] }");
-
-			default:
-				throw new ArgumentException(
-					$"definition must be a JSON object {{ name, roles:[…] }} — got a JSON {definition.ValueKind.ToString().ToLowerInvariant()}");
-		}
-	}
+	static RoleMergeEdit ToEdit(AgentDefRoleInput r) => new(
+		Slug: r.Slug ?? "",
+		Tier: r.Tier,
+		RequiredCapabilities: r.RequiredCapabilities,
+		SpawnAllowed: r.SpawnAllowed,
+		SpawnAllowedRoles: r.SpawnAllowedRoles,
+		EscalationAvailable: r.EscalationAvailable,
+		EscalationTargets: r.EscalationTargets,
+		Notes: r.Notes,
+		Deleted: r.Deleted);
 
 	[McpServerTool(Name = "agent_def_delete", Title = "Delete an agent definition", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(AgentDefDeleteResult))]
 	[Description("Delete a portable agent-definition document (temporal soft-close). Missing key is an idempotent no-op (deleted:false). `version` is the watermark baseline from agent_def_get. Requires agents:write.")]

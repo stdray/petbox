@@ -68,6 +68,36 @@ public sealed record RoleFormEdit(
 	IReadOnlyList<string> EscalationTargets,
 	string? Notes);
 
+// One role's PARTIAL edit, as submitted to the MERGE path (MCP agent_def_upsert). `Slug` is the
+// IDENTITY — which role this edit addresses, matched against the stored document's roles by slug.
+// Every other field is NULLABLE and means "leave whatever the stored role already has": the same
+// omit=keep convention TaskNodeInput/MemoryEntryInputDto carry, and the reason the whole document
+// no longer has to travel to change one field.
+//
+// Deliberately FLAT where the stored document nests (spawn/escalation are `{allowed, allowedRoles}`
+// / `{available, targets}` objects on the wire the document is READ in). Two reasons, in order of
+// weight:
+//   1. McpUnknownParameterFilter walks a batch parameter exactly ONE hop — top-level key, then the
+//      item object's own fields. A flat role therefore has EVERY field policed: a typo is refused
+//      naming the field. A nested `spawn:{allwed:true}` would sit two hops down, unpoliced, and
+//      would bind to Allowed=false — i.e. silently clear the flag. That is the exact silent-loss
+//      class this card exists to end, so the shape is chosen to stay inside the filter's reach
+//      rather than to mirror the read shape.
+//   2. RoleFormEdit above already flattens the same four fields for the admin form, so this is the
+//      shape this codebase edits a role in, not a new invention.
+// The nesting is restored on write (MergeRoles), so the STORED document keeps its shape and
+// agent_def_get is unchanged.
+public sealed record RoleMergeEdit(
+	string Slug,
+	string? Tier = null,
+	IReadOnlyList<string>? RequiredCapabilities = null,
+	bool? SpawnAllowed = null,
+	IReadOnlyList<string>? SpawnAllowedRoles = null,
+	bool? EscalationAvailable = null,
+	IReadOnlyList<string>? EscalationTargets = null,
+	string? Notes = null,
+	bool Deleted = false);
+
 // Shared JSON options + parse helpers for the agent-definition document wire shape.
 public static class AgentDefinitionJson
 {
@@ -170,6 +200,132 @@ public static class AgentDefinitionJson
 			throw new ArgumentException("a definition must keep at least one role — add a replacement before deleting the last one");
 		roles.RemoveAt(roleIndex);
 		return root.ToJsonString(Options);
+	}
+
+	// MERGE-BY-ROLE (work/agent-def-upsert-typed-and-merge-by-role). Apply a set of PARTIAL role
+	// edits to the document AS STORED and return the new raw JSON.
+	//
+	// The contract, in one line: a role you do not send is LEFT ALONE, and a field you do not set on
+	// a role you DO send is left alone too. Absence stopped meaning "delete" — deletion is now the
+	// explicit `deleted:true` marker, mirroring tasks_upsert/memory_upsert, so a payload that lost a
+	// role in transit (or a caller that only knew about three of six roles) can no longer erase the
+	// rest. Under the old full-replace that same call silently dropped every role it omitted.
+	//
+	// Operates on the JsonNode tree of the STORED document rather than on the typed record, for the
+	// same reason UpsertJsonAsync does: properties outside the typed schema — on the root, on ANOTHER
+	// role, or on the edited role itself — survive a merge instead of being erased by a round trip
+	// through AgentDefinitionDoc. A caller editing `worker` cannot damage `orchestrator` at all.
+	//
+	// An unknown slug APPENDS a new role. It is not an error: create-a-role and edit-a-role are the
+	// same call, exactly as tasks_upsert makes create and patch one verb, and the required-field
+	// check (Validate, at the service) is what catches a new role that arrives half-specified.
+	public static string MergeRoles(string rawJson, string? name, IReadOnlyList<RoleMergeEdit> edits)
+	{
+		if (edits is null || edits.Count == 0)
+			throw new ArgumentException("'roles': empty batch — nothing to write");
+
+		var root = ParseRoot(rawJson);
+		// A null/blank name means "keep the stored one" — the same omit=keep rule the role fields
+		// follow. CanonicalizeRaw fills the key slug in when the document has no name at all.
+		if (!string.IsNullOrWhiteSpace(name)) SetStringIfChanged(root, "name", name);
+
+		var roles = root["roles"] as JsonArray;
+		if (roles is null) root["roles"] = roles = [];
+
+		// Two edits for one slug in ONE call would apply in array order and leave the caller unable to
+		// tell which one won — refuse instead of silently picking the last, the same stance
+		// tasks_upsert takes on a duplicated key.
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+
+		foreach (var edit in edits)
+		{
+			var slug = edit.Slug?.Trim() ?? "";
+			if (slug.Length == 0)
+				throw new ArgumentException("each role needs a 'slug' (it identifies which role this edit applies to)");
+			if (!seen.Add(slug))
+				throw new ArgumentException($"role '{slug}' appears twice in one call — send one edit per role");
+
+			var index = IndexOfRole(roles, slug);
+
+			if (edit.Deleted)
+			{
+				// Deleting a role that is not there is a NO-OP, not an error: the same idempotent
+				// stance agent_def_delete takes on a missing key.
+				if (index >= 0) roles.RemoveAt(index);
+				continue;
+			}
+
+			JsonObject role;
+			if (index >= 0)
+			{
+				role = (JsonObject)roles[index]!;
+			}
+			else
+			{
+				role = new JsonObject { ["slug"] = slug };
+				roles.Add(role);
+			}
+
+			if (edit.Tier is not null) SetStringIfChanged(role, "tier", edit.Tier);
+			if (edit.RequiredCapabilities is not null)
+				SetCapabilities(role, edit.RequiredCapabilities);
+			MergeFlagBlock(role, "spawn", "allowed", "allowedRoles", edit.SpawnAllowed, edit.SpawnAllowedRoles);
+			MergeFlagBlock(role, "escalation", "available", "targets", edit.EscalationAvailable, edit.EscalationTargets);
+			if (edit.Notes is not null) SetOptionalStringIfChanged(role, "notes", edit.Notes);
+		}
+
+		return root.ToJsonString(Options);
+	}
+
+	// The stored role carrying this slug, or -1. Slug comparison is ORDINAL — the document's own
+	// slugs are already lowercase by convention and a case-folding match here would let `Worker` and
+	// `worker` address the same role in one call while Validate still sees two.
+	static int IndexOfRole(JsonArray roles, string slug)
+	{
+		for (var i = 0; i < roles.Count; i++)
+		{
+			if (roles[i] is JsonObject o
+				&& o["slug"] is JsonValue v
+				&& v.TryGetValue<string>(out var s)
+				&& s == slug)
+				return i;
+		}
+		return -1;
+	}
+
+	// PARTIAL form of PatchFlagBlock: either half of a spawn/escalation block may be null = keep. The
+	// half that is not sent is read back off the STORED block, so PatchFlagBlock still sees a
+	// complete state and its absent-block/husk rules stay in ONE place.
+	static void MergeFlagBlock(
+		JsonObject role, string blockName, string flagName, string listName,
+		bool? flag, IReadOnlyList<string>? list)
+	{
+		if (flag is null && list is null) return; // neither half sent — the block is not this call's business
+		var block = role[blockName] as JsonObject;
+		var flagCurrent = block?[flagName] is JsonValue fv && fv.TryGetValue<bool>(out var b) && b;
+		var listCurrent = ReadStringArray(block?[listName] as JsonArray);
+		PatchFlagBlock(role, blockName, flagName, listName, flag ?? flagCurrent, list ?? listCurrent);
+	}
+
+	// requiredCapabilities on the MERGE path. Not SetRequiredArrayIfChanged: that one treats an
+	// ABSENT key and an empty list as equal, which is right for the form (the key is always there —
+	// Validate requires it) and wrong here, where a brand-new role starts as `{ "slug": … }` alone.
+	// An explicit `requiredCapabilities: []` on a new role must WRITE `[]`, otherwise the role is
+	// stored without the field and Validate rejects the caller's own well-formed payload.
+	static void SetCapabilities(JsonObject role, IReadOnlyList<string> value)
+	{
+		if (role["requiredCapabilities"] is JsonArray existing && StringArrayEquals(existing, value)) return;
+		role["requiredCapabilities"] = ToJsonArray(value);
+	}
+
+	static List<string> ReadStringArray(JsonArray? arr)
+	{
+		if (arr is null) return [];
+		var list = new List<string>(arr.Count);
+		foreach (var item in arr)
+			if (item is JsonValue v && v.TryGetValue<string>(out var s))
+				list.Add(s);
+		return list;
 	}
 
 	static JsonObject ParseRoot(string rawJson)
