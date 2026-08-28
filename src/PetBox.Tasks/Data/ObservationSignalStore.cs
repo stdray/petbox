@@ -23,6 +23,13 @@ public interface IObservationSignalStore
 	// unhandled miss.
 	Task<long> RecordRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default);
 
+	// Stamp FixedByNodeId/FixedAt (work observation-edges-promote-and-nail, M024): the
+	// automatic effect when a linked obligation reaches a terminal-OK status. Upserts
+	// defensively (INSERT OR REPLACE) like RecordRecurrenceAsync — a pre-existing observation
+	// node still gets a sane row instead of an unhandled miss. RecurrenceCount/LastSeenAt are
+	// preserved when a row already exists (this call never resets the sighting counter).
+	Task MarkFixedAsync(string projectKey, string nodeId, string fixedByNodeId, CancellationToken ct = default);
+
 	Task<ObservationSignal?> GetAsync(string projectKey, string nodeId, CancellationToken ct = default);
 }
 
@@ -54,6 +61,17 @@ public sealed class ObservationSignalStore(IScopedDbFactory<TasksDb> factory) : 
 			};
 		await ctx.InsertOrReplaceAsync(updated, token: ct);
 		return updated.RecurrenceCount;
+	}
+
+	public async Task MarkFixedAsync(string projectKey, string nodeId, string fixedByNodeId, CancellationToken ct = default)
+	{
+		using var ctx = factory.NewEnsuredConnection(projectKey);
+		var now = DateTime.UtcNow;
+		var existing = await ctx.GetTable<ObservationSignal>().FirstOrDefaultAsync(s => s.NodeId == nodeId, ct);
+		var updated = existing is null
+			? new ObservationSignal { NodeId = nodeId, RecurrenceCount = 1, LastSeenAt = now, FixedByNodeId = fixedByNodeId, FixedAt = now }
+			: existing with { FixedByNodeId = fixedByNodeId, FixedAt = now };
+		await ctx.InsertOrReplaceAsync(updated, token: ct);
 	}
 
 	public async Task<ObservationSignal?> GetAsync(string projectKey, string nodeId, CancellationToken ct = default)

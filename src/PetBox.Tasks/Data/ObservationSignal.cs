@@ -12,4 +12,7 @@ public sealed record ObservationSignal
 	[Column, NotNull] public DateTime LastSeenAt { get; init; }
 	[Column, Nullable] public DateTime? RecurredAfterFixAt { get; init; }
 	[Column, Nullable] public string? FixedByNodeId { get; init; }
+	// The moment FixedByNodeId was stamped (work observation-edges-promote-and-nail, M024) —
+	// FixedByNodeId alone names WHO fixed it, this names WHEN. Set together, always.
+	[Column, Nullable] public DateTime? FixedAt { get; init; }
 }

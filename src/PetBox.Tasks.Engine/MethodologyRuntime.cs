@@ -208,17 +208,21 @@ public sealed class MethodologyRuntime
 		ProcessRelationKinds
 			.Concat(NeutralRelationKinds)
 			.Concat(MethodologyPresets.QuartetLinkKinds.Select(k => k.Slug))
+			.Concat(MethodologyPresets.ObservationLinkKinds.Select(k => k.Slug))
 			.Concat(_linkKinds.Select(k => k.Slug))
 			.Distinct(StringComparer.OrdinalIgnoreCase);
 
 	// The declared relation kind for a slug, direction and all: the definition's when it declares
 	// one (declared wins), else the quartet's builtin process trio (MethodologyPresets.QuartetLinkKinds),
-	// else null (a direction-less builtin process/neutral kind, or an unknown slug). The one place
-	// the generic link resolver and relations_create direction-enforcement read a link's orientation.
+	// else the builtin observation-promotion kind (MethodologyPresets.ObservationLinkKinds — SAME
+	// project-independent-fallback posture as the trio, see its own doc comment), else null (a
+	// direction-less builtin process/neutral kind, or an unknown slug). The one place the generic
+	// link resolver and relations_create direction-enforcement read a link's orientation.
 	public MethodologyLinkKindDef? LinkKind(string? slug) =>
 		slug is null ? null
 			: _linkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase))
-				?? MethodologyPresets.QuartetLinkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase));
+				?? MethodologyPresets.QuartetLinkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase))
+				?? MethodologyPresets.ObservationLinkKinds.FirstOrDefault(k => string.Equals(k.Slug, slug, StringComparison.OrdinalIgnoreCase));
 
 	public bool IsValidRelationKind(string kind) =>
 		KnownRelationKinds().Contains(kind, StringComparer.OrdinalIgnoreCase);
@@ -278,6 +282,7 @@ public sealed class MethodologyRuntime
 	{
 		var declaredSlugs = _linkKinds.Select(k => k.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		return MethodologyPresets.QuartetLinkKinds
+			.Concat(MethodologyPresets.ObservationLinkKinds)
 			.Where(q => !declaredSlugs.Contains(q.Slug))
 			.Concat(_linkKinds)
 			.ToList();
