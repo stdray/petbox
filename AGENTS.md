@@ -200,9 +200,16 @@ history now, while the current plan and status are the boards above.
    `yobapub`, where `SessionDigestJob` tried to digest them and burned ~1462 LLM calls.
    Background jobs run in `smoke` exactly as in production — that is the point, a smoke
    must be able to prove them — so it is a real target, not a null sink: clean up after
-   yourself there. There is currently **no `project_delete` MCP tool** (`tool_describe`
-   on it returns `unknown tool`) — a project created during a smoke can only be removed
-   through the admin UI's Danger zone.
+   yourself there. `tasks_board_delete`/`close`/`reopen`/`adopt`/`set_wire` require
+   `methodology:write` on top of `tasks:write` — the smoke key carries it (work
+   `smoke-key-cannot-clean-up-after-itself`, fixed 2026-08-28: without it, the rule above
+   was technically unsatisfiable — the smoke key had the project but not the scope, and
+   the session's own `$system` key has the scope but not the project). Sandbox containment
+   still applies on top: the extra scope changes which VERBS the key may call, never WHICH
+   PROJECT — a sandboxOnly key with `methodology:write` still cannot delete/close a board
+   outside `sandbox=true` territory. There is currently **no `project_delete` MCP tool**
+   (`tool_describe` on it returns `unknown tool`) — a project created during a smoke can
+   only be removed through the admin UI's Danger zone.
 8. **Clean up when the card closes — the worktree's life ends with the card, not with
    the push:** once a card reaches a terminal status (`Done`/`Cancelled`) and its branch
    is merged, remove the worktree (`git worktree remove <dir>`) and delete the branch

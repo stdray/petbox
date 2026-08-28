@@ -31,11 +31,26 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 	public const string RealProject = "sandboxgatereal";       // Sandbox = false (a normal project)
 	public const string SandboxProject = "sandboxgatesandbox"; // Sandbox = true
 
+	// A SEPARATE real project for the board-delete rejection test below: that test's rejected
+	// delete deliberately leaves its seeded board behind (the whole point is that it must NOT be
+	// removed), and the fixture is shared across every [Fact] in this class (IClassFixture, one
+	// DB for the whole class) — reusing RealProject there would leak a board into it and break
+	// WildcardSandboxKey_BoardCreate_OnARealProject_IsRejected's "no board exists" assertion.
+	public const string RealProjectForDelete = "sandboxgaterealdel"; // Sandbox = false
+
 	const string ScopedSandboxKey = "yb_key_sbx_scoped";     // sandboxOnly=true, claim = SandboxProject
 	const string WildcardSandboxKey = "yb_key_sbx_wild";     // sandboxOnly=true, claim = "*"
 	const string WildcardPlainKey = "yb_key_sbx_wild_plain"; // sandboxOnly=false, claim = "*" (control)
 
+	// The smoke-key shape after `smoke-key-cannot-clean-up-after-itself`: a sandboxOnly wildcard key
+	// that ALSO carries methodology:write, the scope tasks_board_delete/close/reopen/adopt/set_wire
+	// require on top of tasks:write. The invariant under test is that this extra scope changes nothing
+	// about WHERE the key may write — containment (ProjectScope.AuthorizesAsync) still gates on the
+	// TARGET project's Sandbox flag, not on which scopes the key holds.
+	const string WildcardSandboxDeleterKey = "yb_key_sbx_wild_deleter"; // sandboxOnly=true, claim = "*"
+
 	const string Scopes = "tasks:read,tasks:write";
+	const string DeleterScopes = "tasks:read,tasks:write,methodology:write";
 
 	readonly WebApplicationFactory<Program> _factory;
 	readonly List<HttpClient> _clients = [];
@@ -44,6 +59,7 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 	public McpClient ScopedSandbox { get; private set; } = null!;
 	public McpClient WildcardSandbox { get; private set; } = null!;
 	public McpClient WildcardPlain { get; private set; } = null!;
+	public McpClient WildcardSandboxDeleter { get; private set; } = null!;
 
 	public SandboxWriteGateFixture()
 	{
@@ -72,6 +88,7 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 			await db.InsertAsync(new Workspace { Key = Workspace, Name = "SBX", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = RealProject, WorkspaceKey = Workspace, Name = "Real", Sandbox = false });
 			await db.InsertAsync(new Project { Key = SandboxProject, WorkspaceKey = Workspace, Name = "Sandbox", Sandbox = true });
+			await db.InsertAsync(new Project { Key = RealProjectForDelete, WorkspaceKey = Workspace, Name = "RealDel", Sandbox = false });
 
 			await db.InsertAsync(new ApiKey
 			{
@@ -97,11 +114,20 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 				SandboxOnly = false,
 				CreatedAt = DateTime.UtcNow,
 			});
+			await db.InsertAsync(new ApiKey
+			{
+				Key = WildcardSandboxDeleterKey,
+				ProjectKey = ProjectScope.AllProjects,
+				Scopes = DeleterScopes,
+				SandboxOnly = true,
+				CreatedAt = DateTime.UtcNow,
+			});
 		}
 
 		ScopedSandbox = await ConnectAsync(ScopedSandboxKey);
 		WildcardSandbox = await ConnectAsync(WildcardSandboxKey);
 		WildcardPlain = await ConnectAsync(WildcardPlainKey);
+		WildcardSandboxDeleter = await ConnectAsync(WildcardSandboxDeleterKey);
 	}
 
 	public IServiceScope Scope() => _factory.Services.CreateScope();
@@ -154,6 +180,12 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 	static async Task<CallToolResult> BoardCreateAsync(McpClient mcp, string projectKey, string board)
 	{
 		var tool = await Tool(mcp, "tasks_board_create");
+		return await tool.CallAsync(new Dictionary<string, object?> { ["projectKey"] = projectKey, ["board"] = board });
+	}
+
+	static async Task<CallToolResult> BoardDeleteAsync(McpClient mcp, string projectKey, string board)
+	{
+		var tool = await Tool(mcp, "tasks_board_delete");
 		return await tool.CallAsync(new Dictionary<string, object?> { ["projectKey"] = projectKey, ["board"] = board });
 	}
 
@@ -250,5 +282,52 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 	{
 		var result = await BoardCreateAsync(_fx.WildcardSandbox, SandboxWriteGateFixture.SandboxProject, "sbx-board-ok");
 		result.IsError.Should().NotBe(true, Text(result));
+	}
+
+	// ── tasks_board_delete (work `smoke-key-cannot-clean-up-after-itself`) ─────────────────────────
+	//
+	// tasks_board_delete/close/reopen/adopt/set_wire require tasks:write AND methodology:write. The
+	// invariant this pins: granting methodology:write to a sandboxOnly key does NOT change WHERE it
+	// may delete boards — containment still gates on the TARGET project's Sandbox flag, exactly as it
+	// does for every other verb. A key with the extra scope must still be refused on a real project and
+	// must still succeed on a sandbox one — the scope only lifts the "which verb", never the "which
+	// project".
+
+	[Fact]
+	public async Task WildcardSandboxKeyWithMethodologyWrite_BoardDelete_OnARealProject_IsRejected()
+	{
+		// A plain (non-sandboxOnly) key seeds the board — this test is about the DELETE call, not
+		// about who may create boards in a real project. Uses its OWN project (RealProjectForDelete,
+		// not the shared RealProject) because the rejected delete below deliberately leaves the board
+		// behind — reusing the project every other [Fact] shares would leak a board into it and break
+		// WildcardSandboxKey_BoardCreate_OnARealProject_IsRejected's "no board exists" assertion.
+		var create = await BoardCreateAsync(_fx.WildcardPlain, SandboxWriteGateFixture.RealProjectForDelete, "sbx-board-del-real");
+		create.IsError.Should().NotBe(true, Text(create));
+
+		var result = await BoardDeleteAsync(_fx.WildcardSandboxDeleter, SandboxWriteGateFixture.RealProjectForDelete, "sbx-board-del-real");
+		result.IsError.Should().Be(true,
+			"methodology:write grants the VERB, not a pass through sandbox containment — a sandboxOnly "
+			+ "key must still be refused on a non-sandbox project even once it can delete boards at all");
+		Text(result).Should().Contain("sandboxOnly", Text(result));
+
+		using var scope = _fx.Scope();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+		(await db.TaskBoards.AnyAsync(b => b.ProjectKey == SandboxWriteGateFixture.RealProjectForDelete && b.Name == "sbx-board-del-real"))
+			.Should().BeTrue("a rejected delete must not remove the board from the real project");
+	}
+
+	[Fact]
+	public async Task WildcardSandboxKeyWithMethodologyWrite_BoardDelete_OnASandboxProject_Succeeds()
+	{
+		var create = await BoardCreateAsync(_fx.WildcardSandboxDeleter, SandboxWriteGateFixture.SandboxProject, "sbx-board-del-ok");
+		create.IsError.Should().NotBe(true, Text(create));
+
+		var result = await BoardDeleteAsync(_fx.WildcardSandboxDeleter, SandboxWriteGateFixture.SandboxProject, "sbx-board-del-ok");
+		result.IsError.Should().NotBe(true, Text(result));
+
+		using var scope = _fx.Scope();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+		(await db.TaskBoards.AnyAsync(b => b.ProjectKey == SandboxWriteGateFixture.SandboxProject && b.Name == "sbx-board-del-ok"))
+			.Should().BeFalse("the sandbox key with methodology:write must be able to actually clean up its own sandbox board");
 	}
 }
