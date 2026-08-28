@@ -73,4 +73,9 @@ public sealed record TaskTableModel(
 	// own table view only — Search's cross-scope call never sets it, so its bar never shows the
 	// toggle in the "on" state; the toggle link itself still renders there since the bar is shared,
 	// but out-of-scope-here cross-project filtering isn't wired to it).
-	bool DecisionPendingOnly = false);
+	bool DecisionPendingOnly = false,
+	// live-verification finding: each row's Observation.FixedByNodeId, resolved to a slug once per
+	// PAGE (TaskBoardModel.ObservationFixedByLinks) and threaded here so _TaskTable.cshtml never
+	// resolves per-row. Null on Search's cross-scope table (Observation itself is never resolved
+	// there either — see Observation's own comment above).
+	IReadOnlyDictionary<string, LinkDto>? ObservationFixedByLinks = null);

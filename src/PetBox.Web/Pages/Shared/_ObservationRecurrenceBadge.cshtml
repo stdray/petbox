@@ -1,13 +1,25 @@
 @model PetBox.Web.Pages.Shared.ObservationSignalModel
 @* spec observation-recurrence-visible-on-card: the recurrence counter, shown only once the
    observation has actually recurred (RecurrenceCount > 1 — a first-ever sighting stays 1 and
-   renders nothing here, same threshold the spec names). Compact badge, styled like the other
-   plain metadata badges (node-type/priority) it sits alongside — the LOUD element is the
-   separate regression banner, not this one. *@
+   renders nothing here, same threshold the spec names).
+   live-verification finding (2026-08-28, owner screenshot on `observations/live3-prov-check-
+   cache-evict`): count and last-seen used to sit as two text runs inside ONE <span>, separated
+   only by incidental markup whitespace — the served page rendered them with NO visible gap at
+   all ("×32026-08-28 19:28:37"), reading as one meaningless number. Never rely on whitespace
+   collapsing between a Razor expression and the next tag for a visual separator again: the count
+   and the last-seen time are now two SEPARATE elements with an explicit "·" separator (the same
+   idiom the relations panel / memory-usage badges already use for "value · context") between
+   them, so there is no whitespace-collapsing path left to silently lose.
+   Owner, same finding: "для наблюдения число повторов оч важно" — recurrence count is THE
+   defining signal of an observation, so it must read at a glance, not blend into the metadata
+   row. The count is now its own bold, slightly-larger chip (badge-sm vs the badge-xs siblings it
+   sits among); the last-seen time is explicitly labelled ("last seen …") and visually
+   subordinate (opacity-60, small text) — the two can never again be mistaken for one value. *@
 @if (Model.Observation is { RecurrenceCount: > 1 } o)
 {
-	<span class="badge badge-ghost badge-xs font-mono" data-testid="node-observation-recurrence" title="recurred @o.RecurrenceCount times">
-		×@o.RecurrenceCount
-		<time class="local-time" datetime="@o.LastSeenAt.ToString("o")" data-testid="node-observation-last-seen">@o.LastSeenAt.ToString("yyyy-MM-dd HH:mm")</time>
+	<span class="inline-flex items-center gap-1" data-testid="node-observation-recurrence" title="recurred @o.RecurrenceCount times">
+		<span class="badge badge-neutral badge-sm font-bold font-mono" data-testid="node-observation-recurrence-count">×@o.RecurrenceCount</span>
+		<span class="opacity-40" aria-hidden="true">·</span>
+		<span class="text-xs opacity-60 whitespace-nowrap" data-testid="node-observation-last-seen-label">last seen <time class="local-time" datetime="@o.LastSeenAt.ToString("o")" data-testid="node-observation-last-seen">@o.LastSeenAt.ToString("yyyy-MM-dd HH:mm")</time></span>
 	</span>
 }

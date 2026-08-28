@@ -17,6 +17,11 @@
 	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
 	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
 	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
+	// live-verification finding: the regression banner's fixed-by slug, looked up in the page's
+	// already-resolved batch map (TaskBoardModel.ObservationFixedByLinks) — no per-card I/O.
+	var observationFixedByLink = n.Observation?.FixedByNodeId is { Length: > 0 } obsFixerId
+		? Model.ObservationFixedByLinks?.GetValueOrDefault(obsFixerId)
+		: null;
 }
 
 @* One task-node card. Reused by both the part_of tree and the tag-groups projection; the
@@ -96,7 +101,7 @@
 		   observation-regression-signalled-on-card), right under the title — a no-op when
 		   n.Observation has no RecurredAfterFixAt (every non-observation card, and most
 		   observation cards). *@
-		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey, observationFixedByLink)" />
 		@if (Model.Fields.Tags && n.Tags.Count > 0)
 		{
 			<div class="flex flex-wrap gap-1 mt-1" data-testid="node-tags">
