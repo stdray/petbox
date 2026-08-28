@@ -303,7 +303,11 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		// Budget resolved from settings (rerank-budget-params-to-settings) at THIS project's scope,
 		// from the SAME rental as the LLM client above — no second scope opened for it.
 		var budget = await RerankCandidateBudget.ResolveAsync(rental.Settings, projectKey, ct);
-		var resp = await new SearchService(indexes, _logger, reranker, budget)
+		// Rerank input size caps (bug rerank-oversize-falls-through-both-legs), resolved from the SAME
+		// settings rental as the budget above — applied once, inside SearchService.RankPoolAsync, not
+		// here: this resolver still hands the facade the raw message content unchanged.
+		var truncation = await RerankInputTruncation.ResolveAsync(rental.Settings, projectKey, ct);
+		var resp = await new SearchService(indexes, _logger, reranker, budget, truncation)
 			.SearchAsync(projectKey, query, new SearchFilter(null), pool, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)

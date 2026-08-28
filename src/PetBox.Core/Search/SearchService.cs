@@ -31,13 +31,20 @@ public sealed partial class SearchService
 	// lexical leg's full matched set from flooding the cross-encoder. Only the top `budget` of the
 	// fused pool reaches the reranker.
 	readonly RerankCandidateBudget _budget;
+	// Rerank INPUT SIZE CAPS (bug rerank-oversize-falls-through-both-legs): applied ONCE, right before
+	// the cross-encoder call, on this one common path — see RerankInputTruncation for why. Every
+	// resolver (sessions/memory/tasks) still hands this facade the RAW candidate text; truncation is
+	// this facade's job, not theirs.
+	readonly RerankInputTruncation _truncation;
 
-	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null, IReranker? reranker = null, RerankCandidateBudget? budget = null)
+	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null, IReranker? reranker = null,
+		RerankCandidateBudget? budget = null, RerankInputTruncation? truncation = null)
 	{
 		_indexes = indexes.ToList();
 		_log = log;
 		_reranker = reranker;
 		_budget = budget ?? new RerankCandidateBudget();
+		_truncation = truncation ?? new RerankInputTruncation();
 	}
 
 	public async Task IndexAsync(DataConnection tx, SearchDoc doc, CancellationToken ct = default)
@@ -189,17 +196,27 @@ public sealed partial class SearchService
 		if (mode == SearchRankingMode.Precision && _reranker is not null
 			&& resolveCandidateText is not null && pool.Count > 0 && await IsRerankAvailableAsync(scope, ct))
 		{
+			IReadOnlyList<string> texts = [];
 			try
 			{
-				var texts = await resolveCandidateText(pool, ct);
+				texts = await resolveCandidateText(pool, ct);
 				if (texts.Count != pool.Count)
 					throw new InvalidOperationException($"candidate-text resolver returned {texts.Count} texts for {pool.Count} candidates");
+				// Truncate document + query BEFORE they reach the cross-encoder (bug
+				// rerank-oversize-falls-through-both-legs): the same text an embedder already caps
+				// (e.g. EmbedCharCap) was going into rerank whole, so a document past the route's
+				// physical-batch ceiling got a deterministic size refusal on BOTH the local route and its
+				// (smaller-ceilinged) cloud fallback — losing the entire precision pass. Truncating
+				// degrades ranking quality for the ONE oversized candidate; losing the pass degrades it
+				// for the WHOLE query.
+				var truncatedQuery = _truncation.TruncateQuery(query);
+				var truncatedTexts = texts.Select(_truncation.TruncateDocument).ToList();
 				// topN is the WHOLE pool, not some page size. The cost of a rerank is in SCORING
 				// the candidates, which happens for every candidate regardless; topN only truncates what
 				// comes BACK. So asking for the complete ordering
 				// costs essentially nothing extra here and is precisely what makes page 2 free: the order
 				// is computed once, at this line, and every later page is a slice of it.
-				var reranked = await _reranker.RerankAsync(query, texts, pool.Count, ct);
+				var reranked = await _reranker.RerankAsync(truncatedQuery, truncatedTexts, pool.Count, ct);
 				// Map the reranked GLOBAL indices back to the candidate hits, carrying the cross-encoder
 				// score. Guard against an out-of-range index rather than trusting the adapter blindly.
 				var ordered = reranked
@@ -211,10 +228,18 @@ public sealed partial class SearchService
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
 			{
-				// Honest RRF degradation (DegradedRrf). Log WHY so a rerank outage is visible on day one
-				// instead of reading as a silent quality drop, then fall through to the RRF path.
+				// Honest RRF degradation (DegradedRrf). Log WHY *with numbers* (bug
+				// rerank-oversize-falls-through-both-legs: a month of degradation was invisible because
+				// the old line named only a reason code, never a candidate count/size/limit an owner
+				// could act on) so a rerank outage — or, now that size is handled by truncation above, any
+				// OTHER outage — is visible on day one instead of reading as a silent quality drop, then
+				// fall through to the RRF path.
 				var code = ex is SearchDegradedException sde ? sde.Reason : ex.GetType().Name;
-				if (_log is not null) LogRerankDegraded(_log, scope, code, ex);
+				if (_log is not null)
+				{
+					var maxDocChars = texts.Count > 0 ? texts.Max(t => t.Length) : 0;
+					LogRerankPrecisionFailed(_log, scope, pool.Count, maxDocChars, _truncation.DocumentChars, code, ex.Message, ex);
+				}
 			}
 		}
 
@@ -247,10 +272,22 @@ public sealed partial class SearchService
 		Message = "search: index {Index} ({Capability}) failed in scope '{Scope}' → degraded, reason {Reason}")]
 	static partial void LogIndexDegraded(ILogger logger, string index, string capability, string scope, string reason, Exception ex);
 
-	// The precision pass fell back to RRF (spec: search-rerank-in-loop): the cross-encoder was
-	// unavailable or errored, so the result is DegradedRrf (Reranked=false). Logged so a rerank outage
-	// is queryable, not a silent quality drop the owner only notices by feel.
+	// The rerank AVAILABILITY PROBE itself failed (IsAvailableAsync threw) — the precision pass was
+	// skipped up front, before any candidate text was even resolved, so there is no candidate/size data
+	// to report yet (spec: search-rerank-in-loop).
 	[LoggerMessage(EventId = 401, Level = LogLevel.Warning,
 		Message = "search: rerank precision pass unavailable in scope '{Scope}' → RRF degradation, reason {Reason}")]
 	static partial void LogRerankDegraded(ILogger logger, string scope, string reason, Exception ex);
+
+	// The precision pass ATTEMPTED and failed (bug rerank-oversize-falls-through-both-legs): unlike
+	// LogRerankDegraded above, this carries the NUMBERS an owner needs to tell "a rerank outage" from
+	// "a document past every route's size limit" without an incident — how many candidates were in the
+	// pool, the largest candidate document's size (BEFORE truncation — so a size-classed failure is
+	// still visible even though truncation now usually prevents it), and the configured truncation cap.
+	// `Detail` carries the exception message, which for a router failure already names WHICH endpoint
+	// refused (LlmRouterException's message format), so this one line answers "how many, how big, what
+	// limit, which leg" — exactly the four numbers the card says a month of silent degradation lacked.
+	[LoggerMessage(EventId = 402, Level = LogLevel.Warning,
+		Message = "search: rerank precision pass failed in scope '{Scope}' → RRF degradation: {CandidateCount} candidates, largest document {MaxDocumentChars} chars (truncation cap {DocumentCharCap} chars), reason {Reason}: {Detail}")]
+	static partial void LogRerankPrecisionFailed(ILogger logger, string scope, int candidateCount, int maxDocumentChars, int documentCharCap, string reason, string detail, Exception ex);
 }

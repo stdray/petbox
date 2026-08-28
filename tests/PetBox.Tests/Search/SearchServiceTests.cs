@@ -256,6 +256,49 @@ public sealed class SearchServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task OversizedDocumentAndQuery_AreTruncatedBeforeReachingTheReranker()
+	{
+		// Bug rerank-oversize-falls-through-both-legs: sessions/memory/tasks all hand the reranker the
+		// RAW candidate text and the raw query — a document/query past the rerank route's physical
+		// ceiling gets a deterministic size refusal on BOTH the local route and its (smaller-ceilinged)
+		// cloud fallback, losing the entire precision pass. Truncation caps here are pinned tiny (5/3
+		// chars) so the test is deterministic without needing a multi-thousand-character fixture.
+		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList());
+		var truncation = new RerankInputTruncation { DocumentChars = 5, QueryChars = 3 };
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker, truncation: truncation);
+		// FTS matches by token PREFIX (FtsQuery.BuildMatch: "token*", AND across tokens) — a single
+		// shared token keeps the match independent of truncation (which only touches what the RERANKER
+		// sees, never what the lexical leg matched on).
+		await IndexAsync(svc, commit: true, Doc("a", "alphabetsoup"));
+
+		var res = await svc.SearchAsync(Scope, "alphabetsoup", new SearchFilter(), k: 10, resolveCandidateText: IdAsText);
+
+		// The candidate text IS the hit's Id in this test (IdAsText) — "a" already fits under 5 chars,
+		// so this alone would not prove truncation happened; the QUERY is what proves it: the reranker
+		// never sees the untruncated 12-char query.
+		reranker.LastQuery.Should().Be("alp", "the query must be capped to QueryChars BEFORE the reranker sees it");
+		res.Retrievers.Ranking.Should().Be(SearchRankingOutcome.Reranked, "truncation must let a precision pass that would otherwise size-refuse actually succeed");
+	}
+
+	[Fact]
+	public async Task OversizedDocument_IsTruncatedToTheConfiguredCap()
+	{
+		// Same property as above, isolated to the DOCUMENT side: a candidate whose resolved text is
+		// longer than DocumentChars must reach the reranker truncated to exactly that cap, not whole.
+		var reranker = new StubReranker(docs => docs.Select((_, i) => new RerankedHit(i, 1.0)).ToList());
+		var truncation = new RerankInputTruncation { DocumentChars = 5, QueryChars = 2000 };
+		var svc = new SearchService([new SqliteFtsIndex(Connect)], reranker: reranker, truncation: truncation);
+		await IndexAsync(svc, commit: true, Doc("a", "alpha one"));
+		CandidateTextResolver longText = (cands, _) =>
+			Task.FromResult<IReadOnlyList<string>>(cands.Select(_ => "this text is way past the five-char cap").ToList());
+
+		await svc.SearchAsync(Scope, "alpha", new SearchFilter(), k: 10, resolveCandidateText: longText);
+
+		reranker.LastDocs.Should().OnlyContain(d => d.Length == 5, "every candidate document must be capped to DocumentChars");
+		reranker.LastDocs!.Single().Should().Be("this ");
+	}
+
+	[Fact]
 	public async Task ExplicitSpeedMode_SkipsRerankerEntirely_EvenWhenAvailable_ReportsChosenRrf()
 	{
 		// search-ranking-mode-is-caller-choice + search-rerank-in-loop: an explicit Speed ask must
@@ -295,6 +338,7 @@ public sealed class SearchServiceTests : IDisposable
 	{
 		public bool Available = true;
 		public List<string>? LastDocs;
+		public string? LastQuery;
 		// Optional probes for tests that must prove a code path was never reached at all (e.g. an
 		// explicit Speed ask must never even call IsAvailableAsync — see ExplicitSpeedMode... below).
 		public Action? OnProbe;
@@ -309,6 +353,7 @@ public sealed class SearchServiceTests : IDisposable
 		public Task<IReadOnlyList<RerankedHit>> RerankAsync(string query, IReadOnlyList<string> documents, int topN, CancellationToken ct = default)
 		{
 			OnRerank?.Invoke();
+			LastQuery = query;
 			LastDocs = documents.ToList();
 			IReadOnlyList<RerankedHit> ranked = rank(documents).Take(topN).ToList();
 			return Task.FromResult(ranked);

@@ -163,7 +163,20 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 			{
 				var code = (int)resp.StatusCode;
 				var rateLimited = code == 429;
-				var transient = rateLimited || code >= 500;
+				// A size-limit refusal is a DETERMINISTIC failure by CONTENT, not by status code (bug
+				// rerank-oversize-falls-through-both-legs): llama-server answers an oversized rerank/embed
+				// input with HTTP 500 (`... is too large to process. increase the physical batch size ...`),
+				// which the old `code >= 500` rule classified transient — so CapabilityRouter retried on
+				// the NEXT route in the chain, which for this repo's rerank fallback has an even SMALLER
+				// ceiling (10240 tokens per whole request vs. the local route's 8192 per pair) and refuses
+				// with its own wording (`... exceeds maximum allowed token size ...`). Both refusals are
+				// checked here so ANY leg's oversize wording is caught regardless of which one answers
+				// first. The retry was guaranteed to fail either way — non-transient stops CapabilityRouter
+				// from wasting it and, more importantly, from masking the real failure behind a generic
+				// "all providers failed" after burning an attempt on a route that could never have served
+				// this input.
+				var oversize = IsInputTooLarge(body);
+				var transient = !oversize && (rateLimited || code >= 500);
 				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited);
 			}
 			try { return JsonDocument.Parse(body); }
@@ -174,6 +187,18 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	static string Url(string baseUrl, string path) => baseUrl.TrimEnd('/') + path;
 
 	static string Truncate(string s) => s.Length <= 300 ? s : s[..300] + "…";
+
+	// Recognizes the two size-limit wordings this repo has actually observed on a failing rerank/embed
+	// call (bug rerank-oversize-falls-through-both-legs): llama-server's per-pair physical-batch refusal
+	// ("... is too large to process. increase the physical batch size ...", HTTP 500) and the OpenAI-
+	// dialect cloud fallback's whole-request token-count refusal ("... exceeds maximum allowed token
+	// size ...", HTTP 422 today — already non-transient by the `code >= 500` rule, matched here too so
+	// this is the ONE place that answers "was this a size refusal?" regardless of which leg answered
+	// or what status code it chose). Matched against the FULL body (not the 300-char Truncate used for
+	// the exception message) so the phrase is never missed to a truncation the caller never asked for.
+	static bool IsInputTooLarge(string body) =>
+		body.Contains("too large to process", StringComparison.OrdinalIgnoreCase)
+		|| body.Contains("exceeds maximum allowed", StringComparison.OrdinalIgnoreCase);
 
 	// The one queryable signal for a silently-degrading endpoint (facts-extraction-unparseable-
 	// batches): fires exactly when a response_format-bearing chat call got a fatal 400 mentioning
