@@ -2,6 +2,13 @@
 @* board-view-fields: shared by both branches of _BoardViewOutline.cshtml (lazy-reveal summary and
    the plain heading row) so the field-gating logic isn't duplicated. *@
 @{ var n = Model.Node; }
+@* decision-pending-has-no-ui: always visible, not gated on Model.Fields — same posture as the
+   tree card's own badge (_TaskNodeCard.cshtml): the decision queue must be readable without
+   opening the fields dialog. *@
+@if (n.DecisionPending)
+{
+	<span class="badge badge-warning badge-xs" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
+}
 @if (Model.Fields.Type && !string.IsNullOrEmpty(n.Type))
 {
 	<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>

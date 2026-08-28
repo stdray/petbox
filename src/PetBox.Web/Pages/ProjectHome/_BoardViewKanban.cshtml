@@ -36,7 +36,7 @@ else
 	// button sits next to the fields one — rendered as a sibling partial it landed outside the bar's
 	// flex container and wrapped onto its own line.
 	var columnsDialogModel = new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the status
 	// CATEGORY (StatusKind.TerminalCancel) on EVERY board kind — a terminally-cancelled node
 	// reads as dead no matter how the user turned the Status property off, and no matter which
@@ -97,7 +97,7 @@ else
 						   loud/saturated background behind the blocked chip anymore — both blocked
 						   and blocking are chip-level signals (badge-outline, same weight as tags/
 						   date), not a card-frame treatment. *@
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" data-decision-pending="@n.DecisionPending.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
 									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
@@ -108,6 +108,10 @@ else
 									@if (blockingCount > 0)
 									{
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocking-badge" title="blocking @blockingCount">🔒 blocking @blockingCount</span>
+									}
+									@if (n.DecisionPending)
+									{
+										<span class="badge badge-warning badge-xs shrink-0" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 									}
 								</div>
 								@* board-fields-slug-missing: the node key never rendered on a kanban card at all
@@ -186,7 +190,7 @@ else
 						var hidden = Model.ActiveOnly && closed;
 						@* kanban-blocked-signal review finding: no border/frame highlight, no loud
 						   background — chip-level signals only, same as the main columns above. *@
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" data-decision-pending="@n.DecisionPending.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
 									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
@@ -197,6 +201,10 @@ else
 									@if (blockingCount > 0)
 									{
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocking-badge" title="blocking @blockingCount">🔒 blocking @blockingCount</span>
+									}
+									@if (n.DecisionPending)
+									{
+										<span class="badge badge-warning badge-xs shrink-0" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 									}
 								</div>
 								@if (Model.Fields.Slug)
