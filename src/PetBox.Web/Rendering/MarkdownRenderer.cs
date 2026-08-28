@@ -50,10 +50,25 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 
 	public MarkdownRenderer()
 	{
-		_pipeline = new MarkdownPipelineBuilder()
+		var builder = new MarkdownPipelineBuilder()
 			.UseAdvancedExtensions()
 			.UseSoftlineBreakAsHardlineBreak()
-			.Build();
+			// GFM alerts (`> [!NOTE]`). Declared EXPLICITLY although it is currently redundant:
+			// measured against the pinned Markdig 1.3.2, UseAdvancedExtensions() already registers
+			// AlertExtension (it is first in that extension list), and UseAlertBlocks() is
+			// AddIfNotAlready — calling it leaves exactly one instance. It is kept so that alerts
+			// are a stated requirement of this pipeline rather than a side effect of whatever
+			// UseAdvancedExtensions happens to bundle in the next Markdig.
+			//
+			// So alerts were never the thing that was off. The parser has been producing
+			// AlertBlock all along and the renderer has been emitting
+			// `<div class="markdown-alert markdown-alert-note">` all along — and the SANITIZER
+			// below was deleting the class attribute, so every alert reached the browser as a bare
+			// <div> that looked like two ordinary paragraphs. The allowlist in BuildSanitizer is
+			// what actually turns a callout into a callout.
+			.UseAlertBlocks();
+		builder.Extensions.AddIfNotAlready(new MarkdownDesignLayerExtension());
+		_pipeline = builder.Build();
 
 		_sanitizer = BuildSanitizer();
 	}
@@ -240,6 +255,33 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		// The commit-hash autolinks open in a new tab; allow just the two attributes they carry.
 		s.AllowedAttributes.Add("target");
 		s.AllowedAttributes.Add("rel");
+		// The design layer (work `node-render-design-layer`) is CSS keyed on classes, and
+		// HtmlSanitizer does NOT allow `class` by default — it drops the attribute wholesale.
+		// Allowing the attribute alone would hand every body author the entire Tailwind utility
+		// set (raw HTML in a body is deliberately KEPT, see the header), so `class` is allowed
+		// AND its VALUES are pinned: a non-empty AllowedClasses filters each class list down to
+		// these names and removes the attribute when nothing survives. An author writing
+		// `<div class="fixed inset-0">` in a body still gets a bare <div>.
+		s.AllowedAttributes.Add("class");
+		foreach (var name in DesignLayerClasses) s.AllowedClasses.Add(name);
 		return s;
 	}
+
+	// Every class name the renderer itself emits: the two structural wrappers from
+	// MarkdownDesignLayerExtension, plus Markdig's own alert classes (its AlertBlockRenderer emits
+	// `markdown-alert markdown-alert-{kind}` and a `markdown-alert-title` paragraph). Anything not
+	// listed here is stripped from a body's HTML — so a new wrapper class MUST be added here or it
+	// renders unstyled.
+	static readonly string[] DesignLayerClasses =
+	[
+		"md-section",
+		"md-table-scroll",
+		"markdown-alert",
+		"markdown-alert-title",
+		"markdown-alert-note",
+		"markdown-alert-tip",
+		"markdown-alert-important",
+		"markdown-alert-warning",
+		"markdown-alert-caution",
+	];
 }

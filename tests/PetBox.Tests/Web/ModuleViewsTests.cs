@@ -1134,10 +1134,13 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// Kind badge = the definition's slug, not the Simple fallback.
 		html.Should().Contain("data-kind=\"support\"");
 		html.Should().NotContain("data-kind=\"simple\"");
-		// The custom statuses render, classified by the DEFINITION: open → info, terminal → success.
+		// The custom statuses render, classified by the DEFINITION: open → the `proposed` semantic
+		// pair, terminal-ok → `live` (work `node-render-design-layer` moved the pill from flat
+		// daisyUI colour classes onto the design layer's outline+fill pairs; the CLASSIFICATION is
+		// unchanged and still comes from MethodologyRuntime.StatusKindOf).
 		// The badge shows each status's declared Name ("New"/"Closed"); the slugs stay new/closed.
-		html.Should().Contain("badge-info badge-sm\" data-testid=\"node-status\">New");
-		html.Should().Contain("badge-success badge-sm\" data-testid=\"node-status\">Closed");
+		html.Should().Contain("status-pill status-pill-proposed badge-sm\" data-testid=\"node-status\">New");
+		html.Should().Contain("status-pill status-pill-live badge-sm\" data-testid=\"node-status\">Closed");
 		// The custom terminal is CLOSED (hidden under active-only); the open node is not.
 		html.Should().MatchRegex("data-node-key=\"t2\"[^>]*data-closed=\"true\"");
 		html.Should().MatchRegex("data-node-key=\"t1\"[^>]*data-closed=\"false\"");

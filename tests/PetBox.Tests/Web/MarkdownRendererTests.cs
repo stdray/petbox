@@ -388,4 +388,129 @@ public sealed class MarkdownRendererNodeRefTests
 		R.RenderToHtml(md, null, Map()).Should().Be(R.RenderToHtml(md));
 		R.RenderToHtml(md, null, null).Should().NotContain("<a");
 	}
+
+}
+
+// The body design layer (work `node-render-design-layer`): the `##` section container, the
+// per-table horizontal scroller and GFM alerts.
+//
+// Every assertion here is on POST-SANITIZER output, which is the whole point: the design layer is
+// CSS keyed on classes, and HtmlSanitizer drops `class` by default. Without the allowlist in
+// MarkdownRenderer.BuildSanitizer these elements still render — bare, unstyleable and silently
+// unthemed — so a test that only checked for `<section>` or `<div>` would stay green through the
+// exact failure this feature is most likely to have.
+public sealed class MarkdownDesignLayerTests
+{
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	static string Html(string md) => R.RenderToHtml(md);
+
+	[Fact]
+	public void SectionContainer_WrapsContentBetweenH2_AndClassSurvivesSanitizer()
+	{
+		var html = Html("## First\n\nalpha\n\n## Second\n\nbeta");
+
+		// The CLASS, not just the element — this is the assertion the sanitizer can break.
+		html.Should().Contain("<section class=\"md-section\">");
+		html.Split("<section class=\"md-section\">").Length.Should().Be(3, "one section per `##`");
+		// Each section owns its heading AND the prose that follows it.
+		html.Should().Contain("<h2>First</h2>").And.Contain("<p>alpha</p>");
+		html.Should().Contain("</section>");
+	}
+
+	[Fact]
+	public void SectionContainer_IsAstDerived_NotTextMatched()
+	{
+		// A `## ` line inside a fenced code block is CODE, not a heading. This is the difference
+		// between grouping on the AST and running a regex over rendered HTML — several of this
+		// repo's own /doc pages carry `#`-prefixed shell comments inside fences.
+		var html = Html("## Real\n\n```sh\n## not a heading\n```");
+
+		html.Split("<section class=\"md-section\">").Length.Should().Be(2, "only the real `##` opens a section");
+		html.Should().Contain("## not a heading", "the fenced line stays literal code");
+	}
+
+	[Fact]
+	public void SectionContainer_ContentBeforeFirstH2_StaysAtTopLevel()
+	{
+		var html = Html("lead paragraph\n\n## Section\n\nbody");
+		// The lead is outside the section, so a body with no `##` at all is completely unchanged.
+		html.IndexOf("<p>lead paragraph</p>", StringComparison.Ordinal)
+			.Should().BeLessThan(html.IndexOf("<section", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public void BodyWithoutH2_GetsNoSectionWrapper()
+	{
+		Html("just prose\n\n### deeper heading").Should().NotContain("<section");
+	}
+
+	[Fact]
+	public void Table_GetsOwnScroller_AndClassSurvivesSanitizer()
+	{
+		var html = Html("| a | b |\n|---|---|\n| 1 | 2 |");
+
+		html.Should().Contain("<div class=\"md-table-scroll\">");
+		// The wrapper is OUTSIDE the table — it is the element that owns overflow-x.
+		html.IndexOf("<div class=\"md-table-scroll\">", StringComparison.Ordinal)
+			.Should().BeLessThan(html.IndexOf("<table>", StringComparison.Ordinal));
+		html.Should().Contain("<th>a</th>");
+	}
+
+	[Fact]
+	public void GfmAlert_ReachesTheBrowserStillCarryingItsClasses()
+	{
+		// Measured, not assumed: Markdig has ALWAYS parsed `> [!NOTE]` here — AlertExtension ships
+		// inside UseAdvancedExtensions() in the pinned 1.3.2 — and has always emitted
+		// `<div class="markdown-alert markdown-alert-note">`. What reached the browser before this
+		// work was `<div><p>Note</p><p>Body</p></div>`: the sanitizer dropped every class, so a
+		// callout rendered as two anonymous paragraphs. The classes surviving IS the feature.
+		var html = Html("> [!NOTE]\n> Body of the note.");
+
+		html.Should().Contain("class=\"markdown-alert markdown-alert-note\"");
+		html.Should().Contain("class=\"markdown-alert-title\"");
+		html.Should().NotContain("[!NOTE]", "the marker is consumed, not printed");
+		html.Should().Contain("Body of the note.");
+	}
+
+	[Fact]
+	public void GfmAlert_EachKindKeepsItsOwnClass()
+	{
+		// The kind class is what selects the semantic colour pair; all five must survive.
+		foreach (var (marker, cls) in new[]
+		{
+			("NOTE", "markdown-alert-note"), ("TIP", "markdown-alert-tip"),
+			("IMPORTANT", "markdown-alert-important"), ("WARNING", "markdown-alert-warning"),
+			("CAUTION", "markdown-alert-caution"),
+		})
+			Html($"> [!{marker}]\n> text").Should().Contain(cls);
+	}
+
+	[Fact]
+	public void PlainBlockquote_StillRendersAsBlockquote()
+	{
+		// Enabling alerts must not reinterpret ordinary quotes.
+		Html("> just a quote").Should().Contain("<blockquote>").And.NotContain("markdown-alert");
+	}
+
+	[Fact]
+	public void AuthorRawHtml_CannotSmuggleArbitraryClasses()
+	{
+		// `class` is allowed as an ATTRIBUTE now, and raw HTML in a body is deliberately kept — so
+		// the value allowlist is the only thing standing between an author and the whole Tailwind
+		// utility set (e.g. a body that covers the page with `fixed inset-0`).
+		var html = Html("<div class=\"fixed inset-0 z-50 bg-error\">hi</div>");
+
+		html.Should().Contain("hi");
+		html.Should().NotContain("fixed").And.NotContain("inset-0").And.NotContain("z-50");
+		html.Should().NotContain("class=", "nothing survived, so the attribute is dropped entirely");
+	}
+
+	[Fact]
+	public void AuthorRawHtml_KeepingADesignClass_KeepsOnlyThatOne()
+	{
+		var html = Html("<div class=\"md-section fixed inset-0\">hi</div>");
+		html.Should().Contain("class=\"md-section\"");
+		html.Should().NotContain("fixed").And.NotContain("inset-0");
+	}
 }
