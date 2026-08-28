@@ -11,6 +11,21 @@ namespace PetBox.Tasks.Contract;
 // means the target no longer exists.
 public sealed record LinkDto(string NodeId, string? Board, string? Slug, string? Title, string Status);
 
+// The recurrence signal for a kind `observation` node (work
+// observation-recurrence-after-fix-signal), a straight mirror of the stored observation_signal
+// row (PetBox.Tasks.Data.ObservationSignal): `RecurrenceCount`/`LastSeenAt` are the plain
+// sighting counter; `RecurredAfterFixAt` is non-null exactly when the MOST RECENT sighting hit
+// a `fixed` observation — "we fixed it and it came back" as opposed to a first-ever finding, a
+// signal that would otherwise be invisible outside the store. `FixedByNodeId`/`FixedAt` name
+// the obligation that (supposedly) fixed it and when — the node RecordObservationRecurrenceAsync
+// flags decisionPending on when a recurrence lands on it.
+public sealed record ObservationSignalView(
+	long RecurrenceCount, DateTime LastSeenAt, DateTime? RecurredAfterFixAt, string? FixedByNodeId, DateTime? FixedAt)
+{
+	public static ObservationSignalView? From(ObservationSignal? s) =>
+		s is null ? null : new ObservationSignalView(s.RecurrenceCount, s.LastSeenAt, s.RecurredAfterFixAt, s.FixedByNodeId, s.FixedAt);
+}
+
 // A task node enriched with its links, enforced tags, and (on a spec board) computed
 // delivery roll-up. Hierarchy is the part_of edge: ParentNodeId/ParentSlug name the
 // parent (null = root); Depth is its computed distance from a root.
@@ -39,7 +54,13 @@ public sealed record TaskNodeView(
 	// node-origin-provenance, accumulating half: the union of sessions that have touched this
 	// node. Enrichment, not a selector — nothing filters on it — so it is LEAN-CUT in query mode
 	// (see TasksTools.SearchRow); listing mode and tasks_node_get carry it.
-	IReadOnlyList<string>? OriginSessions = null);
+	IReadOnlyList<string>? OriginSessions = null,
+	// work observation-recurrence-after-fix-signal: null on every board except `observations`
+	// (SystemBoards.ObservationKind) — TasksService only loads observation_signal when the
+	// OWNING board's kind is `observation`, mirroring Delivery's "gated by kind DATA" posture
+	// just above. NOT lean-cut (see TasksTools.SearchRow): recurrence-after-a-fix is exactly
+	// the signal that must survive the query-mode lean cut to be visible on a tasks_search row.
+	ObservationSignalView? Observation = null);
 
 // A board's active task nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is

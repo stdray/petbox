@@ -31,6 +31,15 @@ public interface IObservationSignalStore
 	Task MarkFixedAsync(string projectKey, string nodeId, string fixedByNodeId, CancellationToken ct = default);
 
 	Task<ObservationSignal?> GetAsync(string projectKey, string nodeId, CancellationToken ct = default);
+
+	// Every row for the project, keyed by NodeId (work observation-recurrence-after-fix-signal):
+	// the read side needs the WHOLE table, not a point lookup, to attach the signal onto every
+	// row of a board-wide (GetAsync/tasks_search listing) or query-mode (ProjectBoardLeanOpenAsync)
+	// read in one query — the SAME shape as BoardTagsAsync/BoardCommitsAsync's own board-wide
+	// batch reads (never N point queries for N nodes). Table is bounded by the `observations`
+	// board's own node count (a project has exactly ONE), so a full scan is the right cost class
+	// here, unlike RelationStore's chunked IN-list reads over a whole project's edges.
+	Task<IReadOnlyDictionary<string, ObservationSignal>> GetAllAsync(string projectKey, CancellationToken ct = default);
 }
 
 public sealed class ObservationSignalStore(IScopedDbFactory<TasksDb> factory) : IObservationSignalStore
@@ -78,5 +87,12 @@ public sealed class ObservationSignalStore(IScopedDbFactory<TasksDb> factory) : 
 	{
 		using var ctx = factory.NewEnsuredConnection(projectKey);
 		return await ctx.GetTable<ObservationSignal>().FirstOrDefaultAsync(s => s.NodeId == nodeId, ct);
+	}
+
+	public async Task<IReadOnlyDictionary<string, ObservationSignal>> GetAllAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var ctx = factory.NewEnsuredConnection(projectKey);
+		var rows = await ctx.GetTable<ObservationSignal>().ToListAsync(ct);
+		return rows.ToDictionary(s => s.NodeId, StringComparer.Ordinal);
 	}
 }
