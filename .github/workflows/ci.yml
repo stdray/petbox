@@ -239,6 +239,21 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
     needs: [publish, test]
     runs-on: ubuntu-latest
+    # Job-level group, independent of the workflow-level `concurrency:` above (which
+    # groups by commit sha so a `main` push and the `deploy` tag move don't double-run
+    # CI). Two DIFFERENT commits land in different workflow-level groups and don't
+    # cancel each other, so without this, two `deploy` jobs from separate runs could
+    # both `docker compose up` on the prod host at once. A fixed group name (not
+    # keyed by sha) serializes every deploy job regardless of commit. GitHub Actions
+    # queues only the LATEST pending run per group and cancels older pending ones —
+    # the running job is left to finish — so the effect is "current deploy finishes,
+    # then the newest queued commit deploys next", never a random winner.
+    # cancel-in-progress: false (the default, spelled out here) is deliberate: true
+    # would abort an in-progress `docker compose up` mid-way, leaving prod in an
+    # unknown state — see work/ci-concurrent-deploys-not-serialized.
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
 
