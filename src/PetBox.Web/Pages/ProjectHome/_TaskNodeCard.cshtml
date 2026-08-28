@@ -62,6 +62,9 @@
 				{
 					<span class="badge badge-warning badge-xs" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 				}
+				@* observation-ui-distinct-from-task: n.Observation is null on every board except
+				   `observations`, so this is a no-op on every other card. *@
+				<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
 				@if (Model.Fields.Type && !string.IsNullOrEmpty(n.Type))
 				{
 					<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
@@ -89,6 +92,11 @@
 				}
 			</div>
 		</div>
+		@* observation-ui-distinct-from-task: standalone, loud banner (spec
+		   observation-regression-signalled-on-card), right under the title — a no-op when
+		   n.Observation has no RecurredAfterFixAt (every non-observation card, and most
+		   observation cards). *@
+		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
 		@if (Model.Fields.Tags && n.Tags.Count > 0)
 		{
 			<div class="flex flex-wrap gap-1 mt-1" data-testid="node-tags">

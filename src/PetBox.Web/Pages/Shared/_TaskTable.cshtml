@@ -79,10 +79,14 @@ else
 							{
 								<span class="badge badge-warning badge-xs" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 							}
+							@* observation-ui-distinct-from-task: Observation is null on every board except
+							   `observations`, so this is a no-op on every other row. *@
+							<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" />
 							@if (fields.Slug)
 							{
 								<span class="font-mono text-xs opacity-50">@row.Key</span>
 							}
+							<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" />
 						</td>
 						@if (fields.Type)
 						{
@@ -130,7 +134,7 @@ else
 						}
 						@if (fields.BlockedBy)
 						{
-							<td><partial name="_BlockedByChips" model="@(new BlockedByChipsModel(Model.WorkspaceKey ?? "", Model.ProjectKey ?? "", row.BlockedBy))" /></td>
+							<td><partial name="_BlockedByChips" model="@(new BlockedByChipsModel(Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty, row.BlockedBy))" /></td>
 						}
 					</tr>
 				}
