@@ -494,6 +494,38 @@
 	margin: 0.8em 0;
 }
 
+/* ── Reply frame (work `comment-vs-body-distinction`) ───────────────────────────────────────
+   Owner's diagnosis: the node body and a comment read as the same kind of surface — the fix is
+   the FRAME OUTSIDE, not typography inside. The body block in TaskBoardNode.cshtml is
+   deliberately left untouched here (no measure, no heading-scale treatment — node-render-design-
+   layer and drop-66ch-measure are both very recent, deliberate decisions this task must not
+   undo); a comment instead becomes its own bounded, reply-shaped element:
+     - a rounded frame with a ground ONE STEP further from the page than the body's. Reuses the
+       existing 3-level backdrop tokens above (this file, "Body design tokens") rather than
+       inventing a colour: the body sits on `bg-base-100/40` (a translucent --b1 over the card's
+       own --b2), a comment sits on the fully-opaque `--md-surface-2` (--b3) — a different token,
+       not "the same one, a bit darker" — so the two grounds stay visually distinct in every
+       daisyUI theme this app ships (dark/light/nord/retro), including the themes' own dark
+       overrides (--md-surface-2 does not change under the dark blocks above, --b3 already is the
+       theme's own most-elevated backdrop step).
+     - a header row (author + time) pulled OUT of the text flow into its own row, separated from
+       the reply text by a rule — already true since `ui-comments-presentation`; this only adds
+       the rule between them.
+   Named "reply-*", not "comment-*": reader-view-body-and-comments deliberately keeps the literal
+   word "comment" out of every CLASS/id here (a Readability UNLIKELY_CANDIDATES negative keyword)
+   — only `data-testid` carries it, which Readability's node scorer never reads. */
+.reply-frame {
+	background-color: var(--md-surface-2);
+	border: 1px solid var(--md-rule-strong);
+	border-radius: 0.5rem;
+	padding: 0.5rem 0.75rem;
+}
+.reply-frame-header {
+	border-bottom: 1px solid var(--md-rule);
+	padding-bottom: 0.35rem;
+	margin-bottom: 0.5rem;
+}
+
 /* ── Status pill ──────────────────────────────────────────────────────────────────────────
    The colour comes from the node's StatusKind METADATA, resolved through MethodologyRuntime
    (Pages/Shared/StatusBadge.cs) — never from anything written in a body. Each variant is one
