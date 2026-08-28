@@ -45,6 +45,13 @@
 #                 SIGTERM: busybox crond, the sidecar's PID 1, ignores it and forwards
 #                 nothing (measured), so before that change no signal ever arrived here.
 #
+# TIME BUDGET (work/backup-leg-timeout-and-probe-alert). restic has no overall deadline of
+# its own and its S3 backend retries with a long backoff: `restic cat config` against an
+# unreachable bucket was MEASURED at over ten minutes on this image. Nothing in here bounded
+# that, so one wedged endpoint could keep a run alive past the next cron tick and stack runs
+# on top of each other. LEG_TIMEOUT_SECONDS below is a ceiling on a WHOLE leg — see
+# leg_remaining().
+#
 # Each leg is independent: one leg's failure must not stop the other leg from
 # running (see run_leg below). The script exits 1 if either leg failed (so cron
 # logs + entrypoint reflect failure) and 0 only if both legs succeeded.
@@ -64,12 +71,31 @@ KEEP_WEEKLY="${RESTIC_KEEP_WEEKLY:-4}"
 # ~1 h, well inside the 6 h cron interval, so a wedged repo still fails (and alerts) within
 # one cycle instead of piling runs on top of each other.
 RETRY_LOCK="${RESTIC_RETRY_LOCK:-15m}"
+# Wall-clock ceiling on ONE leg (both legs run in sequence). Sized by what has to fit inside
+# it, in order:
+#   3 x RETRY_LOCK = 45 min — backup, forget and check may EACH wait out a conflicting lock,
+#     and a budget below that would silently defeat the retry window that exists to survive a
+#     stale lock;
+#   + the real work — the heaviest leg measured (2026-08-28: collapsing 424 snapshots and
+#     18.7 GiB in one forget --prune) took about a minute, so the remaining 45 min is ~45x
+#     headroom over the worst run actually observed.
+# 90 min also keeps the whole run bounded at 2 x 90 = 3 h, HALF the 6 h cron interval, so a
+# wedged endpoint can never leave a run still going when the next tick fires.
+# Asserted against RETRY_LOCK and entrypoint.sh's cron default by BackupSidecarScriptTests.
+LEG_TIMEOUT_SECONDS="${BACKUP_LEG_TIMEOUT_SECONDS:-5400}"
+# Epoch by which the leg in flight must be done. run_leg sets it per leg; push() runs in a
+# subshell of run_leg and so inherits it. 0 = no leg in flight.
+LEG_DEADLINE=0
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 
 # The repo the leg in flight is working on, for the SIGTERM trap below. push() exports the
 # S3 credentials PER LEG, so "which repo would we have to unlock" only exists at runtime —
 # the script has no other notion of a current repository.
 CURRENT_REPO=""
+
+# The file run_leg is capturing the leg in flight into, for the same trap. Empty at top level
+# between legs, and deliberately blanked inside push() — see on_term.
+CURRENT_LEG_LOG=""
 
 STATE_DIR="${STATE_DIR:-/state}"
 ALERT_REPEAT_HOURS="${ALERT_REPEAT_HOURS:-24}"
@@ -86,6 +112,14 @@ log() { echo "[backup $(date -u +%FT%TZ)] $*"; }
 # as stale, so the sweep is immediate and cannot touch anyone else's lock.
 on_term() {
 	trap '' TERM INT
+	# Replay the leg's captured output FIRST. run_leg only `cat`s the log after its subshell
+	# returns, and on shutdown this handler runs instead of that `cat` and exits — so the leg's
+	# own "SIGTERM during a leg on <repo>" line, written inside the subshell, never reached
+	# `docker logs` and a shutdown could not be diagnosed at all (the unlock did happen; it was
+	# just invisible). Same replay now covers a leg killed by its time budget.
+	# CURRENT_LEG_LOG is empty in push()'s re-armed copy of this handler, where stdout ALREADY
+	# is that file and echoing it back would append the file to itself.
+	[ -n "$CURRENT_LEG_LOG" ] && [ -f "$CURRENT_LEG_LOG" ] && cat "$CURRENT_LEG_LOG" || true
 	if [ -n "$CURRENT_REPO" ]; then
 		log "SIGTERM during a leg on $CURRENT_REPO — releasing our repository lock"
 		restic -r "$CURRENT_REPO" unlock >/dev/null 2>&1 			|| log "WARNING: unlock on shutdown failed — a stale lock may survive until it ages out (30 min)"
@@ -115,14 +149,31 @@ log "source snapshot: $newest"
 # sessions/**, config/** (+ $DATA_DIR/keys, the DataProtection key ring).
 EXCLUDE_LOGS="--exclude $newest/logs"
 
+# Seconds left of the current leg's budget. Floored at 1, never 0: `timeout 0` means NO limit
+# in both busybox and coreutils, so an exhausted budget must not round down into "run forever".
+# A 1 s timeout is the intended behaviour there — the leg is over, fail it now.
+leg_remaining() {
+	_left=$(( LEG_DEADLINE - $(date +%s) ))
+	[ "$_left" -gt 0 ] || _left=1
+	echo "$_left"
+}
+
 # push REPO TAG EXTRA_ARGS ACCESS_KEY SECRET_KEY
+# Every restic call below is wrapped in `timeout "$(leg_remaining)"`, not a fixed per-call
+# limit: the budget belongs to the LEG, so backup + unlock + forget + check together cannot
+# outlast it however the time is distributed between them. `timeout` sends SIGTERM, which is
+# exactly what restic needs to drop its repository lock on the way out — the trap above and
+# this ceiling clean up after the same failure, they do not compete. A tripped timeout leaves
+# a non-zero status, so the subshell's `set -e` aborts the leg and it counts as FAILED
+# (and alerts) like any other broken leg.
 push() {
 	repo="$1"; tag="$2"; extra="$3"
 	export AWS_ACCESS_KEY_ID="$4"
 	export AWS_SECRET_ACCESS_KEY="$5"
 	CURRENT_REPO="$repo"
+	CURRENT_LEG_LOG=""      # our stdout IS the leg log here; on_term must not append it to itself
 	trap on_term TERM INT   # re-armed: this runs in run_leg's subshell, where ash reset it
-	restic -r "$repo" snapshots >/dev/null 2>&1 || { log "init $tag repo"; restic -r "$repo" init; }
+	timeout "$(leg_remaining)" restic -r "$repo" snapshots >/dev/null 2>&1 || { log "init $tag repo"; timeout "$(leg_remaining)" restic -r "$repo" init; }
 	log "backup $tag -> $repo"
 	# --group-by host,tags on BOTH backup and forget. The source path is
 	# /data/backups/<timestamp>-auto and so has a different name every run, so restic's
@@ -132,13 +183,13 @@ push() {
 	# 2026-08-28. Grouping by host+tags is what the tag actually means: one timeline per leg.
 	# EXPECT THE FIRST forget --prune AFTER THIS CHANGE TO DELETE A LOT.
 	# shellcheck disable=SC2086 — $extra is an intentional word-split of restic flags
-	restic -r "$repo" backup "$newest" "$DATA_DIR/keys" --tag "$tag" --host petbox 		--group-by host,tags --retry-lock "$RETRY_LOCK" $extra
+	timeout "$(leg_remaining)" restic -r "$repo" backup "$newest" "$DATA_DIR/keys" --tag "$tag" --host petbox 		--group-by host,tags --retry-lock "$RETRY_LOCK" $extra
 	# Stale-lock sweep immediately before the exclusive phase — as late as possible, so a
 	# lock that went stale while the backup above was running is caught too. Not fatal on
 	# its own: --retry-lock may still get the exclusive operations through.
-	restic -r "$repo" unlock || log "WARNING: stale-lock sweep failed on $tag"
-	restic -r "$repo" forget --tag "$tag" --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" 		--group-by host,tags --prune --retry-lock "$RETRY_LOCK"
-	restic -r "$repo" check --retry-lock "$RETRY_LOCK"
+	timeout "$(leg_remaining)" restic -r "$repo" unlock || log "WARNING: stale-lock sweep failed on $tag"
+	timeout "$(leg_remaining)" restic -r "$repo" forget --tag "$tag" --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" 		--group-by host,tags --prune --retry-lock "$RETRY_LOCK"
+	timeout "$(leg_remaining)" restic -r "$repo" check --retry-lock "$RETRY_LOCK"
 	CURRENT_REPO=""
 	log "$tag ok"
 }
@@ -154,11 +205,19 @@ push() {
 # still show it. Returns push's exit status.
 run_leg() {
 	_name="$1"; _log="$2"; shift 2
+	CURRENT_LEG_LOG="$_log"
+	LEG_DEADLINE=$(( $(date +%s) + LEG_TIMEOUT_SECONDS ))
 	(set -e; push "$@") >"$_log" 2>&1
 	_status=$?
+	CURRENT_LEG_LOG=""
 	cat "$_log"
 	if [ "$_status" -eq 0 ]; then
 		log "$_name ok"
+	elif [ "$(date +%s)" -ge "$LEG_DEADLINE" ]; then
+		# Decided from the clock, not from timeout's exit status: busybox and coreutils do not
+		# agree on what that status is, and this line is diagnosis, not control flow — the leg
+		# has already failed either way.
+		log "$_name FAILED: hit the ${LEG_TIMEOUT_SECONDS}s leg time budget — restic was sent SIGTERM, which releases its repository lock"
 	else
 		log "$_name FAILED"
 	fi

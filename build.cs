@@ -742,7 +742,7 @@ Task("CleanupCode")
 		});
 		if (exit != 0)
 			throw new CakeException(
-				$"jb cleanupcode exited {exit} (a concurrent `dotnet build` in this checkout is the usual cause — nothing else may build here while this runs).");
+				$"jb cleanupcode exited {exit} — the tool failed to run, which says nothing about this code. MSBuild's worker-node pool is shared by every process on this MACHINE, so a build (or a killed agent) in a DIFFERENT worktree can take this run's nodes down with it; MSB4166 \"Child node ... exited prematurely\" above is exactly that. Wait for the machine to go quiet and re-run.");
 
 		Information("cleanupcode finished — review `git diff` before committing any resulting changes.");
 	});

@@ -20,6 +20,11 @@
 #    scheduling — or unbounded — would mean an S3 hiccup at deploy time leaves the sidecar
 #    with no cron schedule at all for as long as it lasts. Diagnostics must never be able
 #    to delay the thing they are diagnosing.
+#    A failed probe also PAGES (work/backup-leg-timeout-and-probe-alert). It used to print a
+#    WARNING into a log nobody tails, while the Telegram alert lived only in backup.sh — so
+#    credentials broken by a deploy stayed silent for up to 6 h, until the first cron tick
+#    failed. Owner decision: alert on ANY probe failure, not only when both repos are
+#    unreachable — one dead backend is already one lost offsite copy.
 #
 # 2) BE A PID 1 THAT FORWARDS SIGTERM.
 #    Measured on restic/restic:0.18.1: busybox crond as PID 1 IGNORES SIGTERM — `docker
@@ -33,6 +38,15 @@
 set -eu
 
 CRON="${BACKUP_CRON:-17 */6 * * *}"
+
+# Alerting knobs — the SAME ones backup.sh uses, on purpose. The probe alert shares
+# backup.sh's /state/alert-status window rather than opening a second channel with its own
+# state: a crash loop under `restart: unless-stopped`, or a run of deploys, would otherwise
+# page once per container start.
+STATE_DIR="${STATE_DIR:-/state}"
+ALERT_REPEAT_HOURS="${ALERT_REPEAT_HOURS:-24}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 
 # How long the shutdown relay waits for a running backup to unwind. Must stay comfortably
 # BELOW petbox-backup's stop_grace_period in deploy/compose.yaml — docker must never be the
@@ -67,6 +81,47 @@ term_handler() {
 }
 trap term_handler TERM INT
 
+# Labels of the repos whose probe failed, accumulated across both probes so a start-up that
+# cannot reach either one still pages exactly once, naming both.
+PROBE_FAILED=""
+
+# alert_probe_failure LABELS — page for a failed reachability probe.
+#
+# Two rules this must not break, both inherited from backup.sh's alert block:
+#   * anti-spam: reuse /state/alert-status + ALERT_REPEAT_HOURS. If the state already says
+#     `fail` and the window has not elapsed, stay quiet — this is what keeps a crash loop or a
+#     burst of deploys from paging once per container start.
+#   * recovery: on SUCCESS this function is not called and the state file is NOT touched.
+#     Writing `ok` here would consume backup.sh's one-shot "recovered" message and, worse,
+#     re-arm the alert for a repo that is still failing. Only failure ever writes.
+# Writing `fail` on a failed probe is the point: the next scheduled run that succeeds then
+# sends the usual "recovered", so a probe alert always has a matching all-clear.
+alert_probe_failure() {
+	[ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] || return 0
+	_state_file="$STATE_DIR/alert-status"
+	_prev_status="unknown"
+	_prev_epoch=0
+	if [ -f "$_state_file" ]; then
+		read -r _prev_status _prev_epoch < "$_state_file" 2>/dev/null || true
+	fi
+	case "$_prev_epoch" in ''|*[!0-9]*) _prev_epoch=0 ;; esac
+	_now="$(date +%s)"
+	if [ "$_prev_status" = "fail" ] && [ $(( _now - _prev_epoch )) -lt $(( ALERT_REPEAT_HOURS * 3600 )) ]; then
+		echo "[entrypoint] $1 probe failure NOT re-alerted: already failing and inside the ${ALERT_REPEAT_HOURS}h window"
+		return 0
+	fi
+	curl -fsS -m 15 --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+		--data-urlencode "text=🔴 petbox backup: repo NOT readable at start-up on $(hostname 2>/dev/null || echo unknown)
+unreachable: $1
+bad credentials, wrong RESTIC_PASSWORD, bad endpoint, S3 down, or not initialised yet.
+Scheduled runs will retry: $CRON" \
+		"https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" >/dev/null 2>&1 \
+		|| echo "[entrypoint] WARNING: telegram alert failed to send"
+	mkdir -p "$STATE_DIR" 2>/dev/null || true
+	printf 'fail %s\n' "$_now" > "$_state_file" 2>/dev/null \
+		|| echo "[entrypoint] WARNING: could not write $_state_file — alert state not persisted"
+}
+
 # check_repo LABEL REPO ACCESS_KEY SECRET_KEY — read-only reachability probe, no lock, no writes.
 check_repo() {
 	_label="$1"; _repo="$2"
@@ -76,6 +131,7 @@ check_repo() {
 	if timeout "$PROBE_TIMEOUT_SECONDS" restic -r "$_repo" cat config >/dev/null 2>&1; then
 		echo "[entrypoint] $_label repo reachable"
 	else
+		PROBE_FAILED="${PROBE_FAILED}${PROBE_FAILED:+, }$_label"
 		echo "[entrypoint] WARNING: $_label repo NOT readable within ${PROBE_TIMEOUT_SECONDS}s — bad credentials, bad endpoint, wrong RESTIC_PASSWORD, unreachable S3, or not initialised yet (backup.sh initialises on its first run). Scheduled runs will retry: $CRON"
 	fi
 }
@@ -93,6 +149,9 @@ crond_pid=$!
 echo "[entrypoint] checking offsite repo reachability (read-only, nothing is written)"
 check_repo compact "s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY"
 check_repo full "s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" "$FVDS_ACCESS_KEY_ID" "$FVDS_SECRET_ACCESS_KEY"
+# After BOTH probes, so two dead repos are one alert naming both rather than two messages of
+# which the anti-spam window would swallow the second (and with it the second repo's name).
+[ -z "$PROBE_FAILED" ] || alert_probe_failure "$PROBE_FAILED"
 
 # `wait` returns as soon as a trapped signal arrives, which is what lets term_handler run.
 set +e

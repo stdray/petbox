@@ -136,6 +136,11 @@ public sealed partial class SearchReindexService
 
 	// Tasks: one file per project, all boards inside; the vector cursor of a board is the BARE board
 	// name (TasksVectorizationJob) — no prefix, so the enumerated-names rule matters even more here.
+	// No ActiveTo filter on the board enumeration: a board with every node soft-deleted still owes
+	// its dead-letter/cursor reset — same shape as TasksVectorizationJob's own enumeration (fixed in
+	// 87b110f0) and ResetMemoryAsync's store enumeration above. A board with NO rows at all (physical
+	// delete via DeleteBoardAsync) correctly stays out — enumeration reads existing rows, and a gone
+	// board owns none.
 	// ActiveDocs counts every live, identity-bearing node (TasksSearchDocs.IsIndexable) — since
 	// search-hides-terminal-nodes that includes terminal nodes too, which is what the index carries.
 	// The lexical marker is ONE row for the whole file (TasksCursors.Lexical) — nodes and comments
@@ -143,8 +148,7 @@ public sealed partial class SearchReindexService
 	async Task<ReindexTierResult> ResetTasksAsync(string projectKey, CancellationToken ct)
 	{
 		using var db = _tasks.NewEnsuredConnection(projectKey);
-		var boards = await db.GetTable<TaskNode>().Where(n => n.ActiveTo == null)
-			.Select(n => n.Board).Distinct().ToListAsync(ct);
+		var boards = await db.GetTable<TaskNode>().Select(n => n.Board).Distinct().ToListAsync(ct);
 		var (dead, cursors) = await SearchIndexReset.ResetAsync(db, boards, ct);
 		var (_, lexicalReset) = await SearchIndexReset.ResetAsync(db, [TasksCursors.Lexical], ct);
 		var open = await db.GetTable<TaskNode>().Where(n => n.ActiveTo == null).ToListAsync(ct);
