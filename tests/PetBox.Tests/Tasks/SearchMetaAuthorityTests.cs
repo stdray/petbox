@@ -162,6 +162,41 @@ public sealed class SearchMetaAuthorityTests : IDisposable
 		Aliases("b", "alpha").Should().BeEquivalentTo(["alpha", alphaId]);
 	}
 
+	[Fact]
+	public async Task Backfill_corrects_a_stale_statuskind_stamp_once_the_projection_version_is_bumped()
+	{
+		var svc = Service();
+		await svc.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await svc.UpsertAsync(Proj, "b", [Node("alpha", "alpha", "body")]);
+		Meta("b")[0].StatusKind.Should().Be("open");
+
+		// Simulate a project file whose search_meta row was stamped by an OLDER classification —
+		// production shape (search-restores-observation-lifecycle): a board kind missing from
+		// MethodologyPresets.AllKinds made an open-ish status classify as terminal through the wrong
+		// kind's rules. The facet is WRONG, and the meta cursor is stamped at version 1 — the
+		// pre-bump TasksSearchDocs.MetaProjectionVersion under which that stale stamp was written.
+		// search_reindex never rewinds this cursor (it only rewinds the lexical/vector markers), so
+		// ONLY a MetaProjectionVersion strictly above the stamped value makes EnsureMetaBackfillAsync
+		// re-fire and re-project every row from the CURRENT (correct) authority.
+		using (var conn = _factory.NewEnsuredConnection(Proj))
+		{
+			conn.GetTable<MetaRow>().Where(r => r.Scope == Proj && r.Type == "b" && r.Id == "alpha")
+				.Set(r => r.StatusKind, "terminalok").Update();
+			conn.InsertOrReplace(new CursorRow { IndexName = TasksCursors.Meta, Version = 1 });
+		}
+		Meta("b")[0].StatusKind.Should().Be("terminalok"); // the stale stamp is in place
+
+		// TasksSearchDocs.MetaProjectionVersion is 2, strictly above the stamped 1, so THIS SAME
+		// search re-fires EnsureMetaBackfillAsync before applying the filter, correcting the row from
+		// the live authority — a targeted statusKind:["open"] read (which trusts the search_meta
+		// stamp, unlike the default listing's live classification) now finds the node.
+		var result = await svc.SearchNodesAsync(Proj,
+			Query("alpha", "b") with { Filter = new TaskNodeFilter("b", StatusKind: ["open"]) });
+
+		result.Hits.Should().ContainSingle(h => h.Node.Key == "alpha");
+		Meta("b")[0].StatusKind.Should().Be("open");
+	}
+
 	[Table("search_meta")]
 	sealed class MetaRow
 	{

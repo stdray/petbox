@@ -43,8 +43,14 @@ public static class TasksSearchDocs
 	// LexicalProjectionVersion, gating EnsureMetaBackfillAsync's rebuild of search_meta. Bump this
 	// whenever ToMetaDoc's projected facets or alias set change shape, so every project file self-heals
 	// its search_meta on the next search — same version-gated, no-migration mechanism the lexical floor
-	// uses. Starts at 1: the birth of the reference layer, populated for the first time.
-	public const long MetaProjectionVersion = 1;
+	// uses. Starts at 1: the birth of the reference layer, populated for the first time. Bumped to 2 by
+	// the BoardKind.Observation fix to MethodologyPresets.AllKinds: nodes stamped BEFORE that fix carry
+	// a StatusKind classified through the wrong kind (observations resolved via `wiki`, whose
+	// `promoted` is terminal), so a targeted statusKind filter misses them even though the default
+	// listing (which classifies live, not from the stamp) already self-corrected. search_reindex does
+	// NOT touch this — it only rewinds the lexical/vector markers — so only this version bump forces
+	// every project's stale meta stamps to re-project on the next search.
+	public const long MetaProjectionVersion = 2;
 
 	// Indexed iff the node has a stable identity — terminality no longer forks membership
 	// (search-hides-terminal-nodes): a terminal node's VISIBILITY in a default query-mode result
