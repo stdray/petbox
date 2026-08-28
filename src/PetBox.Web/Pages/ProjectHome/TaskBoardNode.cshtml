@@ -97,7 +97,15 @@
 					   string, which turns the special-casing off and lets the real "True"/"False" text
 					   reach the wire (the default ModelBinder for `bool` accepts either case). *@
 					<input type="hidden" name="pending" value="@((!node.DecisionPending).ToString())" />
-					<button type="submit" class="btn btn-ghost btn-xs" data-testid="node-decision-pending-toggle" title="@(node.DecisionPending ? "Clear — no longer waiting on a decision" : "Mark as waiting on the owner's decision")">
+					@* live-verification finding (owner, 2026-08-28): this button lacked any visual
+					   affordance — plain unhovered `btn-ghost` renders as bare text, indistinguishable
+					   from a caption, and the effect is much more noticeable on a multi-word label
+					   ("mark waiting on me") than on a short familiar one ("edit"). Reusing the row's
+					   ALREADY-established look for a SAME-CATEGORY control — a one-click POST-form
+					   submit button (the status-change "→" button just below is the other one) — not
+					   inventing a third style: drop `-ghost`, matching that button's visible bordered box
+					   in every theme (daisyUI's plain `.btn` is themed, not a new hardcoded colour). *@
+					<button type="submit" class="btn btn-xs" data-testid="node-decision-pending-toggle" title="@(node.DecisionPending ? "Clear — no longer waiting on a decision" : "Mark as waiting on the owner's decision")">
 						@(node.DecisionPending ? "clear decision flag" : "mark waiting on me")
 					</button>
 				</form>
