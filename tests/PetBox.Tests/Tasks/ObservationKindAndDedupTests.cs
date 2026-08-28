@@ -161,4 +161,94 @@ public sealed class ObservationKindAndDedupTests : IDisposable
 		signal.Should().NotBeNull();
 		signal!.RecurredAfterFixAt.Should().NotBeNull();
 	}
+
+	// work observation-recurrence-session-provenance / spec
+	// observation-recurrence-carries-session-provenance: a dedup HIT never re-materializes a
+	// TaskNode — it lands on the EXISTING node by NodeId — so this reuses the union mechanism
+	// (plan_node_sessions / TaskNodeOriginSessions) through the nodeId-list overload of
+	// TaskUpsertAssociations.SetOriginSessionsAsync, not the `desired`-shaped one the normal
+	// upsert path uses.
+
+	List<TaskNodeOriginSession> OriginRows(string nodeId) =>
+		_factory.NewEnsuredConnection(Proj).TaskNodeOriginSessions.Where(o => o.NodeId == nodeId).ToList();
+
+	async Task<TaskNodeView> Read(string key) =>
+		(await _tasks.GetAsync(Proj, SystemBoards.Observations)).Nodes.Single(n => n.Key == key);
+
+	[Fact]
+	public async Task DedupHit_WithSessionId_UnionsItOntoTheExistingNodesOriginSessions()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load." }],
+			sessionId: "sess-birth");
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+		var versionAfterCreate = (await Read("obs-1")).Version;
+
+		var dedup = new ObservationDedupService(_tasks, llm: null);
+		// A DIFFERENT session re-hits the same finding — recurrenceCount:5 must be able to say
+		// "one agent five times" from "five different agents" (the intake card's own framing).
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = "flaky retry in payment webhook", Body = "saw a 3rd retry loop on the payment webhook under load" }],
+			sessionId: "sess-recur");
+
+		outcome.Hits.Should().ContainSingle().Which.RecurrenceCount.Should().Be(2);
+		var after = await Read("obs-1");
+		after.OriginSessions.Should().BeEquivalentTo(["sess-birth", "sess-recur"]);
+		after.Version.Should().Be(versionAfterCreate, "provenance is an association, not a payload field — a recurrence hit must not mint a node revision");
+	}
+
+	[Fact]
+	public async Task DedupHit_WithoutSessionId_DoesNotFail_AndWritesNoProvenanceRow()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load." }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		var dedup = new ObservationDedupService(_tasks, llm: null);
+		// The structural limit from the spec/idea: a call without a sessionId is LEGAL, not an
+		// error — the server cannot require what it cannot infer.
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = "flaky retry in payment webhook", Body = "saw a 3rd retry loop on the payment webhook under load" }]);
+
+		outcome.Hits.Should().ContainSingle().Which.RecurrenceCount.Should().Be(2, "the counter still bumps — only the provenance write is skipped");
+		(await Read("obs-1")).OriginSessions.Should().BeEmpty();
+		OriginRows(nodeId).Should().BeEmpty("no sessionId was supplied — nothing invented, nothing written");
+	}
+
+	[Fact]
+	public async Task DedupHit_RepeatFromTheSameSession_IsAUnion_NoDuplicateRow()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load." }],
+			sessionId: "sess-birth");
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		var dedup = new ObservationDedupService(_tasks, llm: null);
+		// The SAME session sights the SAME finding twice more — recurrenceCount must still climb
+		// (RecordRecurrenceAsync is untouched), but the provenance union must not grow past one row
+		// for (nodeId, "sess-birth") — same (NodeId, SessionId) PK guarantee the general upsert
+		// path already relies on.
+		await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = "flaky retry in payment webhook", Body = "saw a 3rd retry loop on the payment webhook under load" }],
+			sessionId: "sess-birth");
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-3", Version = 0, Title = "Flaky retry in payment webhook", Body = "Saw a 3rd retry loop on the payment webhook under load." }],
+			sessionId: "sess-birth");
+
+		outcome.Hits.Should().ContainSingle().Which.RecurrenceCount.Should().Be(3, "recurrence still counts every sighting");
+		(await Read("obs-1")).OriginSessions.Should().BeEquivalentTo(["sess-birth"]);
+		OriginRows(nodeId).Should().ContainSingle("(NodeId, SessionId) is the primary key — the same session recurring cannot become a second row");
+	}
 }

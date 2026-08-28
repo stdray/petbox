@@ -39,12 +39,16 @@ public sealed record ObservationDedupOutcome(TaskNodeInput[] RemainingNodes, IRe
 // / RecordObservationRecurrenceAsync).
 public interface IObservationDedupService
 {
-	Task<ObservationDedupOutcome> PreProcessCreatesAsync(string projectKey, string board, TaskNodeInput[] nodes, CancellationToken ct = default);
+	Task<ObservationDedupOutcome> PreProcessCreatesAsync(string projectKey, string board, TaskNodeInput[] nodes, string? sessionId = null, CancellationToken ct = default);
 }
 
 public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm = null) : IObservationDedupService
 {
-	public async Task<ObservationDedupOutcome> PreProcessCreatesAsync(string projectKey, string board, TaskNodeInput[] nodes, CancellationToken ct = default)
+	// `sessionId` (work observation-recurrence-session-provenance): the caller's own session,
+	// forwarded onto a HIT (RecordObservationRecurrenceAsync unions it into the existing
+	// node's originSessions) — a genuinely NEW node still gets it the normal way, through
+	// tasks.UpsertAsync's own sessionId parameter at the call site, not through here.
+	public async Task<ObservationDedupOutcome> PreProcessCreatesAsync(string projectKey, string board, TaskNodeInput[] nodes, string? sessionId = null, CancellationToken ct = default)
 	{
 		var candidates = await tasks.ListObservationDedupCandidatesAsync(projectKey, board, ct);
 		if (candidates.Count == 0)
@@ -64,7 +68,7 @@ public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm
 			}
 			var existing = candidates.First(c => c.Key == dupKey);
 			var currentlyFixed = string.Equals(existing.Status, "fixed", StringComparison.OrdinalIgnoreCase);
-			var count = await tasks.RecordObservationRecurrenceAsync(projectKey, existing.NodeId, currentlyFixed, ct);
+			var count = await tasks.RecordObservationRecurrenceAsync(projectKey, existing.NodeId, currentlyFixed, sessionId, ct);
 			hits.Add(new ObservationDedupHit(n.Key ?? "", existing.Key, existing.NodeId, count));
 		}
 		return new ObservationDedupOutcome(remaining.ToArray(), hits);
