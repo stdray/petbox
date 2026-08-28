@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PetBox.Web.Rendering;
 
 namespace PetBox.Tests.Web;
@@ -513,4 +514,241 @@ public sealed class MarkdownDesignLayerTests
 		html.Should().Contain("class=\"md-section\"");
 		html.Should().NotContain("fixed").And.NotContain("inset-0");
 	}
+}
+
+// The diagram allowlist (spec `body-carries-diagram`): a body may carry a sanitized inline-SVG
+// subset. There is NO CSP in this app, so this allowlist is the ENTIRE defence — every forbidden
+// construct below gets its own test, plus a CONTROL test proving a legitimate diagram is not
+// collateral damage (a green "it was stripped" suite that also strips everything real would be
+// worthless). Raw HTML in a body is already kept-then-sanitized (MarkdownRendererTests above), so
+// these tests feed the SVG straight as raw HTML in markdown, exactly as an author would.
+public sealed class MarkdownRendererSvgDiagramTests
+{
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	static string Html(string md) => R.RenderToHtml(md);
+
+	// A diagram shaped like the reference case that motivated the SVG-over-mermaid decision: a
+	// dashed line ("addresses a different id space") crossing a struck-through bridge, arrows via
+	// <marker>/<defs>, a reused glyph via <use>, and the disciplined figure contract — a caption
+	// stating the claim, and the drawing carrying the same claim as its own text alternative
+	// (role="img" + <title>, the standard SVG accessible-name pattern).
+	const string LegitimateDiagram = """
+		<figure>
+		<svg viewBox="0 0 200 100" role="img">
+		<title>The bridge is struck through; the dashed line addresses a different id space.</title>
+		<defs>
+		<marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+		<path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+		</marker>
+		<g id="no-glyph">
+		<circle cx="0" cy="0" r="8" fill="none" stroke="currentColor" />
+		<line x1="-6" y1="-6" x2="6" y2="6" stroke="currentColor" />
+		</g>
+		</defs>
+		<line x1="10" y1="50" x2="90" y2="50" stroke="currentColor" stroke-width="2" />
+		<use href="#no-glyph" x="20" y="20" />
+		<use xlink:href="#no-glyph" x="60" y="20" />
+		<path d="M100,50 L190,50" stroke="currentColor" stroke-dasharray="4 3" marker-end="url(#arrow)" />
+		<text x="10" y="90" font-size="10" fill="currentColor">addresses a different id space</text>
+		</svg>
+		<figcaption>The bridge is struck through; the dashed line addresses a different id space.</figcaption>
+		</figure>
+		""";
+
+	// --- control: a legitimate diagram is not collateral damage ----------------------------------
+
+	[Fact]
+	public void LegitimateDiagram_SurvivesIntact()
+	{
+		var html = Html(LegitimateDiagram);
+
+		html.Should().Contain("<svg").And.Contain("role=\"img\"");
+		html.Should().Contain("<title>The bridge is struck through");
+		html.Should().Contain("<marker").And.Contain("viewBox=\"0 0 10 10\"");
+		html.Should().Contain("<path").And.Contain("fill=\"currentColor\"");
+		html.Should().Contain("stroke-dasharray=\"4 3\"");
+		html.Should().Contain("<use");
+		html.Should().Contain("<text").And.Contain("addresses a different id space");
+		html.Should().Contain("<figcaption>The bridge is struck through");
+		// marker-end and the two <use> refs must still resolve to SOME id after namespacing.
+		var arrowId = Regex.Match(html, "<marker id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
+		arrowId.Should().NotBeEmpty();
+		html.Should().Contain($"marker-end=\"url(#{arrowId})\"");
+		var glyphId = Regex.Match(html, "<g id=\"(no-glyph-[0-9a-f]{8})\"").Groups[1].Value;
+		glyphId.Should().NotBeEmpty();
+		html.Should().Contain($"href=\"#{glyphId}\"").And.Contain($"xlink:href=\"#{glyphId}\"");
+	}
+
+	// --- forbidden: <script> ----------------------------------------------------------------------
+
+	[Fact]
+	public void Script_InsideSvg_IsRemoved()
+	{
+		var html = Html("<svg><script>alert(document.cookie)</script><circle r=\"5\" /></svg>");
+		html.Should().NotContain("<script");
+		html.Should().NotContain("alert(document.cookie)");
+		html.Should().Contain("<circle");
+	}
+
+	// --- forbidden: foreignObject (an escape hatch for arbitrary HTML) ----------------------------
+
+	[Fact]
+	public void ForeignObject_AndItsContents_AreRemoved()
+	{
+		var html = Html("<svg><foreignObject><script>alert(1)</script><b>hi</b></foreignObject><circle r=\"5\" /></svg>");
+		html.ToLowerInvariant().Should().NotContain("foreignobject");
+		html.Should().NotContain("<script");
+		// KeepChildNodes=false: the smuggled content inside the disallowed wrapper is gone too, not
+		// just unwrapped — a body-level <b>hi</b> would otherwise survive as plain bold text.
+		html.Should().NotContain("hi");
+		html.Should().Contain("<circle");
+	}
+
+	// --- forbidden: <image> (a data:/external image inside the diagram) ---------------------------
+
+	[Fact]
+	public void Image_InsideSvg_IsRemoved()
+	{
+		var html = Html("<svg><image href=\"https://evil.example/track.png\" /><circle r=\"5\" /></svg>");
+		html.Should().NotContain("<image");
+		html.Should().NotContain("evil.example");
+		html.Should().Contain("<circle");
+	}
+
+	// --- forbidden: on* handlers --------------------------------------------------------------------
+
+	[Fact]
+	public void OnClickHandler_OnAShape_IsStripped_RestOfElementSurvives()
+	{
+		var html = Html("<svg><rect onclick=\"alert(1)\" onmouseover=\"alert(2)\" width=\"10\" height=\"10\" fill=\"currentColor\" /></svg>");
+		html.Should().NotContain("onclick");
+		html.Should().NotContain("onmouseover");
+		html.Should().Contain("width=\"10\"").And.Contain("fill=\"currentColor\"");
+	}
+
+	// --- forbidden: javascript: scheme on xlink:href ------------------------------------------------
+
+	[Fact]
+	public void JavascriptScheme_OnXlinkHref_IsStripped()
+	{
+		var html = Html("<svg><use xlink:href=\"javascript:alert(1)\" /></svg>");
+		html.Should().NotContain("javascript:");
+	}
+
+	// --- forbidden: external href/xlink:href (only an internal #fragment is allowed) ---------------
+
+	[Fact]
+	public void ExternalHttpsHref_OnUse_IsStripped_EvenThoughHttpsIsAnAllowedScheme()
+	{
+		// https is allowed for markdown <a> links — the point of this test is that the SAME scheme
+		// is still rejected here, because <use> is in the SVG tag set and must stay in-document.
+		var html = Html("<svg><defs><g id=\"shape\"><circle r=\"5\" /></g></defs>"
+			+ "<use href=\"https://evil.example/x.svg#shape\" /></svg>");
+		html.Should().NotContain("evil.example");
+		html.Should().NotContain("href=\"https:");
+	}
+
+	[Fact]
+	public void ExternalHttpsXlinkHref_OnUse_IsStripped()
+	{
+		var html = Html("<svg><use xlink:href=\"https://evil.example/x.svg#shape\" /></svg>");
+		html.Should().NotContain("evil.example");
+		html.Should().NotContain("xlink:href=\"https:");
+	}
+
+	[Fact]
+	public void InternalFragmentHref_OnUse_Survives()
+	{
+		var html = Html("<svg><defs><g id=\"shape\"><circle r=\"5\" /></g></defs><use href=\"#shape\" /></svg>");
+		html.Should().Contain("<use");
+		html.Should().MatchRegex("href=\"#shape-[0-9a-f]{8}\"");
+	}
+
+	// --- forbidden: <style> inside SVG (not scoped to the SVG — a global stylesheet) ---------------
+
+	[Fact]
+	public void StyleTag_InsideSvg_AndItsContents_AreRemoved()
+	{
+		var html = Html("<svg><style>*{display:none}</style><circle r=\"5\" fill=\"currentColor\" /></svg>");
+		html.Should().NotContain("<style");
+		html.Should().NotContain("display:none");
+		html.Should().Contain("<circle");
+	}
+
+	// --- forbidden: external url() reference on fill/stroke/marker-* --------------------------------
+
+	[Fact]
+	public void ExternalUrlReference_OnMarkerEnd_IsStripped()
+	{
+		var html = Html("<svg><path d=\"M0,0 L10,10\" marker-end=\"url(https://evil.example/x.svg#arrow)\" /></svg>");
+		html.Should().NotContain("evil.example");
+		html.Should().NotContain("marker-end");
+	}
+
+	[Fact]
+	public void JavascriptUrlReference_OnFill_IsStripped()
+	{
+		var html = Html("<svg><rect width=\"1\" height=\"1\" fill=\"url(javascript:alert(1))\" /></svg>");
+		html.Should().NotContain("javascript:");
+		html.Should().NotContain("fill=\"url(");
+	}
+
+	[Fact]
+	public void PlainColorValue_OnFillAndStroke_Survives()
+	{
+		var html = Html("<svg><rect width=\"1\" height=\"1\" fill=\"currentColor\" stroke=\"#3b82f6\" /></svg>");
+		html.Should().Contain("fill=\"currentColor\"");
+		html.Should().Contain("stroke=\"#3b82f6\"");
+	}
+
+	// --- id-namespacing: two renders on the same page must never collide ---------------------------
+
+	[Fact]
+	public void TwoRendersOfTheSameDiagram_GetDifferentIds_SoTheyCannotCollideOnOnePage()
+	{
+		// Node bodies AND comment bodies share one renderer and commonly cohabit one board/thread
+		// page — two authors independently pasting the SAME diagram markdown must not have the
+		// second one's <marker>/<use> silently start resolving against the first one's <defs>.
+		const string md = "<svg><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\"><path d=\"M0,0Z\" /></marker></defs>"
+			+ "<path d=\"M0,0 L1,1\" marker-end=\"url(#arrow)\" /></svg>";
+		var html1 = Html(md);
+		var html2 = Html(md);
+
+		var id1 = Regex.Match(html1, "id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
+		var id2 = Regex.Match(html2, "id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
+		id1.Should().NotBeEmpty();
+		id2.Should().NotBeEmpty();
+		id1.Should().NotBe(id2, "the same source id rendered twice must not collide on one page");
+		html1.Should().Contain($"marker-end=\"url(#{id1})\"");
+		html2.Should().Contain($"marker-end=\"url(#{id2})\"");
+	}
+
+	// --- id-scoping: `id` only ever survives inside an SVG --------------------------------------
+
+	[Fact]
+	public void IdAttribute_OnANonSvgElement_IsStripped()
+	{
+		// `id` is now allowed at the sanitizer level (SVG needs it) but must stay scoped to SVG —
+		// otherwise any body could plant `id="whatever-the-app-relies-on"` on an ordinary element.
+		var html = Html("<div id=\"app-shell\">hi</div>");
+		html.Should().NotContain("id=\"app-shell\"");
+		html.Should().Contain("hi");
+	}
+
+	// --- the shared-renderer consequence: comments use the exact same call, so the exact same body
+	// renders the exact same diagram regardless of caller. _MdBody.cshtml is the ONE call site for
+	// both node bodies and comment bodies (Md.RenderToHtml(Model.Body, ...)) — there is no separate
+	// "comment rendering" code path to diverge. Ids differ ONLY by the per-render namespacing token
+	// above (by design), so they are normalized out before comparing structural identity. ------------
+
+	[Fact]
+	public void SameDiagramBody_RendersStructurallyIdentically_RegardlessOfCaller()
+	{
+		var html1 = Html(LegitimateDiagram);
+		var html2 = Html(LegitimateDiagram);
+		Normalize(html1).Should().Be(Normalize(html2));
+	}
+
+	static string Normalize(string html) => Regex.Replace(html, "-[0-9a-f]{8}(?=[\"')#])", "-ID");
 }
