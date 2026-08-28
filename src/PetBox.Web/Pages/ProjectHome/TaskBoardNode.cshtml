@@ -189,8 +189,10 @@
 
 			@* Exhaustive relation panel (node-relations-panel): every relation kind in both directions
 			   — children (part_of down), blocks/blocked by, implements/linked, idea/spec, issue/tasks,
-			   supersedes/superseded by — computed by the service into Detail.Relations. Only non-empty
-			   groups render, in a fixed reading order; each row shows the target's live status. *@
+			   supersedes/superseded by, PLUS the neutral trio relates_to/depends_on/mirrors (related
+			   by/relates to, depended on by/depends on, mirrored by/mirrors) — computed by the service
+			   into Detail.Relations. Only non-empty groups render, in a fixed reading order; each row
+			   shows the target's live status. *@
 			@foreach (var group in Model.Detail.Relations)
 			{
 				@if (group.Links.Count > 0)

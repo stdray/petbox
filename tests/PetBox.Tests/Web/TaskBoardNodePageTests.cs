@@ -144,6 +144,48 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		leaf!.Relations.Should().NotContain(r => r.Label == "children");
 	}
 
+	// node-get-relations-panel-drops-neutral-kinds: the neutral trio (relates_to/depends_on/
+	// mirrors — MethodologyRuntime.NeutralRelationKinds) used to be silently absent from the panel
+	// — a node with ONLY neutral edges came back as relations: []. They must render both ways,
+	// with the fixed reading labels, same as the process builtins.
+	[Fact]
+	public async Task GetNodeAsync_RelationsPanel_SurfacesNeutralKindsBothWays()
+	{
+		await Upsert("plan",
+			new NodePatch { Key = "a", Title = "A" },
+			new NodePatch { Key = "b", Title = "B" });
+		await Upsert("plan",
+			new NodePatch
+			{
+				Key = "c",
+				Title = "C",
+				Links = new Dictionary<string, IReadOnlyList<string>>
+				{
+					["relates_to"] = ["a"],
+					["depends_on"] = ["a"],
+					["mirrors"] = ["a"],
+				},
+			});
+
+		var c = await _tasks.GetNodeAsync(Proj, NodeId("plan", "c"));
+		c!.Relations.Single(r => r.Label == "relates to").Links.Select(l => l.Slug).Should().Equal("a");
+		c.Relations.Single(r => r.Label == "depends on").Links.Select(l => l.Slug).Should().Equal("a");
+		c.Relations.Single(r => r.Label == "mirrors").Links.Select(l => l.Slug).Should().Equal("a");
+
+		// The reverse direction, on the target: it is RELATED BY/DEPENDED ON BY/MIRRORED BY c.
+		var a = await _tasks.GetNodeAsync(Proj, NodeId("plan", "a"));
+		a!.Relations.Single(r => r.Label == "related by").Links.Select(l => l.Slug).Should().Equal("c");
+		a.Relations.Single(r => r.Label == "depended on by").Links.Select(l => l.Slug).Should().Equal("c");
+		a.Relations.Single(r => r.Label == "mirrored by").Links.Select(l => l.Slug).Should().Equal("c");
+
+		// A node with ONLY neutral edges must NOT come back as relations: [] — that was the bug.
+		c.Relations.Should().NotBeEmpty();
+
+		// b has no edges at all: still relations: [] (no false positives from the new groups).
+		var b = await _tasks.GetNodeAsync(Proj, NodeId("plan", "b"));
+		b!.Relations.Should().BeEmpty();
+	}
+
 	[Fact]
 	public async Task OnGet_RendersNode_WithFullBodyAndThread()
 	{

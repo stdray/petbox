@@ -485,4 +485,45 @@ public sealed class TasksMethodologyRefsTests : TasksMethodologySmokeBase, IClas
 		var rels = await Agent("relations_list", new { projectKey = ProjectKey, node = NodeId(spec, "x"), direction = "to" });
 		Text(rels).Should().Contain(ideaId);
 	}
+
+	// 42. node-get-relations-panel-drops-neutral-kinds: tasks_node_get's `relations` panel used to
+	// be a closed enumeration (part_of/blocks/supersedes + declared link kinds) that silently
+	// dropped the neutral trio — a node with ONLY a relates_to edge came back as relations: [],
+	// indistinguishable from an unconnected node. Assert the MCP surface (not just the service
+	// unit test in Web/TaskBoardNodePageTests.cs) carries the neutral edge through.
+	[Fact]
+	public async Task NodeGet_NeutralOnlyEdge_DoesNotComeBackAsEmptyRelations()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var a = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "peer", type = "chore", status = "Pending", title = "Peer", body = "x" })
+		});
+		var peerId = NodeId(a, "peer");
+		var b = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "cites", type = "chore", status = "Pending", title = "Cites", body = "x", links = new { relates_to = "peer" } })
+		});
+		IsErr(b).Should().BeFalse(Text(b));
+		var citesId = NodeId(b, "cites");
+
+		var got = await Agent("tasks_node_get", new { projectKey = ProjectKey, board = "work", node = citesId });
+		IsErr(got).Should().BeFalse(Text(got));
+		var relations = JsonDocument.Parse(Text(got)).RootElement
+			.GetProperty("nodes")[0].GetProperty("relations").EnumerateArray().ToList();
+		relations.Should().NotBeEmpty("a neutral-only edge must not be dropped from the panel");
+		var group = relations.Single(r => r.GetProperty("label").GetString() == "relates to");
+		group.GetProperty("links").EnumerateArray().Single().GetProperty("nodeId").GetString().Should().Be(peerId);
+
+		// And the reverse side reads "related by".
+		var peerGot = await Agent("tasks_node_get", new { projectKey = ProjectKey, board = "work", node = peerId });
+		var peerRelations = JsonDocument.Parse(Text(peerGot)).RootElement
+			.GetProperty("nodes")[0].GetProperty("relations").EnumerateArray().ToList();
+		var peerGroup = peerRelations.Single(r => r.GetProperty("label").GetString() == "related by");
+		peerGroup.GetProperty("links").EnumerateArray().Single().GetProperty("nodeId").GetString().Should().Be(citesId);
+	}
 }

@@ -809,8 +809,10 @@ public static class TasksTools
 		`originSessions` (every session that has since touched it — a union, not a log), plus `url`
 		when includeUrl. `relations` is the EXHAUSTIVE two-way
 		relation panel — one labelled group per non-empty kind×direction (children, blocks/blocked
-		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by), each target
-		carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated
+		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by, PLUS the
+		neutral trio relates_to|depends_on|mirrors — related by/relates to, depended on by/depends
+		on, mirrored by/mirrors), each target carrying its live status. An addressed read ignores
+		terminality: a Done/Cancelled/deprecated
 		node is returned like any other (no statusKind widening needed). Use this instead of re-fetching a
 		whole board when you need one or a few nodes' full bodies. Requires tasks:read.
 		""")]

@@ -1112,7 +1112,9 @@ public sealed partial class TasksService : ITasksService
 			.ToList();
 
 		// The EXHAUSTIVE relation panel (node-relations-panel): every relation kind in both
-		// directions, resolved against the SAME scoped `index` built above — not a project-wide one.
+		// directions — the process builtins, every declared link kind, AND the neutral trio
+		// (relates_to/depends_on/mirrors) — resolved against the SAME scoped `index` built above,
+		// not a project-wide one.
 		var relations = new List<NodeRelationGroup>();
 		foreach (var (kind, fromSide, label) in RelationPanelSpecs(runtime))
 		{
@@ -1137,18 +1139,44 @@ public sealed partial class TasksService : ITasksService
 	// supersedes) keep fixed reading labels; the declared/directed kinds are DATA now
 	// (methodology-link-kinds-declared) — each contributes an outgoing and an incoming row labelled
 	// from its Direction.Label (falling back to the slug), so a project-declared kind shows up in
-	// the panel without a code change.
+	// the panel without a code change. The three NEUTRAL kinds (relates_to/depends_on/mirrors,
+	// MethodologyRuntime.NeutralRelationKinds — free semantic edges, no FSM effects) are included
+	// too, after the declared kinds and before supersedes, with fixed reading labels — they are
+	// available on every project the same way the structural builtins are, so they get the same
+	// always-present treatment rather than a per-project Direction.Label. Deduped by (kind,
+	// fromSide) against the declared loop above: a methodology COULD declare a link kind whose slug
+	// collides with a neutral one (EffectiveLinkKinds is project data, not validated against this
+	// list), and that must not double the row.
+	// Fixed reading labels for the neutral trio, keyed by slug so the SET of kinds itself still
+	// comes from MethodologyRuntime.NeutralRelationKinds below — this is a label lookup, not a
+	// second source of truth for which kinds are neutral.
+	static readonly Dictionary<string, (string OutLabel, string InLabel)> NeutralPanelLabels = new(StringComparer.OrdinalIgnoreCase)
+	{
+		["relates_to"] = ("relates to", "related by"),
+		["depends_on"] = ("depends on", "depended on by"),
+		["mirrors"] = ("mirrors", "mirrored by"),
+	};
+
 	static IEnumerable<(string Kind, bool FromSide, string Label)> RelationPanelSpecs(MethodologyRuntime runtime)
 	{
 		yield return ("part_of", false, "children");
 		yield return ("blocks", false, "blocked by");
 		yield return ("blocks", true, "blocks");
+		var seen = new HashSet<(string Kind, bool FromSide)>();
 		foreach (var lk in runtime.EffectiveLinkKinds())
 		{
 			if (lk.Direction is not { } d) continue;
 			var label = d.Label is { Length: > 0 } ? d.Label : lk.Slug;
+			seen.Add((lk.Slug, true));
+			seen.Add((lk.Slug, false));
 			yield return (lk.Slug, true, $"{lk.Slug}: {label} →");
 			yield return (lk.Slug, false, $"{lk.Slug}: ← {label}");
+		}
+		foreach (var kind in MethodologyRuntime.NeutralRelationKinds)
+		{
+			var (outLabel, inLabel) = NeutralPanelLabels.TryGetValue(kind, out var l) ? l : (kind, kind);
+			if (seen.Add((kind, true))) yield return (kind, true, outLabel);
+			if (seen.Add((kind, false))) yield return (kind, false, inLabel);
 		}
 		yield return ("supersedes", true, "supersedes");
 		yield return ("supersedes", false, "superseded by");

@@ -65,8 +65,9 @@ public sealed record NodeRefResolution(string Board, string Key, string NodeId, 
 // the fully-enriched node view, its part_of ancestor chain ordered root→parent (for
 // breadcrumbs), and the EXHAUSTIVE relation panel (`Relations`) — every relation kind in
 // both directions (children, blocks/blocked-by, implements/linked, idea/spec, issue/tasks,
-// supersedes/superseded-by), one group per non-empty kind×direction. Powers the per-node
-// detail page, which addresses a node by id, not board.
+// supersedes/superseded-by, PLUS the neutral trio relates_to/depends_on/mirrors — related
+// by/relates to, depended on by/depends on, mirrored by/mirrors), one group per non-empty
+// kind×direction. Powers the per-node detail page, which addresses a node by id, not board.
 public sealed record NodeDetailView(
 	string Board, string Kind, TaskNodeView Node, IReadOnlyList<NodeCrumb> Ancestors,
 	IReadOnlyList<NodeRelationGroup> Relations);
