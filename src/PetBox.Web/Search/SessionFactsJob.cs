@@ -9,6 +9,9 @@ using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
+using PetBox.Tasks.Contract;
+using PetBox.Web.Mcp.Contract;
+using PetBox.Web.Tasks;
 
 namespace PetBox.Web.Search;
 
@@ -25,6 +28,16 @@ namespace PetBox.Web.Search;
 // Same enrichment-tick worker pattern as SessionDigestJob: per-session cursor (in the
 // session store's cursor table), quiet period, chat-down → no-op pass that backfills on
 // recovery (spec: write-never-blocks-on-enrich / durable-backfill).
+//
+// FORWARD ROUTING (work observation-extractor-forward-routing): the judge's verdict enum
+// carries a FOURTH class alongside add/update/skip/drop/delete — "observe", a defect-like
+// finding (something broken, contradicting docs, behaving unexpectedly, a process defect).
+// That verdict is a ROUTING decision, not a memory write: it never reaches `autocaptured`:
+// it goes through the SAME ObservationDedupService a manual tasks_upsert create does, so a
+// repeat sighting bumps recurrence instead of minting a second node (spec
+// observation-recurrence-is-ranked). No backfill of the pre-existing memory quarantine —
+// only facts distilled from here forward are routed; see the card for why that is a
+// deliberate non-goal, not an omission.
 public sealed class SessionFactsJob : IBackgroundIndexJob
 {
 	public const string Store = "autocaptured";
@@ -109,13 +122,19 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		Your response MUST START with the object's opening `{` as its very first character — no
 		preamble, no explanation, no <reasoning>/<thinking> block, no markdown fence. Stop the
 		instant the closing `}` is written; nothing follows it, not even a newline of commentary:
-		  {"action":"add|update|skip|drop|delete","key":"<existing key for update/delete>","description":"<merged>","body":"<merged>"}
-		Decide TWO things in this one answer:
-		1. Is it worth storing AT ALL? If the candidate is narration of work done, a
+		  {"action":"add|update|skip|drop|delete|observe","key":"<existing key for update/delete>","description":"<merged>","body":"<merged>"}
+		Decide THREE things in this one answer:
+		1. Is the candidate a DEFECT-LIKE finding — something broken, behaving unexpectedly,
+		   contradicting documentation, or a process defect? (NOT a decision, a preference, a
+		   fact about how the system is built, or reference info — those are never "observe".)
+		   → "observe". This is a ROUTING decision, not a memory write: it is never judged
+		   against EXISTING below, and "description"/"body" carry the finding itself (merged
+		   with the candidate's own text if you improve on it).
+		2. Otherwise, is it worth storing AT ALL? If the candidate is narration of work done, a
 		   progress/status report, session-specific bookkeeping, or anything derivable from
 		   code, git history, or the task/spec boards → "drop". When unsure whether it is
 		   durable knowledge → "drop".
-		2. If worth keeping, deduplicate against EXISTING:
+		3. If worth keeping, deduplicate against EXISTING:
 		   • an existing entry already covers the candidate's knowledge → "skip";
 		   • an entry in YOUR OWN store covers it but the candidate adds material new detail →
 		     "update" that entry (key + merged description/body);
@@ -144,6 +163,12 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	readonly TimeSpan _quietPeriod;
 	readonly TimeSpan _budget;
 	readonly AutocaptureDedupOptions _dedup;
+	// Forward-routing collaborators (work observation-extractor-forward-routing). Optional —
+	// same soft-degrade pattern as `_llm` above — so a caller that never exercises the
+	// "observe" verdict (most existing tests) does not need to wire task-board plumbing.
+	// Production always supplies both (both are scoped DI registrations, Program.cs).
+	readonly ITasksService? _tasks;
+	readonly IObservationDedupService? _observations;
 
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
@@ -151,7 +176,8 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	public SessionFactsJob(IScopedDbFactory<SessionsDb> factory, IProjectCatalog catalog,
 		ISessionService sessions, IMemoryService memory, ILlmClient? llm = null,
 		ILogger<SessionFactsJob>? logger = null, TimeSpan? quietPeriod = null, TimeSpan? budget = null,
-		IOptions<AutocaptureDedupOptions>? dedup = null)
+		IOptions<AutocaptureDedupOptions>? dedup = null, ITasksService? tasks = null,
+		IObservationDedupService? observations = null)
 	{
 		_factory = factory;
 		_catalog = catalog;
@@ -162,6 +188,8 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		_quietPeriod = quietPeriod ?? DefaultQuietPeriod;
 		_budget = budget ?? DrainPacing.DefaultBudget;
 		_dedup = dedup?.Value ?? new AutocaptureDedupOptions();
+		_tasks = tasks;
+		_observations = observations;
 	}
 
 	static string CursorName(string sessionId) => "session-facts:" + sessionId;
@@ -284,6 +312,14 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		var neighbors = await CollectNeighborsAsync(project, candidate, ct);
 		var verdict = await JudgeAsync(project, sessionId, candidate, neighbors, ct);
 		if (verdict is null || verdict.Action == "skip") return false;
+
+		// Forward routing (work observation-extractor-forward-routing): a defect-like finding
+		// never reaches memory at all — checked BEFORE the worth-gate below, since "observe" is
+		// a routing decision, not a verdict on memory durability. Goes through the SAME
+		// ObservationDedupService a manual tasks_upsert create does, so a repeat sighting bumps
+		// recurrence instead of a second node.
+		if (verdict.Action == "observe")
+			return await RouteToObservationAsync(project, sessionId, candidate, verdict, ct);
 
 		// Worth-gate: the judge ruled this not durable (narration / session bookkeeping /
 		// derivable from code or boards). Dead-letter the body so the drop is findable.
@@ -424,6 +460,52 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		return true;
 	}
 
+	// Forward routing (work observation-extractor-forward-routing): mints (or recurrence-bumps)
+	// a node on the system `observations` board in status `seen` — NEVER a memory write. The
+	// ONE entry point is IObservationDedupService.PreProcessCreatesAsync, same as a manual
+	// tasks_upsert create (TasksTools) — this mirrors that call's post-create step
+	// (RecordObservationFirstSeenAsync) by hand because this job talks to ITasksService
+	// directly, off the MCP/HTTP request pipeline TasksTools runs in.
+	async Task<bool> RouteToObservationAsync(string project, string sessionId, FactCandidate candidate,
+		JudgeVerdict verdict, CancellationToken ct)
+	{
+		if (_tasks is null || _observations is null)
+		{
+			// Soft-degrade, same shape as the drop/delete-miss warnings below: wiring absent
+			// (a caller that never provisioned task-board services) must not crash the pass, but
+			// must not vanish silently either — the finding is dead-lettered via this log line.
+			_logger?.LogWarning("facts judge routed a candidate to observations but task-board wiring is unavailable for {Project}/{Session}; dropped. description={Description} body={Body}",
+				project, sessionId, Clip(candidate.Description ?? "", 500), Clip(candidate.Body ?? "", 1000));
+			return false;
+		}
+
+		var title = Clip(FirstNonEmpty(verdict.Description, candidate.Description) ?? "(untitled observation)", 200);
+		var body = FirstNonEmpty(verdict.Body, candidate.Body) ?? "";
+		var node = new TaskNodeInput
+		{
+			Key = "obs-" + Guid.NewGuid().ToString("N")[..12],
+			Version = 0,
+			Title = title,
+			Body = body,
+		};
+
+		var dedup = await _observations.PreProcessCreatesAsync(project, SystemBoards.Observations, [node], ct);
+		if (dedup.RemainingNodes.Length == 0)
+			// Every hit is a genuine repeat sighting — recurrence already bumped inside the
+			// dedup service. Still a real signal (return true), just not a new node.
+			return dedup.Hits.Count > 0;
+
+		var toCreate = dedup.RemainingNodes[0];
+		var patch = new NodePatch { Key = toCreate.Key!, Version = 0, Title = toCreate.Title, Body = toCreate.Body };
+		var outcome = await _tasks.UpsertAsync(project, SystemBoards.Observations, [patch], sessionId: sessionId, ct: ct);
+		if (!outcome.Result.Applied) return false;
+		foreach (var added in outcome.Result.Added)
+			await _tasks.RecordObservationFirstSeenAsync(project, added.NodeId, ct);
+		return true;
+	}
+
+	static string? FirstNonEmpty(string? a, string? b) => !string.IsNullOrWhiteSpace(a) ? a : (string.IsNullOrWhiteSpace(b) ? null : b);
+
 	async Task<IReadOnlyList<Neighbor>> CollectNeighborsAsync(string project, FactCandidate candidate, CancellationToken ct)
 	{
 		// The lexical leg ANDs query tokens, so the neighbor probe must be the candidate's
@@ -500,7 +582,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		sb.AppendLine(JsonSerializer.Serialize(neighbors, PromptJson));
 		var (verdict, recovered, raw) = await ChatParseWithRetryAsync<JudgeVerdict>(
 			project, JudgePrompt, sb.ToString(), JudgeCorrection, ct);
-		if (verdict is null || verdict.Action is not ("add" or "update" or "skip" or "drop" or "delete"))
+		if (verdict is null || verdict.Action is not ("add" or "update" or "skip" or "drop" or "delete" or "observe"))
 		{
 			// A broken judge answer defaults to SKIP, not ADD: quarantine quality first — a
 			// lost fact stays recoverable in the episodic tier, junk would multiply. Same

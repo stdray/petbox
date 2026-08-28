@@ -11,7 +11,13 @@ using PetBox.Memory.Services;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 using PetBox.Sessions.Services;
+using PetBox.Tasks.Contract;
+using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
+using PetBox.Tasks.Workflow;
+using PetBox.Web.Mcp.Contract;
 using PetBox.Web.Search;
+using PetBox.Web.Tasks;
 
 namespace PetBox.Tests.Sessions;
 
@@ -33,6 +39,9 @@ public sealed class SessionFactsJobFixture : IDisposable
 	public PetBoxDb Db { get; }
 	public ScopedDbFactory<SessionsDb> SessionsFactory { get; }
 	public ScopedDbFactory<MemoryDb> MemoryFactory { get; }
+	// Forward-routing (work observation-extractor-forward-routing): the task-board DB the
+	// observations board lives in, same pattern as ObservationKindAndDedupTests.
+	public ScopedDbFactory<TasksDb> TasksFactory { get; }
 
 	public SessionFactsJobFixture()
 	{
@@ -46,6 +55,8 @@ public sealed class SessionFactsJobFixture : IDisposable
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), TestSchema.Sessions);
 		MemoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), TestSchema.Memory);
+		TasksFactory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+			c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 	}
 
 	// Wipe both per-project files, plus the memory store CATALOG (MemoryStoreMeta lives in core,
@@ -53,10 +64,13 @@ public sealed class SessionFactsJobFixture : IDisposable
 	public void Reset()
 	{
 		Db.MemoryStores.Where(s => s.ProjectKey == Proj).Delete();
+		Db.TaskBoards.Where(b => b.ProjectKey == Proj).Delete();
 		using var sessions = SessionsFactory.NewEnsuredConnection(Proj);
 		TestDataReset.WipeAllTables(sessions);
 		using var memory = MemoryFactory.NewEnsuredConnection(Proj);
 		TestDataReset.WipeAllTables(memory);
+		using var tasksDb = TasksFactory.NewEnsuredConnection(Proj);
+		TestDataReset.WipeAllTables(tasksDb);
 	}
 
 	public void Dispose()
@@ -64,6 +78,7 @@ public sealed class SessionFactsJobFixture : IDisposable
 		Db.Dispose();
 		SessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		MemoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		TasksFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
 	}
 }
@@ -84,6 +99,10 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	// has an embedder, so the neighbour-sweep tests use this one and retrieval is honest.
 	readonly MemoryService _semantic;
 	readonly ScopedDbFactory<MemoryDb> _memoryFactory;
+	// Forward-routing (work observation-extractor-forward-routing): the SAME service-layer
+	// entry point a manual tasks_upsert create runs through — no reimplemented dedup here.
+	readonly ITasksService _tasksService;
+	readonly IObservationDedupService _observationDedup;
 
 	public SessionFactsJobTests(SessionFactsJobFixture fx)
 	{
@@ -94,11 +113,15 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
 		_memory = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), llm: null);
 		_semantic = new MemoryService(new MemoryStore(_db.Factory(), fx.MemoryFactory), new BowEmbedder());
+		_tasksService = new TasksService(new TaskBoardStore(_db.Factory(), fx.TasksFactory), new RelationStore(fx.TasksFactory),
+			new TagStore(fx.TasksFactory), new CommentService(fx.TasksFactory),
+			observationSignals: new ObservationSignalStore(fx.TasksFactory));
+		_observationDedup = new ObservationDedupService(_tasksService, llm: null);
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null, ILogger<SessionFactsJob>? logger = null) =>
 		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, llm, logger,
-			quietPeriod: NoQuiet, budget: budget);
+			quietPeriod: NoQuiet, budget: budget, tasks: _tasksService, observations: _observationDedup);
 
 	// Same job over the embedding-backed memory view. Seeding in those tests must go through
 	// `_semantic` too, and the vectors must be driven in by hand — see RunSemanticAsync.
@@ -582,6 +605,69 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 		var props = logger.WarningProperties.Should().ContainSingle().Subject;
 		var messages = props.Should().ContainSingle(kv => kv.Key == "Messages").Subject.Value;
 		messages.Should().BeEquivalentTo(new[] { expectedFrom, expectedTo }, o => o.WithStrictOrdering());
+	}
+
+	// Forward routing (work observation-extractor-forward-routing): the judge's fourth verdict
+	// class, "observe" — a defect-like finding. Routes to the `observations` task board via
+	// IObservationDedupService, never into memory.
+	async Task SeedObservationsBoardAsync() =>
+		await _tasksService.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind,
+			"obs", wiredBoard: null, methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+	[Fact]
+	public async Task JudgeObserve_RoutesToObservationsBoard_NotMemory()
+	{
+		await SeedObservationsBoardAsync();
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("баг: ретраи вебхука зацикливаются под нагрузкой"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"ретраи вебхука зацикливаются под нагрузкой","body":"3-й ретрай не отваливается"}]""",
+			"""{"action":"observe","description":"Ретраи вебхука зацикливаются под нагрузкой","body":"3-й ретрай не отваливается"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		(await _memory.StoreExistsAsync(Proj, SessionFactsJob.Store)).Should().BeFalse(); // never touches memory
+		var nodes = await _tasksService.ListActiveNodesAsync(Proj, SystemBoards.Observations);
+		var node = nodes.Should().ContainSingle().Subject;
+		node.Name.Should().Contain("Ретраи вебхука");
+		node.Status.Should().Be("seen");
+	}
+
+	[Fact]
+	public async Task JudgeObserve_RepeatSighting_BumpsRecurrence_NoSecondNode()
+	{
+		await SeedObservationsBoardAsync();
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("баг: ретраи вебхука зацикливаются под нагрузкой"));
+		await _sessions.UpsertAsync(Proj, "s2", "claude-code", Msgs("опять то же самое: ретраи вебхука зацикливаются под нагрузкой"));
+		// Both the description AND body must match closely — ObservationDedupService's cheap
+		// text-equality pass keys off Title+Body TOGETHER (AutocaptureDedup.FindDuplicateKeyAsync),
+		// so a matching title with a different body is NOT a guaranteed hit without an embedder.
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"ретраи вебхука зацикливаются под нагрузкой","body":"3-й ретрай не отваливается"}]""",
+			"""{"action":"observe"}""",
+			"""[{"type":"Project","description":"Ретраи вебхука зацикливаются под нагрузкой","body":"3-й ретрай не отваливается"}]""",
+			"""{"action":"observe"}""");
+
+		var captured = await Job(chat).DrainAllAsync(CancellationToken.None);
+
+		captured.Should().Be(2); // both sightings are real signals (the second bumps, not skipped)
+		var nodes = await _tasksService.ListActiveNodesAsync(Proj, SystemBoards.Observations);
+		nodes.Should().ContainSingle("a repeat sighting must not mint a second node");
+	}
+
+	[Fact]
+	public async Task JudgeObserve_NoTaskWiring_DropsGracefully_NoCrash()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("баг: ретраи вебхука зацикливаются под нагрузкой"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"ретраи вебхука зацикливаются под нагрузкой","body":"..."}]""",
+			"""{"action":"observe"}""");
+		// Deliberately the plain constructor (no tasks/observations) — mirrors the DI-absent case.
+		var job = new SessionFactsJob(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory,
+			chat, quietPeriod: NoQuiet);
+
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		(await _memory.StoreExistsAsync(Proj, SessionFactsJob.Store)).Should().BeFalse();
 	}
 
 	[Fact]
