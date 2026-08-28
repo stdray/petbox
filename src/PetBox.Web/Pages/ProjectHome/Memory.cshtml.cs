@@ -165,14 +165,21 @@ public sealed class MemoryModel : PageModel
 			}, ct);
 		Retrievers = result.Retrievers;
 
-		var fingerprint = SearchFingerprint(q, sort, result.DataVersion);
+		// FINGERPRINT is the QUESTION ONLY (card: cursor-refusal-blames-caller-for-data-shift) — the data
+		// version moved into `dataStamp`, checked by its own AssertDataStamp below.
+		var fingerprint = SearchFingerprint(q, sort);
+		var dataStamp = result.DataVersion ?? "";
 		var afterCursor = result.Rows;
 		if (!string.IsNullOrWhiteSpace(Cursor))
 		{
 			try
 			{
 				var decoded = KeysetCursor.Decode(Cursor, fingerprint, "memory-search");
-				// THE POOL COMMITMENT, checked first — the walk is bound to the pool its order came out
+				// THE DATA COMMITMENT, checked right after the fingerprint: a write between pages must end
+				// the walk here, named as a data change, BEFORE AssertPoolAlive gets a chance to blame a
+				// rerank-pool eviction the same write can also trigger.
+				decoded.AssertDataStamp(dataStamp, "memory-search");
+				// THE POOL COMMITMENT, checked next — the walk is bound to the pool its order came out
 				// of, because a reranked order is a property of ONE PASS (measured). Reached here only
 				// when the reader asked for Precision: the UI's edge default is Speed, whose RRF order a
 				// rebuild reproduces exactly and which therefore keeps paging across a cold pool.
@@ -196,7 +203,7 @@ public sealed class MemoryModel : PageModel
 		{
 			var last = Hits[^1];
 			NextCursor = new KeysetCursor(fingerprint, "", last.Store + "\x1f" + last.Entry.Key, last.Scope,
-				result.PoolOrderHash ?? "").Encode();
+				result.PoolOrderHash ?? "", dataStamp).Encode();
 		}
 		// WHY THE WALK STOPPED — stated, not implied (card requirement 2).
 		Stop = HasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
@@ -213,12 +220,14 @@ public sealed class MemoryModel : PageModel
 		_ => null,
 	};
 
-	// Everything that decides the QUERY's selection + order, hashed into the cursor — the project-wide
-	// twin of MemoryStoreModel.SearchFingerprint (no Store axis here: this page sweeps every store).
-	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort, string? dataVersion) =>
+	// Everything the CALLER supplied that decides the QUERY's selection + order, hashed into the cursor —
+	// the project-wide twin of MemoryStoreModel.SearchFingerprint (no Store axis here: this page sweeps
+	// every store). The data version is deliberately NOT here (card
+	// cursor-refusal-blames-caller-for-data-shift) — it lives in `dataStamp` at the call site.
+	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort) =>
 		KeysetCursor.FingerprintOf(
 			"memory-search", WorkspaceKey, ProjectKey, NormalizeScope(Scope), NormalizeType(Type), q,
-			sort?.By.ToString(), sort?.Desc.ToString(), dataVersion);
+			sort?.By.ToString(), sort?.Desc.ToString());
 
 	static string NormalizeScope(string? scope) => scope?.Trim().ToLowerInvariant() switch
 	{

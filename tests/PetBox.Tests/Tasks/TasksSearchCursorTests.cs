@@ -608,7 +608,9 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 	{
 		// Requirement 4, and the sharpest difference from listing paging: in a RELEVANCE order a single
 		// edit can move ANY row to ANY position, so continuing after one would splice two rankings. The
-		// data version rides in the fingerprint precisely so this is a loud error.
+		// data version now rides in its OWN field (DataStamp/AssertDataStamp), not the fingerprint — card
+		// cursor-refusal-blames-caller-for-data-shift: the caller's own arguments (`q`, `board`, `limit`)
+		// did not change, so the refusal must say the DATA changed, not "DIFFERENT query".
 		await SeedQueryable();
 		var first = await Search(q: "alpha", board: "b", limit: 2);
 		first.NextCursor.Should().NotBeNull();
@@ -617,7 +619,10 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 
 		var act = () => Search(q: "alpha", board: "b", limit: 2, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*DATA this cursor was reading has changed*");
+		refusal.Which.Message.Should().NotContain("DIFFERENT query",
+			"a data shift must not be told apart from a caller argument change by making it LOOK like one");
 	}
 
 	[Fact]

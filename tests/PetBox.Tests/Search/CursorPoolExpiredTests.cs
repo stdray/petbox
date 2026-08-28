@@ -175,8 +175,13 @@ public sealed class CursorPoolExpiredTests : IDisposable
 	public async Task AWriteMidWalk_IsStillRefused_AndSaysSomethingDifferentAgain()
 	{
 		// The invariant that keeps the fix from degenerating into "always accept": a genuinely different
-		// world must still stop the walk. A write moves the container's data version, which is IN the
-		// fingerprint — so this is the THIRD refusal, and it must not be confusable with the other two.
+		// world must still stop the walk. A write moves the container's data STAMP — its own field since
+		// card cursor-refusal-blames-caller-for-data-shift, no longer folded into the fingerprint — so
+		// this is the FOURTH refusal, and it must not be confusable with the other three. (It used to
+		// assert the fingerprint's "DIFFERENT query" text here: true by the letter, since the data stamp
+		// used to live INSIDE the fingerprint, but false by the sense a caller reads it in — the caller's
+		// own arguments never changed. That was the bug this card exists to fix, not the invariant this
+		// test is protecting; the invariant — a write mid-walk must still refuse — is UNCHANGED below.)
 		await SeedNotes();
 
 		var page1 = await SearchAsync(limit: 2);
@@ -187,9 +192,45 @@ public sealed class CursorPoolExpiredTests : IDisposable
 		var act = () => SearchAsync(limit: 2, cursor: page1.NextCursor);
 
 		var refusal = await act.Should().ThrowAsync<ArgumentException>();
-		refusal.WithMessage("*issued for a DIFFERENT query*");
+		refusal.WithMessage("*DATA this cursor was reading has changed*");
+		refusal.Which.Message.Should().NotContain("issued for a DIFFERENT query",
+			"the caller's own arguments did not change — telling them to \"keep the query identical\" is "
+			+ "wrong advice they already followed");
 		refusal.Which.Message.Should().NotContain("ranked POOL this cursor was walking is gone",
-			"a write is not an expiry — the three diagnoses must stay tellable apart by their text alone");
+			"a write is not an expiry — the four diagnoses must stay tellable apart by their text alone");
+		refusal.Which.Message.Should().NotContain("ranked DIFFERENTLY",
+			"a write is not a reranked order moving with nothing written — the four diagnoses must stay tellable apart");
+	}
+
+	[Fact]
+	public async Task AWriteMidWalk_OnAPoolTheWriteItselfEvicts_StillNamesTheData_NotAPoolExpiry()
+	{
+		// THE ORDER-OF-CHECKS proof (owner amendment to card cursor-refusal-blames-caller-for-data-shift):
+		// `dataVersion` rides in the pool's own CACHE KEY (MemoryService.cs), not only in DataStamp — so a
+		// write between two pages doesn't just move the data stamp, it also changes the poolKey, which
+		// misses the cache and forces a genuine rerank rebuild on THIS reranker-wired suite. That makes
+		// `poolRebuiltByRerank` TRUE for the very same write AssertDataStamp exists to diagnose. If
+		// AssertPoolAlive ran BEFORE AssertDataStamp, this call would throw "the ranked POOL ... is gone"
+		// — the exact bug being fixed, just relocated one check later. The order that must hold is
+		// AssertFingerprint → AssertDataStamp → AssertPoolAlive → AssertPoolOrder, and this test is red
+		// under the reversed order.
+		await SeedNotes();
+
+		var page1 = await SearchAsync(limit: 2);
+
+		// The write below moves BOTH the data stamp (DataStamp/AssertDataStamp) and the pool cache key
+		// (poolKey includes dataVersion), so the next call recomputes the pool through the real reranker
+		// — poolRebuiltByRerank is genuinely true here, not just data having moved elsewhere unrelated.
+		await _memory.UpsertAsync(Proj, "notes",
+			[new MemoryEntryInput { Key = "lex-newer", Version = 0, Type = "Project", Description = "deploy note newer", Body = "the deploy keyword appears here too, again" }], []);
+
+		var act = () => SearchAsync(limit: 2, cursor: page1.NextCursor);
+
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*DATA this cursor was reading has changed*",
+			"the data commitment must be checked BEFORE the pool commitment, or a write that also evicts "
+			+ "the pool reintroduces exactly the false 'pool expired' diagnosis this card removes");
+		refusal.Which.Message.Should().NotContain("ranked POOL this cursor was walking is gone");
 	}
 
 	// ── the CASCADE: a pool is alive only if EVERY leg's is ───────────────────────────────────────

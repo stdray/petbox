@@ -186,7 +186,13 @@ public sealed class MemorySearchCursorTests : IDisposable
 
 		var act = () => Search(q: "deploy", limit: 1, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+		// card cursor-refusal-blames-caller-for-data-shift: the caller's ARGUMENTS did not change — a
+		// write did — so the refusal must name the DATA, not tell them to "keep the query identical"
+		// when they already did.
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*DATA this cursor was reading has changed*");
+		refusal.Which.Message.Should().NotContain("DIFFERENT query",
+			"a data shift must not be told apart from a caller argument change by making it LOOK like one");
 	}
 
 	[Fact]
@@ -199,7 +205,10 @@ public sealed class MemorySearchCursorTests : IDisposable
 
 		var act = () => Search(q: "deploy", limit: 2, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+		// Same fix, project leg: the caller's arguments held, only the data moved.
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*DATA this cursor was reading has changed*");
+		refusal.Which.Message.Should().NotContain("DIFFERENT query");
 	}
 
 	// ── one pool, one ranking pass ───────────────────────────────────────────────────────────

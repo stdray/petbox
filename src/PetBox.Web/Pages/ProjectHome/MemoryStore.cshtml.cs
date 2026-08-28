@@ -252,18 +252,25 @@ public sealed class MemoryStoreModel : PageModel
 				}, ct);
 			Retrievers = result.Retrievers;
 
-			var fingerprint = SearchFingerprint(q, searchSort, result.DataVersion);
+			// FINGERPRINT is the QUESTION ONLY (card: cursor-refusal-blames-caller-for-data-shift) — the
+			// data version moved into `dataStamp`, checked by its own AssertDataStamp below.
+			var fingerprint = SearchFingerprint(q, searchSort);
+			var dataStamp = result.DataVersion ?? "";
 			var afterCursor = result.Rows;
 			if (!string.IsNullOrWhiteSpace(Cursor))
 			{
 				try
 				{
 					var decoded = KeysetCursor.Decode(Cursor, fingerprint, "memory-store-search");
+					// THE DATA COMMITMENT, checked right after the fingerprint: a write between pages must
+					// end the walk here, named as a data change, BEFORE AssertPoolAlive gets a chance to
+					// blame a rerank-pool eviction the same write can also trigger.
+					decoded.AssertDataStamp(dataStamp, "memory-store-search");
 					// THE ORDER COMMITMENT (spec: result-set-pageable) — the fingerprint only proves the
 					// QUESTION is unchanged; this proves the ranked ANSWER is still in the sequence the
 					// token was issued against (a rerank route recovering/failing between pages reorders
 					// the same rows with nothing written). Checked before the seek, same as memory_search.
-					// THE POOL COMMITMENT, checked first — the walk is bound to the pool its order came
+					// THE POOL COMMITMENT, checked next — the walk is bound to the pool its order came
 					// out of, because a reranked order is a property of ONE PASS (measured). Reached only
 					// when the reader asked for Precision: the UI's edge default is Speed, whose RRF
 					// order a rebuild reproduces exactly and which therefore pages across a cold pool.
@@ -289,7 +296,7 @@ public sealed class MemoryStoreModel : PageModel
 			{
 				var last = Hits[^1];
 				NextCursor = new KeysetCursor(fingerprint, "", last.Store + "\x1f" + last.Entry.Key, last.Scope,
-					result.PoolOrderHash ?? "").Encode();
+					result.PoolOrderHash ?? "", dataStamp).Encode();
 			}
 			// WHY THE WALK STOPPED — stated, not implied (card requirement 2). Never infer the end from a
 			// missing cursor: "exhausted" and "pool-boundary" both omit it and mean different things.
@@ -376,15 +383,17 @@ public sealed class MemoryStoreModel : PageModel
 
 	static string NormalizeType(string? type) => string.IsNullOrWhiteSpace(type) ? "" : type.Trim().ToLowerInvariant();
 
-	// Everything that decides the QUERY's selection + order, hashed into the cursor — mirrors
-	// ListingFingerprint's job for the search branch. `dataVersion` (the joined per-container stamps
-	// MemorySearchScope returns) pins the token to the exact store state the pool was ranked over: edit
-	// the store mid-walk and the next page is REFUSED with an instructive error, never silently
-	// restarted against a new ordering (spec: result-set-pageable card requirement 4).
-	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort, string? dataVersion) =>
+	// Everything the CALLER supplied that decides the QUERY's selection + order, hashed into the cursor —
+	// mirrors ListingFingerprint's job for the search branch. The data version (the joined per-container
+	// stamps MemorySearchScope returns) is deliberately NOT here any more (card
+	// cursor-refusal-blames-caller-for-data-shift) — it lives in `dataStamp` at the call site and its own
+	// AssertDataStamp: edit the store mid-walk and the next page is still REFUSED with an instructive
+	// error, never silently restarted against a new ordering (spec: result-set-pageable card requirement
+	// 4), but now the error names the DATA rather than impersonating a caller argument change.
+	string SearchFingerprint(string? q, (MemorySortBy By, bool Desc)? sort) =>
 		KeysetCursor.FingerprintOf(
 			"memory-store-search", WorkspaceKey, ProjectKey, Store, NormalizeScope(Scope), NormalizeType(Type), q,
-			sort?.By.ToString(), sort?.Desc.ToString(), dataVersion);
+			sort?.By.ToString(), sort?.Desc.ToString());
 
 	// The relevance order has no scalar that means anything (fused score is freshness/decay-blended in
 	// cascade scope, exact-identity rows carry none) — resumption is by IDENTITY only (KeysetCursor.Advance

@@ -284,7 +284,11 @@ public sealed class PagePoolRegressionTests : IDisposable
 
 		var act = () => Search(q: "deploy", limit: 2, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*DIFFERENT query*");
+		// card cursor-refusal-blames-caller-for-data-shift: the delete is a DATA change, not a caller
+		// argument change — the refusal must say so instead of "DIFFERENT query".
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*DATA this cursor was reading has changed*");
+		refusal.Which.Message.Should().NotContain("DIFFERENT query");
 	}
 
 	// ── A1: a degradation in ONE cascade leg must not be merged into success ─────────────────
@@ -435,6 +439,23 @@ public sealed class PagePoolRegressionTests : IDisposable
 			System.Text.Encoding.UTF8.GetBytes("""{"v":1,"f":"abc","s":"","k":"k","b":"b"}"""));
 
 		var act = () => KeysetCursor.Decode(v1, "abc", "memory_search");
+
+		act.Should().Throw<ArgumentException>().WithMessage("*older token format*");
+	}
+
+	[Fact]
+	public void C2_AVersionTwoToken_IsRefused_BecauseItCarriesNoDataStampCommitment()
+	{
+		// Same precedent, one version later (card cursor-refusal-blames-caller-for-data-shift). A v2
+		// token has its data version baked INSIDE `f` (the fingerprint) instead of carrying it separately
+		// in `d` — there is nothing to compare a v3 caller's args-only fingerprint against, so honouring
+		// it would either (a) never match (v2's `f` always differs from a v3-computed one, since v2's
+		// bakes in a stamp v3's does not) or, worse, (b) match by coincidence and skip the data check
+		// entirely. Refused outright, like v1 before it, rather than guessing.
+		var v2 = Convert.ToBase64String(
+			System.Text.Encoding.UTF8.GetBytes("""{"v":2,"f":"abc","s":"","k":"k","b":"b","o":"ord-1"}"""));
+
+		var act = () => KeysetCursor.Decode(v2, "abc", "memory_search");
 
 		act.Should().Throw<ArgumentException>().WithMessage("*older token format*");
 	}

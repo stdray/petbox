@@ -42,10 +42,34 @@ public sealed class SessionSearchService
 	private const int DefaultHitsPerSession = 5;
 	private const int MaxHitsPerSession = 20;
 
-	// Term-leg over-fetch pool: mirrors the memory contract's own convention for a store's
-	// hybrid pool (max(3×limit, 50), see IMemoryService.SearchEntriesAsync) so neither leg
-	// starves the fusion of candidates the session cut would otherwise keep.
-	private const int TermPoolFloor = 50;
+	// Term-leg over-fetch pool: a FIXED depth, not `3 × sessions` scaled to the page size — the same
+	// move memory made for its own WholePool candidate depth (MemoryService.PagedCandidateDepth) and for
+	// the same reason (spec: result-set-pageable). It used to be `Math.Max(3 * sessions, 50)`, so it was
+	// part of the pool's CACHE KEY: `sessions` is deliberately excluded from the cursor fingerprint
+	// ("shapes a page, not the sequence"), but a caller who raised it past 16 between pages changed the
+	// key anyway, evicting/rebuilding the pool with nothing written and no TTL involved —
+	// `AssertPoolAlive` then reported a plain expiry that was not one (card:
+	// cursor-refusal-blames-caller-for-data-shift).
+	//
+	// FIXED AT THE FLOOR (50), NOT A CEILING — the memory precedent this move cites makes the floor
+	// choice, not a ceiling one, and the first draft here got that backwards. MemoryService's
+	// PagedCandidateDepth is 60 = 3 × MemoryTools.DefaultLimit (20) — pinned to what the DEFAULT call
+	// already produced, with an explicit accepted trade: "only an explicit limit > 50 now gets the same
+	// pool as everyone else instead of a private, wider one" (MemoryService.cs). That is a floor/typical
+	// anchor, and an outlier caller's recall is what gives, not the common case's cost.
+	//
+	// MEASURED (self-log `petbox`, MCP tool-call telemetry, `Arg_sessions` on `session_search`, ~100
+	// logged calls): sessions ∈ {null(→10 default),1,2,3,5,6,8,10,12,15,16} — every value that never
+	// exceeded the OLD floor of 50 in the first place (3×16=48<50) — covers 94/100 calls. Only
+	// sessions ∈ {20,30} (6/100) ever pushed termPool past 50 under the old formula. So pinning at 50:
+	//   * changes NOTHING for 94% of real traffic — identical to today's behaviour;
+	//   * for the remaining 6%, narrows ONE of three fused discovery legs (term) from 60/90 down to 50 —
+	//     the digest leg (the one with the actual cross-encoder, MemoryService.SearchK = 50) is
+	//     untouched either way, so this is not a recall collapse, just the same class of trade memory
+	//     already accepted for its own >50-limit outliers.
+	// The invariant this constant exists for — `sessions` cannot move the pool's cache key — holds at
+	// ANY fixed value; 50 is simply the one that costs the common case nothing.
+	private const int TermPoolDepth = 50;
 
 	readonly IMemoryService _memory;
 	readonly ISessionEpisodicIndex _episodic;
@@ -150,13 +174,13 @@ public sealed class SessionSearchService
 		}
 		var scanLeg = fullScanRan == true;
 
-		// The term leg's over-fetch depth. It decides WHICH sessions are candidates, so it is part of the
-		// pool's identity below — lifted up here from the leg itself for exactly that reason.
-		var termPool = Math.Max(3 * sessions, TermPoolFloor);
+		// The term leg's over-fetch depth — FIXED (see TermPoolDepth), not derived from `sessions`, so it
+		// no longer decides the pool's identity below the way a page-size knob never should.
+		var termPool = TermPoolDepth;
 
 		// THE POOL KEY — everything that decides the pool's MEMBERSHIP and ORDER, and nothing that decides
-		// only how one page is rendered (`hitsPerSession`, `bodyLen`, and `sessions` except through the
-		// candidate depth it implies, which IS included).
+		// only how one page is rendered (`sessions`, `hitsPerSession`, `bodyLen` — none of the three touch
+		// candidate depth or membership now that TermPoolDepth is fixed).
 		//
 		// NO DATA-VERSION COMPONENT, unlike tasks/memory, and that is a consequence rather than an
 		// oversight: this surface's data version IS the discovery order (see `dataVersion` below), which

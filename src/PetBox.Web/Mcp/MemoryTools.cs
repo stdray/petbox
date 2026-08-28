@@ -814,13 +814,24 @@ public static class MemoryTools
 		// scopes and key alone is not unique across stores, so anything less would let a token land on the
 		// wrong row; with all three the position is exact, which is what lets the relevance order stay
 		// pageable despite repeated scores (a score tie cannot make an identity ambiguous).
-		var fingerprint = SearchFingerprint(hasQuery ? q!.Trim() : null, scope, projectKey, store, type,
-			sort, containerStamps);
+		// FINGERPRINT is the QUESTION ONLY now (card: cursor-refusal-blames-caller-for-data-shift) — the
+		// data stamp of every container the cascade read moved OUT into its own field, `dataStamp` below,
+		// checked by its own AssertDataStamp instead of impersonating a caller argument change.
+		var fingerprint = SearchFingerprint(hasQuery ? q!.Trim() : null, scope, projectKey, store, type, sort);
+		var dataStamp = string.Join('|', containerStamps);
 		var orderHash = string.Join('|', containerOrderHashes);
 		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> seeking = ordered;
 		if (hasCursor)
 		{
 			var token = KeysetCursor.Decode(cursor, fingerprint, "memory_search");
+			// THE DATA COMMITMENT, checked SECOND — right after the fingerprint, which now proves only
+			// that the caller's own arguments held. A write to any container this cascade reads (project
+			// or workspace leg) moves this stamp regardless of `hasQuery`: a LISTING walk reads containers
+			// too, and a write mid-walk must end it here for the same reason a query walk's must — before
+			// AssertPoolAlive gets a chance to blame a rerank-pool eviction that a data write can ALSO
+			// trigger (the pool's cache key includes this same stamp), which would misname the cause right
+			// back into the bug this checks fixes.
+			token.AssertDataStamp(dataStamp, "memory_search");
 			// THE ORDER COMMITMENT (spec: result-set-pageable) — and memory needed it most. Its token
 			// carries no scalar (the relevance order has none), so the moved-row guard inside Advance is
 			// vacuous here and identity resume would accept the boundary row wherever it now sat. Combined
@@ -828,12 +839,12 @@ public static class MemoryTools
 			// outage → not cached → page 2 is always a rebuild → route has recovered → same rows, reranked
 			// order, same stamp, same fingerprint → seek into a list the caller never saw. Minutes-long
 			// recoveries are the observed pattern, so this was not exotic.
-			// THE POOL COMMITMENT, checked FIRST (spec: result-set-pageable). A reranked order is a
-			// property of ONE PASS, not of the query — measured on the live route — so the walk is bound
-			// to the pool that pass materialized, and a pool that is gone ends it with words that name
-			// the real cause. AssertPoolOrder stays behind it as the second echelon: it can no longer
-			// fire on a cold reranked pool (this refusal gets there first) but it still costs nothing and
-			// still catches an order that moved with the pool in hand.
+			// THE POOL COMMITMENT, checked after the data commitment (spec: result-set-pageable). A
+			// reranked order is a property of ONE PASS, not of the query — measured on the live route — so
+			// the walk is bound to the pool that pass materialized, and a pool that is gone ends it with
+			// words that name the real cause. AssertPoolOrder stays behind it as the second echelon: it can
+			// no longer fire on a cold reranked pool (this refusal gets there first) but it still costs
+			// nothing and still catches an order that moved with the pool in hand.
 			if (hasQuery) KeysetCursor.AssertPoolAlive(poolRebuiltByRerank, "memory_search");
 			if (hasQuery) token.AssertPoolOrder(orderHash, "memory_search");
 			seeking = KeysetCursor.Advance(
@@ -880,7 +891,7 @@ public static class MemoryTools
 		var last = kept.Count > 0 ? ordered[kept.Count - 1] : default;
 		var nextCursor = kept.Count > 0 && more
 			? new KeysetCursor(fingerprint, CursorSortValue(last.Score, hasQuery),
-				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope, hasQuery ? orderHash : "").Encode()
+				last.Row.Store + "\x1f" + last.Row.Key, last.Row.Scope, hasQuery ? orderHash : "", dataStamp).Encode()
 			: null;
 		// WHY THE WALK STOPPED — stated, not implied, and the SAME three words tasks_search uses. In query
 		// mode this is always present, so a caller never has to read "nextCursor is absent" and guess
@@ -949,15 +960,17 @@ public static class MemoryTools
 			: "memory_search: the row this cursor names is no longer in the listing. Drop the cursor and "
 			+ "start over.");
 
-	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected and in
-	// WHAT order, plus the change stamp of EVERY container the cascade read. Deliberately EXCLUDES
-	// bodyLen/includeUsage/limit — those shape a page, not the sequence.
+	// The query identity a cursor is bound to: every argument the CALLER supplied that decides WHICH rows
+	// are selected and in WHAT order. Deliberately EXCLUDES bodyLen/includeUsage/limit — those shape a
+	// page, not the sequence — and, since card cursor-refusal-blames-caller-for-data-shift, EXCLUDES the
+	// data stamp of the containers read: that is not a caller argument, it lives in `DataStamp` and its
+	// own AssertDataStamp instead, so a write between pages is diagnosed as a data change, not a
+	// "DIFFERENT query" the caller never asked.
 	static string SearchFingerprint(string? query, string? scope, string? projectKey, string? store,
-		string? type, SortInput? sort, IReadOnlyList<string> containerStamps) =>
+		string? type, SortInput? sort) =>
 		KeysetCursor.FingerprintOf(
 			"memory_search", query, scope, projectKey, store, type,
-			sort?.By, sort?.Desc == true ? "1" : "0",
-			string.Join('|', containerStamps));
+			sort?.By, sort?.Desc == true ? "1" : "0");
 
 	// Merge the vector-lag counts of two scopes: null only when NEITHER ran a semantic leg (there
 	// is no coverage to be behind on); otherwise the sum, treating a scope that answered lexically-
