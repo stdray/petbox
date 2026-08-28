@@ -112,6 +112,44 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 			+ "changed underneath. Drop the cursor and start the query over.");
 	}
 
+	// THE POOL COMMITMENT — the refusal that had to exist once the order stopped being reproducible.
+	//
+	// MEASURED, not assumed (work/rerank-route-nondeterministic-order): the cross-encoder that ranks a
+	// pool is NOT bit-reproducible. On the local route, 8 close paraphrases of ~50-60 tokens came back in
+	// 3 different orders across 10 identical calls (9 of 10 differed from the first); on a cloud route the
+	// sequence held but the scores moved by up to 3e-3. Both break an order hash, and neither is a defect
+	// in this codebase: GPU reduction kernels are not batch-invariant, so the shape of the batch a request
+	// lands in decides the last bits of the score. There is no rounding that separates that noise from
+	// signal either — the reranker's own gaps between ADJACENT candidates are SMALLER than its own jitter.
+	//
+	// So a reranked order is not a function of the query and the data; it is a property of ONE PASS. The
+	// cursor is therefore bound to the MATERIALIZED POOL that pass produced, and when that pool is gone
+	// the walk is over — not because anything is broken, but because nothing can promise to rebuild the
+	// list the caller was walking. `poolRebuiltByRerank` is exactly that state: the order in hand came out
+	// of a FRESH cross-encoder pass instead of out of the stored pool.
+	//
+	// WHY IT IS SCOPED TO A RERANK PASS and not to every cache miss. An RRF order (Speed's ChosenRrf, an
+	// outage's DegradedRrf) IS reproducible — it is arithmetic over the same index — and AssertPoolOrder
+	// below proves reproduction exactly and for free. Refusing those too would end paging for every
+	// deployment with no rerank route, and for the whole length of any rerank outage, in exchange for
+	// nothing: this codebase's standing rule is that a rerank outage must never take search down.
+	//
+	// AssertPoolOrder stays, behind this, as the SECOND ECHELON. It no longer decides the common case (a
+	// live pool always matches it; a dead one is refused here first), but it costs nothing and still
+	// catches what this cannot see — an order that moved with the pool still in hand.
+	public static void AssertPoolAlive(bool poolRebuiltByRerank, string subject)
+	{
+		if (!poolRebuiltByRerank) return;
+
+		throw new ArgumentException(
+			$"{subject}: the ranked POOL this cursor was walking is gone — it expired (a walk keeps its pool "
+			+ "for about 15 minutes of idleness) or was never kept, so the rows had to be ranked again from "
+			+ "scratch. A second cross-encoder pass does not reproduce the first one document-for-document, so "
+			+ "continuing would splice two orderings and silently skip or repeat rows. Your arguments are fine, "
+			+ "nothing was written and nothing is broken; the walk simply outlived its pool. Drop the cursor and "
+			+ "start the query over.");
+	}
+
 	// Decode a token issued for the query identified by `expectedFingerprint`. Throws
 	// ArgumentException — never returns null, never falls back to "start from the top" — for a
 	// token that is malformed, of an unknown format version, or issued for a DIFFERENT query.

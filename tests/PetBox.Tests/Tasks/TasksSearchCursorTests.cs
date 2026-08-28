@@ -448,6 +448,80 @@ public sealed class TasksSearchCursorTests : IClassFixture<TasksSearchCursorFixt
 			.WithMessage("*ranked DIFFERENTLY*").WithMessage("*Your arguments are fine*");
 	}
 
+	// ── the POOL commitment: a reranked walk ends when its pool does ─────────────────────────
+	//
+	// work/rerank-route-nondeterministic-order. The cross-encoder does not reproduce its own order
+	// (measured on the live route: 9 of 10 identical calls came back permuted; a cloud route held the
+	// sequence but moved the scores by up to 3e-3). A reranked order is therefore a property of ONE
+	// PASS, and a cursor is bound to the POOL that pass materialized. These two tests are the tasks
+	// half of that contract: the refusal names the pool, and a LIVE pool still walks the control order
+	// row for row.
+
+	[Fact]
+	public async Task AColdPool_IsRefused_InWordsThatNameThePool_NotTheRanking()
+	{
+		// The route here JITTERS its scores while leaving every row exactly where it was — the shape
+		// measured on short documents, and the one that breaks tasks specifically, because the pool
+		// stores the cross-encoder score. The old refusal called that "ranked DIFFERENTLY", which is a
+		// story about a ranking that misbehaved; nothing misbehaved, the pool simply expired.
+		await SeedQueryable();
+		var tasks = RerankingTasks(out var llm);
+
+		var first = await SearchWith(tasks, limit: 2);
+		first.NextCursor.Should().NotBeNull();
+		first.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.Reranked,
+			"with no cross-encoder the whole defect class is invisible — assert the route is wired");
+		llm.RerankCalls.Should().Be(1);
+
+		_poolCache.Invalidate(); // TTL/restart/eviction, the state a test cannot wait for
+
+		var act = () => SearchWith(tasks, limit: 2, cursor: first.NextCursor);
+
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*ranked POOL this cursor was walking is gone*");
+		refusal.Which.Message.Should().NotContain("ranked DIFFERENTLY",
+			"the diagnosis has to name the pool, or the caller goes looking for a ranking bug");
+	}
+
+	[Fact]
+	public async Task ALiveReankedPool_StillWalksTheControlOrder_RowForRow()
+	{
+		// The other half, and the one that catches a fix that "solved" the refusal by breaking the walk:
+		// while the pool lives, paging must reproduce the unpaged order EXACTLY. Equal, not
+		// BeEquivalentTo — "the same rows in some order" is what a spliced walk also returns.
+		await SeedQueryable();
+		var tasks = RerankingTasks(out _);
+
+		var control = (await SearchWith(tasks, limit: 100)).Nodes.Select(n => n.Key).ToList();
+		control.Should().HaveCount(6);
+
+		var walked = new List<string>();
+		string? cursor = null;
+		for (var guard = 0; guard < 50; guard++)
+		{
+			var page = await SearchWith(tasks, limit: 2, cursor: cursor);
+			walked.AddRange(page.Nodes.Select(n => n.Key));
+			if (page.NextCursor is null) break;
+			cursor = page.NextCursor;
+		}
+
+		walked.Should().Equal(control, "a live pool pages the ONE order it materialized");
+	}
+
+	// A TasksService with a working — and honestly unstable — rerank route, sharing this test's pool
+	// cache. The default `_tasks` has no LLM at all, which is exactly the configuration in which this
+	// card's defect cannot be observed.
+	TasksService RerankingTasks(out JitterRerankClient llm)
+	{
+		llm = new JitterRerankClient();
+		return new TasksService(new TaskBoardStore(_db.Factory(), _factory), new RelationStore(_factory),
+			new TagStore(_factory), new CommentService(_factory), llm: llm, poolCache: _poolCache);
+	}
+
+	static Task<TaskSearchResultView> SearchWith(TasksService tasks, int? limit = null, string? cursor = null) =>
+		TasksTools.SearchAsync(Http(), Flags(), tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj,
+			"alpha", "b", null, null, null, null, null, null, limit, false, null, null, cursor);
+
 	// ── the order guard must fire on DRIFT, never on the resolve step ────────────────────────
 	//
 	// THE production defect (work/tasks-search-order-hash-nondeterministic): on the live box EVERY

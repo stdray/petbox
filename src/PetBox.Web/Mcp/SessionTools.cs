@@ -277,7 +277,7 @@ public static class SessionTools
 		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}).")] int? bodyLen = null,
-		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging; a cursor from a different query is an ERROR, not a silent restart. It is bound to the discovery ORDER it was issued for, so a new session or a fresh digest mid-walk also errors — drop the cursor to start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging; a cursor from a different query is an ERROR, not a silent restart. It is bound to the discovery ORDER it was issued for, so a new session or a fresh digest mid-walk also errors — drop the cursor to start over. The walk is bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -325,6 +325,11 @@ public static class SessionTools
 		// the server's ranking is what changed.
 		var fingerprint = SearchFingerprint(projectKey, q, fullScan);
 		token?.AssertFingerprint(fingerprint, "session_search");
+		// THE POOL COMMITMENT, checked before the order commitment: the digest leg's cross-encoder does
+		// not reproduce its own order (measured — work/rerank-route-nondeterministic-order), so a walk is
+		// bound to the pool that pass materialized. Once that pool is gone the honest answer names the
+		// pool, not the ranking. The order commitment stays behind it as the second echelon.
+		if (token is not null) KeysetCursor.AssertPoolAlive(o.PoolRebuiltByRerank, "session_search");
 		token?.AssertPoolOrder(o.DataVersion ?? "", "session_search");
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
 			c.SessionId, c.Agent,

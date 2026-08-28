@@ -2142,6 +2142,9 @@ public sealed partial class TasksService : ITasksService
 		// case where nothing was written but the ranking still moved (a rerank route recovering or
 		// failing between pages). Rides into the cursor beside the fingerprint.
 		string? poolOrderHash = null;
+		// Whether that order was rebuilt by a cross-encoder just now instead of being read back from the
+		// materialized pool — the fact that ends an in-flight walk (KeysetCursor.AssertPoolAlive).
+		var poolRebuiltByRerank = false;
 		// search-echo-effective-statuskind-filter: the facet ResolveStatusKindFacet ACTUALLY
 		// resolved for this read, captured verbatim from whichever branch below computes it — so
 		// the response echoes the true applied value (including when defaulted), never a recompute.
@@ -2286,6 +2289,13 @@ public sealed partial class TasksService : ITasksService
 				return new SearchPoolCache.PoolComputation(resolvedPool, cacheable);
 			}, ct);
 
+			// THE POOL COMMITMENT (KeysetCursor.AssertPoolAlive): a cross-encoder order built JUST NOW is
+			// not the one an in-flight cursor was issued against, and no second pass can be promised to
+			// reproduce it (work/rerank-route-nondeterministic-order). A cache HIT is the same pool by
+			// construction, and an RRF order rebuilds identically — so only this combination ends a walk.
+			poolRebuiltByRerank = !lookup.FromCache
+				&& lookup.Pool.Retrievers.Ranking == SearchRankingOutcome.Reranked;
+
 			if (freshHits is not null)
 			{
 				hits = freshHits;
@@ -2388,7 +2398,8 @@ public sealed partial class TasksService : ITasksService
 			PoolLimit: poolLimit,
 			PoolBounded: poolBounded,
 			DataVersion: dataVersion,
-			PoolOrderHash: poolOrderHash);
+			PoolOrderHash: poolOrderHash,
+			PoolRebuiltByRerank: poolRebuiltByRerank);
 	}
 
 	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
