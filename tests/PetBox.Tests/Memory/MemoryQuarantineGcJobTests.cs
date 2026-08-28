@@ -126,11 +126,44 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 	{
 		await Seed(Store, "fresh");
 
-		// A 30-day min-age: a just-written entry is far younger than the cutoff → not a candidate.
-		var retired = await Job(enforce: true, minAge: TimeSpan.FromDays(30)).DrainAllAsync(CancellationToken.None);
+		// A 90-day min-age: a just-written entry is far younger than the cutoff → not a candidate.
+		var retired = await Job(enforce: true, minAge: TimeSpan.FromDays(90)).DrainAllAsync(CancellationToken.None);
 
 		retired.Should().Be(0);
 		(await _memory.GetAsync(Proj, Store, "fresh")).Should().NotBeNull();
+	}
+
+	// Backdates an active entry's Created column directly — the public UpsertAsync path always
+	// stamps `now`, so this is the only way to exercise a real elapsed-age boundary rather than
+	// the AllOld trick (cutoff pushed into the future) the rest of this file uses.
+	async Task Backdate(string key, TimeSpan age)
+	{
+		using var db = _factory.NewEnsuredConnection(Proj);
+		await db.Entries.Where(e => e.Store == Store && e.Key == key && e.ActiveTo == null)
+			.Set(e => e.Created, DateTime.UtcNow - age)
+			.UpdateAsync();
+	}
+
+	[Fact]
+	public async Task Enforce_DefaultMinAge_Is90Days_60dSpared_100dRetired()
+	{
+		// Card chore/gc-min-age-90: MinAgeDays raised 30 -> 90 (owner decision — episodic-demand
+		// facts legitimately go unreached for weeks; 24% of candidates are found within 48h once
+		// they surface, and a manual read of 10 live candidates found 8-9/10 were correct reusable
+		// facts, not noise). This exercises the class DEFAULT (no minAge passed to the
+		// constructor) so it fails loudly if the default constant ever regresses.
+		await Seed(Store, "young60", "old100");
+		await Backdate("young60", TimeSpan.FromDays(60));
+		await Backdate("old100", TimeSpan.FromDays(100));
+
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,
+			enforce: true, scanInterval: NoThrottle); // minAge omitted -> DefaultMinAge
+
+		var retired = await job.DrainAllAsync(CancellationToken.None);
+
+		retired.Should().Be(1);
+		(await _memory.GetAsync(Proj, Store, "young60")).Should().NotBeNull(); // 60d < 90d -> spared
+		(await _memory.GetAsync(Proj, Store, "old100")).Should().BeNull();     // 100d >= 90d -> retired
 	}
 
 	[Fact]

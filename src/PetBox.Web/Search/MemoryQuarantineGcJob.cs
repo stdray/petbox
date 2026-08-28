@@ -56,7 +56,15 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	// SessionFactsJob.Store). notes/ops/system stores are curated and never swept here.
 	public const string Store = SessionFactsJob.Store;
 
-	private static readonly TimeSpan DefaultMinAge = TimeSpan.FromDays(30);
+	// Card chore/gc-min-age-90 (owner decision, resting on a reserve review of report-only
+	// output): raised from 30 -> 90. neverReached measures absence of DEMAND, not absence of
+	// value — a manual read of 10 live candidates at 30d found 8-9/10 were correct, reusable
+	// engineering facts with EPISODIC demand (needed only when a bug recurs; weeks of silence
+	// between hits is normal for them), and 24% of candidates clear the list within 48h once
+	// surfaced (someone finds them). Raising the bar keeps that report-only signal but only
+	// fires on entries old enough that "still unreached" has stopped being noise. report-only
+	// stays the default gear here (Enforce, below) — this change does not touch it.
+	private static readonly TimeSpan DefaultMinAge = TimeSpan.FromDays(90);
 	private static readonly TimeSpan DefaultScanInterval = TimeSpan.FromHours(6);
 
 	// The window the cost/fit verdict is measured over: RECENT behaviour, not the entry's whole
