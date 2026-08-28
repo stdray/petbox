@@ -12,11 +12,23 @@
    renders the slug when the caller resolved one (Model.FixedByLink, built via
    ObservationFixedByResolver — the SAME ITasksService.GetNodeAsync door the relations panel's own
    LinkRef reaches through, not a second path); degrades to the raw NodeId, never fails to render,
-   when the target is unresolved/missing (Model.FixedByLink is null or its Status is "missing"). *@
+   when the target is unresolved/missing (Model.FixedByLink is null or its Status is "missing").
+   live-verification finding (2026-08-28, owner screenshot): the bare U+26A0 WARNING SIGN glyph
+   used to render with its default COLOR-EMOJI presentation (most platforms ship it pre-coloured
+   orange/yellow-on-triangle), which all but disappeared against this alert's own warning-yellow
+   fill — the banner TEXT already contrasts correctly (daisyUI's alert-warning sets the text colour
+   per theme; that part was never broken), only the emoji's own baked-in fill fought the background.
+   The fix forces TEXT presentation via the U+FE0E variation selector, which makes browsers render
+   a plain monochrome glyph that inherits `color` like any other character — the SAME
+   already-correct warning-on-warning-background text colour every other word in this banner
+   already uses, in every theme (dark/light/nord/retro — daisyUI computes the pairing per theme,
+   this glyph now just rides it instead of overriding it with its own colour). No new colour or
+   class introduced; the icon is decorative (the adjacent text already states "recurred after
+   fix"), so it's aria-hidden. *@
 @if (Model.Observation is { RecurredAfterFixAt: { } regressedAt } o)
 {
 	<div class="alert alert-warning text-xs py-1.5 px-2 mt-1" data-testid="node-observation-regression" role="alert">
-		<span>⚠ recurred after fix — <time class="local-time" datetime="@regressedAt.ToString("o")" data-testid="node-observation-regressed-at">@regressedAt.ToString("yyyy-MM-dd HH:mm")</time></span>
+		<span><span aria-hidden="true">⚠︎</span> recurred after fix — <time class="local-time" datetime="@regressedAt.ToString("o")" data-testid="node-observation-regressed-at">@regressedAt.ToString("yyyy-MM-dd HH:mm")</time></span>
 		@if (!string.IsNullOrEmpty(o.FixedByNodeId))
 		{
 			@if (Model.FixedByLink is { Status: not "missing" } l && l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s })
