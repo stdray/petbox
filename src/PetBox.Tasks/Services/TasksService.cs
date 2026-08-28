@@ -60,6 +60,14 @@ public sealed partial class TasksService : ITasksService
 	// construction) falls back to the compiled-in RerankCandidateBudget() default, same posture as
 	// _llm/_log above.
 	readonly ISettingsResolver? _settings;
+	// Recurrence signal store for kind `observation` nodes (work observation-kind-and-dedup).
+	// Optional (DI fills it — see Program.cs) so the other 60-odd direct `new TasksService(...)`
+	// test construction sites do not all need updating; every method that reads/writes it is a
+	// no-op-safe fallback when it is null, same posture as _llm/_settings above. The dedup
+	// DECISION itself (AutocaptureDedup.FindDuplicateKeyAsync) lives one layer up, in
+	// PetBox.Web (internal to that assembly) — this service only stores the pool the decision
+	// reads and the counter it bumps.
+	readonly IObservationSignalStore? _observationSignals;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly TaskNodeChangeValidator ChangeValidator = new();
@@ -74,7 +82,8 @@ public sealed partial class TasksService : ITasksService
 	public const int PagedCandidateDepth = 50;
 
 	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null,
-		ILogger<TasksService>? log = null, SearchPoolCache? poolCache = null, ISettingsResolver? settings = null)
+		ILogger<TasksService>? log = null, SearchPoolCache? poolCache = null, ISettingsResolver? settings = null,
+		IObservationSignalStore? observationSignals = null)
 	{
 		_boards = boards;
 		_relations = relations;
@@ -84,6 +93,7 @@ public sealed partial class TasksService : ITasksService
 		_log = log;
 		_poolCache = poolCache ?? SearchPoolCache.Disabled;
 		_settings = settings;
+		_observationSignals = observationSignals;
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
@@ -382,6 +392,12 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default)
 	{
+		// System-board guard (work observation-kind-and-dedup, SystemBoards.IsSystem): the
+		// `observations` board is code-declared plumbing, auto-provisioned per project — like a
+		// memory system store, it must not be casually destroyed by any caller (MCP tool, admin
+		// UI) reaching this one service door.
+		if (SystemBoards.IsSystem(board))
+			throw new InvalidOperationException($"board '{board}' is a built-in system board and cannot be deleted");
 		if (!await _boards.DeleteAsync(projectKey, board, ct)) return false;
 
 		// The board's rows are gone, but its search docs are not: _boards.DeleteAsync bulk-deletes
@@ -420,11 +436,47 @@ public sealed partial class TasksService : ITasksService
 		return true;
 	}
 
-	public Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default) =>
-		_boards.UpdateAsync(projectKey, board, m => m with { ClosedAt = closed ? DateTime.UtcNow : null }, ct);
+	public Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default)
+	{
+		// Same system-board guard as DeleteBoardAsync, closing half only — reopening a system
+		// board (closed:false) is never blocked, only freezing one.
+		if (closed && SystemBoards.IsSystem(board))
+			throw new InvalidOperationException($"board '{board}' is a built-in system board and cannot be closed");
+		return _boards.UpdateAsync(projectKey, board, m => m with { ClosedAt = closed ? DateTime.UtcNow : null }, ct);
+	}
 
 	public Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_boards.ExistsAsync(projectKey, board, ct);
+
+	// ---- observation recurrence signal (work observation-kind-and-dedup) ----
+
+	public async Task<IReadOnlyList<ObservationDedupCandidate>> ListObservationDedupCandidatesAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		var meta = await _boards.FindAsync(projectKey, board, ct);
+		if (meta is null || !string.Equals(meta.Kind, SystemBoards.ObservationKind, StringComparison.OrdinalIgnoreCase))
+			return [];
+		// includeClosed:true is the point — the dedup pool must include `fixed`/`declined`
+		// nodes too, not just `seen`/`promoted`: a candidate matching an already-`fixed`
+		// observation IS the regression signal (RecordObservationRecurrenceAsync's
+		// `currentlyFixed`), and one matching a `declined` observation still means "we said
+		// this before" even though nobody acted on it.
+		var view = await GetAsync(projectKey, board, includeClosed: true, includeBody: true, ct: ct);
+		return view.Nodes.Select(n => new ObservationDedupCandidate(n.Key, n.NodeId, n.Status, ObservationDedupText(n.Title, n.Body))).ToList();
+	}
+
+	static string ObservationDedupText(string? title, string? body)
+	{
+		var parts = new List<string>(2);
+		if (!string.IsNullOrWhiteSpace(title)) parts.Add(title.Trim());
+		if (!string.IsNullOrWhiteSpace(body)) parts.Add(body.Trim());
+		return string.Join("\n\n", parts);
+	}
+
+	public Task RecordObservationFirstSeenAsync(string projectKey, string nodeId, CancellationToken ct = default) =>
+		_observationSignals?.RecordFirstSeenAsync(projectKey, nodeId, ct) ?? Task.CompletedTask;
+
+	public Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default) =>
+		_observationSignals?.RecordRecurrenceAsync(projectKey, nodeId, currentlyFixed, ct) ?? Task.FromResult(0L);
 
 	public async Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default)
 	{

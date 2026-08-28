@@ -317,11 +317,45 @@ public static class MethodologyPresets
 		Singleton = true,
 	};
 
+	// OBSERVATION (work observation-kind-and-dedup): the system `observations` board's kind.
+	// A captured signal — from the extractor or a manual write — starts `seen`; `promoted`
+	// once the (separate, not-yet-built) promote tool turns it into edges/spec/work;
+	// `fixed` (TerminalOk) once the underlying issue is actually gone, kept DISTINCT from
+	// `declined` (TerminalCancel, "not worth acting on") — a regression detector needs to
+	// tell "we fixed it and it came back" from "we decided it never mattered", which a
+	// three-value model can't express. No FSM engine, no traits: this is a single flat
+	// state machine like every other preset above, just four statuses and four trivial
+	// edges. No LinkConstraints/Effects/AutoWireFrom/Delivery — the promote tool (a
+	// neighboring card) owns turning a promoted observation into edges; this preset only
+	// carries the shape of the status lifecycle. Recurrence accumulation lives OUTSIDE this
+	// FSM entirely — a service-layer dedup guard (ObservationDedupService, PetBox.Web) that
+	// intercepts a CREATE before it reaches here, so a repeat sighting never becomes a
+	// second node with its own trivial "seen" status to track.
+	static readonly WorkflowStatus[] ObservationStatuses =
+	[
+		new("seen", "Seen", StatusKind.Open),
+		new("promoted", "Promoted", StatusKind.Open),
+		new("fixed", "Fixed", StatusKind.TerminalOk),
+		new("declined", "Declined", StatusKind.TerminalCancel),
+	];
+
+	static readonly MethodologyKindDef ObservationKind = new("observation", QuickAddAllowed: true,
+	[
+		new MethodologyWorkflowDef(["observation"], ObservationStatuses,
+		[
+			new("seen", "promoted"),
+			new("seen", "declined", RequiresReason: true),
+			new("promoted", "fixed"),
+			new("promoted", "declined", RequiresReason: true),
+		]),
+	]);
+
 	public static MethodologyKindDef KindDef(BoardKind kind) => kind switch
 	{
 		BoardKind.Spec => SpecKind,
 		BoardKind.Ideas => IdeasKind,
 		BoardKind.Intake => IntakeKind,
+		BoardKind.Observation => ObservationKind,
 		BoardKind.Work => WorkKind,
 		BoardKind.Classic => ClassicKind,
 		_ => SimpleKind,

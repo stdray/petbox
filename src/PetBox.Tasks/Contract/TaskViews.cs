@@ -49,6 +49,14 @@ public sealed record TaskNodeView(
 public sealed record PlanBoardView(
 	long CurrentVersion, string Kind, string? WiredBoard, IReadOnlyList<TaskNodeView> Nodes);
 
+// One dedup-pool entry for the observation recurrence guard (work observation-kind-and-dedup,
+// ITasksService.ListObservationDedupCandidatesAsync): a candidate an incoming write's text
+// may match against. `Text` is title+body, plain — the guard's textual identity, never a
+// semantic embedding of it (spec observation-recurrence-is-ranked forbids a semantic
+// fingerprint standing IN PLACE of the textual one; AutocaptureDedup.FindDuplicateKeyAsync's
+// own optional semantic pass runs only as a fallback ON this text).
+public sealed record ObservationDedupCandidate(string Key, string NodeId, string Status, string Text);
+
 // board-search-stem-lookup: a SCALAR "has this board changed" probe for a cache/ETag check —
 // see ITasksService.GetBoardChangeStampAsync for why it's TWO numbers, not one. Two boards with
 // the same (NodeVersion, TagStamp) pair are guaranteed to have identical node payloads AND
@@ -117,11 +125,24 @@ public sealed record UpsertConflictView(
 // ModuleMcp.SizeGuidanceText) — independent of size — never on a refused/conflicted
 // call, where Conflicts is already the signal to act on. tasks_delta never sets it (no write).
 // Null/omitted the rest of the time.
+// One requested CREATE that landed on an existing observation instead of becoming a new node
+// (work observation-kind-and-dedup, the tasks_upsert-facing shape of
+// PetBox.Web.Tasks.ObservationDedupHit — TaskViews.cs stays Web-independent, so the adapter
+// maps one onto the other rather than this file referencing the Web-layer record).
+// `RequestedKey` never became a node; `ExistingKey`/`ExistingNodeId` name what absorbed the
+// write; `RecurrenceCount` is the new total after this hit.
+public sealed record UpsertDedupedView(string RequestedKey, string ExistingKey, string ExistingNodeId, long RecurrenceCount);
+
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
 	IReadOnlyList<TaskNodeDelta> Added, IReadOnlyList<TaskNodeDelta> Updated, IReadOnlyList<string> Removed,
-	IReadOnlyList<string> AutoResolved, string? Warning = null);
+	IReadOnlyList<string> AutoResolved, string? Warning = null,
+	// Observation dedup hits (work observation-kind-and-dedup): null/omitted on every board
+	// except `observations`, and on that board whenever no requested create matched an
+	// existing observation. Non-null only when at least one requested node was absorbed this
+	// way — same "set only when it happened" posture as Warning above.
+	IReadOnlyList<UpsertDedupedView>? Deduped = null);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an

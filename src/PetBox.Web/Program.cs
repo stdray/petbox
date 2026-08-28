@@ -226,6 +226,7 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITaskBoardStore, PetBox.Tasks.Data.TaskBoardStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.IRelationStore, PetBox.Tasks.Data.RelationStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITagStore, PetBox.Tasks.Data.TagStore>();
+		builder.Services.AddScoped<PetBox.Tasks.Data.IObservationSignalStore, PetBox.Tasks.Data.ObservationSignalStore>();
 		// THE on-disk cache tier (work/cache-backend-decision). One SQLite file of its own — never
 		// core.db, never a module tier's — under data/cache/, which Backup deliberately skips: every
 		// row here is a derived value whose source IS in the backup set.
@@ -891,6 +892,16 @@ public partial class Program
 		// Scoped like the IAgentDefinitionService it wraps — never a direct dependency of the
 		// Singleton ProjectDirectory (CaptiveDependencyTests).
 		builder.Services.AddScoped<PetBox.Web.AgentDefs.IProjectAgentDefSeeder, PetBox.Web.AgentDefs.ProjectAgentDefSeeder>();
+		// The observations-board twin of the two seeds above (work observation-kind-and-dedup):
+		// ProjectDirectory.CreateAsync rents this per project creation so the system `observations`
+		// board exists without a manual tasks_board_create/tasks_methodology_utility_upsert step.
+		// Scoped like the ITasksService it wraps.
+		builder.Services.AddScoped<PetBox.Web.Tasks.IObservationsBoardSeeder, PetBox.Web.Tasks.ObservationsBoardSeeder>();
+		// The dedup-with-recurrence guard tasks_upsert runs before creating a node on the
+		// `observations` board (work observation-kind-and-dedup) — see ObservationDedupService's
+		// header comment for why the DECISION has to live in PetBox.Web (AutocaptureDedup is
+		// internal to this assembly) while the pool/counter it touches stay behind ITasksService.
+		builder.Services.AddScoped<PetBox.Web.Tasks.IObservationDedupService, PetBox.Web.Tasks.ObservationDedupService>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
@@ -1085,6 +1096,25 @@ public partial class Program
 		{
 			var autoWireLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.AutoWireFieldRenamedMigrator");
 			new PetBox.Tasks.Data.AutoWireFieldRenamedMigrator(coreDbFactory, tasksFactory, autoWireLog).Migrate();
+		}
+
+		// Idempotent per-restart catch-up (work observation-kind-and-dedup): ProjectDirectory.
+		// CreateAsync seeds the system `observations` board only for a project created FROM NOW ON
+		// (SeedObservationsBoardAsync) — a project that already existed before this card (starting
+		// with $system) needs a one-time reconciliation pass. Not a FluentMigrator migration:
+		// provisioning a board is a service-layer act (ITasksService.CreateBoardAsync, with its own
+		// world/kind/singleton validation), not DDL a migration can express. Cheap on every restart
+		// after the first — ObservationsBoardSeeder.SeedAsync itself probes BoardExistsAsync first
+		// and no-ops when the board is already there.
+		using (var obsScope = app.Services.CreateScope())
+		{
+			var obsCoreFactory = obsScope.ServiceProvider.GetRequiredService<ICoreDbFactory>();
+			var obsSeeder = obsScope.ServiceProvider.GetRequiredService<PetBox.Web.Tasks.IObservationsBoardSeeder>();
+			List<string> obsProjectKeys;
+			using (var obsCoreDb = obsCoreFactory.Open())
+				obsProjectKeys = obsCoreDb.Projects.Select(p => p.Key).ToList();
+			foreach (var obsProjectKey in obsProjectKeys)
+				obsSeeder.SeedAsync(obsProjectKey).GetAwaiter().GetResult();
 		}
 
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config

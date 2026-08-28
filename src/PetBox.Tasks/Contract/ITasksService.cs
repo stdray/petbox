@@ -43,6 +43,28 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<IReadOnlyList<TaskBoardMeta>> ListBoardsAsync(string projectKey, CancellationToken ct = default);
 	Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default);
 
+	// --- observation recurrence signal (work observation-kind-and-dedup) ---
+	// Thin doors onto IObservationSignalStore, kept on this interface because Web may not
+	// reach the data-layer store directly (see the NetArchTest note above) — the actual
+	// dedup DECISION (AutocaptureDedup.FindDuplicateKeyAsync) lives in PetBox.Web and calls
+	// these around it.
+
+	// Every ACTIVE node's dedup pool entry on a kind-`observation` board: its slug key,
+	// stable NodeId, live status (so the caller can tell a hit landed on an already-`fixed`
+	// node — the regression signal) and dedup TEXT (title + body, textual — not semantic —
+	// per spec observation-recurrence-is-ranked). Empty board or a board that isn't kind
+	// `observation` yields an empty list, never an error (the caller is expected to have
+	// already checked the board's kind before bothering to call this).
+	Task<IReadOnlyList<ObservationDedupCandidate>> ListObservationDedupCandidatesAsync(string projectKey, string board, CancellationToken ct = default);
+	// Seed the signal row for a BRAND NEW observation node (no dedup match found) —
+	// RecurrenceCount starts at 1. No-op if no IObservationSignalStore was wired (DI-optional,
+	// see TasksService's constructor comment).
+	Task RecordObservationFirstSeenAsync(string projectKey, string nodeId, CancellationToken ct = default);
+	// A dedup hit landed on an existing node instead of creating a new one: bump its
+	// RecurrenceCount/LastSeenAt (and RecurredAfterFixAt when `currentlyFixed`). Returns the
+	// new RecurrenceCount (0 if no store was wired).
+	Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default);
+
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 
 	// Provision a methodology preset's board(s) if missing and (quartet only) auto-wire

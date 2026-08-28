@@ -7,6 +7,7 @@ using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Web.Mcp.Contract;
+using PetBox.Web.Tasks;
 
 namespace PetBox.Web.Mcp;
 
@@ -1607,6 +1608,13 @@ public static class TasksTools
 		`warning` (optional) is set when an APPLIED call's request payload was large enough to
 		risk the client-side truncation described above — informational, never a refusal (the
 		write already landed); omitted the rest of the time.
+
+		ON THE SYSTEM `observations` BOARD (kind `observation`), a pure-create batch (every
+		node version 0) runs a dedup-with-recurrence guard first: a node whose title+body
+		textually matches an existing observation is NOT created — the existing one's
+		recurrence counter grows instead, and `deduped[]` (requestedKey, existingKey,
+		existingNodeId, recurrenceCount) names where the write went. Omitted whenever nothing
+		deduped, or on any other board.
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -1630,14 +1638,64 @@ public static class TasksTools
 		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
 		// write past methodology-ENFORCED approval gates (enforceApproval transitions).
 		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
-		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+
+		// work observation-kind-and-dedup: a pure-CREATE batch (every node version 0, no
+		// deletes) targeting the system `observations` board runs the dedup-with-recurrence
+		// guard first — a repeat sighting bumps an existing observation's signal instead of
+		// becoming a second node. Anything else on this board (a status edit, e.g.
+		// seen -> promoted, which is never version 0) or any other board is untouched — the
+		// guard only ever intercepts a CREATE. A batch MIXING a create with an edit on this
+		// board skips the guard entirely (falls through unchanged) rather than partially
+		// applying it — a known simplification, not a silent gap: manual quick-adds and the
+		// (not yet built) extractor both send pure-create batches.
+		//
+		// Resolved from the request's own DI scope (like ApiKeyTools/MemoryTools/ModuleMcp pull
+		// IProjectCatalog/ILoggerFactory the same way) instead of a method parameter, so this
+		// widely direct-called tool keeps its existing signature — adding a new required
+		// parameter here would have meant updating ~80 existing test call sites for a guard
+		// that only ever fires on ONE specific board. Null only when no HttpContext/DI scope is
+		// present (a hand-built accessor in a test that doesn't care about this feature) — the
+		// guard simply does not run then, same as any other board.
+		var obsDedup = http.HttpContext?.RequestServices.GetService<IObservationDedupService>();
+		var isObservationsCreateBatch = obsDedup is not null
+			&& string.Equals(board, SystemBoards.Observations, StringComparison.OrdinalIgnoreCase)
+			&& nodes.All(n => n.Version == 0 && !n.Deleted);
+		IReadOnlyList<UpsertDedupedView>? dedupedView = null;
+		if (isObservationsCreateBatch)
+		{
+			var dedup = await obsDedup!.PreProcessCreatesAsync(projectKey, board, nodes, ct);
+			if (dedup.Hits.Count > 0)
+				dedupedView = dedup.Hits.Select(h => new UpsertDedupedView(h.RequestedKey, h.ExistingKey, h.ExistingNodeId, h.RecurrenceCount)).ToList();
+			nodes = dedup.RemainingNodes;
+			if (nodes.Length == 0)
+			{
+				// Every requested node deduped — nothing left to create. Still a successful call
+				// (the write landed, just not as a new node): report the board cursor and the
+				// dedup hits, skip tasks.UpsertAsync entirely (an empty patch batch has nothing
+				// to say to it).
+				var stamp = await tasks.GetBoardChangeStampAsync(projectKey, board, ct);
+				return new UpsertResultView(
+					Applied: true, CurrentVersion: stamp.NodeVersion, Kind: SystemBoards.ObservationKind,
+					Inserted: 0, Closed: 0, Conflicts: [], Added: [], Updated: [], Removed: [], AutoResolved: [],
+					Deduped: dedupedView);
+			}
+		}
+
+		var patches = ParseNodePatches(nodes);
 		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, sessionId, ct);
+		// Seed the recurrence signal (RecurrenceCount 1) for every genuinely NEW observation
+		// node this call created — the counterpart of the dedup hits above, so a fresh
+		// observation and a recurring one both carry a signal row from birth.
+		if (isObservationsCreateBatch && outcome.Result.Applied)
+			foreach (var added in outcome.Result.Added)
+				await tasks.RecordObservationFirstSeenAsync(projectKey, added.NodeId, ct);
 		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
 		// only warn about size on a write that actually landed — a refused/conflicted call already
 		// has its own signal (conflicts[]).
 		var warning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
-		return Serialize(outcome, urlPrefix, bodyLen, warning);
+		var view = Serialize(outcome, urlPrefix, bodyLen, warning);
+		return dedupedView is null ? view : view with { Deduped = dedupedView };
 	}
 
 	[McpServerTool(Name = "tasks_delta", Title = "Task node delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
