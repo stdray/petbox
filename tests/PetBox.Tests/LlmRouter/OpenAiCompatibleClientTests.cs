@@ -136,11 +136,14 @@ public sealed class OpenAiCompatibleClientTests
 
 	// ---- size-limit classification (bug rerank-oversize-falls-through-both-legs) ----
 	//
-	// A size-limit refusal is DETERMINISTIC by CONTENT, not by status code: retrying it on the next
-	// route in a fallback chain (CapabilityRouter) is guaranteed to fail again — worse, the repo's
-	// actual cloud fallback has an even SMALLER ceiling (10240 tokens/request vs. the local route's
-	// 8192 tokens/pair), so the old `code >= 500 → transient` rule sent every oversized rerank straight
-	// to a route that could never have served it, burning an attempt and a breaker failure for nothing.
+	// A size-limit refusal is DETERMINISTIC by CONTENT, not by status code — the old `code >= 500 →
+	// transient` rule sent every home-oversized rerank straight into a retry that classified correctly
+	// only by accident. Every route's ceiling measured on this project is per query+document PAIR, never
+	// per whole request (card comment a85af1e9d92e444d974e520c32b5f1ef: a 60-doc/~18k-token-total batch
+	// passes fine everywhere; only one oversized PAIR fails) — but RerankInputTruncation (the primary fix
+	// on this bug) already keeps a pair below every known route's ceiling in the normal case, so this
+	// classification mainly stops a wasted attempt + breaker failure on an already-doomed retry rather
+	// than routing around a genuinely bigger-ceilinged fallback.
 
 	[Fact]
 	public async Task Rerank500TooLargeToProcess_IsClassifiedNonTransient()

@@ -12,11 +12,12 @@ namespace PetBox.Core.Search;
 //
 // Mirrors RerankCandidateBudget's shape/pattern on purpose (declared number, settings-resolved,
 // System -> Workspace -> Project override, a caller with no ISettingsResolver gets the same honest
-// default as one that resolved and found no override). See RerankTruncationSettings for why 6000/2000
-// are the defaults.
+// default as one that resolved and found no override). See RerankTruncationSettings for why
+// 10000/2000 are the defaults — sized against the SMALLEST rerank route's EFFECTIVE (post-overhead)
+// token budget (~10165 tokens, home), not the nominal config ceiling.
 public sealed record RerankInputTruncation
 {
-	public int DocumentChars { get; init; } = 6000;
+	public int DocumentChars { get; init; } = 10000;
 	public int QueryChars { get; init; } = 2000;
 
 	public static RerankInputTruncation FromSettings(RerankTruncationSettings settings) => new()
