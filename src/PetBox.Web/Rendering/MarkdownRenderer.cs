@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AngleSharp.Dom;
 using Ganss.Xss;
 using Markdig;
 using Markdig.Renderers;
@@ -264,6 +265,7 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		// `<div class="fixed inset-0">` in a body still gets a bare <div>.
 		s.AllowedAttributes.Add("class");
 		foreach (var name in DesignLayerClasses) s.AllowedClasses.Add(name);
+		ConfigureSvgSubset(s);
 		return s;
 	}
 
@@ -284,4 +286,182 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		"markdown-alert-warning",
 		"markdown-alert-caution",
 	];
+
+	// ── Diagram support (spec `body-carries-diagram`) ──────────────────────────────────────────
+	// A body may carry a sanitized inline-SVG subset: raw HTML is already kept-then-sanitized (see
+	// the header comment), so this is an EXTENSION of a live mechanism, not a new one. Owner's
+	// decision: a pinned SVG subset, not mermaid — the reference diagram (a struck-through bridge,
+	// a dashed "different id space", three distinct kinds of "no") is not expressible in a boxed
+	// diagramming language, and mermaid would add a frontend dependency + a post-swap re-init hook
+	// for a case it can't even render.
+	//
+	// There is NO CSP in this app (Program.cs sets HSTS only) — this allowlist is the entire
+	// defence, not a second layer behind one. Three things HtmlSanitizer's flat, tag-agnostic model
+	// does not give for free, so they are handled explicitly below:
+	//   1. `href` is ALREADY a globally-allowed attribute (pre-existing, for markdown `<a>` links)
+	//      and `AllowedAttributes` has no per-tag scoping — so once `<path>`/`<rect>`/`<use>`/etc.
+	//      are allowed as TAGS, an author gets `href` on them for free, and https (needed by `<a>`)
+	//      is an allowed SCHEME. Left alone, `<use href="https://evil.example/x.svg#y">` would
+	//      survive: a same-scheme reference that is nonetheless an external fetch this feature must
+	//      not permit. `FilterUrl` closes this by requiring an in-document `#fragment` for href/
+	//      xlink:href specifically on the SVG tag set (`<a>` is untouched — it keeps http/https).
+	//   2. `marker-end`/`fill`/`stroke` can carry a `url(...)` paint-server/marker reference as a
+	//      plain string value — NOT a `UriAttributes` entry, so it is never scheme-checked at all.
+	//      No gradient/pattern/filter element is on the allowlist, so the only legitimate value
+	//      shape is a LOCAL `url(#id)`; `PostProcessNode` strips anything else (an external SVG
+	//      resource reference has shipped real CVEs in this exact spot).
+	//   3. Node bodies and comments render MANY at once on one board/thread page (the shared-
+	//      renderer consequence this card states explicitly), and `id`/`href="#id"` are a
+	//      DOCUMENT-global namespace in HTML — two diagrams that each define `id="arrow"` would
+	//      collide, with the second silently owning both `<use>`/marker references. `PostProcessDom`
+	//      suffixes every id DEFINED inside a rendered `<svg>` (and every local reference to it)
+	//      with a fresh per-render token, so two independent renders never collide even when the
+	//      author copy-pasted the identical diagram twice.
+	//
+	// Excluded, deliberately:
+	//   - `<script>`, `<foreignObject>`, `<image>` — never added to AllowedTags; the sanitizer's
+	//     default KeepChildNodes=false drops the whole disallowed element AND its children (a
+	//     `<foreignObject>` cannot be used to smuggle arbitrary HTML/script past the allowlist).
+	//   - every `on*` handler — never added to AllowedAttributes; stripped like any other body HTML.
+	//   - `<style>` inside SVG — an inline `<style>` element is NOT scoped to its SVG subtree, it is
+	//     a normal global stylesheet for the WHOLE PAGE the moment it lands in the DOM. With no CSP
+	//     to fall back on, one comment's `<style>` could hide unrelated UI, restyle the page, or run
+	//     a CSS-based data-exfiltration attack (attribute-selector timing/`background-image` probes)
+	//     for zero diagram benefit — colour already comes through `currentColor` + presentation
+	//     attributes. Not added; HtmlSanitizer's default behaviour (drop tag + contents) already
+	//     does the right thing without any code here.
+	//   - `<linearGradient>`/`<pattern>`/`<filter>`/`<mask>`/`<clipPath>` — the main legitimate
+	//     reason `fill`/`stroke` would need a `url(...)` reference. Excluding the paint-server/
+	//     filter elements themselves is what makes the local-only `url(#id)` check above sufficient
+	//     — there is no allowed element for a malicious `url()` to legitimately point at, on- or
+	//     off-document.
+	//
+	// `<use>` IS included: the FilterUrl fragment-only rule above is required regardless (`href`
+	// leaks onto every newly-allowed tag whether or not `<use>` exists), so once that guard exists,
+	// `<use xlink:href="#shape">` costs nothing extra and buys authors shape reuse (e.g. the
+	// reference diagram's three visually distinct "no" glyphs) without repeating markup.
+	static readonly HashSet<string> SvgTags = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+		"text", "tspan", "marker", "defs", "title", "desc", "use",
+	};
+
+	// Attribute names whose value may legitimately carry a `url(#id)` local reference. None of
+	// these are `UriAttributes` (that mechanism is for href/src-shaped attributes), so their scheme
+	// is never checked by the sanitizer's normal pipeline — PostProcessSvgAttributeUrls does it.
+	static readonly string[] UrlFunctionAttributes = ["fill", "stroke", "marker-start", "marker-mid", "marker-end"];
+
+	// A value that is EXACTLY a local reference, e.g. `url(#arrowhead)`. Anything else containing
+	// `url(` — an external address, a `javascript:` payload, garbage — is rejected outright; a
+	// value with no `url(` at all (currentColor, none, #3b82f6, ...) is never touched here.
+	static readonly Regex LocalUrlFunctionRx = new(@"^url\(#([A-Za-z][\w:.-]*)\)$",
+		RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+	static void ConfigureSvgSubset(HtmlSanitizer s)
+	{
+		foreach (var tag in SvgTags) s.AllowedTags.Add(tag);
+
+		// Geometry/structure, presentation, text and marker-linkage attributes the reference
+		// diagram's shapes need. `width`/`height`/`href`/`style`/`title`/`class` are already
+		// allowed above (existing, non-SVG-specific); `xmlns`/`xmlns:xlink`/`version` are skipped —
+		// an <svg> parsed inline in an HTML document renders correctly without them.
+		string[] svgAttributes =
+		[
+			"viewBox", "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+			"points", "d", "transform", "preserveAspectRatio",
+			"fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin",
+			"stroke-opacity", "fill-opacity", "opacity",
+			"font-size", "font-family", "font-weight", "text-anchor", "dominant-baseline", "dx", "dy",
+			"marker-start", "marker-mid", "marker-end", "refX", "refY",
+			"markerWidth", "markerHeight", "markerUnits", "orient",
+			"id", "xlink:href", "role",
+		];
+		foreach (var attr in svgAttributes) s.AllowedAttributes.Add(attr);
+		// `href` is already allowed (for `<a>`); `xlink:href` needs the same URI treatment so its
+		// scheme is checked at all (an attribute not in UriAttributes is never scheme-filtered).
+		s.UriAttributes.Add("xlink:href");
+
+		// Point (1): href/xlink:href on an SVG element may only address a fragment IN THIS
+		// DOCUMENT. `<a>` is not in SvgTags and is untouched — it keeps the http/https/mailto rule
+		// the rest of a markdown body relies on.
+		s.FilterUrl += (_, e) =>
+		{
+			if (e.Tag is not { } tag || !SvgTags.Contains(tag.NodeName)) return;
+			if (e.SanitizedUrl is null || !e.SanitizedUrl.StartsWith('#'))
+				e.SanitizedUrl = null;
+		};
+
+		// Point (2): fill/stroke/marker-* may only reference a LOCAL id via url(#id) — anything
+		// scheme-shaped is rejected outright — and (scoping) `id` only ever survives on an SVG
+		// element; the attribute is allowed globally above only so it can exist there at all.
+		s.PostProcessNode += (_, e) =>
+		{
+			if (e.Node is not IElement el) return;
+			if (!SvgTags.Contains(el.NodeName))
+			{
+				if (el.HasAttribute("id")) el.RemoveAttribute("id");
+				return;
+			}
+			foreach (var attr in UrlFunctionAttributes)
+			{
+				var value = el.GetAttribute(attr);
+				if (value is null || !value.Contains("url(", StringComparison.OrdinalIgnoreCase)) continue;
+				if (!LocalUrlFunctionRx.IsMatch(value.Trim())) el.RemoveAttribute(attr);
+			}
+		};
+
+		// Point (3): namespace every id DEFINED inside each rendered <svg> subtree (and every local
+		// reference to it — href="#id", xlink:href="#id", url(#id)) with a token unique to THIS
+		// render, so two diagrams sharing an id on the same board/thread page never collide.
+		// PostProcessDom fires once per Sanitize() call, after every node has already been
+		// validated — the right place to do a whole-subtree rewrite.
+		s.PostProcessDom += (_, e) =>
+		{
+			foreach (var svg in e.Document.QuerySelectorAll("svg"))
+				NamespaceSvgIds((IElement)svg);
+		};
+	}
+
+	static void NamespaceSvgIds(IElement svgRoot)
+	{
+		var scoped = new[] { svgRoot }.Concat(svgRoot.QuerySelectorAll("*")).ToList();
+		var definedIds = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var el in scoped)
+		{
+			var id = el.GetAttribute("id");
+			if (!string.IsNullOrEmpty(id)) definedIds.Add(id);
+		}
+		if (definedIds.Count == 0) return; // no ids to collide over — nothing to rewrite
+
+		var suffix = "-" + Guid.NewGuid().ToString("N")[..8];
+
+		foreach (var el in scoped)
+		{
+			var id = el.GetAttribute("id");
+			if (!string.IsNullOrEmpty(id)) el.SetAttribute("id", id + suffix);
+
+			// `xlink:href` is NOT addressable by that qualified-name string through
+			// Get/SetAttribute: AngleSharp reports BOTH the real xlink-namespaced attribute and the
+			// plain-`href` compatibility mirror HtmlSanitizer creates for it (SVG2's href/xlink:href
+			// duality) as `Name == "href"` — `SetAttribute("xlink:href", …)` silently creates a
+			// THIRD, unrelated attribute instead of updating the real one (measured, not assumed —
+			// see the sanitizer-behaviour probe in this card's session). Mutating each attribute
+			// NODE's `.Value` in place, found by LocalName rather than by qualified-name string,
+			// updates both the real attribute and its mirror correctly with no duplicate.
+			foreach (var attr in el.Attributes.Where(a => a.LocalName == "href").ToList())
+			{
+				var href = attr.Value;
+				if (href is { Length: > 1 } && href[0] == '#' && definedIds.Contains(href[1..]))
+					attr.Value = href + suffix;
+			}
+			foreach (var urlAttr in UrlFunctionAttributes)
+			{
+				var value = el.GetAttribute(urlAttr);
+				if (value is null) continue;
+				var m = LocalUrlFunctionRx.Match(value.Trim());
+				if (m.Success && definedIds.Contains(m.Groups[1].Value))
+					el.SetAttribute(urlAttr, $"url(#{m.Groups[1].Value}{suffix})");
+			}
+		}
+	}
 }

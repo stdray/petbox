@@ -494,6 +494,29 @@
 	margin: 0.8em 0;
 }
 
+/* ── Diagram (spec `body-carries-diagram`) ───────────────────────────────────────────────
+   The sanitized inline-SVG subset (Rendering/MarkdownRenderer.cs, ConfigureSvgSubset) is
+   authored with `fill`/`stroke="currentColor"` rather than hardcoded hex — `color` already
+   cascades from .md-body's `--md-ink` token above, and CSS `currentColor` reads the computed
+   `color` of the element it's on, so a diagram themes for free in light AND dark with zero
+   diagram-specific tokens. Only a layout concern is left to add here: a diagram authored at a
+   fixed pixel viewBox must not overflow a narrow board card or comment column. */
+.md-body svg {
+	max-width: 100%;
+	height: auto;
+}
+/* A figure is a layout unit like a table, not measured prose (see the "No measure" note on
+   `.md-body p` above) — full section width, own vertical rhythm. */
+.md-body figure {
+	margin: 0.9em 0;
+}
+.md-body figcaption {
+	margin-top: 0.4em;
+	font-family: var(--md-font-ui);
+	font-size: 0.85em;
+	color: var(--md-muted);
+}
+
 /* ── Status pill ──────────────────────────────────────────────────────────────────────────
    The colour comes from the node's StatusKind METADATA, resolved through MethodologyRuntime
    (Pages/Shared/StatusBadge.cs) — never from anything written in a body. Each variant is one
