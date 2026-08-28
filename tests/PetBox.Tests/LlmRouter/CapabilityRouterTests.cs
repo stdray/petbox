@@ -7,9 +7,10 @@ using PetBox.LlmRouter.Routing;
 
 namespace PetBox.Tests.LlmRouter;
 
-// The fallback walk (llm-fallback-chain + llm-fast-down): transient failures fall through to
-// the next provider, a non-transient failure is surfaced without masking, an exhausted chain
-// throws transient, and a circuit-open endpoint is skipped without an attempt.
+// The fallback walk (llm-fallback-chain + llm-fast-down): a transient OR non-transient failure
+// both fall through to the next provider (route-chain-aborts-on-size-refusal, decided
+// 2026-08-28 — the chain never aborts early any more), a circuit-open endpoint is skipped
+// without an attempt, and an exhausted chain's exception carries what happened on every leg.
 public sealed class CapabilityRouterTests
 {
 	// One resolved LEVEL (the router now consumes ILlmRegistryLevelResolver, not the old store).
@@ -68,18 +69,24 @@ public sealed class CapabilityRouterTests
 		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
 	}
 
+	// THE red-before-fix case (route-chain-aborts-on-size-refusal, owner decision 2026-08-28): a
+	// non-transient failure on the first leg must NOT stop the walk — the second leg still gets
+	// tried, and its success is what the caller sees. Before the fix this threw LlmRouterException
+	// instead of returning the secondary's result.
 	[Fact]
-	public async Task Non_transient_failure_is_not_masked_by_fallback()
+	public async Task Non_transient_failure_falls_through_to_the_next_provider()
 	{
 		var upstream = new FakeUpstream();
 		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(false, "400 bad request");
 		upstream.EmbedBehaviour["https://s"] = () => [[9f]];
 		var router = Build(new FakeResolver(TwoEmbed()), upstream, new EndpointBreaker(new FakeTimeProvider()));
 
-		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
 
-		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeFalse();
-		upstream.EmbedCalls.Should().Equal("https://p");
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.ServedBy.AttemptCount.Should().Be(2);
+		res.Vectors.Should().ContainSingle();
+		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
 	}
 
 	[Fact]
@@ -94,6 +101,28 @@ public sealed class CapabilityRouterTests
 
 		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeTrue();
 		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
+	}
+
+	// When ALL legs fail, the exception must let a reader see what happened on EACH one — not
+	// just the last leg attempted. Mixed failure kinds (non-transient then transient) also drive
+	// the exhaustion Transient flag: false, because not every leg failed transiently.
+	[Fact]
+	public async Task All_providers_failing_reports_every_leg_not_just_the_last()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(false, "400 bad request on primary");
+		upstream.EmbedBehaviour["https://s"] = () => throw new LlmUpstreamException(true, "timeout on secondary");
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
+		ex.Transient.Should().BeFalse("at least one leg (primary) failed non-transiently");
+		ex.Message.Should().Contain("primary").And.Contain("400 bad request on primary");
+		ex.Message.Should().Contain("secondary").And.Contain("timeout on secondary");
+		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
+		ex.InnerException.Should().BeOfType<AggregateException>()
+			.Which.InnerExceptions.Should().HaveCount(2, "both legs' original exceptions are preserved");
 	}
 
 	[Fact]
@@ -226,6 +255,25 @@ public sealed class CapabilityRouterTests
 		upstream.RerankCalls.Select(c => c.BaseUrl).Should().Equal("https://p", "https://p", "https://s", "https://s");
 		res.Hits.Should().HaveCount(4);
 		res.Hits.Select(h => h.Index).Should().BeEquivalentTo(new[] { 0, 1, 2, 3 });
+	}
+
+	// Same red-before-fix invariant as EmbedAsync, on the chunked query-affinity path: a
+	// non-transient failure on home's FIRST chunk must not abort the whole query — the fallback
+	// route still gets tried (whole-query replay, never a per-chunk mix).
+	[Fact]
+	public async Task RerankQuery_non_transient_failure_falls_through_to_the_next_route()
+	{
+		var upstream = new FakeUpstream();
+		upstream.RerankBehaviour["https://p"] = _ => throw new LlmUpstreamException(false, "413 payload too large");
+		upstream.RerankBehaviour["https://s"] = docs => docs.Select((_, i) => new RerankHit(i, 0.9 - i * 0.01)).ToList();
+		var router = Build(new FakeResolver(TwoRerank()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.RerankQueryAsync("proj",
+			new RerankQueryRequest("q", ["d0", "d1"], ChunkSize: 10));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.Model.Model.Should().Be("fallback-rr");
+		upstream.RerankCalls.Select(c => c.BaseUrl).Should().Equal("https://p", "https://s");
 	}
 
 	[Fact]

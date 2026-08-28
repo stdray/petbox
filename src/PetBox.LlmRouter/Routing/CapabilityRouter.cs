@@ -6,12 +6,22 @@ using PetBox.LlmRouter.Registry;
 namespace PetBox.LlmRouter.Routing;
 
 // The ILlmClient implementation: for each capability it resolves the project's route chain,
-// orders it by priority, and walks it (llm-fallback-chain). A transient failure
+// orders it by priority, and walks it to the end (llm-fallback-chain). A transient failure
 // (refused/timeout/5xx/429) records a breaker failure and moves to the next provider; a
-// non-transient failure (4xx) is surfaced immediately without masking; a circuit-open
-// endpoint is skipped without a connection (llm-fast-down). Every served call logs who
-// answered (llm-observability) via source-generated LoggerMessage — the logger config, not
-// in-code level checks, decides what is emitted. Scoped (depends on the scoped resolver).
+// non-transient failure (4xx) is logged and ALSO moves to the next provider — the chain never
+// aborts on any non-transient reason (spec: route-chain-aborts-on-size-refusal, decided
+// 2026-08-28). Deliberately NOT reason-classified: a router that decided "keep going" from the
+// failure's cause would need a declared per-leg limit/capability registry to tell "this leg's
+// ceiling" from "this leg is just broken" — a second source of truth that would drift from
+// reality exactly like the 8192/10240 truncation mismatch did. The only classification kept is
+// transient vs not, and it no longer drives the walk — only the breaker and the exhaustion
+// exception's Transient flag read it. The cost, accepted: a hopeless request (bad auth, unknown
+// model) now walks every leg before failing, instead of failing fast on the first one. A
+// circuit-open endpoint is skipped without a connection (llm-fast-down). If every leg fails, the
+// thrown LlmRouterException carries what happened on EACH one, not just the last. Every served
+// call logs who answered (llm-observability) via source-generated LoggerMessage — the logger
+// config, not in-code level checks, decides what is emitted. Scoped (depends on the scoped
+// resolver).
 //
 // The registry it resolves through is the LEVELLED one in core.db (ILlmRegistryLevelResolver,
 // spec: llm-registry-own-store), NOT the old ConfigBindings-backed LlmRegistryStore. That flip is
@@ -72,9 +82,11 @@ public sealed partial class CapabilityRouter : ILlmClient
 	// call and chunking is introduced, per-chunk chain-walking (each chunk its own RerankAsync)
 	// would route sibling chunks to different models on the FIRST fallback. This method is that
 	// guarantee made STRUCTURAL. It resolves the chain ONCE and, per route in priority order, scores
-	// EVERY chunk on THAT route's model. Fallback is WHOLE-QUERY only: a transient failure on ANY
-	// chunk discards the route's partial work and replays the ENTIRE query on the NEXT route — never
-	// a per-chunk "as it comes" mix, never a config-pin (which would kill home-preference + fallback).
+	// EVERY chunk on THAT route's model. Fallback is WHOLE-QUERY only: a failure on ANY chunk —
+	// transient OR non-transient, the chain never aborts either way (route-chain-aborts-on-size-
+	// refusal) — discards the route's partial work and replays the ENTIRE query on the NEXT route —
+	// never a per-chunk "as it comes" mix, never a config-pin (which would kill home-preference +
+	// fallback).
 	public async Task<RerankResult> RerankQueryAsync(string projectKey, RerankQueryRequest request, CancellationToken ct = default)
 	{
 		var resolved = await _resolver.ResolveAsync(projectKey, ct);
@@ -94,18 +106,20 @@ public sealed partial class CapabilityRouter : ILlmClient
 		var chunks = Chunk(request.Documents, request.ChunkSize);
 
 		var attempt = 0;
-		Exception? last = null;
+		var failures = new List<LegFailure>();
 		foreach (var route in routes)
 		{
 			var ep = resolved.Registry.Endpoints.FirstOrDefault(e => e.Name == route.Endpoint);
 			if (ep is null)
 			{
 				LogUnknownEndpoint(_log, LlmCapability.Rerank, route.Endpoint);
+				failures.Add(new LegFailure(route.Endpoint, "unknown endpoint", null));
 				continue;
 			}
 			if (_breaker.IsOpen(ep.Name))
 			{
 				LogCircuitOpen(_log, LlmCapability.Rerank, ep.Name);
+				failures.Add(new LegFailure(ep.Name, "circuit open", null));
 				continue;
 			}
 
@@ -115,9 +129,10 @@ public sealed partial class CapabilityRouter : ILlmClient
 				var http = _clients.Get(ep);
 				var apiKey = resolved.ApiKeys.GetValueOrDefault(ep.Name);
 				// Score EVERY chunk on THIS route's model before returning anything. A chunk that
-				// throws aborts the whole route (the partial `merged` is dropped), so no result ever
-				// carries hits from two models — the invariant is enforced by construction here, not
-				// hoped for. TopN is deferred to the merge, so each chunk asks for all its hits.
+				// throws (transient OR not) aborts the whole ROUTE (the partial `merged` is dropped)
+				// and falls through to the next route, which replays every chunk from scratch — so no
+				// result ever carries hits from two models. TopN is deferred to the merge, so each
+				// chunk asks for all its hits.
 				var merged = new List<RerankHit>(request.Documents.Count);
 				foreach (var (offset, docs) in chunks)
 				{
@@ -134,12 +149,15 @@ public sealed partial class CapabilityRouter : ILlmClient
 			}
 			catch (LlmUpstreamException ux) when (!ux.Transient)
 			{
+				// Non-transient (incl. a size refusal on this chunk) no longer aborts the whole query:
+				// the route's partial `merged` work is already dropped above, and we fall through to
+				// try the next route on the SAME whole-query-per-route path — never a per-chunk mix.
+				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
 				LogNonTransient(_log, LlmCapability.Rerank, ep.Name, ux);
-				throw new LlmRouterException(LlmCapability.Rerank, false, $"Rerank failed on '{ep.Name}': {ux.Message}", ux);
 			}
 			catch (LlmUpstreamException ux)
 			{
-				last = ux;
+				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
 				_breaker.RecordFailure(ep.Name);
 				// Whole-query fallback: the NEXT route replays ALL chunks from scratch. A 429 keeps its
 				// own classified event (event 306), exactly as RunChainAsync.
@@ -148,9 +166,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 			}
 		}
 
-		var rateLimited = (last as LlmUpstreamException)?.RateLimited ?? false;
-		throw new LlmRouterException(LlmCapability.Rerank, true,
-			$"all {routes.Count} Rerank provider(s) failed (last attempt {attempt})", last, rateLimited: rateLimited);
+		throw Exhausted(LlmCapability.Rerank, routes.Count, attempt, failures);
 	}
 
 	// Contiguous, index-preserving chunking of a candidate pool. A non-positive size or a pool that
@@ -217,18 +233,20 @@ public sealed partial class CapabilityRouter : ILlmClient
 		}
 
 		var attempt = 0;
-		Exception? last = null;
+		var failures = new List<LegFailure>();
 		foreach (var route in routes)
 		{
 			var ep = resolved.Registry.Endpoints.FirstOrDefault(e => e.Name == route.Endpoint);
 			if (ep is null)
 			{
 				LogUnknownEndpoint(_log, cap, route.Endpoint);
+				failures.Add(new LegFailure(route.Endpoint, "unknown endpoint", null));
 				continue;
 			}
 			if (_breaker.IsOpen(ep.Name))
 			{
 				LogCircuitOpen(_log, cap, ep.Name);
+				failures.Add(new LegFailure(ep.Name, "circuit open", null));
 				continue;
 			}
 
@@ -244,12 +262,15 @@ public sealed partial class CapabilityRouter : ILlmClient
 			}
 			catch (LlmUpstreamException ux) when (!ux.Transient)
 			{
+				// Non-transient (4xx incl. a size refusal) no longer aborts the chain: the next leg
+				// may have a bigger limit, a working key, a real model — the router does not know
+				// and does not try to know. It just moves on, same as a transient failure would.
+				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
 				LogNonTransient(_log, cap, ep.Name, ux);
-				throw new LlmRouterException(cap, false, $"{cap} failed on '{ep.Name}': {ux.Message}", ux);
 			}
 			catch (LlmUpstreamException ux)
 			{
-				last = ux;
+				failures.Add(new LegFailure(ep.Name, ux.Message, ux));
 				_breaker.RecordFailure(ep.Name);
 				// A 429 gets its OWN classified event (spec: search-degraded-provenance): the owner
 				// must be able to ask "were there rate-limit refusals?" of log_query, and a distinct
@@ -261,17 +282,36 @@ public sealed partial class CapabilityRouter : ILlmClient
 			}
 		}
 
-		// If the chain exhausted on a rate limit, say so: the reason the consumer reports
-		// (embed-rate-limited) is the more useful one for a throttled route than a generic transient.
-		var rateLimited = (last as LlmUpstreamException)?.RateLimited ?? false;
-		throw new LlmRouterException(cap, true,
-			$"all {routes.Count} {cap} provider(s) failed (last attempt {attempt})", last, rateLimited: rateLimited);
+		throw Exhausted(cap, routes.Count, attempt, failures);
 	}
 
 	// A route with no tier is the default and serves any requested tier; a tiered route only
 	// serves its exact tier. Priority then decides order among the matches.
 	static bool TierMatches(string? routeTier, string? requestTier) =>
 		routeTier is null || string.Equals(routeTier, requestTier, StringComparison.OrdinalIgnoreCase);
+
+	// One leg's outcome when it did not serve the call: Reason is always a human-readable summary
+	// (used to build the exhaustion message even for skips that never threw), Error is the actual
+	// exception when there was one (null for "unknown endpoint" / "circuit open" skips, which
+	// never call upstream at all).
+	readonly record struct LegFailure(string Endpoint, string Reason, Exception? Error);
+
+	// Built only when EVERY leg in the chain failed or was skipped — this is the aggregation the
+	// acceptance requires: the thrown exception must let a reader see what happened on EACH leg,
+	// not just the last one that ran. Transient/RateLimited summarize the ACTUAL upstream
+	// exceptions seen (skips contribute no exception and don't count against "all transient") —
+	// this is reporting after the fact, not a decision that drove the walk; the walk itself never
+	// consults these to decide whether to continue.
+	static LlmRouterException Exhausted(LlmCapability cap, int totalRoutes, int attempted, List<LegFailure> failures)
+	{
+		var upstreamErrors = failures.Select(f => f.Error).OfType<LlmUpstreamException>().ToList();
+		var allTransient = upstreamErrors.Count == 0 || upstreamErrors.All(e => e.Transient);
+		var rateLimited = upstreamErrors.Any(e => e.RateLimited);
+		var detail = string.Join("; ", failures.Select(f => $"{f.Endpoint}: {f.Reason}"));
+		var inner = upstreamErrors.Count > 0 ? new AggregateException(upstreamErrors) : null;
+		return new LlmRouterException(cap, allTransient,
+			$"all {totalRoutes} {cap} provider(s) failed ({attempted} attempted): {detail}", inner, rateLimited: rateLimited);
+	}
 
 	[LoggerMessage(EventId = 300, Level = LogLevel.Warning, Message = "llm {Capability}: route references unknown endpoint '{Endpoint}', skipping")]
 	static partial void LogUnknownEndpoint(ILogger logger, LlmCapability capability, string endpoint);
@@ -282,7 +322,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	[LoggerMessage(EventId = 302, Level = LogLevel.Information, Message = "llm {Capability} served by {Endpoint}/{Model} (attempt {Attempt})")]
 	static partial void LogServed(ILogger logger, LlmCapability capability, string endpoint, string model, int attempt);
 
-	[LoggerMessage(EventId = 303, Level = LogLevel.Warning, Message = "llm {Capability} non-transient failure on '{Endpoint}'")]
+	[LoggerMessage(EventId = 303, Level = LogLevel.Warning, Message = "llm {Capability} non-transient failure on '{Endpoint}' — trying next")]
 	static partial void LogNonTransient(ILogger logger, LlmCapability capability, string endpoint, Exception ex);
 
 	[LoggerMessage(EventId = 304, Level = LogLevel.Warning, Message = "llm {Capability} transient failure on '{Endpoint}': {Message} — trying next")]
