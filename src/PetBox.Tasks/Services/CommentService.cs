@@ -1,11 +1,11 @@
 using LinqToDB;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
-using PetBox.Core.Contract;
 
 namespace PetBox.Tasks.Services;
 
@@ -60,6 +60,36 @@ public sealed class CommentService : ICommentService
 		for (var i = 0; i < items.Count; i++)
 		{
 			var it = items[i];
+
+			// ── write-body-by-reference ────────────────────────────────────────────────────
+			// Ahead of the fragment block, so a `bodyRef` + `fragment` collision is named in the
+			// caller's own vocabulary instead of as BodyAndFragment quoting a `body` never sent. A
+			// resolved bodyRef simply becomes `it`'s body and the rest of the loop is unchanged.
+			//
+			// LEGAL ON A CREATE, unlike a fragment: a bodyRef replaces the text rather than patching
+			// it, so there is nothing for it to match against and nothing to refuse. That is the
+			// case this mechanism exists for — a subagent's report posted as a comment, which is a
+			// create, from a file, in one call.
+			if (it.BodyRef is not null)
+			{
+				var at = it.Id ?? $"#{i}";
+				if (it.Body is not null)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null, BodyRefs.BodyAndBodyRef));
+					continue;
+				}
+				if (it.Fragment is not null)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null, BodyRefs.FragmentAndBodyRef));
+					continue;
+				}
+				if (it.BodyRef.Error is { } bodyRefError)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null, bodyRefError));
+					continue;
+				}
+				it = it with { Body = it.BodyRef.Text, BodyRef = null };
+			}
 
 			// ── write-fragment-patch ───────────────────────────────────────────────────────
 			// A `fragment` PATCH is resolved against `currentById` — the active row this call

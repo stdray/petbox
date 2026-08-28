@@ -1847,6 +1847,28 @@ public sealed partial class TasksService : ITasksService
 		// fragment that no longer matches means the body moved under the caller, which is the same
 		// class of failure as a stale watermark and must be reported through the same
 		// applied:false + conflicts[] channel.
+		// ── write-body-by-reference ─────────────────────────────────────────────────────────
+		// Resolved BEFORE fragments, and the order is not arbitrary: a bodyRef becomes an ordinary
+		// Body, so running it second would make a `bodyRef` + `fragment` collision surface as
+		// FragmentPatch.BodyAndFragment — a message naming a `body` the caller never sent. Doing it
+		// first lets the collision be reported in the caller's own vocabulary and leaves
+		// ResolveFragments looking at a perfectly ordinary full-body write, exactly as before.
+		//
+		// The lookup ITSELF already happened, in the adapter, against the caller's claims (see
+		// BodyRefResolution); what is decided here is only what the verdict means for the write. A
+		// refusal is a CONFLICT and not an exception, in atomic and partial mode alike — same channel
+		// and same reasoning as a fragment refusal.
+		var bodyRefConflicts = new List<TemporalConflict>();
+		live = ResolveBodyRefs(live, prior, bodyRefConflicts);
+		if (bodyRefConflicts.Count > 0)
+		{
+			rejected.AddRange(bodyRefConflicts);
+			foreach (var c in bodyRefConflicts) rejectedGuardKeys.Add(c.Key);
+			if (!atomic)
+				rejected.AddRange(TemporalStore.Cascade(batchKeys, k => baselineOf.GetValueOrDefault(k), rejectedGuardKeys, dependsOn));
+			live = live.Where(p => !rejectedGuardKeys.Contains(p.Key)).ToList();
+		}
+
 		var fragmentConflicts = new List<TemporalConflict>();
 		live = ResolveFragments(live, prior, fragmentConflicts);
 		if (fragmentConflicts.Count > 0)
@@ -2901,6 +2923,48 @@ public sealed partial class TasksService : ITasksService
 			OriginSessionId = cur?.OriginSessionId ?? (sessionId ?? "").Trim(),
 			PrevKey = p.PrevKey,
 		};
+	}
+
+	// Turn each patch's resolved `bodyRef` into an ordinary Body set, or record the refusal.
+	//
+	// `cur` is looked up with the SAME expression Merge() and ResolveFragments use (key, then
+	// prevKey on a rename) — duplicated for the same reason it is duplicated there: what matters is
+	// that they agree on WHICH ROW the write is about, and the assertion of that belongs beside each
+	// use. `cur` is needed here only to report the ACTIVE version on a conflict; unlike a fragment, a
+	// bodyRef needs no existing text to match against, so a create is perfectly legal.
+	//
+	// A returned patch carries BodyRef = null: past this point nothing downstream knows or needs to
+	// know that the text arrived by reference.
+	static List<NodePatch> ResolveBodyRefs(
+		List<NodePatch> patches, IReadOnlyDictionary<string, TaskNode> prior, List<TemporalConflict> conflicts)
+	{
+		var resolved = new List<NodePatch>(patches.Count);
+		foreach (var p in patches)
+		{
+			if (p.BodyRef is null)
+			{
+				resolved.Add(p);
+				continue;
+			}
+			var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
+			if (p.Body is not null)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur?.Version, BodyRefs.BodyAndBodyRef));
+				continue;
+			}
+			if (p.Fragment is not null)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur?.Version, BodyRefs.FragmentAndBodyRef));
+				continue;
+			}
+			if (p.BodyRef.Error is { } error)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur?.Version, error));
+				continue;
+			}
+			resolved.Add(p with { Body = p.BodyRef.Text, BodyRef = null });
+		}
+		return resolved;
 	}
 
 	// Turn each patch's `fragment` list into an ordinary Body set, or record the refusal.

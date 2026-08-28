@@ -1242,10 +1242,41 @@ public sealed class MemoryService : IMemoryService
 			// revision was edited. Refusals go to `fragmentConflicts` in BOTH modes — the caller
 			// sees applied:false + conflicts[], exactly as for a stale baseline.
 			var patch = u;
-			if (u.Fragment is not null)
+
+			// ── write-body-by-reference ────────────────────────────────────────────────────
+			// Resolved BEFORE the fragment block, so a `bodyRef` + `fragment` collision is reported
+			// in the caller's own vocabulary rather than as BodyAndFragment naming a `body` that was
+			// never sent. Past this block a resolved bodyRef is an ordinary full-body write.
+			//
+			// UNLIKE a fragment, this needs no `current` row: a bodyRef REPLACES the text, it does
+			// not patch it, so a create (version 0) is legal — which is the whole point for the
+			// population this mechanism serves, where the file is a log or a report being stored for
+			// the first time.
+			if (u.BodyRef is not null)
 			{
 				var key = u.Key ?? "";
 				if (u.Body is not null)
+				{
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current?.Version, BodyRefs.BodyAndBodyRef));
+					continue;
+				}
+				if (u.Fragment is not null)
+				{
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current?.Version, BodyRefs.FragmentAndBodyRef));
+					continue;
+				}
+				if (u.BodyRef.Error is { } bodyRefError)
+				{
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current?.Version, bodyRefError));
+					continue;
+				}
+				patch = u with { Body = u.BodyRef.Text, BodyRef = null };
+			}
+
+			if (patch.Fragment is not null)
+			{
+				var key = u.Key ?? "";
+				if (patch.Body is not null)
 				{
 					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current?.Version, FragmentPatch.BodyAndFragment));
 					continue;
@@ -1257,13 +1288,13 @@ public sealed class MemoryService : IMemoryService
 						$"'fragment' needs existing text to patch — entry '{key}' has no active revision at your baseline; send 'body' to create it"));
 					continue;
 				}
-				var applied = FragmentPatch.Apply(current.Body, u.Fragment);
+				var applied = FragmentPatch.Apply(current.Body, patch.Fragment);
 				if (!applied.Ok)
 				{
 					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current.Version, applied.Error));
 					continue;
 				}
-				patch = u with { Body = applied.Body };
+				patch = patch with { Body = applied.Body };
 			}
 
 			try

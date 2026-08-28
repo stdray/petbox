@@ -477,6 +477,21 @@
 			"note": null
 		},
 		{
+			"id": "bodyrefs.upload",
+			"source": "work/write-body-by-reference",
+			"subdomain": "bodyrefs",
+			"action": "залить готовое тело файлом и получить одноразовую ссылку на него",
+			"target": "project",
+			"targetNote": "Арендатор блоба — проект из маршрута: он же решает, кто потом сможет на блоб сослаться (любой ключ, авторизованный на этот проект, — это и есть кейс «один агент залил, другой сослался»).",
+			"targetSource": null,
+			"surfaces": [
+				"rest:POST /api/blobs/{projectKey}"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Транспорт, а не хранилище: блоб одноразовый (потребляется подстановкой в bodyRef/textRef/contentRef и удаляется), непотреблённый живёт 24 часа и подчищается фоновым BodyRefPruneJob. MCP-поверхности НЕТ намеренно — JSON-аргумент вернул бы ровно ту проблему экранирования, ради которой механизм и сделан (spec no-retransmission-of-existing-content). Гейт — уже имеющееся право писать в этот проект (tasks:write или memory:write); отдельный скоуп в v1 не заводится, иначе ни один существующий ключ не смог бы им воспользоваться."
+		},
+		{
 			"id": "sessions.append",
 			"source": "08-summary §1 #26",
 			"subdomain": "sessions",

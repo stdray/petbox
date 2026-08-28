@@ -18,6 +18,10 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<DataTable> DataTables => this.GetTable<DataTable>();
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
+	// One-shot uploaded bodies awaiting substitution into a write (work/write-body-by-reference).
+	// core.db and not a per-project file: the blob's tenant is a column, and the prune job sweeps
+	// every project in one statement rather than opening N files per tick.
+	public ITable<BodyRefBlob> BodyRefBlobs => this.GetTable<BodyRefBlob>();
 	public ITable<Setting> Settings => this.GetTable<Setting>();
 	public ITable<DataDb> DataDbs => this.GetTable<DataDb>();
 	public ITable<LogMeta> Logs => this.GetTable<LogMeta>();
@@ -186,6 +190,23 @@ public sealed class PetBoxDb : DataConnection
 			.Property(s => s.ColumnsJson).HasDataType(DataType.Text).IsNullable(false)
 			.Property(s => s.ModesJson).HasDataType(DataType.Text).IsNullable(false)
 			.Property(s => s.CreatedBy).HasLength(100).IsNullable(false);
+
+		// M052 (work/write-body-by-reference). EVERY column declared, for the reason the ApiKey block
+		// above documents four separate times: on a partially-Fluent entity an undeclared column is
+		// dropped from the schema cache, so the INSERT omits it and the read comes back the CLR
+		// default. Here that would land on ExpiresAt — every uploaded blob would read back
+		// DateTime.MinValue, i.e. already expired, and the mechanism would be dead on arrival while
+		// the upload endpoint reported 200.
+		builder.Entity<BodyRefBlob>()
+			.HasTableName("BodyRefBlobs")
+			.HasPrimaryKey(b => b.Ref)
+			.Property(b => b.Ref).HasLength(64).IsNullable(false)
+			.Property(b => b.ProjectKey).HasLength(100).IsNullable(false)
+			.Property(b => b.Body).HasDataType(DataType.Text).IsNullable(false)
+			.Property(b => b.Bytes).HasDataType(DataType.Int64).IsNullable(false)
+			.Property(b => b.CreatedAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(b => b.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(b => b.CreatedBy).HasLength(200).IsNullable(false);
 
 		builder.Build();
 		return ms;

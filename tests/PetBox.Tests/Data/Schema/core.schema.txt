@@ -16,6 +16,18 @@ TABLE ApiKeys
   COL Scopes TEXT NOT NULL
   INDEX sqlite_autoindex_ApiKeys_1 UNIQUE origin=pk (Key)
 
+TABLE BodyRefBlobs
+  COL Body TEXT NOT NULL
+  COL Bytes INTEGER NOT NULL DEFAULT 0
+  COL CreatedAt DATETIME NOT NULL
+  COL CreatedBy TEXT NOT NULL DEFAULT ''
+  COL ExpiresAt DATETIME NOT NULL
+  COL ProjectKey TEXT NOT NULL
+  COL Ref TEXT NOT NULL PK1
+  INDEX IX_BodyRefBlobs_ExpiresAt origin=c (ExpiresAt)
+  INDEX IX_BodyRefBlobs_RefProject origin=c (Ref, ProjectKey)
+  INDEX sqlite_autoindex_BodyRefBlobs_1 UNIQUE origin=pk (Ref)
+
 TABLE DataDbs
   COL CreatedAt DATETIME NOT NULL
   COL Description TEXT NULL

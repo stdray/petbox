@@ -3,7 +3,10 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 223 surfaces: 58 REST, 66 Razor, 99 MCP; was 222/98 MCP before
+// ratchet guards (AuthzSurfaces — 224 surfaces: 59 REST, 66 Razor, 99 MCP; was 223/58 REST before
+// write-body-by-reference added POST /api/blobs/{projectKey}, the raw-body upload half of `bodyRef`
+// — a REST surface and deliberately not an MCP one, because a JSON argument would reintroduce the
+// escaping cost the mechanism exists to remove; was 222/98 MCP before
 // observation-edges-promote-and-nail added the mcp:tasks_observation_promote verb (TasksTools'
 // class-level TenantFrom(projectKey) covers it like every other tasks_* verb); 220/65 Razor/97 MCP before
 // owner-away-digest-delivery added BOTH doors of the owner digest — the mcp:tasks_owner_digest verb and
@@ -21,10 +24,10 @@ namespace PetBox.Tests.Architecture;
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 223 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 224 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 151 addressed surfaces that already deny a foreign tenant today.
+//   * REFUSED               — 152 addressed surfaces that already deny a foreign tenant today.
 //   * KnownDeviations       —   5 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
@@ -35,7 +38,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 151 + 5 + 67 = 223, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 152 + 5 + 67 = 224, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -421,9 +424,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(223,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 66 Razor + 99 MCP "
-			+ "(was 98 MCP / 222 before observation-edges-promote-and-nail added mcp:tasks_observation_promote; "
+		_host.Surfaces.Should().HaveCount(224,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 59 REST + 66 Razor + 99 MCP "
+			+ "(was 58 REST / 223 before write-body-by-reference added rest:POST /api/blobs/{{projectKey}} — the "
+			+ "raw-body upload the `bodyRef` parameter references, REST rather than MCP on purpose; "
+			+ "was 98 MCP / 222 before observation-edges-promote-and-nail added mcp:tasks_observation_promote; "
 			+ "65 Razor / 97 MCP / 220 before owner-away-digest-delivery added the owner digest's TWO doors — "
 			+ "mcp:tasks_owner_digest and page:/ProjectHome/OwnerDigest, one service behind both; "
 			+ "96 MCP / 219 before share-link-revocation-finish added mcp:share_revoke, the agent-facing "
@@ -444,7 +449,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(151,
+		refused.Should().Be(152,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -473,6 +478,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "[TenantFrom(Argument, \"projectKey\")] like every other tasks_* verb, so the MCP PEP "
 			+ "refuses the probe before the tool body runs. A rise that ADDS protection, not one that "
 			+ "repairs a deviation. "
+			+ "151 -> 152 with write-body-by-reference: rest:POST /api/blobs/{{projectKey}}, a NEW surface "
+			+ "that denies from its first commit — it declares [TenantFrom(Route, \"projectKey\")], so "
+			+ "TenantEnforcementMiddleware refuses a foreign tenant (and contains a sandboxOnly key) before "
+			+ "the handler is entered and before a single byte of the uploaded body is read. Once more a "
+			+ "rise that ADDS protection rather than repairing a deviation. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "

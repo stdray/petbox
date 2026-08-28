@@ -97,19 +97,43 @@ public static class SessionTools
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent,
 		[Description("Ordinal (1-based) of the first message in this batch.")] long fromOrdinal,
-		[Description("Array of {role, content} messages, in transcript order. session_get does NOT return this array shape — it returns the transcript joined into ONE string (`content`), not a per-message list. The bridge between the two verbs is the ORDINAL, not the wire shape: this call's `fromOrdinal` and session_get's/session_search's `lastOrdinal` share the same 1-based, dense message-count cursor.")] SessionMessageDto[] messages,
+		[Description("Array of {role, content, contentRef?} messages, in transcript order. `contentRef` carries a message body BY REFERENCE — a blob reference from POST /api/blobs/{projectKey}, per message, mutually exclusive with that message's `content` — for a transcript or report that already exists as a file. session_get does NOT return this array shape — it returns the transcript joined into ONE string (`content`), not a per-message list. The bridge between the two verbs is the ORDINAL, not the wire shape: this call's `fromOrdinal` and session_get's/session_search's `lastOrdinal` share the same 1-based, dense message-count cursor.")] SessionMessageDto[] messages,
 		[Description("Optional observed client metadata as a JSON object string (e.g. roleBinding stamp). Last-write-wins when set; omit to keep existing; not written on a gap reject.")] string? meta = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
-		var inputs = messages
-			.Where(m => !string.IsNullOrEmpty(m.Content))
-			.Select(m => new SessionMessageInput(m.Role ?? "", m.Content!))
-			.ToList();
+		// work/write-body-by-reference. session_append has no conflicts[] channel and no per-message
+		// refusal shape — its only structured reject is the ordinal `gap` — so a bad `contentRef`
+		// refuses the CALL by throwing, the way every other malformed-input refusal on this verb
+		// does. The RULE is the batch verbs' rule unchanged (both fields = refused, never a
+		// precedence); only the channel differs, because this surface has only one.
+		var bodyRefs = await McpBodyRefs.ResolveAsync(http, messages.Select(m => m.ContentRef), ct);
+		var resolved = new List<SessionMessageInput>(messages.Length);
+		for (var i = 0; i < messages.Length; i++)
+		{
+			var m = messages[i];
+			var content = m.Content;
+			if (!string.IsNullOrWhiteSpace(m.ContentRef))
+			{
+				if (content is not null)
+					throw new ArgumentException($"'messages[{i}]': " + BodyRefs.BodyAndBodyRef.Replace("'body'", "'content'"));
+				var resolution = bodyRefs.For(m.ContentRef)!;
+				if (resolution.Error is { } refError) throw new ArgumentException($"'messages[{i}]': {refError}");
+				content = resolution.Text;
+			}
+			// Blank entries are still dropped rather than refused — session_append's documented
+			// contract (an all-blank batch is an idempotent no-op, not an error) is unchanged.
+			if (!string.IsNullOrEmpty(content))
+				resolved.Add(new SessionMessageInput(m.Role ?? "", content));
+		}
 
-		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, inputs, meta, ct);
+		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, resolved, meta, ct);
+		// ONE-SHOT: spent only when the append actually applied. A `gap` reject writes nothing, so
+		// the blobs survive and the caller resends the same refs from lastOrdinal+1.
+		if (o.Applied)
+			await bodyRefs.ConsumeAsync(messages.Select(m => m.ContentRef), ct);
 		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
 		// only warn about size on a write that actually landed — a gap reject already has its own
 		// signal (reason:"gap").

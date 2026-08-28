@@ -103,6 +103,15 @@ public sealed record TaskNodeInput
 	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
 	// first-match guess, never a partial application.
 	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
+	// A body that ALREADY EXISTS as a file, carried by REFERENCE instead of retyped into this call
+	// (work/write-body-by-reference). Upload the file to POST /api/blobs/{projectKey} — a RAW body,
+	// not JSON, which is the point: the text never passes through the model's output and so never
+	// pays the \uXXXX escaping tax that truncates long Cyrillic calls. Send the `ref` it returns
+	// here, verbatim. ONE-SHOT: consumed by the write that references it (a refused write does NOT
+	// consume it — retry with the same ref), and expiring 24h after upload otherwise.
+	// Mutually exclusive with `body` AND with `fragment`: two of them in one item is a REFUSAL
+	// through conflicts[], never a silent precedence — the same rule `body` vs `fragment` follows.
+	public string? BodyRef { get; init; }
 	// Free-form reason for THIS write (not the node body). Two independent effects: (1) a status
 	// transition the methodology marks RequiresReason still fails outright when this is
 	// omitted/null/whitespace — that gate is unchanged. (2) whenever this write is APPLIED and
@@ -407,6 +416,13 @@ public sealed record SessionMessageDto
 {
 	public string? Role { get; init; }
 	public string? Content { get; init; }
+
+	// A message body carried by REFERENCE (work/write-body-by-reference). NAMED `contentRef`, not
+	// `bodyRef`: this surface's text field is `content`, and a parameter must name the field it
+	// replaces. PER MESSAGE, not per call — a batch may carry one huge referenced message (a
+	// subagent's transcript, a captured command output) beside several ordinary inline ones.
+	// Mutually exclusive with `content`; sending both is a refusal for the whole call.
+	public string? ContentRef { get; init; }
 }
 
 // One item of a config_binding_upsert batch (typed array, like TaskNodeInput/CommentItemInput).
@@ -440,6 +456,15 @@ public sealed record CommentItemInput
 	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
 	// first-match guess, never a partial application.
 	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
+	// A body that ALREADY EXISTS as a file, carried by REFERENCE instead of retyped into this call
+	// (work/write-body-by-reference). Upload the file to POST /api/blobs/{projectKey} — a RAW body,
+	// not JSON, which is the point: the text never passes through the model's output and so never
+	// pays the \uXXXX escaping tax that truncates long Cyrillic calls. Send the `ref` it returns
+	// here, verbatim. ONE-SHOT: consumed by the write that references it (a refused write does NOT
+	// consume it — retry with the same ref), and expiring 24h after upload otherwise.
+	// Mutually exclusive with `body` AND with `fragment`: two of them in one item is a REFUSAL
+	// through conflicts[], never a silent precedence — the same rule `body` vs `fragment` follows.
+	public string? BodyRef { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }
 	public long Version { get; init; }
 }
@@ -473,6 +498,15 @@ public sealed record MemoryEntryInputDto
 	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
 	// first-match guess, never a partial application.
 	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
+	// A body that ALREADY EXISTS as a file, carried by REFERENCE instead of retyped into this call
+	// (work/write-body-by-reference). Upload the file to POST /api/blobs/{projectKey} — a RAW body,
+	// not JSON, which is the point: the text never passes through the model's output and so never
+	// pays the \uXXXX escaping tax that truncates long Cyrillic calls. Send the `ref` it returns
+	// here, verbatim. ONE-SHOT: consumed by the write that references it (a refused write does NOT
+	// consume it — retry with the same ref), and expiring 24h after upload otherwise.
+	// Mutually exclusive with `body` AND with `fragment`: two of them in one item is a REFUSAL
+	// through conflicts[], never a silent precedence — the same rule `body` vs `fragment` follows.
+	public string? BodyRef { get; init; }
 
 	// Tags as an ARRAY of tag strings (like tasks): null = omit (PATCH: keep the current
 	// set), [] = explicit clear, a non-empty list REPLACES the set.

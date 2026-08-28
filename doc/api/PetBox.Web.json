@@ -1821,6 +1821,35 @@
         }
       }
     },
+    "/api/blobs/{projectKey}": {
+      "post": {
+        "tags": [
+          "BodyRefApi"
+        ],
+        "parameters": [
+          {
+            "name": "projectKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BodyRefUploadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/chat/completions": {
       "post": {
         "tags": [
@@ -2702,6 +2731,40 @@
       "BindingKind": {
         "type": "integer",
         "default": 0
+      },
+      "BodyRefUploadResponse": {
+        "required": [
+          "ref",
+          "bytes",
+          "chars",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "bytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "chars": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "CanonPart": {
         "required": [
@@ -4052,6 +4115,9 @@
     },
     {
       "name": "MemoryApi"
+    },
+    {
+      "name": "BodyRefApi"
     },
     {
       "name": "LlmRouterApi"

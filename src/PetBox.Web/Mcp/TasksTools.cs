@@ -1626,7 +1626,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board,
-		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node and is listed in the node object's `required` — omitting it is an error, not a quick-add. `key` is the slug FIELD being written and takes the slug ONLY (never a NodeId); the reference parameters below take either form. Then: optional `partOf` (the parent: a node reference — its slug key or its 32-hex NodeId, both accepted), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds, each ref a node reference — a slug key or a 32-hex NodeId, both accepted — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (the blocker: a node reference — its slug key or its 32-hex NodeId, both accepted), `supersedes` (the replaced node: a node reference — its slug key or its 32-hex NodeId, both accepted), status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, and `prevKey` to rename (the node's PREVIOUS slug key — a rename source, not an alias of `key`).")] TaskNodeInput[] nodes,
+		[Description("Array of node objects. `key` (flat slug) is REQUIRED on every node and is listed in the node object's `required` — omitting it is an error, not a quick-add. `key` is the slug FIELD being written and takes the slug ONLY (never a NodeId); the reference parameters below take either form. Then: optional `partOf` (the parent: a node reference — its slug key or its 32-hex NodeId, both accepted), `tags` (array of ns:value), `commits` (array of hex SHAs), `links` ({relationKind: ref|ref[]} for declared/process kinds, each ref a node reference — a slug key or a 32-hex NodeId, both accepted — e.g. {\"task_spec\":\"spec-leaf\"} / {\"idea_spec\":\"<accepted idea>\"}), `blockedBy` (the blocker: a node reference — its slug key or its 32-hex NodeId, both accepted), `supersedes` (the replaced node: a node reference — its slug key or its 32-hex NodeId, both accepted), status/type/title/body/reason (for RequiresReason transitions — never the body)/priority/version, `bodyRef` (a blob reference from POST /api/blobs/{projectKey} whose text BECOMES this node's body — for a body that already exists as a file; mutually exclusive with `body` and `fragment`, and sending two is a refusal in conflicts[]), and `prevKey` to rename (the node's PREVIOUS slug key — a rename source, not an alias of `key`).")] TaskNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
@@ -1689,8 +1689,28 @@ public static class TasksTools
 			}
 		}
 
-		var patches = ParseNodePatches(nodes);
+		// work/write-body-by-reference: every DISTINCT `bodyRef` in the batch is looked up ONCE,
+		// here in the adapter, because judging it needs the caller's claims. Resolved AFTER the
+		// observation-dedup guard has had its say, so a batch that fully deduped never touches the
+		// blob store at all — and, more importantly, never CONSUMES a blob for a node it did not
+		// create. Nothing is consumed yet regardless; that happens below, only for what landed.
+		var bodyRefs = await McpBodyRefs.ResolveAsync(http, nodes.Select(n => n.BodyRef), ct);
+		var patches = ParseNodePatches(nodes, bodyRefs);
 		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, sessionId, ct);
+
+		// ONE-SHOT, spent only on what actually landed. A node counts as landed when the call
+		// applied at all AND its key is not among the conflicts — the same key space
+		// TasksService.ResolveBodyRefs rejects into. A blob behind a REFUSED node deliberately
+		// SURVIVES, so the caller can rebase the version watermark and retry with the SAME ref
+		// instead of re-uploading; re-uploading on every CAS retry would reintroduce, at the retry,
+		// the double payment this whole mechanism exists to abolish.
+		if (!bodyRefs.IsEmpty)
+		{
+			var refusedKeys = outcome.Result.Conflicts.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+			await bodyRefs.ConsumeAsync(nodes
+				.Where(n => outcome.Result.Applied && !refusedKeys.Contains(ResolveKey(n)))
+				.Select(n => n.BodyRef), ct);
+		}
 		// Seed the recurrence signal (RecurrenceCount 1) for every genuinely NEW observation
 		// node this call created — the counterpart of the dedup hits above, so a fresh
 		// observation and a recurring one both carry a signal row from birth.
@@ -1982,7 +2002,7 @@ public static class TasksTools
 	// from the prior row) happens in the service; here an omitted field deserializes to null
 	// (inherit) and a present field to its value ("" = explicit clear) — the null-vs-"" distinction
 	// is carried by the JSON value itself, so the old Has()-presence checks are no longer needed.
-	static List<NodePatch> ParseNodePatches(TaskNodeInput[] nodes)
+	static List<NodePatch> ParseNodePatches(TaskNodeInput[] nodes, BodyRefBatch bodyRefs)
 	{
 		var list = new List<NodePatch>(nodes.Length);
 		foreach (var n in nodes)
@@ -2004,6 +2024,12 @@ public static class TasksTools
 				// adapter deliberately does NOT resolve it here (resolving it at the adapter would
 				// mean read-then-write across two statements, outside the version guard).
 				Fragment = FragmentEditDto.ToCore(n.Fragment),
+				// Body by reference (write-body-by-reference). The LOOKUP already happened — it
+				// needs the caller's claims, which the service does not have (see McpBodyRefs) —
+				// so what is passed down is the verdict. What the verdict MEANS for the write
+				// (a refusal into conflicts[], or a substitution into Body) is the service's call,
+				// beside the fragment rule it mirrors.
+				BodyRef = bodyRefs.For(n.BodyRef),
 				Reason = n.Reason,
 				// Commits: null = omit (don't touch); a non-null list (incl. empty) REPLACES the
 				// node's full commit set — same semantics as Tags.
