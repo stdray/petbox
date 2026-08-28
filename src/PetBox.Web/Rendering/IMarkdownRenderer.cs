@@ -1,9 +1,12 @@
 namespace PetBox.Web.Rendering;
 
-// Server-side markdown → sanitized HTML for the READ surfaces (node bodies, comment bodies,
+// Server-side markdown → sanitized HTML for the read surfaces (node bodies, comment bodies,
 // board-row previews). Rendering on the server emits real <article>/<p>/<ul>… in the initial
 // response so Firefox's reader-view heuristic (isProbablyReaderable) can detect the article.
-// The live edit-preview still renders client-side (ts/markdown.ts); this is read-only.
+// editor-preview-renders-server-side: this is now the ONLY markdown pipeline in the product — the
+// live edit-preview goes through it too (TaskBoardNodeModel.OnPostPreviewAsync, over htmx),
+// rather than through a second client-side one that drifted structurally from it. So whatever
+// this renderer learns to emit, the author sees while still typing, with no parity work.
 public interface IMarkdownRenderer
 {
 	// Parse `markdown` to HTML and sanitize it (parity with the client DOMPurify path). Safe to

@@ -30,6 +30,16 @@ namespace PetBox.Web.Pages.ProjectHome;
 [TenantFrom(TenantSource.Route, "projectKey")]
 public sealed class TaskBoardNodeModel : PageModel
 {
+	// editor-preview-renders-server-side: the largest draft OnPostPreviewAsync will render in one
+	// request. Public so the test that pins the refusal reads the SAME number the handler enforces
+	// rather than restating it.
+	public const int MaxPreviewChars = 262_144;
+
+	// The preview fragment is already-sanitized HTML written verbatim into the response; the
+	// charset is explicit so a body of Cyrillic prose round-trips as UTF-8 rather than inheriting a
+	// guess (the renderer emits raw non-ASCII, it does not entity-escape it).
+	const string PreviewContentType = "text/html; charset=utf-8";
+
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
@@ -42,10 +52,18 @@ public sealed class TaskBoardNodeModel : PageModel
 	// is registered unconditionally), a bare unit-test construction that never exercises memory
 	// autolinking may omit it.
 	readonly IProjectCatalog? _catalog;
+	// editor-preview-renders-server-side: the ONE markdown pipeline, now serving the live edit
+	// preview too (OnPostPreviewAsync) and not only the saved read surfaces. Optional ctor param
+	// with the same posture as _memory/_catalog above — DI always supplies it (registered singleton
+	// in Program.cs), and a bare page-model unit test that never previews may omit it. The fallback
+	// is a fresh MarkdownRenderer rather than a null-render: the renderer is stateless and
+	// configuration-identical per instance, so the preview's output cannot drift from the saved
+	// body's just because a test constructed the page by hand.
+	readonly IMarkdownRenderer _markdown;
 
 	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
 		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null,
-		IProjectCatalog? catalog = null)
+		IProjectCatalog? catalog = null, IMarkdownRenderer? markdown = null)
 	{
 		_features = features;
 		_tasks = tasks;
@@ -53,6 +71,7 @@ public sealed class TaskBoardNodeModel : PageModel
 		_settings = settings;
 		_memory = memory;
 		_catalog = catalog;
+		_markdown = markdown ?? new MarkdownRenderer();
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -140,6 +159,63 @@ public sealed class TaskBoardNodeModel : PageModel
 		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		return await ApplyAsync(p => p with { Title = title ?? string.Empty, Body = body ?? string.Empty }, version, ct);
+	}
+
+	// editor-preview-renders-server-side: render the DRAFT body through the same IMarkdownRenderer
+	// that renders the saved body, and return the sanitized HTML fragment htmx swaps into the
+	// preview pane. The old preview was a SECOND markdown pipeline (ts/markdown.ts: marked +
+	// DOMPurify) whose output diverged structurally from this one — `##` never became a
+	// `<section class="md-section">` and `> [!NOTE]` rendered as a plain blockquote containing the
+	// literal text "[!NOTE]". Owner's call (2026-08-28): delete that pipeline rather than chase
+	// parity between two implementations forever; the network round-trip per recompute is the
+	// consciously accepted price.
+	//
+	// The parameter is TEXT, not a node reference, because the draft does not exist in the database
+	// yet — which makes this an authenticated endpoint that renders arbitrary caller-supplied
+	// markup, so it is fenced on four sides:
+	//   * Member+ (NOT the class-level WorkspaceViewer): only someone who could actually SAVE this
+	//     body may render one. Same check, same order, as OnPostEditAsync above.
+	//   * the Tasks feature flag, like every other handler here;
+	//   * the node the editor sits on must still RESOLVE for this caller (ResolveAsync honours the
+	//     route's tenant binding) — so this is a node-scoped preview, not a general-purpose
+	//     "render markdown for me" oracle reachable by any workspace member;
+	//   * MaxPreviewChars, below.
+	// XSS is handled by construction rather than by a second sanitizer: the response is whatever
+	// MarkdownRenderer.RenderToHtml returns, which is already through the SAME BuildSanitizer() and
+	// the SAME AllowedClasses as the saved body — author raw HTML, `on*` handlers and
+	// `javascript:` URLs are neutralized in the preview exactly as they are after saving.
+	public async Task<IActionResult> OnPostPreviewAsync(string? body, CancellationToken ct)
+	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		var detail = await ResolveAsync(ct);
+		if (detail is null) return NotFound();
+
+		var draft = body ?? string.Empty;
+		// A ceiling on ONE preview render, not on what may be saved: bodies are unbounded in
+		// storage, so a body past this point still saves fine and simply previews as this notice
+		// instead of a render. Deliberately far above any hand-written node body (the largest on
+		// the real boards are a few KB) so a human never meets it, and far below the input size at
+		// which a debounced-per-keystroke Markdig parse becomes a cheap way to burn the box's CPU.
+		if (draft.Length > MaxPreviewChars)
+			return Content(
+				$"<p class=\"opacity-60 italic\">Body is too large to preview ({draft.Length:N0} characters; " +
+				$"the limit is {MaxPreviewChars:N0}). It can still be saved.</p>", PreviewContentType);
+
+		// The SAME three context inputs the saved body is rendered with (see TaskBoardNode.cshtml's
+		// read-body partial), pre-scanned over the DRAFT text rather than the stored one — that is
+		// what makes `[[slug]]` mentions, commit hashes and memory keys resolve in the preview
+		// instead of trading the old divergence for a new one. LoadAsync scans the body PLUS every
+		// comment body, so its map can hold entries this one does not; that cannot move the output,
+		// because the renderer only ever looks up mentions it actually finds in the text it is
+		// rendering (see NodeRefs' own note that an unused map entry is harmless).
+		var commitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
+		var nodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, [draft], ct);
+		var memoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
+			? await MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, [draft], ct)
+			: MemoryRefs;
+
+		return Content(_markdown.RenderToHtml(draft, commitUrlTemplate, nodeRefs, memoryRefs), PreviewContentType);
 	}
 
 	// decision-pending-has-no-ui: set or clear the owner-decision-pending flag from the UI — the
