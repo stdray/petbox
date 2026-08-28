@@ -1,0 +1,17 @@
+{
+  "note": "Real bodies fetched live from the $system PetBox project via tasks_node_get / comments_get on 2026-08-28, for work/write-economy-measure-existing-text. Not lorem ipsum. Each row: file, source board/key (or comment id), version at fetch time, char count (as fetched, .NET UTF-16 code units == what a JSON string literal must escape/encode).",
+  "fetchedAt": "2026-08-28",
+  "projectKey": "$system",
+  "items": [
+    { "file": "01-blob-upload-then-reference-in-mcp.md", "board": "ideas", "key": "blob-upload-then-reference-in-mcp", "version": 570, "kind": "idea" },
+    { "file": "02-context-economy.md", "board": "ideas", "key": "context-economy", "version": 82, "kind": "idea" },
+    { "file": "03-deploy-control-plane.md", "board": "ideas", "key": "deploy-control-plane", "version": 135, "kind": "idea" },
+    { "file": "04-board-view-display-config.md", "board": "ideas", "key": "board-view-display-config", "version": 453, "kind": "idea" },
+    { "file": "05-authz-coverage-matrix-guard.md", "board": "ideas", "key": "authz-coverage-matrix-guard", "version": 347, "kind": "idea" },
+    { "file": "06-write-body-by-reference.md", "board": "work", "key": "write-body-by-reference", "version": 1975, "kind": "feature (chore card)" },
+    { "file": "07-write-economy-measure-existing-text.md", "board": "work", "key": "write-economy-measure-existing-text", "version": 1975, "kind": "chore card" },
+    { "file": "08-verdict-comment-smoke-verdict-gate.md", "board": "work", "commentId": "32c4529e95374b6586fa4cbcc5bed1a6", "nodeId": "eae62e06d1d64850a577164c5d21fa5b", "version": 151, "kind": "comment (artifact:verdict)" },
+    { "file": "09-spec-no-retransmission.md", "board": "spec", "key": "no-retransmission-of-existing-content", "version": 171, "kind": "spec" },
+    { "file": "10-spec-write-cost-follows-change.md", "board": "spec", "key": "write-cost-follows-change", "version": 171, "kind": "spec" }
+  ]
+}
