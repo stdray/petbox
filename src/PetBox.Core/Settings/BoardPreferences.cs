@@ -26,6 +26,13 @@ public sealed record BoardViewPreference
 	// are "what does THIS board look like", both write on the exact same `?columns=`+
 	// `columnsSet=1` navigation trigger.
 	public string? Columns { get; init; }
+
+	// decision-pending-has-no-ui: the board's "only nodes waiting on the owner's decision" toggle,
+	// same per-board cross-device shape as Mode/By/Fields/Columns above — an explicit `?decisionPending=`
+	// navigation both renders AND writes this. null = never explicitly set on this board (falls
+	// through to the builtin default, false — show everything); true/false once the owner has
+	// picked one explicitly at least once on some device.
+	public bool? DecisionPendingOnly { get; init; }
 }
 
 // board-view-cross-device / board-filters-server-state: per-user task-board preferences, resolved

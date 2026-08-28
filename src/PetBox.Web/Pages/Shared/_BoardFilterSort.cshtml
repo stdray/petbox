@@ -14,6 +14,14 @@
 		<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" checked="@(Model.ActiveOnly ? "checked" : null)" />
 		<span>active only</span>
 	</label>
+	@* decision-pending-has-no-ui: a PLAIN navigating link (`<a href="?decisionPending=...">`), the
+	   SAME shape as TaskBoard.cshtml's own view-mode switcher just above this bar — never
+	   intercepted by ts/board.ts, never a fire-and-forget POST like active-only above. The server
+	   resolves the SAME `?decisionPending=` query key TaskBoardModel.LoadAsync reads (board-view-
+	   cross-device cascade: explicit URL wins, then the saved per-board preference, else off), so
+	   the state this link lands on is what makes the URL shareable — a second browser hitting the
+	   exact same link re-derives the exact same filtered board on its own FIRST response. *@
+	<a href="?decisionPending=@(Model.DecisionPendingOnly ? "false" : "true")" class="btn btn-xs @(Model.DecisionPendingOnly ? "btn-warning" : "btn-ghost")" data-testid="board-decision-pending-toggle" data-decision-pending="@Model.DecisionPendingOnly.ToString().ToLowerInvariant()" title="Show only nodes waiting on the owner's decision">⏳ waiting only</a>
 	@* board-filters-server-state: ActiveOnly/SortBy/SortDesc are TaskBoardModel's server-resolved
 	   [Setting] values (Scope.User, board-independent — a global habit, not a per-board choice) —
 	   rendering `checked`/`selected`/the arrow glyph from them means the FIRST response already

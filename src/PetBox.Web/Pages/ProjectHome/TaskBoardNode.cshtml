@@ -64,6 +64,23 @@
 				   the board agree on this field (ui-spec-status-board-node-mismatch). The status-change
 				   form below is unaffected — only the read-only badge is suppressed. *@
 				<partial name="_StatusBadge" model="new PetBox.Web.Pages.Shared.StatusBadgeModel(Model.Runtime, Model.Detail.Kind, node.Status)" />
+				@* decision-pending-has-no-ui: badge + the ONLY UI door to set/clear the flag — before
+				   this form, the owner could read the queue only via an agent (tasks_search
+				   decisionPending:) and never mark a card themselves. A plain POST form (works
+				   without JS), same door (UpsertAsync via TaskBoardNodeModel.ApplyAsync) every other
+				   edit on this page already goes through, so it hits the SAME guards/concurrency
+				   check as the MCP path. *@
+				@if (node.DecisionPending)
+				{
+					<span class="badge badge-warning badge-sm" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
+				}
+				<form method="post" asp-page-handler="DecisionPending" class="inline-flex items-center" data-testid="node-decision-pending-form">
+					<input type="hidden" name="version" value="@node.Version" />
+					<input type="hidden" name="pending" value="@(!node.DecisionPending)" />
+					<button type="submit" class="btn btn-ghost btn-xs" data-testid="node-decision-pending-toggle" title="@(node.DecisionPending ? "Clear — no longer waiting on a decision" : "Mark as waiting on the owner's decision")">
+						@(node.DecisionPending ? "clear decision flag" : "mark waiting on me")
+					</button>
+				</form>
 				@if (Model.NextStatuses.Count > 0)
 				{
 					<form method="post" asp-page-handler="Status" class="inline-flex items-center gap-1" data-testid="node-status-form">

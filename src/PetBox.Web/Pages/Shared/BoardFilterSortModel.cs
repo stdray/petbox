@@ -49,4 +49,8 @@ public sealed record BoardFilterSortModel(
 	bool BodyUnavailable = false,
 	bool ActiveOnly = true,
 	string SortBy = "priority",
-	bool SortDesc = false);
+	bool SortDesc = false,
+	// decision-pending-has-no-ui: the board's current `?decisionPending=` state (TaskBoardModel.
+	// DecisionPendingOnly) — drawn as a plain navigating toggle link, the SAME shape as the view-mode
+	// switcher just above it in TaskBoard.cshtml, not a fire-and-forget POST like active-only.
+	bool DecisionPendingOnly = false);

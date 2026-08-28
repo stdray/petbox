@@ -37,7 +37,7 @@ else
 	// board it lives on. It was briefly scoped to the spec board only (board-ui-review-findings
 	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
 	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
 		@foreach (var n in Model.Nodes)
@@ -69,7 +69,7 @@ else
 			// via the tree pane stays hidden here too on the SAME board.
 			var hiddenByActive = Model.ActiveOnly && closed && !keepVisible;
 			var hidden = hiddenByActive || Model.IsHiddenByCollapse(n.ParentNodeId);
-			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem;display:@(hidden ? "none" : "")">
+			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-decision-pending="@n.DecisionPending.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem;display:@(hidden ? "none" : "")">
 				@if (eager)
 				{
 					<details open data-testid="outline-node-eager">

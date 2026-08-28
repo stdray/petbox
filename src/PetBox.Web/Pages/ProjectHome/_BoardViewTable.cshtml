@@ -30,7 +30,11 @@
 			// board-filters-server-state: table has no hierarchy to orphan a child out of, so
 			// (unlike TaskNodeCard) there's no keepVisible exception — a closed row hides under
 			// active-only, period. No collapse either (table never showed one).
-			Hidden: Model.ActiveOnly && closed);
+			Hidden: Model.ActiveOnly && closed,
+			// decision-pending-has-no-ui: the table's own visibility affordance — Model.Nodes is
+			// already narrowed server-side when the toggle is on (TaskBoardModel.LoadAsync), this is
+			// just the per-row badge for the unfiltered render.
+			DecisionPending: n.DecisionPending);
 	}).ToList();
 }
-<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc)" />
+<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly)" />

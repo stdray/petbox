@@ -28,7 +28,12 @@ public sealed record TaskTableRow(
 	// tree-view counterpart — an inline `display:none` on the <tr> so the first response already
 	// shows the filtered table (no post-load hide/reflow). Default false: Search's cross-scope table
 	// never sets it (search has no active-only concept), so its rows are unaffected.
-	bool Hidden = false);
+	bool Hidden = false,
+	// decision-pending-has-no-ui: the badge trigger for this row (_TaskTable.cshtml) — always
+	// rendered when true, not gated on Fields (same posture as the tree card's own badge). Default
+	// false: Search's cross-scope ToRow doesn't resolve it (out of this card's scope — see
+	// CrossScopeSearchHit), so its rows never show the badge.
+	bool DecisionPending = false);
 
 // ShowScopeColumns=true renders workspace/project/board columns ahead of key (cross-scope
 // search, where a row's location isn't implicit from the page it's on); false omits them
@@ -56,4 +61,9 @@ public sealed record TaskTableModel(
 	PetBox.Web.Rendering.BoardFieldConfig? Fields = null,
 	string? WorkspaceKey = null, string? ProjectKey = null,
 	bool ActiveOnly = true, string SortBy = "priority", bool SortDesc = false,
-	bool ShowFilterBar = true);
+	bool ShowFilterBar = true,
+	// decision-pending-has-no-ui: threaded through to the shared filter bar's toggle (TaskBoard's
+	// own table view only — Search's cross-scope call never sets it, so its bar never shows the
+	// toggle in the "on" state; the toggle link itself still renders there since the bar is shared,
+	// but out-of-scope-here cross-project filtering isn't wired to it).
+	bool DecisionPendingOnly = false);

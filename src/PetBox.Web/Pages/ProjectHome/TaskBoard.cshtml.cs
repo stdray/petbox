@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Caching.Hybrid;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -159,6 +160,20 @@ public sealed class TaskBoardModel : PageModel
 	// render; NEVER consulted by active-only filtering/sorting/other view modes (presentation
 	// only, kanban-column-picker bullet 6).
 	public BoardColumnConfig VisibleColumns { get; private set; } = BoardColumnConfig.None;
+
+	// decision-pending-has-no-ui: "only nodes waiting on the owner's decision" — the SAME
+	// URL-contract shape as `view`/`by` above (board-view-cross-device): an explicit `?decisionPending=`
+	// both renders AND writes the per-board saved preference; bool? (not string[]) already tells
+	// "absent from the URL" (null) apart from "explicitly asked, either way" (true/false), so unlike
+	// Fields/Columns this needs no extra `...Set` disambiguator.
+	[BindProperty(SupportsGet = true, Name = "decisionPending")]
+	public bool? DecisionPendingParam { get; set; }
+
+	// What THIS render actually filtered on: DecisionPendingParam when the request explicitly named
+	// it, else the saved per-board preference, else false (show everything — a board nobody has
+	// ever asked to narrow must render exactly as it always has). Read by the view to draw the
+	// toggle's current state.
+	public bool DecisionPendingOnly { get; private set; }
 
 	// board-filters-server-state: active-only / sort — GLOBAL (board-independent) [Setting]
 	// preferences resolved from BrowserState. Rendered into _BoardFilterSort's controls (checked/
@@ -553,6 +568,8 @@ public sealed class TaskBoardModel : PageModel
 		var effectiveViewRequest = ViewMode ?? savedPref?.Mode;
 		ResolvedViewMode = BoardViewModeRegistry.Resolve(effectiveViewRequest, Runtime.DefaultView(KindSlug));
 		var effectiveBy = By ?? savedPref?.By;
+		// decision-pending-has-no-ui: same cascade as ViewMode/By just above.
+		DecisionPendingOnly = DecisionPendingParam ?? savedPref?.DecisionPendingOnly ?? false;
 		// closed-board-disabled-display: a closed board never shows quick-add, regardless of
 		// what the kind would otherwise allow — mirrors the server-side reject in UpsertAsync.
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug) && ClosedAt is null;
@@ -638,6 +655,11 @@ public sealed class TaskBoardModel : PageModel
 					changed = true;
 				}
 			}
+			if (DecisionPendingParam is not null && nextPref.DecisionPendingOnly != DecisionPendingParam)
+			{
+				nextPref = nextPref with { DecisionPendingOnly = DecisionPendingParam };
+				changed = true;
+			}
 			if (changed)
 			{
 				var updatedPrefs = new Dictionary<string, BoardViewPreference>(boardPrefs.ViewPreferences, StringComparer.Ordinal)
@@ -671,7 +693,30 @@ public sealed class TaskBoardModel : PageModel
 		// client-side, and now also server-side via ActiveOnly/Hidden — see TaskNodeCard.Hidden);
 		// GetAsync supplies each node's part_of parent + depth.
 		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, includeBody: needsBody, ct: ct);
-		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
+		var boardNodes = view.Nodes;
+
+		// decision-pending-has-no-ui: narrowed through the SAME entity predicate tasks_search's
+		// decisionPending param and the owner digest already ride (TaskNodeFilter.DecisionPending →
+		// TaskSearchFilter.Apply) — a real `Where` over the selected pool, run and resolved to a
+		// concrete NodeId set BEFORE OrderHierarchically ever sees the excluded rows, not a display-
+		// only hide of cards the browser already received (board-filters-server-state's Hidden flag
+		// is the wrong shape for THIS filter: an unchecked "waiting only" toggle must ship a board
+		// the excluded rows never reached, because a shared `?decisionPending=true` link with zero
+		// matches must render empty, not the full board with everything merely dimmed).
+		// StatusKind widened to all three facets (the documented includeClosed:true replacement) so
+		// a CLOSED node that still carries the flag (decision-pending-survives-closure) stays in the
+		// queue exactly like this page's own unfiltered GetAsync(includeClosed:true) already does.
+		if (DecisionPendingOnly)
+		{
+			var pending = await _tasks.SearchNodesAsync(ProjectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
+			{
+				Filter = new TaskNodeFilter(Board, StatusKind: ["open", "terminalok", "terminalcancel"], DecisionPending: true),
+			}, ct: ct);
+			var pendingIds = new HashSet<string>(pending.Hits.Select(h => h.Node.NodeId), StringComparer.Ordinal);
+			boardNodes = [.. boardNodes.Where(n => pendingIds.Contains(n.NodeId))];
+		}
+
+		Nodes = OrderHierarchically([.. boardNodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 		_parentOf = Nodes.ToDictionary(n => n.NodeId, n => n.ParentNodeId, StringComparer.Ordinal);
 

@@ -142,6 +142,19 @@ public sealed class TaskBoardNodeModel : PageModel
 		return await ApplyAsync(p => p with { Title = title ?? string.Empty, Body = body ?? string.Empty }, version, ct);
 	}
 
+	// decision-pending-has-no-ui: set or clear the owner-decision-pending flag from the UI — the
+	// ONLY write door for it before this handler existed was tasks_upsert via an agent. Routes
+	// through the SAME ApplyAsync (NodePatch → UpsertAsync) every other edit on this page uses, so
+	// it hits the identical guards/concurrency check as the MCP path (edit-respects-guards); the
+	// flag itself carries no FSM of its own (orthogonal to Status — owner-decision-pending-flag), so
+	// there is nothing here for UpsertAsync to reject beyond the normal stale-version conflict.
+	public async Task<IActionResult> OnPostDecisionPendingAsync(bool pending, long version, CancellationToken ct)
+	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		return await ApplyAsync(p => p with { DecisionPending = pending }, version, ct);
+	}
+
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under this node. Goes
 	// through ICommentService.AddAsync — the low-ceremony single-write door; the comments_upsert
 	// MCP batch verb shares the SAME reply-parent / same-thread guards. `nodeId` rides along on the
