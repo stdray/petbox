@@ -271,11 +271,15 @@ test("doctor (online) names built-in-vs-live drift by substance — role and rul
   const projectDir = freshDir("petbox-doctor-proj-");
   const orchestrator = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")!;
   // Recreate the exact historical shape this bug describes (fewer rules on the live side) by
-  // dropping the last rule from a live-server copy of the orchestrator role, everything else
-  // identical.
+  // dropping the LAST rule from a live-server copy of the orchestrator role, everything else
+  // identical. The rule numbers are read off the built-in notes themselves (never hardcoded)
+  // so this stays correct as the roster's rule count grows over time.
+  const ruleNumbers = [...(orchestrator.notes ?? "").matchAll(/^(\d+)\.\s/gm)].map((m) => Number(m[1]));
+  const builtInRuleCount = ruleNumbers.length;
+  const lastRuleNumber = ruleNumbers[ruleNumbers.length - 1];
   const driftedOrchestrator = {
     ...orchestrator,
-    notes: (orchestrator.notes ?? "").replace(/\n6\.\s[\s\S]*$/, ""),
+    notes: (orchestrator.notes ?? "").replace(new RegExp(`\\n${lastRuleNumber}\\.\\s[\\s\\S]*$`), ""),
   };
   const liveDefinition: AgentDefinition = {
     name: DEFAULT_AGENT_DEFINITION.name,
@@ -295,7 +299,9 @@ test("doctor (online) names built-in-vs-live drift by substance — role and rul
     );
     assert.match(
       out,
-      /role 'orchestrator': built-in default has 6 rule\(s\), live definition has 5/,
+      new RegExp(
+        `role 'orchestrator': built-in default has ${builtInRuleCount} rule\\(s\\), live definition has ${builtInRuleCount - 1}`,
+      ),
       `drift message must name the role and the rule-count disagreement, human-readable — not a byte diff. Full output:\n${out}`,
     );
     // Drift is informational (definition-truthfulness is a separate axis) — it must never turn

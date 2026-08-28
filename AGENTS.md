@@ -46,6 +46,23 @@ board belongs to exactly one of them (or to the project's `$utility` layer). `$s
 happens to run one open instance, `quartet` — so "the `$system` boards" and "the quartet
 instance's boards" are the same four boards today, and only today.
 
+**`observations`** is a fifth, but separate, board: a system-built-in, undeletable board
+(kind `observation`) auto-created in every project, living in the `$utility` layer — outside
+any methodology instance, so it never reaches the owner's decision queue or digest. It holds
+defect-like findings (something broken, unexpected, or contradicting docs) as ordinary task
+nodes on the ordinary task surface (`tasks_search`/`tasks_node_get`/`tasks_upsert`/
+`tasks_delta`/`comments_*`); status is a plain value, not an FSM: `seen`/`promoted` (open),
+`fixed` (terminal ok), `declined` (terminal cancel). A write that resembles an existing
+observation dedupes onto it and bumps its recurrence count instead of creating a duplicate.
+The one new MCP tool, `tasks_observation_promote`, turns a `seen` observation into a real
+`work` or `ideas` node via an `observation_obligation` relation, without deleting the
+observation. When the promoted obligation reaches a terminal-ok status the observation
+auto-flips to `fixed`; a later recurrence of the same problem reopens it to `seen` and flags
+the task that had fixed it. The session-facts extractor's judge has a fourth verdict,
+`observe`, that routes defect-like findings here instead of into memory. Procedure and tool
+details: the `petbox-methodology` skill; role-facing prose lives on the server agent-def, not
+here.
+
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
 [doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a
 **MAINTAINED reader surface**, not an archive — onboarding reads it, so a change that

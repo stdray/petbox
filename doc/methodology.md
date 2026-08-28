@@ -43,6 +43,9 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
 5. **Intake** — the inbox (agent + user queues) → triage → {reject-with-reason |
    promote to a task (only if a spec node already exists) | escalate to an idea (no spec
    reflection → P1)}. See "Intake — the inbox, and the no-spec rule" below.
+6. **Observation** — a defect-like finding (something broken, behaving unexpectedly, or
+   contradicting docs), NOT a deliberation and NOT a memory fact; lives on the system
+   built-in `observations` board, outside both P1 and P2. See "Observations" below.
 
 ## Task lifecycle + the approve gate
 
@@ -132,6 +135,49 @@ an accepted idea.** An intake item that can't find a spec node gets no shortcut 
 it goes the long way (idea → spec) so the requirement *exists* before the fix does. A bug is
 the common case where a spec node usually already exists (the behaviour was specified, it's
 just broken); a wish/new-capability usually doesn't, and becomes an idea.
+
+## Observations — defect-like findings, promoted with two exits
+
+Intake is for reports someone routes; **observations are for defect-like findings noticed
+along the way** — something broken, behaving unexpectedly, or contradicting docs — and they
+don't wait for triage to exist. They live on `observations`, a system built-in, undeletable
+board auto-created per project in the `$utility` layer: outside any methodology instance,
+so it never enters the owner's decision queue or digest, and outside P1/P2 both. It reuses
+the ordinary task surface as-is (`tasks_search`, `tasks_node_get`, `tasks_upsert`,
+`tasks_delta`, `comments_*`, the boards UI) — an observation is a node, not a new kind of
+record.
+
+**Status is a value, not an engine.** `seen` (open) → `promoted` (open) → `fixed` (terminal
+ok); `declined` (terminal cancel).
+
+**Dedup with accumulating recurrence.** A write that resembles an existing observation —
+automatic (the session-facts extractor's judge, on a fourth verdict `observe`: defect-like
+material is routed here instead of into memory) or manual (a plain `tasks_upsert` to the
+board) — does not create a duplicate. It bumps the existing node's `recurrenceCount` and
+`lastSeenAt` instead, reported back as `deduped:[{requestedKey, existingKey, existingNodeId,
+recurrenceCount}]`. This only fires on a purely-creating batch (every node at `version:0`,
+no deletes) — don't mix creates with edits in the same call.
+
+**Promotion has exactly two exits**, via the one new tool, `tasks_observation_promote`: a
+`seen` observation becomes a `work` task (`type` required: `feature|bug|chore`) or an
+`ideas` node — same two destinations Intake triage already uses, chosen explicitly
+(`targetBoard`), never inferred. Promotion creates an `observation_obligation` relation
+(visible in `relations` from both sides) and moves the observation to `promoted` — **the
+observation does not disappear**; it stays addressable, unlike an intake item that gets
+consumed by triage.
+
+**Fix-pinning is automatic, not agent-driven.** When the linked obligation (the promoted
+task or idea) reaches a terminal-**ok** status, the observation auto-flips to `fixed`
+(stamping `fixedByNodeId`/`fixedAt`) — no agent call needed. A terminal-**not-ok** status
+reopens it to `seen`: the problem wasn't fixed, it was abandoned.
+
+**Recurrence after a fix is a regression signal, not a new duplicate.** A fresh hit of the
+same problem after `fixed` reopens the observation to `seen`, stamps `recurredAfterFixAt`,
+and surfaces it higher in search — and sets `decisionPending:true` on the task that had
+"fixed" it. The task's own terminal status is **not** reopened automatically; that stays an
+explicit owner call, so reopening a task never silently distorts cycle-time metrics.
+`recurrenceCount` / `lastSeenAt` / `recurredAfterFixAt` / `fixedByNodeId` / `fixedAt` all ride
+the `observation` field on `tasks_search`/`tasks_node_get` hits for the node.
 
 ## Process order — the fix never precedes the requirement
 
