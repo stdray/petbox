@@ -63,7 +63,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// A dedup hit landed on an existing node instead of creating a new one: bump its
 	// RecurrenceCount/LastSeenAt (and RecurredAfterFixAt when `currentlyFixed`). Returns the
 	// new RecurrenceCount (0 if no store was wired).
-	Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default);
+	// `sessionId` (work observation-recurrence-session-provenance, spec
+	// observation-recurrence-carries-session-provenance): the session that produced THIS
+	// sighting — unioned onto the existing node's accumulating provenance (originSessions),
+	// the SAME plan_node_sessions mechanism a normal upsert touch uses (TaskUpsertAssociations.
+	// SetOriginSessionsAsync), reused rather than reinvented. Optional and structurally
+	// incomplete by design (see spec body): null/empty records nothing and never errors.
+	Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, string? sessionId = null, CancellationToken ct = default);
 
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 

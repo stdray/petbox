@@ -489,7 +489,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			Body = body,
 		};
 
-		var dedup = await _observations.PreProcessCreatesAsync(project, SystemBoards.Observations, [node], ct);
+		var dedup = await _observations.PreProcessCreatesAsync(project, SystemBoards.Observations, [node], sessionId, ct);
 		if (dedup.RemainingNodes.Length == 0)
 			// Every hit is a genuine repeat sighting — recurrence already bumped inside the
 			// dedup service. Still a real signal (return true), just not a new node.

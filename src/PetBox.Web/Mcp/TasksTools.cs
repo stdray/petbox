@@ -1671,7 +1671,7 @@ public static class TasksTools
 		IReadOnlyList<UpsertDedupedView>? dedupedView = null;
 		if (isObservationsCreateBatch)
 		{
-			var dedup = await obsDedup!.PreProcessCreatesAsync(projectKey, board, nodes, ct);
+			var dedup = await obsDedup!.PreProcessCreatesAsync(projectKey, board, nodes, sessionId, ct);
 			if (dedup.Hits.Count > 0)
 				dedupedView = dedup.Hits.Select(h => new UpsertDedupedView(h.RequestedKey, h.ExistingKey, h.ExistingNodeId, h.RecurrenceCount)).ToList();
 			nodes = dedup.RemainingNodes;
