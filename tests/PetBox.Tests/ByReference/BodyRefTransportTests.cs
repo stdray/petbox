@@ -258,8 +258,15 @@ public sealed class BodyRefTransportTests : IClassFixture<BodyRefTransportFixtur
 		using var res = await client.PostAsync($"/api/blobs/{BodyRefTransportFixture.ProjA}", content);
 
 		res.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
-		// 64 KB is the reader's chunk size: it may overshoot by at most one chunk before it notices.
-		source.BytesRead.Should().BeLessThan(BodyRefs.MaxBytes + (128 * 1024),
+		// `BytesRead` counts what the CLIENT pulled out of this stream, not what the server actually
+		// consumed — the server's 64 KB-chunked reader stops at most one chunk past the ceiling, but
+		// the client-side send pump races that abort and can push a further chunk or two into the
+		// pipe before the server tears the request down. Under load that race can land closer to the
+		// edge than in isolation, so the slack here is sized to comfortably clear the race (1 MB, vs.
+		// the 40 MB this test measures if the bound in ReadBoundedAsync is removed) rather than to sit
+		// tight against the reader's one-chunk overshoot — a tighter bound flakes under load without
+		// this test discriminating any better.
+		source.BytesRead.Should().BeLessThan(BodyRefs.MaxBytes + (1024 * 1024),
 			"the ceiling must be enforced on the way in, not after the whole body has been buffered");
 	}
 
