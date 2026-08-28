@@ -360,19 +360,40 @@ public sealed class PagePoolRegressionTests : IDisposable
 
 		var act = () => Search(q: "deploy", limit: 2, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*ranked DIFFERENTLY*");
+		// The WORDS moved with work/rerank-route-nondeterministic-order, and the refusal did not. Page 2
+		// here IS a fresh cross-encoder pass over a pool nobody kept, which is precisely the state that
+		// can no longer be walked into: what the caller must be told is that the pool their walk was
+		// reading is not there, not that "the ranking changed", which sends them hunting a ranking bug.
+		await act.Should().ThrowAsync<ArgumentException>()
+			.WithMessage("*ranked POOL this cursor was walking is gone*");
 	}
 
 	[Fact]
-	public async Task C_PoolRebuiltIdentically_IsAccepted_SoTheGuardIsNotAWall()
+	public async Task C_AnRrfPoolRebuiltIdentically_IsAccepted_SoTheGuardIsNotAWall()
 	{
-		// The other half of the contract: the check must fire on DRIFT, not on rebuilding. An evicted pool
-		// rebuilt over unchanged data through the same route reproduces the same order, so the walk
-		// continues — otherwise "cold page" would mean "broken page" and the guard would be useless.
+		// The other half of the contract: the check must fire on DRIFT, not on rebuilding — otherwise
+		// "cold page" would mean "broken page" and the guard would be useless.
+		//
+		// WHAT CHANGED HERE, and it is the deliberate LIMIT of the pool refusal above. This test used to
+		// walk a RERANKED pool across evictions and expect it through, on the premise that "an evicted
+		// pool rebuilt over unchanged data through the same route reproduces the same order". Measurement
+		// killed that premise (work/rerank-route-nondeterministic-order): a cross-encoder does NOT
+		// reproduce its own order — 9 of 10 identical calls came back permuted on the live route — so a
+		// reranked walk now ends with its pool, and CursorPoolExpiredTests asserts that it does.
+		//
+		// The premise is still exactly true for an RRF order, which is what this test now walks: with the
+		// rerank route down, the pool is plain arithmetic over the same index, a rebuild reproduces it
+		// byte for byte, and the ORDER COMMITMENT proves that for free. This case must keep working, and
+		// not as a nicety: refusing it would end paging for every deployment with no rerank route and for
+		// the whole length of any rerank outage — while the standing rule here is that a rerank outage
+		// must never take search down.
 		await SeedLexicalAndSemantic();
+		_llm.EmbedDown = true; // no cross-encoder for the whole walk: an honest RRF degradation
 
 		var whole = (await Search(q: "deploy", limit: 100)).Items.Select(i => i.Key).ToList();
 		var first = await Search(q: "deploy", limit: 2);
+		first.Retrievers!.Ranking.Should().Be(SearchRankingOutcome.DegradedRrf,
+			"the premise of this test is a REPRODUCIBLE order — assert it really is one");
 		var seen = first.Items.Select(i => i.Key).ToList();
 
 		EvictPools(); // every later page is now a cold rebuild
