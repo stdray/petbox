@@ -27,15 +27,12 @@
    (data-testid="node-comments" — kept for zero JS churn beyond the "comment-read-body" →
    "comment-body" toggle-target rename below); a click anywhere in the body area simply matches
    none of the comment-specific selectors, so behavior there is unaffected.
-   Spacing arithmetic (worked out, not eyeballed): flex's `gap` ADDS to each item's own margin;
-   plain block flow instead COLLAPSES adjacent margins to the larger one. The old layout's total
-   gaps were heading→comment1 = mb-0.5(2px) + gap(4px) = 6px, comment→comment = gap(4px) = 4px,
-   comment→add-form = gap(4px) + the add-form's own mt-1(4px) = 8px. Without a flex parent,
-   reproducing those needs: comments-heading's mb bumped 0.5→1.5 (6px) so it collapses with a
-   comment's `mt-1` (4px) to max(6,4)=6px; the add-form's own mt bumped 1→2 (8px, the ONLY margin
-   at that boundary since the preceding comment has no bottom margin) for 8px; comment→comment
-   needed no change (only the follower's `mt-1` was ever present at that boundary, so it was never
-   diluted by collapsing). *@
+   Spacing note (comment-vs-body-distinction superseded the exact numbers below): the round-2
+   rhythm above was tuned for a plain left-rule row and no longer applies now that each comment
+   is its own bordered `.reply-frame` box — the heading keeps its own `mb-1.5`, but each comment
+   and the add-form now carry `mt-2` at their own top boundary instead of `mt-1`, since a bordered
+   box wants a visible gap from its neighbour rather than a margin tuned to collapse quietly
+   against one. *@
 @{
 	var hasComments = Model.Lines.Count > 0;
 }
@@ -45,18 +42,24 @@
 @foreach (var line in Model.Lines)
 {
 	var c = line.Comment;
-	@* `group` + per-comment left rail: the action buttons (reply/edit/delete) stay invisible
-	   until the comment is hovered or holds focus (comment-action-buttons-hover) — kills the
-	   visual noise of a full button row on every comment. `mt-1` replaces the old wrapper's
-	   flex-col `gap-1` (same 0.25rem Tailwind spacing step) now that comments are direct
-	   siblings under the shared <article> rather than flex children of a removed wrapper. *@
+	@* `group` + reply frame (comment-vs-body-distinction): the action buttons (reply/edit/
+	   delete) stay invisible until the comment is hovered or holds focus
+	   (comment-action-buttons-hover) — kills the visual noise of a full button row on every
+	   comment. `.reply-frame` (app.css) is the bounded, reply-shaped frame the owner asked for —
+	   a rounded border + a ground one step further from the page than the body's, reusing the
+	   existing backdrop tokens rather than a left rule + hover tint. `mt-2` spaces frames apart
+	   now that each one carries its own visible border (a left-rule's `mt-1` read fine touching
+	   a plain row; a bordered box wants more air). *@
 	@* comment-permalink-anchor: `id="comment-{id}"` is the anchor `<url-detail>#comment-{id}`
 	   scrolls to — native, works with JS off. `scroll-mt-20` (5rem, same value MemoryStore's
 	   `.memory-entry:target` uses) keeps the landing clear of a possible sticky header. Does
 	   NOT touch data-comment-id/data-comment-version/data-testid="comment" below — e2e and
 	   commentThread.ts key off those. *@
-	<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30 mt-1 scroll-mt-20" id="comment-@c.Id" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
-		<div class="flex items-baseline gap-2 flex-wrap">
+	<div class="group/cmt reply-frame text-sm mt-2 scroll-mt-20" id="comment-@c.Id" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
+		@* Header row: author + time + tags + actions, pulled out of the text flow (already true
+		   since `ui-comments-presentation`) and now visually separated from the reply text below
+		   by a rule (`.reply-frame-header`, app.css) instead of just spacing. *@
+		<div class="flex items-baseline gap-2 flex-wrap reply-frame-header">
 			@* rv-noscore: a bare <div class="flex items-baseline …"> full of only inline children
 			   (span/time/button/form) is exactly what Readability's node-prep pass converts into a
 			   scoreable <p> (no block-level descendant → _hasChildBlockElement is false), handing
@@ -142,9 +145,8 @@
    commenting is a node-detail operation, not a per-card affordance on a list of nodes. *@
 @if (Model.ShowAddForm)
 {
-	@* mt-2, not mt-1 (spacing arithmetic in the comment above): this is now the ONLY margin at
-	   the previous-comment/add-form boundary (the preceding comment has no bottom margin), so it
-	   must carry the full 8px the old flex `gap` + this form's own `mt-1` used to add up to. *@
+	@* mt-2: matches the gap comment-vs-body-distinction now puts between reply frames (each one
+	   carries its own visible border, so the boundary needs real air, not a hairline's worth). *@
 	<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-2" data-testid="comment-add-form">
 		<input type="hidden" name="nodeId" value="@Model.NodeId" />
 		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
