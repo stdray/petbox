@@ -144,7 +144,7 @@
 		</div>
 
 		@* Edit form (title + body, markdown write/preview). Hidden until ts/nodeEdit.ts shows it.
-		   The textarea is the source for both the POST body and the client-side preview render. *@
+		   The textarea is the source for both the POST body and the preview render. *@
 		<form method="post" asp-page-handler="Edit" class="flex flex-col gap-2 mt-3" data-testid="node-edit-form" style="display:none">
 			<input type="hidden" name="version" value="@node.Version" />
 			<input type="text" name="title" value="@node.Title" maxlength="200" class="input input-bordered input-sm w-full" placeholder="Title" data-testid="node-edit-title" aria-label="Title" />
@@ -153,6 +153,32 @@
 				<a role="tab" class="tab" data-testid="node-edit-preview-tab">preview</a>
 			</div>
 			<textarea name="body" rows="12" class="textarea textarea-bordered textarea-sm w-full font-mono" placeholder="Body (markdown)" data-testid="node-edit-body" aria-label="Body">@node.Body</textarea>
+			@* editor-preview-renders-server-side: the preview is rendered by the SERVER, through the
+			   same IMarkdownRenderer as the saved body (?handler=Preview), so what the author sees
+			   is byte-for-byte what saving produces. The old second pipeline (ts/markdown.ts —
+			   marked + DOMPurify) is gone: it rendered `##` as a bare <h2> with no md-section
+			   wrapper and `> [!NOTE]` as an ordinary blockquote holding the literal "[!NOTE]".
+
+			   The trigger is a NON-INPUT element on purpose. `hx-include="closest form"` posts the
+			   form's fields — `body` plus its antiforgery token — and a span contributes no value
+			   of its own; hanging hx-post on the textarea instead would send `body` TWICE and bind
+			   as "draft,draft". The relative `?handler=Preview` keeps whichever address the page
+			   was opened by (…/tasks/node/{id} or …/tasks/{board}/{slug}), so the handler's
+			   ResolveAsync scopes the preview to this node either way — same trick as the outline's
+			   lazy `?handler=NodeBody` fetch.
+
+			   ts/nodeEdit.ts fires `preview-refresh`: immediately when the preview tab is opened,
+			   debounced while the author keeps typing. *@
+			<span hidden data-testid="node-edit-preview-trigger"
+				  hx-post="?handler=Preview"
+				  hx-trigger="preview-refresh"
+				  hx-include="closest form"
+				  hx-target="[data-testid='node-edit-preview']"
+				  hx-swap="innerHTML"></span>
+			@* Shown by ts/nodeEdit.ts when a preview request fails (offline, or a server error).
+			   htmx does not swap on a failed response, so the pane keeps its last good render and
+			   this strip says so — the preview never silently presents stale HTML as current. *@
+			<div class="alert alert-warning text-xs py-1 px-2" data-testid="node-edit-preview-error" role="status" style="display:none"></div>
 			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { TestId = "node-edit-preview", ExtraClasses = "border border-base-300 rounded p-3 min-h-24", Style = "display:none", ServerRender = false })" />
 			<div class="flex items-center gap-2">
 				<button type="submit" class="btn btn-sm btn-primary" data-testid="node-edit-save">Save</button>
