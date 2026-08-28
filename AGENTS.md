@@ -114,10 +114,15 @@ history now, while the current plan and status are the boards above.
    nothing about it. Incident 2026-08-26: a worker ran the Cake gate in the foreground, exit
    0, 4460 tests green, and still had the push rejected — `inspect-gate: 1 finding(s)
    survived` (`RedundantUsingDirective`). Run it yourself before pushing:
-   `dotnet run scripts/inspect-gate.cs` (~45-110s; nothing else may build in the checkout
-   while it runs — `jb inspectcode` fails if a concurrent `dotnet build` touches the same
-   checkout; bypass with `git push --no-verify`, but that just defers the failure to the
-   next push or to whoever reviews it). If it reports something mechanically fixable, the
+   `dotnet run scripts/inspect-gate.cs` (~45-160s; `jb inspectcode` shells out to MSBuild,
+   whose worker-node pool is MACHINE-global — it adopts idle nodes a DIFFERENT worktree left
+   behind and dies with them (MSB4166) when that worktree's agent gets killed, not from a
+   build in this checkout. Runs are serialized machine-wide by a `Global\petbox-inspect-gate`
+   mutex; a "waiting for the gate lock" message is normal, not a hang (30m timeout;
+   `--lock-timeout=N` / `--no-lock` to override). Exit 1 = findings survived; exit 2 = the
+   tool itself couldn't run after 3 attempts (`COULD NOT VERIFY`, not a code finding). Bypass
+   either with `git push --no-verify`, but that just defers the failure to the next push or
+   to whoever reviews it). If it reports something mechanically fixable, the
    fixer is `./build.ps1 -Target CleanupCode` (`jb cleanupcode --profile=PetBoxSafe`) — also
    deliberately wired into NEITHER a hook nor `Test`/`Verify` (it rewrites files, so it must
    be run and its diff reviewed BEFORE committing, never after — see `build.cs` for the full
