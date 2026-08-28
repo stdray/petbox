@@ -61,6 +61,17 @@ services:
     image: petbox-backup:local
     container_name: petbox-backup
     restart: unless-stopped
+    # A restic push that is killed mid-flight leaves its repository lock behind, and every
+    # later run then fails retention/prune/check until the lock ages out — that is exactly
+    # what three deploys inside six minutes did on 2026-08-28. Docker's default of 10 s
+    # cannot cover the abort: restic has to notice the signal, finish the object in flight
+    # and delete its lock over S3. 120 s is the budget for that, and it is a CEILING, not a
+    # wait — docker stops the moment PID 1 exits, which for an idle sidecar is immediate.
+    # It only buys anything because entrypoint.sh now relays SIGTERM: busybox crond, the
+    # PID 1 before that change, ignores SIGTERM and forwards nothing, so a longer grace
+    # period on its own would just postpone the same SIGKILL. Asserted by
+    # ComposeStopGraceTests, which also checks it outlasts entrypoint.sh's own shutdown wait.
+    stop_grace_period: 120s
     depends_on:
       - petbox
     volumes:

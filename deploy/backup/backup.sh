@@ -22,6 +22,29 @@
 # Both repos share RESTIC_PASSWORD (read from env by restic). Retention + prune +
 # an integrity check run after each push.
 #
+# LOCKING (work/backup-deploy-kills-restic-stale-lock, 2026-08-28). `forget --prune` and
+# `check` need an EXCLUSIVE repository lock, and on 2026-08-28 a deploy SIGKILLed a running
+# restic and left its lock behind: every later run pushed its snapshot fine (backup only
+# takes a shared lock) and then failed retention, prune and check for hours. Three defences,
+# and only the three together work:
+#   --retry-lock  a conflicting lock is waited out instead of failing the leg outright
+#                 (restic 0.18.1 default is 0s — the incident log literally read
+#                 "waiting up to 0s for the lock").
+#   unlock        sweeps locks restic considers STALE before the exclusive phase.
+#                 Deliberately NOT --remove-all, which would rip the lock out from under a
+#                 legitimately running parallel backup. Note what plain `unlock` can and
+#                 cannot do: it removes a lock older than 30 min, OR one whose process is
+#                 dead ON THE SAME HOSTNAME. Our hostname is the container id and every
+#                 deploy makes a new one, so against a lock orphaned by the PREVIOUS
+#                 container only the 30-minute rule applies — `unlock` alone does NOT heal
+#                 a freshly orphaned lock, which is exactly why --retry-lock is there too.
+#                 (Within THIS container the same-host dead-pid rule does apply, which is
+#                 what makes the SIGTERM trap below effective immediately.)
+#   trap TERM     releases our own lock when a deploy stops the container mid-run — the
+#                 case that actually caused the incident. Needs entrypoint.sh to relay
+#                 SIGTERM: busybox crond, the sidecar's PID 1, ignores it and forwards
+#                 nothing (measured), so before that change no signal ever arrived here.
+#
 # Each leg is independent: one leg's failure must not stop the other leg from
 # running (see run_leg below). The script exits 1 if either leg failed (so cron
 # logs + entrypoint reflect failure) and 0 only if both legs succeeded.
@@ -35,7 +58,18 @@ set -u
 DATA_DIR="${DATA_DIR:-/data}"
 KEEP_DAILY="${RESTIC_KEEP_DAILY:-7}"
 KEEP_WEEKLY="${RESTIC_KEEP_WEEKLY:-4}"
+# How long a restic call waits for a conflicting repository lock before giving up. 15m
+# covers the real case — an overlapping run whose prune is still going — while keeping the
+# worst case bounded: four exclusive operations across two legs cannot stall the run past
+# ~1 h, well inside the 6 h cron interval, so a wedged repo still fails (and alerts) within
+# one cycle instead of piling runs on top of each other.
+RETRY_LOCK="${RESTIC_RETRY_LOCK:-15m}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+# The repo the leg in flight is working on, for the SIGTERM trap below. push() exports the
+# S3 credentials PER LEG, so "which repo would we have to unlock" only exists at runtime —
+# the script has no other notion of a current repository.
+CURRENT_REPO=""
 
 STATE_DIR="${STATE_DIR:-/state}"
 ALERT_REPEAT_HOURS="${ALERT_REPEAT_HOURS:-24}"
@@ -44,6 +78,27 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-}"
 
 log() { echo "[backup $(date -u +%FT%TZ)] $*"; }
+
+# Deploy-time lock release. A trap runs only AFTER the foreground command returns, so this
+# fires once the restic that was signalled alongside us has exited — leaving its lock behind
+# is precisely the failure we are cleaning up after. Plain `unlock` (never --remove-all)
+# suffices here: the dead restic held the lock on THIS hostname, which restic itself scores
+# as stale, so the sweep is immediate and cannot touch anyone else's lock.
+on_term() {
+	trap '' TERM INT
+	if [ -n "$CURRENT_REPO" ]; then
+		log "SIGTERM during a leg on $CURRENT_REPO — releasing our repository lock"
+		restic -r "$CURRENT_REPO" unlock >/dev/null 2>&1 			|| log "WARNING: unlock on shutdown failed — a stale lock may survive until it ages out (30 min)"
+	else
+		log "SIGTERM — no leg in flight, nothing to unlock"
+	fi
+	exit 143
+}
+# Armed here for the top-level shell, and AGAIN inside push(): ash resets traps to their
+# default action in a ( ) subshell (verified on this image), and each leg's restic runs in
+# exactly such a subshell — see run_leg. Arming it only here would be dead code where it
+# matters most.
+trap on_term TERM INT
 
 newest="$(ls -1d "$DATA_DIR"/backups/*-auto/ 2>/dev/null | sort | tail -1 || true)"
 if [ -z "$newest" ]; then
@@ -65,12 +120,26 @@ push() {
 	repo="$1"; tag="$2"; extra="$3"
 	export AWS_ACCESS_KEY_ID="$4"
 	export AWS_SECRET_ACCESS_KEY="$5"
+	CURRENT_REPO="$repo"
+	trap on_term TERM INT   # re-armed: this runs in run_leg's subshell, where ash reset it
 	restic -r "$repo" snapshots >/dev/null 2>&1 || { log "init $tag repo"; restic -r "$repo" init; }
 	log "backup $tag -> $repo"
+	# --group-by host,tags on BOTH backup and forget. The source path is
+	# /data/backups/<timestamp>-auto and so has a different name every run, so restic's
+	# default grouping (host,paths) put every run in a group of its own: backup never found
+	# a parent snapshot ("will read all files", every time) and forget kept a full
+	# 7-daily/4-weekly set FOR EACH RUN — 429 snapshots had accumulated in the full repo by
+	# 2026-08-28. Grouping by host+tags is what the tag actually means: one timeline per leg.
+	# EXPECT THE FIRST forget --prune AFTER THIS CHANGE TO DELETE A LOT.
 	# shellcheck disable=SC2086 — $extra is an intentional word-split of restic flags
-	restic -r "$repo" backup "$newest" "$DATA_DIR/keys" --tag "$tag" --host petbox $extra
-	restic -r "$repo" forget --tag "$tag" --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --prune
-	restic -r "$repo" check
+	restic -r "$repo" backup "$newest" "$DATA_DIR/keys" --tag "$tag" --host petbox 		--group-by host,tags --retry-lock "$RETRY_LOCK" $extra
+	# Stale-lock sweep immediately before the exclusive phase — as late as possible, so a
+	# lock that went stale while the backup above was running is caught too. Not fatal on
+	# its own: --retry-lock may still get the exclusive operations through.
+	restic -r "$repo" unlock || log "WARNING: stale-lock sweep failed on $tag"
+	restic -r "$repo" forget --tag "$tag" --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" 		--group-by host,tags --prune --retry-lock "$RETRY_LOCK"
+	restic -r "$repo" check --retry-lock "$RETRY_LOCK"
+	CURRENT_REPO=""
 	log "$tag ok"
 }
 
