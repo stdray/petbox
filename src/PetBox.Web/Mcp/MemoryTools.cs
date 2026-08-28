@@ -305,7 +305,7 @@ public static class MemoryTools
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, [LogArg] string store,
-		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
+		[Description("Array of entry objects: { key, type, description, body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this entry's body; mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
@@ -321,8 +321,24 @@ public static class MemoryTools
 		if (entries.Length == 0)
 			throw new ArgumentException("'entries': empty batch — nothing to write");
 		await AssertStoreCreatableOrKnownAsync(memory, projectKey, store, ct);
-		var (upserts, deletes) = ParseEntries(entries);
+		// work/write-body-by-reference: every DISTINCT `bodyRef` looked up ONCE, here in the adapter,
+		// because judging it needs the caller's claims — and, for `scope: workspace`, because
+		// `projectKey` above has ALREADY been rewritten to the derived container, which is not where
+		// the blob lives. That rewrite is exactly the reason the lookup cannot be pushed down.
+		var bodyRefs = await McpBodyRefs.ResolveAsync(http, entries.Select(e => e.BodyRef), ct);
+		var (upserts, deletes) = ParseEntries(entries, bodyRefs);
 		var outcome = await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct);
+
+		// ONE-SHOT, spent only on what landed: applied, and this entry's key not among the
+		// conflicts. A blob behind a REFUSED entry survives so a stale-baseline retry can reuse the
+		// same ref rather than re-uploading.
+		if (!bodyRefs.IsEmpty)
+		{
+			var refusedKeys = outcome.Result.Conflicts.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+			await bodyRefs.ConsumeAsync(entries
+				.Where(e => outcome.Result.Applied && !refusedKeys.Contains(e.Key ?? ""))
+				.Select(e => e.BodyRef), ct);
+		}
 		// Point 4: only warn about size on a write that actually landed — a refused/conflicted
 		// call already has its own signal (conflicts[]), and piling a size warning on TOP of a
 		// refusal would blur which one the caller needs to act on.
@@ -533,13 +549,33 @@ public static class MemoryTools
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
-		string text, string? scope = null, string? projectKey = null, [LogArg] string? store = null,
+		string? text = null, string? scope = null, string? projectKey = null, [LogArg] string? store = null,
 		string? type = null, string[]? tags = null, string? description = null,
+		// NAMED `textRef`, NOT `bodyRef`, and the inconsistency is deliberate: this verb's text field
+		// is `text`, not `body`, so `bodyRef` would name a parameter that does not exist here. The
+		// convention is "<the field it replaces> + Ref", which is what makes the pairing readable at
+		// the call site on every surface — `bodyRef` where the field is `body`, `contentRef` where it
+		// is a message's `content`.
+		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact that already exists as a file. Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required");
+
+		// work/write-body-by-reference. memory_remember has no conflicts[] channel — it is a
+		// single-entry CREATE whose every other refusal is an ArgumentException — so the mutual
+		// exclusion surfaces the way this verb's other refusals do, by throwing. The RULE is
+		// identical to the batch verbs' (both present = refused, never a precedence); only the
+		// channel differs, because this surface has only one.
+		var bodyRefs = await McpBodyRefs.ResolveAsync(http, [textRef], ct);
+		if (!string.IsNullOrWhiteSpace(textRef))
+		{
+			if (text is not null) throw new ArgumentException(BodyRefs.BodyAndBodyRef.Replace("'body'", "'text'"));
+			var resolution = bodyRefs.For(textRef)!;
+			if (resolution.Error is { } refError) throw new ArgumentException(refError);
+			text = resolution.Text;
+		}
+		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required (or a 'textRef' naming an uploaded blob)");
 		var container = await ResolveScopeAsync(http, wsmem, projectKey, scope, ct);
 		await AssertMemoryProjectAsync(http, wsmem, container.Key, ct);
 		var st = NormalizeStore(store);
@@ -555,6 +591,8 @@ public static class MemoryTools
 			Tags = tags,
 		};
 		await memory.UpsertAsync(container.Key, st, [input], [], ct: ct);
+		// The write landed (this verb throws rather than returning a refusal), so the blob is spent.
+		await bodyRefs.ConsumeAsync([textRef], ct);
 
 		// Point 1 (card mcp-write-degrades-silently-fix): an empty description is a WARNING, not a
 		// refusal — memory_remember is often the last thing called at the end of a session, exactly
@@ -1317,7 +1355,7 @@ public static class MemoryTools
 	// Map the typed entry inputs into service inputs + soft-deletes. Taxonomy/tag normalization
 	// happens in the service. `deleted:true` carries a soft-delete (only key + optional version);
 	// otherwise key and type are required (as the old JsonElement parser enforced).
-	static (List<MemoryEntryInput> Upserts, List<MemoryDelete> Deletes) ParseEntries(MemoryEntryInputDto[] entries)
+	static (List<MemoryEntryInput> Upserts, List<MemoryDelete> Deletes) ParseEntries(MemoryEntryInputDto[] entries, BodyRefBatch bodyRefs)
 	{
 		var upserts = new List<MemoryEntryInput>();
 		var deletes = new List<MemoryDelete>();
@@ -1338,6 +1376,9 @@ public static class MemoryTools
 				Body = e.Body,
 				// See TasksTools: resolved in the service's read-merge, not here.
 				Fragment = FragmentEditDto.ToCore(e.Fragment),
+				// See TasksTools: the LOOKUP happened in the adapter (it needs the caller's claims);
+				// what the verdict means for the write is the service's decision.
+				BodyRef = bodyRefs.For(e.BodyRef),
 				Tags = e.Tags,
 				Metadata = e.Metadata,
 				PrevKey = e.PrevKey,

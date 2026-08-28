@@ -182,6 +182,10 @@ public partial class Program
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
 		// file yet and kept working the ghost file of a deleted one. Scoped: it reads PetBoxDb.
 		builder.Services.AddScoped<IProjectCatalog, ProjectCatalog>();
+		// The one-shot body transport (work/write-body-by-reference): POST /api/blobs/{p} writes a row
+		// here, a `bodyRef` on a write verb reads and consumes it. Scoped like every other core.db
+		// door — it holds ICoreDbFactory and opens a connection per call.
+		builder.Services.AddScoped<IBodyRefBlobStore, BodyRefBlobStore>();
 		// THE tenant access decision — (principal, TenantRef) -> TenantAccess, one rule for both kinds
 		// of target (spec authz-tenant-default-deny). Scoped, not singleton: it holds the SCOPED
 		// IProjectCatalog, and a singleton over a scoped dependency is a captive dependency
@@ -328,6 +332,10 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Sessions.Search.SessionTermIndex>();
 		builder.Services.AddScoped<PetBox.Sessions.Search.ISessionTermIndex>(sp => sp.GetRequiredService<PetBox.Sessions.Search.SessionTermIndex>());
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.SessionTermIndexJob>();
+		// Reclaims uploaded bodies that no write ever referenced (work/write-body-by-reference).
+		// Registered as a background job rather than given a scheduler of its own, for the same
+		// reason SessionTermIndexJob is: the enrichment tick already loops every registered job.
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.BodyRefPruneJob>();
 		// Session discovery digests: distills each session's transcript into the project's
 		// `session-digests` memory store off the write path — rides the same enrichment tick
 		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
@@ -1481,6 +1489,12 @@ public partial class Program
 		// Agent memory canon read surface (the wiring hooks pull it at session start).
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Memory))
 			PetBox.Web.Memory.MemoryApi.MapMemoryEndpoints(app);
+
+		// The `bodyRef` upload transport (work/write-body-by-reference). NO feature flag: it feeds
+		// BOTH the tasks verbs and the memory ones, so gating it on either would make `bodyRef`
+		// unusable on the other family whenever that flag was off — a transport is not owned by one
+		// of the modules it carries for.
+		PetBox.Web.Blobs.BodyRefApi.MapBodyRefEndpoints(app);
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.LlmRouter))
 			PetBox.Web.LlmRouter.LlmRouterApi.MapLlmRouterEndpoints(app);

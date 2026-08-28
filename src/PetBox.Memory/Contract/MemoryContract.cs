@@ -28,6 +28,15 @@ public sealed record MemoryEntryInput
 	// Mutually exclusive with Body. Every failure (zero matches, more than one match, both fields
 	// present) is a REFUSAL through the ordinary conflict channel, never a partial application.
 	public IReadOnlyList<FragmentEdit>? Fragment { get; init; }
+
+	// A body that ALREADY EXISTS as a file, carried by REFERENCE instead of retyped into this call
+	// (spec/no-retransmission-of-existing-content). ALREADY RESOLVED by the adapter against the
+	// CALLER's authority — see BodyRefResolution for why the lookup cannot happen down here — so
+	// this service only decides what the verdict MEANS for the write.
+	// Mutually exclusive with Body and with Fragment: all three are answers to "what is the new
+	// text", and honouring any one over another would be a guess. Every refusal rides the ordinary
+	// conflict channel, exactly as a fragment refusal does.
+	public BodyRefResolution? BodyRef { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }
 	public string? Metadata { get; init; }
 	public string? PrevKey { get; init; }

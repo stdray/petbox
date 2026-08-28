@@ -114,7 +114,12 @@ public sealed record CommentItem(
 	long Version,
 	// Point edit of an existing comment's body — see NodePatch.Fragment. PATCH only: a CREATE has
 	// no current text to match against, so a fragment on a create is refused.
-	IReadOnlyList<FragmentEdit>? Fragment = null);
+	IReadOnlyList<FragmentEdit>? Fragment = null,
+	// A body carried by REFERENCE — see NodePatch.BodyRef. Already resolved by the adapter against
+	// the CALLER's authority; mutually exclusive with Body and Fragment alike. Unlike Fragment this
+	// is legal on a CREATE: a bodyRef REPLACES the text rather than patching it, so there is nothing
+	// it needs to match against.
+	BodyRefResolution? BodyRef = null);
 
 // Outcome of a comments_upsert batch, mirroring the tasks_upsert ack: `Applied` is the single
 // source of truth (false ⇒ nothing written, `Conflicts` explains every rejected id); on success

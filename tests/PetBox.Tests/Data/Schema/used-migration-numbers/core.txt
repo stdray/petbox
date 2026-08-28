@@ -64,6 +64,7 @@
 49 LIVE M049_ApiKeyCreatedBy
 50 LIVE M050_ApiKeyHostId
 51 LIVE M051_TaskBoardDeclaredRole
+52 LIVE M052_BodyRefBlobs
 #
 # --- 1000+ : the DISK CACHE set (PetBox.Core.Data.CacheMigrations), not the core.db timeline ---
 # A second migration set shares this assembly, and FluentMigrator numbers are per-SCAN, so the two
