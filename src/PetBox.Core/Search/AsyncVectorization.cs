@@ -45,8 +45,13 @@ public interface IIndexCursorStore
 // behind by N versions" (0 = caught up). Carried out so a job can log/alert on it.
 // `Stalled` is the SearchDegradedReason that aborted the pass because the EMBEDDER (not the doc)
 // was down — non-null means "nothing is wrong with the data, come back later".
+// `Advanced` and `Moved` are DIFFERENT facts: `Advanced` means "the cursor was written, nothing
+// blocked the pass" — it stays true even when the value written is IDENTICAL to what was already
+// there. `Moved` means the cursor's VALUE actually changed. A pass that is Advanced but not Moved
+// is itself a diagnostic signal (a source stuck re-deriving the same version) — that's why both
+// go into the log line, not just one.
 public sealed record DrainResult(
-	int Indexed, int Deleted, int DeadLettered, bool Advanced, long Cursor, long SourceVersion = 0,
+	int Indexed, int Deleted, int DeadLettered, bool Advanced, bool Moved, long Cursor, long SourceVersion = 0,
 	string? Stalled = null)
 {
 	public long Lag => Math.Max(0, SourceVersion - Cursor);
@@ -154,12 +159,12 @@ public sealed partial class AsyncVectorizationWorker
 
 		if (!blocked) await _store.SetCursorAsync(_index, delta.CurrentVersion, ct);
 		var newCursor = await _store.GetCursorAsync(_index, ct);
-		var result = new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Cursor: newCursor,
-			SourceVersion: delta.CurrentVersion, Stalled: stalled);
+		var result = new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Moved: newCursor != cursor,
+			Cursor: newCursor, SourceVersion: delta.CurrentVersion, Stalled: stalled);
 		// Summary of the pass, including the LAG that says how far behind the semantic index is.
 		// Skipped when there was literally nothing to do, so an idle drain loop stays quiet.
 		if (_log is not null && (indexed > 0 || deleted > 0 || deadLettered > 0 || blocked))
-			LogDrain(_log, _index, indexed, deleted, deadLettered, result.Advanced, newCursor, result.Lag);
+			LogDrain(_log, _index, indexed, deleted, deadLettered, result.Advanced, result.Moved, newCursor, result.Lag);
 		return result;
 	}
 
@@ -180,8 +185,8 @@ public sealed partial class AsyncVectorizationWorker
 	static partial void LogDeleteFailed(ILogger logger, string index, string type, string id, Exception ex);
 
 	[LoggerMessage(EventId = 404, Level = LogLevel.Information,
-		Message = "vectorization {Index}: indexed {Indexed}, deleted {Deleted}, dead-lettered {DeadLettered}, advanced {Advanced}, cursor {Cursor}, lag {Lag}")]
-	static partial void LogDrain(ILogger logger, string index, int indexed, int deleted, int deadLettered, bool advanced, long cursor, long lag);
+		Message = "vectorization {Index}: indexed {Indexed}, deleted {Deleted}, dead-lettered {DeadLettered}, advanced {Advanced}, moved {Moved}, cursor {Cursor}, lag {Lag}")]
+	static partial void LogDrain(ILogger logger, string index, int indexed, int deleted, int deadLettered, bool advanced, bool moved, long cursor, long lag);
 }
 
 // In-memory cursor store: fine for tests/dev and single-process drains. Not durable across

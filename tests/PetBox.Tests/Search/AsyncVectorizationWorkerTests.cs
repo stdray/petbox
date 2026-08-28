@@ -1,5 +1,7 @@
 using LinqToDB.Data;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Search;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.Search;
 
@@ -74,6 +76,90 @@ public sealed class AsyncVectorizationWorkerTests
 		var third = await worker.DrainAsync();
 		index.Indexed.Count(x => x.Id == "bad").Should().Be(0);
 		third.Advanced.Should().BeTrue();
+	}
+
+	// work drain-advanced-flag-does-not-mean-advanced: `Advanced` only ever meant "cursor written,
+	// nothing blocked" — it stays true even when the written value is IDENTICAL to what was already
+	// there (a real month-long incident: 40k+ passes reported Advanced=true while the cursor sat
+	// still). `Moved` is the honest complement: did the cursor's VALUE actually change this pass.
+	// Two drains, no change to the source between them: pass 1 has a real delta to write (Moved
+	// true), pass 2 re-derives the SAME cursor value from an already-drained source (Moved false) —
+	// yet Advanced is true both times, because neither pass was blocked.
+	[Fact]
+	public async Task TwoDrainsNoSourceChange_FirstReportsMoved_SecondDoesNot_WhileAdvancedStaysTrue()
+	{
+		var source = new FakeSource { Upserts = [Doc("a")], Version = 5 };
+		var index = new FakeIndex();
+		var worker = new AsyncVectorizationWorker(IndexName, source, index, new InMemoryIndexCursorStore());
+
+		var first = await worker.DrainAsync();
+		first.Advanced.Should().BeTrue();
+		first.Moved.Should().BeTrue("cursor went 0 -> 5");
+		first.Cursor.Should().Be(5);
+
+		// Nothing changed in the source (Version still 5); the second pass sees an empty delta whose
+		// CurrentVersion is still 5, so it re-writes the exact same cursor value.
+		var second = await worker.DrainAsync();
+		second.Advanced.Should().BeTrue("nothing blocked the pass");
+		second.Moved.Should().BeFalse("cursor was already 5 — this write didn't move it");
+		second.Cursor.Should().Be(5);
+	}
+
+	sealed record LogEntry(MsLogLevel Level, int EventId, string Message);
+
+	sealed class CapturingLogger : ILogger
+	{
+		public List<LogEntry> Entries { get; } = [];
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+		public bool IsEnabled(MsLogLevel logLevel) => true;
+		public void Log<TState>(MsLogLevel logLevel, EventId eventId, TState state, Exception? exception,
+			Func<TState, Exception?, string> formatter) =>
+			Entries.Add(new LogEntry(logLevel, eventId.Id, formatter(state, exception)));
+	}
+
+	// The record field alone isn't enough — EventId 404 is the only diagnostic window into a stuck
+	// drain (see the card body). `Moved` must reach the actual log TEXT, not just DrainResult.
+	[Fact]
+	public async Task LogDrain_EventId404_TextCarriesMoved()
+	{
+		var source = new FakeSource { Upserts = [Doc("a")], Version = 5 };
+		var index = new FakeIndex();
+		var log = new CapturingLogger();
+		var worker = new AsyncVectorizationWorker(IndexName, source, index, new InMemoryIndexCursorStore(), log: log);
+
+		await worker.DrainAsync();
+
+		var first = log.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
+		first.Message.Should().Contain("advanced True");
+		first.Message.Should().Contain("moved True");
+
+		// The card's acceptance criterion is this exact line: a pass that is Advanced but NOT
+		// Moved — the diagnostic the whole card exists for (the real incident: 40k+ passes each
+		// logging Advanced=true while the cursor sat still). A store whose SetCursorAsync never
+		// actually sticks reproduces it: the source keeps handing out the same non-empty delta
+		// forever (indexed>0 every pass, so the quiet-drain gate still fires), nothing is
+		// blocked (Advanced stays true), but the cursor's VALUE never changes (Moved is false).
+		var stuckLog = new CapturingLogger();
+		var stuckWorker = new AsyncVectorizationWorker(
+			IndexName, source, new FakeIndex(), new NeverPersistsCursorStore(), log: stuckLog);
+
+		await stuckWorker.DrainAsync();
+
+		var second = stuckLog.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
+		second.Message.Should().Contain("advanced True");
+		second.Message.Should().Contain("moved False");
+	}
+
+	// SetCursorAsync "succeeds" but GetCursorAsync never reflects it — the store-level failure
+	// mode behind the real incident this card documents. Scoped to this one test.
+	sealed class NeverPersistsCursorStore : IIndexCursorStore
+	{
+		public Task<long> GetCursorAsync(string index, CancellationToken ct = default) => Task.FromResult(0L);
+		public Task SetCursorAsync(string index, long version, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<int> BumpAttemptsAsync(string index, string type, string id, CancellationToken ct = default) => Task.FromResult(0);
+		public Task ClearAttemptsAsync(string index, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task MarkDeadAsync(string index, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<bool> IsDeadAsync(string index, string type, string id, CancellationToken ct = default) => Task.FromResult(false);
 	}
 
 	[Fact]
