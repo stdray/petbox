@@ -189,6 +189,26 @@ public sealed class ProjectDirectory(
 		}
 	}
 
+	// The observations-board twin of SeedAgentDefinitionAsync (work observation-kind-and-dedup,
+	// owner clarification: `observations` is a system builtin board, provisioned the same way a
+	// fresh project gets its canon/agent-def seeds — not a manual tasks_methodology_utility_upsert
+	// step). Own seeder class (PetBox.Web/Tasks/ObservationsBoardSeeder.cs) for the same reason as
+	// the other two; `internal` so a test can call the seed a SECOND time directly.
+	internal async Task SeedObservationsBoardAsync(string projectKey, CancellationToken ct)
+	{
+		if (scopes is null) return;
+		try
+		{
+			using var scope = scopes.CreateScope();
+			var seeder = scope.ServiceProvider.GetRequiredService<PetBox.Web.Tasks.IObservationsBoardSeeder>();
+			await seeder.SeedAsync(projectKey, ct);
+		}
+		catch (Exception ex)
+		{
+			log?.LogWarning(ex, "observations board seed failed for project {ProjectKey} (project creation still succeeds)", projectKey);
+		}
+	}
+
 	// Project keys that would collide with a URL segment of the /ui tree.
 	static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
 	{
@@ -405,6 +425,10 @@ public sealed class ProjectDirectory(
 		// contract — see SeedAgentDefinitionAsync. Sandbox projects get one too: a throwaway
 		// project is exactly where a newcomer wires the kit up first.
 		await SeedAgentDefinitionAsync(key, ct);
+
+		// Best-effort observations-board seed, same placement/contract — see
+		// SeedObservationsBoardAsync. Sandbox projects get one too, same posture as the two above.
+		await SeedObservationsBoardAsync(key, ct);
 
 		// Invalidate the workspace's cached list so the created project is visible IMMEDIATELY (the
 		// row cache needs nothing: negatives are never cached, so the next lookup asks the db). This

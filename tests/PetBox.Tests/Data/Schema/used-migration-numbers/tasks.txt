@@ -36,3 +36,4 @@
 20 LIVE M020_SearchTitleColumn
 21 LIVE M021_NodeDecisionFlagAndOrigin
 22 LIVE M022_NodeUsage
+23 LIVE M023_ObservationSignal

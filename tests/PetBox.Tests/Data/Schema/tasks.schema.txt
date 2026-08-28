@@ -125,6 +125,14 @@ TABLE node_usage
   COL SurfacedCount INTEGER NOT NULL DEFAULT 0
   INDEX sqlite_autoindex_node_usage_1 UNIQUE origin=pk (Board, NodeId)
 
+TABLE observation_signal
+  COL FixedByNodeId TEXT NULL
+  COL LastSeenAt TEXT NOT NULL
+  COL NodeId TEXT NOT NULL PK1
+  COL RecurredAfterFixAt TEXT NULL
+  COL RecurrenceCount INTEGER NOT NULL DEFAULT 1
+  INDEX sqlite_autoindex_observation_signal_1 UNIQUE origin=pk (NodeId)
+
 TABLE plan_node_commits
   COL Board TEXT NOT NULL
   COL NodeId TEXT NOT NULL PK1

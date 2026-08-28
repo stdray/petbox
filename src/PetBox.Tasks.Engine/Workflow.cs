@@ -6,7 +6,16 @@ namespace PetBox.Tasks.Workflow;
 // `Classic` = the standalone GitHub/Jira/Linear-level status model (simple-like: no
 // singleton rule, no auto-wire, free-form tags).
 // Simple is first so it stays the ParseKind fallback — a legacy "free" string maps to it.
-public enum BoardKind { Simple, Spec, Ideas, Intake, Work, Classic }
+// `Observation` (work observation-kind-and-dedup): the SYSTEM builtin kind for the
+// project-wide `observations` board — a code-declared preset like every other member here,
+// deliberately NOT a project's utility-layer document, so it exists for every project
+// without a manual tasks_methodology_utility_upsert step (mirrors how memory's system
+// stores — MemoryStore.SystemStoreNames — are code, not per-project config). Lives outside
+// any methodology instance (the board is created in the project's `$utility` world) so it
+// never enters MethodologyRuntime.PipelineOrder / EffectiveKinds() — kept out of the
+// process guide and the owner-decision surfaces on purpose (spec
+// observation-stays-out-of-the-owner-queue).
+public enum BoardKind { Simple, Spec, Ideas, Intake, Work, Classic, Observation }
 
 // Terminal kind of a status — data that powers UI "closed" predicate + badge,
 // and the (capability-level) approve gate (only a maintainer reaches TerminalOk).
