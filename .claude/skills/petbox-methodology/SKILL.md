@@ -3,11 +3,12 @@ name: petbox-methodology
 description: >-
   Operate PetBox's own project methodology — the idea → spec → work pipeline and its gates —
   on the `$system` project via the `petbox` MCP server. Use when creating or refining IDEAS,
-  writing or changing the SPEC, creating WORK tasks, triaging INTAKE, or planning a PetBox
-  module/feature. Encodes the gate rules (an idea needs a spec_plan artifact to reach review;
-  the maintainer accepts; the spec is defined-only and every write needs links.idea_spec→an accepted
-  idea; the agent never self-sets Done/accepted), the spec-writing format, and the exact MCP
-  tool sequences + gotchas. Canon: doc/methodology.md.
+  writing or changing the SPEC, creating WORK tasks, triaging INTAKE, promoting an OBSERVATION,
+  or planning a PetBox module/feature. Encodes the gate rules (an idea needs a spec_plan artifact
+  to reach review; the maintainer accepts; the spec is defined-only and every write needs
+  links.idea_spec→an accepted idea; the agent never self-sets Done/accepted), the spec-writing
+  format, the observations board (defect-like findings, promotion, auto-fix/regression), and the
+  exact MCP tool sequences + gotchas. Canon: doc/methodology.md.
 ---
 
 # PetBox methodology — operator's guide
@@ -23,7 +24,9 @@ are the logical names — prefix them per runtime.
 State lives on the `$system` project — query it,
 don't assume: `tasks_methodology_get($system)` for the quartet, or
 `tasks_get($system, <board>)` per board. Boards: `ideas`, `spec`, `work`, `intake` (the
-methodology quartet, per-project singletons), plus `free` boards for scratch.
+methodology quartet, per-project singletons), plus `free` boards for scratch, plus the
+system-built-in `observations` board (§ OBSERVATIONS below — not part of the quartet, lives
+outside the methodology gates).
 
 Core principle: **thinking must not be lost** — the asset is the reasoning, not the verdict.
 Two gates protect quality: an idea is **accepted** only by the maintainer (= approval of a
@@ -109,6 +112,38 @@ tasks_upsert($system, spec, [
   work). An item with no spec gets **no shortcut into work** (work feature/bug needs
   links.task_spec).
 
+### OBSERVATIONS (board `observations`) — defect-like findings, outside the pipeline
+- A **node on a board**, not a memory fact and not a separate store. The board is
+  system-built-in, undeletable, auto-created per project, and lives in world `$utility` —
+  outside the methodology instance, so it never enters the owner's decision queue or digest.
+  The regular task surface applies as-is: `tasks_search`, `tasks_node_get`, `tasks_upsert`,
+  `tasks_delta`, `comments_*`, the boards UI.
+- **Status is a value, no FSM engine:** `seen` (open) → `promoted` (open) → `fixed` (terminal
+  ok); `declined` (terminal cancel).
+- **Dedup with recurrence, on every write:** a similar node landing on this board (automatic or
+  a manual `tasks_upsert`) doesn't create a duplicate — it bumps the existing node's
+  `recurrenceCount`/`lastSeenAt` instead, reported back as `deduped:[{requestedKey,
+  existingKey, existingNodeId, recurrenceCount}]`. Only fires on a purely-creating batch (every
+  node `version:0`, no deletes) — don't mix creates with edits in one call.
+- **Promotion — the only new tool, `tasks_observation_promote`:** turns a `seen` observation
+  into a real `work` task (`type` required: `feature|bug|chore`) or an `ideas` node
+  (`targetBoard: "work"|"ideas"`, plus `key`/`title`/`body`/`links`/`tags`/`sessionId`). Creates
+  an `observation_obligation` relation (visible in `relations` from both sides) and moves the
+  observation to `promoted` — it stays addressable, it does not disappear.
+- **Fix-pinning, automatic:** the linked obligation reaching a terminal-**ok** status flips the
+  observation to `fixed` (stamps `fixedByNodeId`/`fixedAt`); a terminal-**not-ok** status
+  reopens it to `seen` (the problem wasn't fixed, it was abandoned).
+- **Regression detector:** a fresh hit of the same problem after a fix reopens the observation
+  to `seen`, stamps `recurredAfterFixAt`, surfaces it higher in search, and sets
+  `decisionPending:true` on the task that had "fixed" it — the task's own terminal status is
+  **not** reopened automatically (an owner call, to keep cycle-time metrics honest).
+  `recurrenceCount`/`lastSeenAt`/`recurredAfterFixAt`/`fixedByNodeId`/`fixedAt` all ride the
+  `observation` field on search/node-get hits.
+- **The session extractor also files these on its own** (judge verdict `observe`, defect-like →
+  observation node, never a memory fact) — you don't need to hand-file what it would already
+  catch; use `tasks_upsert`/`tasks_observation_promote` yourself for anything mid-session that
+  needs to be on the board or promoted right now.
+
 ## Hard gotchas
 - **THE FIX NEVER PRECEDES THE REQUIREMENT — no code before accept.** Implementation of new
   behaviour starts ONLY when the chain exists: accepted idea → spec node → work task
@@ -160,7 +195,8 @@ tasks_upsert($system, spec, [
   id-set = patch under a version watermark); `artifact:<slug>` tags mark key artifacts
   (`artifact:spec_plan` is the gate precondition).
 - `relations_create|list|delete` — kinds `idea_spec | task_spec | issue_task | blocks |
-  part_of | supersedes`.
+  part_of | supersedes | observation_obligation`.
+- `tasks_observation_promote` — the only observations-specific tool; see § OBSERVATIONS above.
 
 ## Doing it well
 Go slowly; respect the gates. Treat the run itself as the test of whether the methodology is

@@ -42,13 +42,20 @@ Per task, in order. The orchestrator owns steps 5–10 and never delegates them.
 8. **Verifier agents on the live stand**, with the concrete steps taken from the
    implementers' reports.
 9. **Disposition every tail from the implementers' reports — the run does not end with an
-   open list.** Four outcomes, one per item: fix now (a few lines, in files this run already
-   touched); discard, with a one-line reason in the run report; one line to memory; escalate
-   as a self-contained card the owner can act on without this run's context. A tail is
-   escalated only if leaving it unfixed risks losing data, letting an unauthorized party in,
-   or breaking something a user can see — and the risk is live now, not hypothetical. Check
-   "still open?" first: many tails close during the run itself. When unsure, discard — a real
-   problem returns on its own; a hypothetical one returns only as the owner's reading load.
+   open list.** Five outcomes, one per item: fix now (a few lines, in files this run already
+   touched); file as an observation (defect-like — something broken, unexpected, or
+   contradicting docs — but not worth a fix-now or an escalation): `tasks_upsert` a node on
+   the project's built-in `observations` board (`kind:"observation"`, `status:"seen"`); it
+   dedupes on its own if the same thing was already noticed, and can be promoted later with
+   `tasks_observation_promote`; discard, with a one-line reason in the run report, for
+   anything that isn't even observation-worthy; one line to memory, for a decision/preference/
+   fact rather than a defect; escalate as a self-contained card the owner can act on without
+   this run's context. A tail is escalated only if leaving it unfixed risks losing data,
+   letting an unauthorized party in, or breaking something a user can see — and the risk is
+   live now, not hypothetical. Check "still open?" first: many tails close during the run
+   itself. When unsure between filing and discarding, file it as an observation — a real
+   problem returns on its own and the regression detector is exactly what notices that return;
+   reserve outright discard for what plainly isn't a finding.
 10. **Orchestrator moves cards to Done** — only for what the live stand actually confirmed.
 
 ## Rules that cost something to learn

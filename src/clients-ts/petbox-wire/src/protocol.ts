@@ -93,6 +93,7 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const tasksUpsert = tool("tasks_upsert");
   const tasksMethodologyGuide = tool("tasks_methodology_guide");
   const tasksWorkflow = tool("tasks_workflow");
+  const tasksObservationPromote = tool("tasks_observation_promote");
 
   const allowSpawn = orchestrationPrescriptionsAllowed(opts?.harness);
   const definition = opts?.definition ?? DEFAULT_AGENT_DEFINITION;
@@ -114,7 +115,9 @@ ${intro}
 
 **Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts). Curated/temporal edits: \`${memoryUpsert}\`. The server also autocaptures after each session — don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
 
-**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (do not invent board/type/status).`;
+**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (do not invent board/type/status).
+
+**Defect-like findings are observations, not memory facts:** something broken, behaving unexpectedly, or contradicting docs is a node on the built-in \`observations\` board (\`${tasksSearch}\`/\`${tasksUpsert}\`), not a memory entry — the session extractor also files these automatically. To turn a real one into work or an idea: \`${tasksObservationPromote}\`.`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {
