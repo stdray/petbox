@@ -61,6 +61,26 @@ namespace PetBox.Web.Mcp;
 // every other filter's stance toward its OWN infra failing. Once a schema with `properties` IS
 // found, an unknown key is a hard reject, not a soft one: that hard edge is the entire point (a
 // write verb's silently-dropped rename is a lost mutation, e.g. apikey_update's `keyValue`).
+//
+// ROLE CHANGE (card work/mcp-unmapped-member-disallow) — READ THIS BEFORE TRUSTING THIS FILE.
+// This filter is NO LONGER the mechanism that guarantees unknown members are refused. The
+// guarantee now comes from the TYPE: the MCP serializer options carry
+// UnmappedMemberHandling.Disallow (Program.cs, where mcpJson is built), so the SDK's own binder
+// refuses an unmapped member at EVERY depth, including the depths this file never reached
+// (`definition.kinds[].workflows[]...`, `tasks_search.sort`, any object-valued parameter — see
+// ItemSchema below, which fails open for everything that is not an array-of-objects).
+//
+// What this file is FOR now is MESSAGE QUALITY, and it is still worth its keep: it collects EVERY
+// offender in one refusal instead of stopping at the first, it classifies a name as a READ-ONLY
+// RESPONSE field (the read-modify-write paste, where "unknown parameter" is actively misleading),
+// it offers "did you mean", and it lists the accepted vocabulary of the scope. A raw
+// JsonException does none of that. It runs BEFORE next(), so wherever it DOES reach, its message
+// still wins over the binder's — the binder only speaks for the depths the filter cannot see.
+//
+// Therefore: do NOT read a gap in this file's coverage as a hole in the contract, and do NOT make
+// this walk recurse to close one (considered and rejected on the card — a second, hand-maintained
+// copy of the schema walk chasing a guarantee the type system now gives for free). Widen it only
+// if the aim is a BETTER MESSAGE at a depth that demonstrably matters.
 static class McpUnknownParameterFilter
 {
 	public static void Register(IMcpRequestFilterBuilder filters) =>

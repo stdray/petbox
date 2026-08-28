@@ -134,20 +134,7 @@ static class MethodologyWire
 		(d.Kinds ?? []).Select(k => new MethodologyKindDef(
 			k.Kind ?? string.Empty,
 			k.QuickAddAllowed,
-			(k.Workflows ?? []).Select(w => new MethodologyWorkflowDef(
-				w.Types ?? [],
-				(w.Statuses ?? []).Select(ParseStatus).ToList(),
-				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
-					t.From ?? string.Empty, t.To ?? string.Empty,
-					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
-				{
-					EnforceApproval = t.EnforceApproval,
-					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
-					Description = t.Description,
-					RequiredArtifacts = (t.RequiredArtifacts ?? [])
-						.Select(a => new RequiredArtifactDef(a.Slug ?? string.Empty, a.Inline)).ToList(),
-					Enforce = t.Enforce is null ? null : new GateEnforcementDef(t.Enforce.Approval, t.Enforce.Artifacts),
-				}).ToList())).ToList())
+			(k.Workflows ?? []).Select(ParseWorkflow).ToList())
 		{
 			LinkConstraints = (k.LinkConstraints ?? [])
 				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)
@@ -202,6 +189,45 @@ static class MethodologyWire
 		if (!string.IsNullOrWhiteSpace(category) && !Enum.TryParse(category.Trim(), ignoreCase: true, out kind))
 			throw new ArgumentException($"link kind category '{category}' is not valid (neutral|process)");
 		return kind;
+	}
+
+	// Map one workflow block. `initial` is the READ-BACK of the positional convention
+	// (MethodologyWorkflowDef.Initial => Statuses[0].Slug): the projector emits it on every read, so
+	// a pasted read document sends it back. It is CHECKED against this block's own statuses, never
+	// honoured as a declaration — honouring it would mean reordering `statuses` behind the caller's
+	// back, and would silently undo a deliberate reorder that left a stale `initial` behind. Blank
+	// or omitted = not declared. An EMPTY statuses list is left alone deliberately: the service
+	// validator's "needs at least one status" is a better message than anything sayable here.
+	static MethodologyWorkflowDef ParseWorkflow(MethodologyWorkflowInput w)
+	{
+		var statuses = (w.Statuses ?? []).Select(ParseStatus).ToList();
+		if (!string.IsNullOrWhiteSpace(w.Initial) && statuses.Count > 0)
+		{
+			var initial = w.Initial.Trim();
+			var declared = string.Join(", ", statuses.Select(s => s.Slug));
+			if (!statuses.Any(s => string.Equals(s.Slug, initial, StringComparison.OrdinalIgnoreCase)))
+				throw new ArgumentException(
+					$"workflow initial '{initial}' is not one of the statuses this block declares ({declared})");
+			if (!string.Equals(statuses[0].Slug, initial, StringComparison.OrdinalIgnoreCase))
+				throw new ArgumentException(
+					$"workflow initial '{initial}' disagrees with the first declared status '{statuses[0].Slug}': " +
+					$"the initial status IS statuses[0], and `initial` only reads that back. Move '{initial}' to the " +
+					$"front of `statuses` to make it initial, or set `initial` to '{statuses[0].Slug}' (declared: {declared})");
+		}
+		return new MethodologyWorkflowDef(
+			w.Types ?? [],
+			statuses,
+			(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
+				t.From ?? string.Empty, t.To ?? string.Empty,
+				t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
+			{
+				EnforceApproval = t.EnforceApproval,
+				Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
+				Description = t.Description,
+				RequiredArtifacts = (t.RequiredArtifacts ?? [])
+					.Select(a => new RequiredArtifactDef(a.Slug ?? string.Empty, a.Inline)).ToList(),
+				Enforce = t.Enforce is null ? null : new GateEnforcementDef(t.Enforce.Approval, t.Enforce.Artifacts),
+			}).ToList());
 	}
 
 	static WorkflowStatus ParseStatus(MethodologyStatusInput s)

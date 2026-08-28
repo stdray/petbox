@@ -482,9 +482,23 @@ public partial class Program
 		// converters) and only relax the text encoder: the default escapes every non-ASCII
 		// char (Cyrillic -> \uXXXX), making tool-result JSON unreadable. Allow common ranges
 		// (not UnsafeRelaxed) so output is human-readable while HTML-sensitive chars stay escaped.
+		// UnmappedMemberHandling.Disallow: an argument member the target type does not declare is a
+		// REFUSAL, at EVERY depth — not a silent drop. These options are the ones the SDK binds tool
+		// ARGUMENTS with (McpOutputSchema passes them as SerializerOptions to McpServerTool.Create),
+		// so the guarantee is the TYPE's, not a schema walk's. Before this, the binder mapped what it
+		// recognized and dropped the rest: a typo two hops inside a full-document REPLACE verb
+		// (tasks_methodology_rules_upsert `definition`) bound the default and DELETED the real value,
+		// with no error — which is why McpUnknownParameterFilter (top level + one hop) had to exist,
+		// and why contracts were being flattened just to stay inside its reach.
+		// Deliberately still OPEN: an open `Dictionary<,>` member (tasks_upsert `nodes[].links`, keyed
+		// by relation kind) and a `JsonElement` parameter (agent_def_upsert `definition`) — neither has
+		// a closed member set, so neither is affected. Measured, not assumed: Mcp/UnmappedMemberStrictnessTests.
+		// Side effect, wanted: the generated schemas gain `additionalProperties:false` on closed object
+		// nodes, so a strict client catches the same mistake before the call leaves.
 		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
 		{
 			Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
+			UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
 		};
 		builder.Services.AddMcpServer()
 			.WithHttpTransport(o => o.Stateless = true)
