@@ -402,6 +402,14 @@ public sealed partial class TasksService : ITasksService
 			if (_llm is not null)
 				await new VectorSearchIndex(() => ctx, new LlmClientEmbedder(_llm, projectKey), VectorDim)
 					.DeleteByTypeAsync(ctx, projectKey, board, ct);
+			// work tasks-vectorization-skips-soft-emptied-boards: the board's Class-B vector cursor
+			// (search_cursor, keyed by the BARE board name — TasksVectorizationJob/TasksCursors.cs) is
+			// now orphaned too — the board can never own another delta once its plan_nodes rows are
+			// physically gone. Not itself a re-drive risk (board enumeration reads plan_nodes, never
+			// search_cursor), but leaving it behind is dead state for a board that no longer exists;
+			// purge it alongside the FTS/meta/vector purge above, same invariant: a board drains
+			// exactly as long as it owes undelivered deltas.
+			await ctx.GetTable<LexicalCursorRow>().Where(r => r.IndexName == board).DeleteAsync(ct);
 			await tx.CommitAsync(ct);
 		}
 		catch
