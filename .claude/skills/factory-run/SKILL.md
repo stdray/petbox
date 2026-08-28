@@ -23,7 +23,7 @@ a consequence, that consequence was observed, not imagined.
 
 ## The pipeline
 
-Per task, in order. The orchestrator owns steps 5–9 and never delegates them.
+Per task, in order. The orchestrator owns steps 5–10 and never delegates them.
 
 1. **Recon (read-only, before anything is decided).** A few agents read the statements
    *and* the linked cards/specs, and report: real scope, files touched, overlap with the
@@ -41,7 +41,15 @@ Per task, in order. The orchestrator owns steps 5–9 and never delegates them.
    the whole pipeline).
 8. **Verifier agents on the live stand**, with the concrete steps taken from the
    implementers' reports.
-9. **Orchestrator moves cards to Done** — only for what the live stand actually confirmed.
+9. **Disposition every tail from the implementers' reports — the run does not end with an
+   open list.** Four outcomes, one per item: fix now (a few lines, in files this run already
+   touched); discard, with a one-line reason in the run report; one line to memory; escalate
+   as a self-contained card the owner can act on without this run's context. A tail is
+   escalated only if leaving it unfixed risks losing data, letting an unauthorized party in,
+   or breaking something a user can see — and the risk is live now, not hypothetical. Check
+   "still open?" first: many tails close during the run itself. When unsure, discard — a real
+   problem returns on its own; a hypothetical one returns only as the owner's reading load.
+10. **Orchestrator moves cards to Done** — only for what the live stand actually confirmed.
 
 ## Rules that cost something to learn
 
@@ -70,7 +78,8 @@ write by reading the target. One call; the alternative is findings that exist on
 dead transcript.
 
 **Card bodies lose concurrent writes; comments don't.** A shared collector edited by many
-agents drops writes silently on CAS. Have agents post findings as comments.
+agents drops writes silently on CAS. Where agents must write to a shared card at all, have
+them post comments, never edit the body.
 
 **Demand red-proof, not green-proof.** "The test passes" is worth nothing. "The test
 fails when I remove the fix" is evidence. The strongest work in a run came from agents
@@ -88,9 +97,13 @@ the brief assumed, one showed the classification unit in the brief would silentl
 misclassify seven unrelated types, one showed a count in the brief was miscopied. Put it
 in writing: if the premise is wrong, say so and stop rather than comply.
 
-**Forbid fixing adjacent defects.** One collector card for the whole batch; everything
-found on the way goes there. Otherwise diffs bloat and review gets harder exactly where
-the real change needs attention.
+**Forbid fixing adjacent defects — tails live in the report, not in a card.** Each
+implementer lists incidental findings in a `TAILS` section of its report, one line each:
+what and where. Otherwise diffs bloat and review gets harder exactly where the real change
+needs attention. No shared collector card: a batch-wide accumulator outlives its run and
+lands on the owner's desk as a page of unsorted "defects" — three of them piled up in eight
+days, one still waiting on the owner a day later. The orchestrator dispositions every tail
+at the end of the run (step 9); nothing survives as an open list.
 
 **Hardcoded counters are guaranteed merge conflicts.** Ratchet tests that pin a number
 (surface counts, tool counts) collide whenever two parallel branches each add one. Decide
@@ -124,7 +137,8 @@ Reused verbatim per task; only the task-specific block changes.
   foreground gate, push branch, card to Review. `Done` is the owner's gate, never the
   agent's.
 - **Named traps** already known for this task, from recon.
-- **Tails**: do not fix adjacent defects; post them as a comment on the collector card.
+- **Tails**: do not fix adjacent defects; list them in a `TAILS` section of your report, one
+  line each — what and where. An empty section is a good result, not a gap; never pad.
 - **Report shape**: branch and sha; what was done; what each test catches and how it was
   shown to fail without the fix; the literal gate output; risks to the live stand; the
   concrete steps to verify on the live stand after deploy.
