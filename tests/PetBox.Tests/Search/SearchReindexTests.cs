@@ -78,6 +78,58 @@ public sealed class SearchReindexTests
 		fx.TasksCount("SELECT COUNT(*) FROM search_vec").Should().Be(3);
 	}
 
+	// work search-reindex-skips-soft-emptied-boards: ResetTasksAsync enumerated boards via
+	// `.Where(n => n.ActiveTo == null)`, the same filter TasksVectorizationJob carried before
+	// 87b110f0 — a board whose every node is soft-deleted has zero ActiveTo==null rows left and
+	// drops out of the enumeration entirely, so its cursor is never rewound and its dead-letter
+	// never cleared, even though `search_reindex` reports success.
+	[Fact]
+	public async Task Reindex_Tasks_ResetsTheCursor_OfABoardWhoseNodesAreAllSoftDeleted()
+	{
+		using var fx = new Fixture();
+		await fx.SeedTasksAsync("b", 3);
+
+		// Drain once so the board's bare-name cursor moves off 0 — the state the reset must undo.
+		await fx.TasksJob(new FakeLlmClient()).DrainAllAsync(default);
+		fx.TasksCount("SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = 'b'")
+			.Should().BeGreaterThan(0, "the drain advanced the board's cursor — the baseline the reset must rewind");
+
+		// Soft-delete every node on the board: zero rows with ActiveTo == null remain for "b".
+		var tasks = fx.Tasks();
+		var view = await tasks.GetAsync(Fixture.Proj, "b");
+		var patches = view.Nodes.Select(n => new NodePatch { Key = n.Key, Version = n.Version, Deleted = true }).ToArray();
+		(await tasks.UpsertAsync(Fixture.Proj, "b", patches)).Result.Applied.Should().BeTrue();
+		fx.TasksCount("SELECT COUNT(*) FROM plan_nodes WHERE Board = 'b' AND ActiveTo IS NULL").Should().Be(0,
+			"the board is now soft-emptied — this is the exact condition the bug drops from enumeration");
+
+		var result = await fx.Reindex(new FakeLlmClient()).ReindexAsync(Fixture.Proj, ReindexTier.Tasks);
+
+		result.Tiers.Should().ContainSingle().Which.Indexes.Should().Contain("b",
+			"RED without the fix: the board has no ActiveTo==null rows left, so it drops out of enumeration entirely");
+		fx.TasksCount("SELECT COALESCE(Version, 0) FROM search_cursor WHERE IndexName = 'b'").Should().Be(0,
+			"RED without the fix: the cursor is never touched because the board was never enumerated");
+	}
+
+	// The other half of the same invariant: a board with NO ROWS AT ALL (physically deleted via
+	// DeleteBoardAsync) must NOT appear — enumeration reads existing rows, and a gone board owns
+	// none. Dropping the ActiveTo filter must not turn into an unbounded/ghost scan.
+	[Fact]
+	public async Task Reindex_Tasks_DoesNotEnumerateAPhysicallyDeletedBoard()
+	{
+		using var fx = new Fixture();
+		await fx.SeedTasksAsync("gone", 2);
+		await fx.SeedTasksAsync("stays", 1);
+		await fx.TasksJob(new FakeLlmClient()).DrainAllAsync(default);
+
+		var tasks = fx.Tasks();
+		(await tasks.DeleteBoardAsync(Fixture.Proj, "gone")).Should().BeTrue();
+
+		var result = await fx.Reindex(new FakeLlmClient()).ReindexAsync(Fixture.Proj, ReindexTier.Tasks);
+
+		result.Tiers.Should().ContainSingle().Which.Indexes.Should().BeEquivalentTo(["stays"],
+			"a physically-deleted board owns no rows any more and must not be resurrected as a ghost entry");
+	}
+
 	// ---- (b) the gate: no Embed route → REFUSE, and reset nothing ----
 
 	[Fact]
