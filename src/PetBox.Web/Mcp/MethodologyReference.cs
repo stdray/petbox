@@ -101,6 +101,7 @@ static class MethodologyReference
 			new()
 			{
 				["types"] = $"Type slugs sharing this state machine ({SlugSpec} each) — at least one; unique across the kind's blocks.",
+				["initial"] = "The initial status, READ BACK from the convention (it always equals statuses[0]) — every read of this document emits it, so a pasted-back document carries it. Optional on save; when present it is CHECKED against this block's statuses, never honoured as a declaration: to CHANGE the initial status, move that status to the front of `statuses` (and update this field, or drop it).",
 				["statuses"] = "The block's status vocabulary — at least one; slugs unique per block (case-insensitive). The FIRST status is the initial one.",
 				["transitions"] = "The directed edges of the state machine. Only listed moves are allowed; both ends must be statuses of THIS block.",
 			}),

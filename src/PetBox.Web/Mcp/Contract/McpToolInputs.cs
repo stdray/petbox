@@ -291,6 +291,22 @@ public sealed record MethodologyTagAxisInput
 public sealed record MethodologyWorkflowInput
 {
 	public string[]? Types { get; init; }
+	// The READ-BACK of the positional convention (MethodologyWorkflowDef.Initial => Statuses[0].Slug):
+	// MethodologyWorkflowBlockView EMITS `initial`, so every tasks_methodology_template_get /
+	// rules_get / utility_get document carries it, and the documented round trip ("same document
+	// shape ... copyable into def_upsert/template_upsert without reshaping", TasksTools) sends it
+	// straight back. It used to be DROPPED silently by the binder; under the MCP options'
+	// UnmappedMemberHandling.Disallow a member with no home is a REFUSAL, so this field has to exist
+	// here or that paste stops working.
+	//
+	// VALIDATED, not honoured (MethodologyWire.ParseWorkflow). Honouring it as the initial-status
+	// DECLARATION would mean reordering the caller's `statuses` behind its back to keep
+	// Statuses[0] == Initial — silently mutating one half of the document to satisfy the other,
+	// the exact quiet data-shift the strictness exists to end, and it would undo a deliberate
+	// reorder for a caller who moved a status to the front and left the stale `initial` in place.
+	// So a disagreement is the caller's bug and is NAMED. Blank/omitted = not declared: a
+	// hand-authored document never has to write it, and nothing about the convention changes.
+	public string? Initial { get; init; }
 	public MethodologyStatusInput[]? Statuses { get; init; }
 	public MethodologyTransitionInput[]? Transitions { get; init; }
 }
