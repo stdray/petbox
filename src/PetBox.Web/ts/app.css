@@ -140,6 +140,92 @@
 	line-height: 1.6 !important;
 }
 
+/* ── Body design tokens (work `node-render-design-layer`) ──────────────────────────────────
+   Three backdrops, three text weights, two rule weights, plus four semantic "outline + fill"
+   pairs. Every rendered-body rule below reads a token and NOTHING reads a raw colour, so a theme
+   change is a token change.
+
+   The values DERIVE from daisyUI's own per-theme variables rather than being hard-coded hexes.
+   That is deliberate and it is the one place this layer departs from its source artifact, which
+   had exactly two themes: this app ships FOUR daisyUI themes (dark, light, nord, retro — see
+   tailwind.config.js), and nord/retro are light themes with non-white backdrops. A hard-coded
+   light palette would put a white surface on retro's cream `--b1`; deriving from --b1/--b2/--b3
+   and --bc makes all four correct for free, and the semantic pairs likewise ride --su/--er/--wa/
+   --in, which every daisyUI theme defines.
+
+   The dark overrides below therefore carry only what genuinely differs on a dark backdrop: alpha.
+   A hairline that reads correctly as 14% black on white is nearly invisible as 14% white on
+   near-black, and a 12% semantic tint under-fills. Nothing else is redefined — no component rule
+   appears in a theme block. */
+:root {
+	/* Font ROLES — the font encodes what kind of content this is, it does not decorate.
+	   System stacks only: this box self-hosts and must render identically with no network, so
+	   there is no @import/<link> to a font CDN anywhere in this layer. */
+	--md-font-prose: Georgia, Charter, "Bitstream Charter", "Iowan Old Style", "Source Serif 4", "Noto Serif",
+		"Times New Roman", serif;
+	--md-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+	--md-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+	/* Backdrops, 3 levels. */
+	--md-ground: oklch(var(--b1));
+	--md-surface: oklch(var(--b2));
+	--md-surface-2: oklch(var(--b3));
+
+	/* Text, 3 weights. */
+	--md-ink: oklch(var(--bc));
+	--md-ink-soft: oklch(var(--bc) / 0.78);
+	--md-muted: oklch(var(--bc) / 0.55);
+
+	/* Rules, 2 weights. */
+	--md-rule: oklch(var(--bc) / 0.14);
+	--md-rule-strong: oklch(var(--bc) / 0.3);
+
+	/* Semantics, each an outline + fill PAIR. The status pill consumes live/proposed/broken
+	   (StatusKind terminalok/open/terminalcancel — see Pages/Shared/StatusBadge.cs); `partial`
+	   is consumed by the GFM alert styling below. */
+	--md-live: oklch(var(--su));
+	--md-live-fill: oklch(var(--su) / 0.12);
+	--md-broken: oklch(var(--er));
+	--md-broken-fill: oklch(var(--er) / 0.12);
+	--md-partial: oklch(var(--wa));
+	--md-partial-fill: oklch(var(--wa) / 0.12);
+	--md-proposed: oklch(var(--in));
+	--md-proposed-fill: oklch(var(--in) / 0.12);
+}
+
+/* Dark tokens, declared TWICE so the explicit switch wins in both directions — mirroring how
+   daisyUI itself owns [data-theme] globally rather than fighting it.
+
+   (1) OS preference. The guard excludes every LIGHT theme by name, not just `light`. The source
+   artifact's `:root:not([data-theme="light"])` is correct in a two-theme world and is a cascade
+   trap here: it matches [data-theme="nord"] and [data-theme="retro"], so a nord user on an
+   OS-dark machine would get dark ink on a light backdrop. Enumerating the light themes keeps the
+   rule symmetric with the theme list it is guarding against.
+   (2) Explicit dark, regardless of OS preference. */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]):not([data-theme="nord"]):not([data-theme="retro"]) {
+		--md-ink-soft: oklch(var(--bc) / 0.74);
+		--md-muted: oklch(var(--bc) / 0.5);
+		--md-rule: oklch(var(--bc) / 0.2);
+		--md-rule-strong: oklch(var(--bc) / 0.4);
+		--md-live-fill: oklch(var(--su) / 0.18);
+		--md-broken-fill: oklch(var(--er) / 0.18);
+		--md-partial-fill: oklch(var(--wa) / 0.18);
+		--md-proposed-fill: oklch(var(--in) / 0.18);
+	}
+}
+
+:root[data-theme="dark"] {
+	--md-ink-soft: oklch(var(--bc) / 0.74);
+	--md-muted: oklch(var(--bc) / 0.5);
+	--md-rule: oklch(var(--bc) / 0.2);
+	--md-rule-strong: oklch(var(--bc) / 0.4);
+	--md-live-fill: oklch(var(--su) / 0.18);
+	--md-broken-fill: oklch(var(--er) / 0.18);
+	--md-partial-fill: oklch(var(--wa) / 0.18);
+	--md-proposed-fill: oklch(var(--in) / 0.18);
+}
+
 /* Outline view (board-view-mode-framework): an expanded node body sits directly under its
    heading in a headings-first TOC row. _MdBody deliberately renders every OTHER surface (node
    page, board card, comment) at the same text-base size — that invariant is right for those
@@ -153,10 +239,40 @@
 	opacity: 0.85;
 }
 
+/* The size ladder below is absolute (rem), which is right for a document surface and wrong for
+   this one: a 2.35rem h1 inside a 0.875rem TOC row re-breaks exactly the finding the rule above
+   fixed. Headings are re-pinned here, in the rule that already owns "the outline is smaller",
+   rather than by making the whole ladder relative — that would drift every other surface. */
+[data-outline-body] .md-body h1 {
+	font-size: 1.25rem;
+}
+[data-outline-body] .md-body h2 {
+	font-size: 1.05rem;
+}
+[data-outline-body] .md-body h3 {
+	font-size: 0.95rem;
+}
+[data-outline-body] .md-body .md-section {
+	padding: 0.5rem 0.7rem;
+}
+
 /* Rendered markdown (task-node bodies). Tailwind's base reset strips heading/list styling and
-   there is no typography plugin, so re-assert a compact, readable set scoped to .md-body. */
+   there is no typography plugin, so re-assert a compact, readable set scoped to .md-body.
+
+   Scope note: .md-body is shared by every read surface — node body and edit preview, board card,
+   outline row, comment thread, the five /doc pages and the session page. That uniformity is the
+   accepted decision for this layer; there is deliberately no per-surface opt-in class. */
 .md-body {
-	line-height: 1.6;
+	font-family: var(--md-font-prose);
+	color: var(--md-ink);
+	line-height: 1.62;
+}
+/* The base step of the ladder. Written with .text-base attached because _MdBody always emits
+   that utility on the same element; matching its specificity keeps this from depending on which
+   of the two happens to come later in the built sheet. */
+.md-body.text-base {
+	font-size: 16.5px;
+	line-height: 1.62;
 }
 .md-body > :first-child {
 	margin-top: 0;
@@ -164,28 +280,49 @@
 .md-body > :last-child {
 	margin-bottom: 0;
 }
+/* Headings are CHROME, not prose: sans, and they set their own tracking. Tracking tightens as the
+   size grows (a display size at default tracking reads loose) and `balance` stops a two-line
+   heading leaving one orphaned word. */
 .md-body h1,
 .md-body h2,
 .md-body h3,
-.md-body h4 {
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+	font-family: var(--md-font-ui);
 	font-weight: 600;
 	line-height: 1.25;
 	margin: 0.6em 0 0.3em;
+	text-wrap: balance;
 }
 .md-body h1 {
-	font-size: 1.3em;
+	font-size: 2.35rem;
+	letter-spacing: -0.02em;
 }
 .md-body h2 {
-	font-size: 1.18em;
+	font-size: 1.32rem;
+	letter-spacing: -0.01em;
 }
 .md-body h3 {
-	font-size: 1.07em;
+	font-size: 1.02rem;
 }
 .md-body h4 {
-	font-size: 1em;
+	font-size: 1rem;
 }
+/* MEASURE. `node-detail-read-width` removed the global 80ch cap from the container, and that
+   was right — a table, a diagram or a code block must be free to use the full width. What it
+   also removed was any limit on the PROSE line, and a 1400px-wide paragraph is genuinely hard to
+   track back to the next line. The cap therefore lands on the paragraph only; nothing else in
+   this file constrains width. */
 .md-body p {
 	margin: 0.85em 0;
+	max-width: 66ch;
+}
+/* …except where a paragraph is a layout cell rather than prose. */
+.md-body td p,
+.md-body th p,
+.md-body .markdown-alert-title {
+	max-width: none;
 }
 .md-body ul {
 	list-style: disc;
@@ -210,8 +347,12 @@
 	color: oklch(var(--p));
 	text-decoration: underline;
 }
-.md-body code {
-	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+/* An identifier is not prose. Mono is the third font role and it is what lets a reader tell a
+   `SessionId` from a word before reading either. */
+.md-body code,
+.md-body kbd,
+.md-body samp {
+	font-family: var(--md-font-mono);
 	font-size: 0.85em;
 	background-color: oklch(var(--p) / 0.1);
 	border-radius: 0.25rem;
@@ -230,23 +371,163 @@
 	font-size: 0.85em;
 }
 .md-body blockquote {
-	border-left: 3px solid oklch(var(--bc) / 0.3);
+	border-left: 3px solid var(--md-rule-strong);
 	padding-left: 0.8em;
-	opacity: 0.85;
+	color: var(--md-ink-soft);
 	margin: 0.5em 0;
+}
+/* ── Section container ────────────────────────────────────────────────────────────────────
+   What separates two ideas is a visible boundary, not empty space. The renderer groups
+   everything between two `##` headings into <section class="md-section">
+   (Rendering/MarkdownDesignLayer.cs) — the author already writes `##`, so no body changed and no
+   new syntax exists to learn. */
+.md-body .md-section {
+	background-color: var(--md-surface);
+	border: 1px solid var(--md-rule);
+	border-radius: 0.5rem;
+	padding: 0.75rem 1rem;
+	margin: 0.9rem 0;
+}
+/* The section's own opening heading sits flush with the top of its box. */
+.md-body .md-section > h2:first-child {
+	margin-top: 0;
+}
+.md-body .md-section > :last-child {
+	margin-bottom: 0;
+}
+/* A table/code block is allowed to reach the section's edges. */
+.md-body .md-section > .md-table-scroll,
+.md-body .md-section > pre {
+	background-color: var(--md-surface-2);
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────────────────────────
+   No vertical rules: a row is read across, and a grid of boxes fights that. Only a horizontal
+   rule under each row, none under the last. The header is a small upper-case LABEL (sans, wide
+   tracking) rather than bold body text, and figures are tabular so columns of numbers line up. */
+.md-body .md-table-scroll {
+	overflow-x: auto;
+	margin: 0.6em 0;
+	max-width: 100%;
 }
 .md-body table {
 	border-collapse: collapse;
-	margin: 0.5em 0;
+	margin: 0;
+	font-size: 0.9rem;
+	font-variant-numeric: tabular-nums;
 }
 .md-body th,
 .md-body td {
-	border: 1px solid oklch(var(--bc) / 0.2);
-	padding: 0.25em 0.6em;
+	border: 0;
+	border-bottom: 1px solid var(--md-rule);
+	padding: 0.35em 0.7em;
+	text-align: left;
+	vertical-align: top;
 }
+.md-body th {
+	font-family: var(--md-font-ui);
+	font-size: 0.7rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	/* Tracking OPENS on small upper-case — the inverse of the display headings above. */
+	letter-spacing: 0.13em;
+	color: var(--md-muted);
+	border-bottom-color: var(--md-rule-strong);
+}
+.md-body tbody tr:last-child > td {
+	border-bottom: 0;
+}
+
+/* ── GFM alerts (`> [!NOTE]`) ─────────────────────────────────────────────────────────────
+   One rule: a 3px semantic left edge, a tinted fill from the same pair, and an asymmetric radius
+   so the coloured edge stays a hard line. Markdig's AlertBlockRenderer supplies the classes; its
+   inline octicon <svg> does not survive the sanitizer, so the title is styled as a label instead
+   of relying on an icon.
+
+   GFM has five alert kinds and the palette has four semantic pairs; `important` and `warning`
+   therefore share `partial`. They are still distinguishable — the title word is rendered. */
+.md-body .markdown-alert {
+	border-left: 3px solid var(--md-rule-strong);
+	background-color: var(--md-surface-2);
+	border-radius: 0 0.4rem 0.4rem 0;
+	padding: 0.6em 0.9em;
+	margin: 0.7em 0;
+}
+.md-body .markdown-alert-title {
+	font-family: var(--md-font-ui);
+	font-size: 0.7rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.13em;
+	margin: 0 0 0.35em;
+}
+.md-body .markdown-alert-note {
+	border-left-color: var(--md-proposed);
+	background-color: var(--md-proposed-fill);
+}
+.md-body .markdown-alert-note .markdown-alert-title {
+	color: var(--md-proposed);
+}
+.md-body .markdown-alert-tip {
+	border-left-color: var(--md-live);
+	background-color: var(--md-live-fill);
+}
+.md-body .markdown-alert-tip .markdown-alert-title {
+	color: var(--md-live);
+}
+.md-body .markdown-alert-important,
+.md-body .markdown-alert-warning {
+	border-left-color: var(--md-partial);
+	background-color: var(--md-partial-fill);
+}
+.md-body .markdown-alert-important .markdown-alert-title,
+.md-body .markdown-alert-warning .markdown-alert-title {
+	color: var(--md-partial);
+}
+.md-body .markdown-alert-caution {
+	border-left-color: var(--md-broken);
+	background-color: var(--md-broken-fill);
+}
+.md-body .markdown-alert-caution .markdown-alert-title {
+	color: var(--md-broken);
+}
+
 .md-body hr {
-	border-color: oklch(var(--bc) / 0.2);
+	border-color: var(--md-rule);
 	margin: 0.8em 0;
+}
+
+/* ── Status pill ──────────────────────────────────────────────────────────────────────────
+   The colour comes from the node's StatusKind METADATA, resolved through MethodologyRuntime
+   (Pages/Shared/StatusBadge.cs) — never from anything written in a body. Each variant is one
+   semantic pair: the outline and the fill are the same hue at two strengths. */
+.badge.status-pill {
+	font-family: var(--md-font-ui);
+	font-size: 0.68rem;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	border-width: 1px;
+	border-style: solid;
+}
+.badge.status-pill-live {
+	color: var(--md-live);
+	border-color: var(--md-live);
+	background-color: var(--md-live-fill);
+}
+.badge.status-pill-proposed {
+	color: var(--md-proposed);
+	border-color: var(--md-proposed);
+	background-color: var(--md-proposed-fill);
+}
+.badge.status-pill-broken {
+	color: var(--md-broken);
+	border-color: var(--md-broken);
+	background-color: var(--md-broken-fill);
+}
+.badge.status-pill-muted {
+	color: var(--md-muted);
+	border-color: var(--md-rule-strong);
+	background-color: var(--md-surface-2);
 }
 
 .msg-sub {

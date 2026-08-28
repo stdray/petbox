@@ -68,4 +68,45 @@ public sealed class StatusBadgeTests
 			"disable the noise suppression (presetkind-spec-blind-spot)");
 		badgeDeprecated.Show.Should().BeTrue("a terminal status always shows, even on a definition-resolved spec board");
 	}
+
+	// --- status pill colour comes from StatusKind METADATA (work `node-render-design-layer`) -----
+
+	// A definition built so that every status NAME lies about its kind: a status whose slug and
+	// display name are literally "Done" is classified Open, and one called "Broken" is a SUCCESS
+	// terminal. Nothing but StatusKind can produce the right pill on this board — a rule that read
+	// the word, from a body or from the label, gets every single one of these backwards.
+	static readonly MethodologyDefinition MisleadingNames = new("misleading",
+	[
+		new MethodologyKindDef("task", QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(["task"],
+				[
+					new("Done", "Done", StatusKind.Open),
+					new("Broken", "Broken", StatusKind.TerminalOk),
+					new("Live", "Live", StatusKind.TerminalCancel),
+				],
+				[new("Done", "Broken"), new("Done", "Live")]),
+		]),
+	]);
+
+	[Theory]
+	[InlineData("Done", "status-pill status-pill-proposed")]
+	[InlineData("Broken", "status-pill status-pill-live")]
+	[InlineData("Live", "status-pill status-pill-broken")]
+	public void CssClass_FollowsStatusKind_NotTheWord(string status, string expected)
+	{
+		var runtime = new MethodologyRuntime(MisleadingNames);
+		new StatusBadgeModel(runtime, "task", status).CssClass.Should().Be(expected,
+			"the pill is keyed on MethodologyRuntime.StatusKindOf — the status text, and anything " +
+			"a node's BODY says, is not an input to it at all");
+	}
+
+	[Fact]
+	public void CssClass_UnknownStatus_GetsNeutralPair_NotASemanticOne()
+	{
+		// An unclassifiable status must not claim a meaning it does not have.
+		var runtime = new MethodologyRuntime(MisleadingNames);
+		new StatusBadgeModel(runtime, "task", "no-such-status").CssClass
+			.Should().Be("status-pill status-pill-muted");
+	}
 }
