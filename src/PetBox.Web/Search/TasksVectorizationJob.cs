@@ -96,9 +96,12 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 
 				DataConnection Connect() => _factory.NewEnsuredConnection(project);
 
+				// No ActiveTo filter: a board with every node soft-deleted still owes its
+				// deletions to the index and must keep draining until the delta is empty —
+				// same shape as MemoryVectorizationJob's store enumeration below.
 				List<string> boards;
 				using (var probe = _factory.NewEnsuredConnection(project))
-					boards = probe.GetTable<TaskNode>().Where(n => n.ActiveTo == null)
+					boards = probe.GetTable<TaskNode>()
 						.Select(n => n.Board).Distinct().ToList();
 
 				int projectIndexed = 0, projectDead = 0;
