@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using Ganss.Xss;
@@ -433,7 +435,17 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		}
 		if (definedIds.Count == 0) return; // no ids to collide over — nothing to rewrite
 
-		var suffix = "-" + Guid.NewGuid().ToString("N")[..8];
+		// Content-derived, not random: the suffix must satisfy "different things must differ", not
+		// "everything must be unique". Hashing the SVG's own serialized markup (its state BEFORE
+		// this rewrite — hashing anything post-rewrite would fold the suffix into its own input)
+		// means two renders of the *same* diagram get the *same* suffix (a harmless collision — the
+		// cross-reference lands on an identical shape) while two *different* diagrams still diverge,
+		// restoring byte-identical output for repeated renders of unchanged input (the property the
+		// editor-preview-vs-saved-body comparison relies on). SHA256 is used only for its low
+		// collision rate at this length, not for any cryptographic property; 12 hex chars (48 bits)
+		// keeps a same-page birthday collision between genuinely different diagrams negligible.
+		var digest = SHA256.HashData(Encoding.UTF8.GetBytes(svgRoot.OuterHtml));
+		var suffix = "-" + Convert.ToHexStringLower(digest)[..12];
 
 		foreach (var el in scoped)
 		{
