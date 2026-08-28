@@ -249,7 +249,13 @@ public sealed record TaskSearchResult(
 	// answers "did the data move"; this answers "did the RANKING move", which it can do with nothing
 	// written at all — a rerank route recovering or failing between pages rebuilds the same rows in a
 	// different sequence. Carried into the cursor so that becomes a loud refusal instead of a splice.
-	string? PoolOrderHash = null);
+	string? PoolOrderHash = null,
+	// Whether this order came out of a FRESH cross-encoder pass rather than out of the stored pool
+	// (KeysetCursor.AssertPoolAlive). A reranked order is a property of ONE PASS — measured, not assumed:
+	// the same query over the same data comes back in a different order on the next call — so a cursor is
+	// bound to the POOL that pass materialized, and this is what tells the adapter that pool is gone.
+	// False for a cache hit, and false for any RRF order (Speed/degraded), which a rebuild DOES reproduce.
+	bool PoolRebuiltByRerank = false);
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by

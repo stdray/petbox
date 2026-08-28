@@ -1058,7 +1058,7 @@ public static class TasksTools
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = the mode default (query: open+terminalok; listing: open) — a default read still finds accepted/Done. Pass all three values for the widest read (this replaces the removed includeClosed:true); an unknown value is an error.")] string[]? statusKind = null,
-		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, `decisionPending`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, `decisionPending`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over. A `q` walk is also bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		// Appended AFTER `cursor` on purpose: MCP arguments are named on the wire, so parameter
 		// ORDER is not part of this tool's contract, and appending keeps every existing
 		// positional in-process call site (the test suite's) binding to the same parameters.
@@ -1146,6 +1146,12 @@ public static class TasksTools
 			// matched an RRF one. That was an emergent side effect nobody had written down — a refactor
 			// dropping the score from the token (as memory legitimately did) would have reopened the door
 			// in silence. Now it is a stated invariant, checked in one place, for every surface.
+			// THE POOL COMMITMENT, checked FIRST: a reranked order is a property of ONE PASS (measured —
+			// work/rerank-route-nondeterministic-order), so the walk is bound to the pool that pass
+			// materialized and a pool that is gone ends it saying so. The order commitment below stays as
+			// the second echelon — it cannot fire on a cold reranked pool any more (this gets there
+			// first), but it is free and still catches an order that moved with the pool in hand.
+			KeysetCursor.AssertPoolAlive(res.PoolRebuiltByRerank, "tasks_search");
 			if (res.PoolOrderHash is { } expectedOrder)
 				token.AssertPoolOrder(expectedOrder, "tasks_search");
 			hits = KeysetCursor.Advance(

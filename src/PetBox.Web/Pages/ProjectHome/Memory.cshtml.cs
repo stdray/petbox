@@ -172,6 +172,11 @@ public sealed class MemoryModel : PageModel
 			try
 			{
 				var decoded = KeysetCursor.Decode(Cursor, fingerprint, "memory-search");
+				// THE POOL COMMITMENT, checked first — the walk is bound to the pool its order came out
+				// of, because a reranked order is a property of ONE PASS (measured). Reached here only
+				// when the reader asked for Precision: the UI's edge default is Speed, whose RRF order a
+				// rebuild reproduces exactly and which therefore keeps paging across a cold pool.
+				KeysetCursor.AssertPoolAlive(result.PoolRebuiltByRerank, "memory-search");
 				if (!string.IsNullOrEmpty(result.PoolOrderHash))
 					decoded.AssertPoolOrder(result.PoolOrderHash, "memory-search");
 				afterCursor = KeysetCursor.Advance(

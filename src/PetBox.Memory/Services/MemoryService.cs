@@ -270,6 +270,9 @@ public sealed class MemoryService : IMemoryService
 		// The identity of the ORDER this result was ranked in — the guard for the case where nothing was
 		// written but the ranking still moved. Rides into the cursor beside the fingerprint.
 		string? poolOrderHash = null;
+		// Whether that order was rebuilt by a cross-encoder just now instead of being read back from the
+		// materialized pool — the fact that ends an in-flight walk (KeysetCursor.AssertPoolAlive).
+		var poolRebuiltByRerank = false;
 		if (stores.Count > 0 && query is null)
 		{
 			// LISTING: the active entries of every store in scope — ONE query over the project
@@ -337,6 +340,14 @@ public sealed class MemoryService : IMemoryService
 					cacheable);
 			}, ct);
 
+			// THE POOL COMMITMENT (KeysetCursor.AssertPoolAlive): a cross-encoder order that was built
+			// JUST NOW is not the one an in-flight cursor was issued against, and no second pass can be
+			// promised to reproduce it (work/rerank-route-nondeterministic-order). A cache HIT is the same
+			// pool by construction, and an RRF order rebuilds identically — so only this combination ends
+			// a walk.
+			poolRebuiltByRerank = !lookup.FromCache
+				&& lookup.Pool.Retrievers.Ranking == SearchRankingOutcome.Reranked;
+
 			List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> hits;
 			if (freshHits is not null)
 			{
@@ -396,7 +407,8 @@ public sealed class MemoryService : IMemoryService
 			// Raw sort-key values for the UI adapter's keyset cursor: MemoryEntryView (the wire
 			// projection) deliberately omits them, and the adapter needs the value it is paging on.
 			x.Entry.Created, x.Entry.Updated)).ToList();
-		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion, poolOrderHash);
+		return new MemoryEntrySearchResult(hits2, retrievers, poolLimit, poolBounded, dataVersion, poolOrderHash,
+			poolRebuiltByRerank);
 	}
 
 	// One selection candidate: its owning store, the entry, the fused relevance Score (query
