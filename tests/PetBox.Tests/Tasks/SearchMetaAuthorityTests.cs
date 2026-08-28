@@ -182,7 +182,11 @@ public sealed class SearchMetaAuthorityTests : IDisposable
 		{
 			conn.GetTable<MetaRow>().Where(r => r.Scope == Proj && r.Type == "b" && r.Id == "alpha")
 				.Set(r => r.StatusKind, "terminalok").Update();
-			conn.InsertOrReplace(new CursorRow { IndexName = TasksCursors.Meta, Version = 1 });
+			// CursorRow here maps no [PrimaryKey], so InsertOrReplace has no updatable column to
+			// target ("no fields to update"). Delete + Insert states the same intent unambiguously
+			// and leaves the shared mapping alone.
+			conn.GetTable<CursorRow>().Where(r => r.IndexName == TasksCursors.Meta).Delete();
+			conn.Insert(new CursorRow { IndexName = TasksCursors.Meta, Version = 1 });
 		}
 		Meta("b")[0].StatusKind.Should().Be("terminalok"); // the stale stamp is in place
 
