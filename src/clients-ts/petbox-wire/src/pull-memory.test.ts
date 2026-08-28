@@ -166,6 +166,50 @@ test("pull-memory.ts as a real process: wall clock stays well under budget again
   }
 });
 
+// Pins the real Claude Code SessionStart payload shape, captured live (2026-08-28, CC on
+// Windows via `claude -p`): {session_id, transcript_path, cwd, hook_event_name, source}. There
+// was suspicion the hook reads the wrong key (a "matcher" field was floated as the real name,
+// confused with the unrelated hook-registration matcher-pattern table in the docs) — if that
+// were true, `HookInput.source` would silently stay `undefined` on every real session and the
+// code's `let source = "startup"` default would mask it completely: no error, no log, just a
+// permanently-skipped resume/compact nudge. Asserting on the nudge text (which only appears
+// when `source` parses to "resume"/"compact" — see protocol.ts) turns that silent divergence
+// into a hard test failure instead of an invisible one.
+test("pull-memory.ts as a real process: a real-shaped payload with source:\"resume\" parses `source` and appends the resume nudge", async () => {
+  const { close, port } = await startFastFakeServer();
+  const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      FAKE_HOOK_TEST_KEY: "fake-key-for-test",
+    };
+    // Mirrors the exact field set captured from a live harness invocation, not just the
+    // fields this hook happens to read.
+    const input = JSON.stringify({
+      session_id: "6087d175-023a-49af-8410-fb6778e3bd82",
+      transcript_path: "C:\\Users\\stdray\\.claude\\projects\\fake\\6087d175.jsonl",
+      cwd: projectDir,
+      hook_event_name: "SessionStart",
+      source: "resume",
+    });
+
+    const result = await runHook(join(HERE, "pull-memory.ts"), input, env, projectDir);
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
+    assert.match(
+      result.stdout,
+      /Session resume — also recall recent session\/decision memories/,
+      `source:"resume" must produce the resume nudge; if this fails, the hook is not reading ` +
+        `the real payload's \`source\` field — got stdout: ${JSON.stringify(result.stdout.slice(0, 500))}`,
+    );
+  } finally {
+    await close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("pull-memory.ts as a real process: an oversized canon is dropped, logged loudly (stderr + wire.log), and stdout never risks the harness's own truncation", async () => {
   const { close, port } = await startFatCanonFakeServer();
   const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
