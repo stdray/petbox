@@ -1,5 +1,7 @@
 using LinqToDB.Data;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Search;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace PetBox.Tests.Search;
 
@@ -74,6 +76,62 @@ public sealed class AsyncVectorizationWorkerTests
 		var third = await worker.DrainAsync();
 		index.Indexed.Count(x => x.Id == "bad").Should().Be(0);
 		third.Advanced.Should().BeTrue();
+	}
+
+	// work drain-advanced-flag-does-not-mean-advanced: `Advanced` only ever meant "cursor written,
+	// nothing blocked" — it stays true even when the written value is IDENTICAL to what was already
+	// there (a real month-long incident: 40k+ passes reported Advanced=true while the cursor sat
+	// still). `Moved` is the honest complement: did the cursor's VALUE actually change this pass.
+	// Two drains, no change to the source between them: pass 1 has a real delta to write (Moved
+	// true), pass 2 re-derives the SAME cursor value from an already-drained source (Moved false) —
+	// yet Advanced is true both times, because neither pass was blocked.
+	[Fact]
+	public async Task TwoDrainsNoSourceChange_FirstReportsMoved_SecondDoesNot_WhileAdvancedStaysTrue()
+	{
+		var source = new FakeSource { Upserts = [Doc("a")], Version = 5 };
+		var index = new FakeIndex();
+		var worker = new AsyncVectorizationWorker(IndexName, source, index, new InMemoryIndexCursorStore());
+
+		var first = await worker.DrainAsync();
+		first.Advanced.Should().BeTrue();
+		first.Moved.Should().BeTrue("cursor went 0 -> 5");
+		first.Cursor.Should().Be(5);
+
+		// Nothing changed in the source (Version still 5); the second pass sees an empty delta whose
+		// CurrentVersion is still 5, so it re-writes the exact same cursor value.
+		var second = await worker.DrainAsync();
+		second.Advanced.Should().BeTrue("nothing blocked the pass");
+		second.Moved.Should().BeFalse("cursor was already 5 — this write didn't move it");
+		second.Cursor.Should().Be(5);
+	}
+
+	sealed record LogEntry(MsLogLevel Level, int EventId, string Message);
+
+	sealed class CapturingLogger : ILogger
+	{
+		public List<LogEntry> Entries { get; } = [];
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+		public bool IsEnabled(MsLogLevel logLevel) => true;
+		public void Log<TState>(MsLogLevel logLevel, EventId eventId, TState state, Exception? exception,
+			Func<TState, Exception?, string> formatter) =>
+			Entries.Add(new LogEntry(logLevel, eventId.Id, formatter(state, exception)));
+	}
+
+	// The record field alone isn't enough — EventId 404 is the only diagnostic window into a stuck
+	// drain (see the card body). `Moved` must reach the actual log TEXT, not just DrainResult.
+	[Fact]
+	public async Task LogDrain_EventId404_TextCarriesMoved()
+	{
+		var source = new FakeSource { Upserts = [Doc("a")], Version = 5 };
+		var index = new FakeIndex();
+		var log = new CapturingLogger();
+		var worker = new AsyncVectorizationWorker(IndexName, source, index, new InMemoryIndexCursorStore(), log: log);
+
+		await worker.DrainAsync();
+
+		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
+		entry.Message.Should().Contain("advanced True");
+		entry.Message.Should().Contain("moved True");
 	}
 
 	[Fact]
