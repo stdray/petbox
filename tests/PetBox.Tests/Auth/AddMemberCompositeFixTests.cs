@@ -39,6 +39,11 @@ namespace PetBox.Tests.Auth;
 //      members page and holding that silent 0. Closed with one transaction over all three. The
 //      test does not take that on trust — it INJECTS the failure with a BEFORE INSERT trigger on
 //      WorkspaceMembers and then looks for the orphan.
+//
+// [Collection(...)]: see AddMemberCompositeFixCollectionDef for why the WHOLE class (not just the
+// one test that reads AdminPasswordHasher.HashCallCount) is pinned to a DisableParallelization
+// collection — a process-global counter needs the isolation, and xUnit collections are per class.
+[Collection(AddMemberCompositeFixCollectionDef.Name)]
 public sealed class AddMemberCompositeFixTests : IDisposable
 {
 	const string Ws = "alpha";
@@ -216,10 +221,21 @@ public sealed class AddMemberCompositeFixTests : IDisposable
 	// this suite alongside the separate PetBox.E2ETests PROCESS and CPU contention skewed one
 	// reading but not the other. "AdminPasswordHasher.Hash ran at least once on this path" is the
 	// actual invariant — a call that got skipped is the oracle back, the same way a suspiciously
-	// fast reply was; a call count says that directly and cannot be pushed below the true value by
-	// background load, only (harmlessly) above it by an unrelated concurrent test's own Hash() call
-	// — see AdminPasswordHasher.HashCallCount for why >= 1, never == 1, is the assertion that stays
-	// load-independent.
+	// fast reply was; a call count says that directly.
+	//
+	// >= 1, never == 1, because a delta can only be PUSHED UP by extra Hash() calls, never down —
+	// which is exactly why == 1 would be too strict (any legitimate extra call anywhere would fail
+	// it) and, on a first pass, looked "safe" for >= 1 too. It is NOT safe on its own: this counter
+	// is process-global, and AdminPasswordHasherTests / CredentialAuthenticatorTests / anything
+	// that drives UserAdminService or AccountSelfService also call Hash() directly or indirectly.
+	// If the taken-name branch's OWN call were removed (product contribution 0) while one of those
+	// unrelated classes happened to call Hash() during this exact await window, `after - before`
+	// would read 1 from THEIR call and this assertion would pass on a live regression — reviewed
+	// and caught in auth-hash-cost-test-is-a-wallclock-flake-in-the-gate. What actually makes >= 1
+	// safe here is AddMemberCompositeFixCollectionDef: DisableParallelization pins this whole class
+	// so NO other xUnit collection in this process can run while any test in it runs, which is what
+	// rules the cross-class case out structurally rather than probabilistically. See that file for
+	// the empirical verification of the isolation itself.
 	[Fact]
 	public async Task CreateNew_pays_the_password_hash_even_when_the_username_is_taken()
 	{
