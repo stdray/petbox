@@ -230,6 +230,53 @@ public sealed class SearchProvenanceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task RerankPrecisionFailure_LogsCandidateCountDocumentSizeAndTruncationCap()
+	{
+		// Bug rerank-oversize-falls-through-both-legs: the OLD line ("... reason {Reason}") named only
+		// a machine code — no candidate count, no document size, no configured cap — which is exactly
+		// why a month of oversize-driven RRF degradation went unnoticed. The NEW line (EventId 402) must
+		// carry all three numbers, plus the failure detail, so an owner can tell "an oversized document"
+		// from "a genuine rerank outage" from the log alone.
+		var log = new CapturingLogger<SearchService>();
+		var longText = "alpha long document text here that is over cap"; // 48 chars, > the 20-char cap below
+		var svc = new SearchService([new FixedHitIndex("a")], log, reranker: new ThrowingReranker(),
+			truncation: new RerankInputTruncation { DocumentChars = 20 });
+
+		await svc.SearchAsync("proj/notes", "alpha", new SearchFilter(), k: 10,
+			resolveCandidateText: (cands, _) => Task.FromResult<IReadOnlyList<string>>(cands.Select(_ => longText).ToList()));
+
+		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 402).Which;
+		entry.Level.Should().Be(MsLogLevel.Warning);
+		entry.Message.Should().Contain("1 candidates", "how many candidates were in the pool")
+			.And.Contain($"{longText.Length} chars", "the largest candidate document's UNTRUNCATED size")
+			.And.Contain("cap 20 chars", "the configured truncation cap, so a reader can tell it was already applied")
+			.And.Contain("rerank boom", "the underlying failure detail — which leg/reason refused");
+	}
+
+	// A minimal lexical-shaped index that always surfaces one fixed hit — no real DB needed, this test
+	// only needs the pool to be non-empty so the precision pass is attempted at all.
+	sealed class FixedHitIndex(string id) : ISearchIndex
+	{
+		public SearchConsistency ConsistencyClass => SearchConsistency.Synchronous;
+		public SearchCapability Capability => SearchCapability.Lexical;
+		public Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default) => Task.CompletedTask;
+		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default) =>
+			Task.FromResult<IReadOnlyList<Hit>>([new Hit("note", id, 0.5, "lexical")]);
+	}
+
+	// Models the oversize-refusal shape at the IReranker seam (LlmClientReranker translates the
+	// router's failure into exactly this exception): always throws, so the precision pass always falls
+	// through to RRF and the degradation log line is always emitted.
+	sealed class ThrowingReranker : IReranker
+	{
+		public Task<bool> IsAvailableAsync(CancellationToken ct = default) => Task.FromResult(true);
+		public Task<IReadOnlyList<RerankedHit>> RerankAsync(string query, IReadOnlyList<string> documents, int topN, CancellationToken ct = default) =>
+			throw new SearchDegradedException(SearchDegradedReason.RerankUnavailable, "rerank boom");
+	}
+
+	[Fact]
 	public async Task NoDegradation_LeavesReasonNull()
 	{
 		var memory = new MemoryService(_store); // no LLM at all → semantic never attempted, not degraded

@@ -134,6 +134,79 @@ public sealed class OpenAiCompatibleClientTests
 		log.Entries.Should().BeEmpty(); // an unrelated 400 is not a response_format degradation
 	}
 
+	// ---- size-limit classification (bug rerank-oversize-falls-through-both-legs) ----
+	//
+	// A size-limit refusal is DETERMINISTIC by CONTENT, not by status code — the old `code >= 500 →
+	// transient` rule sent every home-oversized rerank straight into a retry that classified correctly
+	// only by accident. Every route's ceiling measured on this project is per query+document PAIR, never
+	// per whole request (card comment a85af1e9d92e444d974e520c32b5f1ef: a 60-doc/~18k-token-total batch
+	// passes fine everywhere; only one oversized PAIR fails) — but RerankInputTruncation (the primary fix
+	// on this bug) already keeps a pair below every known route's ceiling in the normal case, so this
+	// classification mainly stops a wasted attempt + breaker failure on an already-doomed retry rather
+	// than routing around a genuinely bigger-ceilinged fallback.
+
+	[Fact]
+	public async Task Rerank500TooLargeToProcess_IsClassifiedNonTransient()
+	{
+		// The EXACT wording measured on the live local route (bug card, 2026-08-27): llama-server's
+		// physical-batch refusal, HTTP 500 — the status code alone says "transient", the body says
+		// otherwise.
+		var (client, http, _) = Build(
+			body: """{"error":"input (15936 tokens) is too large to process. increase the physical batch size (current batch size: 8192)"}""",
+			status: HttpStatusCode.InternalServerError);
+
+		var act = async () => await client.RerankAsync(http, "https://home", null, "m", "q", ["d"], null, CancellationToken.None);
+
+		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+		ex.Transient.Should().BeFalse("a size refusal will fail again on retry — 500 alone must not make it look transient");
+		ex.RateLimited.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task Rerank422ExceedsMaximumAllowed_IsClassifiedNonTransient()
+	{
+		// The cloud fallback's OWN wording (bug card): already non-transient under the old rule too
+		// (422 < 500), but covered here so the SAME content check is proven to fire regardless of which
+		// leg answers or what status code it happens to choose.
+		var (client, http, _) = Build(
+			body: """{"error":"Input length 14940 exceeds maximum allowed token size 10240"}""",
+			status: HttpStatusCode.UnprocessableEntity);
+
+		var act = async () => await client.RerankAsync(http, "https://cloud", null, "m", "q", ["d"], null, CancellationToken.None);
+
+		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+		ex.Transient.Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task Ordinary500_IsStillClassifiedTransient()
+	{
+		// The size-limit content check must be NARROW: an unrelated 500 (upstream crashed, out of
+		// memory, whatever) must still fall through to the next route in the chain exactly as before —
+		// this fix must not turn every 5xx into a dead end.
+		var (client, http, _) = Build(body: """{"error":"internal server error"}""", status: HttpStatusCode.InternalServerError);
+
+		var act = async () => await client.RerankAsync(http, "https://home", null, "m", "q", ["d"], null, CancellationToken.None);
+
+		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+		ex.Transient.Should().BeTrue("an ordinary 5xx with no size-limit wording must keep falling through the chain");
+	}
+
+	[Fact]
+	public async Task Embed500TooLargeToProcess_IsClassifiedNonTransient()
+	{
+		// The same classification lives in the ONE shared PostAsync, so Embed (which can hit the same
+		// physical-batch ceiling as Rerank) gets it too, not just the rerank call path.
+		var (client, http, _) = Build(
+			body: """{"error":"input (9800 tokens) is too large to process. increase the physical batch size (current batch size: 8192)"}""",
+			status: HttpStatusCode.InternalServerError);
+
+		var act = async () => await client.EmbedAsync(http, "https://home", null, "m", ["some text"], CancellationToken.None);
+
+		var ex = (await act.Should().ThrowAsync<LlmUpstreamException>()).Which;
+		ex.Transient.Should().BeFalse();
+	}
+
 	sealed record LogEntry(MsLogLevel Level, string Message);
 
 	sealed class CapturingLogger<T> : ILogger<T>

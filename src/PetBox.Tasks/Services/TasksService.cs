@@ -2511,7 +2511,11 @@ public sealed partial class TasksService : ITasksService
 		// Budget resolved from settings (rerank-budget-params-to-settings) at THIS project's scope, so
 		// a Project-level override actually lands here rather than the compiled-in default only.
 		var budget = await RerankCandidateBudget.ResolveAsync(_settings, projectKey, ct);
-		var pool = await new SearchService(indexes, _log, reranker, budget)
+		// Rerank input size caps (bug rerank-oversize-falls-through-both-legs) — applied once, inside
+		// SearchService.RankPoolAsync, not here: this resolver still hands the facade the raw
+		// Name+Body / comment Body text unchanged.
+		var truncation = await RerankInputTruncation.ResolveAsync(_settings, projectKey, ct);
+		var pool = await new SearchService(indexes, _log, reranker, budget, truncation)
 			.SearchPoolAsync(projectKey, query, new SearchFilter(boardFilter, Facets: facets), k, mode: mode, resolveCandidateText: resolveText, ct: ct);
 		var resp = new SearchResponse(pool.Ordered, pool.Retrievers);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers, pool.PoolLimit, pool.PoolBounded, pool.OrderHash);

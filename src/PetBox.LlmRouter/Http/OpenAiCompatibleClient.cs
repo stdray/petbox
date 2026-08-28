@@ -163,7 +163,28 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 			{
 				var code = (int)resp.StatusCode;
 				var rateLimited = code == 429;
-				var transient = rateLimited || code >= 500;
+				// A size-limit refusal is a DETERMINISTIC failure by CONTENT, not by status code (bug
+				// rerank-oversize-falls-through-both-legs): llama-server answers an oversized rerank/embed
+				// input with HTTP 500 (`... is too large to process. increase the physical batch size ...`),
+				// which the old `code >= 500` rule classified transient — so CapabilityRouter retried on
+				// the NEXT route in the chain. Every route's ceiling measured on this project is PER
+				// query+document PAIR, never per whole request (the original "cloud caps the whole
+				// request" theory is refuted by direct measurement — a 60-document/~18k-token-total batch
+				// passes fine on every route; only a single oversized PAIR fails) — but the ceilings still
+				// differ: each route spends a different amount of its nominal budget on its own overhead
+				// (query + prompt template), so two routes with the SAME nominal ceiling (both 10240 here)
+				// can still refuse at different actual document sizes. A retry on a size refusal is
+				// therefore not automatically useless (a bigger-ceilinged route MAY still serve it) — but
+				// it IS useless once RerankInputTruncation has already capped the pair below every known
+				// route's ceiling, which is the normal case; this classification only matters for the
+				// residual tail that config override or a future route addition could still produce.
+				// checked here so ANY leg's oversize wording is caught regardless of which one answers
+				// first. The retry was guaranteed to fail either way for a route with a SMALLER-or-equal
+				// effective budget — non-transient stops CapabilityRouter from wasting it and, more
+				// importantly, from masking the real failure behind a generic "all providers failed" after
+				// burning an attempt that could never have served this input on that route.
+				var oversize = IsInputTooLarge(body);
+				var transient = !oversize && (rateLimited || code >= 500);
 				throw new LlmUpstreamException(transient, $"HTTP {code}: {Truncate(body)}", rateLimited: rateLimited);
 			}
 			try { return JsonDocument.Parse(body); }
@@ -174,6 +195,20 @@ public sealed partial class OpenAiCompatibleClient : IOpenAiCompatibleClient
 	static string Url(string baseUrl, string path) => baseUrl.TrimEnd('/') + path;
 
 	static string Truncate(string s) => s.Length <= 300 ? s : s[..300] + "…";
+
+	// Recognizes the two size-limit wordings this repo has actually observed on a failing rerank/embed
+	// call (bug rerank-oversize-falls-through-both-legs): llama-server's per-PAIR physical-batch refusal
+	// ("... is too large to process. increase the physical batch size ...", HTTP 500) and the OpenAI-
+	// dialect cloud fallback's own per-PAIR token-count refusal ("... exceeds maximum allowed token
+	// size ...", HTTP 422 today — already non-transient by the `code >= 500` rule, matched here too so
+	// this is the ONE place that answers "was this a size refusal?" regardless of which leg answered
+	// or what status code it chose). Both are per PAIR, never per whole request (card comment
+	// a85af1e9d92e444d974e520c32b5f1ef measured this directly against the cloud route). Matched against
+	// the FULL body (not the 300-char Truncate used for the exception message) so the phrase is never
+	// missed to a truncation the caller never asked for.
+	static bool IsInputTooLarge(string body) =>
+		body.Contains("too large to process", StringComparison.OrdinalIgnoreCase)
+		|| body.Contains("exceeds maximum allowed", StringComparison.OrdinalIgnoreCase);
 
 	// The one queryable signal for a silently-degrading endpoint (facts-extraction-unparseable-
 	// batches): fires exactly when a response_format-bearing chat call got a fatal 400 mentioning
