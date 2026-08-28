@@ -15,6 +15,16 @@
 	// The spec-board-only scoping (board-ui-review-findings #2) is GONE: live acceptance found a
 	// Cancelled work task reading as alive, which the spec node forbids on every board kind.
 	var nodeTerminalCancel = Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status) == PetBox.Tasks.Workflow.StatusKind.TerminalCancel;
+	// spec observation-shows-linked-obligation: the `observation_obligation` edge is already part
+	// of the exhaustive relations panel below (Model.Detail.Relations — MethodologyRuntime.
+	// EffectiveLinkKinds() concatenates ObservationLinkKinds unconditionally, so it resolves
+	// regardless of methodology instance), which already shows it "from both sides" per the work
+	// card. This just pulls the SAME group forward into a short, noticeable link next to the
+	// status badge — only when this node is actually `promoted` (the literal spec condition),
+	// not a second, differently-sourced computation.
+	var obligationGroup = string.Equals(node.Status, "promoted", StringComparison.OrdinalIgnoreCase)
+		? Model.Detail.Relations.FirstOrDefault(g => g.Label.StartsWith("observation_obligation:", StringComparison.Ordinal))
+		: null;
 }
 
 @* Breadcrumb: tasks / {board} / {ancestors…} / {this node}. The node is addressed by its
@@ -114,6 +124,30 @@
 				{
 					<partial name="_DeliveryBadge" model="new PetBox.Web.Pages.Shared.DeliveryBadgeModel(node.Delivery)" />
 				}
+				@* observation-ui-distinct-from-task: node.Observation is null on every board except
+				   `observations`, so this is a no-op everywhere else. *@
+				<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(node.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+				@* spec observation-shows-linked-obligation: a short, noticeable link next to the
+				   status badge — see obligationGroup's own comment above for where it comes from. *@
+				@if (obligationGroup is not null && obligationGroup.Links.Count > 0)
+				{
+					<span class="badge badge-info badge-sm" data-testid="node-observation-obligation-badge" title="promoted — addressed by">
+						@foreach (var l in obligationGroup.Links)
+						{
+							@if (l.NodeId.Length > 0 && l.Status != "missing")
+							{
+								var href = l is { Board: { Length: > 0 } ob, Slug: { Length: > 0 } os }
+									? Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, ob, os)
+									: Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId);
+								<a href="@href" class="link link-hover font-mono" data-testid="node-observation-obligation-link">→ obligation: @(l.Slug ?? l.NodeId)</a>
+							}
+							else
+							{
+								<span data-testid="node-observation-obligation-link">→ obligation: @(l.Slug ?? l.NodeId) · @l.Status</span>
+							}
+						}
+					</span>
+				}
 				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
 			</div>
 		</div>
@@ -142,6 +176,11 @@
 				<span>updated <time class="local-time" datetime="@node.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@node.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time></span>
 			}
 		</div>
+
+		@* observation-ui-distinct-from-task: standalone, loud banner (spec
+		   observation-regression-signalled-on-card) — a no-op when node.Observation has no
+		   RecurredAfterFixAt (every non-observation node, and most observation nodes). *@
+		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(node.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
 
 		@* Edit form (title + body, markdown write/preview). Hidden until ts/nodeEdit.ts shows it.
 		   The textarea is the source for both the POST body and the client-side preview render. *@

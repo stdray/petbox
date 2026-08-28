@@ -1,0 +1,13 @@
+@model PetBox.Web.Pages.Shared.ObservationSignalModel
+@* spec observation-recurrence-visible-on-card: the recurrence counter, shown only once the
+   observation has actually recurred (RecurrenceCount > 1 — a first-ever sighting stays 1 and
+   renders nothing here, same threshold the spec names). Compact badge, styled like the other
+   plain metadata badges (node-type/priority) it sits alongside — the LOUD element is the
+   separate regression banner, not this one. *@
+@if (Model.Observation is { RecurrenceCount: > 1 } o)
+{
+	<span class="badge badge-ghost badge-xs font-mono" data-testid="node-observation-recurrence" title="recurred @o.RecurrenceCount times">
+		×@o.RecurrenceCount
+		<time class="local-time" datetime="@o.LastSeenAt.ToString("o")" data-testid="node-observation-last-seen">@o.LastSeenAt.ToString("yyyy-MM-dd HH:mm")</time>
+	</span>
+}

@@ -33,7 +33,14 @@ public sealed record TaskTableRow(
 	// rendered when true, not gated on Fields (same posture as the tree card's own badge). Default
 	// false: Search's cross-scope ToRow doesn't resolve it (out of this card's scope — see
 	// CrossScopeSearchHit), so its rows never show the badge.
-	bool DecisionPending = false);
+	bool DecisionPending = false,
+	// observation-ui-distinct-from-task: the recurrence/regression signal (spec
+	// observation-recurrence-visible-on-card / observation-regression-signalled-on-card), rendered
+	// via the shared _ObservationRecurrenceBadge / _ObservationRegressionBanner partials — always
+	// null except on the `observations` board (TaskNodeView's own contract), so every OTHER row is
+	// unaffected. Default null: Search's cross-scope ToRow doesn't resolve it (out of scope, same
+	// posture as BlockedBy above), so its rows never show these.
+	ObservationSignalView? Observation = null);
 
 // ShowScopeColumns=true renders workspace/project/board columns ahead of key (cross-scope
 // search, where a row's location isn't implicit from the page it's on); false omits them

@@ -1,0 +1,19 @@
+@model PetBox.Web.Pages.Shared.ObservationSignalModel
+@* spec observation-regression-signalled-on-card: "we fixed it and it came back" is the highest-
+   value signal the whole observation mechanism exists to surface (work
+   observation-recurrence-after-fix-signal) — a SEPARATE, noticeable alert banner, deliberately
+   NOT another badge sharing the row with the plain recurrence counter (_ObservationRecurrenceBadge).
+   Uses the project's standard alert-warning convention (doc/ui-conventions.md). FixedByNodeId is a
+   raw NodeId (no resolved board+slug), so it routes through the opaque Routes.TaskBoardNode(id)
+   door — same fallback the exhaustive relations panel (TaskBoardNode.cshtml) already uses for an
+   unresolved link target. *@
+@if (Model.Observation is { RecurredAfterFixAt: { } regressedAt } o)
+{
+	<div class="alert alert-warning text-xs py-1.5 px-2 mt-1" data-testid="node-observation-regression" role="alert">
+		<span>⚠ recurred after fix — <time class="local-time" datetime="@regressedAt.ToString("o")" data-testid="node-observation-regressed-at">@regressedAt.ToString("yyyy-MM-dd HH:mm")</time></span>
+		@if (!string.IsNullOrEmpty(o.FixedByNodeId))
+		{
+			<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, o.FixedByNodeId)" class="link link-hover font-mono" data-testid="node-observation-fixed-by-link">fixed by @o.FixedByNodeId</a>
+		}
+	</div>
+}
