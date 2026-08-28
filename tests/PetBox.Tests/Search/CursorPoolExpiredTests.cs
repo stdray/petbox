@@ -8,7 +8,6 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Search;
 using PetBox.Core.Settings;
-using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
