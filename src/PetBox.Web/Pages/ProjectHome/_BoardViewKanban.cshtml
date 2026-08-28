@@ -10,9 +10,20 @@
    tree/table. Sort is PER COLUMN: each column's own <ul data-sort-scope> is an independent
    reorder scope (board.ts groups scopes by DOM containment) — cards have no data-parent-id, so
    within a scope they're all "roots" and sort flat, matching "order of cards within column". *@
+@{
+	// kanban-column-picker: the column picker rides INSIDE the filter/sort bar (ColumnsDialog) so its
+	// button sits next to the fields one — rendered as a sibling partial it landed outside the bar's
+	// flex container and wrapped onto its own line.
+	var columnsDialogModel = new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By);
+	// live-verification finding (sticky-filter-hides-board-silently): filter bar hoisted OUT of the
+	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
+	// visible no matter how many nodes matched.
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+}
+<partial name="_BoardFilterSort" model="filterSortModel" />
 @if (Model.Nodes.Count == 0)
 {
-	<div class="alert" data-testid="board-empty">This board has no active task nodes.</div>
+	<div class="alert" data-testid="board-empty">@(Model.DecisionPendingOnly ? "No task nodes are waiting on your decision." : "This board has no active task nodes.")</div>
 }
 else
 {
@@ -32,11 +43,6 @@ else
 	// board-body-not-for-table-kanban: kanban never renders a body block on a card (below),
 	// regardless of what Fields.Body says — BodyUnavailable disables the dialog checkbox and says
 	// why, same mechanism Outline's Navigate mode already uses.
-	// kanban-column-picker: the column picker rides INSIDE the filter/sort bar (ColumnsDialog) so its
-	// button sits next to the fields one — rendered as a sibling partial it landed outside the bar's
-	// flex container and wrapped onto its own line.
-	var columnsDialogModel = new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the status
 	// CATEGORY (StatusKind.TerminalCancel) on EVERY board kind — a terminally-cancelled node
 	// reads as dead no matter how the user turned the Status property off, and no matter which
@@ -44,7 +50,6 @@ else
 	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
 	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
 
-	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
 		@* kanban-column-picker bullet 6: hiding a column is PRESENTATION only — byStatus/strayCount
 		   above are still computed over every node regardless of the selection, so active-only

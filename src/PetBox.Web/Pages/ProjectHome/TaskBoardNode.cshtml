@@ -76,7 +76,17 @@
 				}
 				<form method="post" asp-page-handler="DecisionPending" class="inline-flex items-center" data-testid="node-decision-pending-form">
 					<input type="hidden" name="version" value="@node.Version" />
-					<input type="hidden" name="pending" value="@(!node.DecisionPending)" />
+					@* live-verification finding: Razor's runtime attribute writer treats a BARE bool
+					   expression as an HTML5 "minimized boolean attribute" for ANY attribute name, not
+					   just the curated checked/disabled/readonly/... list — `value="@(someBool)"` renders
+					   literal `value="value"` when true and OMITS the attribute entirely when false. That
+					   silently broke "mark waiting on me": true rendered as `value="value"` (unparseable,
+					   binds to default false) while false rendered as no attribute at all (also binds to
+					   default false) — so a `bool` model-bound parameter can NEVER observe true through
+					   this attribute. Forcing the value through ToString() changes its static type to
+					   string, which turns the special-casing off and lets the real "True"/"False" text
+					   reach the wire (the default ModelBinder for `bool` accepts either case). *@
+					<input type="hidden" name="pending" value="@((!node.DecisionPending).ToString())" />
 					<button type="submit" class="btn btn-ghost btn-xs" data-testid="node-decision-pending-toggle" title="@(node.DecisionPending ? "Clear — no longer waiting on a decision" : "Mark as waiting on the owner's decision")">
 						@(node.DecisionPending ? "clear decision flag" : "mark waiting on me")
 					</button>

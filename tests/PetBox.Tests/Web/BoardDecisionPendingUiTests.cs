@@ -193,6 +193,30 @@ public sealed class BoardDecisionPendingUiTests : IClassFixture<BoardDecisionPen
 			"an enabled filter with zero matches must render the board's own empty state, not fall back to showing everything");
 	}
 
+	// live-verification finding (sticky-filter-hides-board-silently): a board that genuinely has an
+	// UNFLAGGED node (so it is not "actually" empty at all) must never say so ambiguously — the
+	// filter's own ON state has to stay visible in the SAME response that says nothing matched, or
+	// a persisted (board-view-cross-device-style) `decisionPending=true` from a past visit hides a
+	// live board with zero on-page evidence that anything is filtered at all.
+	[Fact]
+	public async Task FilteredBoard_WithNoPendingNodes_StillShowsTheToggleOn_AndNamesTheFilterInTheEmptyMessage()
+	{
+		var client = NewClient();
+		var (resp, _) = await GetAuthedAsync(client, BoardUrl(BoardDecisionPendingUiFixture.EmptyBoard) + "?decisionPending=true");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// The board is NOT genuinely empty — dpui-only-plain lives there, unflagged — so the
+		// generic "no active task nodes" wording (indistinguishable from an actually-empty board)
+		// must not appear; the filter must be independently, visibly ON on the same page.
+		html.Should().Contain("data-testid=\"board-decision-pending-toggle\"",
+			"the toggle itself must render even when it narrowed the board to zero rows");
+		html.Should().Contain("data-decision-pending=\"true\"",
+			"and it must show as ON, not just present");
+		html.Should().NotContain("This board has no active task nodes.",
+			"that phrasing reads as \"nothing lives here\" — indistinguishable from a genuinely empty board — when the truth is a real node exists and the filter hid it");
+	}
+
 	// THE shareable-link acceptance bullet: a totally independent context (its own cookie jar, its
 	// own login) hitting the exact same `?decisionPending=true` URL must land on the exact same
 	// filtered board on its FIRST response — no shared client-side state of any kind is involved.
@@ -218,45 +242,77 @@ public sealed class BoardDecisionPendingUiTests : IClassFixture<BoardDecisionPen
 		htmlB.Should().NotContain("data-node-key=\"dpui-plain\"");
 	}
 
+	// Extracts the hidden input's `value="..."` for `inputName` from the given `<form ...>` block
+	// (formHtml starts at the form's own opening tag). Returns null when the attribute — or the
+	// whole input — is ABSENT, which is a legal outcome a browser must also handle (an omitted
+	// hidden input simply never rides in the submitted form data).
+	static string? ExtractHiddenValue(string formHtml, string inputName)
+	{
+		var marker = $"name=\"{inputName}\"";
+		var inputStart = formHtml.IndexOf(marker, StringComparison.Ordinal);
+		if (inputStart < 0) return null;
+		var tagEnd = formHtml.IndexOf('>', inputStart);
+		var valueMarker = "value=\"";
+		var valueStart = formHtml.IndexOf(valueMarker, inputStart, StringComparison.Ordinal);
+		if (valueStart < 0 || valueStart > tagEnd) return null; // no value="..." on THIS input tag
+		valueStart += valueMarker.Length;
+		return formHtml[valueStart..formHtml.IndexOf('"', valueStart)];
+	}
+
+	// THE red-proof shape the coordinator required after the live-verification finding: this test
+	// submits EXACTLY the field values the server's own rendered form carries — never a value this
+	// test invents — because a hand-assembled POST (the first draft's `pending.ToString()`) cannot
+	// observe a broken hidden input's rendered value and would have stayed green through the actual
+	// production defect (Razor's bare-bool "minimized attribute" trap: `value="@(someBool)"` renders
+	// literal `value="value"` when true and OMITS the attribute when false — see TaskBoardNode.cshtml's
+	// own comment on the fix). A form field this test cannot find is passed through as ABSENT from
+	// the POST body, exactly like a real browser would if the markup never emitted it.
+	static async Task<(string Html, string AuthCookie, string AfCookie, string Token)> GetNodePageAsync(HttpClient client, string nodeUrl)
+	{
+		var (resp, authCookie) = await GetAuthedAsync(client, nodeUrl);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		var tokenStart = html.IndexOf("__RequestVerificationToken", StringComparison.Ordinal);
+		var tokenValueStart = html.IndexOf("value=\"", tokenStart, StringComparison.Ordinal) + 7;
+		var token = html[tokenValueStart..html.IndexOf('"', tokenValueStart)];
+		var afCookie = resp.Headers.GetValues("Set-Cookie")
+			.First(c => c.Contains("Antiforgery", StringComparison.OrdinalIgnoreCase))
+			.Split(';')[0];
+		return (html, authCookie, afCookie, token);
+	}
+
+	static async Task<HttpResponseMessage> SubmitDecisionPendingFormAsync(HttpClient client, string nodeUrl, string html, string authCookie, string afCookie, string token)
+	{
+		var formStart = html.IndexOf("data-testid=\"node-decision-pending-form\"", StringComparison.Ordinal);
+		formStart.Should().BeGreaterThan(-1, "the decision-pending form itself must be present on the node page");
+		var formEnd = html.IndexOf("</form>", formStart, StringComparison.Ordinal);
+		var formHtml = html[formStart..formEnd];
+
+		// Whatever the server actually rendered — including nothing, if the field is missing.
+		var version = ExtractHiddenValue(formHtml, "version");
+		var pending = ExtractHiddenValue(formHtml, "pending");
+		version.Should().NotBeNull("the form must always carry the concurrency baseline");
+
+		var fields = new Dictionary<string, string> { ["version"] = version!, ["__RequestVerificationToken"] = token };
+		if (pending is not null) fields["pending"] = pending; // omitted entirely when the server didn't render it — same as a real <form> submit
+
+		var req = new HttpRequestMessage(HttpMethod.Post, $"{nodeUrl}?handler=DecisionPending");
+		req.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
+		req.Content = new FormUrlEncodedContent(fields);
+		return await client.SendAsync(req);
+	}
+
 	[Fact]
 	public async Task NodeDetailPage_TogglingFromUi_FlipsTheFlag_VisibleThroughGetNodeAsync()
 	{
 		var client = NewClient();
 		var nodeUrl = NodeUrl(BoardDecisionPendingUiFixture.Board, "dpui-toggleme");
-		var (getResp, authCookie) = await GetAuthedAsync(client, nodeUrl);
-		getResp.StatusCode.Should().Be(HttpStatusCode.OK);
-		var html = await getResp.Content.ReadAsStringAsync();
-		html.Should().NotContain("data-testid=\"node-decision-pending-badge\"", "starts un-flagged");
 
-		// Antiforgery needs BOTH the token AND its matching cookie (AgentKeyEditTests.
-		// ExtractAntiforgery's pattern) — the auth cookie alone 400s a POST, which is exactly what
-		// the first draft of this test did (red-proof of the harness, not the feature: fixed before
-		// this test was ever used to prove the feature itself).
-		var tokenStart = html.IndexOf("__RequestVerificationToken", StringComparison.Ordinal);
-		var tokenValueStart = html.IndexOf("value=\"", tokenStart, StringComparison.Ordinal) + 7;
-		var token = html[tokenValueStart..html.IndexOf('"', tokenValueStart)];
-		var afCookie = getResp.Headers.GetValues("Set-Cookie")
-			.First(c => c.Contains("Antiforgery", StringComparison.OrdinalIgnoreCase))
-			.Split(';')[0];
-		var formStart = html.IndexOf("data-testid=\"node-decision-pending-form\"", StringComparison.Ordinal);
-		var versionMarker = "name=\"version\" value=\"";
-		var versionStart = html.IndexOf(versionMarker, formStart, StringComparison.Ordinal) + versionMarker.Length;
-		var version = html[versionStart..html.IndexOf('"', versionStart)];
+		var (html1, authCookie, afCookie, token) = await GetNodePageAsync(client, nodeUrl);
+		html1.Should().NotContain("data-testid=\"node-decision-pending-badge\"", "starts un-flagged");
 
-		async Task<HttpResponseMessage> PostToggleAsync(bool pending, string ver)
-		{
-			var req = new HttpRequestMessage(HttpMethod.Post, $"{nodeUrl}?handler=DecisionPending");
-			req.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
-			req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
-			{
-				["pending"] = pending.ToString(),
-				["version"] = ver,
-				["__RequestVerificationToken"] = token,
-			});
-			return await client.SendAsync(req);
-		}
-
-		var setResp = await PostToggleAsync(true, version);
+		// Click 1: "mark waiting on me" — submits EXACTLY what this render's form carries.
+		var setResp = await SubmitDecisionPendingFormAsync(client, nodeUrl, html1, authCookie, afCookie, token);
 		setResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "a successful ApplyAsync PRGs back to the canonical node URL");
 
 		using (var scope = _fx.Factory.Services.CreateScope())
@@ -264,13 +320,23 @@ public sealed class BoardDecisionPendingUiTests : IClassFixture<BoardDecisionPen
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
 			var afterSet = await tasks.GetNodeBySlugAsync(BoardDecisionPendingUiFixture.Proj, BoardDecisionPendingUiFixture.Board, "dpui-toggleme");
 			afterSet.Should().NotBeNull();
-			afterSet!.Node.DecisionPending.Should().BeTrue("the SAME read tasks_node_get wraps must see the flag the UI just set");
+			afterSet!.Node.DecisionPending.Should().BeTrue(
+				"clicking \"mark waiting on me\" as the server's own form actually submits it must set the flag — " +
+				"this is the exact assertion that stayed green under the production defect when the POST body was hand-built instead of scraped off the real form");
+		}
 
-			// Clear it back — same door, opposite value, next version.
-			var clearResp = await PostToggleAsync(false, afterSet.Node.Version.ToString());
-			clearResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+		// Click 2: re-fetch (the form now reflects the NEW state) and submit AGAIN exactly as
+		// rendered — this is "clear decision flag", which must ALSO go through the real form.
+		var (html2, authCookie2, afCookie2, token2) = await GetNodePageAsync(client, nodeUrl);
+		html2.Should().Contain("data-testid=\"node-decision-pending-badge\"", "now flagged, so the badge must show without opening anything else");
+		var clearResp = await SubmitDecisionPendingFormAsync(client, nodeUrl, html2, authCookie2, afCookie2, token2);
+		clearResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+
+		using (var scope = _fx.Factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
 			var afterClear = await tasks.GetNodeBySlugAsync(BoardDecisionPendingUiFixture.Proj, BoardDecisionPendingUiFixture.Board, "dpui-toggleme");
-			afterClear!.Node.DecisionPending.Should().BeFalse("the same UI door clears it too");
+			afterClear!.Node.DecisionPending.Should().BeFalse("the same UI door, driven the same way, clears it too");
 		}
 	}
 }

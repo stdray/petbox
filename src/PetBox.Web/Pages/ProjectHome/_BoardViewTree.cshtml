@@ -4,9 +4,20 @@
    dispatches to it without knowing anything mode-specific. Client interactivity (collapse /
    filter / active-only / sort) is ts/board.ts, keyed off the data-* attrs _TaskNodeCard
    renders on each <li data-node-id>. *@
+@{
+	// live-verification finding (sticky-filter-hides-board-silently): the filter bar — and its
+	// "waiting only" toggle — used to render ONLY in the non-empty branch below, so a filter that
+	// narrowed the board to zero nodes (persisted from a PREVIOUS visit, per board-view-cross-
+	// device, or just the honest result of the current query) left NOTHING on the page saying a
+	// filter was even active. It renders here UNCONDITIONALLY now, before the empty check, so the
+	// toggle's own state (_BoardFilterSort's data-decision-pending) is always the visible source of
+	// truth regardless of how many nodes matched.
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Tree, SortHint: "sort branches:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+}
+<partial name="_BoardFilterSort" model="filterSortModel" />
 @if (Model.Nodes.Count == 0)
 {
-	<div class="alert" data-testid="board-empty">This board has no active task nodes.</div>
+	<div class="alert" data-testid="board-empty">@(Model.DecisionPendingOnly ? "No task nodes are waiting on your decision." : "This board has no active task nodes.")</div>
 }
 else
 {
@@ -17,9 +28,6 @@ else
 	// just no longer computes the INITIAL state from localStorage (see initBoardPage's header
 	// comment).
 	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Tree, SortHint: "sort branches:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
-
-	<partial name="_BoardFilterSort" model="filterSortModel" />
 	@* data-sort-scope (board-sort): the DFS-flat <li> list IS the single reorder scope for this
 	   pane — ts/board.ts walks it depth-first via each row's data-parent-id, so "sort" reorders
 	   sibling branches in place without touching the part_of nesting (finding D11). *@

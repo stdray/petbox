@@ -14,21 +14,25 @@
 	var fields = Model.Fields ?? new PetBox.Web.Rendering.BoardFieldConfig(
 		Slug: true, Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true, Delivery: true, BlockedBy: false, Body: false);
 	var viewMode = Model.Fields is not null ? BoardViewModeNames.Table : "";
-}
-@if (Model.Rows.Count == 0)
-{
-	<div class="alert" data-testid="board-empty">No tasks.</div>
-}
-else
-{
 	// board-body-not-for-table-kanban: table never renders a body cell (below), regardless of what
 	// Fields.Body says — BodyUnavailable disables the dialog checkbox and says why, same mechanism
 	// Outline's Navigate mode already uses for the same "checking it would have zero effect" honesty.
+	// live-verification finding (sticky-filter-hides-board-silently): filter bar hoisted OUT of the
+	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
+	// visible no matter how many rows matched (still gated on Model.ShowFilterBar, unchanged: a
+	// grouped multi-table caller — Search's per-project sections — still shows exactly ONE bar).
 	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
-	if (Model.ShowFilterBar)
-	{
-		<partial name="_BoardFilterSort" model="filterSortModel" />
-	}
+}
+@if (Model.ShowFilterBar)
+{
+	<partial name="_BoardFilterSort" model="filterSortModel" />
+}
+@if (Model.Rows.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">@(Model.DecisionPendingOnly ? "No task nodes are waiting on your decision." : "No tasks.")</div>
+}
+else
+{
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
 			<thead>

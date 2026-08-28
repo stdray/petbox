@@ -24,21 +24,26 @@
    board-node-filter / board-sort: the shared _BoardFilterSort bar plus the same ts/board.ts
    data-* contract _TaskNodeCard carries — the outline row list is DFS-flat exactly like the tree
    pane (indentation via margin-left, no actual DOM nesting), so it's ONE reorder scope. *@
+@{
+	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
+	// live-verification finding (sticky-filter-hides-board-silently): filter bar hoisted OUT of the
+	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
+	// visible no matter how many nodes matched.
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+}
+<partial name="_BoardFilterSort" model="filterSortModel" />
 @if (Model.Nodes.Count == 0)
 {
-	<div class="alert" data-testid="board-empty">This board has no active task nodes.</div>
+	<div class="alert" data-testid="board-empty">@(Model.DecisionPendingOnly ? "No task nodes are waiting on your decision." : "This board has no active task nodes.")</div>
 }
 else
 {
-	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
 	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the status
 	// CATEGORY (StatusKind.TerminalCancel) on EVERY board kind — a terminally-cancelled node
 	// reads as dead no matter how the user turned the Status property off, and no matter which
 	// board it lives on. It was briefly scoped to the spec board only (board-ui-review-findings
 	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
 	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
-	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
 		@foreach (var n in Model.Nodes)
 		{
