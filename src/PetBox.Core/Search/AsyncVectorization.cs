@@ -157,9 +157,21 @@ public sealed partial class AsyncVectorizationWorker
 		var result = new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Cursor: newCursor,
 			SourceVersion: delta.CurrentVersion, Stalled: stalled);
 		// Summary of the pass, including the LAG that says how far behind the semantic index is.
-		// Skipped when there was literally nothing to do, so an idle drain loop stays quiet.
-		if (_log is not null && (indexed > 0 || deleted > 0 || deadLettered > 0 || blocked))
-			LogDrain(_log, _index, indexed, deleted, deadLettered, result.Advanced, newCursor, result.Lag);
+		// work vectorization-drain-log-gate: gated to Information ONLY when there is a signal worth a
+		// human's attention — Indexed>0 (real work), DeadLettered>0, or Lag>0 — mirroring the exact
+		// hasSignal criterion MemoryVectorizationJob/TasksVectorizationJob already use for their
+		// per-project rollups (EventId 410/411). Deleted>0 alone does NOT count as signal: measured
+		// 2026-08-28, 96.7% of this event's daily volume (5118/5294) was a HANDFUL of store/board
+		// partitions (vector:canon, vector:notes, tasks board "classic") reporting the SAME Deleted
+		// count and the SAME never-advancing cursor on every single tick for 25 straight hours —
+		// almost certainly a stuck-cursor/stale-tombstone defect upstream, not fresh deletions each
+		// pass (see the card's TAIL comment). Debug still carries the line for anyone chasing that.
+		if (_log is not null)
+		{
+			var hasSignal = indexed > 0 || deadLettered > 0 || result.Lag > 0;
+			LogDrain(_log, hasSignal ? LogLevel.Information : LogLevel.Debug, _index, indexed, deleted,
+				deadLettered, result.Advanced, newCursor, result.Lag);
+		}
 		return result;
 	}
 
@@ -179,9 +191,9 @@ public sealed partial class AsyncVectorizationWorker
 		Message = "vectorization {Index}: delete of {Type}/{Id} failed; cursor held")]
 	static partial void LogDeleteFailed(ILogger logger, string index, string type, string id, Exception ex);
 
-	[LoggerMessage(EventId = 404, Level = LogLevel.Information,
+	[LoggerMessage(EventId = 404,
 		Message = "vectorization {Index}: indexed {Indexed}, deleted {Deleted}, dead-lettered {DeadLettered}, advanced {Advanced}, cursor {Cursor}, lag {Lag}")]
-	static partial void LogDrain(ILogger logger, string index, int indexed, int deleted, int deadLettered, bool advanced, long cursor, long lag);
+	static partial void LogDrain(ILogger logger, LogLevel level, string index, int indexed, int deleted, int deadLettered, bool advanced, long cursor, long lag);
 }
 
 // In-memory cursor store: fine for tests/dev and single-process drains. Not durable across
