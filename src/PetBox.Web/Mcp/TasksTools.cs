@@ -1420,7 +1420,13 @@ public static class TasksTools
 			// is enrichment. `originSessions` is additionally null in query mode because the lean
 			// PROJECTION never read it (null = "not looked at", never "looked and found none").
 			OriginSessionId: lean ? null : n.OriginSessionId,
-			OriginSessions: lean ? null : n.OriginSessions);
+			OriginSessions: lean ? null : n.OriginSessions,
+			// NOT lean-cut, on the SAME rule the `commits`/`decisionPending` exemption states
+			// (work observation-recurrence-after-fix-signal): recurrence-after-a-fix must survive
+			// a query-mode row to be a signal at all. Already null for every non-`observation`
+			// board (TasksService only loads it for that kind), so this costs every other row
+			// nothing.
+			Observation: n.Observation);
 	}
 
 	// ---- usage telemetry helpers (spec: task-usage-layer-with-declared-role) ----

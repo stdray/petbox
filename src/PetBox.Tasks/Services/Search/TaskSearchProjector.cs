@@ -33,7 +33,8 @@ public static class TaskSearchProjector
 	// the historic `[]`.
 	private static TaskNodeView Lean(
 		TaskNode n, string board, IReadOnlyList<string> tags, string? urlPrefix = null,
-		IReadOnlyDictionary<string, List<string>>? commitsByNode = null) =>
+		IReadOnlyDictionary<string, List<string>>? commitsByNode = null,
+		IReadOnlyDictionary<string, ObservationSignal>? signalsByNode = null) =>
 		new(
 			Key: n.Key,
 			NodeId: n.NodeId,
@@ -67,19 +68,26 @@ public static class TaskSearchProjector
 			// extra board-wide read per query. null (not []) says exactly that — "not projected",
 			// as distinct from "projected and empty" — so no consumer can mistake a lean row for
 			// proof that a node has never been touched.
-			OriginSessions: null);
+			OriginSessions: null,
+			// work observation-recurrence-after-fix-signal: NOT lean-cut on the wire (see
+			// TaskNodeView.Observation's own doc comment) — projected right here whenever the
+			// caller passed a signals map (ProjectBoardLeanOpenAsync only builds one for the
+			// `observation` kind), so a query-mode row carries the SAME recurrence signal a
+			// listing row does.
+			Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null);
 
 	// Project every node in `nodes` to a lean view, keyed by slug and NodeId for hit resolve.
 	public static (Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)
 		LeanIndex(string board, IEnumerable<TaskNode> nodes, ILookup<string, string> tagsByNode, string? urlPrefix = null,
-			IReadOnlyDictionary<string, List<string>>? commitsByNode = null)
+			IReadOnlyDictionary<string, List<string>>? commitsByNode = null,
+			IReadOnlyDictionary<string, ObservationSignal>? signalsByNode = null)
 	{
 		var bySlug = new Dictionary<string, TaskNodeView>(StringComparer.Ordinal);
 		var byNodeId = new Dictionary<string, TaskNodeView>(StringComparer.Ordinal);
 		foreach (var n in nodes)
 		{
 			var tags = tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList();
-			var view = Lean(n, board, tags, urlPrefix, commitsByNode);
+			var view = Lean(n, board, tags, urlPrefix, commitsByNode, signalsByNode);
 			bySlug[n.Key] = view;
 			if (n.NodeId.Length > 0) byNodeId[n.NodeId] = view;
 		}

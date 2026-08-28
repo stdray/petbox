@@ -472,11 +472,53 @@ public sealed partial class TasksService : ITasksService
 		return string.Join("\n\n", parts);
 	}
 
+	// work observation-recurrence-after-fix-signal: the read-side gate every enrichment call
+	// site below shares — null (never an empty dict) for any board whose kind isn't
+	// `observation`, so GetAsyncCore/GetNodeAsync/ProjectBoardLeanOpenAsync can tell "not this
+	// kind, skip entirely" apart from "this kind, genuinely nothing recorded yet" without a
+	// second predicate at each call site. Mirrors Delivery's own "gated by kind DATA" shape
+	// (deliveryDef is not null ? ... : null) just above in GetAsyncCore.
+	async Task<IReadOnlyDictionary<string, ObservationSignal>?> ObservationSignalsForBoardAsync(string projectKey, string? kind, CancellationToken ct) =>
+		_observationSignals is not null && string.Equals(kind, SystemBoards.ObservationKind, StringComparison.OrdinalIgnoreCase)
+			? await _observationSignals.GetAllAsync(projectKey, ct)
+			: null;
+
 	public Task RecordObservationFirstSeenAsync(string projectKey, string nodeId, CancellationToken ct = default) =>
 		_observationSignals?.RecordFirstSeenAsync(projectKey, nodeId, ct) ?? Task.CompletedTask;
 
-	public Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default) =>
-		_observationSignals?.RecordRecurrenceAsync(projectKey, nodeId, currentlyFixed, ct) ?? Task.FromResult(0L);
+	// work observation-recurrence-after-fix-signal: the regression half of the dedup guard.
+	// `currentlyFixed` false is the plain "seen again" case — bump and return, unchanged from
+	// before this card. `currentlyFixed` true is "fixed, and it came back": on top of the same
+	// bump (which stamps RecurredAfterFixAt — see ObservationSignalStore.RecordRecurrenceAsync),
+	// two more system writes fire, per the owner's split decision (reopen the OBSERVATION
+	// automatically, never the TASK that fixed it):
+	//   - the observation itself moves fixed -> seen (a system action, no FSM gate — same
+	//     posture as SyncObservationOnObligationTerminalAsync's own promoted -> seen move) so it
+	//     re-enters the default OPEN view exactly when it matters most, instead of sitting
+	//     terminal and invisible;
+	//   - the obligation named by FixedByNodeId (read BEFORE the bump — RecordRecurrenceAsync
+	//     never touches that column) gets decisionPending:true, so the owner sees "fixed, and it
+	//     came back" in their OWN queue without a manual sweep. The obligation's status/FSM is
+	//     never touched — reopening a closed task would distort cycle metrics, an explicit owner
+	//     call-out, not an oversight.
+	public async Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default)
+	{
+		if (_observationSignals is null) return 0;
+		if (!currentlyFixed)
+			return await _observationSignals.RecordRecurrenceAsync(projectKey, nodeId, currentlyFixed: false, ct);
+
+		var prior = await _observationSignals.GetAsync(projectKey, nodeId, ct);
+		var count = await _observationSignals.RecordRecurrenceAsync(projectKey, nodeId, currentlyFixed: true, ct);
+
+		var runtime = await GetRuntimeForBoardAsync(projectKey, SystemBoards.Observations, ct);
+		await _effects.SetActiveNodeStatusAsync(projectKey, nodeId, runtime,
+			(_, obsNode, _, _) => string.Equals(obsNode.Status, "fixed", StringComparison.OrdinalIgnoreCase) ? "seen" : null, ct);
+
+		if (prior?.FixedByNodeId is { Length: > 0 } fixedByNodeId)
+			await _effects.SetDecisionPendingAsync(projectKey, fixedByNodeId, ct);
+
+		return count;
+	}
 
 	public async Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default)
 	{
@@ -911,6 +953,11 @@ public sealed partial class TasksService : ITasksService
 		// BoardCommitsAsync above — a constant, NOT a per-node query, so the board page's cost
 		// stays independent of how many nodes it renders.
 		var originsByNode = await BoardOriginSessionsAsync(ctx, board, ct);
+		// work observation-recurrence-after-fix-signal: same board-wide-batch shape as
+		// tagsByNode/commitsByNode/originsByNode just above, gated to kind `observation` only —
+		// every other board pays nothing here (ObservationSignalsForBoardAsync short-circuits
+		// before touching the store).
+		var signalsByNode = await ObservationSignalsForBoardAsync(projectKey, meta.Kind, ct);
 		var underId = ResolveUnderNodeId(under, active);
 		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
 		// with includeClosed=false (widen the pool first, then keep only the named slugs).
@@ -992,7 +1039,8 @@ public sealed partial class TasksService : ITasksService
 				OriginSessionId: n.OriginSessionId,
 				// [] (not null) here: this projection DID look, and found none. null is reserved
 				// for the lean query projection, which does not look at all.
-				OriginSessions: originsByNode.TryGetValue(n.NodeId, out var os) ? os : []));
+				OriginSessions: originsByNode.TryGetValue(n.NodeId, out var os) ? os : [],
+				Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null));
 		}
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
 	}
@@ -1133,6 +1181,13 @@ public sealed partial class TasksService : ITasksService
 		// Read ONCE, before the view is built: both are per-node point queries on one connection
 		// (node-page-cost-bounded-by-degree), never the board-wide reads GetAsync uses.
 		var (nodeCommits, nodeOriginSessions) = await NodeAttachmentsAsync(projectKey, nodeId, ct);
+		// work observation-recurrence-after-fix-signal: a per-NODE point read (IObservationSignalStore.
+		// GetAsync), not GetAllAsync's board-wide batch — this path already stays bounded by the
+		// node's own degree, not board size, and a single-node render has no board list to batch
+		// against. Gated to kind `observation` like every other enrichment on this path.
+		var nodeSignal = _observationSignals is not null && string.Equals(meta.Kind, SystemBoards.ObservationKind, StringComparison.OrdinalIgnoreCase)
+			? await _observationSignals.GetAsync(projectKey, nodeId, ct)
+			: null;
 		var node = new TaskNodeView(
 			Key: row.Key,
 			NodeId: row.NodeId,
@@ -1161,7 +1216,8 @@ public sealed partial class TasksService : ITasksService
 			// Per-NODE read, not the board-wide one: a single-node render must issue no per-board
 			// work (node-page-cost-bounded-by-degree), and it shares the ONE connection the commits
 			// read already opened rather than paying a second.
-			OriginSessions: nodeOriginSessions);
+			OriginSessions: nodeOriginSessions,
+			Observation: ObservationSignalView.From(nodeSignal));
 
 		// Root→parent order for the breadcrumb (ancestorIds was collected bottom-up). A miss in
 		// `index` (a dangling/deleted ancestor) still gets a crumb — falls back to the raw id,
@@ -2471,6 +2527,26 @@ public sealed partial class TasksService : ITasksService
 		hits = TaskSearchFilter.Apply(hits, criteria);
 
 		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
+		// Recurrence-after-a-fix ranking boost (spec observation-recurrence-is-ranked, work
+		// observation-recurrence-after-fix-signal): "повторная находка повышает вес" — a STABLE
+		// PARTITION over the SAME primitive the statusKind tiering right below already uses
+		// (Tiering.StablePartition), spliced into the existing order rather than a parallel
+		// ranking pass. Recurred-after-fix observation hits move to the FRONT, preserving
+		// whatever order SortHits just produced within each tier — the SAME "policy in the
+		// presentation slot, changes ORDER never SELECTION" posture the statusKind tiering
+		// documents below. It runs BEFORE that tiering (not after) so statusKind stays the
+		// OUTER/primary grouping exactly as it is today — a recurred observation still cannot
+		// outrank an unrelated terminalOk/open hit's tier, it only rises WITHIN its own tier.
+		// Scoped to the axis's own NATURAL default (no explicit sort, or the mode's own default
+		// axis named explicitly), the same restriction the statusKind tiering applies just
+		// below: an explicit `sort:{by:title}` (or similar) is the caller overriding the natural
+		// order for their own purpose, and a boost has no business clobbering that ask. A no-op
+		// for every board but `observations` — every other hit's Node.Observation is null (never
+		// loaded for a non-observation kind, see ObservationSignalsForBoardAsync), so its tier is
+		// always 1 and the partition changes nothing about their relative order.
+		var recurrenceNaturalAxis = query is not null ? TaskSortBy.Relevance : TaskSortBy.Priority;
+		if (req.Sort is null || req.Sort.Value.By == recurrenceNaturalAxis)
+			hits = Tiering.StablePartition(hits, h => h.Node.Observation?.RecurredAfterFixAt is not null ? 0 : 1);
 		// Presentation tiers (spec tasks-search-status-tiers, Option A): OVER the fused relevance
 		// order — query mode, and only when the order IS the rerank order (no explicit sort, or the
 		// relevance sort). A STABLE PARTITION by StatusKind tier — TWO tiers: {open, terminalok} → 0,
@@ -2737,7 +2813,13 @@ public sealed partial class TasksService : ITasksService
 		// per-node query). Query rows carry commits because `commit` filters in query mode too —
 		// see TaskSearchProjector.Lean and client-issues/tasks-tool-contract-friction-tas-c31570.
 		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
-		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix, commitsByNode);
+		// work observation-recurrence-after-fix-signal: same gate as GetAsyncCore/GetNodeAsync —
+		// query-mode (tasks_search q) rows are LEAN, but recurrence-after-a-fix is exactly the
+		// signal that must survive that lean cut (see TaskNodeView.Observation's own doc comment),
+		// so it rides the SAME per-board batch commits/tags already pay for here, not a parallel
+		// per-node lookup.
+		var signalsByNode = await ObservationSignalsForBoardAsync(projectKey, meta.Kind, ct);
+		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix, commitsByNode, signalsByNode);
 	}
 
 	// Final ordering of the selected set. No sort: query mode keeps the fused relevance

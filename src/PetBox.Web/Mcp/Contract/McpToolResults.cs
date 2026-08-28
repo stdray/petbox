@@ -767,7 +767,13 @@ public sealed record TaskSearchNodeView(
 	DateTime? LastHitAt = null,
 	long? Deliberate = null,
 	long? DeliveredChars = null,
-	double? AvgKRel = null);
+	double? AvgKRel = null,
+	// The recurrence signal (work observation-recurrence-after-fix-signal), kind `observation`
+	// ONLY — null (omitted on the wire) on every other board's rows, same "gated by kind DATA"
+	// posture as Delivery above. NOT lean-cut, on the SAME rule the `commits`/`decisionPending`
+	// exemption states: recurrence-after-a-fix is exactly the signal that must survive a
+	// query-mode row, the entire point of the card that added it.
+	ObservationSignalView? Observation = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/WiredBoard/

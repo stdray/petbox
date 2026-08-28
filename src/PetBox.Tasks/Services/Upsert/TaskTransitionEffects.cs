@@ -140,4 +140,21 @@ public sealed class TaskTransitionEffects
 		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target, DecisionPending = pending } }, partition: n => n.Board == node.Board, ct: ct);
 		await _boards.TouchAsync(projectKey, node.Board, ct);
 	}
+
+	// Stamp decisionPending:true on a node addressed by NodeId, without touching status — the
+	// automatic "fixed, and it came back" alert (work observation-recurrence-after-fix-signal):
+	// when a dedup hit lands on a `fixed` observation, the OBLIGATION that (supposedly) fixed it
+	// gets flagged so the owner sees the regression in their own decision queue without a manual
+	// sweep. System action, no gate — same posture as SetActiveNodeStatusAsync just above, minus
+	// the auto-CLEAR that method applies on ENTERING a terminal status: here the target node is
+	// very likely already terminal (that is exactly why it was recorded as FixedByNodeId), and
+	// staying flagged despite that is the entire point of this call, not a stale leftover.
+	public async Task SetDecisionPendingAsync(string projectKey, string nodeId, CancellationToken ct)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var node = ctx.TaskNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
+		if (node is null || node.DecisionPending) return;
+		await TemporalStore.UpsertAsync(ctx, new[] { node with { DecisionPending = true } }, partition: n => n.Board == node.Board, ct: ct);
+		await _boards.TouchAsync(projectKey, node.Board, ct);
+	}
 }
