@@ -418,13 +418,31 @@ public static class TemporalStore
 		return await q.ToDictionaryAsync(x => x.Key, ct);
 	}
 
-	// Cursor: the max revision within the partition (or the whole table when unpartitioned).
+	// Cursor: the highest version at which anything in the partition (or the whole table when
+	// unpartitioned) was WRITTEN OR RETIRED.
+	//
+	// MAX(Version) ALONE IS NOT ENOUGH. An edit closes the old row AND inserts a new revision at
+	// nextVersion, so the ceiling keeps up. A DELETE-ONLY batch does not: CloseBaselinesAsync
+	// stamps ActiveTo = V+1 on the EXISTING row and inserts nothing, so no row ever carries
+	// Version = V+1 and MAX(Version) stays at V — below the stamp, permanently. DeltaAsync
+	// selects deaths as `ActiveTo > sinceVersion`, so a caller that faithfully advances its
+	// cursor to this value is handed the SAME tombstone on every subsequent call, forever.
+	// (In production that ran 40165 times on the `vector:notes` partition and 40164 on
+	// `classic`, once a minute since 2026-07-29, each drain reporting Advanced=true.)
+	//
+	// ActiveTo is itself a VERSION (long?), not a timestamp, so MAX(COALESCE(ActiveTo, Version))
+	// is the one aggregate that moves on inserts, edits and deletes alike — the same reading
+	// MemoryService.ChangeStampAsync arrived at locally for its change stamp.
+	//
+	// It never SKIPS a live row: the value only ever rises to a tombstone stamp, every existing
+	// live row has Version <= MAX(Version) <= this cursor and was therefore already delivered,
+	// and every future live row is born at nextVersion = this cursor + 1, above it.
 	static async Task<long> MaxVersionAsync<TRow>(ITable<TRow> table, Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		IQueryable<TRow> q = table;
 		if (partition is not null) q = q.Where(partition);
-		return await q.Select(x => (long?)x.Version).MaxAsync(ct) ?? 0;
+		return await q.Select(x => (long?)(x.ActiveTo ?? x.Version)).MaxAsync(ct) ?? 0;
 	}
 
 	// For every row that will hit the stale branch (baseline > 0 and behind the entity's
