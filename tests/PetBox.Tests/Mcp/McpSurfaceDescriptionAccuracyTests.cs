@@ -111,7 +111,8 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 	// `cursor` used to say "Keep every other argument identical while paging" while `limit` said
 	// it "can be varied freely between pages without changing the pool" — both cannot be true at
 	// once. TasksTools.SearchFingerprint (~1153) and KeysetCursor.Decode settle it: the token is
-	// fingerprinted on q/board/underNode/status/nodes/commit/statusKind/sort (+ dataVersion in q
+	// fingerprinted on q/board/underNode/status/nodes/commit/statusKind/decisionPending/sort
+	// (+ dataVersion in q
 	// mode) and explicitly EXCLUDES bodyLen/includeUrl/limit. Both descriptions must now name that
 	// same split instead of contradicting each other.
 
@@ -120,7 +121,7 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 	{
 		var full = Flat(RegisteredParamDescription("tasks_search", "cursor"));
 
-		full.Should().Contain("`q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, and `sort`",
+		full.Should().Contain("`q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, `decisionPending`, and `sort`",
 			"the fingerprint ingredients (SearchFingerprint) must be named, not just asserted");
 		full.Should().Contain("`bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint",
 			"this is the exact claim `limit`'s own description makes — the two must agree");

@@ -82,6 +82,39 @@ public sealed class TaskUpsertAssociations
 		}
 	}
 
+	// Union this call's session into every touched node's provenance (node-origin-provenance).
+	// Runs for EVERY node the call landed — created or merely edited — because the question the
+	// association answers is "which sessions have touched this node", and an edit is a touch.
+	//
+	// FOLD, NOT APPEND: a session that already appears for a node contributes nothing on a second
+	// touch. That is enforced twice over — this reader skips what is already there, and
+	// plan_node_sessions' PK (NodeId, SessionId) makes a duplicate physically impossible even if
+	// two writers race. `FirstSeen` therefore really is first-seen and is never rewritten.
+	//
+	// Post-write stage, like SetCommitsAsync: it touches no plan_nodes row, so accumulating
+	// provenance NEVER mints a node revision and never moves the node's version.
+	//
+	// No sessionId → nothing to record, and no error: the write is legal without one (the
+	// missing-sid detector in TasksService.UpsertAsync is what makes that omission visible).
+	public static async Task SetOriginSessionsAsync(
+		TasksDb ctx, string board, string? sessionId, TaskNode[] desired, CancellationToken ct)
+	{
+		var sid = (sessionId ?? "").Trim();
+		if (sid.Length == 0 || desired.Length == 0) return;
+		var nodeIds = desired.Select(n => n.NodeId).Where(id => id.Length > 0)
+			.Distinct(StringComparer.Ordinal).ToList();
+		if (nodeIds.Count == 0) return;
+
+		var already = (await ctx.TaskNodeOriginSessions
+				.Where(o => o.SessionId == sid && nodeIds.Contains(o.NodeId))
+				.Select(o => o.NodeId).ToListAsync(ct))
+			.ToHashSet(StringComparer.Ordinal);
+		var now = DateTime.UtcNow;
+		foreach (var nid in nodeIds.Where(id => !already.Contains(id)))
+			await ctx.InsertAsync(
+				new TaskNodeOriginSession { NodeId = nid, Board = board, SessionId = sid, FirstSeen = now }, token: ct);
+	}
+
 	// Apply part_of (vertical decomposition) after the upsert. A patch whose PartOf is null
 	// OMITS it (leave as-is); "" DETACHES (make a root); otherwise sets the parent (a slug
 	// on this board or a NodeId). Enforces a single active parent and rejects cycles.

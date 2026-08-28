@@ -111,7 +111,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, string? declaredRole = null, CancellationToken ct = default)
 	{
 		// World: a real instance key, the reserved UtilityWorld sentinel (spec methodology-
 		// utility-kinds — always legal, first-class regardless of how many instances exist),
@@ -177,7 +177,7 @@ public sealed partial class TasksService : ITasksService
 		// declared only in the utility layer or a non-active instance must not read as "not a work
 		// board" here).
 		await ValidateWiredBoardAsync(projectKey, runtime, canonical, wiredBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, wiredBoard, instanceKey, declaredRole, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
@@ -485,7 +485,7 @@ public sealed partial class TasksService : ITasksService
 			if (await _boards.ExistsAsync(projectKey, name, ct))
 				name = $"{instanceKey}-{name}";
 			if (await _boards.ExistsAsync(projectKey, name, ct)) continue;
-			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceKey, ct);
+			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceKey, ct: ct);
 			createdKinds.Add(kind);
 		}
 		await AutoWireSpecAsync(projectKey, ct);
@@ -820,6 +820,11 @@ public sealed partial class TasksService : ITasksService
 				Name = n.Name,
 				Body = includeBody ? n.Body : "",
 				Priority = n.Priority,
+				// Both are real columns and must be named here: this projection is EXPLICIT, so a
+				// field left out of it silently reads back as its default — every node would look
+				// "not waiting on the owner, no origin session" no matter what is stored.
+				DecisionPending = n.DecisionPending,
+				OriginSessionId = n.OriginSessionId,
 			}).ToListAsync(ct);
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
@@ -842,6 +847,10 @@ public sealed partial class TasksService : ITasksService
 		var index = BuildNodeIndex(allActiveNodes, await _boards.ListAsync(projectKey, ct));
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
+		// One extra board-wide read, the same shape and cost class as BoardTagsAsync/
+		// BoardCommitsAsync above — a constant, NOT a per-node query, so the board page's cost
+		// stays independent of how many nodes it renders.
+		var originsByNode = await BoardOriginSessionsAsync(ctx, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
 		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
 		// with includeClosed=false (widen the pool first, then keep only the named slugs).
@@ -918,7 +927,12 @@ public sealed partial class TasksService : ITasksService
 				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key,
 				CreatedAt: n.Created,
 				UpdatedAt: n.Updated,
-				Blocks: blocks.Count > 0 ? blocks : null));
+				Blocks: blocks.Count > 0 ? blocks : null,
+				DecisionPending: n.DecisionPending,
+				OriginSessionId: n.OriginSessionId,
+				// [] (not null) here: this projection DID look, and found none. null is reserved
+				// for the lean query projection, which does not look at all.
+				OriginSessions: originsByNode.TryGetValue(n.NodeId, out var os) ? os : []));
 		}
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.WiredBoard, nodes);
 	}
@@ -1056,6 +1070,9 @@ public sealed partial class TasksService : ITasksService
 			delivery = rollup.GetValueOrDefault(nodeId);
 		}
 
+		// Read ONCE, before the view is built: both are per-node point queries on one connection
+		// (node-page-cost-bounded-by-degree), never the board-wide reads GetAsync uses.
+		var (nodeCommits, nodeOriginSessions) = await NodeAttachmentsAsync(projectKey, nodeId, ct);
 		var node = new TaskNodeView(
 			Key: row.Key,
 			NodeId: row.NodeId,
@@ -1066,7 +1083,7 @@ public sealed partial class TasksService : ITasksService
 			Type: row.Type,
 			Title: row.Name,
 			Body: row.Body,
-			Commits: await NodeCommitsAsync(projectKey, nodeId, ct),
+			Commits: nodeCommits,
 			Priority: row.Priority,
 			Version: row.Version,
 			Delivery: delivery,
@@ -1078,7 +1095,13 @@ public sealed partial class TasksService : ITasksService
 			Tags: (await _tags.ActiveTagsAsync(projectKey, nodeId, ct)).OrderBy(t => t, StringComparer.Ordinal).ToList(),
 			CreatedAt: row.Created,
 			UpdatedAt: row.Updated,
-			Blocks: blocks.Count > 0 ? blocks : null);
+			Blocks: blocks.Count > 0 ? blocks : null,
+			DecisionPending: row.DecisionPending,
+			OriginSessionId: row.OriginSessionId,
+			// Per-NODE read, not the board-wide one: a single-node render must issue no per-board
+			// work (node-page-cost-bounded-by-degree), and it shares the ONE connection the commits
+			// read already opened rather than paying a second.
+			OriginSessions: nodeOriginSessions);
 
 		// Root→parent order for the breadcrumb (ancestorIds was collected bottom-up). A miss in
 		// `index` (a dangling/deleted ancestor) still gets a crumb — falls back to the raw id,
@@ -1569,11 +1592,20 @@ public sealed partial class TasksService : ITasksService
 
 	// node-page-cost-bounded-by-degree: this node's own active commit set — BoardCommitsAsync
 	// reads every commit on the whole board just to pick one node's rows back out.
-	async Task<IReadOnlyList<string>> NodeCommitsAsync(string projectKey, string nodeId, CancellationToken ct)
+	// Both of a node's small point-query attachments — commits and provenance sessions — on ONE
+	// connection. They are read together (the node page needs both) and separately they would be
+	// two OPENS for two tiny queries: NodePageCostTests pins the node render's connection count AT
+	// its measured value precisely so a second open cannot slip in unnoticed, and paying one for a
+	// single-row lookup is the shape that test exists to refuse.
+	async Task<(IReadOnlyList<string> Commits, IReadOnlyList<string> OriginSessions)> NodeAttachmentsAsync(
+		string projectKey, string nodeId, CancellationToken ct)
 	{
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		return await ctx.TaskNodeCommits.Where(c => c.NodeId == nodeId && c.ValidTo == null)
+		var commits = await ctx.TaskNodeCommits.Where(c => c.NodeId == nodeId && c.ValidTo == null)
 			.Select(c => c.Sha).OrderBy(s => s, StringComparer.Ordinal).ToListAsync(ct);
+		var sessions = await ctx.TaskNodeOriginSessions.Where(o => o.NodeId == nodeId)
+			.Select(o => o.SessionId).OrderBy(v => v, StringComparer.Ordinal).ToListAsync(ct);
+		return (commits, sessions);
 	}
 
 	// The IO half of the delivery roll-up: SELECT, then hand the raw candidates to the pure
@@ -1605,9 +1637,10 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- write: upsert ----
 
-	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, CancellationToken ct = default)
+	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, string? sessionId = null, CancellationToken ct = default)
 	{
 		actor ??= TasksActor.None;
+		var sid = (sessionId ?? "").Trim();
 		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks_upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.board", board);
@@ -1672,7 +1705,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			try
 			{
-				desired = live.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor, p.Reason) with { Board = board }).ToArray();
+				desired = live.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior, sid), prior, actor, p.Reason) with { Board = board }).ToArray();
 				ValidateChanges(desired, prior);
 				using (PetBoxActivitySources.Tasks.StartActivity("tasks_upsert_guards"))
 				{
@@ -1838,6 +1871,7 @@ public sealed partial class TasksService : ITasksService
 			{
 				await _associations.SetTagsAsync(projectKey, board, runtime, kindSlug, landedPatches, landed, ct);
 				await TaskUpsertAssociations.SetCommitsAsync(ctx, board, landedPatches, landed, ct);
+				await TaskUpsertAssociations.SetOriginSessionsAsync(ctx, board, sid, landed, ct);
 				await _associations.SetPartOfAsync(projectKey, board, landedPatches, landed, ct);
 				await _associations.SetSupersedesAsync(projectKey, board, landedPatches, landed, runtime, ct);
 				// A supplied `reason` lands as a comment after the node write (same post-tx
@@ -1845,6 +1879,36 @@ public sealed partial class TasksService : ITasksService
 				// applied write of the node, not only a RequiresReason transition.
 				await PersistReasonCommentsAsync(projectKey, board, landedPatches, landed, ct);
 			}
+		// node-origin-provenance, the MISSING-SID DETECTOR. A caller that forgets `sessionId`
+		// produces a node indistinguishable from a legitimately session-less one, and the omission
+		// is invisible at the call site — it looks like an ordinary stateless write. So it is
+		// REPORTED, not refused: refusing was considered and rejected, because the MCP transport's
+		// own session id is empty on 100% of today's calls (3750 over 30 days), so a refusal would
+		// break every caller at once.
+		//
+		// Two observables, both on surfaces this file already uses: one warning per node naming
+		// board+key (locatable in the self-log by board and key), and a per-call COUNT on the
+		// tasks_upsert span, beside petbox.conflicts / petbox.auto_resolved.
+		//
+		// Only CREATES are reported. An edit without a sid loses nothing that was ever promised —
+		// OriginSessionId is write-once, so it is already set or permanently empty — and warning on
+		// every edit would bury the one signal this exists to raise. A RENAME is not a create
+		// either: the node keeps the identity, and the provenance, it was born with.
+		if (r.Applied && sid.Length == 0)
+		{
+			var bornWithoutSession = landed
+				.Where(n => !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey)))
+				.ToList();
+			if (bornWithoutSession.Count > 0)
+			{
+				op?.SetTag("petbox.origin_sid_missing", bornWithoutSession.Count);
+				foreach (var n in bornWithoutSession)
+					_log?.LogWarning(
+						"tasks_upsert created a node with no origin session: board={Board} key={Key}. " +
+						"Pass sessionId so the node carries provenance.", board, n.Key);
+			}
+		}
+
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
 		// now-current tags. Content/membership are already committed with the entity; vectors are
@@ -2060,7 +2124,8 @@ public sealed partial class TasksService : ITasksService
 			ParentOf: parentOf,
 			StatusSlugs: statusFilter,
 			KeyNodeIds: keyIds,
-			CommitNodeIds: commitNodeIds);
+			CommitNodeIds: commitNodeIds,
+			DecisionPending: f.DecisionPending);
 
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
@@ -2077,6 +2142,9 @@ public sealed partial class TasksService : ITasksService
 		// case where nothing was written but the ranking still moved (a rerank route recovering or
 		// failing between pages). Rides into the cursor beside the fingerprint.
 		string? poolOrderHash = null;
+		// Whether that order was rebuilt by a cross-encoder just now instead of being read back from the
+		// materialized pool — the fact that ends an in-flight walk (KeysetCursor.AssertPoolAlive).
+		var poolRebuiltByRerank = false;
 		// search-echo-effective-statuskind-filter: the facet ResolveStatusKindFacet ACTUALLY
 		// resolved for this read, captured verbatim from whichever branch below computes it — so
 		// the response echoes the true applied value (including when defaulted), never a recompute.
@@ -2221,6 +2289,13 @@ public sealed partial class TasksService : ITasksService
 				return new SearchPoolCache.PoolComputation(resolvedPool, cacheable);
 			}, ct);
 
+			// THE POOL COMMITMENT (KeysetCursor.AssertPoolAlive): a cross-encoder order built JUST NOW is
+			// not the one an in-flight cursor was issued against, and no second pass can be promised to
+			// reproduce it (work/rerank-route-nondeterministic-order). A cache HIT is the same pool by
+			// construction, and an RRF order rebuilds identically — so only this combination ends a walk.
+			poolRebuiltByRerank = !lookup.FromCache
+				&& lookup.Pool.Retrievers.Ranking == SearchRankingOutcome.Reranked;
+
 			if (freshHits is not null)
 			{
 				hits = freshHits;
@@ -2323,7 +2398,8 @@ public sealed partial class TasksService : ITasksService
 			PoolLimit: poolLimit,
 			PoolBounded: poolBounded,
 			DataVersion: dataVersion,
-			PoolOrderHash: poolOrderHash);
+			PoolOrderHash: poolOrderHash,
+			PoolRebuiltByRerank: poolRebuiltByRerank);
 	}
 
 	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
@@ -2598,7 +2674,9 @@ public sealed partial class TasksService : ITasksService
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
 	// (null) inherits the prior value; a non-null value sets it ("" clears it).
-	static TaskNode Merge(NodePatch p, IReadOnlyDictionary<string, TaskNode> prior)
+	// `sessionId` is this CALL's session (node-origin-provenance). It reaches the node in exactly
+	// one place — the CREATE branch of OriginSessionId below — and never anywhere else.
+	static TaskNode Merge(NodePatch p, IReadOnlyDictionary<string, TaskNode> prior, string? sessionId = null)
 	{
 		var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
 		return new TaskNode
@@ -2610,6 +2688,16 @@ public sealed partial class TasksService : ITasksService
 			Name = p.Title ?? cur?.Name ?? string.Empty,
 			Body = p.Body ?? cur?.Body ?? string.Empty,
 			Priority = p.Priority ?? cur?.Priority ?? 0,
+			// Ordinary PATCH merge: omitted (null) inherits, an explicit true/false sets, a new
+			// node starts false.
+			DecisionPending = p.DecisionPending ?? cur?.DecisionPending ?? false,
+			// WRITE-ONCE. An existing node inherits its own value verbatim, whatever this call
+			// supplies — that is what makes a re-write unable to change it. A node being CREATED
+			// takes this call's session; if the call supplied none it is born with "" and stays
+			// that way forever. It is deliberately NOT filled in on a later edit that happens to
+			// carry a sid: the node was not created in that session, and a provenance field that
+			// quietly records the wrong session is worse than an empty one.
+			OriginSessionId = cur?.OriginSessionId ?? (sessionId ?? "").Trim(),
 			PrevKey = p.PrevKey,
 		};
 	}
@@ -2884,6 +2972,16 @@ public sealed partial class TasksService : ITasksService
 			.Select(c => new { c.NodeId, c.Sha }).ToListAsync(ct);
 		return rows.GroupBy(r => r.NodeId, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.Select(x => x.Sha).OrderBy(s => s, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
+	}
+
+	// Active provenance sessions for a whole board, nodeId -> sorted session list. Mirrors
+	// BoardCommitsAsync: one board-wide read, grouped in memory — never a query per node.
+	static async Task<Dictionary<string, List<string>>> BoardOriginSessionsAsync(TasksDb ctx, string board, CancellationToken ct)
+	{
+		var rows = await ctx.TaskNodeOriginSessions.Where(o => o.Board == board)
+			.Select(o => new { o.NodeId, o.SessionId }).ToListAsync(ct);
+		return rows.GroupBy(r => r.NodeId, StringComparer.Ordinal)
+			.ToDictionary(g => g.Key, g => g.Select(x => x.SessionId).OrderBy(v => v, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
 	}
 
 	// Populate TaskNode.Commits (the NotColumn enrichment field) for an echo batch so the

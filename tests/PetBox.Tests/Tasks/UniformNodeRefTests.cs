@@ -126,7 +126,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		edge.FromNodeId.Should().MatchRegex("^[0-9a-f]{32}$");
 
 		// And the enriched read surfaces the link.
-		var view = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b");
+		var view = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b");
 		view.Nodes.Single(n => n.Key == "task-x").BlockedBy!.Single().NodeId.Should().Be(ids["blocker"]);
 	}
 
@@ -162,7 +162,7 @@ public sealed class UniformNodeRefTests : IClassFixture<UniformNodeRefFixture>
 		var ids = await Seed(http, "b", """[{"key":"blocker","status":"Todo","title":"B"}]""");
 		await Seed(http, "b", $$"""[{"key":"task-y","status":"Todo","title":"Y","blockedBy":"{{ids["blocker"]}}"}]""");
 
-		var view = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b");
+		var view = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "b");
 		view.Nodes.Single(n => n.Key == "task-y").BlockedBy!.Single().NodeId.Should().Be(ids["blocker"]);
 	}
 

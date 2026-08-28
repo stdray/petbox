@@ -84,6 +84,13 @@ public sealed class TestSchemaBypassGuardTests
 			"M001-era file with a legacy CommitRef column and calls Ensure to prove M002..M011 migrate " +
 			"it — same already-exists-but-behind shape as LegacyMigrationTests; every other test in " +
 			"this file uses TestSchema.Tasks normally via the class's own ScopedDbFactory.",
+		["NodeDecisionFlagAndProvenanceTests.cs"] =
+			"one test (Migration_UpgradesAFileThatAlreadyHasNodes_WithoutTouchingTheirData) hand-writes " +
+			"an M001-era file holding real nodes and calls Ensure to prove M021 ALTERs it in place — " +
+			"the same already-exists-but-behind shape as LegacyMigrationTests/NodeCommitsTests, and the " +
+			"one thing TestSchema.Tasks structurally cannot show (its template is built from the " +
+			"CURRENT schema, so nothing is ever upgraded). Every other test in this file uses " +
+			"TestSchema.Tasks normally via the class fixture's ScopedDbFactory.",
 		["MemoryStoreMergeTests.cs"] =
 			"M010's legacy-store merge scans SIBLING per-store files in the same directory at ensure " +
 			"time; the seeded legacy files live next to the project db BEFORE it is first ensured, so " +

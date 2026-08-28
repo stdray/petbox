@@ -288,6 +288,11 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_list", new { projectKey = ProjectKey }),
 			("tasks_workflow", new { projectKey = ProjectKey, board = "work" }),
 			("tasks_delta", new { projectKey = ProjectKey, board = "work", sinceVersion = 0 }),
+			// owner-away-digest: both arms — the default (no timeline, so `timeline`/`timelineTotal` are
+			// NULL, the exact nullable-property shape that produced the historic -32602) and the
+			// timeline arm, which is the only one that reads the comment cursor.
+			("tasks_owner_digest", new { projectKey = ProjectKey, board = "work" }),
+			("tasks_owner_digest", new { projectKey = ProjectKey, board = "work", includeTimeline = true, days = 30 }),
 			("tasks_node_get", new { projectKey = ProjectKey, board = "work", node = "a" }),
 			// batch3: nodes[] batch arm — same declared outputSchema { nodes: [...] } as the single-`node` arm.
 			("tasks_node_get", new { projectKey = ProjectKey, board = "work", nodes = new[] { "a", "no-such-node" } }),
@@ -497,7 +502,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	{
 		"tasks_board_create", "tasks_upsert", "memory_upsert", "memory_store_create", "memory_remember",
 		"session_upsert", "log_create", "log_update", "comments_upsert", "comments_search", "comments_get", "comments_delta",
-		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get",
+		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get", "tasks_owner_digest",
 		"tasks_methodology_guide",
 		"tasks_methodology_template_list", "tasks_methodology_template_get",
 		"memory_search", "memory_store_list", "memory_delta", "memory_get",

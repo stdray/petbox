@@ -169,13 +169,18 @@ public sealed class SessionSearchPoolCacheTests : IDisposable
 	// ── the invariant: a REAL reordering is still refused ─────────────────────────────────────────
 
 	[Fact]
-	public async Task WithoutThePoolCache_TheSameWalkIsRefused_ByTheOrderGuard()
+	public async Task WithoutThePoolCache_TheSameWalkIsRefused_BecauseThereIsNoPoolToWalk()
 	{
-		// THE RED ARM. This is the pre-fix service (no pool cache), walked exactly like the test above.
-		// It must still throw, and it must throw the ORDER refusal specifically — not "cursor is for a
+		// THE RED ARM. This is the pre-fix service (no pool cache at all), walked exactly like the test
+		// above. It must still throw, and it must throw for the RIGHT reason — not "cursor is for a
 		// different query" and not "the session left the pool". Two things ride on it: it is the proof the
-		// scenario really does trigger the guard (so the green test above cannot be green by accident), and
-		// it is the proof the fix removed a FALSE refusal rather than the guard.
+		// scenario really does trigger a guard (so the green test above cannot be green by accident), and
+		// it is the proof the fix removed a FALSE refusal rather than the refusal.
+		//
+		// The WORDS changed with work/rerank-route-nondeterministic-order and the change is the point: a
+		// service that keeps no pool rebuilds the ranking on every page, and what a caller needs to be
+		// told is that the pool their walk was reading is not there — not that "the ranking changed",
+		// which reads as a fault in a ranking that did nothing wrong.
 		await SeedSixAsync();
 
 		var first = await SearchToolAsync(_uncached, sessions: 2);
@@ -184,7 +189,7 @@ public sealed class SessionSearchPoolCacheTests : IDisposable
 		var act = () => SearchToolAsync(_uncached, sessions: 2, cursor: first.NextCursor);
 
 		await act.Should().ThrowAsync<ArgumentException>()
-			.WithMessage("*the ranked order this cursor was issued against no longer exists*");
+			.WithMessage("*ranked POOL this cursor was walking is gone*");
 	}
 
 	[Fact]
@@ -203,9 +208,54 @@ public sealed class SessionSearchPoolCacheTests : IDisposable
 
 		var act = () => SearchToolAsync(_search, sessions: 2, cursor: first.NextCursor);
 
-		await act.Should().ThrowAsync<ArgumentException>()
-			.WithMessage("*the ranked order this cursor was issued against no longer exists*",
-				"the guard must survive the fix — we removed a FALSE refusal, not the refusal");
+		var refusal = await act.Should().ThrowAsync<ArgumentException>();
+		refusal.WithMessage("*ranked POOL this cursor was walking is gone*",
+			"the guard must survive the fix — we removed a FALSE refusal, not the refusal");
+		refusal.Which.Message.Should().NotContain("ranked DIFFERENTLY",
+			"a pool that expired is not a ranking that misbehaved, and the caller acts on the difference");
+	}
+
+	[Fact]
+	public async Task ALiveWalkMatchesTheControlRowForRow_NotJustAsASet()
+	{
+		// THE anti-corruption assertion for this surface. The walk above proves every session is
+		// delivered once; it does NOT prove they arrive in the order the pool actually holds, and a walk
+		// spliced across two orderings delivers exactly the same SET. So the page walk is compared to the
+		// single-call control by SEQUENCE — Equal, never BeEquivalentTo. "Nothing threw and all the rows
+		// came back" is precisely what the silent corruption would look like from here.
+		await SeedSixAsync();
+
+		var control = (await SearchToolAsync(_search, sessions: 6)).Items.Select(i => i.SessionId).ToList();
+		control.Should().HaveCount(6);
+
+		var (seen, _, _) = await WalkAsync(pageSize: 2);
+
+		seen.Should().Equal(control, "a live pool pages the ONE order it materialized, in sequence");
+	}
+
+	[Fact]
+	public async Task Control_ScoreJitterAlone_DoesNotMoveThisSurfacesOrderStamp()
+	{
+		// WHY THIS FILE NEEDS ITS OWN FAKE, and why a single shape of noise would have left one surface
+		// unguarded. The other measured shape — scores drifting in their low digits with every row
+		// staying put — is what breaks memory and tasks, because their pool stores the CROSS-ENCODER
+		// score. It cannot break sessions: RankDiscovery consumes the rerank's RANKS through RRF and the
+		// pool stores the fused RRF score, so a score that moves without moving a rank leaves the
+		// discovery stamp byte-identical. Hence AdjacentSwapReranker for this surface, JitterRerankClient
+		// for the other two — and this test is the evidence that the two are not interchangeable.
+		var jitter = new JitterRerankClient();
+		var memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: jitter);
+		var search = new SessionSearchService(memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver,
+			_sessions);
+		await SeedSixAsync();
+
+		var first = await search.SearchAsync(Proj, Query, sessions: 2);
+		var second = await search.SearchAsync(Proj, Query, sessions: 2);
+
+		first.Discovery.Ranking.Should().Be(SearchRankingOutcome.Reranked, "the cross-encoder must have run");
+		jitter.RerankCalls.Should().BeGreaterThan(1, "both passes really reranked — no pool was kept here");
+		second.DataVersion.Should().Be(first.DataVersion,
+			"score jitter alone cannot move a stamp built from RRF ranks — the swap fake is what this surface needs");
 	}
 
 	// ── what a cached page must still be able to say ──────────────────────────────────────────────

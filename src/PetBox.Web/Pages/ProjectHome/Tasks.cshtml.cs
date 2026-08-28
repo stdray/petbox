@@ -189,6 +189,13 @@ public sealed class TasksModel : PageModel
 				// THE ORDER COMMITMENT (spec result-set-pageable) — same check tasks_search's own
 				// adapter makes before seeking: the fingerprint only proves the QUESTION is
 				// unchanged, this proves the ranked ANSWER is still in the sequence the token names.
+				// THE POOL COMMITMENT, checked first — the walk is bound to the pool its order came out
+				// of, because a reranked order is a property of ONE PASS (measured). Reached only when
+				// the reader asked for Precision: the UI's edge default is Speed, whose RRF order a
+				// rebuild reproduces exactly and which therefore keeps paging across a cold pool.
+				// NOT in the card's list of six sites — this seventh one runs the same engine through
+				// the same cursor and would otherwise be the one surface still splicing two orderings.
+				KeysetCursor.AssertPoolAlive(result.PoolRebuiltByRerank, "project-tasks-search");
 				if (result.PoolOrderHash is { } expectedOrder)
 					decoded.AssertPoolOrder(expectedOrder, "project-tasks-search");
 				afterCursor = KeysetCursor.Advance(

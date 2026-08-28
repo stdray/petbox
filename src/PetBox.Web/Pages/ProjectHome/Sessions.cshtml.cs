@@ -218,12 +218,21 @@ public sealed class SessionsModel : PageModel
 			}
 			if (peeked is { } token && !CursorWasReset)
 			{
-				try { token.AssertPoolOrder(outcome.DataVersion ?? "", "sessions-ui-search"); }
+				try
+				{
+					// THE POOL COMMITMENT, checked first — the walk is bound to the pool its discovery
+					// order came out of, because a reranked order is a property of ONE PASS (measured).
+					// Reached only when the reader asked for Precision: the UI's edge default is Speed,
+					// whose RRF order a rebuild reproduces exactly.
+					KeysetCursor.AssertPoolAlive(outcome.PoolRebuiltByRerank, "sessions-ui-search");
+					token.AssertPoolOrder(outcome.DataVersion ?? "", "sessions-ui-search");
+				}
 				catch (ArgumentException)
 				{
-					// THE ORDER COMMITMENT (spec: result-set-pageable): the pool was rebuilt and came back
-					// ranked differently (a rerank/discovery input moved between pages) — restart rather
-					// than splice two orderings.
+					// Either commitment refusing means the same thing for a PAGE: the pool this walk was
+					// reading is gone, or it came back ranked differently — restart from the top rather
+					// than splice two orderings. The banner says the walk restarted; the MCP surface
+					// raises the refusal instead, where the caller can act on the words.
 					CursorWasReset = true;
 					outcome = await MemoizedSearchAsync(null, rankingMode, ct);
 				}

@@ -89,7 +89,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		up.Applied.Should().BeTrue();
 		up.Inserted.Should().Be(2);
 
-		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap", statusKind: TestFacets.All);
+		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "roadmap", statusKind: TestFacets.All);
 		var keys = get.Nodes.Select(n => n.Key).ToList();
 		keys.Should().Equal("phase-16", "wave-1"); // priority order
 	}
@@ -121,7 +121,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }));
 
-		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", statusKind: TestFacets.All);
+		var get = await TasksTools.SearchAsync(http, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "b", statusKind: TestFacets.All);
 		var node = get.Nodes.Single();
 		node.Key.Should().Be("new");
 		node.RenamedFrom.Should().Equal("old");
@@ -151,7 +151,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		// A cross-project key (project="*") may operate on any project...
 		var star = Http("tasks:read,tasks:write", project: "*");
 		await TasksTools.BoardCreateAsync(star, Flags(), _tasks, Proj, "x");
-		(await TasksTools.SearchAsync(star, Flags(), _tasks, Proj, board: "x"))
+		(await TasksTools.SearchAsync(star, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "x"))
 			.Kind.Should().Be("simple");
 
 		// ...while a key scoped to a different project is rejected for this one. Since the declaration
@@ -475,7 +475,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "exploring", body = "x" } }));
 
-		var node = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "ideas")).Nodes.Single();
+		var node = (await TasksTools.SearchAsync(http, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "ideas")).Nodes.Single();
 		var nodeId = node.NodeId;
 		var v = node.Version;
 
@@ -493,7 +493,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		rev.Applied.Should().BeTrue();
 
 		// review -> accepted (the maintainer gate; enforceApproval is off so it applies).
-		var v2 = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "ideas"))
+		var v2 = (await TasksTools.SearchAsync(http, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "ideas"))
 			.Nodes.Single().Version;
 		var acc = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }));
@@ -507,7 +507,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "exploring", body = "x" } }));
-		var v = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "ideas"))
+		var v = (await TasksTools.SearchAsync(http, Flags(), _tasks, PetBox.Tests.Tasks.NoopTaskUsage.Recorder, PetBox.Tests.Tasks.NoopTaskUsage.Reader, Proj, board: "ideas"))
 			.Nodes.Single().Version;
 		// The direct exploring->accepted transition was removed; you must pass through review.
 		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",

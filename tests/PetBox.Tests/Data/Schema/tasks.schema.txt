@@ -85,6 +85,25 @@ TABLE methodology_templates
   INDEX sqlite_autoindex_methodology_templates_1 UNIQUE origin=pk (Key, Version)
   INDEX ux_methodology_templates_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
 
+TABLE node_delivery_events
+  COL Board TEXT NOT NULL
+  COL BodyChars INTEGER NOT NULL
+  COL DeclaredRole TEXT NOT NULL DEFAULT 'corpus'
+  COL DeliveredChars INTEGER NOT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL KRel NUMERIC NULL
+  COL Key TEXT NOT NULL
+  COL NodeId TEXT NOT NULL
+  COL Rank INTEGER NOT NULL
+  COL RowChars INTEGER NOT NULL
+  COL ScoreRaw NUMERIC NULL
+  COL SessionId TEXT NULL
+  COL Tool TEXT NOT NULL
+  COL Ts TEXT NOT NULL
+  COL UsageSource TEXT NOT NULL
+  INDEX ix_node_delivery_events_node origin=c (Board, NodeId)
+  INDEX ix_node_delivery_events_ts origin=c (Ts)
+
 TABLE node_tag
   COL Board TEXT NOT NULL
   COL NodeId TEXT NOT NULL PK1
@@ -96,6 +115,15 @@ TABLE node_tag
   INDEX ix_node_tag_node origin=c (NodeId) WHERE ValidTo IS NULL
   INDEX ix_node_tag_tag origin=c (Tag) WHERE ValidTo IS NULL
   INDEX sqlite_autoindex_node_tag_1 UNIQUE origin=pk (NodeId, Tag, ValidFrom)
+
+TABLE node_usage
+  COL Board TEXT NOT NULL PK1
+  COL DeliberateCount INTEGER NOT NULL DEFAULT 0
+  COL LastHitAt TEXT NULL
+  COL NodeId TEXT NOT NULL PK2
+  COL OpenedCount INTEGER NOT NULL DEFAULT 0
+  COL SurfacedCount INTEGER NOT NULL DEFAULT 0
+  INDEX sqlite_autoindex_node_usage_1 UNIQUE origin=pk (Board, NodeId)
 
 TABLE plan_node_commits
   COL Board TEXT NOT NULL
@@ -111,15 +139,25 @@ TABLE plan_node_ids
   COL NodeId TEXT NOT NULL PK1
   INDEX sqlite_autoindex_plan_node_ids_1 UNIQUE origin=pk (NodeId)
 
+TABLE plan_node_sessions
+  COL Board TEXT NOT NULL
+  COL FirstSeen TEXT NOT NULL
+  COL NodeId TEXT NOT NULL PK1
+  COL SessionId TEXT NOT NULL PK2
+  INDEX ix_plan_node_sessions_board origin=c (Board)
+  INDEX sqlite_autoindex_plan_node_sessions_1 UNIQUE origin=pk (NodeId, SessionId)
+
 TABLE plan_nodes
   COL ActiveFrom INTEGER NOT NULL
   COL ActiveTo INTEGER NULL
   COL Board TEXT NOT NULL DEFAULT '' PK1
   COL Body TEXT NOT NULL
   COL Created TEXT NOT NULL
+  COL DecisionPending INTEGER NOT NULL DEFAULT 0
   COL Key TEXT NOT NULL PK2
   COL Name TEXT NOT NULL DEFAULT ''
   COL NodeId TEXT NOT NULL DEFAULT ''
+  COL OriginSessionId TEXT NOT NULL DEFAULT ''
   COL PrevKey TEXT NULL
   COL Priority INTEGER NOT NULL DEFAULT 0
   COL Status TEXT NOT NULL DEFAULT ''

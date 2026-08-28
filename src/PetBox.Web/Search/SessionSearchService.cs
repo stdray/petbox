@@ -190,6 +190,15 @@ public sealed class SessionSearchService
 		// built it or read it. That is the point: the stamp, the seek and the page all read the same
 		// object, so no two of them can disagree about what the order was.
 		var pool = lookup.Pool;
+		// THE POOL COMMITMENT (KeysetCursor.AssertPoolAlive): a discovery order the cross-encoder built
+		// JUST NOW is not the one an in-flight cursor was issued against, and no second pass can be
+		// promised to reproduce it — this surface is where that was first measured
+		// (work/session-search-cursor-invalidates-immediately, then rerank-route-nondeterministic-order:
+		// session DIGESTS are long texts with close scores, the worst case for a non-batch-invariant
+		// kernel). A cache HIT is the same pool by construction, and an RRF order rebuilds identically —
+		// so only this combination ends a walk.
+		var poolRebuiltByRerank = !lookup.FromCache
+			&& pool.Retrievers.Ranking == SearchRankingOutcome.Reranked;
 		var ranked = FromPool(pool);
 		var retrievers = pool.Retrievers;
 		var poolBounded = pool.PoolBounded;
@@ -250,7 +259,8 @@ public sealed class SessionSearchService
 			// hydrate. A stale candidate (session deleted after distillation) is skipped, and resuming
 			// before it would re-consider it forever; resuming after the slice also keeps a page whose
 			// every candidate went stale from ending the walk while the pool still has rows.
-			pageSlice.Count > 0 ? pageSlice[^1].SessionId : null);
+			pageSlice.Count > 0 ? pageSlice[^1].SessionId : null,
+			poolRebuiltByRerank);
 	}
 
 	// ONE ROW of the discovery pool: the session a caller navigates, plus the three facts a page needs
@@ -521,4 +531,10 @@ public sealed record SessionSearchOutcome(
 	bool PoolBounded = false,
 	bool MoreInPool = false,
 	string? DataVersion = null,
-	string? LastPoolKey = null);
+	string? LastPoolKey = null,
+	// Whether this discovery order came out of a FRESH cross-encoder pass rather than out of the stored
+	// pool (KeysetCursor.AssertPoolAlive). A reranked order is a property of ONE PASS — measured, not
+	// assumed: the digest leg's route hands the same digests back in a different order on the next call —
+	// so a cursor is bound to the POOL that pass materialized, and this is what says that pool is gone.
+	// False for a cache hit, and false for any RRF order (Speed/degraded), which a rebuild DOES reproduce.
+	bool PoolRebuiltByRerank = false);

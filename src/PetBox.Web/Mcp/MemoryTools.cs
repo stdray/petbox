@@ -662,7 +662,7 @@ public static class MemoryTools
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
-		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination: the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging — a cursor from a different query/filter/sort is an ERROR, not a silent restart. With `q` it is additionally bound to the state of every store the cascade could see, so a write mid-walk also errors; drop the cursor to start over. A `q` walk is also bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -679,6 +679,11 @@ public static class MemoryTools
 		// question: a stamp says whether the DATA moved, this says whether the RANKING did — which it can
 		// with nothing written at all, and which memory had no way to notice until now.
 		var containerOrderHashes = new List<string>();
+		// THE POOL COMMITMENT across the cascade (KeysetCursor.AssertPoolAlive), merged the strict way:
+		// the walk is over if ANY leg's order was rebuilt by a cross-encoder. The merged list below is a
+		// splice of both pools, so one leg losing its pool is enough to make the merged sequence a
+		// different list — a pool is alive here only if EVERY leg's is.
+		var poolRebuiltByRerank = false;
 		// Pool facts merged across the cascade: the depth is the same declared budget in every leg, and
 		// the walk is bounded if ANY leg was bounded — a truncated pool anywhere means the merged order
 		// is a prefix of the merged match set.
@@ -734,6 +739,7 @@ public static class MemoryTools
 			// so either one being re-ranked differently is a different list to page.
 			containerStamps.Add(scopeName + "=" + (res.DataVersion ?? ""));
 			containerOrderHashes.Add(scopeName + "=" + (res.PoolOrderHash ?? ""));
+			poolRebuiltByRerank |= res.PoolRebuiltByRerank;
 			if (res.PoolLimit is { } pl) poolLimit = poolLimit is { } cur ? Math.Min(cur, pl) : pl;
 			poolBounded |= res.PoolBounded;
 			if (res.Retrievers is { } r)
@@ -822,6 +828,13 @@ public static class MemoryTools
 			// outage → not cached → page 2 is always a rebuild → route has recovered → same rows, reranked
 			// order, same stamp, same fingerprint → seek into a list the caller never saw. Minutes-long
 			// recoveries are the observed pattern, so this was not exotic.
+			// THE POOL COMMITMENT, checked FIRST (spec: result-set-pageable). A reranked order is a
+			// property of ONE PASS, not of the query — measured on the live route — so the walk is bound
+			// to the pool that pass materialized, and a pool that is gone ends it with words that name
+			// the real cause. AssertPoolOrder stays behind it as the second echelon: it can no longer
+			// fire on a cold reranked pool (this refusal gets there first) but it still costs nothing and
+			// still catches an order that moved with the pool in hand.
+			if (hasQuery) KeysetCursor.AssertPoolAlive(poolRebuiltByRerank, "memory_search");
 			if (hasQuery) token.AssertPoolOrder(orderHash, "memory_search");
 			seeking = KeysetCursor.Advance(
 				ordered, token,

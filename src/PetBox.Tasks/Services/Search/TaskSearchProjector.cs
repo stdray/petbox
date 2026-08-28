@@ -19,7 +19,8 @@ public enum SearchProjectionKind
 // would use GetAsync instead; Full here is the identity-shaped shell only).
 public static class TaskSearchProjector
 {
-	// Lean row: identity, body, tags, commits, version, priority, timestamps, optional url.
+	// Lean row: identity, body, tags, commits, decisionPending, originSessionId, version,
+	// priority, timestamps, optional url.
 	// Parent/depth/delivery/links/lineage left empty/null — query-mode MCP strips them on the
 	// wire; sort axes that need Priority/Created/Updated still work.
 	//
@@ -55,7 +56,18 @@ public static class TaskSearchProjector
 			Tags: tags,
 			Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key,
 			CreatedAt: n.Created,
-			UpdatedAt: n.Updated);
+			UpdatedAt: n.Updated,
+			// Both are COLUMNS of the row already in hand, so projecting them costs nothing and
+			// keeps this view truthful: a lean domain row never claims a node has no origin just
+			// because the projection was cheap. Whether they reach the WIRE in query mode is the
+			// MCP adapter's lean cut (TasksTools.SearchRow), decided per field there.
+			DecisionPending: n.DecisionPending,
+			OriginSessionId: n.OriginSessionId,
+			// NOT projected: the provenance UNION lives in plan_node_sessions and would cost an
+			// extra board-wide read per query. null (not []) says exactly that — "not projected",
+			// as distinct from "projected and empty" — so no consumer can mistake a lean row for
+			// proof that a node has never been touched.
+			OriginSessions: null);
 
 	// Project every node in `nodes` to a lean view, keyed by slug and NodeId for hit resolve.
 	public static (Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)

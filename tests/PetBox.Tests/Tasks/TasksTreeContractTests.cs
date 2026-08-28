@@ -82,7 +82,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
-		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap");
+		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "roadmap");
 		var arr = got.Nodes.ToList();
 		arr.Should().HaveCount(3);
 
@@ -112,12 +112,12 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 		var ver = up.CurrentVersion;
 
-		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap"), "b").Should().Be("a");
+		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "roadmap"), "b").Should().Be("a");
 
 		// Reparent b under c (single active parent — the a->b edge is closed).
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
 			McpInputs.Nodes(new object[] { new { key = "b", partOf = "c", version = ver } }));
-		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap"), "b").Should().Be("c");
+		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "roadmap"), "b").Should().Be("c");
 
 		// Cycle: a part_of b, but b is already a descendant of c which... make a a child of b
 		// while b is reachable — a->b->? a is root, b under c. Set c part_of b → c,b,? Let's
@@ -136,7 +136,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
 			McpInputs.Nodes(new object[] { new { key = "alpha", status = "Todo", title = "alpha note", body = "alpha keyword" } }));
 
-		var res = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, "alpha");
+		var res = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, "alpha");
 		var hit = res.Nodes.Single(n => n.Key == "alpha");
 		var version = hit.Version;
 		version.Should().BeGreaterThan(0);
@@ -166,7 +166,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 
 		// group-by area: ui {a,b}, llm {c}. groupBy echoes the ordered dimension list.
-		var byArea = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "area"));
+		var byArea = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", groupBy: "area"));
 		byArea.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area");
 		var areaGroups = byArea.GetProperty("groups").EnumerateArray()
 			.ToDictionary(g => g.GetProperty("key").GetString()!, g => g.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).ToList());
@@ -174,7 +174,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		areaGroups["area:llm"].Should().BeEquivalentTo(["c"]);
 
 		// group-by concern: security {a}, and the untagged b,c fall into "(none)" — listed last.
-		var byConcern = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "concern"));
+		var byConcern = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", groupBy: "concern"));
 		var keys = byConcern.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("key").GetString()).ToList();
 		keys.Should().Equal("concern:security", "(none)"); // (none) last
 	}
@@ -193,7 +193,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 
 		// groupBy [area, concern]: top level = area buckets, each split by concern, leaves = nodeKeys.
-		var got = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "area, concern"));
+		var got = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", groupBy: "area, concern"));
 		got.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area", "concern");
 
 		var areas = got.GetProperty("groups").EnumerateArray()
@@ -230,7 +230,7 @@ public sealed class TasksTreeContractTests : IDisposable
 				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", links = new { idea_spec = ir } },
 			}));
 
-		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "spec", statusKind: TestFacets.All);
+		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "spec", statusKind: TestFacets.All);
 		var nodes = got.Nodes.ToList();
 		// old obsoleted → moved to the spec workflow's terminal-cancel (deprecated).
 		nodes.Single(n => n.Key == "old").Status.Should().Be("deprecated");
@@ -244,7 +244,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
-		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "status"));
+		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.SearchAsync(http, Flags(), _tasks, NoopTaskUsage.Recorder, NoopTaskUsage.Reader, Proj, board: "g", groupBy: "status"));
 	}
 
 	[Fact]

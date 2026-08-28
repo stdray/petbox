@@ -35,7 +35,12 @@ public static class MemorySearchScope
 	// with '|' — the SAME encoding MemoryTools.SearchFingerprint/order-hash join uses, so a page model
 	// can feed them straight into a KeysetCursor fingerprint/AssertPoolOrder exactly as the MCP adapter does.
 	public sealed record Result(IReadOnlyList<Row> Rows, SearchRetrievers? Retrievers,
-		bool PoolBounded = false, string? DataVersion = null, string? PoolOrderHash = null);
+		bool PoolBounded = false, string? DataVersion = null, string? PoolOrderHash = null,
+		// The cascade's POOL COMMITMENT (KeysetCursor.AssertPoolAlive), merged the strict way: the walk
+		// is over if ANY leg's order was rebuilt by a cross-encoder, because the merged sequence is
+		// spliced from every leg and one rebuilt leg is enough to reshuffle it. The mirror of the MCP
+		// cascade's own fold in MemoryTools.SearchAsync.
+		bool PoolRebuiltByRerank = false);
 
 	// Whether offering the scope control makes sense at all: moot when the project IS already the
 	// workspace's shared-memory container (ResolveContainersAsync collapses to one leg regardless
@@ -94,6 +99,8 @@ public static class MemorySearchScope
 		// joined "scope=value" with '|' so a page model's KeysetCursor fingerprint/order-hash binds to
 		// the SAME state the MCP cascade would bind to for an identical request.
 		var poolBounded = false;
+		// A pool is only still alive if EVERY leg's is: OR the rebuilt flag, exactly as PoolBounded ORs.
+		var poolRebuiltByRerank = false;
 		var dataVersionParts = new List<string>();
 		var orderHashParts = new List<string>();
 		for (var rank = 0; rank < containers.Count; rank++)
@@ -101,6 +108,7 @@ public static class MemorySearchScope
 			var (scopeName, container) = containers[rank];
 			var res = await memory.SearchEntriesAsync(container, request, ct);
 			poolBounded |= res.PoolBounded;
+			poolRebuiltByRerank |= res.PoolRebuiltByRerank;
 			dataVersionParts.Add(scopeName + "=" + (res.DataVersion ?? ""));
 			orderHashParts.Add(scopeName + "=" + (res.PoolOrderHash ?? ""));
 			if (res.Retrievers is { } r)
@@ -132,7 +140,7 @@ public static class MemorySearchScope
 		// tail the caller asked to see, so only a plain top-K request gets the Take.
 		if (!request.WholePool && request.Limit > 0 && rows.Count > request.Limit) rows = rows.Take(request.Limit).ToList();
 		return new Result(rows, retrievers, poolBounded,
-			string.Join('|', dataVersionParts), string.Join('|', orderHashParts));
+			string.Join('|', dataVersionParts), string.Join('|', orderHashParts), poolRebuiltByRerank);
 	}
 
 	// Batched usage-counter lookup for a page of Rows, grouped by (Scope, Store) so each

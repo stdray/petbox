@@ -16,11 +16,11 @@ namespace PetBox.Web.Mcp;
 // ITasksService (the single door to the task store). It must not touch the store or
 // DB context directly (a NetArchTest enforces this). Scopes: tasks:read / tasks:write.
 // TENANT DECLARATION (spec authz-scope-declaration): the `projectKey` ARGUMENT — ONE declaration for
-// all 29 verbs, which is the case the type-level carrier exists for. The alternative is 29 copies of
+// all 30 verbs, which is the case the type-level carrier exists for. The alternative is 29 copies of
 // the same attribute, and 29 copies of one sentence is how a family ends up different by accident
 // (the ratchet's own carrier test says as much about exactly this family).
 //
-// Manual coverage was already complete: every one of the 29 opened with
+// Manual coverage was already complete: every one of the 29 that existed at the wave opened with
 // ModuleMcp.AssertProject(http, projectKey) — the same ProjectScope.EvaluateAsync ITenantAuthorizer
 // runs — so enforcement moves no allow/deny outcome. It moves only WHERE: the refusal now precedes
 // the Feature.Tasks gate and the tool body, and precedes McpProjectExistsFilter, so a foreign key can
@@ -35,12 +35,17 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, [LogArg] string board, string? kind = null, string? description = null, string? wiredBoard = null,
 		[Description("The board's world: a methodology instance `key` (its slug address), or \"$utility\" for the project's utility layer. Required when the project has any instance.")] string? methodologyInstance = null,
+		[Description("The board's DELIVERY role for usage telemetry: \"corpus\" (default — the board's nodes ARE the answer, so a node that is never opened is waste) or \"index\" (the board is an ENTRY POINT — its nodes are supposed to be surfaced far more often than opened, so a dead tail there is coverage, not waste). Declared, never guessed from the board's name. Case-insensitive; an unrecognized value is REJECTED naming both valid ones, never silently folded into \"corpus\".")] string? declaredRole = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, ct);
-		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance);
+		// STRICT at the boundary (the store itself normalizes leniently): a typo here would be
+		// filed as `corpus` and the board would then be measured by the wrong expectations for the
+		// rest of its life — silently, which is the exact failure this declaration exists to end.
+		var role = ResolveDeclaredRole(declaredRole);
+		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, wiredBoard, methodologyInstance, role, ct);
+		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance, meta.DeclaredRole);
 	}
 
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance, or release it to the utility layer", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
@@ -80,15 +85,73 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
-	[Description("List task boards in a project, each with its kind, wiredBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
+	[Description("""
+		List task boards in a project, each with its kind, wiredBoard (work->spec link, if set),
+		closed flag and `declaredRole` — "index" or "corpus", the board's DELIVERY role (spec:
+		task-usage-layer-with-declared-role).
+
+		`includeUsage` (default false) attaches a per-board usage aggregate: totalNodes,
+		surfacedAtLeastOnce / deliberatelySurfacedAtLeastOnce / openedAtLeastOnce and their
+		fractions, medianLastHitAt, the never-surfaced deadTail (count + oldest-first sample), and
+		what the board COST over a trailing window (`usageWindowDays`, default 30) — deliveries,
+		deliveredChars, rowChars — next to how well it FIT (avgKRel). Cost and fit are reported
+		SEPARATELY on purpose: "expensive and off-target" and "cheap and dead-on" are opposite
+		outcomes that one number would smear together. The same cost/fit pair is ALSO reported
+		split by source: deliberate* (a human/agent deliberately searched or opened) vs machine*
+		(an automatic context pull, `usageSource:"machine"`), because automated traffic is real
+		context cost but is not evidence that anything was worth reading.
+
+		READ EVERY NUMBER AGAINST `declaredRole`. On a `corpus` board a large deadTail and a low
+		openedFraction mean waste. On an `index` board the SAME numbers mean the board is doing its
+		job — it exists to be surfaced and route the reader onward, not to be opened. Judging an
+		index by corpus expectations is not hypothetical: memory's `session-digests` store read as
+		the worst surface in the system on exactly that shape.
+
+		`droppedEvents` is the honesty knob: telemetry events discarded because the writer's queue
+		overflowed, since process start. Non-zero means every counter here UNDERCOUNTS.
+		Requires tasks:read.
+		""")]
 	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		ITaskUsageReader usageReader, ITaskUsageRecorder usage,
+		string projectKey,
+		[Description("Attach a per-board usage aggregate (coverage, median recency, dead tail, window cost/fit) alongside the board's declaredRole (default false).")] bool includeUsage = false,
+		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
-		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
+		var window = usageWindowDays is { } d && d > 0 ? TimeSpan.FromDays(d) : (TimeSpan?)null;
+		var rows = new List<BoardRow>(list.Count);
+		foreach (var b in list)
+		{
+			BoardUsageRow? usageRow = null;
+			if (includeUsage)
+			{
+				// The counters are written in the BACKGROUND (the read path never waits on them);
+				// flush first so a read that immediately follows a delivery sees it, instead of
+				// reporting a zero that is really "not drained yet".
+				await usage.FlushAsync(ct);
+				var a = await usageReader.GetBoardUsageAsync(projectKey, b.Name, window: window, ct: ct);
+				usageRow = new BoardUsageRow(
+					a.TotalNodes, a.SurfacedAtLeastOnce, a.DeliberatelySurfacedAtLeastOnce, a.OpenedAtLeastOnce,
+					Math.Round(a.SurfacedFraction, 4), Math.Round(a.OpenedFraction, 4), a.MedianLastHitAt,
+					a.DeadTail.Count, a.DeadTail.TopKeys,
+					a.Cost.WindowDays, a.Cost.Deliveries, a.Cost.DeliveredChars, a.Cost.RowChars,
+					a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.NodesDelivered,
+					a.Cost.DeliberateDeliveries, a.Cost.DeliberateDeliveredChars,
+					a.Cost.DeliberateAvgKRel is { } dk ? Math.Round(dk, 4) : null,
+					a.Cost.MachineDeliveries, a.Cost.MachineDeliveredChars,
+					a.Cost.MachineAvgKRel is { } mk ? Math.Round(mk, 4) : null,
+					usage.DroppedEvents);
+			}
+
+			rows.Add(new BoardRow(b.Name, b.Kind, b.Description, b.WiredBoard, b.CreatedAt, b.ClosedAt != null,
+				b.MethodologyInstance, PetBox.Core.Models.BoardDeclaredRole.Normalize(b.DeclaredRole), usageRow));
+		}
+
+		return new BoardListResult(rows);
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
@@ -740,7 +803,11 @@ public static class TasksTools
 		status, type, title, the `body` (COMPLETE by default — this is the pointed full read; the
 		uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full),
 		priority, version, tags, links (`spec`, `blockedBy`; on a spec node `linkedTasks` + the
-		computed `delivery`), plus `url` when includeUrl. `relations` is the EXHAUSTIVE two-way
+		computed `delivery`), `decisionPending` (is this node waiting on a decision from the
+		OWNER — independent of status, so a node can be InProgress and waiting), the write-once
+		`originSessionId` (the session it was created in; "" = none was recorded, permanently) and
+		`originSessions` (every session that has since touched it — a union, not a log), plus `url`
+		when includeUrl. `relations` is the EXHAUSTIVE two-way
 		relation panel — one labelled group per non-empty kind×direction (children, blocks/blocked
 		by, implements/linked tasks, idea/spec, issue/tasks, supersedes/superseded by), each target
 		carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated
@@ -748,16 +815,20 @@ public static class TasksTools
 		whole board when you need one or a few nodes' full bodies. Requires tasks:read.
 		""")]
 	public static async Task<NodeGetResultView> NodeGetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks, ITaskUsageRecorder usage,
 		string projectKey, string board,
 		[Description("One node: a node reference — its slug key on the board or its 32-hex NodeId (both accepted). Named `node`, not `key`, because it is a REFERENCE that takes either form — tasks_upsert's `key` is the slug field itself and takes the slug only. Combine with `nodes` or use either alone.")] string? node = null,
 		[Description("Batch of nodes read in ONE call: each entry is a node reference — a slug key or a 32-hex NodeId (both accepted, mixed in one list). A node that doesn't resolve on this board is silently dropped (soft filter), order preserved.")] string[]? nodes = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
+		[Description("Usage-signal source of this read: \"deliberate\" (default — a human/agent intentionally opened this node) or \"machine\" (an automatic hook/context pull — bumps only the raw cost, never the deliberate cut). Automated wiring should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// usageSource is telemetry, not free text — resolved BEFORE any work, so a typo fails the
+		// call instead of quietly filing machine traffic as deliberate.
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 
 		// The ask: `node` ⊕ `nodes`, de-duped, order preserved — exactly memory_get's key/keys
@@ -784,8 +855,34 @@ public static class TasksTools
 		}
 
 		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only.
-		return new NodeGetResultView([.. details.Select(d =>
+		var result = new NodeGetResultView([.. details.Select(d =>
 			d with { Node = d.Node with { Body = ModuleMcp.Body(d.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } })]);
+
+		// THE ENGAGEMENT SIGNAL. tasks_node_get is the task-side mirror of memory_get: an
+		// addressed read of one node is the strongest evidence that the node was actually WANTED,
+		// which is why `opened` is defined as this call and NOT as a click in the UI (owner
+		// decision) — the UI opens nodes for navigation reasons that say nothing about whether an
+		// agent's context needed the text. Fire-and-forget: the answer above is already built, and
+		// nothing below can delay or fail it.
+		//
+		// An addressed open is a PERFECT FIT by definition (KRel = 1) and carries no relevance
+		// leg, so ScoreRaw stays null — rank is the row's position in the requested order.
+		var sessionId = McpSessionId(http);
+		var events = new List<TaskDeliveryEvent>(result.Nodes.Count);
+		for (var i = 0; i < result.Nodes.Count; i++)
+		{
+			var d = result.Nodes[i];
+			var full = details[i].Node.Body;
+			usage.Opened(projectKey, d.Board, d.Node.NodeId);
+			events.Add(new TaskDeliveryEvent(
+				Tool: "get", Board: d.Board, NodeId: d.Node.NodeId, Key: d.Node.Key,
+				DeliveredChars: d.Node.Body.Length, BodyChars: full.Length,
+				RowChars: ResponseBudget.CostOf(d), Rank: i + 1,
+				ScoreRaw: null, KRel: 1, SessionId: sessionId, UsageSource: resolvedUsageSource));
+		}
+
+		if (events.Count > 0) usage.Delivered(projectKey, events);
+		return result;
 	}
 
 	[McpServerTool(Name = "tasks_search", Title = "Read task nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
@@ -802,7 +899,10 @@ public static class TasksTools
 		WHY it stopped — `stop`: "more" | "exhausted" | "pool-boundary" — and "pool-boundary"
 		means ranking looked only `poolLimit` deep and MORE matched behind it, so narrow the query
 		rather than expecting another page. To enumerate EVERYTHING regardless of ranking depth,
-		list without `q` (filters + cursor) or use tasks_delta. `statusKind` visibility defaults
+		list without `q` (filters + cursor) or use tasks_delta. `decisionPending` filters on the
+		owner-decision-pending flag in both modes (true = only what waits on the owner, false =
+		only what does not, omitted = no filter); the flag itself is on every row, in both modes.
+		`statusKind` visibility defaults
 		when omitted (open+terminalok for a query, open for a listing) — the response echoes the
 		applied set as `effectiveStatusKind`, so the default is never silent. Tracking changes
 		since a known version cursor (added/updated/removed, including tombstones this search
@@ -944,6 +1044,7 @@ public static class TasksTools
 		""")]
 	public static async Task<TaskSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		ITaskUsageRecorder usage, ITaskUsageReader usageReader,
 		string projectKey,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board (listing then carries kind/wiredBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
@@ -957,11 +1058,20 @@ public static class TasksTools
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		[Description("Visibility facet: keep only nodes whose statusKind is in this SET — values open | terminalok | terminalcancel (open = not finished; terminalok = accepted/Done, a SUCCESS state; terminalcancel = rejected/cancelled). Applies in BOTH modes against the same authority. Omit = the mode default (query: open+terminalok; listing: open) — a default read still finds accepted/Done. Pass all three values for the widest read (this replaces the removed includeClosed:true); an unknown value is an error.")] string[]? statusKind = null,
-		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over.")] string? cursor = null,
+		[LogArg(LogArgMode.Presence)][Description("Pagination (BOTH modes): the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. The cursor is fingerprinted on exactly what SELECTS and ORDERS the rows — `q`, `board`, `underNode`, `status`, `nodes`, `commit`, `statusKind`, `decisionPending`, and `sort` — every one of those must be identical to the call that issued it, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering; pass the token verbatim, never edit or build one. `bodyLen`, `includeUrl` and `limit` are NOT part of the fingerprint and may be changed freely between pages — they shape a page, not the sequence. With `q` the cursor is additionally bound to the board state (data version) the ranked pool was built over, so an edit mid-walk also errors; drop the cursor and start over. A `q` walk is also bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
+		// Appended AFTER `cursor` on purpose: MCP arguments are named on the wire, so parameter
+		// ORDER is not part of this tool's contract, and appending keeps every existing
+		// positional in-process call site (the test suite's) binding to the same parameters.
+		[Description("Keep only nodes whose owner-decision-pending flag matches: true = ONLY nodes waiting on a decision from the owner, false = ONLY nodes that are NOT. Omit = no filter at all (the flag never narrows a read that did not ask about it). Independent of `status` and `type` — a node can be InProgress AND waiting — so this is the cheap way to ask \"what is waiting on me\" without scanning a board. Applies in BOTH modes (listing and query), and the flag is returned on every row in both modes too.")] bool? decisionPending = null,
+		[LogArg][Description("Include usage per row: the counters (surfaced/opened/deliberate/lastHitAt) AND the node's own cost/fit (deliveredChars/avgKRel) (default false). Read them against the board's declaredRole from tasks_board_list.")] bool includeUsage = false,
+		[Description("Usage-signal source of the impression this read records: \"deliberate\" (default — a human/agent intentionally searched or listed, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut). Automated wiring should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// Resolved BEFORE any work: an unrecognized source fails the call rather than quietly
+		// filing automated traffic as deliberate, which is the one thing this split exists to stop.
+		var resolvedUsageSource = ResolveUsageSource(usageSource);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var hasCursor = !string.IsNullOrWhiteSpace(cursor);
@@ -990,7 +1100,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind),
+			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind, decisionPending),
 			Sort = parsedSort,
 			// LISTING: ask for the whole ordered set and apply `limit` HERE (below), after the
 			// cursor skip. The service's own Limit is a plain prefix Take over that same ordered
@@ -1020,7 +1130,7 @@ public static class TasksTools
 		// the next page is REFUSED with an instructive error, never quietly restarted against a new
 		// ordering — the failure mode the whole keyset design exists to avoid.
 		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
-			nodes, commit, statusKind, axis, desc, res.DataVersion);
+			nodes, commit, statusKind, decisionPending, axis, desc, res.DataVersion);
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
 		{
@@ -1036,6 +1146,12 @@ public static class TasksTools
 			// matched an RRF one. That was an emergent side effect nobody had written down — a refactor
 			// dropping the score from the token (as memory legitimately did) would have reopened the door
 			// in silence. Now it is a stated invariant, checked in one place, for every surface.
+			// THE POOL COMMITMENT, checked FIRST: a reranked order is a property of ONE PASS (measured —
+			// work/rerank-route-nondeterministic-order), so the walk is bound to the pool that pass
+			// materialized and a pool that is gone ends it saying so. The order commitment below stays as
+			// the second echelon — it cannot fire on a cold reranked pool any more (this gets there
+			// first), but it is free and still catches an order that moved with the pool in hand.
+			KeysetCursor.AssertPoolAlive(res.PoolRebuiltByRerank, "tasks_search");
 			if (res.PoolOrderHash is { } expectedOrder)
 				token.AssertPoolOrder(expectedOrder, "tasks_search");
 			hits = KeysetCursor.Advance(
@@ -1071,6 +1187,38 @@ public static class TasksTools
 			: more ? SearchPoolStop.More
 			: res.PoolBounded ? SearchPoolStop.PoolBoundary
 			: SearchPoolStop.Exhausted;
+
+		// THE IMPRESSION SIGNAL — recorded over `kept`, the rows that ACTUALLY went on the wire,
+		// never over the wider candidate set: a node the budget cut cost the caller nothing and
+		// must not be credited with an appearance. Fire-and-forget; the answer is already built.
+		//
+		// The groupBy projection above returns early and records nothing, on purpose: it delivers
+		// tag BUCKETS, not nodes, so no node was surfaced by it.
+		RecordSearchDeliveries(usage, projectKey, kept, page, hasQuery, resolvedUsageSource, McpSessionId(http));
+
+		// Per-row usage (opt-in). Counters say the node keeps APPEARING; deliveredChars/avgKRel say
+		// what the appearing COSTS and whether it lands — the two axes stay separate.
+		if (includeUsage && kept.Count > 0)
+		{
+			await usage.FlushAsync(ct); // include the impression just recorded, not a stale zero
+			var byBoard = new Dictionary<string, IReadOnlyDictionary<string, NodeUsageView>>(StringComparer.Ordinal);
+			foreach (var g in kept.GroupBy(r => r.Board, StringComparer.Ordinal))
+				byBoard[g.Key] = await usageReader.GetUsageAsync(projectKey, g.Key, g.Select(r => r.NodeId).ToList(), ct);
+			kept = [.. kept.Select(r =>
+			{
+				var u = byBoard.TryGetValue(r.Board, out var m) && m.TryGetValue(r.NodeId, out var uv) ? uv : null;
+				return r with
+				{
+					Surfaced = u?.Surfaced ?? 0,
+					Opened = u?.Opened ?? 0,
+					LastHitAt = u?.LastHitAt,
+					Deliberate = u?.Deliberate ?? 0,
+					DeliveredChars = u?.DeliveredChars ?? 0,
+					AvgKRel = u?.AvgKRel is { } k ? Math.Round(k, 4) : null,
+				};
+			})];
+		}
+
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.WiredBoard, res.CurrentVersion,
 			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason, r.SemanticLag, r.Ranking) : null,
@@ -1163,12 +1311,18 @@ public static class TasksTools
 	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
 		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
-		string? commit, string[]? statusKind, TaskSortBy axis, bool desc,
+		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc,
 		string? dataVersion = null) =>
 		KeysetCursor.FingerprintOf(
 			"tasks_search", projectKey, query, board, underNode,
 			CursorFilterSet(status), CursorFilterSet(nodes),
-			commit, CursorFilterSet(statusKind), axis.ToString(), desc ? "1" : "0", dataVersion);
+			commit, CursorFilterSet(statusKind),
+			// `decisionPending` SELECTS rows, so it belongs in the fingerprint with every other
+			// selector: a token issued for the waiting set must not be honoured against the whole
+			// board. Three distinct states — omitted, true, false — so null must NOT collapse onto
+			// "false" (that would silently accept a cursor across a filter change).
+			decisionPending is null ? null : decisionPending.Value ? "1" : "0",
+			axis.ToString(), desc ? "1" : "0", dataVersion);
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
 	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled
@@ -1246,7 +1400,100 @@ public static class TasksTools
 			Score: h.Score is { } s ? Math.Round(s, 6) : null,
 			Retriever: h.Retriever,
 			// Relevance provenance — survives the lean cut like Score/Retriever.
-			MatchedIn: h.MatchedIn);
+			MatchedIn: h.MatchedIn,
+			// NOT lean-cut, on the same rule the `commits` exemption states: `decisionPending` is a
+			// FILTER on this tool and it applies in query mode too, so a lean row that hid it would
+			// select by a field it then refuses to show — the exact friction that exemption ended.
+			DecisionPending: n.DecisionPending,
+			// LEAN-CUT, by the other half of that same rule: nothing selects on provenance, so it
+			// is enrichment. `originSessions` is additionally null in query mode because the lean
+			// PROJECTION never read it (null = "not looked at", never "looked and found none").
+			OriginSessionId: lean ? null : n.OriginSessionId,
+			OriginSessions: lean ? null : n.OriginSessions);
+	}
+
+	// ---- usage telemetry helpers (spec: task-usage-layer-with-declared-role) ----
+
+	// Local aliases for the two UsageSource wire values and the two declared roles — each is
+	// declared in exactly ONE place, so this adapter cannot invent a third spelling of either.
+	const string DeliberateSource = PetBox.Tasks.Contract.NodeUsageSourceKind.Deliberate;
+	const string MachineSource = PetBox.Tasks.Contract.NodeUsageSourceKind.Machine;
+
+	// Validates + resolves a caller-supplied `usageSource` — shared by tasks_search AND
+	// tasks_node_get, so the two verbs cannot drift on what they accept. An unrecognized value is
+	// REFUSED rather than folded into the default: silently counting an unlabelled read as
+	// deliberate inflates the one number that is supposed to mean "somebody actually wanted this".
+	static string ResolveUsageSource(string? usageSource)
+	{
+		if (string.IsNullOrWhiteSpace(usageSource)) return DeliberateSource;
+		if (!PetBox.Tasks.Contract.NodeUsageSourceKind.TryNormalize(usageSource, out var normalized))
+			throw new ArgumentException($"invalid usageSource '{usageSource}' ({DeliberateSource}|{MachineSource})");
+		return normalized;
+	}
+
+	// Same posture for the board's declared role: an omitted argument defaults, a TYPO is refused.
+	// A mis-declared role is not a cosmetic error — it silently applies the wrong expectations to
+	// every usage number the board will ever produce.
+	static string? ResolveDeclaredRole(string? declaredRole)
+	{
+		if (string.IsNullOrWhiteSpace(declaredRole)) return null; // store defaults to corpus
+		if (!PetBox.Core.Models.BoardDeclaredRole.TryNormalize(declaredRole, out var normalized))
+			throw new ArgumentException(
+				$"invalid declaredRole '{declaredRole}' ({PetBox.Core.Models.BoardDeclaredRole.Index}|{PetBox.Core.Models.BoardDeclaredRole.Corpus})");
+		return normalized;
+	}
+
+	// The MCP streamable-HTTP session id, read off the request header — a tool method has no
+	// IMcpServer in scope, and it is null on a stateless transport, which the event stores as-is.
+	static string? McpSessionId(IHttpContextAccessor http) =>
+		http.HttpContext?.Request.Headers["Mcp-Session-Id"].FirstOrDefault();
+
+	// One impression + one delivery event per row that ACTUALLY went on the wire.
+	//
+	// kRel normalizes fit WITHIN the request: the row's score over the top-1 score of the same
+	// request. A rank-based fused score has no absolute scale, so a bare score is not comparable
+	// across requests; the denominator is taken over the whole PAGE (pre-budget-cut), so it is the
+	// page's true best hit even when the cut dropped it. Rank is the row's 1-based position in the
+	// delivered answer — rank and score are two different facts and BOTH are stored.
+	//
+	// A LISTING (no q) ran no relevance leg: ScoreRaw and KRel stay null, and the events carry
+	// cost without fit. That is not a gap — it is the honest reading, and the roll-up's fit
+	// denominator counts only events that actually have a fit.
+	static void RecordSearchDeliveries(
+		ITaskUsageRecorder usage, string projectKey,
+		IReadOnlyList<TaskSearchNodeView> kept, IReadOnlyList<TaskSearchHit> page,
+		bool hasQuery, string usageSource, string? sessionId)
+	{
+		if (kept.Count == 0) return;
+		var deliberate = string.Equals(usageSource, DeliberateSource, StringComparison.Ordinal);
+		foreach (var g in kept.GroupBy(r => r.Board, StringComparer.Ordinal))
+			usage.Surfaced(projectKey, g.Key, g.Select(r => r.NodeId).ToList(), deliberate);
+
+		// The page's best score, taken BEFORE the budget cut (see above). A degenerate top-1
+		// (no relevance leg, or a zero score) leaves fit unknown rather than dividing by zero and
+		// claiming a perfect 1.
+		var top = hasQuery ? page.Max(h => h.Score ?? 0) : 0;
+		var events = new List<TaskDeliveryEvent>(kept.Count);
+		for (var i = 0; i < kept.Count; i++)
+		{
+			var row = kept[i];
+			var hit = page[i];
+			var score = hasQuery ? hit.Score : null;
+			events.Add(new TaskDeliveryEvent(
+				Tool: hasQuery ? "search" : "listing",
+				Board: row.Board, NodeId: row.NodeId, Key: row.Key,
+				// The body as SENT (the bodyLen contract already applied) vs the whole node.
+				DeliveredChars: row.Body?.Length ?? 0, BodyChars: hit.Node.Body.Length,
+				// The row's whole wire price — title, tags, envelope and all.
+				RowChars: PetBox.Core.Contract.ResponseBudget.CostOf(row),
+				Rank: i + 1,
+				ScoreRaw: score,
+				KRel: score is { } sc && top > 0 ? sc / top : null,
+				SessionId: sessionId,
+				UsageSource: usageSource));
+		}
+
+		usage.Delivered(projectKey, events);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the
@@ -1303,7 +1550,11 @@ public static class TasksTools
 		supersedes (a node reference — the slug key or 32-hex NodeId, both accepted, of the node
 		this one replaces; the old one is moved to its terminal-cancel),
 		commits? (an ARRAY of commit SHAs — hex, 7..40 chars; null omits, [] clears, a list
-		REPLACES the node's full commit set, same PATCH semantics as tags), priority? (sparse
+		REPLACES the node's full commit set, same PATCH semantics as tags), decisionPending?
+		(bool — "this node is waiting on a decision from the OWNER"; null omits, true/false sets,
+		a new node starts false. ORTHOGONAL to status, not a status: a node can be InProgress AND
+		waiting, and either an agent or the owner may set it. Filterable via tasks_search's
+		`decisionPending`), priority? (sparse
 		int, lower first), version (WATERMARK baseline: pass the
 		board `currentVersion` from your last read OR the node's own version — both are valid; 0 =
 		new; a version above this board's cursor is rejected as a wrong-scope baseline). The guard
@@ -1350,6 +1601,7 @@ public static class TasksTools
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid nodes LAND, each refused node comes back in conflicts[] with its own reason (a stale baseline is one such per-node refusal, not a failed call), and a node referencing a refused node of the SAME call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never leaves a dangling reference. added/updated/removed then echo exactly the nodes that landed.")] bool atomic = true,
+		[Description("YOUR session id (the same one session_upsert/session_get use), passed EXPLICITLY — the server cannot infer it: the MCP transport's own session id is empty on effectively every call, and the delivery-events id is a different identifier space, so nothing is auto-filled from either. Two effects: a node this call CREATES is stamped with it as write-once `originSessionId`, and this session is unioned into every touched node's provenance set (a repeat touch adds nothing — it is a union, not a log, and it never bumps the node's `version`). Omitting it is LEGAL and never refuses the write; the node is simply born with no origin, permanently, and the omission is logged as a warning naming the board and key.")] string? sessionId = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -1366,7 +1618,7 @@ public static class TasksTools
 		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, ct);
+		var outcome = await tasks.UpsertAsync(projectKey, board, patches, actor, atomic, sessionId, ct);
 		// card size-warning-not-wired-to-write-verbs, mirroring MemoryTools.UpsertAsync point 4:
 		// only warn about size on a write that actually landed — a refused/conflicted call already
 		// has its own signal (conflicts[]).
@@ -1387,6 +1639,69 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
+	}
+
+	[McpServerTool(Name = "tasks_owner_digest", Title = "Owner-away digest for a board", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(OwnerDigestView))]
+	[Description("""
+		"What happened while I was away" for ONE board, ordered by WHAT IT ASKS OF YOU — not chronologically.
+		Sections, in this fixed order: (1) `awaitingDecision` — nodes waiting on YOUR decision; (2) `closed`
+		— nodes in the period whose status is now terminal; (3) `newCohorts` — nodes born in the period,
+		grouped on the `area` tag; (4) `timeline` — chronology, only when `includeTimeline` is true.
+		PERIOD: `sinceVersion` (a `currentVersion` from an earlier digest or tasks_delta), else the last
+		`days` days (default 7). Section (1) is deliberately NOT clipped to the period — it is your whole
+		open decision queue, because a decision that waited longer than your absence is more urgent, not
+		less. CLOSURE DATES ARE A PROXY: the server does not store when a status changed, so a closed node
+		is dated by its `updatedAt` — the last revision of anything on it. Cycle time is NOT measurable
+		from this, and `closureDatingCaveat` repeats it in the payload. Requires tasks:read.
+		[[full]]
+		The digest is assembled ONCE, in the Tasks module (IOwnerDigestService), and this verb and the
+		/ui/{workspaceKey}/{projectKey}/digest/{board} page are two doors onto that same assembly — the
+		page does not build a digest of its own, so the two can never disagree about what waits on you.
+
+		WHY THE ORDER IS NOT CHRONOLOGICAL. A chronological feed is pleasant for a one-day absence and
+		useless for a two-week one, where it is a couple of hundred events nobody reads. So the digest
+		leads with what needs a decision, then what finished, then what is new by theme, and offers the
+		chronology only on request.
+
+		TWO CURSORS, NOT ONE. Task nodes and comments are separate temporal stores with independent
+		version spaces, so the digest carries `sinceVersion` (nodes) and `sinceCommentVersion` (comments,
+		read only for the timeline) and returns `currentVersion` / `currentCommentVersion` to feed the
+		next call. Passing `sinceVersion` also switches the period OFF the clock: `windowStart` then comes
+		back null, because a version cursor names a revision and not an instant.
+
+		SECTION SHAPES. Every section reports both its rows and its untruncated `...Total`, so a section
+		clipped by `sectionLimit` says so with a number instead of just ending. `newCohorts[].area` is the
+		bare `area:` tag value; a node with two area tags appears in two cohorts, and nodes with none land
+		in a single "(no area)" cohort listed last. `removedKeys` names nodes that were DELETED in the
+		period (there is no row left to enrich). `statusKind` on every item is resolved from the board's
+		own workflow (open|terminalok|terminalcancel), never guessed from how the status is spelled.
+
+		Memory is NOT covered: memory_delta is cursored per STORE, so including it would need a composite
+		cursor, and none of sections (1)-(3) has a memory row to put in.
+		""")]
+	public static async Task<OwnerDigestView> OwnerDigestAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks, IOwnerDigestService digest,
+		string projectKey, string board,
+		[Description("Node cursor: a `currentVersion` from an earlier digest or tasks_delta. Omit to use the `days` window instead — passing it makes `windowStart` null, because a version cursor names a revision, not an instant.")] long? sinceVersion = null,
+		[Description("Comment cursor, in the comments' OWN version space (they are a separate temporal store). Only read when includeTimeline is true.")] long? sinceCommentVersion = null,
+		[Description("The cursor-less period, in days (default 7). Ignored when sinceVersion is given.")] int? days = null,
+		[Description("Include section (4), the chronology. Off by default — it is the section that does not survive a long absence.")] bool includeTimeline = false,
+		[Description("Rows per section (default 20). Each section still reports its untruncated total.")] int? sectionLimit = null,
+		[Description("Include an absolute `url` permalink on each item (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return await digest.DigestAsync(projectKey, new OwnerDigestRequest
+		{
+			Board = board,
+			SinceVersion = sinceVersion,
+			SinceCommentVersion = sinceCommentVersion,
+			Days = days ?? OwnerDigestRequest.DefaultDays,
+			IncludeTimeline = includeTimeline,
+			SectionLimit = sectionLimit ?? OwnerDigestRequest.DefaultSectionLimit,
+		}, urlPrefix, ct);
 	}
 
 	[McpServerTool(Name = "tasks_workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
@@ -1479,7 +1794,11 @@ public static class TasksTools
 		Commits: n.Commits,
 		Priority: n.Priority,
 		Version: n.Version,
-		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
+		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key,
+		// owner-decision-pending-flag: a flip mints a node revision, so it arrives here — and
+		// tasks_delta is what the owner digest catches up on. A consumer that had to re-read every
+		// changed node just to learn whether it now waits on the owner would defeat the flag.
+		DecisionPending: n.DecisionPending);
 
 	// Map the typed node inputs into service NodePatches. Read-merge (inheriting omitted fields
 	// from the prior row) happens in the service; here an omitted field deserializes to null
@@ -1507,6 +1826,8 @@ public static class TasksTools
 				// node's full commit set — same semantics as Tags.
 				Commits = n.Commits,
 				Priority = n.Priority,
+				// null = omit (leave as-is); true/false = an explicit set/clear.
+				DecisionPending = n.DecisionPending,
 				// links:{kind:ref|ref[]} → kind -> normalized string list (the converter already
 				// flattened a bare ref to a one-element list). Empty-value kinds are dropped.
 				Links = n.Links is null ? null : n.Links

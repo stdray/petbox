@@ -263,6 +263,11 @@ public sealed class MemoryStoreModel : PageModel
 					// QUESTION is unchanged; this proves the ranked ANSWER is still in the sequence the
 					// token was issued against (a rerank route recovering/failing between pages reorders
 					// the same rows with nothing written). Checked before the seek, same as memory_search.
+					// THE POOL COMMITMENT, checked first — the walk is bound to the pool its order came
+					// out of, because a reranked order is a property of ONE PASS (measured). Reached only
+					// when the reader asked for Precision: the UI's edge default is Speed, whose RRF
+					// order a rebuild reproduces exactly and which therefore pages across a cold pool.
+					KeysetCursor.AssertPoolAlive(result.PoolRebuiltByRerank, "memory-store-search");
 					if (!string.IsNullOrEmpty(result.PoolOrderHash))
 						decoded.AssertPoolOrder(result.PoolOrderHash, "memory-store-search");
 					afterCursor = KeysetCursor.Advance(

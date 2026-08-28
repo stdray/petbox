@@ -18,7 +18,8 @@ namespace PetBox.Tasks.Services.Search;
 // the same re-filter step for the same reason.
 public static class TaskSearchFilter
 {
-	// Apply every non-null predicate in criteria order (under → status → keys → commit). Every one
+	// Apply every non-null predicate in criteria order (under → status → keys → commit →
+	// decisionPending). Every one
 	// is a pure NARROWING `Where` over the incoming pool — the re-filter step, never a re-selection.
 	public static List<TaskSearchHit> Apply(IEnumerable<TaskSearchHit> hits, TaskSearchCriteria criteria)
 	{
@@ -45,6 +46,13 @@ public static class TaskSearchFilter
 		{
 			var carrying = criteria.CommitNodeIds;
 			q = q.Where(h => carrying.Contains(h.Node.NodeId));
+		}
+		if (criteria.DecisionPending is { } pending)
+		{
+			// Both directions, not just the true one: `decisionPending:false` is a real ask
+			// ("what is NOT waiting on me"), and an implementation that only ever narrowed on
+			// true would answer it by returning everything.
+			q = q.Where(h => h.Node.DecisionPending == pending);
 		}
 		return q as List<TaskSearchHit> ?? q.ToList();
 	}

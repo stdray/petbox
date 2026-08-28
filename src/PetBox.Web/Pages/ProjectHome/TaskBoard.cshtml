@@ -35,6 +35,11 @@
 			title="this board's methodology instance is open but is not the project's active default — still a full process, not disabled">not active</span>
 	}
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
+	@* DISCOVERABILITY of the owner-away digest (spec owner-away-digest). A page nothing links to is a
+	   page nobody finds — the exact defect doc-surface-undiscoverable-from-ui was filed for. *@
+	<a href="@Routes.ProjectOwnerDigest(Model.WorkspaceKey, Model.ProjectKey, Model.Board)"
+	   class="link link-hover text-xs opacity-70" data-testid="board-digest-link"
+	   title="what happened on this board while you were away">while you were away →</a>
 	@* Per-type "View workflow" triggers — one per FSM block (a preset kind has exactly one).
 	   Opens the daisyUI modal with the block's status graph (ts/workflow-viz.ts). *@
 	@if (Model.WorkflowBlocks.Count > 0)

@@ -639,13 +639,55 @@ public sealed record SessionSearchResultView(
 
 // ---- tasks_* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
-public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, string? MethodologyInstance = null);
+public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, string? MethodologyInstance = null, string? DeclaredRole = null);
 
 public sealed record BoardSetWireResult(bool Set, string? WiredBoard);
 
-public sealed record BoardRow(string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, bool Closed, string? MethodologyInstance = null);
+// `DeclaredRole` is "index" or "corpus" (spec: task-usage-layer-with-declared-role) and rides
+// EVERY row, not only a usage read: it is what the usage numbers mean, and a caller who has to
+// make a second call to learn it is a caller who will read them without it.
+public sealed record BoardRow(string Name, string Kind, string? Description, string? WiredBoard, DateTime CreatedAt, bool Closed, string? MethodologyInstance = null, string? DeclaredRole = null, BoardUsageRow? Usage = null);
 
 public sealed record BoardListResult(IReadOnlyList<BoardRow> Boards);
+
+// The per-board usage aggregate attached by tasks_board_list `includeUsage` — the task-side twin
+// of memory_store_list's store aggregate, and the surface the spec's "usage-метрики задач видны
+// на читающей поверхности с разбивкой по объявленной роли" lands on.
+//
+// TWO AXES, NEVER COLLAPSED. Coverage (surfaced/opened/deadTail) is the PRICE OF SHOWING; the
+// cost/fit trio (deliveredChars/rowChars/avgKRel) is what the showing SPENT and how well it
+// LANDED. `surfaced 40 / opened 0` is either a perfect index entry or pure noise and the coverage
+// numbers alone cannot tell them apart — which is also why `declaredRole` sits on the row that
+// carries them: on a corpus board a fat dead tail is waste, on an index board it is coverage.
+//
+// `deliberate*` vs `machine*` is the third cut: an automatic context pull is real cost but not
+// evidence of value, and blending the two is what made memory's early usage signal unusable.
+public sealed record BoardUsageRow(
+	int TotalNodes,
+	int SurfacedAtLeastOnce,
+	int DeliberatelySurfacedAtLeastOnce,
+	int OpenedAtLeastOnce,
+	double SurfacedFraction,
+	double OpenedFraction,
+	DateTime? MedianLastHitAt,
+	int DeadTailCount,
+	IReadOnlyList<string> DeadTailTopKeys,
+	int WindowDays,
+	long Deliveries,
+	long DeliveredChars,
+	long RowChars,
+	double? AvgKRel,
+	int NodesDelivered,
+	long DeliberateDeliveries,
+	long DeliberateDeliveredChars,
+	double? DeliberateAvgKRel,
+	long MachineDeliveries,
+	long MachineDeliveredChars,
+	double? MachineAvgKRel,
+	// Telemetry events discarded because the writer's bounded queue was full, since process
+	// start. NOT decoration: a counter that silently undercounts is a counter every conclusion
+	// drawn from it is unsound on, so the drop is reported next to the numbers it affects.
+	long DroppedEvents);
 
 public sealed record BoardAdoptResult(string Name, string Kind, string? MethodologyInstance);
 
@@ -693,7 +735,28 @@ public sealed record TaskSearchNodeView(
 	// "comment" when the row surfaced because a COMMENT under this node matched the query
 	// (tasks-search-comments); null when the node itself matched. Relevance provenance, so it
 	// survives the lean q-mode cut like Score/Retriever.
-	string? MatchedIn = null);
+	string? MatchedIn = null,
+	// owner-decision-pending-flag. NOT lean-cut — the same reason `commits` is exempt: it is a
+	// FILTER on this very tool (`decisionPending`) and that filter applies in BOTH modes, so
+	// hiding it would let a query select rows by a field the response then refuses to show.
+	bool DecisionPending = false,
+	// node-origin-provenance. Both ARE lean-cut (null → omitted by the serializer in query mode):
+	// nothing selects on them, so by the same criterion the commits exemption rests on they are
+	// enrichment, and enrichment is exactly what the lean row exists to drop. Listing mode and
+	// tasks_node_get carry them.
+	string? OriginSessionId = null,
+	IReadOnlyList<string>? OriginSessions = null,
+	// Per-node usage, filled only under `includeUsage` (null → omitted on the wire). Surfaced/
+	// Opened/Deliberate say how often this node has been REACHED; DeliveredChars/AvgKRel say what
+	// the reaching COST and how well it LANDED — the two axes stay separate here for the same
+	// reason they do on the board aggregate. Read them against the board's `declaredRole`
+	// (tasks_board_list): a never-opened node on an INDEX board is not a dead node.
+	long? Surfaced = null,
+	long? Opened = null,
+	DateTime? LastHitAt = null,
+	long? Deliberate = null,
+	long? DeliveredChars = null,
+	double? AvgKRel = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/WiredBoard/

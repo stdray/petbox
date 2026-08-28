@@ -363,8 +363,10 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		// Deterministic dedup safety net BEHIND the judge (spec: autocapture-dedup): a
 		// hallucinated "add" or a repeat the neighbor search never surfaced (lexical AND-
 		// narrowing, a paraphrase ranked below K) still lands here. Compare the candidate to
-		// the WHOLE quarantined store by text/semantics before minting a new row — a match =
-		// skip, so repetition can't pile up even when the judge lets it through.
+		// the WHOLE quarantined store by text/semantics before minting a new row — a match
+		// merges into the existing entry (see below) instead of minting a duplicate, so
+		// repetition can't pile up even when the judge lets it through, while the recurrence
+		// itself is still recorded rather than silently dropped (dedup-drop-discards-recurrence).
 		if (await _memory.StoreExistsAsync(project, Store, ct))
 		{
 			var existing = await _memory.ListAsync(project, Store, type: null, ct);
@@ -372,7 +374,41 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 				string.IsNullOrWhiteSpace(candidate.Description) ? candidate.Body ?? "" : candidate.Description,
 				existing.Select(e => (e.Key, Text: string.IsNullOrWhiteSpace(e.Description) ? e.Body : e.Description)).ToList(),
 				_llm, ct, _dedup.SemanticThreshold, embedCache);
-			if (dupKey is not null) return false;
+			if (dupKey is not null)
+			{
+				// Same accumulation discipline as the judge's "update" branch above and
+				// AutocaptureDedup.CollapseAsync's twin-fold: a deterministic-net match is still a
+				// REAL recurrence of a fact, not noise to throw away. Merge the candidate's
+				// provenance into the CANONICAL (existing) entry instead of a bare discard, so
+				// sourcesCount (MemoryTools.SourcesCount) reflects real recurrence for ac-* facts
+				// the same way it already does for bp-*.
+				//
+				// The canonical's OWN sessionId/messages are kept — NOT overwritten with the
+				// candidate's — because session_get's verbatim bridge resolves through that field;
+				// swapping it to the candidate's session would silently repoint an existing fact at
+				// a different transcript. The candidate's session only proves recurrence, so it goes
+				// into seenIn via the same MergeMetadata helper CollapseAsync uses (a throwaway
+				// MemoryEntryView carries just enough of the candidate — its freshly-built
+				// `metadata` — for that shared helper to fold in).
+				var canonical = existing.First(e => e.Key == dupKey);
+				var candidateView = new MemoryEntryView(canonical.Key, type, candidate.Description ?? "",
+					candidate.Body ?? "", tags, canonical.Version, metadata);
+				await _memory.UpsertAsync(project, Store, [new MemoryEntryInput
+				{
+					Key = canonical.Key,
+					Version = canonical.Version,
+					Type = canonical.Type,
+					Description = canonical.Description,
+					Body = canonical.Body,
+					Tags = canonical.Tags,
+					Metadata = AutocaptureDedup.MergeMetadata([canonical, candidateView], canonical),
+				}], [], ct: ct);
+				// A merge is a real memory write (sourcesCount moves) even though no new key was
+				// minted — the same "true = the store changed" convention the update-verdict branch
+				// above already uses. Callers only read this as an observability counter
+				// (SearchEnrichmentService logs/traces it as "indexed"), never as "a new row exists".
+				return true;
+			}
 		}
 
 		await _memory.UpsertAsync(project, Store, [new MemoryEntryInput

@@ -28,7 +28,9 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// for a project with no methodology instance yet (pre-backfill bootstrap); once any
 	// instance exists, a caller MUST say which world explicitly. Process-role singleton
 	// is enforced inside whichever world is targeted (instance, or the utility bucket).
-	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, CancellationToken ct = default);
+	// `declaredRole` declares the board's DELIVERY role for usage telemetry — "index" or
+	// "corpus" (spec: task-usage-layer-with-declared-role); null = corpus.
+	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? wiredBoard, string? methodologyInstance = null, string? declaredRole = null, CancellationToken ct = default);
 	// Move/adopt a board into a (different) open methodology instance, OR release it into
 	// the project's utility layer when `methodologyInstance` is the reserved
 	// `TaskBoardMeta.UtilityWorld` sentinel (spec methodology-utility-kinds) — the board's
@@ -264,7 +266,17 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// `conflicts[]` with its own reason, and a node that references a refused node of the SAME
 	// call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never
 	// leaves a dangling reference.
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, CancellationToken ct = default);
+	// `sessionId` (node-origin-provenance) is the CALLER'S session, passed EXPLICITLY — there is
+	// no server-side source to infer it from. The MCP transport's own `Mcp-Session-Id` is empty on
+	// 100% of real calls (measured: 3750 MCP calls over 30 days, every one of them stateless), and
+	// the delivery_events session id lives in a DIFFERENT identifier space, so auto-filling from
+	// either would mint provenance pointing at nothing. It does two things and only these two:
+	// stamps OriginSessionId on nodes this call CREATES (write-once), and unions itself into every
+	// touched node's provenance association. Omitted/blank is LEGAL — the write proceeds, the node
+	// simply carries no origin — and is reported by the missing-sid detector (a warning naming
+	// board+key per created node, plus a per-call count on the tasks_upsert span). Refusing the
+	// write instead was considered and REJECTED: it would break every existing caller at once.
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, string? sessionId = null, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks_search — the one
