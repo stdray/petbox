@@ -2780,6 +2780,22 @@ public sealed partial class TasksService : ITasksService
 		var res = WorkflowEngine.Validate(wf, runtime.KindName(kindSlug), runtime.ValidTypes(kindSlug),
 			type, from, n.Status, actorCanApprove: actor.CanApprove, hasReason: !string.IsNullOrWhiteSpace(reason));
 		if (!res.Ok) throw new ArgumentException(res.Error!).ForNode(n.Key);
+
+		// A CLOSED NODE WAITS FOR NOBODY (card decision-pending-survives-closure). The owner's
+		// decision flag is cleared IN THIS SAME REVISION — the one the status change already mints —
+		// so a closure never costs a second revision and never leaves the decision queue holding a
+		// node nothing can be decided about. It matters because `tasks_search` in QUERY mode
+		// defaults to open+terminalok: a stale flag would keep surfacing a Done node from
+		// `decisionPending:true` forever (the LISTING default is open, which is why the owner
+		// digest never saw this — see OwnerDigestService.AwaitingAsync's own comment).
+		// Terminality is read from the board's OWN FSM — `wf` is this node's type-resolved state
+		// machine and Workflow.IsTerminal covers BOTH terminal kinds, terminalok AND terminalcancel
+		// — never from a status SPELLING: `work` closes as Done/Cancelled, `intake` as
+		// done/wontfix/duplicate, and a project-declared methodology spells its own. That is the
+		// same authority OwnerDigestService.StatusKindMapAsync resolves through tasks_workflow,
+		// taken here from the runtime this write path already holds instead of a second board read.
+		// A NON-terminal transition is untouched: Review -> InProgress keeps the flag.
+		if (n.DecisionPending && wf?.IsTerminal(n.Status) is true) n = n with { DecisionPending = false };
 		return n;
 	}
 
