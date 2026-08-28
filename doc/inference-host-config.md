@@ -23,6 +23,35 @@ service) pinned the refusal boundary to `ubatch-size`. Source: bug card
 `rerank-oversize-falls-through-both-legs` body (the original 8192 measurement) and its
 verdict comment.
 
+## Warning: the same ubatch/ctx-size trap has already bitten once, silently
+
+Before the 2026-08-27 ceiling work above, `home` ran with `ubatch-size` left at the
+llama.cpp default (**512**) while `ctx-size` was set much higher — the config *looked*
+generous but the actual per-request ceiling was 512. Verbatim from the `models.ini`
+comment in `[qwen3-rerank-0.6b]`:
+
+> ubatch-size is NOT redundant with ctx-size: pooling=rank scores the whole query+document
+> sequence in ONE physical batch, so the per-request ceiling is `--ubatch-size`, not
+> `--ctx-size`. Left at the llama.cpp default (512) the server answers anything longer with
+> HTTP 500 "input (N tokens) is too large to process" — measured 2026-07-28: 319 tokens OK,
+> 559 rejected. PetBox treats that 500 as transient and re-runs the rerank on a cloud leg,
+> so the local GPU silently served only the shortest documents while OpenRouter did the
+> rest.
+
+The symptom is what makes this worth calling out on its own: the refusal never looked like
+a refusal. `CapabilityRouter` treated the HTTP 500 as transient and retried on the cloud
+leg, so **the local GPU appeared to be working the whole time** — it just quietly stopped
+being used for anything but the shortest documents, and the rest of the traffic was paid
+for and served by OpenRouter without anyone noticing. Fixed 2026-07-28 by raising
+`batch-size`/`ubatch-size` to 8192 in `models.ini` (superseded by the 10240 alignment
+below). Source: PetBox memory `m-5041a72ebde646e08f5b76dce5374d18` (scope `workspace`,
+store `notes`) and the `models.ini` comment itself — not the card comments cited elsewhere
+in this doc, which don't carry this incident.
+
+This is a **separate** incident from the "computed from the stale 8192" mistake recorded
+in the bug card's verdict comment (below) — two different errors that both land on the same
+consequence: a truncation/ceiling number computed from the wrong input.
+
 ## Current value
 
 **10240**, set 2026-08-27. Chosen to equal the smallest *nominal* cloud shoulder measured
@@ -99,3 +128,6 @@ This doc does not duplicate `models.ini`. If a number here looks stale, treat
   `a85af1e9d92e444d974e520c32b5f1ef` (cloud ceilings measured per-pair, ladder of nominal
   values), `bede7926182f4d78bec1e6c6236f72af` (10240 alignment + effective-budget table),
   and the verdict comment (arithmetic for the 8075-token / ~21%-margin worst case).
+- PetBox memory `m-5041a72ebde646e08f5b76dce5374d18` (scope `workspace`, store `notes`)
+  and the `models.ini` `[qwen3-rerank-0.6b]` comment — the 2026-07-28 default-512
+  incident above. Not the card comments: they don't carry this one.
