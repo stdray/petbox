@@ -371,6 +371,38 @@ public sealed class UnmappedMemberStrictnessTests(UnmappedMemberStrictnessFixtur
 			Text(result));
 	}
 
+	// THE ACCEPTED COST, pinned so nobody meets it only in production. The read result's ENVELOPE
+	// (`key`, `source`, `version`, `created`, `updated`) is not part of `definition` —
+	// MethodologyDefInput declares name/kinds/linkKinds/tagAxes/strictMode and nothing else. Before
+	// the strictness a caller could shovel the WHOLE result object in and the envelope was quietly
+	// dropped; now it is refused. That is right in principle (a read row is not a write payload,
+	// the same hard edge McpUnknownParameterFilter already draws at the top level) but it IS a
+	// call that used to work, so it is written down here rather than left to be discovered.
+	//
+	// The tolerant twin still exists and is deliberately NOT touched: MethodologyWire.ParseDocument
+	// — the admin methodology editor's paste path — parses with its own WireOptions and still
+	// ignores the envelope. MethodologyEditorViewsTests.ToJson_Inlines...AndRoundTrips depends on
+	// that tolerance today (it parses a projected document carrying `defined`/`version`).
+	[Fact]
+	public async Task WholeReadResultPastedIntoDefinition_IsRefused_NamingTheEnvelopeField()
+	{
+		var read = await (await Tool("tasks_methodology_template_get")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = UnmappedMemberStrictnessFixture.ProjectKey,
+			["key"] = "simple",
+		});
+		read.IsError.Should().NotBe(true, "fixture read must succeed; got: {0}", Text(read));
+
+		var result = await (await Tool("tasks_methodology_template_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = UnmappedMemberStrictnessFixture.ProjectKey,
+			["key"] = "simple-whole-envelope",
+			["definition"] = read.StructuredContent!.Value, // the WHOLE result, envelope included
+		});
+
+		result.IsError.Should().Be(true, "the read envelope is not part of the write document; got: {0}", Text(result));
+	}
+
 	// The `initial` DECISION, pinned. It is VALIDATED against the block's own statuses, not
 	// honoured as a declaration: honouring would mean reordering `statuses` behind the caller's
 	// back to keep Statuses[0] == Initial. A disagreement is therefore named, in both directions.
@@ -435,6 +467,21 @@ public sealed class UnmappedMemberStrictnessTests(UnmappedMemberStrictnessFixtur
 
 		var links = item.GetProperty("properties").GetProperty("links");
 		Closed(Unwrap(links)).Should().BeFalse("`links` is Dictionary<string, LinkRefs>, keyed by relation kind — closing it would reject every project-declared kind");
+	}
+
+	// The same options generate the OUTPUT schema (McpServerTool.Create takes one
+	// SerializerOptions for both), so results are declared closed too. Recorded because it is the
+	// client-visible half: a strict client validates structuredContent against this schema, and
+	// `additionalProperties:false` means a result carrying a field the schema omits is now its
+	// error, not its shrug. Every tool's structuredContent is validated against its own declared
+	// outputSchema by McpOutputSchemaConformanceTests, which is what says the results conform.
+	[Fact]
+	public async Task OutputSchema_IsAlsoClosed()
+	{
+		var schema = (await Tool("tasks_search")).ProtocolTool.OutputSchema;
+
+		schema.Should().NotBeNull();
+		Closed(schema!.Value).Should().BeTrue("a strict client validates the result against this schema");
 	}
 
 	// `additionalProperties: false` on this node.
