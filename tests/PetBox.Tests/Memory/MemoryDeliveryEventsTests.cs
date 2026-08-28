@@ -182,6 +182,31 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 		e.KRel.Should().Be(1);
 		e.ScoreRaw.Should().BeNull(); // no relevance leg ran
 		e.UsageSource.Should().Be("deliberate");
+		// PetBox's MCP transport is stateless (Program.cs .WithHttpTransport(o => o.Stateless =
+		// true)): no test double and no real client ever sends Mcp-Session-Id, so the column this
+		// test exercises (renamed from SessionId, card delivery-event-transport-session-id) is
+		// null on the overwhelming majority path — this is that path.
+		e.TransportSessionId.Should().BeNull();
+	}
+
+	// Red-proof for the SessionId -> TransportSessionId rename (card
+	// delivery-event-transport-session-id): the field still round-trips end to end — MCP request
+	// header -> MemoryTools.McpSessionId -> MemoryDeliveryEvent.TransportSessionId ->
+	// MemoryUsageRecorder.Apply(Delivery) -> the delivery_events.TransportSessionId column — under
+	// its new name, the exact same code path as before the rename. The header is never actually
+	// sent by a real client (the transport is stateless), but the plumbing that WOULD carry it is
+	// exercised here so the rename cannot silently break it.
+	[Fact]
+	public async Task Search_TransportSessionId_RoundTrips_FromMcpSessionIdHeader()
+	{
+		await Seed("u1");
+		var http = Http();
+		http.HttpContext!.Request.Headers["Mcp-Session-Id"] = "sess-xyz";
+
+		await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await _recorder.FlushAsync();
+
+		Events().Should().ContainSingle().Which.TransportSessionId.Should().Be("sess-xyz");
 	}
 
 	// Card usage-delivery-mixes-machine-traffic: memory_get had NO usageSource parameter at all

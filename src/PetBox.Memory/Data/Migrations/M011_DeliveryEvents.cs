@@ -20,8 +20,10 @@ namespace PetBox.Memory.Data.Migrations;
 //                    normalization takes the PRE-decay score, or freshness would count twice (decay
 //                    already reordered the answer). memory_get is by definition a perfect fit: KRel = 1.
 //   UsageSource    — deliberate | machine (same honest split entry_usage.DeliberateCount records)
-//   SessionId      — the MCP session the delivery went to (null on a stateless transport)
-//   Tool           — search | get | listing
+//   SessionId      — renamed TransportSessionId by M014 (2026-08-28): the MCP `Mcp-Session-Id`
+//                    transport header verbatim, NOT an agent/transcript session id — PetBox's MCP
+//                    transport is stateless, so this is always null in practice.
+//   Tool           — search | get | listing | canon
 //   Scope          — project | workspace: how the container was reached (the row lives in the
 //                    container's own file, so the project is implicit)
 //

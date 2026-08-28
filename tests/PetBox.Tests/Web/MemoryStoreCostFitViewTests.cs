@@ -71,7 +71,7 @@ public sealed class MemoryStoreCostFitViewTests : IClassFixture<ModuleViewsFixtu
 			recorder.Delivered("$system", [
 				new MemoryDeliveryEvent("search", "project", store, "hit",
 					DeliveredChars: 500, BodyChars: 500, RowChars: 600, Rank: 1,
-					ScoreRaw: 0.02, KRel: 0.8, SessionId: null, UsageSource: "deliberate"),
+					ScoreRaw: 0.02, KRel: 0.8, TransportSessionId: null, UsageSource: "deliberate"),
 			]);
 			await recorder.FlushAsync();
 		}

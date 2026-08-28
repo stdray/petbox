@@ -18,9 +18,9 @@ TABLE delivery_events
   COL RowChars INTEGER NOT NULL
   COL Scope TEXT NOT NULL
   COL ScoreRaw NUMERIC NULL
-  COL SessionId TEXT NULL
   COL Store TEXT NOT NULL
   COL Tool TEXT NOT NULL
+  COL TransportSessionId TEXT NULL
   COL Ts TEXT NOT NULL
   COL UsageSource TEXT NOT NULL
   INDEX ix_delivery_events_entry origin=c (Store, Key)

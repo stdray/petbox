@@ -158,7 +158,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
 				Tool: "search", Scope: "project", Store: Store, Key: key,
 				DeliveredChars: chars, BodyChars: chars, RowChars: chars + 100,
-				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: "deliberate")]);
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, TransportSessionId: null, UsageSource: "deliberate")]);
 	}
 
 	[Fact]
@@ -222,7 +222,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
 				Tool: "search", Scope: "project", Store: Store, Key: key,
 				DeliveredChars: chars, BodyChars: chars, RowChars: chars + 100,
-				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: "machine")]);
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, TransportSessionId: null, UsageSource: "machine")]);
 	}
 
 	[Fact]
@@ -274,7 +274,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
 				Tool: "search", Scope: "project", Store: Store, Key: "boar",
 				DeliveredChars: 2_000, BodyChars: 2_000, RowChars: 2_100,
-				Rank: 1, ScoreRaw: 0.02, KRel: 0.2, SessionId: null, UsageSource: "deliberate")]);
+				Rank: 1, ScoreRaw: 0.02, KRel: 0.2, TransportSessionId: null, UsageSource: "deliberate")]);
 		await _recorder.FlushAsync();
 
 		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,

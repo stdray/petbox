@@ -87,7 +87,7 @@ public sealed class MemoryUsage2dTests : IDisposable
 			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
 				Tool: "search", Scope: "project", Store: Store, Key: key,
 				DeliveredChars: chars, BodyChars: chars * 2, RowChars: chars + 100,
-				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: source)]);
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, TransportSessionId: null, UsageSource: source)]);
 	}
 
 	// An OLD delivery — the recorder always stamps `now`, so a past event is written straight to

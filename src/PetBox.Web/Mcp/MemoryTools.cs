@@ -239,7 +239,7 @@ public static class MemoryTools
 				Tool: "get", Scope: x.From.Scope, Store: store, Key: x.Entry.Key,
 				DeliveredChars: x.Wire.Body.Length, BodyChars: x.Entry.Body.Length,
 				RowChars: ResponseBudget.CostOf(x.Wire),
-				Rank: x.Rank, ScoreRaw: null, KRel: 1, SessionId: McpSessionId(http),
+				Rank: x.Rank, ScoreRaw: null, KRel: 1, TransportSessionId: McpSessionId(http),
 				UsageSource: resolvedUsageSource))]);
 
 		return new MemoryGetResultView(wireEntries);
@@ -1061,7 +1061,7 @@ public static class MemoryTools
 				// A degenerate top-1 (no relevance leg, or a zero score) leaves fit unknown rather
 				// than dividing by zero and claiming a perfect 1.
 				KRel: f.ScoreRaw is { } s && top > 0 ? s / top : null,
-				SessionId: sessionId,
+				TransportSessionId: sessionId,
 				UsageSource: usageSource));
 		}
 		// Rows of one answer may span containers (the project ⊕ workspace cascade): each event
