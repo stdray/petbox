@@ -242,9 +242,11 @@
 			}
 		</div>
 
-		@* RAW MODE: the SAME wire shape agent_def_get / agent_def_upsert use. Saving posts the raw
-		   JSON, so the `model`-not-allowed reject runs on exactly what was typed. The only way to
-		   reach a field outside the schema above. *@
+		@* RAW MODE: the SAME wire shape agent_def_get returns (and REST PUT /agent-defs/{key} takes).
+		   NOT the shape MCP agent_def_upsert writes any more — that verb merges per role now
+		   (work/agent-def-upsert-typed-and-merge-by-role); this page still writes the whole document.
+		   Saving posts the raw JSON, so the `model`-not-allowed reject runs on exactly what was
+		   typed. The only way to reach a field outside the schema above. *@
 		<div x-show="mode === 'raw'" data-testid="agent-defs-raw-mode">
 			<form method="post" asp-page-handler="Save" data-testid="agent-defs-editor">
 				@Html.AntiForgeryToken()
@@ -295,9 +297,11 @@
 	<summary class="collapse-title font-semibold">Definition reference</summary>
 	<div class="collapse-content overflow-x-auto">
 		<p class="text-xs opacity-70 mb-2">
-			A portable agent definition is a roster: a name and the roles a team may run. It is the same
-			document <span class="font-mono">agent_def_get</span> / <span class="font-mono">agent_def_upsert</span> exchange,
-			so it moves between this page, MCP and other projects unchanged.
+			A portable agent definition is a roster: a name and the roles a team may run. It is the
+			document <span class="font-mono">agent_def_get</span> returns and this page stores, so it moves
+			between this page, MCP and other projects unchanged. Writing it back over MCP goes role by
+			role (<span class="font-mono">agent_def_upsert</span> takes the roles you are CHANGING, not the
+			whole document).
 		</p>
 
 		<h3 class="font-mono font-semibold text-sm mt-3" data-testid="agent-defs-reference-entity">definition</h3>
