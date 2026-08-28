@@ -57,6 +57,11 @@ else
 				@foreach (var row in Model.Rows)
 				{
 					var search = $"{row.Title} {row.Key} {string.Join(' ', row.Tags)}".ToLowerInvariant();
+					// live-verification finding: the row's regression fixed-by slug, looked up in the
+					// page's already-resolved batch map — no per-row I/O here.
+					var rowObservationFixedByLink = row.Observation?.FixedByNodeId is { Length: > 0 } rowObsFixerId
+						? Model.ObservationFixedByLinks?.GetValueOrDefault(rowObsFixerId)
+						: null;
 					<tr data-testid="@(Model.ShowScopeColumns ? "search-hit" : "task-table-row")"
 						data-node-id="@row.NodeId" data-node-key="@row.Key"
 						data-status="@row.StatusSlug" data-type="@row.Type" data-priority="@row.Priority" data-title="@row.Title"
@@ -86,7 +91,7 @@ else
 							{
 								<span class="font-mono text-xs opacity-50">@row.Key</span>
 							}
-							<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" />
+							<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty, rowObservationFixedByLink)" />
 						</td>
 						@if (fields.Type)
 						{

@@ -19,7 +19,11 @@ namespace PetBox.Web.Pages.Shared;
 //     the node that (supposedly) fixed it, shown only when RecurredAfterFixAt is set — the single
 //     highest-value signal the whole mechanism exists to surface (work
 //     observation-recurrence-after-fix-signal).
-// WorkspaceKey/ProjectKey are needed only for the regression banner's FixedByNodeId link — we
-// only ever have a raw NodeId there (not a resolved board+slug), so it routes through the opaque
-// Routes.TaskBoardNode(id) door, same fallback the exhaustive relations panel already uses.
-public sealed record ObservationSignalModel(ObservationSignalView? Observation, string WorkspaceKey, string ProjectKey);
+// WorkspaceKey/ProjectKey are needed for routing (the regression banner's fixed-by link, whichever
+// form it takes). `FixedByLink` is the CALLER-resolved slug for Observation.FixedByNodeId
+// (ObservationFixedByResolver, reusing the same ITasksService.GetNodeAsync door the exhaustive
+// relations panel resolves through) — resolution is I/O, so it happens once per page in the page
+// model, never inside this pure-render partial. Null when there is nothing to resolve (no
+// FixedByNodeId) OR the resolver wasn't wired by this caller; the banner then falls back to the
+// opaque Routes.TaskBoardNode(id) route rather than failing to render.
+public sealed record ObservationSignalModel(ObservationSignalView? Observation, string WorkspaceKey, string ProjectKey, LinkDto? FixedByLink = null);

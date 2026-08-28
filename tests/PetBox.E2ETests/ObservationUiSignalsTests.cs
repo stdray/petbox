@@ -24,6 +24,16 @@ namespace PetBox.E2ETests;
 // obligation's own terminal-ok transition auto-firing SyncObservationOnObligationTerminalAsync),
 // never a direct data-layer write — exactly what a live extractor + promote + fix + regress cycle
 // produces.
+//
+// live-verification finding (owner, 2026-08-28, screenshot of `observations/live3-prov-check-
+// cache-evict` on prod c4f0492): the FIRST version of this test only checked PRESENCE of
+// data-testid elements, never their TEXT CONTENT — so it missed two real rendering defects:
+// (1) the recurrence count and last-seen date collapsed into one unreadable run ("×32026-08-28
+// 19:28:37") with no separator, and (2) the regression banner's "fixed by" link showed the raw
+// 32-hex NodeId instead of the project's UI convention (prefer a slug). Both are now covered by
+// exact-text assertions (ToHaveTextAsync, not ToContainTextAsync/ToHaveCountAsync) on the count
+// element and the fixed-by link, specifically BECAUSE those are the two things a presence check
+// cannot catch.
 [Collection(nameof(UiCollection))]
 public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelper output) : IAsyncLifetime
 {
@@ -156,15 +166,24 @@ public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelp
 		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{SystemBoards.Observations}");
 
 		var recurredCard = _page.Locator($"[data-node-id='{_recurredId}']");
-		await Expect(recurredCard.GetByTestId("node-observation-recurrence")).ToContainTextAsync("×2");
+		// Exact text, not ContainText: the live defect was the count and the date fusing into one
+		// run ("×32026-08-28…") — an exact match on the COUNT'S OWN element fails if any date text
+		// leaked into it, which a mere "contains ×2" check cannot detect.
+		await Expect(recurredCard.GetByTestId("node-observation-recurrence-count")).ToHaveTextAsync("×2");
+		await Expect(recurredCard.GetByTestId("node-observation-last-seen-label")).ToContainTextAsync("last seen");
 		await Expect(recurredCard.GetByTestId("node-observation-regression")).ToHaveCountAsync(0);
 		await Expect(recurredCard.GetByTestId("node-observation-obligation-badge")).ToHaveCountAsync(0);
 
 		var regressedCard = _page.Locator($"[data-node-id='{_regressedId}']");
-		await Expect(regressedCard.GetByTestId("node-observation-recurrence")).ToContainTextAsync("×2");
+		await Expect(regressedCard.GetByTestId("node-observation-recurrence-count")).ToHaveTextAsync("×2");
+		await Expect(regressedCard.GetByTestId("node-observation-last-seen-label")).ToContainTextAsync("last seen");
 		await Expect(regressedCard.GetByTestId("node-observation-regression")).ToBeVisibleAsync();
 		await Expect(regressedCard.GetByTestId("node-observation-regression")).ToContainTextAsync("recurred after fix");
-		await Expect(regressedCard.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/node/{_regressedFixerId}");
+		// The live defect: this used to show the raw 32-hex NodeId. Now the resolved SLUG, both in
+		// the link TEXT and in the href route (TaskBoardNodeBySlug, not the opaque NodeId route).
+		await Expect(regressedCard.GetByTestId("node-observation-fixed-by-link")).ToHaveTextAsync("fixed by chore-fixer");
+		await Expect(regressedCard.GetByTestId("node-observation-fixed-by-link")).Not.ToContainTextAsync(_regressedFixerId);
+		await Expect(regressedCard.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/work/chore-fixer");
 
 		var promotedCard = _page.Locator($"[data-node-id='{_promotedId}']");
 		await Expect(promotedCard.GetByTestId("node-observation-recurrence")).ToHaveCountAsync(0);
@@ -177,13 +196,16 @@ public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelp
 		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{SystemBoards.Observations}?view=table");
 
 		var recurredRow = _page.Locator($"tr[data-node-id='{_recurredId}']");
-		await Expect(recurredRow.GetByTestId("node-observation-recurrence")).ToContainTextAsync("×2");
+		await Expect(recurredRow.GetByTestId("node-observation-recurrence-count")).ToHaveTextAsync("×2");
+		await Expect(recurredRow.GetByTestId("node-observation-last-seen-label")).ToContainTextAsync("last seen");
 		await Expect(recurredRow.GetByTestId("node-observation-regression")).ToHaveCountAsync(0);
 
 		var regressedRow = _page.Locator($"tr[data-node-id='{_regressedId}']");
-		await Expect(regressedRow.GetByTestId("node-observation-recurrence")).ToContainTextAsync("×2");
+		await Expect(regressedRow.GetByTestId("node-observation-recurrence-count")).ToHaveTextAsync("×2");
 		await Expect(regressedRow.GetByTestId("node-observation-regression")).ToBeVisibleAsync();
-		await Expect(regressedRow.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/node/{_regressedFixerId}");
+		await Expect(regressedRow.GetByTestId("node-observation-fixed-by-link")).ToHaveTextAsync("fixed by chore-fixer");
+		await Expect(regressedRow.GetByTestId("node-observation-fixed-by-link")).Not.ToContainTextAsync(_regressedFixerId);
+		await Expect(regressedRow.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/work/chore-fixer");
 	}
 
 	[Fact]
@@ -192,10 +214,19 @@ public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelp
 		// Recurrence + regression, both on one node (obs-regressed is genuinely both: it recurred,
 		// and that recurrence happened after a fix).
 		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/node/{_regressedId}");
-		await Expect(_page.GetByTestId("node-observation-recurrence")).ToContainTextAsync("×2");
+		// live-verification finding: exact text on the count's OWN element (not "contains ×2" on
+		// the whole badge) — this is the assertion that would have caught the count/date fusing
+		// into one unreadable run.
+		await Expect(_page.GetByTestId("node-observation-recurrence-count")).ToHaveTextAsync("×2");
+		await Expect(_page.GetByTestId("node-observation-last-seen-label")).ToContainTextAsync("last seen");
 		await Expect(_page.GetByTestId("node-observation-regression")).ToBeVisibleAsync();
 		await Expect(_page.GetByTestId("node-observation-regression")).ToContainTextAsync("recurred after fix");
-		await Expect(_page.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/node/{_regressedFixerId}");
+		// live-verification finding: the raw 32-hex NodeId used to be the link text; the project's
+		// UI convention prefers a slug — asserts the resolved slug appears (both text and href) and
+		// the raw NodeId does NOT.
+		await Expect(_page.GetByTestId("node-observation-fixed-by-link")).ToHaveTextAsync("fixed by chore-fixer");
+		await Expect(_page.GetByTestId("node-observation-fixed-by-link")).Not.ToContainTextAsync(_regressedFixerId);
+		await Expect(_page.GetByTestId("node-observation-fixed-by-link")).ToHaveAttributeAsync("href", $"/ui/{Ws}/{Proj}/tasks/work/chore-fixer");
 		// Not promoted (reopened to `seen`) — no obligation badge here.
 		await Expect(_page.GetByTestId("node-observation-obligation-badge")).ToHaveCountAsync(0);
 

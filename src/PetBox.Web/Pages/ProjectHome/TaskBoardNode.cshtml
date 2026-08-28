@@ -180,7 +180,7 @@
 		@* observation-ui-distinct-from-task: standalone, loud banner (spec
 		   observation-regression-signalled-on-card) — a no-op when node.Observation has no
 		   RecurredAfterFixAt (every non-observation node, and most observation nodes). *@
-		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(node.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+		<partial name="_ObservationRegressionBanner" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(node.Observation, Model.WorkspaceKey, Model.ProjectKey, Model.ObservationFixedByLink)" />
 
 		@* Edit form (title + body, markdown write/preview). Hidden until ts/nodeEdit.ts shows it.
 		   The textarea is the source for both the POST body and the client-side preview render. *@

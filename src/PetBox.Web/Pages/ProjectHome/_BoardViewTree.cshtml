@@ -43,7 +43,7 @@ else
 			var hidden = hiddenByActive || Model.IsHiddenByCollapse(n.ParentNodeId);
 			var collapsedSelf = Model.CollapsedNodeIds.Contains(n.NodeId);
 			var commentCount = Model.CommentCounts.GetValueOrDefault(n.NodeId);
-			<partial name="_TaskNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.TaskNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, commentCount, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, hidden, collapsedSelf)" />
+			<partial name="_TaskNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.TaskNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, commentCount, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, hidden, collapsedSelf, Model.ObservationFixedByLinks)" />
 		}
 	</ul>
 }

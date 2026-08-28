@@ -286,6 +286,13 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyDictionary<string, NodeRefTarget> MemoryRefs { get; private set; }
 		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
 
+	// live-verification finding: every rendered node's Observation.FixedByNodeId resolved to a
+	// slug in ONE batch (ObservationFixedByResolver.ResolveManyAsync), threaded into each
+	// TaskNodeCard/TaskTableModel exactly like NodeRefs/MemoryRefs above. Empty on every
+	// non-observation board.
+	public IReadOnlyDictionary<string, LinkDto> ObservationFixedByLinks { get; private set; }
+		= new Dictionary<string, LinkDto>(StringComparer.Ordinal);
+
 	// The board's EFFECTIVE process, resolved through MethodologyRuntime — the same seam
 	// the MCP tools / TasksService use (project definition first, preset fallback), so a
 	// definition-declared custom kind renders its own statuses/terminality instead of
@@ -342,7 +349,12 @@ public sealed class TaskBoardModel : PageModel
 		// (_BoardViewTags.cshtml) doesn't compute or thread these through — that pane is a Hidden
 		// (from-the-switcher) projection over the tree, out of scope for this pass, so its cards
 		// simply render as always-visible/never-collapsed, same as before this change.
-		bool Hidden = false, bool CollapsedSelf = false);
+		bool Hidden = false, bool CollapsedSelf = false,
+		// live-verification finding: the regression banner's fixed-by target, resolved to a slug
+		// once per PAGE (TaskBoardModel.LoadAsync, ObservationFixedByResolver.ResolveManyAsync) and
+		// threaded through like NodeRefs/MemoryRefs above — never re-resolved per card. Empty map on
+		// every non-observation board (nothing to resolve).
+		IReadOnlyDictionary<string, LinkDto>? ObservationFixedByLinks = null);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -719,6 +731,11 @@ public sealed class TaskBoardModel : PageModel
 		Nodes = OrderHierarchically([.. boardNodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 		_parentOf = Nodes.ToDictionary(n => n.NodeId, n => n.ParentNodeId, StringComparer.Ordinal);
+
+		// live-verification finding: resolve every card's regression fixed-by target to a slug in
+		// ONE batch — empty/cheap on every board that isn't kind `observation` (no node carries a
+		// non-null Observation there, see TaskNodeView's own contract).
+		ObservationFixedByLinks = await ObservationFixedByResolver.ResolveManyAsync(_tasks, ProjectKey, Nodes.Select(n => n.Observation), ct);
 
 		// board-page-cost: comments are NEVER rendered on the board (a thread is a node-detail-page
 		// affordance) — one aggregate COUNT query replaces what used to be a full board-wide

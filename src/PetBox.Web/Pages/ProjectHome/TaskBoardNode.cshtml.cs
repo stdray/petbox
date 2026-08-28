@@ -76,6 +76,13 @@ public sealed class TaskBoardNodeModel : PageModel
 
 	// The resolved node (board + enriched view + breadcrumb ancestors). Set on a 200.
 	public NodeDetailView Detail { get; private set; } = default!;
+	// live-verification finding (owner screenshot, 2026-08-28): the regression banner's
+	// "fixed by" link used to always show the raw NodeId — PetBox's UI convention prefers a slug
+	// when one resolves. Observation.FixedByNodeId is a plain stored NodeId (not a graph edge), so
+	// it needs its OWN resolution, reusing GetNodeAsync — the same door the exhaustive relations
+	// panel below already resolves every OTHER link target through (ObservationFixedByResolver).
+	// Null when this node has no Observation, or no FixedByNodeId, or the resolver isn't reached.
+	public LinkDto? ObservationFixedByLink { get; private set; }
 	// The node's discussion thread, DFS-flattened (shared shape with the board page).
 	public IReadOnlyList<CommentLine> Thread { get; private set; } = [];
 	// Legal next statuses from the node's current status (edit-status). The status form offers
@@ -315,6 +322,11 @@ public sealed class TaskBoardNodeModel : PageModel
 		MemoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
 			? await MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, bodies, ct)
 			: MemoryRefs;
+
+		// live-verification finding: resolve the regression banner's fixed-by target to a slug
+		// (ObservationFixedByResolver) — a single-node point read, same cost posture as NodeRefs/
+		// MemoryRefs just above. No-op (null) when there's no Observation or no FixedByNodeId.
+		ObservationFixedByLink = await ObservationFixedByResolver.ResolveAsync(_tasks, ProjectKey, detail.Node.Observation?.FixedByNodeId, ct);
 		return Page();
 	}
 }

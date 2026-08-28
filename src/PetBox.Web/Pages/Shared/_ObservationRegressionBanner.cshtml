@@ -3,17 +3,30 @@
    value signal the whole observation mechanism exists to surface (work
    observation-recurrence-after-fix-signal) — a SEPARATE, noticeable alert banner, deliberately
    NOT another badge sharing the row with the plain recurrence counter (_ObservationRecurrenceBadge).
-   Uses the project's standard alert-warning convention (doc/ui-conventions.md). FixedByNodeId is a
-   raw NodeId (no resolved board+slug), so it routes through the opaque Routes.TaskBoardNode(id)
-   door — same fallback the exhaustive relations panel (TaskBoardNode.cshtml) already uses for an
-   unresolved link target. *@
+   Uses the project's standard alert-warning convention (doc/ui-conventions.md).
+   live-verification finding (2026-08-28, owner screenshot on `observations/live3-prov-check-
+   cache-evict`): this used to always link through the opaque Routes.TaskBoardNode(id) route,
+   showing the raw 32-hex NodeId as link text ("fixed by 65ce101c2a864c04b32869675ce2f30d") — PetBox
+   addresses by either NodeId or slug, but the UI convention prefers a slug (the SAME exhaustive
+   relations panel lower on this page already resolves its targets to a slug when it can). Now
+   renders the slug when the caller resolved one (Model.FixedByLink, built via
+   ObservationFixedByResolver — the SAME ITasksService.GetNodeAsync door the relations panel's own
+   LinkRef reaches through, not a second path); degrades to the raw NodeId, never fails to render,
+   when the target is unresolved/missing (Model.FixedByLink is null or its Status is "missing"). *@
 @if (Model.Observation is { RecurredAfterFixAt: { } regressedAt } o)
 {
 	<div class="alert alert-warning text-xs py-1.5 px-2 mt-1" data-testid="node-observation-regression" role="alert">
 		<span>⚠ recurred after fix — <time class="local-time" datetime="@regressedAt.ToString("o")" data-testid="node-observation-regressed-at">@regressedAt.ToString("yyyy-MM-dd HH:mm")</time></span>
 		@if (!string.IsNullOrEmpty(o.FixedByNodeId))
 		{
-			<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, o.FixedByNodeId)" class="link link-hover font-mono" data-testid="node-observation-fixed-by-link">fixed by @o.FixedByNodeId</a>
+			@if (Model.FixedByLink is { Status: not "missing" } l && l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s })
+			{
+				<a href="@Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, b, s)" class="link link-hover font-mono" data-testid="node-observation-fixed-by-link">fixed by @s</a>
+			}
+			else
+			{
+				<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, o.FixedByNodeId)" class="link link-hover font-mono" data-testid="node-observation-fixed-by-link">fixed by @o.FixedByNodeId</a>
+			}
 		}
 	</div>
 }

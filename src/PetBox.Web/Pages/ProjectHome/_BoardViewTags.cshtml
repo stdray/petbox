@@ -29,7 +29,7 @@ else
 			{
 				var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, row.Node.Status);
 				var commentCount = Model.CommentCounts.GetValueOrDefault(row.Node.NodeId);
-				<partial name="_TaskNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.TaskNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, commentCount, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs)" />
+				<partial name="_TaskNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.TaskNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, commentCount, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, ObservationFixedByLinks: Model.ObservationFixedByLinks)" />
 			}
 		}
 	</ul>
