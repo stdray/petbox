@@ -129,7 +129,15 @@ public sealed class TaskTransitionEffects
 		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
 		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status), meta?.Kind);
 		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
-		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, partition: n => n.Board == node.Board, ct: ct);
+		// The CASCADE half of decision-pending-survives-closure: this door closes nodes too — the
+		// work preset's `On: Done, Link: issue_task` effect drives the reported intake node to
+		// `done` without ever passing through TasksService.ApplyWorkflow. Clearing the flag here,
+		// in the same revision the status change mints, keeps the invariant "terminal ⇒ not
+		// waiting" true whichever door did the closing. Terminality comes from the TARGET board's
+		// FSM through the very predicate this method already asks about the CURRENT status one
+		// line above — both terminal kinds, never a status spelling.
+		var pending = node.DecisionPending && !runtime.IsTerminalStatus(meta?.Kind, target);
+		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target, DecisionPending = pending } }, partition: n => n.Board == node.Board, ct: ct);
 		await _boards.TouchAsync(projectKey, node.Board, ct);
 	}
 }
