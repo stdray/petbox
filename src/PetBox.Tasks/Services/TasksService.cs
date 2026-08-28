@@ -501,9 +501,21 @@ public sealed partial class TasksService : ITasksService
 	//     came back" in their OWN queue without a manual sweep. The obligation's status/FSM is
 	//     never touched — reopening a closed task would distort cycle metrics, an explicit owner
 	//     call-out, not an oversight.
-	public async Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, CancellationToken ct = default)
+	public async Task<long> RecordObservationRecurrenceAsync(string projectKey, string nodeId, bool currentlyFixed, string? sessionId = null, CancellationToken ct = default)
 	{
 		if (_observationSignals is null) return 0;
+
+		// work observation-recurrence-session-provenance / spec
+		// observation-recurrence-carries-session-provenance: union THIS sighting's session
+		// onto the existing node's accumulating provenance, reusing the same
+		// plan_node_sessions mechanism a normal upsert touch already writes
+		// (TaskUpsertAssociations.SetOriginSessionsAsync) rather than a second table. A
+		// dedup hit never re-materializes a TaskNode, so this calls the nodeId-list overload
+		// directly. No sessionId → no-op, same contract as the normal upsert path (never a
+		// refusal, never a required argument — see the spec body's structural-limit clause).
+		using (var ctx = _boards.NewEnsuredConnection(projectKey))
+			await TaskUpsertAssociations.SetOriginSessionsAsync(ctx, SystemBoards.Observations, sessionId, [nodeId], ct);
+
 		if (!currentlyFixed)
 			return await _observationSignals.RecordRecurrenceAsync(projectKey, nodeId, currentlyFixed: false, ct);
 

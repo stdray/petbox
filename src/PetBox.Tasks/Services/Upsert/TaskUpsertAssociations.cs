@@ -96,12 +96,22 @@ public sealed class TaskUpsertAssociations
 	//
 	// No sessionId → nothing to record, and no error: the write is legal without one (the
 	// missing-sid detector in TasksService.UpsertAsync is what makes that omission visible).
+	public static Task SetOriginSessionsAsync(
+		TasksDb ctx, string board, string? sessionId, TaskNode[] desired, CancellationToken ct) =>
+		SetOriginSessionsAsync(ctx, board, sessionId, desired.Select(n => n.NodeId), ct);
+
+	// nodeId-list core (work observation-recurrence-session-provenance): the dedup-hit path
+	// (TasksService.RecordObservationRecurrenceAsync) never has a `TaskNode[] desired` — a
+	// dedup hit lands on an EXISTING node it never re-materializes as a TaskNode, it only
+	// knows the NodeId. Same union semantics as the `desired`-shaped overload above (which now
+	// forwards here): FOLD, NOT APPEND, enforced by the plan_node_sessions PK (NodeId,
+	// SessionId) as much as by the `already` skip-check.
 	public static async Task SetOriginSessionsAsync(
-		TasksDb ctx, string board, string? sessionId, TaskNode[] desired, CancellationToken ct)
+		TasksDb ctx, string board, string? sessionId, IEnumerable<string> nodeIdsIn, CancellationToken ct)
 	{
 		var sid = (sessionId ?? "").Trim();
-		if (sid.Length == 0 || desired.Length == 0) return;
-		var nodeIds = desired.Select(n => n.NodeId).Where(id => id.Length > 0)
+		if (sid.Length == 0) return;
+		var nodeIds = nodeIdsIn.Where(id => !string.IsNullOrEmpty(id))
 			.Distinct(StringComparer.Ordinal).ToList();
 		if (nodeIds.Count == 0) return;
 
