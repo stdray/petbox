@@ -110,22 +110,34 @@ public sealed class TaskBoardDecisionPendingFilterTests : IDisposable
 		m.Nodes.Should().BeEmpty();
 	}
 
-	// Parity with decision-pending-survives-closure: a CLOSED node that still carries the flag must
-	// stay in the filtered queue — the same StatusKind widening this page's own unfiltered
-	// GetAsync(includeClosed:true) already applies for the board's base read.
+	// THE SEAM between this card and decision-pending-survives-closure, asserted from the UI side.
+	// That card clears the flag inside the very write that closes the node, so a closed node carrying
+	// the flag is no longer reachable through the service at all — not by closing a flagged node, and
+	// not by flagging an already-closed one. The board queue must therefore agree with the MCP queue:
+	// closing a node takes it OUT of the filtered board, without this page filtering on status itself.
+	// An earlier revision of this test asserted the OPPOSITE (a closed node stays in the queue); it was
+	// written before the sibling fix landed and its premise died with it.
 	[Fact]
-	public async Task Filtered_KeepsAClosedNodeThatStillCarriesTheFlag()
+	public async Task Filtered_DropsTheNodeOnceItCloses_BecauseClosureClearsTheFlag()
 	{
 		await _store.CreateAsync(Proj, "b4", null, "simple");
-		await _tasks.UpsertAsync(Proj, "b4", [Node("closed-pending", decisionPending: true)]);
-		var born = await Read("b4", "closed-pending");
-		await _tasks.UpsertAsync(Proj, "b4", [Node("closed-pending", status: "Done", version: born.Version)]);
+		await _tasks.UpsertAsync(Proj, "b4", [Node("closing", decisionPending: true), Node("still-waiting", decisionPending: true)]);
 
-		var m = Model("b4", decisionPendingParam: true);
-		await m.OnGetAsync(default);
+		var before = Model("b4", decisionPendingParam: true);
+		await before.OnGetAsync(default);
+		before.Nodes.Select(n => n.Key).Should().BeEquivalentTo(["closing", "still-waiting"],
+			"both carry the flag while they are open");
 
-		m.Nodes.Select(n => n.Key).Should().BeEquivalentTo(["closed-pending"],
-			"a Done node that still waits on the owner must not silently drop out of the filtered queue");
+		var born = await Read("b4", "closing");
+		await _tasks.UpsertAsync(Proj, "b4", [Node("closing", status: "Done", version: born.Version)]);
+
+		(await Read("b4", "closing")).DecisionPending.Should().BeFalse(
+			"the closing write itself clears the flag — a closed node waits on nobody");
+
+		var after = Model("b4", decisionPendingParam: true);
+		await after.OnGetAsync(default);
+		after.Nodes.Select(n => n.Key).Should().BeEquivalentTo(["still-waiting"],
+			"the closed node leaves the queue, and the one still waiting stays — the board agrees with tasks_search");
 	}
 
 	// board-view-cross-device shape parity: explicit `?decisionPending=false` must win over ANY
