@@ -5,6 +5,7 @@ using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
+using PetBox.Core.Contract;
 
 namespace PetBox.Tasks.Services;
 
@@ -59,6 +60,48 @@ public sealed class CommentService : ICommentService
 		for (var i = 0; i < items.Count; i++)
 		{
 			var it = items[i];
+
+			// ── write-fragment-patch ───────────────────────────────────────────────────────
+			// A `fragment` PATCH is resolved against `currentById` — the active row this call
+			// already read to build the ordinary PATCH below — so the substitution and the
+			// version watermark see the same revision. Refusals ride `rejected` in BOTH atomic
+			// and partial mode (unlike the ArgumentException guards below, which keep their
+			// historical atomic-throw behaviour): a fragment that stopped matching means the text
+			// moved under the caller, and that must surface as applied:false + conflicts[], the
+			// same channel a stale baseline uses.
+			if (it.Fragment is not null)
+			{
+				// A CREATE has no id yet, so a rejected item can only be named by its position.
+				var at = it.Id ?? $"#{i}";
+				if (it.Body is not null)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null, FragmentPatch.BodyAndFragment));
+					continue;
+				}
+				if (string.IsNullOrEmpty(it.Id))
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null,
+						"'fragment' patches an existing comment — a create (no id) has no text to match; send 'body'"));
+					continue;
+				}
+				if (!currentById.TryGetValue(it.Id!, out var curForFragment))
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, null,
+						$"comment '{it.Id}' not found or already deleted"));
+					continue;
+				}
+				var patched = FragmentPatch.Apply(curForFragment.Body, it.Fragment);
+				if (!patched.Ok)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, curForFragment.Version, patched.Error));
+					continue;
+				}
+				desired.Add(curForFragment with { Version = it.Version, Body = patched.Body });
+				itemByKey[it.Id!] = it;
+				patchedKeys.Add(it.Id!);
+				continue;
+			}
+
 			try
 			{
 				if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
@@ -86,7 +129,7 @@ public sealed class CommentService : ICommentService
 						NodeId = it.NodeId!,
 						ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
 						Author = it.Author ?? string.Empty,
-						Body = it.Body,
+						Body = it.Body!,
 					});
 					itemByKey[id] = it;
 				}
@@ -95,7 +138,7 @@ public sealed class CommentService : ICommentService
 					// PATCH
 					if (!currentById.TryGetValue(it.Id!, out var cur))
 						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
-					desired.Add(cur with { Version = it.Version, Body = it.Body });
+					desired.Add(cur with { Version = it.Version, Body = it.Body! });
 					itemByKey[it.Id!] = it;
 					patchedKeys.Add(it.Id!);
 				}

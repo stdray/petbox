@@ -723,7 +723,11 @@ public sealed class MemoryService : IMemoryService
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
 		// The payload guards (key required, type required on a new entry, unknown type) fire per
 		// entry: in partial mode they land in `rejected` instead of throwing the call away.
-		var desired = MergePatches(ctx, store, live, atomic ? null : rejected);
+		var fragmentConflicts = new List<TemporalConflict>();
+		var desired = MergePatches(ctx, store, live, atomic ? null : rejected, fragmentConflicts);
+		// Unconditional: a fragment refusal is a conflict in atomic mode too (applied:false,
+		// nothing written) rather than an exception thrown out of the call.
+		rejected.AddRange(fragmentConflicts);
 		if (!atomic)
 		{
 			var refused = rejected.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
@@ -1215,7 +1219,11 @@ public sealed class MemoryService : IMemoryService
 	// `rejected` non-null = PARTIAL mode: a per-entry payload refusal is recorded and the entry is
 	// dropped, instead of the throw that (correctly) kills an atomic call.
 	static MemoryEntry[] MergePatches(MemoryDb ctx, string store, IReadOnlyList<MemoryEntryInput> upserts,
-		List<TemporalConflict>? rejected = null)
+		List<TemporalConflict>? rejected,
+		// Fragment refusals, unlike the payload guards above, are collected in BOTH modes — see
+		// the block in the loop. Separate list so the caller can add them to `rejected`
+		// unconditionally without changing what atomic mode does to the OTHER guards.
+		List<TemporalConflict> fragmentConflicts)
 	{
 		var editKeys = upserts.Where(u => u.Version != 0).Select(u => u.PrevKey ?? u.Key).Distinct().ToList();
 		var active = editKeys.Count == 0
@@ -1227,9 +1235,40 @@ public sealed class MemoryService : IMemoryService
 		foreach (var u in upserts)
 		{
 			var current = u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key ?? "", out var c) ? c : null;
+
+			// ── write-fragment-patch ───────────────────────────────────────────────────────
+			// Resolved here, against the same `current` row ToEntry() inherits an omitted body
+			// from, so the substitution and the version watermark cannot disagree about which
+			// revision was edited. Refusals go to `fragmentConflicts` in BOTH modes — the caller
+			// sees applied:false + conflicts[], exactly as for a stale baseline.
+			var patch = u;
+			if (u.Fragment is not null)
+			{
+				var key = u.Key ?? "";
+				if (u.Body is not null)
+				{
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current?.Version, FragmentPatch.BodyAndFragment));
+					continue;
+				}
+				if (current is null)
+				{
+					// Either version 0 (a create) or no active row at this key: no text to match.
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, null,
+						$"'fragment' needs existing text to patch — entry '{key}' has no active revision at your baseline; send 'body' to create it"));
+					continue;
+				}
+				var applied = FragmentPatch.Apply(current.Body, u.Fragment);
+				if (!applied.Ok)
+				{
+					fragmentConflicts.Add(new(key, TemporalConflictKind.Rejected, u.Version, current.Version, applied.Error));
+					continue;
+				}
+				patch = u with { Body = applied.Body };
+			}
+
 			try
 			{
-				desired.Add(ToEntry(u, store, current));
+				desired.Add(ToEntry(patch, store, current));
 			}
 			catch (ArgumentException ex) when (rejected is not null)
 			{

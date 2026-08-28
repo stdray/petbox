@@ -1,3 +1,5 @@
+using PetBox.Core.Contract;
+
 namespace PetBox.Tasks.Contract;
 
 // The single door to node comments — a generic, editable, tree-structured comment thread
@@ -105,9 +107,14 @@ public sealed record CommentItem(
 	string? NodeId,
 	string? ParentId,
 	string? Author,
-	string Body,
+	// NULLABLE since write-fragment-patch: a PATCH may carry `Fragment` INSTEAD of a whole body,
+	// so "no body" is now a legal item shape. Exactly one of Body/Fragment must be present.
+	string? Body,
 	IReadOnlyList<string>? Tags,
-	long Version);
+	long Version,
+	// Point edit of an existing comment's body — see NodePatch.Fragment. PATCH only: a CREATE has
+	// no current text to match against, so a fragment on a create is refused.
+	IReadOnlyList<FragmentEdit>? Fragment = null);
 
 // Outcome of a comments_upsert batch, mirroring the tasks_upsert ack: `Applied` is the single
 // source of truth (false ⇒ nothing written, `Conflicts` explains every rejected id); on success

@@ -1,3 +1,4 @@
+using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Memory.Data;
 
@@ -19,6 +20,14 @@ public sealed record MemoryEntryInput
 	public string? Type { get; init; }
 	public string? Description { get; init; }
 	public string? Body { get; init; }
+
+	// Point edit of the body instead of a full replace (spec/write-cost-follows-change): a list of
+	// {old, new} substitutions applied IN ORDER against the CURRENT active row's body, resolved in
+	// the service's read-merge — the same `cur` every other omitted field inherits from — so the
+	// substitution rides the existing version watermark rather than a second, racier read.
+	// Mutually exclusive with Body. Every failure (zero matches, more than one match, both fields
+	// present) is a REFUSAL through the ordinary conflict channel, never a partial application.
+	public IReadOnlyList<FragmentEdit>? Fragment { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }
 	public string? Metadata { get; init; }
 	public string? PrevKey { get; init; }
