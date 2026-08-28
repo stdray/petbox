@@ -42,10 +42,18 @@ public sealed class SessionSearchService
 	private const int DefaultHitsPerSession = 5;
 	private const int MaxHitsPerSession = 20;
 
-	// Term-leg over-fetch pool: mirrors the memory contract's own convention for a store's
-	// hybrid pool (max(3×limit, 50), see IMemoryService.SearchEntriesAsync) so neither leg
-	// starves the fusion of candidates the session cut would otherwise keep.
-	private const int TermPoolFloor = 50;
+	// Term-leg over-fetch pool: a FIXED depth, not `3 × sessions` scaled to the page size — the same
+	// move memory made for its own WholePool candidate depth (MemoryService.PagedCandidateDepth) and for
+	// the same reason (spec: result-set-pageable). It used to be `Math.Max(3 * sessions, 50)`, so it was
+	// part of the pool's CACHE KEY: `sessions` is deliberately excluded from the cursor fingerprint
+	// ("shapes a page, not the sequence"), but a caller who raised it past 16 between pages changed the
+	// key anyway, evicting/rebuilding the pool with nothing written and no TTL involved —
+	// `AssertPoolAlive` then reported a plain expiry that was not one (card:
+	// cursor-refusal-blames-caller-for-data-shift). Fixed at 3 × MaxSessions (90) — the widest the old
+	// formula could ever produce — so `sessions` no longer touches the pool's identity at all, and the
+	// tool's promise that page-shaping arguments are free to vary between pages becomes true instead of
+	// true-until-16.
+	private const int TermPoolDepth = 3 * MaxSessions;
 
 	readonly IMemoryService _memory;
 	readonly ISessionEpisodicIndex _episodic;
@@ -150,13 +158,13 @@ public sealed class SessionSearchService
 		}
 		var scanLeg = fullScanRan == true;
 
-		// The term leg's over-fetch depth. It decides WHICH sessions are candidates, so it is part of the
-		// pool's identity below — lifted up here from the leg itself for exactly that reason.
-		var termPool = Math.Max(3 * sessions, TermPoolFloor);
+		// The term leg's over-fetch depth — FIXED (see TermPoolDepth), not derived from `sessions`, so it
+		// no longer decides the pool's identity below the way a page-size knob never should.
+		var termPool = TermPoolDepth;
 
 		// THE POOL KEY — everything that decides the pool's MEMBERSHIP and ORDER, and nothing that decides
-		// only how one page is rendered (`hitsPerSession`, `bodyLen`, and `sessions` except through the
-		// candidate depth it implies, which IS included).
+		// only how one page is rendered (`sessions`, `hitsPerSession`, `bodyLen` — none of the three touch
+		// candidate depth or membership now that TermPoolDepth is fixed).
 		//
 		// NO DATA-VERSION COMPONENT, unlike tasks/memory, and that is a consequence rather than an
 		// oversight: this surface's data version IS the discovery order (see `dataVersion` below), which

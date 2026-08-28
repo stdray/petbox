@@ -166,6 +166,30 @@ public sealed class SessionSearchPoolCacheTests : IDisposable
 		_digestLlm.Calls.Should().Be(1, "the discovery pool is materialized once and every later page is a slice of it");
 	}
 
+	[Fact]
+	public async Task RaisingSessionsPastTheOldFloor_MidWalk_DoesNotRebuildThePool()
+	{
+		// Root-cause half of card cursor-refusal-blames-caller-for-data-shift. `sessions` is deliberately
+		// EXCLUDED from the cursor fingerprint ("shapes a page, not the sequence"), but before
+		// TermPoolDepth was fixed it fed the pool's own CACHE KEY via `termPool = max(3 × sessions, 50)`:
+		// sessions ≤ 16 always landed on the floor (stable), sessions ≥ 17 moved the key — so raising
+		// `sessions` from 10 to 20 mid-walk, something the tool description promises is free, silently
+		// evicted and rebuilt the pool. That is asserted directly here: page 2 with a DIFFERENT `sessions`
+		// than page 1 (crossing the old 16 boundary both ways) must not throw and must not pay a second
+		// cross-encoder pass.
+		await SeedSixAsync();
+
+		var page1 = await SearchToolAsync(_search, sessions: 2);
+		page1.NextCursor.Should().NotBeNull("a page size of 2 over 6 sessions must leave more to walk");
+
+		var act = () => SearchToolAsync(_search, sessions: 20, cursor: page1.NextCursor);
+
+		await act.Should().NotThrowAsync(
+			"sessions is a page-shaping argument — the tool description promises it is free to vary");
+		_digestLlm.Calls.Should().Be(1,
+			"the pool's cache key must not depend on `sessions`, so page 2 reads the SAME pool page 1 built");
+	}
+
 	// ── the invariant: a REAL reordering is still refused ─────────────────────────────────────────
 
 	[Fact]

@@ -1127,16 +1127,24 @@ public static class TasksTools
 		// must not spend budget it already spent last call.
 		var axis = hasQuery ? parsedSort?.By ?? TaskSortBy.Relevance : parsedSort?.By ?? TaskSortBy.Priority;
 		var desc = parsedSort?.Desc ?? false;
-		// In query mode the DATA VERSION the pool was ranked over joins the fingerprint. That single
-		// addition is what makes a cursor honest here (card requirement 4): edit the board mid-walk and
-		// the next page is REFUSED with an instructive error, never quietly restarted against a new
-		// ordering — the failure mode the whole keyset design exists to avoid.
+		// FINGERPRINT is the QUESTION ONLY (card: cursor-refusal-blames-caller-for-data-shift) — the DATA
+		// VERSION the pool was ranked over no longer joins it; it lives in `dataStamp` below, checked by
+		// its own AssertDataStamp, so a board edit mid-walk is diagnosed as a data change instead of a
+		// caller argument change that never happened.
 		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
-			nodes, commit, statusKind, decisionPending, axis, desc, res.DataVersion);
+			nodes, commit, statusKind, decisionPending, axis, desc);
+		// Query mode only — listing keeps its long-standing, deliberately version-FREE token (see
+		// SearchFingerprint's note on the documented "row may shift across the boundary" anomaly).
+		var dataStamp = hasQuery ? res.DataVersion ?? "" : "";
 		IReadOnlyList<TaskSearchHit> hits = res.Hits;
 		if (hasCursor)
 		{
 			var token = KeysetCursor.Decode(cursor, fingerprint, "tasks_search");
+			// THE DATA COMMITMENT, checked right after the fingerprint (query mode only): a board edit
+			// mid-walk must end the walk here, with words that name the data, BEFORE AssertPoolAlive gets a
+			// chance to blame a rerank-pool eviction that the SAME edit can also trigger (the pool cache key
+			// includes this stamp too) — which would silently reintroduce the bug this fixes one check later.
+			if (hasQuery) token.AssertDataStamp(dataStamp, "tasks_search");
 			// THE ORDER COMMITMENT, checked before the seek (spec: result-set-pageable). The fingerprint
 			// above only proves the QUESTION is unchanged; this proves the ANSWER is still ranked the way
 			// the token was issued against. A pool that was evicted and rebuilt while the rerank route was
@@ -1148,10 +1156,10 @@ public static class TasksTools
 			// matched an RRF one. That was an emergent side effect nobody had written down — a refactor
 			// dropping the score from the token (as memory legitimately did) would have reopened the door
 			// in silence. Now it is a stated invariant, checked in one place, for every surface.
-			// THE POOL COMMITMENT, checked FIRST: a reranked order is a property of ONE PASS (measured —
-			// work/rerank-route-nondeterministic-order), so the walk is bound to the pool that pass
-			// materialized and a pool that is gone ends it saying so. The order commitment below stays as
-			// the second echelon — it cannot fire on a cold reranked pool any more (this gets there
+			// THE POOL COMMITMENT, checked after the data commitment: a reranked order is a property of ONE
+			// PASS (measured — work/rerank-route-nondeterministic-order), so the walk is bound to the pool
+			// that pass materialized and a pool that is gone ends it saying so. The order commitment below
+			// stays as the second echelon — it cannot fire on a cold reranked pool any more (this gets there
 			// first), but it is free and still catches an order that moved with the pool in hand.
 			KeysetCursor.AssertPoolAlive(res.PoolRebuiltByRerank, "tasks_search");
 			if (res.PoolOrderHash is { } expectedOrder)
@@ -1179,7 +1187,7 @@ public static class TasksTools
 		var more = kept.Count < hits.Count;
 		var nextCursor = last is not null && more
 			? new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Node.Key, last.Board,
-				res.PoolOrderHash ?? "").Encode()
+				res.PoolOrderHash ?? "", dataStamp).Encode()
 			: null;
 		// WHY THE WALK STOPPED — stated, not implied (card requirement 2). In query mode this field is
 		// ALWAYS present, so a caller never has to read "nextCursor is absent" and guess whether it
@@ -1296,15 +1304,15 @@ public static class TasksTools
 		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
 	};
 
-	// The query identity a cursor is bound to: every argument that decides WHICH rows are selected
-	// and in WHAT order. Deliberately EXCLUDES bodyLen/includeUrl/limit — those shape a page, not
-	// the sequence, so a caller may vary them mid-walk without invalidating the token.
-	//
-	// `dataVersion` (query mode only; null in listing mode, which keeps its long-standing, deliberately
-	// version-FREE token and its documented "a row whose sort key changed may shift across the boundary"
-	// anomaly) pins the token to the exact board state the pool was ranked over. Relevance has no
-	// equivalent of that tolerable anomaly: a single new or edited node can move ANY row to ANY position,
-	// so a version-free relevance token would be the silent-splice failure rather than a small anomaly.
+	// The query identity a cursor is bound to: every argument the CALLER supplied that decides WHICH rows
+	// are selected and in WHAT order. Deliberately EXCLUDES bodyLen/includeUrl/limit — those shape a
+	// page, not the sequence, so a caller may vary them mid-walk without invalidating the token. Since
+	// card cursor-refusal-blames-caller-for-data-shift, also EXCLUDES the board's own data version: that
+	// is not a caller argument, so it is no longer folded in here — it lives in `dataStamp` at the call
+	// site and its own AssertDataStamp, so a board edit mid-walk is diagnosed as a data change rather than
+	// impersonating a "DIFFERENT query" the caller never asked. Listing mode keeps its long-standing,
+	// deliberately version-FREE token and its documented "a row whose sort key changed may shift across
+	// the boundary" anomaly, unaffected by this — it never folded a data version in either place.
 	//
 	// `q` ITSELF is an ingredient — the one this method did not need while a cursor was listing-only.
 	// In query mode the text decides both WHICH nodes are selected and in WHAT order they rank, so
@@ -1313,8 +1321,7 @@ public static class TasksTools
 	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
 		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
-		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc,
-		string? dataVersion = null) =>
+		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc) =>
 		KeysetCursor.FingerprintOf(
 			"tasks_search", projectKey, query, board, underNode,
 			CursorFilterSet(status), CursorFilterSet(nodes),
@@ -1324,7 +1331,7 @@ public static class TasksTools
 			// board. Three distinct states — omitted, true, false — so null must NOT collapse onto
 			// "false" (that would silently accept a cursor across a filter change).
 			decisionPending is null ? null : decisionPending.Value ? "1" : "0",
-			axis.ToString(), desc ? "1" : "0", dataVersion);
+			axis.ToString(), desc ? "1" : "0");
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
 	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled

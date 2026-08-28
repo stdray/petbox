@@ -273,11 +273,11 @@ public static class SessionTools
 		IMemoryUsageRecorder usage,
 		string? projectKey = null,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
-		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
-		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
+		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30). Shapes a page only (the discovery pool's own candidate depth is a fixed constant, not derived from this) — free to vary between pages.")] int sessions = 0,
+		[LogArg][Description("With q: max hits returned per session (default 5, max 20). Shapes a page only — free to vary between pages.")] int hitsPerSession = 0,
 		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
-		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}).")] int? bodyLen = null,
-		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. Keep every other argument identical while paging; a cursor from a different query is an ERROR, not a silent restart. It is bound to the discovery ORDER it was issued for, so a new session or a fresh digest mid-walk also errors — drop the cursor to start over. The walk is bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
+		[LogArg][Description("With q: body length knob (uniform contract) for each hit's snippet — omitted = a query-centered ~240-char preview (the compact default); 0 = no snippet text; N>0 = a query-centered preview N chars wide; -1 = the full raw message (or jump there directly with session_get {fromOrdinal: the hit's `message` ordinal}). Shapes a page only — free to vary between pages.")] int? bodyLen = null,
+		[LogArg(LogArgMode.Presence)][Description("With q: pagination — the opaque `nextCursor` from the previous page, passed back verbatim to continue after it. `q` and `fullScan` decide the QUESTION and must stay identical, or the call FAILS with an explaining error rather than silently restarting you inside a different ordering. `sessions`/`hitsPerSession`/`bodyLen` shape a page, not the sequence, and are free to vary. The walk is separately bound to the POOL it was ranked in: that pool lives about 15 minutes from the last page, and once it expires the walk is over — the next page is REFUSED — the error names the expired pool — rather than re-ranked, because a cross-encoder does not reproduce its own order. Page promptly, and on that refusal start the query over.")] string? cursor = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -329,6 +329,12 @@ public static class SessionTools
 		// not reproduce its own order (measured — work/rerank-route-nondeterministic-order), so a walk is
 		// bound to the pool that pass materialized. Once that pool is gone the honest answer names the
 		// pool, not the ranking. The order commitment stays behind it as the second echelon.
+		//
+		// `sessions` is excluded from the FINGERPRINT above (it shapes a page, not the sequence) AND, since
+		// SessionSearchService.TermPoolDepth was fixed to a constant, from the pool's CACHE KEY too — it no
+		// longer has any way to evict/rebuild this pool on its own (card:
+		// cursor-refusal-blames-caller-for-data-shift). So "the pool expired" is the only honest cause left
+		// here and needs no hint.
 		if (token is not null) KeysetCursor.AssertPoolAlive(o.PoolRebuiltByRerank, "session_search");
 		token?.AssertPoolOrder(o.DataVersion ?? "", "session_search");
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
@@ -407,7 +413,11 @@ public static class SessionTools
 	// token's order commitment instead (see AssertPoolOrder at the call site), so the two failures stay
 	// tellable apart: "you changed the query" versus "the ranking moved under you".
 	// `sessions`/`hitsPerSession`/`bodyLen` are deliberately EXCLUDED: they shape a page, not the
-	// sequence, so a caller may vary them mid-walk.
+	// sequence, so a caller may vary them mid-walk. That is true of the pool's CACHE KEY too, not only
+	// its fingerprint — SessionSearchService.TermPoolDepth is a fixed constant rather than `3 ×
+	// sessions`, precisely so `sessions` cannot touch which pool a page reads (card:
+	// cursor-refusal-blames-caller-for-data-shift; the prior formula let sessions ≥ 17 evict/rebuild the
+	// pool on its own, which AssertPoolAlive could then only misname as an ordinary timeout).
 	static string SearchFingerprint(string projectKey, string? query, bool fullScan) =>
 		KeysetCursor.FingerprintOf("session_search", projectKey, query, fullScan ? "1" : "0");
 

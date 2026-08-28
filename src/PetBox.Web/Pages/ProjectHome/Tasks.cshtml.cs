@@ -179,13 +179,20 @@ public sealed class TasksModel : PageModel
 		}, urlPrefix, ct: ct);
 		Retrievers = result.Retrievers;
 
-		var fingerprint = SearchFingerprint(q, axis, desc, result.DataVersion);
+		// FINGERPRINT is the QUESTION ONLY (card: cursor-refusal-blames-caller-for-data-shift) — the data
+		// version moved into `dataStamp`, checked by its own AssertDataStamp below.
+		var fingerprint = SearchFingerprint(q, axis, desc);
+		var dataStamp = result.DataVersion ?? "";
 		IReadOnlyList<TaskSearchHit> afterCursor = result.Hits;
 		if (!string.IsNullOrWhiteSpace(Cursor))
 		{
 			try
 			{
 				var decoded = KeysetCursor.Decode(Cursor, fingerprint, "project-tasks-search");
+				// THE DATA COMMITMENT, checked right after the fingerprint: a board edit mid-walk must end
+				// the walk here, named as a data change, BEFORE AssertPoolAlive gets a chance to blame a
+				// rerank-pool eviction the same edit can also trigger.
+				decoded.AssertDataStamp(dataStamp, "project-tasks-search");
 				// THE ORDER COMMITMENT (spec result-set-pageable) — same check tasks_search's own
 				// adapter makes before seeking: the fingerprint only proves the QUESTION is
 				// unchanged, this proves the ranked ANSWER is still in the sequence the token names.
@@ -219,7 +226,7 @@ public sealed class TasksModel : PageModel
 		{
 			var last = page[^1];
 			NextCursor = new KeysetCursor(fingerprint, CursorSortValue(last, axis), last.Node.Key, last.Board,
-				result.PoolOrderHash ?? "").Encode();
+				result.PoolOrderHash ?? "", dataStamp).Encode();
 		}
 		// WHY THE WALK STOPPED — stated, never implied (card requirement 2).
 		Stop = hasNext ? "more" : result.PoolBounded ? "pool-boundary" : "exhausted";
@@ -275,8 +282,10 @@ public sealed class TasksModel : PageModel
 
 	// The query identity this cursor is bound to — mirrors TasksTools.SearchAsync's own
 	// SearchFingerprint (project-wide: no board/under/status/statusKind facet on this MVP screen).
-	static string SearchFingerprint(string query, TaskSortBy axis, bool desc, string? dataVersion) =>
-		KeysetCursor.FingerprintOf("project-tasks-search", query, axis.ToString(), desc ? "1" : "0", dataVersion);
+	// The data version is deliberately NOT here any more (card cursor-refusal-blames-caller-for-data-shift)
+	// — it lives in `dataStamp` at the call site and its own AssertDataStamp.
+	static string SearchFingerprint(string query, TaskSortBy axis, bool desc) =>
+		KeysetCursor.FingerprintOf("project-tasks-search", query, axis.ToString(), desc ? "1" : "0");
 
 	// Mirrors TasksTools.CursorSortValue exactly — see that method's own comment for why RELEVANCE
 	// resumes by identity only (Advance tries that first) and never by comparing the score.

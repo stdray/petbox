@@ -58,12 +58,32 @@ namespace PetBox.Core.Contract;
 // a cached pool it matches for free; against a rebuilt one it matches only if the rebuild genuinely
 // reproduced the list. Everything else is a loud, honest refusal. This generalizes the scheme session
 // search already used — the only surface that was closed on purpose rather than by luck.
-public readonly record struct KeysetCursor(string Fingerprint, string SortValue, string Key, string Board, string OrderHash = "")
+// DATA STAMP. `Fingerprint` answers "is this the same QUESTION" — the caller's own arguments: the
+// selection and ordering inputs THEY supplied. It used to also carry the DATA VERSION of the container(s)
+// a query read (memory_search's `containerStamps`, tasks_search's `dataVersion`), which meant a write
+// landing between two pages of an UNCHANGED query surfaced as "this cursor was issued for a DIFFERENT
+// query" — true by the letter (the fingerprint moved) and false by the sense a caller reads it in: they
+// changed nothing, and the advice that follows ("keep the query identical while paging") is a caller
+// contribution they had not withheld. Measured on the live server 2026-08-28 (card
+// cursor-refusal-blames-caller-for-data-shift): a chasing write moved memory's and tasks' fingerprints
+// with the order hash untouched, so the honest "pool expired" refusal (work/rerank-route-nondeterministic-
+// order) was unreachable behind this one on any actively-written project. `DataStamp` is the fix: it moves
+// the data version OUT of `Fingerprint` and into its own field, checked by its own `AssertDataStamp`, so a
+// data shift gets a diagnosis that actually names what changed instead of impersonating a caller mistake.
+public readonly record struct KeysetCursor(
+	string Fingerprint, string SortValue, string Key, string Board, string OrderHash = "", string DataStamp = "")
 {
 	// Bumped only if the payload's SHAPE changes; an old token then fails decode loudly
 	// (see the strictness note above) instead of being misread as the new shape.
 	// 2: added `o` (OrderHash) — a v1 token carries no order commitment, so it must not be honoured.
-	const int FormatVersion = 2;
+	// 3: added `d` (DataStamp), moved OUT of `f` (see the DATA STAMP note above). A v2 token has the data
+	// version baked INSIDE its fingerprint instead of carrying it separately, so there is no `d` to compare
+	// it against under the new, args-only fingerprint scheme — exactly the v1→v2 situation repeated: it
+	// "carries no [...] commitment, so it must not be honoured", and is refused as an old format rather
+	// than silently misread. The cost is small and one-shot: a pool survives a deploy on disk (up to ~15
+	// minutes, SearchPoolCache.DefaultTtl), so only a walk whose token was minted before THIS deploy pays a
+	// restart, once.
+	const int FormatVersion = 3;
 
 	// The token's payload. Short names because the encoded form travels in every page request
 	// and back in every response — a token is overhead, not content.
@@ -75,7 +95,8 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 		[property: JsonPropertyName("s")] string SortValue,
 		[property: JsonPropertyName("k")] string Key,
 		[property: JsonPropertyName("b")] string Board,
-		[property: JsonPropertyName("o")] string? OrderHash = null);
+		[property: JsonPropertyName("o")] string? OrderHash = null,
+		[property: JsonPropertyName("d")] string? DataStamp = null);
 
 	static readonly JsonSerializerOptions TokenJson = new(JsonSerializerDefaults.Web);
 
@@ -85,7 +106,7 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 	// to reach into.
 	public string Encode() =>
 		Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(
-			new Payload(FormatVersion, Fingerprint, SortValue, Key, Board, OrderHash), TokenJson));
+			new Payload(FormatVersion, Fingerprint, SortValue, Key, Board, OrderHash, DataStamp), TokenJson));
 
 	// The ORDER a pool was in when a token was issued, as one hash: each row's address and score, in
 	// order. Address AND score, because either moving is a different list to page — a reordering shows
@@ -110,6 +131,24 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 			+ "pages, or the vector index moved), so continuing would splice two orderings and silently "
 			+ "skip or repeat rows. Your arguments are fine and nothing was written; the ranking simply "
 			+ "changed underneath. Drop the cursor and start the query over.");
+	}
+
+	// THE DATA COMMITMENT — its own refusal, its own words, for the same reason AssertPoolOrder got one:
+	// folding this into the fingerprint made a defect indistinguishable from a caller mistake. A write
+	// between two pages of the SAME query moves the data a walk is reading; that is real and MUST end the
+	// walk (splicing two states together silently skips or repeats rows — the refusal is the feature, see
+	// SearchPoolCache's own note on this), but it is not the caller having "changed the query", and telling
+	// them to "keep the query identical" is advice they already followed. Card:
+	// cursor-refusal-blames-caller-for-data-shift.
+	public void AssertDataStamp(string expectedDataStamp, string subject)
+	{
+		if (string.Equals(DataStamp, expectedDataStamp, StringComparison.Ordinal)) return;
+
+		throw new ArgumentException(
+			$"{subject}: the DATA this cursor was reading has changed since the page it came from — "
+			+ "something was written to the project between pages, so continuing would splice two states "
+			+ "together and silently skip or repeat rows. Your arguments are fine and the query itself did "
+			+ "not change; the underlying data did. Drop the cursor and start the query over.");
 	}
 
 	// THE POOL COMMITMENT — the refusal that had to exist once the order stopped being reproducible.
@@ -184,7 +223,7 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 				+ "changed since the page it came from, so continuing would splice two orderings. Keep "
 				+ "the query identical while paging, or drop the cursor to start the new query over.");
 
-		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "");
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "", p.DataStamp ?? "");
 	}
 
 	// STRUCTURAL decode WITHOUT the fingerprint check, plus the check as a separate step. For consumers
@@ -217,7 +256,7 @@ public readonly record struct KeysetCursor(string Fingerprint, string SortValue,
 			throw new ArgumentException(
 				$"{subject}: cursor is malformed or from an older token format — omit it to start over");
 
-		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "");
+		return new KeysetCursor(p.Fingerprint, p.SortValue, p.Key, p.Board, p.OrderHash ?? "", p.DataStamp ?? "");
 	}
 
 	// The other half of Peek: the SAME refusal Decode makes, as its own step. Word-for-word identical
