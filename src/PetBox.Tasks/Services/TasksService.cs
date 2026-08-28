@@ -3313,10 +3313,24 @@ public sealed partial class TasksService : ITasksService
 	// currently `promoted` is touched, so this can never clobber a `fixed`/`declined`/`seen`
 	// observation (isTerminal already excludes fixed/declined; the explicit status check also
 	// excludes seen, matching "return to seen" being a no-op once already there).
+	//
+	// TWO runtimes, deliberately: `runtime`/`kindSlug` (the OBLIGATION board's, as they arrived in
+	// UpsertAsync) classify the obligation's NEW status, and the observations board's OWN runtime —
+	// re-resolved here, exactly as RecordObservationRecurrenceAsync already does — classifies the
+	// OBSERVATION's. Passing the obligation's runtime through to SetActiveNodeStatusAsync was a live
+	// defect (found on 2f89092 by an end-to-end sweep): the `observations` board lives in the
+	// project's `$utility` world, OUTSIDE every methodology instance, so an instance runtime holds no
+	// `observation` kind and falls back to a project-wide SLUG scan — where an unrelated kind that
+	// happens to own the same slug answers instead. On `$system` that is the wiki kind, whose
+	// `promoted` means "promoted to /doc" and is TERMINALOK; the observation's `promoted` read back
+	// as terminal, `isTerminal` short-circuited the pick, and the fix never nailed the observation.
+	// Resolved ONCE per call and only once an edge is actually in hand, so the no-observation upsert
+	// (the overwhelming majority) still costs nothing.
 	async Task SyncObservationOnObligationTerminalAsync(
 		string projectKey, MethodologyRuntime runtime, string? kindSlug,
 		TaskNode[] desired, Dictionary<string, TaskNode> prior, CancellationToken ct)
 	{
+		MethodologyRuntime? observationRuntime = null;
 		foreach (var n in desired)
 		{
 			if (n.NodeId.Length == 0) continue;
@@ -3333,7 +3347,8 @@ public sealed partial class TasksService : ITasksService
 			{
 				var observationId = edge.FromNodeId;
 				var applied = false;
-				await _effects.SetActiveNodeStatusAsync(projectKey, observationId, runtime,
+				observationRuntime ??= await GetRuntimeForBoardAsync(projectKey, SystemBoards.Observations, ct);
+				await _effects.SetActiveNodeStatusAsync(projectKey, observationId, observationRuntime,
 					(_, obsNode, isTerminal, _) =>
 					{
 						if (isTerminal || !string.Equals(obsNode.Status, "promoted", StringComparison.OrdinalIgnoreCase))

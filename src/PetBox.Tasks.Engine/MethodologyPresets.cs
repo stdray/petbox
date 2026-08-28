@@ -470,7 +470,18 @@ public static class MethodologyPresets
 	public static string ValidTypes(BoardKind kind) =>
 		string.Join("|", KindDef(kind).Workflows.SelectMany(b => b.Types));
 
-	static readonly BoardKind[] AllKinds = [BoardKind.Simple, BoardKind.Classic, BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+	// EVERY preset kind — Observation included. It was missing here until a live sweep on 2f89092
+	// caught the consequence: KindOfSlug/NameOfSlug are the fallback BOTH MethodologyRuntime
+	// classification doors take for a kind that is not a DEFINED kind of the runtime in hand, and
+	// `observation` is exactly such a kind for every runtime — the `observations` board sits in the
+	// project's `$utility` world, so neither a methodology instance's rules nor (on `$system`) the
+	// utility document declares it. With the observation vocabulary absent from this array, its four
+	// slugs resolved to null here and fell through to the runtime's DEFINED kinds, where any kind
+	// owning the same slug answered for it: `$system`'s wiki kind classifies `promoted` as TERMINALOK
+	// ("promoted to /doc"), so an observation at `promoted` read as already-terminal and the
+	// nail-on-fix effect silently declined to touch it. None of the four (seen/promoted/fixed/
+	// declined) collides with another preset's vocabulary, so listing the kind is purely additive.
+	static readonly BoardKind[] AllKinds = [BoardKind.Simple, BoardKind.Classic, BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work, BoardKind.Observation];
 
 	// StatusKind for a status slug across ALL presets (case-insensitive), or null if
 	// the slug isn't in any preset workflow (e.g. a legacy free-board status pre-migration).
