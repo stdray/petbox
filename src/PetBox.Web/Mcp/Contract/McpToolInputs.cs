@@ -501,3 +501,73 @@ public sealed record FragmentEditDto
 	public static IReadOnlyList<FragmentEdit>? ToCore(IReadOnlyList<FragmentEditDto>? dtos) =>
 		dtos?.Select(d => new FragmentEdit(d.Old, d.New)).ToList();
 }
+
+// ── agent_def_upsert: ONE typed nested document ──────────────────────────────────────────────
+//
+// work/agent-def-upsert-typed-and-merge-by-role. Two changes ride on these records and they are
+// the same change:
+//
+//   TYPED — `definition` used to be a bare `JsonElement` with `[McpJsonShape("object")]`, which
+//   stamps `"type":"object"` and nothing else: no `properties`, no `required`, so the document's
+//   real structure existed only in the prose of a description. That violates spec/typed-mcp-inputs
+//   («голый JsonElement запрещён») and left a mistyped field name to bind a default — under
+//   full-replace, a silent DELETE of stored data.
+//
+//   MERGE — the roles a call carries are the roles it CHANGES. A role absent from `roles` is
+//   untouched, so editing one role costs one role (spec/write-cost-follows-change) instead of the
+//   10 520 B the six-role roster measured at.
+//
+// SHAPE: this MIRRORS what agent_def_get emits — `{ name, roles:[{ slug, tier,
+// requiredCapabilities, spawn?:{allowed, allowedRoles}, escalation?:{available, targets},
+// notes? }] }` — so read → edit → write is a paste, not a reshaping exercise. An earlier draft of
+// this card destructured the document into `roles[]` + `name` and FLATTENED the role
+// (`spawn:{allowed}` → `spawnAllowed`) to stay inside McpUnknownParameterFilter's one-hop walk.
+// That constraint is GONE (work/mcp-unmapped-member-disallow: the MCP serializer options carry
+// UnmappedMemberHandling.Disallow, so an unmapped member is refused BY THE TYPE at any depth), and
+// the shape it forced does not scale — every new field would become another top-level parameter.
+// Do not re-flatten citing the filter.
+//
+// There is no `model` member anywhere in this tree, and there never will be: model binding is
+// LOCAL, not part of a portable definition. `roles[].model` is refused by name by the binder, and
+// AgentDefinitionJson.Parse re-checks the merged document, so it cannot reach the store by any
+// route (REST included).
+
+// spawn, as agent_def_get emits it. BOTH halves nullable: `spawn:{allowedRoles:[…]}` keeps the
+// stored `allowed`, and `spawn:{allowed:false}` keeps the stored list. Omit `spawn` entirely and
+// the block is not this call's business at all.
+public sealed record AgentDefSpawnInput(
+	bool? Allowed = null,
+	IReadOnlyList<string>? AllowedRoles = null);
+
+// escalation, same shape and the same either-half rule.
+public sealed record AgentDefEscalationInput(
+	bool? Available = null,
+	IReadOnlyList<string>? Targets = null);
+
+// One role's edit. `slug` is the IDENTITY — which stored role this addresses; an unknown slug
+// APPENDS a role (create and edit are one verb, as in tasks_upsert). Every other field is optional
+// and means "leave whatever the stored role has" (omit=keep, the surface-wide convention).
+//
+// A positional record on purpose: STJ's schema exporter marks a ctor parameter `required` when it
+// has no default, so `slug` lands in the published `required` array without needing
+// [McpRequiredMember] — which would not have worked here anyway, since McpOutputSchema's
+// WithRequiredMembers walks ONE level (parameter, or its array `items`) and this role sits under
+// `definition.roles`. The CLR type stays non-nullable-but-unenforced, so a missing slug reaches the
+// tool's own sentence rather than a raw binder error.
+//
+// `deleted` is input-only — agent_def_get never emits it, so its presence here does not break the
+// paste-back round trip in either direction.
+public sealed record AgentDefRoleInput(
+	string Slug,
+	string? Tier = null,
+	IReadOnlyList<string>? RequiredCapabilities = null,
+	AgentDefSpawnInput? Spawn = null,
+	AgentDefEscalationInput? Escalation = null,
+	string? Notes = null,
+	bool Deleted = false);
+
+// The document. `roles` carries only the roles being CHANGED; `name` is optional and omit=keep,
+// so a paste of a read document (which always carries `name`) is a no-op on the name.
+public sealed record AgentDefDocumentInput(
+	IReadOnlyList<AgentDefRoleInput> Roles,
+	string? Name = null);

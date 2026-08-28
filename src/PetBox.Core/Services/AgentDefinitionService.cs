@@ -21,6 +21,10 @@ public interface IAgentDefinitionService
 	// Accepts raw JSON so the model-field reject runs on the wire shape (not only typed records),
 	// and so unknown properties SURVIVE the store instead of being dropped by re-serialization.
 	Task<AgentDefinitionAck> UpsertJsonAsync(string projectKey, string key, string json, long version, CancellationToken ct = default);
+	// MERGE path (MCP agent_def_upsert): apply PARTIAL per-role edits to the stored document — a role
+	// absent from `roles` is left untouched, a role marked deleted is removed. The call therefore
+	// costs the size of the CHANGE, not the size of the document (spec/write-cost-follows-change).
+	Task<AgentDefinitionAck> MergeRolesAsync(string projectKey, string key, string? name, IReadOnlyList<RoleMergeEdit> roles, long version, CancellationToken ct = default);
 	Task<AgentDefinitionAck> DeleteAsync(string projectKey, string key, long version, CancellationToken ct = default);
 }
 
@@ -97,6 +101,38 @@ public sealed partial class AgentDefinitionService : IAgentDefinitionService
 		var canonical = AgentDefinitionJson.CanonicalizeRaw(json, nameFallback: k);
 		AgentDefinitionJson.Parse(canonical); // reject `model` / enforce the schema — throws on bad
 		return UpsertCoreAsync(pk, k, canonical, version, ct);
+	}
+
+	// MERGE path: read the document AS STORED, apply the per-role edits, write the result back under
+	// the caller's watermark.
+	//
+	// The read-modify-write is NOT a lost-update race despite spanning two statements: the write still
+	// carries the CALLER's baseline `version`, so any writer that lands in between bumps the row past
+	// it and TemporalStore refuses this call outright. What the merge changes is the COST of losing
+	// that race — the retry resends the caller's few roles, not the whole roster.
+	//
+	// A key that stores nothing yet merges onto an EMPTY document, so create and edit stay ONE verb
+	// (version 0 = create, exactly as before; a stale 0 against an existing key still conflicts).
+	public async Task<AgentDefinitionAck> MergeRolesAsync(
+		string projectKey, string key, string? name, IReadOnlyList<RoleMergeEdit> roles, long version,
+		CancellationToken ct = default)
+	{
+		var pk = RequireProjectKey(projectKey);
+		var k = NormalizeKey(key);
+
+		string? current;
+		using (var db = _factory.Open())
+		{
+			var row = await db.AgentDefinitions
+				.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
+			current = row?.Json;
+		}
+
+		var baseJson = current ?? AgentDefinitionJson.Serialize(new AgentDefinitionDoc(k, []));
+		var merged = AgentDefinitionJson.MergeRoles(baseJson, name, roles);
+		var canonical = AgentDefinitionJson.CanonicalizeRaw(merged, nameFallback: k);
+		AgentDefinitionJson.Parse(canonical); // reject `model` / enforce the schema — throws on bad
+		return await UpsertCoreAsync(pk, k, canonical, version, ct);
 	}
 
 	// pk/k are already normalized by the caller (RequireProjectKey / NormalizeKey).
