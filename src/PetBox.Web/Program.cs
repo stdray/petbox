@@ -492,8 +492,11 @@ public partial class Program
 		// with no error — which is why McpUnknownParameterFilter (top level + one hop) had to exist,
 		// and why contracts were being flattened just to stay inside its reach.
 		// Deliberately still OPEN: an open `Dictionary<,>` member (tasks_upsert `nodes[].links`, keyed
-		// by relation kind) and a `JsonElement` parameter (agent_def_upsert `definition`) — neither has
+		// by relation kind) and a `JsonElement` parameter (llm_config_upsert `config`) — neither has
 		// a closed member set, so neither is affected. Measured, not assumed: Mcp/UnmappedMemberStrictnessTests.
+		// (agent_def_upsert `definition` was the JsonElement witness here until
+		// work/agent-def-upsert-typed-and-merge-by-role typed it; it is now policed like any other
+		// typed payload, which is the point of that card.)
 		// Side effect, wanted: the generated schemas gain `additionalProperties:false` on closed object
 		// nodes, so a strict client catches the same mistake before the call leaves.
 		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)

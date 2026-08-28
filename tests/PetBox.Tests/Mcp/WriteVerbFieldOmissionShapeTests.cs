@@ -31,8 +31,6 @@ namespace PetBox.Tests.Mcp;
 //   - tasks_methodology_rules_upsert / template_upsert: honest whole-DOCUMENT PUT (the caller
 //     resubmits the ENTIRE document every call, by design) — covered by a DIFFERENT failure mode
 //     (a field with no slot at all) in MethodologyKindContractParityTests, not this one.
-//   - agent_def_upsert: same shape — `definition` is a whole-document replace with no per-field
-//     merge contract at all (its gap is that the prose never SAYS so — WriteVerbOmissionProseTests).
 //   - session_upsert: `content` is deliberately the WHOLE payload of an honest PUT (its own
 //     description says so); `meta` is already nullable. Nothing to assert here.
 //   - tasks_board_set_wire: one nullable string field, already correct, and its omit-vs-clear
@@ -74,6 +72,16 @@ public sealed class WriteVerbFieldOmissionShapeTests
 		// (omit=keep, same convention as NodeInput.Tags/.Ephemeral), so nothing is excluded here
 		// anymore.
 		{ "deploy_upsert", typeof(DeploymentInput), ["Id", "Service", "Project", "NodeId", "ImageDigest", "DesiredState"] },
+
+		// work/agent-def-upsert-typed-and-merge-by-role moved this verb OUT of the "honest whole
+		// document PUT" exemption this file used to list it under: `definition` (an untyped
+		// whole-document replace) became a typed nested document whose `roles` is a real per-role
+		// PATCH, so the same mechanical question now applies to it. Slug = identity (which role the
+		// edit addresses); Deleted = the one-way removal trigger, where omitted and explicit-false
+		// are the same normal upsert. The nested Spawn/Escalation blocks are themselves nullable
+		// (omit = the block is not this call's business) and their halves are nullable inside, so
+		// they are enforced here like any other field.
+		{ "agent_def_upsert", typeof(AgentDefRoleInput), ["Slug", "Deleted"] },
 	};
 
 	[Theory]
@@ -103,7 +111,7 @@ public sealed class WriteVerbFieldOmissionShapeTests
 		var tools = Targets().Select(row => row.Data.Item1).ToList();
 		tools.Should().Contain([
 			"tasks_upsert", "comments_upsert", "memory_upsert", "apikey_update", "llm_config_upsert",
-			"deploy_node_upsert", "deploy_upsert",
+			"deploy_node_upsert", "deploy_upsert", "agent_def_upsert",
 		]);
 	}
 
