@@ -444,7 +444,7 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			"a surface is either aimable at another tenant or it is not; being on both lists means one of "
 			+ "them is describing something that is not there");
 
-		refused.Should().Be(150,
+		refused.Should().Be(151,
 			"the count of surfaces that already refuse a foreign tenant. It is asserted rather than merely "
 			+ "reported so that this test cannot go green while quietly protecting less than it did — the "
 			+ "number may rise (fix a deviation) but never fall without someone deleting this line on purpose. "
@@ -468,6 +468,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "their first commit for the same reason: the verb rides TasksTools' type-level [TenantFrom(Argument, "
 			+ "\"projectKey\")] and the page carries [TenantFrom(Route, \"projectKey\")], so both are refused above "
 			+ "the handler. Again a rise that ADDS protection rather than repairing a deviation. "
+			+ "150 -> 151 with observation-edges-promote-and-nail: mcp:tasks_observation_promote, a NEW "
+			+ "surface that denies from its first commit — it rides TasksTools' type-level "
+			+ "[TenantFrom(Argument, \"projectKey\")] like every other tasks_* verb, so the MCP PEP "
+			+ "refuses the probe before the tool body runs. A rise that ADDS protection, not one that "
+			+ "repairs a deviation. "
 			+ "THE RAZOR WAVE MOVED IT BY ZERO, and that is the result rather than an absence of one: all 65 "
 			+ "pages left the allowlist, 41 of them addressed, and every one of those 41 answered Denied "
 			+ "BEFORE and after. The families that came out had complete manual coverage already, so the PEP "
