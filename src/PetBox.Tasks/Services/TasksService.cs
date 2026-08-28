@@ -1974,6 +1974,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, landed, resolvedLinks, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
+				await SyncObservationOnObligationTerminalAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
 			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
@@ -3206,6 +3207,69 @@ public sealed partial class TasksService : ITasksService
 				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
 		}
 	}
+
+	// The automatic half of observation promotion (work observation-edges-promote-and-nail): an
+	// obligation (the work/ideas node a promoted observation points at via the
+	// observation_obligation edge — MethodologyPresets.ObservationObligationLinkKind) reaching a
+	// terminal status on the NORMAL tasks_upsert path — no separate tool call — closes the loop:
+	//   - terminalOK (Done/accepted/…)      -> the observation moves promoted -> fixed, and its
+	//     observation_signal row is stamped FixedByNodeId/FixedAt (the obligation that fixed it).
+	//   - terminalCANCEL (Cancelled/rejected) -> the observation moves promoted -> seen (the
+	//     problem wasn't fixed, it was abandoned — it stays open for another attempt), no
+	//     FixedByNodeId stamp.
+	// Kept IMPERATIVE, deliberately NOT a declared Effects entry on WorkKind/IdeasKind — the SAME
+	// reason CloseBlocksOnLeaveAsync just above stays imperative: MethodologyRuntime.Effects
+	// resolves WHOLE-OBJECT per kind, and this edge is not scoped to any one kind's Effects list
+	// (an obligation may be a work OR an ideas node) nor to any single methodology instance (the
+	// `observations` board lives outside every instance). Runs for EVERY board's upsert (any kind
+	// can in principle be promoted-into), gated entirely by the presence of an incoming
+	// observation_obligation edge — cheap to skip when there is none (RunTransitionEffectsAsync's
+	// own Effects.Count==0 short-circuit doesn't apply here since this isn't Effects-data-driven).
+	// Reuses TaskTransitionEffects.SetActiveNodeStatusAsync (the same system-write primitive the
+	// Done/delete effects use) for the actual status mutation — no FSM guard check, a system
+	// action — gated by the observation's OWN current status via the `pick` callback: only a node
+	// currently `promoted` is touched, so this can never clobber a `fixed`/`declined`/`seen`
+	// observation (isTerminal already excludes fixed/declined; the explicit status check also
+	// excludes seen, matching "return to seen" being a no-op once already there).
+	async Task SyncObservationOnObligationTerminalAsync(
+		string projectKey, MethodologyRuntime runtime, string? kindSlug,
+		TaskNode[] desired, Dictionary<string, TaskNode> prior, CancellationToken ct)
+	{
+		foreach (var n in desired)
+		{
+			if (n.NodeId.Length == 0) continue;
+			var cur = prior.GetValueOrDefault(n.Key) ?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
+			var statusChanged = cur is null || !string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase);
+			if (!statusChanged) continue;
+			var newKind = runtime.StatusKindOf(kindSlug, n.Status);
+			if (newKind is not (StatusKind.TerminalOk or StatusKind.TerminalCancel)) continue;
+			var fixedNow = newKind == StatusKind.TerminalOk;
+
+			var incoming = (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct))
+				.Where(e => string.Equals(e.Kind, MethodologyPresets.ObservationObligationLinkKind, StringComparison.OrdinalIgnoreCase));
+			foreach (var edge in incoming)
+			{
+				var observationId = edge.FromNodeId;
+				var applied = false;
+				await _effects.SetActiveNodeStatusAsync(projectKey, observationId, runtime,
+					(_, obsNode, isTerminal, _) =>
+					{
+						if (isTerminal || !string.Equals(obsNode.Status, "promoted", StringComparison.OrdinalIgnoreCase))
+							return null;
+						applied = true;
+						return fixedNow ? "fixed" : "seen";
+					}, ct);
+				if (applied && fixedNow)
+					await RecordObservationFixedAsync(projectKey, observationId, n.NodeId, ct);
+			}
+		}
+	}
+
+	// Stamp observation_signal.FixedByNodeId/FixedAt (M024) — the counterpart write to the status
+	// move SyncObservationOnObligationTerminalAsync just made. No-op-safe when no
+	// IObservationSignalStore was wired, same posture as RecordObservationRecurrenceAsync.
+	Task RecordObservationFixedAsync(string projectKey, string observationNodeId, string fixedByNodeId, CancellationToken ct) =>
+		_observationSignals?.MarkFixedAsync(projectKey, observationNodeId, fixedByNodeId, ct) ?? Task.CompletedTask;
 
 	// TaskNode -> NodeState (methodology-engine-extraction, slice 2, condition 4): the IO-side
 	// half of the mapping. TaskNode can't cross into PetBox.Tasks.Engine (linq2db-bound); this

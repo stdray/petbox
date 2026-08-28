@@ -507,6 +507,17 @@ public sealed record RelationDeletedResult(string Id, bool Deleted);
 // Batch delete result — Relations is always present (length 1 for the single-id BC path).
 public sealed record RelationsDeletedResult(IReadOnlyList<RelationDeletedResult> Relations);
 
+// ---- tasks_observation_promote (work observation-edges-promote-and-nail) --------------
+
+// tasks_observation_promote's answer: the observation stays addressable (moved to
+// `promoted`, never deleted) and the new obligation it was promoted into. The
+// observation_obligation edge itself is addressable via relations_list on either NodeId
+// (this tool creates it through the same generic `links` door tasks_upsert uses, so it
+// carries no separate id here — RelationTools is the sanctioned door onto the relation store).
+public sealed record ObservationPromotedResult(
+	string ObservationNodeId, string ObservationKey, string ObservationStatus,
+	string TargetBoard, string ObligationNodeId, string ObligationKey, string ObligationStatus, string ObligationType);
+
 // ---- search_reindex --------------------------------------------------------------------
 
 // search_reindex's OutputSchemaType (SearchTools.ReindexAsync). Moved here from

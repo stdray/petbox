@@ -399,6 +399,21 @@
 			"note": null
 		},
 		{
+			"id": "nodes.observation-promote",
+			"source": "work observation-edges-promote-and-nail (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "nodes",
+			"action": "промоутить наблюдение в обязательство (новый узел + типизированное ребро + статус)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_observation_promote"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Составное действие поверх nodes.upsert/nodes.relations-create: создаёт НОВЫЙ узел на явной целевой доске (work|ideas), пишет типизированное ребро observation_obligation и переводит статус наблюдения seen->promoted одним МСР-тулом — не read, не голый upsert, поэтому отдельная запись каталога, как nodes.owner-digest выше."
+		},
+		{
 			"id": "nodes.comments-upsert",
 			"source": "08-summary §1 #22",
 			"subdomain": "nodes",

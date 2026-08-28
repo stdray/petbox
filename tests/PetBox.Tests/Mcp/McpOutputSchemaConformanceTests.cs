@@ -189,6 +189,11 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["deploy_delete"] = "pending: needs a seeded deployment",
 		["project_create"] = "pending: workspace/project args not yet wired",
 		["relations_create"] = "pending: endpoint refs not yet wired",
+		// pending: needs a seeded `seen` observation node + a work/ideas board target, chained
+		// through two writes — same "endpoint refs not yet wired" shape as relations_create just
+		// above. Write path (create+link+status, plus the automatic fix/regression effect) is
+		// covered end-to-end by ObservationEdgesPromoteAndNailTests (service layer the tool wraps).
+		["tasks_observation_promote"] = "pending: needs a seeded observation + work board; write path covered by ObservationEdgesPromoteAndNailTests",
 		["apikey_create"] = "pending: mint args not yet wired",
 		["apikey_delete"] = "pending: needs a minted key",
 		// Same reason as its two siblings — it addresses an EXISTING key, so the battery would have to

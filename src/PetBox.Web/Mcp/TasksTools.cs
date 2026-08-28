@@ -6,6 +6,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Workflow;
 using PetBox.Web.Mcp.Contract;
 using PetBox.Web.Tasks;
 
@@ -1697,6 +1698,105 @@ public static class TasksTools
 		var view = Serialize(outcome, urlPrefix, bodyLen, warning);
 		return dedupedView is null ? view : view with { Deduped = dedupedView };
 	}
+
+	[McpServerTool(Name = "tasks_observation_promote", Title = "Promote an observation to an obligation", UseStructuredContent = true, OutputSchemaType = typeof(ObservationPromotedResult))]
+	[Description("""
+		Promote a `seen` observation (the system `observations` board) into an obligation — a NEW
+		node on an EXPLICIT target board, "work" or "ideas" (no heuristic, no guessing: name the
+		board). The observation stays ADDRESSABLE, it is never deleted: it moves seen -> promoted,
+		and a typed `observation_obligation` edge (observation -> obligation) records the link —
+		readable from either side via relations_list on its NodeId.
+
+		Promoting to "work" follows the SAME creation gates a plain tasks_upsert on that board would
+		(feature/bug need `links.task_spec`; chore doesn't) — this tool writes the obligation through
+		the ordinary path, it does not bypass link constraints or quick-add rules. `title`/`body`
+		default to the observation's own when omitted. `type` is REQUIRED for "work" (feature|bug|
+		chore — tasks_workflow lists the valid ones, there is no default); for "ideas" omit it to use
+		the kind's one type (`idea`) — an explicit wrong type is rejected the same as any other write.
+
+		Two SEPARATE writes land — the obligation's board, then the observations board — not one
+		cross-board transaction (relations/nodes live in one project file, but ITasksService.
+		upsertAsync is scoped to one board per call). A failure on the SECOND write leaves the
+		already-created obligation in place, named in the error, for a manual relations_create
+		(kind observation_obligation) + tasks_upsert follow-up.
+
+		Once the obligation later reaches a terminal-OK status (e.g. Done, accepted) through the
+		NORMAL tasks_upsert path — no separate call — the observation is AUTOMATICALLY moved
+		promoted -> fixed, and its recurrence signal is stamped with which node fixed it. A
+		terminal-CANCEL status (Cancelled, rejected) instead returns the observation to `seen` — the
+		problem wasn't fixed, it was abandoned. Requires tasks:write.
+		""")]
+	public static async Task<ObservationPromotedResult> ObservationPromoteAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("The observation to promote: its slug key or 32-hex NodeId on the system `observations` board. Must currently be in status `seen` — an already promoted/fixed/declined observation is rejected.")] string observation,
+		[Description("Target board — EXPLICIT, not inferred: \"work\" or \"ideas\" (case-insensitive). Any other value is rejected.")] string targetBoard,
+		[Description("New obligation's type. REQUIRED for targetBoard \"work\" (feature|bug|chore — call tasks_workflow to confirm); omit for \"ideas\" to use its one type (`idea`).")] string? type = null,
+		[Description("New obligation's slug key. Defaults to the observation's own key.")] string? key = null,
+		[Description("New obligation's title. Defaults to the observation's title.")] string? title = null,
+		[Description("New obligation's body. Defaults to the observation's body.")] string? body = null,
+		[Description("Links to set on the NEW obligation at creation — the same {relationKind: ref|ref[]} shape as tasks_upsert's `links` (e.g. {\"task_spec\":\"spec-leaf\"} for a work feature/bug).")] Dictionary<string, LinkRefs>? links = null,
+		[Description("Enforced tags to set on the NEW obligation (\"namespace:value\", namespaces area|concern).")] IReadOnlyList<string>? tags = null,
+		[Description("YOUR session id — passed through to BOTH writes, same contract as tasks_upsert's sessionId.")] string? sessionId = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+
+		var board = (targetBoard ?? "").Trim().ToLowerInvariant();
+		if (board is not ("work" or "ideas"))
+			throw new ArgumentException($"targetBoard must be \"work\" or \"ideas\" (got '{targetBoard}') — an explicit choice, never inferred");
+		await AssertBoardKnownAsync(tasks, projectKey, board, ct);
+
+		var obs = await tasks.GetNodeOnBoardAsync(projectKey, SystemBoards.Observations, observation, ct: ct);
+		if (!string.Equals(obs.Node.Status, "seen", StringComparison.OrdinalIgnoreCase))
+			throw new ArgumentException(
+				$"observation '{obs.Node.Key}' is in status '{obs.Node.Status}', not 'seen' — only a freshly-seen observation can be promoted");
+
+		var obligationPatch = new NodePatch
+		{
+			Key = string.IsNullOrWhiteSpace(key) ? obs.Node.Key : key.Trim(),
+			Version = 0,
+			Type = string.IsNullOrWhiteSpace(type) ? null : type,
+			Title = string.IsNullOrWhiteSpace(title) ? obs.Node.Title : title,
+			Body = body ?? obs.Node.Body,
+			Links = links is null ? null : links
+				.Where(kv => kv.Value.Values.Count > 0)
+				.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.Values, StringComparer.Ordinal),
+			Tags = tags,
+		};
+		var created = await tasks.UpsertAsync(projectKey, board, [obligationPatch], sessionId: sessionId, ct: ct);
+		if (!created.Result.Applied || created.Result.Added.Count == 0)
+			throw new InvalidOperationException(
+				$"could not create the obligation on board '{board}': {ConflictSummary(created.Result.Conflicts)}");
+		var obligation = created.Result.Added[0];
+
+		var promotePatch = new NodePatch
+		{
+			Key = obs.Node.Key,
+			Version = obs.Node.Version,
+			Status = "promoted",
+			Links = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+			{
+				[MethodologyPresets.ObservationObligationLinkKind] = [obligation.NodeId],
+			},
+		};
+		var promoted = await tasks.UpsertAsync(projectKey, SystemBoards.Observations, [promotePatch], sessionId: sessionId, ct: ct);
+		if (!promoted.Result.Applied)
+			throw new InvalidOperationException(
+				$"created obligation '{obligation.Key}' ({obligation.NodeId}) on board '{board}', but could not promote observation '{obs.Node.Key}': {ConflictSummary(promoted.Result.Conflicts)}. "
+				+ "The obligation is already live — link it by hand (relations_create, kind observation_obligation, from the observation to it) and retry the status change with tasks_upsert.");
+		var observationNode = promoted.Result.Added.Concat(promoted.Result.Updated)
+			.First(n => string.Equals(n.Key, obs.Node.Key, StringComparison.Ordinal));
+
+		return new ObservationPromotedResult(
+			ObservationNodeId: observationNode.NodeId, ObservationKey: observationNode.Key, ObservationStatus: observationNode.Status,
+			TargetBoard: board, ObligationNodeId: obligation.NodeId, ObligationKey: obligation.Key,
+			ObligationStatus: obligation.Status, ObligationType: obligation.Type);
+	}
+
+	static string ConflictSummary(IReadOnlyList<PetBox.Core.Data.Temporal.TemporalConflict> conflicts) =>
+		conflicts.Count > 0 ? string.Join("; ", conflicts.Select(c => $"{c.Key}: {c.Reason}")) : "the write did not apply";
 
 	[McpServerTool(Name = "tasks_delta", Title = "Task node delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]

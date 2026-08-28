@@ -126,6 +126,7 @@ TABLE node_usage
   INDEX sqlite_autoindex_node_usage_1 UNIQUE origin=pk (Board, NodeId)
 
 TABLE observation_signal
+  COL FixedAt TEXT NULL
   COL FixedByNodeId TEXT NULL
   COL LastSeenAt TEXT NOT NULL
   COL NodeId TEXT NOT NULL PK1

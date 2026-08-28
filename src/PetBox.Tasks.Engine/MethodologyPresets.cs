@@ -402,6 +402,28 @@ public static class MethodologyPresets
 			new MethodologyLinkDirectionDef("intake", "work", "закрывает")),
 	];
 
+	// OBSERVATION PROMOTION (work observation-edges-promote-and-nail): the ONE relation kind
+	// linking a promoted observation to the obligation (a work feature/bug/chore, or an ideas
+	// node) that addresses it — FromNodeId=observation, ToNodeId=obligation, mirroring
+	// issue_task's orientation (the origin signal points at what was produced to answer it).
+	// Declared the SAME WAY as the quartet's process trio just above — a builtin,
+	// project-independent fallback (MethodologyRuntime concatenates it into
+	// KnownRelationKinds/LinkKind/EffectiveLinkKinds unconditionally) rather than a
+	// methodology-instance-declared linkKind, because the system `observations` board lives in
+	// the project's $utility world, outside any methodology instance — this edge must resolve
+	// regardless of which (or whether any) instance is active. ToKind is null (unconstrained):
+	// the obligation may land on either a `work` or an `ideas` board, so the direction pins
+	// only the observation end.
+	public const string ObservationObligationLinkKind = "observation_obligation";
+
+	public static readonly IReadOnlyList<MethodologyLinkKindDef> ObservationLinkKinds =
+	[
+		new MethodologyLinkKindDef(ObservationObligationLinkKind,
+			"Наблюдение промоутится в обязательство (work-фичу/баг/chore или ideas-узел), которое его адресует — наблюдение остаётся адресуемым узлом доски, а не исчезает.",
+			LinkCategory.Process,
+			new MethodologyLinkDirectionDef("observation", null, "адресуется через")),
+	];
+
 	// ---- resolution helpers over the preset data ----
 
 	// Board kinds where the bare board quick-add form is valid — preset data now, same

@@ -3,7 +3,9 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 222 surfaces: 58 REST, 66 Razor, 98 MCP; was 220/65 Razor/97 MCP before
+// ratchet guards (AuthzSurfaces — 223 surfaces: 58 REST, 66 Razor, 99 MCP; was 222/98 MCP before
+// observation-edges-promote-and-nail added the mcp:tasks_observation_promote verb (TasksTools'
+// class-level TenantFrom(projectKey) covers it like every other tasks_* verb); 220/65 Razor/97 MCP before
 // owner-away-digest-delivery added BOTH doors of the owner digest — the mcp:tasks_owner_digest verb and
 // the page:/ProjectHome/OwnerDigest page it shares one service with; 219/96 MCP before
 // share-link-revocation-finish added the mcp:share_revoke verb; 218/57 REST before
@@ -19,10 +21,10 @@ namespace PetBox.Tests.Architecture;
 // for why garbage arguments are sufficient (and for the one place where they are deliberately
 // type-shaped rather than absent).
 //
-// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 222 surfaces lands in
+// WHAT THIS TEST IS NOT ALLOWED TO DO: pass by omission. Every one of the 223 surfaces lands in
 // exactly one of three places, and the sum is checked:
 //
-//   * REFUSED               — 150 addressed surfaces that already deny a foreign tenant today.
+//   * REFUSED               — 151 addressed surfaces that already deny a foreign tenant today.
 //   * KnownDeviations       —   5 addressed surfaces that do NOT, each named, with the behaviour that
 //                              was actually observed. Same discipline as the ratchet's allowlist: it
 //                              only ever shrinks, a fixed entry fails as stale, and the number is
@@ -33,7 +35,7 @@ namespace PetBox.Tests.Architecture;
 //                              Named one by one and grouped by WHY, because "the rest" is exactly
 //                              the sentence this work item exists to stop anyone writing.
 //
-// 150 + 5 + 67 = 222, and TheAccounting_IsComplete fails if it ever stops adding up.
+// 151 + 5 + 67 = 223, and TheAccounting_IsComplete fails if it ever stops adding up.
 [Collection("WebAppFactory")]
 public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 {
@@ -419,9 +421,10 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(222,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 66 Razor + 98 MCP "
-			+ "(was 65 Razor / 97 MCP / 220 before owner-away-digest-delivery added the owner digest's TWO doors — "
+		_host.Surfaces.Should().HaveCount(223,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 58 REST + 66 Razor + 99 MCP "
+			+ "(was 98 MCP / 222 before observation-edges-promote-and-nail added mcp:tasks_observation_promote; "
+			+ "65 Razor / 97 MCP / 220 before owner-away-digest-delivery added the owner digest's TWO doors — "
 			+ "mcp:tasks_owner_digest and page:/ProjectHome/OwnerDigest, one service behind both; "
 			+ "96 MCP / 219 before share-link-revocation-finish added mcp:share_revoke, the agent-facing "
 			+ "half of the DELETE /api/share/{{token}} below; "
@@ -495,9 +498,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 	{
 		// The scope axis is already centralised and already works. If the probe key were short a scope,
 		// the surfaces guarded by it would deny for the WRONG reason and read as passes.
-		_host.ToolsVisibleToAttacker.Should().HaveCount(98,
+		_host.ToolsVisibleToAttacker.Should().HaveCount(99,
 			"McpToolScopeFilter trims tools/list to what the key's scopes allow. A key missing a scope sees "
-			+ "fewer than the full 98 verbs (was 97 before owner-away-digest-delivery added tasks_owner_digest, "
+			+ "fewer than the full 99 verbs (was 98 before observation-edges-promote-and-nail added "
+			+ "tasks_observation_promote, a tasks:write verb the filter classifies with the rest of its family; "
+			+ "97 before owner-away-digest-delivery added tasks_owner_digest, "
 			+ "a tasks:read verb the filter classifies with the rest of its family; 96 before "
 			+ "share-link-revocation-finish added share_revoke, "
 			+ "which McpToolScopeFilter leaves UNCLASSIFIED — there is no share:* scope module, so it is "

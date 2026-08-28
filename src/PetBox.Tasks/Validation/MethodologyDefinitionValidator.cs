@@ -60,6 +60,7 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 					MethodologyRuntime.ProcessRelationKinds
 						.Concat(MethodologyRuntime.NeutralRelationKinds)
 						.Concat(MethodologyPresets.QuartetLinkKinds.Select(lk => lk.Slug))
+						.Concat(MethodologyPresets.ObservationLinkKinds.Select(lk => lk.Slug))
 						.Concat((ctx.InstanceToValidate.LinkKinds ?? []).Select(lk => lk.Slug ?? "")),
 					StringComparer.OrdinalIgnoreCase);
 				var declaredKindStatuses = (kinds ?? [])
