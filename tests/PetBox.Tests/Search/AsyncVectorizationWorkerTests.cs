@@ -129,9 +129,37 @@ public sealed class AsyncVectorizationWorkerTests
 
 		await worker.DrainAsync();
 
-		var entry = log.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
-		entry.Message.Should().Contain("advanced True");
-		entry.Message.Should().Contain("moved True");
+		var first = log.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
+		first.Message.Should().Contain("advanced True");
+		first.Message.Should().Contain("moved True");
+
+		// The card's acceptance criterion is this exact line: a pass that is Advanced but NOT
+		// Moved — the diagnostic the whole card exists for (the real incident: 40k+ passes each
+		// logging Advanced=true while the cursor sat still). A store whose SetCursorAsync never
+		// actually sticks reproduces it: the source keeps handing out the same non-empty delta
+		// forever (indexed>0 every pass, so the quiet-drain gate still fires), nothing is
+		// blocked (Advanced stays true), but the cursor's VALUE never changes (Moved is false).
+		var stuckLog = new CapturingLogger();
+		var stuckWorker = new AsyncVectorizationWorker(
+			IndexName, source, new FakeIndex(), new NeverPersistsCursorStore(), log: stuckLog);
+
+		await stuckWorker.DrainAsync();
+
+		var second = stuckLog.Entries.Should().ContainSingle(e => e.EventId == 404).Subject;
+		second.Message.Should().Contain("advanced True");
+		second.Message.Should().Contain("moved False");
+	}
+
+	// SetCursorAsync "succeeds" but GetCursorAsync never reflects it — the store-level failure
+	// mode behind the real incident this card documents. Scoped to this one test.
+	sealed class NeverPersistsCursorStore : IIndexCursorStore
+	{
+		public Task<long> GetCursorAsync(string index, CancellationToken ct = default) => Task.FromResult(0L);
+		public Task SetCursorAsync(string index, long version, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<int> BumpAttemptsAsync(string index, string type, string id, CancellationToken ct = default) => Task.FromResult(0);
+		public Task ClearAttemptsAsync(string index, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task MarkDeadAsync(string index, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task<bool> IsDeadAsync(string index, string type, string id, CancellationToken ct = default) => Task.FromResult(false);
 	}
 
 	[Fact]
