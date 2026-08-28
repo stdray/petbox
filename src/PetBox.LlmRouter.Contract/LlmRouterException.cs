@@ -1,11 +1,16 @@
 namespace PetBox.LlmRouter.Contract;
 
-// Thrown when a capability cannot be served. Two cases:
-//   Transient == true  -> every provider in the chain failed transiently (refused/timeout/
-//                         5xx/429) and nothing succeeded; the caller may degrade/retry.
-//   Transient == false -> a provider returned a definitive non-transient error (e.g.
-//                         400/401/422) that MUST NOT be masked by fallback — surfaced as-is
-//                         (llm-fallback-chain).
+// Thrown when a capability cannot be served — the chain walked every leg (llm-fallback-chain)
+// and none served the call; it never aborts early on a non-transient leg failure any more
+// (route-chain-aborts-on-size-refusal). Two cases, read from the AGGREGATE of every leg's
+// outcome, not from "which reason ended the walk" (nothing does — the walk always runs to the
+// end):
+//   Transient == true  -> every leg that actually failed did so transiently (refused/timeout/
+//                         5xx/429); the caller may degrade/retry, it may well fix itself.
+//   Transient == false -> at least one leg returned a definitive non-transient error (e.g.
+//                         400/401/422) — config-level, will not self-heal by retrying alone.
+// The Message/InnerException (an AggregateException when there were upstream errors) carry what
+// happened on EACH leg, not just the last.
 public sealed class LlmRouterException : Exception
 {
 	public LlmCapability Capability { get; }
