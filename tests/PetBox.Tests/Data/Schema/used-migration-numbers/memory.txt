@@ -27,3 +27,4 @@
 11 LIVE M011_DeliveryEvents
 12 LIVE M012_SearchKeyColumn
 13 LIVE M013_SearchTitleColumn
+14 LIVE M014_DeliveryEventTransportSessionId

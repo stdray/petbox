@@ -10,9 +10,14 @@ public sealed record DeliveryEvent
 {
 	[Column, Identity] public long Id { get; init; }
 	[Column, NotNull] public DateTime Ts { get; init; }
-	// The MCP session the delivery went to; null on a stateless transport (no session id).
-	[Column] public string? SessionId { get; init; }
-	// search | get | listing.
+	// The MCP `Mcp-Session-Id` transport header, verbatim, when the client sent one — NOT an
+	// agent/transcript session identifier (that space is SessionRow.SessionId, a disjoint id the
+	// MCP handler never sees). PetBox's MCP transport is stateless (Program.cs, .WithHttpTransport
+	// (o => o.Stateless = true)), so this header is NEVER sent by any real client and this column
+	// is ALWAYS null in practice (renamed from SessionId 2026-08-28 — see M014 — precisely because
+	// that name promised a link to the agent session that cannot exist on this transport).
+	[Column] public string? TransportSessionId { get; init; }
+	// search | get | listing | canon.
 	[Column, NotNull] public string Tool { get; init; } = string.Empty;
 	// project | workspace — how the container was reached (the row lives in the container's file).
 	[Column, NotNull] public string Scope { get; init; } = string.Empty;

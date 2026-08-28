@@ -55,8 +55,13 @@ public interface IMemoryUsageRecorder
 //          ScoreRaw (the fused RRF score BEFORE recency decay) and KRel (that score over the
 //          request's top-1 → a within-request [0,1] normalization; raw RRF has no meaningful
 //          absolute scale, its ceiling is ~1/60).
-// `Tool` is search | get | listing; a listing ran no relevance leg (ScoreRaw/KRel null), and a
-// memory_get is a perfect fit by definition (KRel = 1, DeliveredChars = BodyChars).
+// `Tool` is search | get | listing | canon; a listing ran no relevance leg (ScoreRaw/KRel null),
+// and a memory_get (or the canon endpoint's implicit get) is a perfect fit by definition
+// (KRel = 1, DeliveredChars = BodyChars).
+// `TransportSessionId` is the MCP `Mcp-Session-Id` transport header, verbatim, NOT an agent/
+// transcript session id (that is a disjoint id space — SessionRow.SessionId). PetBox's MCP
+// transport is stateless, so no real client ever sends this header and the field is always null
+// in practice; kept only because the header IS read off the request when present.
 public sealed record MemoryDeliveryEvent(
 	string Tool,
 	string Scope,
@@ -68,7 +73,7 @@ public sealed record MemoryDeliveryEvent(
 	int Rank,
 	double? ScoreRaw,
 	double? KRel,
-	string? SessionId,
+	string? TransportSessionId,
 	string UsageSource);
 
 // One entry's usage as exposed on read surfaces (opt-in flags / UI). `Deliberate` is the

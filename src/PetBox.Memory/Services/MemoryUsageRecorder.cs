@@ -130,7 +130,7 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 		db.Insert(new DeliveryEvent
 		{
 			Ts = d.Ts,
-			SessionId = d.E.SessionId,
+			TransportSessionId = d.E.TransportSessionId,
 			Tool = d.E.Tool,
 			Scope = d.E.Scope,
 			Store = d.E.Store,

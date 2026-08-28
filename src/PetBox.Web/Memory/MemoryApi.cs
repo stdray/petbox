@@ -151,7 +151,7 @@ public static class MemoryApi
 			Tool: "canon", Scope: scope, Store: CanonStore, Key: key,
 			DeliveredChars: part.Body.Length, BodyChars: entry.Body.Length,
 			RowChars: ResponseBudget.CostOf(part),
-			Rank: 1, ScoreRaw: null, KRel: 1, SessionId: null,
+			Rank: 1, ScoreRaw: null, KRel: 1, TransportSessionId: null,
 			UsageSource: UsageSourceKind.Machine)]);
 
 		return part;
