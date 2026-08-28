@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.Mapping;
@@ -488,6 +489,64 @@ public sealed class TemporalStoreTests : IDisposable
 		ActiveOf("a").Should().NotBeNull();
 	}
 
+	// ── delete-only batches must MOVE the cursor (work vectorization-cursor-never-advances-on-three-partitions) ──
+	// A soft-delete stamps ActiveTo = V+1 on the EXISTING row and inserts nothing, so the
+	// scope cursor cannot be MAX(Version): that ceiling stops at V and never reaches the
+	// stamp. DeltaAsync selects deaths by `ActiveTo > sinceVersion`, so a cursor stuck below
+	// the stamp re-delivers the SAME tombstone on every call, forever. The cursor is
+	// therefore "the highest version at which anything in scope was written OR retired".
+
+	[Fact]
+	public async Task DeleteOnlyBatch_AdvancesCursor_PastTheTombstoneStamp()
+	{
+		var born = await Upsert(Node("a", PlanStatus.Done, "A"));
+		born.CurrentVersion.Should().Be(1);
+
+		var gone = await Delete(("a", 0)); // stamps ActiveTo = 2, inserts no revision
+
+		gone.Applied.Should().BeTrue();
+		gone.Closed.Should().Be(1);
+		gone.CurrentVersion.Should().Be(2,
+			"a soft-delete stamps ActiveTo = 2 and the scope cursor must reach that stamp — a cursor left at 1 re-delivers the tombstone forever");
+	}
+
+	// One tick of the async-vectorization worker, verbatim, against the real store: drain,
+	// advance the cursor to what the store handed back, drain again. The second drain must
+	// be empty. In production this loop ran 40165 times on `vector:notes` and 40164 on
+	// `classic`, redelivering the same tombstone every 60s since 2026-07-29.
+	[Fact]
+	public async Task ChangesSince_AfterDeleteOnlyBatch_DoesNotRedeliverTheTombstone()
+	{
+		var born = await Upsert(Node("a", PlanStatus.Done, "A"));
+		await Delete(("a", 0));
+
+		var d1 = await ChangesSince(born.CurrentVersion);
+		d1.Removed.Should().BeEquivalentTo(["a"], "the first drain after a delete must report the removal exactly once");
+
+		var d2 = await ChangesSince(d1.CurrentVersion); // cursor := what the store told us to advance to
+
+		d2.Removed.Should().BeEmpty(
+			"a drain that advanced its cursor to the store's CurrentVersion must not be handed the same tombstone again");
+	}
+
+	// The ActiveTo term rides UNDER the partition filter: a delete in P1 must not move P2's
+	// cursor, or every partition sharing the table would spuriously skip forward.
+	[Fact]
+	public async Task DeleteInOnePartition_MovesOnlyThatPartitionsCursor()
+	{
+		await UpsertIn("P1", Part("P1", "a", "A"));
+		var p2 = await UpsertIn("P2", Part("P2", "b", "B"));
+		p2.CurrentVersion.Should().Be(1, "each partition numbers its own revisions");
+
+		var gone = await DeleteIn("P1", ("a", 0));
+
+		gone.CurrentVersion.Should().Be(2, "P1's cursor must reach its own tombstone stamp");
+		var p2after = await ChangesSinceIn("P2", 0);
+		p2after.CurrentVersion.Should().Be(1,
+			"P2 saw no write and no retirement — the ActiveTo aggregate must stay under the partition filter");
+		p2after.Removed.Should().BeEmpty("P1's tombstone must not leak into P2's delta");
+	}
+
 	// ---- helpers ----
 	static PlanRow Node(string key, PlanStatus status, string body,
 		long baseline = 0, string? commit = null, long priority = 0, string? prevKey = null) =>
@@ -541,6 +600,36 @@ public sealed class TemporalStoreTests : IDisposable
 
 	PlanRow? ActiveOf(string key) => Active().FirstOrDefault(x => x.Key == key);
 
+	async Task<(IReadOnlyList<PlanRow> Added, IReadOnlyList<PlanRow> Updated, IReadOnlyList<string> Removed, long CurrentVersion)> ChangesSince(long since)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.ChangesSinceAsync<PlanRow>(db, since);
+	}
+
+	// ---- partitioned helpers (PartNode: several scopes share one table) ----
+	static PartRow Part(string part, string key, string body, long baseline = 0) =>
+		new() { Part = part, Key = key, Body = body, Version = baseline };
+
+	static Expression<Func<PartRow, bool>> In(string part) => x => x.Part == part;
+
+	async Task<TemporalUpsertResult<PartRow>> UpsertIn(string part, params PartRow[] rows)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, rows, partition: In(part));
+	}
+
+	async Task<TemporalUpsertResult<PartRow>> DeleteIn(string part, params (string Key, long Version)[] dels)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, Array.Empty<PartRow>(), dels, partition: In(part));
+	}
+
+	async Task<(IReadOnlyList<PartRow> Added, IReadOnlyList<PartRow> Updated, IReadOnlyList<string> Removed, long CurrentVersion)> ChangesSinceIn(string part, long since)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.ChangesSinceAsync(db, since, In(part));
+	}
+
 	static void EnsureSchema(string cs)
 	{
 		using var c = new SqliteConnection(cs);
@@ -560,6 +649,18 @@ public sealed class TemporalStoreTests : IDisposable
 				Created    TEXT    NOT NULL,
 				Updated    TEXT    NOT NULL,
 				PRIMARY KEY (Key, Version)
+			);
+			CREATE TABLE IF NOT EXISTS PartNode (
+				Part       TEXT    NOT NULL,
+				Key        TEXT    NOT NULL,
+				Version    INTEGER NOT NULL,
+				Body       TEXT    NOT NULL,
+				PrevKey    TEXT,
+				ActiveFrom INTEGER NOT NULL,
+				ActiveTo   INTEGER,
+				Created    TEXT    NOT NULL,
+				Updated    TEXT    NOT NULL,
+				PRIMARY KEY (Part, Key, Version)
 			);
 			""";
 		cmd.ExecuteNonQuery();
@@ -612,4 +713,18 @@ sealed class SteppingTimeProvider : TimeProvider
 		_now = _now.AddSeconds(1);
 		return now;
 	}
+}
+
+// A partitioned sample payload: several scopes share ONE table, each with its own key
+// space and its own version cursor, selected by the `partition` predicate.
+[Table("PartNode")]
+public sealed record PartRow : TemporalRow
+{
+	[Column, NotNull] public string Part { get; init; } = string.Empty;
+	[Column, NotNull] public string Body { get; init; } = string.Empty;
+
+	public override bool SamePayload(TemporalRow other) => other is PartRow p && p.Part == Part && p.Body == Body;
+
+	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
+		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
 }
