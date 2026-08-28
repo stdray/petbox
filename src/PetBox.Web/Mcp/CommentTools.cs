@@ -40,6 +40,12 @@ public static class CommentTools
 		exactly like tasks_upsert). `body` is GFM markdown — `##` headings and REAL newlines, NOT
 		literal `\n`, NOT `==headings==`. `applied` is the SINGLE source of truth — false = nothing
 		written, see conflicts[]. Requires tasks:write.
+		`fragment` is a POINT edit of `body`: a list of {old, new} applied IN ORDER to the CURRENT
+		text, so the call costs the size of the CHANGE, not the size of the whole body. Mutually
+		exclusive with `body`. Each `old` must occur EXACTLY once — zero matches or two or more
+		REFUSE the write through conflicts[] (never a first-match guess, never a partial apply),
+		and a list is all-or-nothing. `new` is required; send "" to delete the matched text.
+		PATCH only — a create (no id) has no current text for `old` to match.
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
 
 		[[full]]
@@ -92,14 +98,18 @@ public static class CommentTools
 		var parsed = new List<CommentItem>(items.Length);
 		foreach (var i in items)
 		{
-			var body = i.Body ?? throw new ArgumentException("each comment item needs a body");
+			// The body/fragment choice is judged in the SERVICE, not here: it needs the current
+			// row (a fragment is only meaningful against existing text) and its refusal must ride
+			// conflicts[], which the adapter cannot produce. So the adapter no longer demands a
+			// body — it forwards both fields and lets the merge decide.
 			string? node = null;
 			if (string.IsNullOrEmpty(i.Id))
 			{
 				if (string.IsNullOrWhiteSpace(i.Node)) throw new ArgumentException("a new comment (no id) needs node");
 				node = await tasks.ResolveNodeRefAsync(projectKey, i.Node!, board, ct);
 			}
-			parsed.Add(new CommentItem(i.Id, node, i.ParentId, i.Author, body, i.Tags, i.Version));
+			parsed.Add(new CommentItem(i.Id, node, i.ParentId, i.Author, i.Body, i.Tags, i.Version,
+				FragmentEditDto.ToCore(i.Fragment)));
 		}
 
 		var r = await comments.UpsertAsync(projectKey, board, parsed, atomic, ct);

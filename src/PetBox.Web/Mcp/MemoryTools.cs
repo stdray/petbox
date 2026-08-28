@@ -268,6 +268,11 @@ public static class MemoryTools
 		Reference (pointer to an external resource). Pick one — an unrecognized value is REJECTED,
 		naming these four, never a silently-dropped typo. `tags` is an ARRAY of free-form tag
 		strings, normalised on write ([] clears, omit leaves as-is).
+		`fragment` is a POINT edit of `body`: a list of {old, new} applied IN ORDER to the CURRENT
+		text, so the call costs the size of the CHANGE, not the size of the whole body. Mutually
+		exclusive with `body`. Each `old` must occur EXACTLY once — zero matches or two or more
+		REFUSE the write through conflicts[] (never a first-match guess, never a partial apply),
+		and a list is all-or-nothing. `new` is required; send "" to delete the matched text.
 		`version` is the WATERMARK baseline: pass the store `currentVersion` from your last read OR
 		the entry's own version — both valid; 0 = new; a version above the store cursor is rejected
 		as a wrong-scope baseline. The guard is about PAYLOAD: an old baseline conflicts ONLY when
@@ -1331,6 +1336,8 @@ public static class MemoryTools
 				Type = e.Version == 0 ? Req(e.Type, "type") : e.Type,
 				Description = e.Description,
 				Body = e.Body,
+				// See TasksTools: resolved in the service's read-merge, not here.
+				Fragment = FragmentEditDto.ToCore(e.Fragment),
 				Tags = e.Tags,
 				Metadata = e.Metadata,
 				PrevKey = e.PrevKey,

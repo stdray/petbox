@@ -1525,6 +1525,11 @@ public static class TasksTools
 		REFERENCES and each accepts a slug key OR a 32-hex NodeId, while `key` accepts the slug
 		only.
 		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
+		`fragment` is a POINT edit of `body`: a list of {old, new} applied IN ORDER to the CURRENT
+		text, so the call costs the size of the CHANGE, not the size of the whole body. Mutually
+		exclusive with `body`. Each `old` must occur EXACTLY once — zero matches or two or more
+		REFUSE the write through conflicts[] (never a first-match guess, never a partial apply),
+		and a list is all-or-nothing. `new` is required; send "" to delete the matched text.
 		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
 		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
 		""" + "\n\t\t" + ModuleMcp.SizeGuidanceText + """
@@ -1830,6 +1835,11 @@ public static class TasksTools
 				Type = n.Type,
 				Title = n.Title,
 				Body = n.Body,
+				// Point body edit (write-fragment-patch). Passed straight through to the service:
+				// the substitution needs the CURRENT row, which only the read-merge has, so the
+				// adapter deliberately does NOT resolve it here (resolving it at the adapter would
+				// mean read-then-write across two statements, outside the version guard).
+				Fragment = FragmentEditDto.ToCore(n.Fragment),
 				Reason = n.Reason,
 				// Commits: null = omit (don't touch); a non-null list (incl. empty) REPLACES the
 				// node's full commit set — same semantics as Tags.

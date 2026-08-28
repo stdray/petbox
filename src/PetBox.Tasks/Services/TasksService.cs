@@ -1725,6 +1725,32 @@ public sealed partial class TasksService : ITasksService
 		var baselineOf = nodes.GroupBy(p => p.Key, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.First().Version, StringComparer.Ordinal);
 		var live = upsertPatches;
+
+		// ── write-fragment-patch ────────────────────────────────────────────────────────────
+		// Resolve every `fragment` list into a concrete Body BEFORE the guard loop, against
+		// `prior` — the SAME read Merge() inherits an omitted body from, looked up by the SAME
+		// key/prevKey rule. That co-location is the whole safety argument: the substitution is not
+		// a second read that could disagree with the write, it is the write's own read. The
+		// baseline the caller supplied is still checked downstream by TemporalStore exactly as it
+		// is for a full-body write, and the close is a compare-and-swap on (Key, Version), so a
+		// writer that lands in between turns this into Stale/CloseRace — not a lost update.
+		//
+		// A refusal here is a CONFLICT, never an exception, in atomic AND partial mode alike: a
+		// fragment that no longer matches means the body moved under the caller, which is the same
+		// class of failure as a stale watermark and must be reported through the same
+		// applied:false + conflicts[] channel.
+		var fragmentConflicts = new List<TemporalConflict>();
+		live = ResolveFragments(live, prior, fragmentConflicts);
+		if (fragmentConflicts.Count > 0)
+		{
+			rejected.AddRange(fragmentConflicts);
+			foreach (var c in fragmentConflicts) rejectedGuardKeys.Add(c.Key);
+			// Only PARTIAL mode needs the dependents retired: in atomic mode nothing is written at
+			// all, and naming collateral nodes there would bury the one conflict that explains why.
+			if (!atomic)
+				rejected.AddRange(TemporalStore.Cascade(batchKeys, k => baselineOf.GetValueOrDefault(k), rejectedGuardKeys, dependsOn));
+			live = live.Where(p => !rejectedGuardKeys.Contains(p.Key)).ToList();
+		}
 		TaskNode[] desired;
 		IReadOnlyList<ResolvedLink> resolvedLinks;
 
@@ -2740,6 +2766,49 @@ public sealed partial class TasksService : ITasksService
 			OriginSessionId = cur?.OriginSessionId ?? (sessionId ?? "").Trim(),
 			PrevKey = p.PrevKey,
 		};
+	}
+
+	// Turn each patch's `fragment` list into an ordinary Body set, or record the refusal.
+	//
+	// `cur` is resolved with the EXACT expression Merge() uses (key, then prevKey on a rename) —
+	// duplicated deliberately rather than shared, because the invariant that matters is that these
+	// two agree on WHICH ROW the edit applies to, and the assertion of that invariant belongs next
+	// to each use. A returned patch carries Fragment = null: past this point the rest of the
+	// pipeline sees a perfectly ordinary full-body write and needs to know nothing about fragments.
+	static List<NodePatch> ResolveFragments(
+		List<NodePatch> patches, IReadOnlyDictionary<string, TaskNode> prior, List<TemporalConflict> conflicts)
+	{
+		var resolved = new List<NodePatch>(patches.Count);
+		foreach (var p in patches)
+		{
+			if (p.Fragment is null)
+			{
+				resolved.Add(p);
+				continue;
+			}
+			var cur = prior.GetValueOrDefault(p.Key) ?? (p.PrevKey is not null ? prior.GetValueOrDefault(p.PrevKey) : null);
+			if (p.Body is not null)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur?.Version, FragmentPatch.BodyAndFragment));
+				continue;
+			}
+			if (cur is null)
+			{
+				// Nothing to match against. Refused rather than treated as an empty body, which
+				// would report success for an edit that silently created the node from scratch.
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, null,
+					$"'fragment' needs existing text to patch — node '{p.Key}' has no active revision; send 'body' to create it"));
+				continue;
+			}
+			var r = FragmentPatch.Apply(cur.Body, p.Fragment);
+			if (!r.Ok)
+			{
+				conflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, cur.Version, r.Error));
+				continue;
+			}
+			resolved.Add(p with { Body = r.Body, Fragment = null });
+		}
+		return resolved;
 	}
 
 	static Dictionary<string, string> LinkFields(IReadOnlyList<NodePatch> nodes, Func<NodePatch, string?> pick)

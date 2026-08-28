@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using PetBox.Core.Contract;
 
 namespace PetBox.Web.Mcp.Contract;
 
@@ -96,6 +97,12 @@ public sealed record TaskNodeInput
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
+	// Point edit of the body: a list of {old, new} substitutions applied IN ORDER against the
+	// node's CURRENT body, so the call costs the size of the CHANGE rather than the size of the
+	// node (spec/write-cost-follows-change). Mutually exclusive with `body`. An `old` that matches
+	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
+	// first-match guess, never a partial application.
+	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
 	// Free-form reason for THIS write (not the node body). Two independent effects: (1) a status
 	// transition the methodology marks RequiresReason still fails outright when this is
 	// omitted/null/whitespace — that gate is unchanged. (2) whenever this write is APPLIED and
@@ -411,6 +418,12 @@ public sealed record CommentItemInput
 	public string? ParentId { get; init; }
 	public string? Author { get; init; }
 	public string? Body { get; init; }
+	// Point edit of the body: a list of {old, new} substitutions applied IN ORDER against the
+	// node's CURRENT body, so the call costs the size of the CHANGE rather than the size of the
+	// node (spec/write-cost-follows-change). Mutually exclusive with `body`. An `old` that matches
+	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
+	// first-match guess, never a partial application.
+	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }
 	public long Version { get; init; }
 }
@@ -438,6 +451,12 @@ public sealed record MemoryEntryInputDto
 	public string? Type { get; init; }
 	public string? Description { get; init; }
 	public string? Body { get; init; }
+	// Point edit of the body: a list of {old, new} substitutions applied IN ORDER against the
+	// node's CURRENT body, so the call costs the size of the CHANGE rather than the size of the
+	// node (spec/write-cost-follows-change). Mutually exclusive with `body`. An `old` that matches
+	// zero times, or more than once, REFUSES the whole write through conflicts[] — never a
+	// first-match guess, never a partial application.
+	public IReadOnlyList<FragmentEditDto>? Fragment { get; init; }
 
 	// Tags as an ARRAY of tag strings (like tasks): null = omit (PATCH: keep the current
 	// set), [] = explicit clear, a non-empty list REPLACES the set.
@@ -448,4 +467,21 @@ public sealed record MemoryEntryInputDto
 
 	// Soft-delete marker: { key, deleted:true } closes the active entry (optional version baseline).
 	public bool Deleted { get; init; }
+}
+
+// One {old, new} substitution of a `fragment` list (work/write-fragment-patch). Both fields are
+// REQUIRED: `old` must occur EXACTLY once in the current text, and `new` must be present (send ""
+// to delete the matched text). NOTE — McpUnknownParameterFilter walks the top level and ONE hop
+// into batch items, so it does NOT police the fields of this second-hop object; a misspelt `old`/
+// `new` therefore arrives as null and is refused by FragmentPatch, not by the filter.
+public sealed record FragmentEditDto
+{
+	public string? Old { get; init; }
+	public string? New { get; init; }
+
+	// Wire shape -> the core primitive. Nulls are carried through UNCHANGED rather than defaulted
+	// to "": FragmentPatch refuses a null `old`/`new` with a message naming the field, and that
+	// refusal is the only thing standing between a second-hop typo and a silent deletion.
+	public static IReadOnlyList<FragmentEdit>? ToCore(IReadOnlyList<FragmentEditDto>? dtos) =>
+		dtos?.Select(d => new FragmentEdit(d.Old, d.New)).ToList();
 }
