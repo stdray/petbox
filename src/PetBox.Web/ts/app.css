@@ -309,14 +309,11 @@
 .md-body h4 {
 	font-size: 1rem;
 }
-/* MEASURE. `node-detail-read-width` removed the global 80ch cap from the container, and that
-   was right — a table, a diagram or a code block must be free to use the full width. What it
-   also removed was any limit on the PROSE line, and a 1400px-wide paragraph is genuinely hard to
-   track back to the next line. The cap therefore lands on the paragraph only; nothing else in
-   this file constrains width. */
+/* No measure. `node-detail-read-width` removed the global 80ch cap from the container; a
+   paragraph-level 66ch measure was tried afterwards (node-render-design-layer) and then dropped
+   per owner request. Nothing in this file constrains width. */
 .md-body p {
 	margin: 0.85em 0;
-	max-width: 66ch;
 }
 /* …except where a paragraph is a layout cell rather than prose. */
 .md-body td p,

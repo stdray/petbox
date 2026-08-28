@@ -12,10 +12,10 @@
 //      therefore asserted by actually MATCHING it against a real root element per theme, not by
 //      grepping for the selector text.
 //
-//   2. THE MEASURE. `node-detail-read-width` deliberately removed the global 80ch cap from the
-//      container. This layer re-introduces a measure for PARAGRAPHS ONLY; a cap that creeps back
-//      onto .md-body, a table, a code block or the section container would be a silent revert of
-//      that accepted decision.
+//   2. NO WIDTH CAP. `node-detail-read-width` deliberately removed the global 80ch cap from the
+//      container. `node-render-design-layer` briefly reintroduced a 66ch measure for paragraphs
+//      only, and the owner then asked for it back out entirely. A cap that creeps back onto
+//      .md-body or .md-body p would be a silent revert of either decision.
 //
 // Run: bun test ts/design-tokens.test.ts
 
@@ -167,23 +167,17 @@ test("the explicit dark rule is scoped to the dark theme alone", () => {
 	assert.ok(root.matches(':root[data-theme="dark"]'));
 });
 
-test("the measure caps paragraphs only — never the container, a table or a code block", () => {
+test("no reading measure caps .md-body or .md-body p — the container cap node-detail-read-width removed must stay removed", () => {
 	const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, sel, body]) => ({
 		selector: sel.trim().replace(/\s+/g, " "),
 		body,
 	}));
 
-	const capped = rules.filter((r) => /max-width:\s*66ch/.test(r.body));
-	assert.equal(capped.length, 1, "exactly one rule may apply the 66ch measure");
+	const measured = rules.filter((r) => /max-width\s*:/.test(r.body) && /^\.md-body(\s+p)?$/.test(r.selector));
 	assert.equal(
-		capped[0].selector,
-		".md-body p",
-		"the measure belongs on the paragraph — putting it on .md-body would re-impose the container " +
-			"cap that node-detail-read-width deliberately removed",
+		measured.length,
+		0,
+		"no max-width measure may sit on .md-body or .md-body p — the reading-width cap was dropped " +
+			"and the global container cap node-detail-read-width removed must not come back either",
 	);
-
-	// And the escape hatch for paragraphs that are layout, not prose.
-	const released = rules.find((r) => /max-width:\s*none/.test(r.body));
-	assert.ok(released, "table cells must release the measure");
-	assert.match(released.selector, /td p/);
 });
