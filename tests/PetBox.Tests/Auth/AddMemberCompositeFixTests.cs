@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
@@ -210,39 +209,36 @@ public sealed class AddMemberCompositeFixTests : IDisposable
 	// domain would be no fix at all: PBKDF2 at 100_000 iterations costs tens of milliseconds, far
 	// more than HTTP jitter, so "the reply came back fast" would still spell "that name is taken".
 	// The service therefore hashes BEFORE it looks, and throws the hash away when the name turns
-	// out to be taken. Asserted as a LOWER bound against the measured cost of one hash — a lower
-	// bound is the robust shape here: a loaded machine makes things slower, never faster, so this
-	// cannot flake upward.
+	// out to be taken.
+	//
+	// Asserted as a CALL COUNT, not a Stopwatch reading (auth-hash-cost-test-is-a-wallclock-flake
+	// -in-the-gate): a wall-clock comparison of two measurements flaked whenever the Cake gate ran
+	// this suite alongside the separate PetBox.E2ETests PROCESS and CPU contention skewed one
+	// reading but not the other. "AdminPasswordHasher.Hash ran at least once on this path" is the
+	// actual invariant — a call that got skipped is the oracle back, the same way a suspiciously
+	// fast reply was; a call count says that directly and cannot be pushed below the true value by
+	// background load, only (harmlessly) above it by an unrelated concurrent test's own Hash() call
+	// — see AdminPasswordHasher.HashCallCount for why >= 1, never == 1, is the assertion that stays
+	// load-independent.
 	[Fact]
 	public async Task CreateNew_pays_the_password_hash_even_when_the_username_is_taken()
 	{
 		SeedUser("taken", quota: 5);
 
-		AdminPasswordHasher.Hash("warm-up-the-jit");
-		var hashCost = TimeSpan.MaxValue;
-		for (var i = 0; i < 3; i++)
-		{
-			var sw = Stopwatch.StartNew();
-			AdminPasswordHasher.Hash("baseline");
-			if (sw.Elapsed < hashCost) hashCost = sw.Elapsed;
-		}
-
-		// Warm the query path too, so the first-call cost of building the linq2db query is not what
-		// this ends up measuring.
+		// "taken" has a Users row but, until this call, no WorkspaceMembers row yet — the first
+		// post against it is itself an Added, not the AlreadyMember path under test. Grant the
+		// membership first so the measured call below lands on the actual taken-name/AlreadyMember
+		// branch the test is about.
 		await _svc.AddMemberAsync(Ws, "taken", AddMemberMode.CreateNew, "pw", 1, WorkspaceRole.Member);
 
-		var takenCost = TimeSpan.MaxValue;
-		for (var i = 0; i < 3; i++)
-		{
-			var sw = Stopwatch.StartNew();
-			var outcome = await _svc.AddMemberAsync(Ws, "taken", AddMemberMode.CreateNew, "pw", 1, WorkspaceRole.Member);
-			if (sw.Elapsed < takenCost) takenCost = sw.Elapsed;
-			outcome.Should().Be(AddMemberOutcome.AlreadyMember);
-		}
+		var before = AdminPasswordHasher.HashCallCount;
+		var outcome = await _svc.AddMemberAsync(Ws, "taken", AddMemberMode.CreateNew, "pw", 1, WorkspaceRole.Member);
+		var after = AdminPasswordHasher.HashCallCount;
 
-		takenCost.Should().BeGreaterThan(hashCost * 0.5,
-			$"the taken-name path must still pay for the hash (one hash ≈ {hashCost.TotalMilliseconds:F0} ms, "
-			+ $"this path took {takenCost.TotalMilliseconds:F0} ms) — a fast answer here is the oracle, restated as a stopwatch");
+		outcome.Should().Be(AddMemberOutcome.AlreadyMember);
+		(after - before).Should().BeGreaterThanOrEqualTo(1,
+			"the taken-name path must still pay for the hash — a hash that got skipped here is the "
+			+ "account-enumeration oracle, restated as a call count instead of a stopwatch");
 	}
 
 	// ---- (B) the silent WorkspaceQuota = 0 -------------------------------------------------
