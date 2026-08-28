@@ -572,10 +572,10 @@ public sealed class MarkdownRendererSvgDiagramTests
 		html.Should().Contain("<text").And.Contain("addresses a different id space");
 		html.Should().Contain("<figcaption>The bridge is struck through");
 		// marker-end and the two <use> refs must still resolve to SOME id after namespacing.
-		var arrowId = Regex.Match(html, "<marker id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
+		var arrowId = Regex.Match(html, "<marker id=\"(arrow-[0-9a-f]{12})\"").Groups[1].Value;
 		arrowId.Should().NotBeEmpty();
 		html.Should().Contain($"marker-end=\"url(#{arrowId})\"");
-		var glyphId = Regex.Match(html, "<g id=\"(no-glyph-[0-9a-f]{8})\"").Groups[1].Value;
+		var glyphId = Regex.Match(html, "<g id=\"(no-glyph-[0-9a-f]{12})\"").Groups[1].Value;
 		glyphId.Should().NotBeEmpty();
 		html.Should().Contain($"href=\"#{glyphId}\"").And.Contain($"xlink:href=\"#{glyphId}\"");
 	}
@@ -662,7 +662,7 @@ public sealed class MarkdownRendererSvgDiagramTests
 	{
 		var html = Html("<svg><defs><g id=\"shape\"><circle r=\"5\" /></g></defs><use href=\"#shape\" /></svg>");
 		html.Should().Contain("<use");
-		html.Should().MatchRegex("href=\"#shape-[0-9a-f]{8}\"");
+		html.Should().MatchRegex("href=\"#shape-[0-9a-f]{12}\"");
 	}
 
 	// --- forbidden: <style> inside SVG (not scoped to the SVG — a global stylesheet) ---------------
@@ -702,26 +702,65 @@ public sealed class MarkdownRendererSvgDiagramTests
 		html.Should().Contain("stroke=\"#3b82f6\"");
 	}
 
-	// --- id-namespacing: two renders on the same page must never collide ---------------------------
+	// --- id-namespacing: the suffix must satisfy "different things must differ", not "everything
+	// must be unique" — it is derived from the SVG's own serialized markup, not randomized. --------
 
 	[Fact]
-	public void TwoRendersOfTheSameDiagram_GetDifferentIds_SoTheyCannotCollideOnOnePage()
+	public void TwoRendersOfTheSameDiagram_GetTheSameIds()
 	{
-		// Node bodies AND comment bodies share one renderer and commonly cohabit one board/thread
-		// page — two authors independently pasting the SAME diagram markdown must not have the
-		// second one's <marker>/<use> silently start resolving against the first one's <defs>.
+		// Inverts the old (now-wrong) "must differ" expectation: `editor-preview-renders-server-side`
+		// requires byte-identical HTML between the editor preview and the saved body, and preview
+		// and save are two separate renders of the SAME text. A content-derived suffix makes two
+		// renders of the same diagram collide on the same id — which is harmless, because the
+		// cross-reference lands on an identical shape (see SameSourceText_RendersByteIdentically
+		// below for the end-to-end version of this property).
 		const string md = "<svg><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\"><path d=\"M0,0Z\" /></marker></defs>"
 			+ "<path d=\"M0,0 L1,1\" marker-end=\"url(#arrow)\" /></svg>";
 		var html1 = Html(md);
 		var html2 = Html(md);
 
-		var id1 = Regex.Match(html1, "id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
-		var id2 = Regex.Match(html2, "id=\"(arrow-[0-9a-f]{8})\"").Groups[1].Value;
+		var id1 = Regex.Match(html1, "id=\"(arrow-[0-9a-f]{12})\"").Groups[1].Value;
+		var id2 = Regex.Match(html2, "id=\"(arrow-[0-9a-f]{12})\"").Groups[1].Value;
 		id1.Should().NotBeEmpty();
 		id2.Should().NotBeEmpty();
-		id1.Should().NotBe(id2, "the same source id rendered twice must not collide on one page");
+		id1.Should().Be(id2, "the same source text rendered twice must produce the same suffix");
 		html1.Should().Contain($"marker-end=\"url(#{id1})\"");
 		html2.Should().Contain($"marker-end=\"url(#{id2})\"");
+	}
+
+	[Fact]
+	public void TwoDifferentDiagrams_GetDifferentIds_SoTheyCannotCollideOnOnePage()
+	{
+		// The property that must survive the switch away from Guid.NewGuid(): node bodies AND
+		// comment bodies share one renderer and commonly cohabit one board/thread page — two
+		// authors pasting DIFFERENT diagrams that happen to reuse the source id "arrow" must not
+		// have the second one's <marker>/<use> silently start resolving against the first one's
+		// <defs>. Without this test, a content-derived suffix would be unproven — it could
+		// degenerate to a constant and still pass the "same diagram, same id" test above.
+		const string md1 = "<svg><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\"><path d=\"M0,0Z\" /></marker></defs>"
+			+ "<path d=\"M0,0 L1,1\" marker-end=\"url(#arrow)\" /></svg>";
+		const string md2 = "<svg><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\"><path d=\"M0,0 L2,2Z\" /></marker></defs>"
+			+ "<path d=\"M0,0 L1,1\" marker-end=\"url(#arrow)\" /></svg>";
+		var html1 = Html(md1);
+		var html2 = Html(md2);
+
+		var id1 = Regex.Match(html1, "id=\"(arrow-[0-9a-f]{12})\"").Groups[1].Value;
+		var id2 = Regex.Match(html2, "id=\"(arrow-[0-9a-f]{12})\"").Groups[1].Value;
+		id1.Should().NotBeEmpty();
+		id2.Should().NotBeEmpty();
+		id1.Should().NotBe(id2, "two genuinely different diagrams sharing a source id must not collide on one page");
+	}
+
+	[Fact]
+	public void SameSourceText_RendersByteIdentically()
+	{
+		// The end-to-end property `editor-preview-renders-server-side` actually needs: the SAME body
+		// text — containing a diagram with ids — rendered twice (once for the editor preview, once
+		// for the saved body) must produce byte-identical HTML. This was NOT provable before this
+		// fix: Guid.NewGuid() made every render diverge on the suffix.
+		var html1 = Html(LegitimateDiagram);
+		var html2 = Html(LegitimateDiagram);
+		html1.Should().Be(html2, "identical source text must render byte-identically, ids included");
 	}
 
 	// --- id-scoping: `id` only ever survives inside an SVG --------------------------------------
@@ -750,5 +789,5 @@ public sealed class MarkdownRendererSvgDiagramTests
 		Normalize(html1).Should().Be(Normalize(html2));
 	}
 
-	static string Normalize(string html) => Regex.Replace(html, "-[0-9a-f]{8}(?=[\"')#])", "-ID");
+	static string Normalize(string html) => Regex.Replace(html, "-[0-9a-f]{12}(?=[\"')#])", "-ID");
 }
