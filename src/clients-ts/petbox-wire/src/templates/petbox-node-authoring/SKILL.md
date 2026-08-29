@@ -72,13 +72,14 @@ Every diagram is a `<figure>`, and both halves must carry the SAME claim:
 
 This skill exists to hold back drawing as much as to enable it. A diagram costs the author time to
 build and the reader time to parse; prose costs neither when it already says the same thing.
-Reach for a diagram only when ALL of this is true:
+Reach for a diagram only when one of these holds:
 
 - the mechanism has **several distinct kinds of connection or state** that prose would have to
   enumerate one at a time, and the picture shows them at a glance instead;
-  a genuine divergence between two states or two paths that is easier to see side-by-side than to
-  describe in sequence;
-  a flow where the **order of branching** itself is the point (which check happens before which).
+- there is a genuine **divergence between two states or two paths** that is easier to see
+  side-by-side than to describe in sequence;
+- it is a flow where the **order of branching** itself is the point (which check happens before
+  which).
 
 Do NOT draw when:
 
