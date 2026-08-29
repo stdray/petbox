@@ -60,9 +60,14 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   uploaded, never invents a model.
 - `wire-exit.ts` — the exit taxonomy (`WIRE_EXIT`, `classifyApplyExit`) **and** the two sanctioned
   ways a run may end (`exitWith`, `abortRun`); see §2b and §2b-2.
-- `templates/SKILL.md` — per-project petbox skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
-- `templates/agent-factory/SKILL.md` — the on-demand `petbox-agent-factory` skill (no placeholders):
-  the `roles` / `profile` / `doctor` / `apply` procedure.
+- `templates/petbox/SKILL.md` — per-project petbox skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
+- `templates/petbox-agent-factory/SKILL.md` — the on-demand `petbox-agent-factory` skill (no
+  placeholders): the `roles` / `profile` / `doctor` / `apply` procedure.
+- `templates/petbox-methodology/SKILL.md` — the on-demand `petbox-methodology` skill (only
+  `{{PROJECT}}`): a THIN, project-agnostic pointer that fetches the wired project's live
+  task-methodology rules via `tasks_methodology_guide` at runtime — it never bakes in this repo's
+  own gates (preset `quartet`, `spec_plan`, …), because a wired project may run a different preset,
+  a custom instance, or no methodology at all.
 - `templates/petbox-write-economy/SKILL.md` — the on-demand `petbox-write-economy` skill (no
   placeholders): `bodyRef`/`fragment` write-cost mechanisms, raw UTF-8 vs. `\uXXXX`, the `bodyLen`
   read contract, and when the mechanisms don't pay off.
@@ -153,9 +158,15 @@ version, then imports `wire.ts`) plus the `src/` kit.
      skills root is `.factory/skills/`; its Claude-compat root is `.agent/skills/`, not
      `.claude/skills/`, so it needs a dedicated copy).
    - `.claude/skills/petbox-agent-factory/SKILL.md` + `.factory/skills/petbox-agent-factory/SKILL.md`
-     — the on-demand **agent-factory** skill (`templates/agent-factory/SKILL.md`, no placeholders):
-     the `roles` / `profile` / `doctor` / `apply` procedure. Written to both surfaces, same as the
-     petbox skill; it is a skill an agent loads when it needs it, not every session.
+     — the on-demand **agent-factory** skill (`templates/petbox-agent-factory/SKILL.md`, no
+     placeholders): the `roles` / `profile` / `doctor` / `apply` procedure. Written to both
+     surfaces, same as the petbox skill; it is a skill an agent loads when it needs it, not every
+     session.
+   - `.claude/skills/petbox-methodology/SKILL.md` + `.factory/skills/petbox-methodology/SKILL.md`
+     — the **methodology** skill (`templates/petbox-methodology/SKILL.md`, `{{PROJECT}}` only): a
+     thin, project-agnostic pointer that fetches the wired project's live task-methodology rules
+     (`tasks_methodology_guide`) at runtime instead of assuming this repo's own gates. Written to
+     both surfaces, same as the others.
    - `.claude/skills/petbox-write-economy/SKILL.md` + `.factory/skills/petbox-write-economy/SKILL.md`
      — the **write-economy** skill (`templates/petbox-write-economy/SKILL.md`, no placeholders):
      `bodyRef` (upload a body once, write by reference), `fragment` (point-patch a body), the raw

@@ -71,7 +71,10 @@ your machine actually has.
   `.factory/skills/petbox-write-economy/` (`bodyRef`/`fragment`, when they pay off and when they
   don't), plus the **node-authoring** skill under `.claude/skills/petbox-node-authoring/` and
   `.factory/skills/petbox-node-authoring/` (GFM callouts, the sanitized inline-SVG diagram
-  convention, and when a diagram is not worth drawing).
+  convention, and when a diagram is not worth drawing), plus the **methodology** skill under
+  `.claude/skills/petbox-methodology/` and `.factory/skills/petbox-methodology/` (a thin,
+  project-agnostic pointer that fetches this project's live task-methodology rules at runtime
+  instead of assuming another project's).
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a
