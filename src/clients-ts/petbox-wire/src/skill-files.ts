@@ -50,6 +50,7 @@ export const PROJECT_SKILLS: SkillTemplateSpec[] = [
   { dir: "petbox-agent-factory", needsWorkspace: false },
   { dir: "petbox-methodology", needsWorkspace: false },
   { dir: "petbox-write-economy", needsWorkspace: false },
+  { dir: "petbox-node-authoring", needsWorkspace: false },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has

@@ -69,7 +69,9 @@ your machine actually has.
   `.factory/skills/petbox-agent-factory/` (`roles` / `profile` / `doctor` / `apply`), plus the
   **write-economy** skill under `.claude/skills/petbox-write-economy/` and
   `.factory/skills/petbox-write-economy/` (`bodyRef`/`fragment`, when they pay off and when they
-  don't).
+  don't), plus the **node-authoring** skill under `.claude/skills/petbox-node-authoring/` and
+  `.factory/skills/petbox-node-authoring/` (GFM callouts, the sanitized inline-SVG diagram
+  convention, and when a diagram is not worth drawing).
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a
