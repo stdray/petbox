@@ -66,7 +66,10 @@ your machine actually has.
   (opencode MCP), `.factory/mcp.json` (Droid MCP — **merged**, so team servers survive), the rendered
   `SKILL.md` under `.claude/skills/petbox/` and `.factory/skills/petbox/`, and the on-demand
   **agent-factory** skill under `.claude/skills/petbox-agent-factory/` and
-  `.factory/skills/petbox-agent-factory/` (`roles` / `profile` / `doctor` / `apply`).
+  `.factory/skills/petbox-agent-factory/` (`roles` / `profile` / `doctor` / `apply`), plus the
+  **write-economy** skill under `.claude/skills/petbox-write-economy/` and
+  `.factory/skills/petbox-write-economy/` (`bodyRef`/`fragment`, when they pay off and when they
+  don't).
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a

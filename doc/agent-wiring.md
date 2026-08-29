@@ -63,6 +63,11 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `templates/SKILL.md` — per-project petbox skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
 - `templates/agent-factory/SKILL.md` — the on-demand `petbox-agent-factory` skill (no placeholders):
   the `roles` / `profile` / `doctor` / `apply` procedure.
+- `templates/petbox-write-economy/SKILL.md` — the on-demand `petbox-write-economy` skill (no
+  placeholders): `bodyRef`/`fragment` write-cost mechanisms, raw UTF-8 vs. `\uXXXX`, the `bodyLen`
+  read contract, and when the mechanisms don't pay off. `skill-files.ts`'s `PROJECT_SKILLS` is the
+  one place a new skill is registered — every directory under `templates/` must appear there and
+  vice versa (enforced by a test in `skill-files.test.ts`).
 
 Runtime: plain TypeScript executed by **node ≥ 23.6** native type-stripping. Zero dependencies.
 (No `enum`/`namespace`/parameter-properties; type-only imports; relative imports with explicit
@@ -145,6 +150,11 @@ version, then imports `wire.ts`) plus the `src/` kit.
      — the on-demand **agent-factory** skill (`templates/agent-factory/SKILL.md`, no placeholders):
      the `roles` / `profile` / `doctor` / `apply` procedure. Written to both surfaces, same as the
      petbox skill; it is a skill an agent loads when it needs it, not every session.
+   - `.claude/skills/petbox-write-economy/SKILL.md` + `.factory/skills/petbox-write-economy/SKILL.md`
+     — the **write-economy** skill (`templates/petbox-write-economy/SKILL.md`, no placeholders):
+     `bodyRef` (upload a body once, write by reference), `fragment` (point-patch a body), the raw
+     UTF-8 vs. `\uXXXX` cost, the `bodyLen` read contract, and when none of it pays off. Written to
+     both surfaces, same as the other two.
    - *7b (opt-in, `--telemetry`)*: ensure the named log exists
      (`POST /api/logs/<project>/logs`; 201 or 409 = ready, anything else aborts), then merge the OTLP
      export env into `.claude/settings.json` (non-secret) and the API-key-bearing
