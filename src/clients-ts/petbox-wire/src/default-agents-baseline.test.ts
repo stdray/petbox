@@ -24,7 +24,6 @@ const EXPECTED_SLUGS = [
   "orchestrator",
   "worker",
   "worker-highstakes",
-  "utility",
   "reserve",
   "explore",
 ];

@@ -162,7 +162,7 @@ test("computeRosterState: absent / empty-shell / partial / complete", () => {
   const partialState = computeRosterState(DEFAULT_AGENT_DEFINITION, partial, true);
   assert.equal(partialState.kind, "partial");
   if (partialState.kind === "partial") {
-    for (const slug of ["utility", "reserve", "explore"]) assert.ok(partialState.missing.includes(slug));
+    for (const slug of ["worker-highstakes", "reserve", "explore"]) assert.ok(partialState.missing.includes(slug));
   }
 
   const complete: RolesFile = {
@@ -175,7 +175,6 @@ test("computeRosterState: absent / empty-shell / partial / complete", () => {
               orchestrator: { model: "opus" },
               worker: { model: "sonnet" },
               "worker-highstakes": { model: "opus" },
-              utility: { model: "haiku" },
               explore: { model: "haiku" },
               reserve: { model: "fable" },
             },
@@ -524,7 +523,6 @@ test("CLI: roles.json missing exactly one role's binding -> that role prints 'no
                     orchestrator: { model: "opus" },
                     worker: { model: "sonnet" },
                     "worker-highstakes": { model: "opus" },
-                    utility: { model: "haiku" },
                     reserve: { model: "fable" },
                     // "explore" deliberately absent.
                   },

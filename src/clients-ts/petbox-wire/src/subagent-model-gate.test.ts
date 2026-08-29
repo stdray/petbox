@@ -34,7 +34,7 @@ test("petbox-worker + model → blocked, with a message telling the caller to re
 });
 
 test("any petbox-* role + model is blocked, not just petbox-worker", () => {
-  for (const role of ["petbox-orchestrator", "petbox-explore", "petbox-utility", "petbox-reserve"]) {
+  for (const role of ["petbox-orchestrator", "petbox-explore", "petbox-worker-highstakes", "petbox-reserve"]) {
     const decision = evaluateModelGate({
       tool_name: "Task",
       tool_input: { subagent_type: role, model: "opus" },

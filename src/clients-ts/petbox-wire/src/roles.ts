@@ -395,7 +395,6 @@ export const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   orchestrator: "opus",
   worker: "sonnet",
   "worker-highstakes": "opus",
-  utility: "haiku",
   explore: "haiku",
   reserve: "fable",
 };

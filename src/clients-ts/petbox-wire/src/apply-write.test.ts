@@ -73,7 +73,7 @@ test("writeArtifact: an existing marker-carrying file for a DIFFERENT role is st
   const dir = freshDir();
   try {
     const abs = join(dir, "petbox-worker.md");
-    writeFileSync(abs, `---\nname: petbox-utility\n${PETBOX_MARKER_LINE}\n---\n\nstale\n`, "utf8");
+    writeFileSync(abs, `---\nname: petbox-explore\n${PETBOX_MARKER_LINE}\n---\n\nstale\n`, "utf8");
     const outcome = writeArtifact(abs, "fresh");
     assert.equal(outcome.kind, "written");
   } finally {

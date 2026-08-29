@@ -6,7 +6,7 @@ directory is that no side can be edited without the others seeing it.
 
 ## `default-agents.json`
 
-The portable agent roster (`agent-definition-as-data`): six roles with `tier`,
+The portable agent roster (`agent-definition-as-data`): five roles with `tier`,
 `requiredCapabilities`, `spawn`, `escalation` and `notes` prose. Two consumers, one file:
 
 - **The server** embeds it (`PetBox.Core.csproj` → `EmbeddedResource`) and

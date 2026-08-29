@@ -38,7 +38,6 @@ const ALL_DEFAULT_BOUND: Readonly<Record<string, string>> = {
   orchestrator: "opus",
   worker: "sonnet",
   "worker-highstakes": "opus",
-  utility: "haiku",
   explore: "haiku",
   reserve: "fable",
 };
@@ -281,13 +280,13 @@ test("model gate: claude-code role bound to a droid id is BLOCKED (not written)"
     name: "p",
     roles: [
       { slug: "worker", tier: "worker", requiredCapabilities: [] },
-      { slug: "utility", tier: "utility", requiredCapabilities: [] },
+      { slug: "explore", tier: "utility", requiredCapabilities: [] },
     ],
   };
   // The 2026-07-12 incident: droid ids copied into the claude-code block of roles.json.
   const plan = planApply(portable, "claude-code", {
     worker: "custom:DeepSeek-V4-Pro-0",
-    utility: "haiku",
+    explore: "haiku",
   });
 
   assert.deepEqual(plan.skippedRoles, ["worker"]);
@@ -295,7 +294,7 @@ test("model gate: claude-code role bound to a droid id is BLOCKED (not written)"
     !plan.files.some((f) => f.relativePath.endsWith("worker.md")),
     "an unresolvable model must never reach .claude/agents/*.md",
   );
-  assert.ok(plan.files.some((f) => f.relativePath.endsWith("utility.md")));
+  assert.ok(plan.files.some((f) => f.relativePath.endsWith("explore.md")));
 
   assert.equal(plan.violations.length, 1);
   const v = plan.violations[0]!;
@@ -412,7 +411,6 @@ test("checkTruthfulness (doctor path) also gates the local model binding", () =>
     orchestrator: "opus",
     worker: "sonnet",
     "worker-highstakes": "opus",
-    utility: "haiku",
     reserve: "fable",
     explore: "haiku",
   });
@@ -529,7 +527,11 @@ test("orchestrator body's spawn/escalation prose names the NAMESPACED target rol
   const orchestrator = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")!;
   const md = renderAgentMarkdown(orchestrator);
   assert.match(md, /Target roles:.*`petbox-worker`/);
-  assert.match(md, /Target roles:.*`petbox-utility`/);
+  assert.match(md, /Target roles:.*`petbox-explore`/);
+  assert.ok(
+    !/`petbox-utility`/.test(md),
+    "the utility role was removed — the orchestrator must not route to a role that does not exist",
+  );
   assert.ok(!/Target roles:.*`worker`[,.]/.test(md), "must not list the bare slug");
 
   const worker = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
