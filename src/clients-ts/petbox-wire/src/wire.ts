@@ -43,6 +43,12 @@
 //        - .claude/skills/petbox-methodology/SKILL.md    (thin pointer at the LIVE methodology
 //                                                          this project runs — see skill-files.ts)
 //        - .factory/skills/petbox-methodology/SKILL.md
+//        - .claude/skills/petbox-write-economy/SKILL.md  (bodyRef/fragment write-cost mechanisms)
+//        - .factory/skills/petbox-write-economy/SKILL.md
+//        - .claude/skills/petbox-node-authoring/SKILL.md (node/comment BODY structure: GFM
+//                                                          callouts, the sanitized-SVG diagram
+//                                                          convention, when NOT to diagram)
+//        - .factory/skills/petbox-node-authoring/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
 //       all links point at the stable copy (~/.petbox/wire/), and any dead prompt-RAG hook left by
 //       an older kit is pruned. Claude Code additionally gets a PreToolUse hook (subagent-model-
@@ -1631,9 +1637,12 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   log(`[7/10] merged petbox MCP server into ${droidMcpPath}`);
 
   // Skill bodies: `petbox` (project-scoped), `petbox-agent-factory` (on-demand, no
-  // placeholders), and `petbox-methodology` (thin, project-agnostic pointer at the LIVE
-  // methodology this project runs — never this repo's own rules; see skill-files.ts). Rendered
-  // once per skill, then dropped into every native skill surface (writeSkillFiles / skill-files.ts).
+  // placeholders), `petbox-methodology` (thin, project-agnostic pointer at the LIVE
+  // methodology this project runs — never this repo's own rules; see skill-files.ts),
+  // `petbox-write-economy` (bodyRef/fragment write-cost mechanisms) and `petbox-node-authoring`
+  // (node/comment BODY structure). Rendered once per skill (see PROJECT_SKILLS in
+  // skill-files.ts — the one place a new skill is registered), then dropped into every native
+  // skill surface (writeSkillFiles / skill-files.ts).
   reportSkillOutcomes("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace));
 }
 

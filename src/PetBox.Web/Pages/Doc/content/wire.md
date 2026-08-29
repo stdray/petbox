@@ -34,7 +34,7 @@ It validates the key against the server **before** persisting anything, so a bad
 | `--telemetry-log <name>` | Target named log for telemetry (default `cc-telemetry`); the log is created if missing. |
 | `--help`, `-h` | Usage banner, exit 0. |
 
-What the full wire writes into `<dir>`: `.mcp.json` (Claude Code), `.opencode/opencode.json` (opencode), `.factory/mcp.json` (Factory Droid — **merged**, not overwritten, so team servers survive), and a `SKILL.md` under `.claude/skills/petbox/`, `.factory/skills/petbox/` plus the `petbox-agent-factory`, `petbox-write-economy` and `petbox-node-authoring` skills in the same surfaces. All three MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a project file.
+What the full wire writes into `<dir>`: `.mcp.json` (Claude Code), `.opencode/opencode.json` (opencode), `.factory/mcp.json` (Factory Droid — **merged**, not overwritten, so team servers survive), and a `SKILL.md` under `.claude/skills/petbox/`, `.factory/skills/petbox/` plus the `petbox-agent-factory`, `petbox-methodology`, `petbox-write-economy` and `petbox-node-authoring` skills in the same surfaces. All three MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a project file.
 
 > **Note:** on a fresh machine the environment variable only exists in **new** terminals (Windows user-scope env; POSIX `~/.petbox/env.sh` sourced from your login profiles). The kit's own hooks work immediately, because they read `~/.petbox/keys.json` directly.
 

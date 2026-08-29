@@ -146,6 +146,32 @@ test("every PROJECT_SKILLS entry has a matching templates/ directory (no danglin
   }
 });
 
+// ---- registry <-> README.md parity (task wire-docs-skill-list-stale) ------------------------
+//
+// The templates<->PROJECT_SKILLS parity tests above catch a skill the CODE forgot; they say
+// nothing about the prose in README.md's "What it installs" section, which lists every skill by
+// name for a human reader and has now drifted from PROJECT_SKILLS three times in a row (missing
+// petbox-methodology, then petbox-write-economy, then petbox-node-authoring, each added to the
+// registry without a matching README update). README.md ships inside this same npm package
+// (package.json "files") right next to src/, so this check never crosses a repo/package
+// boundary — unlike doc/agent-wiring.md or the .NET web doc page, which live outside this
+// package and are intentionally NOT covered here (see task report: cross-boundary path coupling
+// from inside this package's own test file was judged not worth it).
+test("every PROJECT_SKILLS entry is named in README.md's What it installs section", () => {
+  const readme = readFileSync(join(HERE, "..", "README.md"), "utf8");
+  const marker = "## What it installs";
+  const start = readme.indexOf(marker);
+  assert.ok(start >= 0, `README.md is missing the "${marker}" section`);
+  const nextHeading = readme.indexOf("\n## ", start + marker.length);
+  const section = nextHeading >= 0 ? readme.slice(start, nextHeading) : readme.slice(start);
+  for (const spec of PROJECT_SKILLS) {
+    assert.ok(
+      section.includes(spec.dir),
+      `README.md's "${marker}" section does not mention "${spec.dir}" — PROJECT_SKILLS and the README have drifted apart`,
+    );
+  }
+});
+
 // ---- origin marker (bug: skill-files-clobber-and-apply-skips) -------------------------------
 
 test("every template's frontmatter carries the PetBox origin marker", () => {
