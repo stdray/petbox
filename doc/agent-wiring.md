@@ -68,8 +68,8 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   task-methodology rules via `tasks_methodology_guide` at runtime — it never bakes in this repo's
   own gates (preset `quartet`, `spec_plan`, …), because a wired project may run a different preset,
   a custom instance, or no methodology at all.
-- `templates/petbox-write-economy/SKILL.md` — the on-demand `petbox-write-economy` skill (no
-  placeholders): `bodyRef`/`fragment` write-cost mechanisms, raw UTF-8 vs. `\uXXXX`, the `bodyLen`
+- `templates/petbox-write-economy/SKILL.md` — the on-demand `petbox-write-economy` skill (only
+  `{{PROJECT}}`): `bodyRef`/`fragment` write-cost mechanisms, raw UTF-8 vs. `\uXXXX`, the `bodyLen`
   read contract, and when the mechanisms don't pay off.
 - `templates/petbox-node-authoring/SKILL.md` — the on-demand `petbox-node-authoring` skill (only
   `{{PROJECT}}`): how to structure a node/comment BODY — GFM formatting the renderer already gives
@@ -168,10 +168,11 @@ version, then imports `wire.ts`) plus the `src/` kit.
      (`tasks_methodology_guide`) at runtime instead of assuming this repo's own gates. Written to
      both surfaces, same as the others.
    - `.claude/skills/petbox-write-economy/SKILL.md` + `.factory/skills/petbox-write-economy/SKILL.md`
-     — the **write-economy** skill (`templates/petbox-write-economy/SKILL.md`, no placeholders):
+     — the **write-economy** skill (`templates/petbox-write-economy/SKILL.md`, `{{PROJECT}}`
+     only):
      `bodyRef` (upload a body once, write by reference), `fragment` (point-patch a body), the raw
      UTF-8 vs. `\uXXXX` cost, the `bodyLen` read contract, and when none of it pays off. Written to
-     both surfaces, same as the other two.
+     both surfaces, same as the others.
    - `.claude/skills/petbox-node-authoring/SKILL.md` + `.factory/skills/petbox-node-authoring/SKILL.md`
      — the **node-authoring** skill (`templates/petbox-node-authoring/SKILL.md`, `{{PROJECT}}`
      only): what GFM formatting already gives an author for free, the GFM-alert callout convention,
