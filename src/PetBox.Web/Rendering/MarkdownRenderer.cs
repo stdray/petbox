@@ -342,7 +342,10 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 	// leaks onto every newly-allowed tag whether or not `<use>` exists), so once that guard exists,
 	// `<use xlink:href="#shape">` costs nothing extra and buys authors shape reuse (e.g. the
 	// reference diagram's three visually distinct "no" glyphs) without repeating markup.
-	static readonly HashSet<string> SvgTags = new(StringComparer.OrdinalIgnoreCase)
+	// `internal` (+ PetBox.Web's InternalsVisibleTo PetBox.Tests) so the drift-guard test
+	// (NodeAuthoringSkillSvgDriftTests) can pin the petbox-node-authoring skill's declared
+	// allowlist — shipped to projects with no PetBox sources — against this ground truth.
+	internal static readonly HashSet<string> SvgTags = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
 		"text", "tspan", "marker", "defs", "title", "desc", "use",
