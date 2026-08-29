@@ -1,0 +1,9 @@
+{
+  "_comment": "Price list for the `money` subcommand. Units: USD per 1,000,000 tokens. NOT vendored from any pricing page — snapshot it yourself with `opencode models <provider> --verbose` and read cost.input / cost.output / cost.cache.read / cost.cache.write off each model entry. These numbers drift (new model versions, provider repricing); re-run that command and update this file rather than trusting it's still current.",
+  "_captured": "2026-08-29, from opencode-config-research session scripts (money_calc.py)",
+  "deepseek/deepseek-v4-pro": {"input": 0.435, "output": 0.87, "cache_read": 0.003625, "cache_write": 0},
+  "deepseek/deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cache_read": 0.0028, "cache_write": 0},
+  "opencode-go/deepseek-v4-pro": {"input": 0.66, "output": 1.98, "cache_read": 0.022, "cache_write": 0},
+  "opencode-go/glm-5.3-flash": {"input": 0.075, "output": 0.25, "cache_read": 0.015, "cache_write": 0},
+  "opencode-go/qwen3.8-max": {"input": 2, "output": 6, "cache_read": 0.25, "cache_write": 2.5}
+}

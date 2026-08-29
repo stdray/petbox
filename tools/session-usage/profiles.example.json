@@ -1,0 +1,27 @@
+{
+  "_comment": "Example role -> model routing profiles for the `money` subcommand, as used in the opencode-roster-kak-i-pochemu wiki analysis. Not authoritative for your setup - copy and edit. `orchestrator_model` is applied to root/orchestrator session usage in every profile (the orchestrator is assumed to always run direct, never through a quota-metered route).",
+  "orchestrator_model": "deepseek/deepseek-v4-pro",
+  "profiles": {
+    "opencode-direct": {
+      "petbox-worker": "deepseek/deepseek-v4-flash",
+      "petbox-utility": "deepseek/deepseek-v4-flash",
+      "petbox-explore": "deepseek/deepseek-v4-flash",
+      "petbox-worker-highstakes": "deepseek/deepseek-v4-pro",
+      "petbox-reserve": "opencode-go/qwen3.8-max"
+    },
+    "opencode-main": {
+      "petbox-worker": "opencode-go/glm-5.3-flash",
+      "petbox-utility": "opencode-go/glm-5.3-flash",
+      "petbox-explore": "opencode-go/glm-5.3-flash",
+      "petbox-worker-highstakes": "deepseek/deepseek-v4-pro",
+      "petbox-reserve": "opencode-go/qwen3.8-max"
+    },
+    "opencode-go-max": {
+      "petbox-worker": "opencode-go/glm-5.3-flash",
+      "petbox-utility": "opencode-go/glm-5.3-flash",
+      "petbox-explore": "opencode-go/glm-5.3-flash",
+      "petbox-worker-highstakes": "opencode-go/deepseek-v4-pro",
+      "petbox-reserve": "opencode-go/qwen3.8-max"
+    }
+  }
+}

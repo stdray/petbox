@@ -33,10 +33,12 @@ TestResults/
 # BenchmarkDotNet artifacts
 BenchmarkDotNet.Artifacts/
 
-# Cake (tool restore) — but keep the tracked KqlBench research harness
+# Cake (tool restore) — but keep the tracked KqlBench research harness and the
+# session-usage token-reporting tool
 tools/*
 !tools/KqlBench/
 tools/KqlBench/bench-results.jsonl
+!tools/session-usage/
 .cake/
 
 # Python (agent/ deploy tool)
