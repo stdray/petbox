@@ -125,10 +125,13 @@ resumed agent what you found on disk so it does not redo it.
 self-introduction with zero tool calls. Only per-report review catches this.
 
 **Shared-checkout tools race with the gate.** Anything that rebuilds the primary checkout
-(a static-analysis model refresh, another agent's build) while the gate or a push runs
-produces a *false* red gate and can block the push outright — a pre-push inspection tool
-exits non-zero because another build holds the directory. Before believing a red gate,
-check whether something else was building.
+(a static-analysis model refresh, another agent's build) while the gate runs produces a
+*false* red — the Cake `Test` gate fails, or a by-hand `jb inspectcode` run
+(`scripts/inspect-gate.cs`) exits 2 (`COULD NOT VERIFY`, not a code finding) because
+another build holds the directory. Neither blocks the push itself any more: inspectcode's
+push-time run moved to CI on an isolated per-push runner (`.github/workflows/inspect.yml`),
+where this race can't happen. Before believing a red gate, check whether something else
+was building.
 
 **Check real exit codes.** A backgrounded command whose output is piped reports the exit
 code of the last command in the pipe. A failed push was reported as success this way.

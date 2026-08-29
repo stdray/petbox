@@ -1,8 +1,9 @@
 // pre-commit — whitespace-only autofix, nothing more.
 //
 // Runs `dotnet format whitespace` on the staged .cs files that are actually part of
-// PetBox.slnx, then re-stages what it touched. No build, no test, no jb: those are
-// pre-push's job (.githooks/pre-push -> scripts/inspect-gate.cs, ~45-110s) and CI's job.
+// PetBox.slnx, then re-stages what it touched. No build, no test, no jb: those are the
+// Cake gate's job (`./build.ps1 -Target Test`, run by hand before push — see AGENTS.md)
+// and CI's job (`jb inspectcode` via scripts/inspect-gate.cs, .github/workflows/inspect.yml).
 // This hook exists to make the common case (docs, yml, json, a handful of .cs files) cost
 // milliseconds-to-low-seconds, not minutes — the old pre-commit ran
 // format --verify-no-changes + build + test on the whole solution on every commit, which is

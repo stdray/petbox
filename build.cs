@@ -701,14 +701,15 @@ string CleanupCodeCachesHome(IEnumerable<string> settingsFiles)
 	return System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"petbox-cleanupcode-cache-{hash}");
 }
 
-// `CleanupCode` is a MANUAL fixer — deliberately wired into NEITHER a git hook NOR the
-// Test/Verify dependency chain (see work item resharper-clt-in-pipeline for the full case):
-// on pre-push it would rewrite files AFTER the commits being pushed were already made, so
-// origin would receive an unreviewed post-hoc diff; pre-commit can't afford it either — 43s
-// for a single file, because `--include` narrows which files get REWRITTEN, not the analysis
-// scope, so it still loads and inspects the whole solution every time. Run it by hand — e.g.
-// when scripts/inspect-gate.cs reports something mechanically fixable — then review `git diff`
-// before committing, same as any other auto-formatter.
+// `CleanupCode` is a MANUAL fixer — deliberately wired into NEITHER a git hook (there is no
+// pre-push hook at all any more, chore/inspect-gate-to-ci; pre-commit is the only hook left)
+// NOR the Test/Verify dependency chain (see work item resharper-clt-in-pipeline for the full
+// case): any hook firing at push time would rewrite files AFTER the commits being pushed were
+// already made, so origin would receive an unreviewed post-hoc diff; pre-commit can't afford it
+// either — 43s for a single file, because `--include` narrows which files get REWRITTEN, not the
+// analysis scope, so it still loads and inspects the whole solution every time. Run it by hand —
+// e.g. when scripts/inspect-gate.cs reports something mechanically fixable — then review
+// `git diff` before committing, same as any other auto-formatter.
 //
 // --profile=PetBoxSafe is REQUIRED, never omitted: without it jb defaults to the built-in "Full
 // Cleanup" profile, which reformats/reorders far more than this repo's conventions want (see
