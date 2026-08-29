@@ -106,7 +106,7 @@ secrets.local.env
 # untracked. Un-ignore each level explicitly — git will not descend into an ignored dir.
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/petbox-methodology/
+!.claude/skills/petbox-methodology-system/
 !.claude/skills/analysis-workspace/
 !.claude/skills/factory-run/
 

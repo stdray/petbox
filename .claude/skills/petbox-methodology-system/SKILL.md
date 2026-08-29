@@ -1,21 +1,28 @@
 ---
-name: petbox-methodology
+name: petbox-methodology-system
 description: >-
-  Operate PetBox's own project methodology — the idea → spec → work pipeline and its gates —
-  on the `$system` project via the `petbox` MCP server. Use when creating or refining IDEAS,
-  writing or changing the SPEC, creating WORK tasks, triaging INTAKE, promoting an OBSERVATION,
-  or planning a PetBox module/feature. Encodes the gate rules (an idea needs a spec_plan artifact
-  to reach review; the maintainer accepts; the spec is defined-only and every write needs
-  links.idea_spec→an accepted idea; the agent never self-sets Done/accepted), the spec-writing
-  format, the observations board (defect-like findings, promotion, auto-fix/regression), and the
-  exact MCP tool sequences + gotchas. Canon: doc/methodology.md.
+  Operate PetBox's OWN project methodology (the `$system` project itself) — the idea → spec →
+  work pipeline and its gates — via the `petbox` MCP server. This is $system-specific operator
+  detail, not the generic wired-in methodology pointer (that thin, project-agnostic skill is
+  `petbox-methodology`, wired by petbox-wire into every OTHER project). Use when creating or
+  refining IDEAS, writing or changing the SPEC, creating WORK tasks, triaging INTAKE, promoting
+  an OBSERVATION, or planning a PetBox module/feature, on `$system` itself. Encodes the gate
+  rules (an idea needs a spec_plan artifact to reach review; the maintainer accepts; the spec is
+  defined-only and every write needs links.idea_spec→an accepted idea; the agent never self-sets
+  Done/accepted), the spec-writing format, the observations board (defect-like findings,
+  promotion, auto-fix/regression), and the exact MCP tool sequences + gotchas. Canon:
+  doc/methodology.md.
 ---
 
-# PetBox methodology — operator's guide
+# PetBox methodology — $system operator's guide
 
-How to run work on PetBox itself through its own methodology. The canonical write-up is
-`doc/methodology.md`; this is the **operator's cheat-sheet** (the agent-facing flow, exact
-tool calls, and the gotchas that bite).
+How to run work on PetBox itself (the `$system` project) through its own methodology. This
+skill is `$system`-specific operator detail — the generic, project-agnostic pointer that
+petbox-wire installs into every wired project is the separate `petbox-methodology` skill (see
+`src/clients-ts/petbox-wire/src/templates/petbox-methodology/SKILL.md`); it fetches the live
+rules for THAT project at runtime instead of hardcoding `$system`'s own gates. The canonical
+write-up is `doc/methodology.md`; this is the **operator's cheat-sheet** (the agent-facing flow,
+exact tool calls, and the gotchas that bite).
 
 **Tool naming:** in opencode these MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`,
 `petbox_comments_upsert`); in Claude Code they are `mcp__petbox__<verb>`. The verbs written below
