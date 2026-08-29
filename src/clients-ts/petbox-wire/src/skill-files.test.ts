@@ -5,7 +5,7 @@
 // Run: node --test src/skill-files.test.ts   (Node >= 23.6 native TS type-stripping; no build step)
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -115,6 +115,35 @@ test("petbox-methodology skill: defers to the live server guide, never hardcodes
 test("petbox-methodology skill frontmatter names the skill correctly", () => {
   const body = readFileSync(join(TEMPLATES_ROOT, "petbox-methodology", "SKILL.md"), "utf8");
   assert.match(body, /^---\nname: petbox-methodology\n/);
+});
+
+// ---- registry <-> templates/ parity (task write-economy-skill-via-wire) ---------------------
+//
+// The property that lets a NEW skill be added with a single PROJECT_SKILLS entry: every template
+// directory on disk is registered, and every registered spec has a template directory on disk —
+// no orphan in either direction. Without this, a template could sit unregistered forever (never
+// wired into any project) or a registered spec could point at a deleted directory (every wire
+// crashes at readFileSync) and nothing here would say so.
+
+test("every directory under templates/ is registered in PROJECT_SKILLS (no unregistered orphan template)", () => {
+  const templateDirs = readdirSync(TEMPLATES_ROOT, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+  const registered = new Set(PROJECT_SKILLS.map((s) => s.dir));
+  for (const dir of templateDirs) {
+    assert.ok(registered.has(dir), `templates/${dir} exists but is not registered in PROJECT_SKILLS`);
+  }
+});
+
+test("every PROJECT_SKILLS entry has a matching templates/ directory (no dangling registry entry)", () => {
+  const templateDirs = new Set(
+    readdirSync(TEMPLATES_ROOT, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name),
+  );
+  for (const spec of PROJECT_SKILLS) {
+    assert.ok(templateDirs.has(spec.dir), `PROJECT_SKILLS names "${spec.dir}" but templates/${spec.dir}/ does not exist`);
+  }
 });
 
 // ---- origin marker (bug: skill-files-clobber-and-apply-skips) -------------------------------
