@@ -3,8 +3,13 @@
 // non-zero if anything survives at the given severity. See the doctrine comment below for how a
 // confirmed false positive gets out of the survivor set — it is never done in THIS file.
 //
-// This is the pre-push gate (.githooks/pre-push -> this script). Cost: ~45-160s wall-clock
-// (measured on this repo; depends on warm/cold JetBrains caches).
+// This gate runs in CI (.github/workflows/inspect.yml -> this script, on every branch push),
+// not locally: there is no pre-push hook invoking it any more (removed along with this comment
+// being wrong — see AGENTS.md for the current contract: the orchestrator waits for a green
+// `inspect` CI run before merging, push itself is never blocked locally). Still runnable by hand
+// for debugging a finding or checking `CleanupCode`'s effect before committing. Cost: ~45-160s
+// wall-clock locally (measured on this repo; depends on warm/cold JetBrains caches); CI runs
+// somewhat slower — see the `inspect` workflow's run history for current numbers.
 //
 // CONCURRENCY: the thing this gate has to survive is NOT "something else is building in this
 // checkout" -- it is that MSBuild's worker-node pool is MACHINE-GLOBAL. `jb inspectcode` shells
@@ -18,8 +23,8 @@
 // a false red caused by a checkout it never touched. Two mechanisms below defend against that:
 // MSBUILDDISABLENODEREUSE on the jb child, and a machine-global mutex.
 //
-// Activate: git config core.hooksPath .githooks
-// Bypass:   git push --no-verify
+// Run manually: dotnet run scripts/inspect-gate.cs   (from the repo root; no activation step —
+// there is nothing to `git config` any more, this is just a script you can invoke directly).
 //
 // Usage:
 //   dotnet run scripts/inspect-gate.cs                                       # full run, ERROR severity
