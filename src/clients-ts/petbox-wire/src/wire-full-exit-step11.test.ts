@@ -175,7 +175,6 @@ function plantUnresolvableBinding(homeDir: string): void {
                 orchestrator: { model: "opus" },
                 worker: { model: "gpt-4o-mini" }, // not in claude-code's closed model space
                 "worker-highstakes": { model: "opus" },
-                utility: { model: "haiku" },
                 explore: { model: "haiku" },
                 reserve: { model: "fable" },
               },

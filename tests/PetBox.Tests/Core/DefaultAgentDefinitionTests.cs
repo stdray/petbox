@@ -24,7 +24,7 @@ public sealed class DefaultAgentDefinitionTests
 	// artifact per role, and a harness roster that silently lost `reserve` or `worker-highstakes`
 	// would fail as "the orchestrator spawns a role that does not exist" much later and elsewhere.
 	static readonly string[] ExpectedSlugs =
-		["orchestrator", "worker", "worker-highstakes", "utility", "reserve", "explore"];
+		["orchestrator", "worker", "worker-highstakes", "reserve", "explore"];
 
 	// Tier is FREE TEXT everywhere else in the system (the admin form takes any string, and there
 	// is no tier enum in either the C# contract or the kit), so this is deliberately a check on THIS

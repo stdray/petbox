@@ -85,10 +85,9 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
     assert.equal(ccRoles.orchestrator.model, "opus");
     assert.equal(ccRoles.worker.model, "sonnet");
     assert.equal(ccRoles["worker-highstakes"].model, "opus");
-    assert.equal(ccRoles.utility.model, "haiku");
     assert.equal(ccRoles.explore.model, "haiku");
     const droidRoles = roles.profiles.default.agents["droid"].roles;
-    for (const role of ["orchestrator", "worker", "worker-highstakes", "utility", "explore", "reserve"]) {
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       assert.equal(droidRoles[role].model, "inherit", `droid ${role} must be seeded to inherit`);
     }
     assert.equal(
@@ -99,7 +98,7 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
 
     // Every default claude-code role file actually carries a model: line — the bug this card
     // fixes (a bare `apply` used to ship every role with NO model: key at all).
-    for (const role of ["orchestrator", "worker", "worker-highstakes", "utility", "explore", "reserve"]) {
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       const p = join(projectDir, ".claude", "agents", `petbox-${role}.md`);
       assert.equal(existsSync(p), true, `expected ${p} to be written. Output:\n${out}`);
       assert.match(
@@ -115,7 +114,7 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
 
     // droid roles are written too, with the seeded literal `inherit` — a real, explicit binding,
     // not the old implicit fallback.
-    for (const role of ["orchestrator", "worker", "worker-highstakes", "utility", "explore", "reserve"]) {
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       const p = join(projectDir, ".factory", "droids", `petbox-${role}.md`);
       assert.equal(existsSync(p), true, `expected ${p} to be written. Output:\n${out}`);
       assert.match(readFileSync(p, "utf8"), /^model: inherit$/m, `droid ${role} must carry model: inherit`);
@@ -125,12 +124,28 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
     // must still WRITE its role files (inheriting the session model, exactly the pre-card
     // behavior) and warn loudly, rather than block. This is the crux of the happy path: a first
     // wire/apply on a brand-new machine must not fail just because opencode has no default.
-    for (const role of ["orchestrator", "worker", "worker-highstakes", "utility", "explore", "reserve"]) {
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       const p = join(projectDir, ".opencode", "agent", `petbox-${role}.md`);
       assert.equal(existsSync(p), true, `expected ${p} to be written (inheriting). Output:\n${out}`);
       const body = readFileSync(p, "utf8");
       assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), `opencode ${role} must NOT invent a model`);
     }
+    // The `utility` role was deleted from the roster: a fresh apply must not render it on
+    // ANY harness (leaf-tools-mechanical-and-drop-utility).
+    for (const [dir, sub] of [
+      [".claude", "agents"],
+      [".opencode", "agent"],
+      [".factory", "droids"],
+    ] as const) {
+      for (const name of ["petbox-utility.md", "utility.md"]) {
+        assert.equal(
+          existsSync(join(projectDir, dir, sub, name)),
+          false,
+          `${join(projectDir, dir, sub, name)} must not be written — the utility role is gone`,
+        );
+      }
+    }
+
     assert.match(out, /no local model binding for harness 'opencode'/);
     assert.match(out, /model set .* --agent opencode/);
 
@@ -173,7 +188,6 @@ test("apply refuses a declared role with no local model binding — hard block, 
                     orchestrator: { model: "opus" },
                     worker: { model: "sonnet" },
                     "worker-highstakes": { model: "opus" },
-                    utility: { model: "haiku" },
                     reserve: { model: "fable" },
                     // "explore" deliberately absent — the case under test.
                   },
@@ -183,7 +197,6 @@ test("apply refuses a declared role with no local model binding — hard block, 
                     orchestrator: { model: "opencode-default" },
                     worker: { model: "opencode-default" },
                     "worker-highstakes": { model: "opencode-default" },
-                    utility: { model: "opencode-default" },
                     explore: { model: "opencode-default" },
                     reserve: { model: "opencode-default" },
                   },
@@ -193,7 +206,6 @@ test("apply refuses a declared role with no local model binding — hard block, 
                     orchestrator: { model: "inherit" },
                     worker: { model: "inherit" },
                     "worker-highstakes": { model: "inherit" },
-                    utility: { model: "inherit" },
                     explore: { model: "inherit" },
                     reserve: { model: "inherit" },
                   },
