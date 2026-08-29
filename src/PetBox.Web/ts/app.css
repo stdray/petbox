@@ -522,6 +522,50 @@
 	color: var(--md-muted);
 }
 
+/* ── Figure viewer (spec `body-figure-inspectable`) ─────────────────────────────────────
+   A "⛶" ghost button in the figure unit's corner, revealed on hover/focus of the unit —
+   NOT a click-on-figure affordance (non-obvious; precedent node-action-row-affordance).
+   The button and the [data-figure-view] unit are added client-side by ts/figure-viewer.ts;
+   classes here are plain CSS (not Tailwind utilities) for the same reason the rest of
+   .md-body's own styling is. The `.md-body svg` rule above is deliberately untouched —
+   the inline size stays whatever diagram-renders-unreadably-small decides; only the DIALOG
+   gets its own large rendering below. */
+.md-body .figure-view {
+	position: relative;
+}
+.md-body .figure-view-trigger {
+	position: absolute;
+	top: 0.15rem;
+	right: 0.15rem;
+	padding: 0 0.4rem;
+	font-size: 0.9rem;
+	line-height: 1.7;
+	border: none;
+	border-radius: 0.25rem;
+	background: oklch(var(--b1) / 0.75);
+	color: oklch(var(--bc) / 0.7);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.md-body .figure-view:hover .figure-view-trigger,
+.md-body .figure-view:focus-within .figure-view-trigger {
+	opacity: 1;
+}
+/* The dialog's own rendering of the SAME svg: near-fullscreen box, native scroll. The inline
+   `max-width` rule above is scoped to .md-body and does not apply here, so this restates the
+   containment the enlarged view needs. */
+.figure-view-dialog-box {
+	width: min(94vw, 1100px);
+	max-width: 94vw;
+	max-height: 92vh;
+	overflow: auto;
+}
+.figure-view-dialog-content svg {
+	max-width: 100%;
+	height: auto;
+}
+
 /* ── Reply frame (work `comment-vs-body-distinction`) ───────────────────────────────────────
    Owner's diagnosis: the node body and a comment read as the same kind of surface — the fix is
    the FRAME OUTSIDE, not typography inside. The body block in TaskBoardNode.cshtml is

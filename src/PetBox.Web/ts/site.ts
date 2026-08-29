@@ -18,6 +18,7 @@ import { initBoardColumnsDialog, initBoardFieldsDialog, initBoardPage } from "./
 import { initCommentThreads } from "./commentThread";
 import { initConfigPage } from "./config";
 import { initConfirmForms } from "./confirm";
+import { initFigureViewer } from "./figure-viewer";
 import { initJsonHighlight } from "./json-highlight";
 import { initMethodologyPresetLead } from "./methodology-preset";
 import { initMethodologyPreview } from "./methodology-preview";
@@ -36,3 +37,4 @@ initMethodologyPreview();
 initMethodologyPresetLead();
 initJsonHighlight();
 initConfirmForms();
+initFigureViewer();
