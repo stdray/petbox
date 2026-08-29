@@ -406,7 +406,14 @@
 /* ── Tables ───────────────────────────────────────────────────────────────────────────────
    No vertical rules: a row is read across, and a grid of boxes fights that. Only a horizontal
    rule under each row, none under the last. The header is a small upper-case LABEL (sans, wide
-   tracking) rather than bold body text, and figures are tabular so columns of numbers line up. */
+   tracking) rather than bold body text, and figures are tabular so columns of numbers line up.
+   font-size is `em`, not `rem`: `rem` reads the ROOT font-size (~16px) regardless of where the
+   table sits, but `.md-body` prose renders at 16.5px (its own token, not the root), so `0.9rem`
+   landed ~13% smaller than the surrounding text instead of the intended "slightly more compact
+   than prose" — and the gap would only widen if the root and body sizes ever diverge further
+   (observation `md-body-tables-read-too-small`). `em` reads the table's OWN computed font-size,
+   which for an element with no explicit override is inherited from `.md-body`, so the table now
+   tracks the body size it actually sits inside. */
 .md-body .md-table-scroll {
 	overflow-x: auto;
 	margin: 0.6em 0;
@@ -415,7 +422,7 @@
 .md-body table {
 	border-collapse: collapse;
 	margin: 0;
-	font-size: 0.9rem;
+	font-size: 0.95em;
 	font-variant-numeric: tabular-nums;
 }
 .md-body th,
