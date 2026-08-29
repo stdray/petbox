@@ -58,9 +58,30 @@ don't push silently.
 - Tasks (`tasks_*`) — a unit of work with a status tracked to Done.
 - Memory (`memory_*`) — a durable fact that should outlive the work. Don't store what
   code/git already records, transient state, secrets, or actionable work (that's a task).
+- Observations (board `observations`) — a defect-like finding: something broken, behaving
+  unexpectedly, or contradicting docs. NOT a memory fact and not (yet) a task.
+
+**Observations** — every project has a built-in, undeletable `observations` board (world
+`$utility`, so it never enters the owner's decision queue or digest). It's an ordinary
+board (`tasks_search`/`tasks_node_get`/`tasks_upsert` work on it like any other) holding
+`observation` nodes: `seen` → `promoted` → `fixed` (terminal ok), or `declined` (terminal
+cancel) — a status value, no separate FSM engine. Writing a similar node there dedupes onto
+the existing one and bumps its `recurrenceCount` instead of creating a duplicate (surfaced as
+`deduped` in the write response and as `observation.recurrenceCount`/`lastSeenAt` on search
+hits) — this only fires on a purely-creating batch (every node `version:0`, no deletes), so
+don't mix creates with edits in one call. `tasks_observation_promote` turns a `seen`
+observation into a real `work` (needs `type: feature|bug|chore`) or `ideas` node via an
+`observation_obligation` relation; the observation moves to `promoted` and stays addressable,
+it does not disappear. When the linked task/idea reaches a terminal-ok status the observation
+auto-flips to `fixed`; a terminal-not-ok reopens it to `seen`. A fresh hit of the same problem
+after a fix reopens it to `seen` too, stamps `recurredAfterFixAt`, and flags
+`decisionPending:true` on the task that had "fixed" it — that task's terminal status is not
+touched automatically. The session extractor also files defect-like findings here on its own;
+you don't need to do that manually for anything it would already catch.
 
 **Tools:**
 - `tasks_board_list / board_create / board_delete / search / node_get / upsert / delta / workflow`
+- `tasks_observation_promote` — promote a `seen` observation to `work`/`ideas` (see above)
 - `memory_store_list / store_create / store_delete / search / remember / get / upsert / delta`
 - `session_search / get / upsert / append / delete` (`search` without `q` = the session listing; with `q` = two-stage archive search whose hits carry message ordinals for `session_get`)
 - Logs: `log_query` (KQL), `log_create / list / delete`
