@@ -115,10 +115,11 @@ using System.Text.Json.Nodes;
 //     surface for this class of setting means one place a reviewer has to check.
 
 // ---- exit codes ---------------------------------------------------------------------------------
-// 1 and 2 both block a push (`.githooks/pre-push` execs this and git rejects on any non-zero), and
-// nothing anywhere parses the number — the split exists so a HUMAN reading the last line can tell
-// "your code has a problem" from "the check never ran". Conflating them is what sent this repo
-// hunting for a defect in a checkout that was innocent.
+// 1 and 2 both fail the run (`.github/workflows/inspect.yml` execs this and a non-zero exit fails
+// the CI job — no push is blocked locally any more), and nothing anywhere parses the number — the
+// split exists so a HUMAN reading the last line can tell "your code has a problem" from "the check
+// never ran". Conflating them is what sent this repo hunting for a defect in a checkout that was
+// innocent.
 const int ExitCouldNotVerify = 2;
 
 // ---- args -------------------------------------------------------------------------------------
@@ -258,8 +259,8 @@ else
 	psi.ArgumentList.Add("-f=Sarif");
 	psi.ArgumentList.Add($"-o={sarifPath}");
 	psi.ArgumentList.Add($"--caches-home={cachesHome}");
-	// Without this jb narrates every file it touches — ~2200 lines on this solution, which in a
-	// pre-push hook buries the one line that matters. WARN still surfaces jb's own failures.
+	// Without this jb narrates every file it touches — ~2200 lines on this solution, which in the
+	// CI log buries the one line that matters. WARN still surfaces jb's own failures.
 	psi.ArgumentList.Add("--verbosity=WARN");
 
 	// ---- defence 1: never share MSBuild worker nodes with another process ---------------------
