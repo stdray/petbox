@@ -160,8 +160,13 @@
 :root {
 	/* Font ROLES — the font encodes what kind of content this is, it does not decorate.
 	   System stacks only: this box self-hosts and must render identically with no network, so
-	   there is no @import/<link> to a font CDN anywhere in this layer. */
-	--md-font-prose: Georgia, Charter, "Bitstream Charter", "Iowan Old Style", "Source Serif 4", "Noto Serif",
+	   there is no @import/<link> to a font CDN anywhere in this layer.
+
+	   Georgia is deliberately NOT first here: its digits are old-style (3/4/5/7/9 descend, 6/8
+	   ascend) and it ships no `lnum`/`tnum`, so numbers wobble mid-sentence and the tabular-nums
+	   on tables below is a silent no-op. Charter (macOS) and Cambria (Windows) are the two screen
+	   serifs with lining tabular figures. */
+	--md-font-prose: Charter, "Bitstream Charter", "Source Serif 4", Cambria, "Iowan Old Style", "Noto Serif", Georgia,
 		"Times New Roman", serif;
 	--md-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 	--md-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
