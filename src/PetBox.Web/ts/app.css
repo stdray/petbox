@@ -504,15 +504,44 @@
    authored with `fill`/`stroke="currentColor"` rather than hardcoded hex — `color` already
    cascades from .md-body's `--md-ink` token above, and CSS `currentColor` reads the computed
    `color` of the element it's on, so a diagram themes for free in light AND dark with zero
-   diagram-specific tokens. Only a layout concern is left to add here: a diagram authored at a
-   fixed pixel viewBox must not overflow a narrow board card or comment column. */
+   diagram-specific tokens. A diagram authored at a fixed pixel viewBox must not overflow a
+   narrow board card or comment column — kept here as a blanket safety net for any bare `<svg>`
+   the sanitized subset lets through outside a `<figure>` (there shouldn't be one — see below —
+   but this costs nothing and matches the rule's original intent if there ever is). */
 .md-body svg {
 	max-width: 100%;
 	height: auto;
 }
+/* Layout (work `diagram-renders-unreadably-small`): the skill mandates "every diagram is a
+   `<figure>`" (petbox-node-authoring), so the diagram itself is targeted through THAT wrapper,
+   not the bare `.md-body svg` rule above. The skill never asks an author for `width`/`height`
+   on the `<svg>` root, only `viewBox` — and a replaced element with a `viewBox` but no
+   `width`/`height` gets the UA default object size (300×150), which `max-width` cannot fix
+   because it only clamps a size, it never SUPPLIES one. `width: 100%` supplies the real size —
+   the containing block's own width, so it self-clamps to whatever column it's in (narrow board
+   card or comment, or the wide node page) without needing a separate cap — and `height: auto`
+   then derives from the `viewBox` aspect ratio via the CSS "natural aspect ratio" replaced-
+   element algorithm, so the drawing isn't stretched. A SMALL diagram (e.g. a compact viewBox
+   meant to read like a large icon) is stretched to full column width same as a large one: the
+   skill gives the author no way to say "keep this one small", so there is no signal to act on
+   either way, and a full-width small diagram is still legible — the bug this card fixes. */
+.md-body figure svg {
+	width: 100%;
+}
 /* A figure is a layout unit like a table, not measured prose (see the "No measure" note on
-   `.md-body p` above) — full section width, own vertical rhythm. */
+   `.md-body p` above) — full section width, own vertical rhythm. `display: block` overrides a
+   real leak, found empirically (live render, work `diagram-renders-unreadably-small`): daisyUI's
+   `.card figure { display: flex; align-items: center; justify-content: center }` (its card-image
+   convention) is a DESCENDANT selector with no depth limit, so it reaches any `<figure>` nested
+   anywhere inside a `.card`-classed ancestor — including a diagram `<figure>` buried in
+   `.md-body`. That flex row is the second symptom on the owner's screenshot: it sits the SVG and
+   `<figcaption>` side by side instead of stacking them, and the caption (a flex item, not
+   confined to a text column) reads as an oversized block of prose to the right of the drawing.
+   `.md-body figure` and `.card figure` are equal specificity (one class + one type each); this
+   rule wins the cascade only because it is declared later in this file — verified against the
+   compiled `wwwroot/css/app.css`, not assumed — so `display: block` here is not redundant. */
 .md-body figure {
+	display: block;
 	margin: 0.9em 0;
 }
 .md-body figcaption {
@@ -527,9 +556,10 @@
    NOT a click-on-figure affordance (non-obvious; precedent node-action-row-affordance).
    The button and the [data-figure-view] unit are added client-side by ts/figure-viewer.ts;
    classes here are plain CSS (not Tailwind utilities) for the same reason the rest of
-   .md-body's own styling is. The `.md-body svg` rule above is deliberately untouched —
-   the inline size stays whatever diagram-renders-unreadably-small decides; only the DIALOG
-   gets its own large rendering below. */
+   .md-body's own styling is. The `.md-body figure svg` and `.md-body figure` rules above are
+   deliberately untouched here — the inline size and stacking stay whatever those rules compute
+   (real container width, block layout; work `diagram-renders-unreadably-small`, resolved) —
+   only the DIALOG gets its own large rendering below. */
 .md-body .figure-view {
 	position: relative;
 }
