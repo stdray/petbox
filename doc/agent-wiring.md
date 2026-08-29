@@ -65,9 +65,15 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   the `roles` / `profile` / `doctor` / `apply` procedure.
 - `templates/petbox-write-economy/SKILL.md` — the on-demand `petbox-write-economy` skill (no
   placeholders): `bodyRef`/`fragment` write-cost mechanisms, raw UTF-8 vs. `\uXXXX`, the `bodyLen`
-  read contract, and when the mechanisms don't pay off. `skill-files.ts`'s `PROJECT_SKILLS` is the
-  one place a new skill is registered — every directory under `templates/` must appear there and
-  vice versa (enforced by a test in `skill-files.test.ts`).
+  read contract, and when the mechanisms don't pay off.
+- `templates/petbox-node-authoring/SKILL.md` — the on-demand `petbox-node-authoring` skill (only
+  `{{PROJECT}}`): how to structure a node/comment BODY — GFM formatting the renderer already gives
+  for free, the GFM-alert callout convention, the sanitized inline-SVG diagram convention (a
+  `<figure>`/`<figcaption>` pair carrying the same claim as the drawing's own `role="img"`/`<title>`
+  text alternative), and — the part that matters most — when a diagram is not worth drawing.
+  `skill-files.ts`'s `PROJECT_SKILLS` is the one place a new skill is registered — every directory
+  under `templates/` must appear there and vice versa (enforced by a test in
+  `skill-files.test.ts`).
 
 Runtime: plain TypeScript executed by **node ≥ 23.6** native type-stripping. Zero dependencies.
 (No `enum`/`namespace`/parameter-properties; type-only imports; relative imports with explicit
@@ -155,6 +161,11 @@ version, then imports `wire.ts`) plus the `src/` kit.
      `bodyRef` (upload a body once, write by reference), `fragment` (point-patch a body), the raw
      UTF-8 vs. `\uXXXX` cost, the `bodyLen` read contract, and when none of it pays off. Written to
      both surfaces, same as the other two.
+   - `.claude/skills/petbox-node-authoring/SKILL.md` + `.factory/skills/petbox-node-authoring/SKILL.md`
+     — the **node-authoring** skill (`templates/petbox-node-authoring/SKILL.md`, `{{PROJECT}}`
+     only): what GFM formatting already gives an author for free, the GFM-alert callout convention,
+     the sanitized inline-SVG diagram convention and its caption-states-the-claim discipline, and
+     when a diagram is not worth drawing. Written to both surfaces, same as the others.
    - *7b (opt-in, `--telemetry`)*: ensure the named log exists
      (`POST /api/logs/<project>/logs`; 201 or 409 = ready, anything else aborts), then merge the OTLP
      export env into `.claude/settings.json` (non-secret) and the API-key-bearing
