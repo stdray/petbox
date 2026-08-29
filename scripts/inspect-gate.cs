@@ -28,6 +28,7 @@
 //   dotnet run scripts/inspect-gate.cs -- --report path/to/existing.sarif    # skip the jb run, just re-judge a report
 //   dotnet run scripts/inspect-gate.cs -- --lock-timeout=45                  # minutes to wait for the gate lock (default 30)
 //   dotnet run scripts/inspect-gate.cs -- --no-lock                          # run without the machine-global lock
+//   dotnet run scripts/inspect-gate.cs -- --caches-home path/to/dir          # override the computed caches-home (e.g. a stable, cacheable CI path)
 //
 // Exit 0: nothing survived at the given severity.
 // Exit 1: at least one finding SURVIVED (printed as `file:line  ruleId  message`) — a verdict about
@@ -121,6 +122,7 @@ var severity = "ERROR";
 string? reportPath = null;
 var useLock = true;
 var lockTimeout = TimeSpan.FromMinutes(30);
+string? cachesHomeOverride = null;
 for (var i = 0; i < args.Length; i++)
 {
 	var (name, inlineValue) = SplitArg(args[i]);
@@ -131,6 +133,7 @@ for (var i = 0; i < args.Length; i++)
 		case "--severity": severity = Value(); break;
 		case "--report": reportPath = Value(); break;
 		case "--no-lock": useLock = false; break;
+		case "--caches-home": cachesHomeOverride = Value(); break;
 		case "--lock-timeout":
 			if (!double.TryParse(Value(), NumberStyles.Float, CultureInfo.InvariantCulture, out var lockMinutes) || lockMinutes <= 0)
 			{
@@ -204,7 +207,13 @@ else
 		? Directory.EnumerateFiles(externalAnnotationsDir, "*", SearchOption.AllDirectories)
 		: [])
 	.ToArray();
-	var cachesHome = Path.Combine(Path.GetTempPath(), $"petbox-inspectcode-cache-{HashOf(settingsFiles)}");
+	// --caches-home overrides the computed path outright (CI wants a stable, cacheable
+	// location outside the OS temp folder, which GitHub Actions' actions/cache does not
+	// persist across runs anyway); the settings-hash computation above still runs so the
+	// override path is validated the same way, but its result is discarded when an override
+	// is given. The default (no override) is unchanged: keyed to settings CONTENT, disposable,
+	// shared across worktrees on this machine.
+	var cachesHome = cachesHomeOverride ?? Path.Combine(Path.GetTempPath(), $"petbox-inspectcode-cache-{HashOf(settingsFiles)}");
 
 	// ---- version pin --------------------------------------------------------------------------
 	// `jb` is a globally installed dotnet tool, not something this repo's manifest pulls in (see

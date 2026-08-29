@@ -1,0 +1,103 @@
+name: Inspect
+
+# Separate workflow from ci.yml on purpose: ci.yml triggers on `push: branches: [main]` (plus a
+# handful of release tags), and widening that trigger to every branch would also fire `test`,
+# `sdk`, and `publish` on every feature push — far more than this gate needs. This workflow's
+# only job is `jb inspectcode` via scripts/inspect-gate.cs, formerly run locally from
+# .githooks/pre-push (see AGENTS.md and scripts/inspect-gate.cs for the gate's own rationale and
+# exit-code contract).
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+concurrency:
+  # A second push to the same branch makes the first run's verdict moot — cancel it rather than
+  # let two runs of the same ~1-3 min gate race for the machine.
+  group: inspect-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        # No fetch-depth: 0 — inspectcode analyzes the checked-out tree, not history; the default
+        # (depth-1) checkout is sufficient and cheaper. If that turns out wrong (e.g. some MSBuild
+        # target here needs git history) the fix is a one-line addition, not a reason to default to
+        # full history speculatively.
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          # Same key as ci.yml's `test`/`sdk`/`publish` jobs — the gate's `jb inspectcode` shells
+          # out to an MSBuild restore over the same solution, so it can reuse whatever cache those
+          # jobs already warmed (and vice versa) instead of keying its own separate copy.
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # jb is a globally installed dotnet tool (~978MB), not something the repo's own
+      # dotnet-tools.json manifest pulls in — see scripts/inspect-gate.cs's top-of-file comment on
+      # why `dotnet tool restore` is not the fix. Installed to an explicit --tool-path (not the
+      # default ~/.dotnet/tools) purely because an explicit directory is simpler to point
+      # actions/cache at than a shared tools directory that may also hold other tools.
+      #
+      # Version is PINNED, not `dotnet tool install -g` latest: scripts/inspect-gate.cs hardcodes
+      # ExpectedJbVersion = "2026.2" and refuses to run (exit 2) against a mismatched jb — and a
+      # newer jb release is known to trip that check. The cache key includes the version so a
+      # future bump here also rotates the cache instead of silently reusing an old install.
+      - name: Resolve jb tool cache
+        id: jb-tool-cache
+        run: echo "path=$HOME/.jb-tools" >> "$GITHUB_OUTPUT"
+
+      - name: Cache jb (JetBrains.ReSharper.GlobalTools)
+        id: cache-jb
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.jb-tool-cache.outputs.path }}
+          key: jb-tool-2026.2.0-${{ runner.os }}
+
+      - name: Install jb 2026.2.0
+        if: steps.cache-jb.outputs.cache-hit != 'true'
+        run: dotnet tool install JetBrains.ReSharper.GlobalTools --version 2026.2.0 --tool-path "${{ steps.jb-tool-cache.outputs.path }}"
+
+      - name: Add jb tool dir to PATH
+        run: echo "${{ steps.jb-tool-cache.outputs.path }}" >> "$GITHUB_PATH"
+
+      # inspectcode's own solution cache (--caches-home, see scripts/inspect-gate.cs) is keyed by
+      # settings CONTENT there — a locally-computed hash of .editorconfig, PetBox.slnx.DotSettings,
+      # and ExternalAnnotations/**. Mirrored here via hashFiles() so a settings edit rotates the CI
+      # cache exactly like it rotates the local one: reuse a stale cache and jb silently reports
+      # yesterday's findings against today's settings (the bug --caches-home exists to prevent).
+      - name: Resolve inspectcode caches-home
+        id: inspect-cache-home
+        run: echo "path=$HOME/.inspectcode-caches-home" >> "$GITHUB_OUTPUT"
+
+      - name: Cache inspectcode caches-home
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.inspect-cache-home.outputs.path }}
+          key: inspectcode-caches-home-${{ runner.os }}-${{ hashFiles('.editorconfig', 'PetBox.slnx.DotSettings', 'ExternalAnnotations/**') }}
+
+      # --no-lock is REQUIRED here, not optional: the machine-global mutex
+      # (Global\petbox-inspect-gate) this script otherwise takes exists to serialize concurrent
+      # gate runs sharing ONE machine's MSBuild worker-node pool — meaningless on a fresh,
+      # single-use GitHub-hosted runner. Worse, the mutex name has a literal backslash, and on a
+      # non-Windows runner `new Mutex(false, @"Global\petbox-inspect-gate")` can throw an exception
+      # scripts/inspect-gate.cs does not catch (only UnauthorizedAccessException,
+      # WaitHandleCannotBeOpenedException, and IOException are handled there) — --no-lock skips
+      # the mutex path entirely rather than relying on that catch clause covering it.
+      - name: Run inspect-gate
+        run: dotnet run scripts/inspect-gate.cs -- --no-lock --caches-home "${{ steps.inspect-cache-home.outputs.path }}"
+
+      - name: Measure caches-home size
+        if: always()
+        run: du -sh "${{ steps.inspect-cache-home.outputs.path }}" || true
