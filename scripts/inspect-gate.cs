@@ -3,8 +3,13 @@
 // non-zero if anything survives at the given severity. See the doctrine comment below for how a
 // confirmed false positive gets out of the survivor set — it is never done in THIS file.
 //
-// This is the pre-push gate (.githooks/pre-push -> this script). Cost: ~45-160s wall-clock
-// (measured on this repo; depends on warm/cold JetBrains caches).
+// This gate runs in CI (.github/workflows/inspect.yml -> this script, on every branch push),
+// not locally: there is no pre-push hook invoking it any more (removed along with this comment
+// being wrong — see AGENTS.md for the current contract: the orchestrator waits for a green
+// `inspect` CI run before merging, push itself is never blocked locally). Still runnable by hand
+// for debugging a finding or checking `CleanupCode`'s effect before committing. Cost: ~45-160s
+// wall-clock locally (measured on this repo; depends on warm/cold JetBrains caches); CI runs
+// somewhat slower — see the `inspect` workflow's run history for current numbers.
 //
 // CONCURRENCY: the thing this gate has to survive is NOT "something else is building in this
 // checkout" -- it is that MSBuild's worker-node pool is MACHINE-GLOBAL. `jb inspectcode` shells
@@ -18,8 +23,8 @@
 // a false red caused by a checkout it never touched. Two mechanisms below defend against that:
 // MSBUILDDISABLENODEREUSE on the jb child, and a machine-global mutex.
 //
-// Activate: git config core.hooksPath .githooks
-// Bypass:   git push --no-verify
+// Run manually: dotnet run scripts/inspect-gate.cs   (from the repo root; no activation step —
+// there is nothing to `git config` any more, this is just a script you can invoke directly).
 //
 // Usage:
 //   dotnet run scripts/inspect-gate.cs                                       # full run, ERROR severity
@@ -28,6 +33,7 @@
 //   dotnet run scripts/inspect-gate.cs -- --report path/to/existing.sarif    # skip the jb run, just re-judge a report
 //   dotnet run scripts/inspect-gate.cs -- --lock-timeout=45                  # minutes to wait for the gate lock (default 30)
 //   dotnet run scripts/inspect-gate.cs -- --no-lock                          # run without the machine-global lock
+//   dotnet run scripts/inspect-gate.cs -- --caches-home path/to/dir          # override the computed caches-home (e.g. a stable, cacheable CI path)
 //
 // Exit 0: nothing survived at the given severity.
 // Exit 1: at least one finding SURVIVED (printed as `file:line  ruleId  message`) — a verdict about
@@ -121,6 +127,7 @@ var severity = "ERROR";
 string? reportPath = null;
 var useLock = true;
 var lockTimeout = TimeSpan.FromMinutes(30);
+string? cachesHomeOverride = null;
 for (var i = 0; i < args.Length; i++)
 {
 	var (name, inlineValue) = SplitArg(args[i]);
@@ -131,6 +138,7 @@ for (var i = 0; i < args.Length; i++)
 		case "--severity": severity = Value(); break;
 		case "--report": reportPath = Value(); break;
 		case "--no-lock": useLock = false; break;
+		case "--caches-home": cachesHomeOverride = Value(); break;
 		case "--lock-timeout":
 			if (!double.TryParse(Value(), NumberStyles.Float, CultureInfo.InvariantCulture, out var lockMinutes) || lockMinutes <= 0)
 			{
@@ -204,7 +212,13 @@ else
 		? Directory.EnumerateFiles(externalAnnotationsDir, "*", SearchOption.AllDirectories)
 		: [])
 	.ToArray();
-	var cachesHome = Path.Combine(Path.GetTempPath(), $"petbox-inspectcode-cache-{HashOf(settingsFiles)}");
+	// --caches-home overrides the computed path outright (CI wants a stable, cacheable
+	// location outside the OS temp folder, which GitHub Actions' actions/cache does not
+	// persist across runs anyway); the settings-hash computation above still runs so the
+	// override path is validated the same way, but its result is discarded when an override
+	// is given. The default (no override) is unchanged: keyed to settings CONTENT, disposable,
+	// shared across worktrees on this machine.
+	var cachesHome = cachesHomeOverride ?? Path.Combine(Path.GetTempPath(), $"petbox-inspectcode-cache-{HashOf(settingsFiles)}");
 
 	// ---- version pin --------------------------------------------------------------------------
 	// `jb` is a globally installed dotnet tool, not something this repo's manifest pulls in (see

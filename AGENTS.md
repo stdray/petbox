@@ -122,30 +122,35 @@ history now, while the current plan and status are the boards above.
    local check — the Cake gate builds the whole source tree, the image build does not. If
    a change adds a root-level build input (a new props/analyzer file, a new top-level
    directory), build the image (`docker build .`) before moving the deploy tag.
-   **The Cake gate is not the only gate `git push` has to clear.** `core.hooksPath` is set
-   to `.githooks`, and `.githooks/pre-push` runs `dotnet run scripts/inspect-gate.cs` —
-   `jb inspectcode` against the whole solution, failing (exit 1) if anything survives at
-   ERROR severity — on every push that isn't a pure ref deletion. This is invoked ONLY from
-   the hook: it is not a dependency of `Test`, `Verify`, or any other Cake target in
-   `build.cs`, so a green `./build.ps1 -Target Test` (or even `-Target Verify`) proves
-   nothing about it. Incident 2026-08-26: a worker ran the Cake gate in the foreground, exit
-   0, 4460 tests green, and still had the push rejected — `inspect-gate: 1 finding(s)
-   survived` (`RedundantUsingDirective`). Run it yourself before pushing:
-   `dotnet run scripts/inspect-gate.cs` (~45-160s; `jb inspectcode` shells out to MSBuild,
-   whose worker-node pool is MACHINE-global — it adopts idle nodes a DIFFERENT worktree left
-   behind and dies with them (MSB4166) when that worktree's agent gets killed, not from a
-   build in this checkout. Runs are serialized machine-wide by a `Global\petbox-inspect-gate`
-   mutex; a "waiting for the gate lock" message is normal, not a hang (30m timeout;
-   `--lock-timeout=N` / `--no-lock` to override). Exit 1 = findings survived; exit 2 = the
-   tool itself couldn't run after 3 attempts (`COULD NOT VERIFY`, not a code finding). Bypass
-   either with `git push --no-verify`, but that just defers the failure to the next push or
-   to whoever reviews it). If it reports something mechanically fixable, the
-   fixer is `./build.ps1 -Target CleanupCode` (`jb cleanupcode --profile=PetBoxSafe`) — also
-   deliberately wired into NEITHER a hook nor `Test`/`Verify` (it rewrites files, so it must
-   be run and its diff reviewed BEFORE committing, never after — see `build.cs` for the full
-   rationale). `.githooks/pre-commit` runs a separate, much cheaper check on every commit:
-   `dotnet run scripts/pre-commit.cs`, which runs `dotnet format whitespace` on the staged
-   `.cs` files and re-stages what it touched — no build, no test, no `jb`.
+   **The Cake gate is not the only gate a branch has to clear before it merges to main.**
+   `jb inspectcode` runs against the whole solution in CI (`.github/workflows/inspect.yml`,
+   triggered on every branch push; script: `scripts/inspect-gate.cs`), failing (exit 1) if
+   anything survives at ERROR severity. It does **not** run locally any more — there is no
+   pre-push hook for it (removed alongside this rewrite, chore/inspect-gate-to-ci: the old
+   `.githooks/pre-push` had no other job, so it was deleted rather than left empty), and
+   `git push` is never blocked by it: pushing is immediate, the verdict comes back
+   asynchronously as a CI run. It is also still not a dependency of `Test`, `Verify`, or any
+   other Cake target in `build.cs`, so a green `./build.ps1 -Target Test` (or even
+   `-Target Verify`) proves nothing about it — same as before this change.
+   **The orchestrator MUST wait for a green `inspect` CI run before merging a branch into
+   main** — `gh run list --workflow=inspect.yml --branch=<branch>` to find the run, then
+   `gh run view <id> --json status,conclusion` to confirm it (not `gh run watch`, which
+   misreports CI state — see below). Merging without it reintroduces exactly the risk the
+   2026-08-26 incident surfaced (`inspect-gate: 1 finding(s) survived`, `RedundantUsingDirective`,
+   caught back then only because the old pre-push hook forced it before the push could land) —
+   just one step later, straight onto main instead of a branch. Exit 1 = findings survived;
+   exit 2 = the tool itself couldn't run after 3 attempts (`COULD NOT VERIFY`, not a code
+   finding). If it reports something mechanically fixable, the fixer is
+   `./build.ps1 -Target CleanupCode` (`jb cleanupcode --profile=PetBoxSafe`) — still
+   deliberately wired into NEITHER CI nor `Test`/`Verify` (it rewrites files, so it must be run
+   and its diff reviewed BEFORE committing, never after — see `build.cs` for the full
+   rationale). `scripts/inspect-gate.cs` is still runnable by hand
+   (`dotnet run scripts/inspect-gate.cs`, ~45-160s locally, depends on warm/cold JetBrains
+   caches) to debug a finding or check `CleanupCode`'s effect before committing — it is simply
+   no longer wired into the push path. `.githooks/pre-commit` runs a separate, much cheaper
+   check on every commit: `dotnet run scripts/pre-commit.cs`, which runs
+   `dotnet format whitespace` on the staged `.cs` files and re-stages what it touched — no
+   build, no test, no `jb`; unaffected by this change.
    **Run the gate in the FOREGROUND and block on its exit code.** A gate started in the
    background dies with the turn that started it: a subagent that ends its turn saying "the
    gate is running, I'll report when it finishes" never reports — its process is gone. This
