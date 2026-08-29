@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { decorateFigures } from "./figure-viewer";
+import { clampZoom, decorateFigures } from "./figure-viewer";
 
 const SVG = '<svg viewBox="0 0 40 20"><rect x="1" y="1" width="38" height="18"></rect></svg>';
 
@@ -88,5 +88,23 @@ describe("figure decoration", () => {
 		expect(swapped?.closest("[data-figure-view]")).toBeNull();
 		decorateFigures(dom.window.document);
 		expect(swapped?.closest("[data-figure-view]")).not.toBeNull();
+	});
+});
+
+// Zoom (v2, work `figure-viewer-zoom-controls`). The dialog-bound mechanics (buttons, ctrl+wheel,
+// drag-pan, keyboard, reset-on-close) need a real browser — showModal and pointer capture aren't
+// implemented by jsdom — so those live in the E2E suite. clampZoom is the one pure piece.
+describe("zoom clamping", () => {
+	test("passes values inside [0.5, 8] through unchanged", () => {
+		expect(clampZoom(1)).toBe(1);
+		expect(clampZoom(2.5)).toBe(2.5);
+	});
+
+	test("clamps below the minimum", () => {
+		expect(clampZoom(0.1)).toBe(0.5);
+	});
+
+	test("clamps above the maximum", () => {
+		expect(clampZoom(50)).toBe(8);
 	});
 });

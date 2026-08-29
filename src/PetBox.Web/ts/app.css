@@ -582,18 +582,49 @@
 .md-body .figure-view:focus-within .figure-view-trigger {
 	opacity: 1;
 }
-/* The dialog's own rendering of the SAME svg: near-fullscreen box, native scroll. The inline
-   `max-width` rule above is scoped to .md-body and does not apply here, so this restates the
-   containment the enlarged view needs. */
+/* The dialog's own rendering of the SAME svg: near-fullscreen box, native scroll at rest. The
+   inline `max-width` rule above is scoped to .md-body and does not apply here, so this restates
+   the containment the enlarged view needs. `box` is now the flex shell (fixed-height controls
+   row + a content viewport that owns its own scrolling) rather than the scrolling element itself
+   — v1 let the whole box scroll, which would drag the controls row along with it; scoping the
+   scroll to `content` keeps the zoom/close controls put. */
 .figure-view-dialog-box {
 	width: min(94vw, 1100px);
 	max-width: 94vw;
 	max-height: 92vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+.figure-view-dialog-content {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow: auto;
 }
 .figure-view-dialog-content svg {
 	max-width: 100%;
 	height: auto;
+}
+/* Zoom (v2, work `figure-viewer-zoom-controls`): a permanent dialog-owned layer that carries the
+   translate+scale transform. It never leaves the dialog — only the held unit moves in and out of
+   it — so the unit itself is never transformed and restoreHeld never has to undo one. */
+.figure-view-zoom-layer {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 100%;
+	transform-origin: center center;
+}
+/* Past fit, dragging replaces native scroll — running both at once over the same gesture would
+   fight each other, so overflow switches to hidden for the duration. */
+.figure-view-dialog-content.figure-view-zoomed {
+	overflow: hidden;
+	cursor: grab;
+	touch-action: none;
+}
+.figure-view-dialog-content.figure-view-zoomed.figure-view-panning {
+	cursor: grabbing;
 }
 
 /* ── Reply frame (work `comment-vs-body-distinction`) ───────────────────────────────────────
