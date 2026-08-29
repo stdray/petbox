@@ -1,0 +1,15 @@
+{
+  "_comment": "Price list for the `money` subcommand (and opencode_store.bucket_cost). Units: USD per 1,000,000 tokens. NOT vendored from any pricing page — snapshot it yourself with `opencode models <provider> --verbose` and read cost.input / cost.output / cost.cache.read / cost.cache.write off each model entry. These numbers drift (new model versions, provider repricing); re-run that command and update this file rather than trusting it's still current. Only entries actually returned by that command are listed here — a model with no entry is reported as 'no price', never silently priced at $0.",
+  "_quota_multiplier_comment": "Optional per-entry field. Some opencode-go models are billed against the Go subscription's usage caps ($12/5h, $30/week, $60/month) at a MULTIPLE of their base per-token price shown below. `opencode models opencode-go --verbose` states this ONLY inside the free-text `name` field (e.g. 'GLM-5.3-Flash (2x usage)', 'Hy3 (8x usage)') — there is no structured field to parse it from. You must read the name field by eye and transcribe the multiplier here BY HAND every time this file is refreshed, or any quota forecast for that model is silently understated by exactly the missed factor (this happened once: glm-5.3-flash reconciled as recorded/recomputed cost $0.2773 vs recorded, ratio 1.000 — but the Go dashboard's quota figure was $0.56, exactly base_cost x 2). Absent field = multiplier 1. Do not apply this to any deepseek/* entry — that wallet is a real per-token invoice, not a quota, and has no multiplier concept.",
+  "_captured": "2026-08-29, from opencode-config-research session scripts (money_calc.py) plus `opencode models opencode-go --verbose` / `opencode models deepseek --verbose` (opencode 1.18.25)",
+  "deepseek/deepseek-v4-pro": {"input": 0.435, "output": 0.87, "cache_read": 0.003625, "cache_write": 0},
+  "deepseek/deepseek-v4-flash": {"input": 0.14, "output": 0.28, "cache_read": 0.0028, "cache_write": 0},
+  "opencode-go/deepseek-v4-pro": {"input": 0.66, "output": 1.98, "cache_read": 0.022, "cache_write": 0},
+  "opencode-go/deepseek-v4-flash": {"input": 0.22, "output": 0.66, "cache_read": 0.007, "cache_write": 0},
+  "opencode-go/glm-5.3": {"input": 1.4, "output": 4.4, "cache_read": 0.26, "cache_write": 0},
+  "opencode-go/glm-5.3-flash": {"input": 0.075, "output": 0.25, "cache_read": 0.015, "cache_write": 0, "quota_multiplier": 2},
+  "opencode-go/grok-4.6": {"input": 2, "output": 6, "cache_read": 0.5, "cache_write": 0},
+  "opencode-go/mimo-v2.5": {"input": 0.14, "output": 0.28, "cache_read": 0.0028, "cache_write": 0},
+  "opencode-go/qwen3.8-max": {"input": 2, "output": 6, "cache_read": 0.25, "cache_write": 2.5},
+  "opencode-go/hy3": {"input": 0.0175, "output": 0.0725, "cache_read": 0.004375, "cache_write": 0, "quota_multiplier": 8}
+}

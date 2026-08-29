@@ -1,0 +1,14 @@
+{
+  "_comment": "Example ACTUAL numbers file for the `reconcile` subcommand. This is DATA you supply, not something the tool derives - read these off the Go subscription usage dashboard (or wherever the ground truth lives) for one calendar day, per model, per wallet (providerID). The `date`/`tz` keys here are used unless overridden on the command line. This particular snapshot is the reconciliation reference from the session-usage-tool card: 2026-08-29, local (UTC+3) day boundary, five opencode-go models. Copy and edit with your own numbers for other days.",
+  "date": "2026-08-29",
+  "tz": "local",
+  "wallets": {
+    "opencode-go": {
+      "glm-5.3": 0.29,
+      "grok-4.6": 0.04,
+      "mimo-v2.5": 0.00,
+      "qwen3.8-max": 0.31,
+      "glm-5.3-flash": 0.56
+    }
+  }
+}
