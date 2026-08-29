@@ -4,10 +4,11 @@
 // change, no Razor change: the SVG is already a live inline element in the DOM.
 //
 // Mechanism:
-//   * Decorator — finds every `<svg>` in a `.md-body` and gives its UNIT (the enclosing
-//     `<figure>` when present, else a positioning wrapper created around the bare svg) a corner
-//     ghost button "⛶", revealed on hover/focus. NOT click-on-figure: that affordance is
-//     non-obvious (precedent node-action-row-affordance).
+//   * Decorator — finds every `<svg>` inside a `<figure>` in a `.md-body` (the authoring skill,
+//     petbox-node-authoring, mandates that every diagram IS a `<figure>`, so that ancestor is the
+//     full and exact set of svgs this feature owns) and gives the `<figure>` itself a corner ghost
+//     button "⛶", revealed on hover/focus. NOT click-on-figure: that affordance is non-obvious
+//     (precedent node-action-row-affordance).
 //   * Dialog — a single native `<dialog class="modal">` created lazily and appended to <body>
 //     (daisyUI 4 modal works with showModal; free ESC/focus/backdrop — precedent: the share
 //     modal). Near-fullscreen box + native scroll at rest (scale 1 == "fit").
@@ -40,10 +41,17 @@ const TRIGGER_SELECTOR = "[data-testid='figure-viewer-trigger']";
 // The unit currently held by the dialog, with everything needed to put it back exactly where it
 // came from. `next` is the node the unit sat BEFORE — inserting before it on close reproduces the
 // original position even when the unit wasn't the parent's last child.
+// `trigger` is the "⛶" button, detached from the unit before the move (see openUnit) rather than
+// carried into the dialog with it — restoreHeld re-appends it. Two reasons, not one: the button is
+// meaningless on an already-enlarged figure, and its `position: absolute` is only positioned by a
+// `.md-body .figure-view-trigger` rule, so dragging it out of `.md-body` and into the dialog would
+// drop it into normal flow as a stray glyph under the caption (observation
+// `figure-view-trigger-loses-position-in-dialog`) — simplest fix is to just not take it along.
 interface HeldUnit {
 	readonly unit: HTMLElement;
 	readonly parent: ParentNode;
 	readonly next: ChildNode | null;
+	readonly trigger: HTMLElement | null;
 }
 
 let held: HeldUnit | null = null;
@@ -65,32 +73,29 @@ let panOriginY = 0;
 
 // Which elements get a trigger, and what the unit is:
 //   * an <svg> inside a <figure>  → the figure itself is the unit (caption travels with it);
-//   * a bare <svg>                → wrapped in a positioning div first (the button needs a
-//     positioned ancestor, and an svg's own box is an unreliable one);
-//   * an <svg> outside .md-body   → nothing (the decorator is scoped to markdown surfaces).
+//   * any other <svg>             → nothing.
+// The second bullet used to read "a bare svg gets wrapped in a positioning div and decorated
+// too", on the theory that any bare svg the sanitizer let through was a diagram missing its
+// `<figure>` wrapper. That theory was false: a GFM alert title (`<p class="markdown-alert-title">`)
+// legitimately carries its own small decorative <svg> icon with no `<figure>` ancestor, and the
+// wrap-and-decorate branch put a "view enlarged" trigger on it too — three triggers on a page with
+// one real diagram and two alerts (observation `figure-viewer-wraps-non-figure-svg-icons`). The
+// authoring skill (petbox-node-authoring) already mandates that every diagram IS a `<figure>`, so
+// requiring that ancestor is both narrower and correct: nothing legitimate is missed, and there is
+// no fallback branch left to maintain.
 // Idempotent: a unit already carrying data-figure-view is skipped, so re-running after every
 // htmx settle never stacks triggers.
 export function decorateFigures(root: ParentNode): readonly HTMLElement[] {
 	const decorated: HTMLElement[] = [];
 	for (const body of root.querySelectorAll<HTMLElement>(".md-body")) {
 		for (const svg of body.querySelectorAll("svg")) {
-			if (svg.closest(UNIT_SELECTOR)) continue;
 			const figure = svg.closest("figure");
-			const unit = figure ?? wrapBare(svg);
-			decorateUnit(unit);
-			decorated.push(unit);
+			if (!figure || figure.closest(UNIT_SELECTOR)) continue;
+			decorateUnit(figure);
+			decorated.push(figure);
 		}
 	}
 	return decorated;
-}
-
-function wrapBare(svg: SVGElement): HTMLElement {
-	const wrapper = document.createElement("div");
-	wrapper.className = "figure-view";
-	wrapper.setAttribute("data-figure-view", "");
-	svg.replaceWith(wrapper);
-	wrapper.append(svg);
-	return wrapper;
 }
 
 function decorateUnit(unit: Element): void {
@@ -280,7 +285,11 @@ function openUnit(unit: HTMLElement): void {
 	const content = dialog.querySelector<HTMLElement>(".figure-view-dialog-content");
 	const parent = unit.parentNode;
 	if (!zoomLayer || !content || !parent) return;
-	held = { unit, parent, next: unit.nextSibling };
+	// Detach the trigger BEFORE recording next-sibling / moving the unit — see the HeldUnit comment
+	// for why it doesn't travel into the dialog.
+	const trigger = unit.querySelector<HTMLElement>(TRIGGER_SELECTOR);
+	trigger?.remove();
+	held = { unit, parent, next: unit.nextSibling, trigger };
 	resetZoom(zoomLayer, content);
 	zoomLayer.replaceChildren(unit);
 	dialog.showModal();
@@ -294,6 +303,8 @@ function restoreHeld(): void {
 	// of the surface the unit came from); fall back to appending rather than throwing NotFoundError.
 	if (state.next && state.next.parentNode === state.parent) state.parent.insertBefore(state.unit, state.next);
 	else state.parent.append(state.unit);
+	// Put the trigger back exactly where decorateUnit originally appended it (last child).
+	if (state.trigger) state.unit.append(state.trigger);
 }
 
 export function initFigureViewer(): void {

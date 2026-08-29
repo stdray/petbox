@@ -559,7 +559,14 @@
    .md-body's own styling is. The `.md-body figure svg` and `.md-body figure` rules above are
    deliberately untouched here — the inline size and stacking stay whatever those rules compute
    (real container width, block layout; work `diagram-renders-unreadably-small`, resolved) —
-   only the DIALOG gets its own large rendering below. */
+   only the DIALOG gets its own large rendering below.
+   Positioning is deliberately scoped to `.md-body` (below), not to the bare `.figure-view` /
+   `.figure-view-trigger` classes: the button never actually needs to be positioned OUTSIDE a
+   `.md-body`, because ts/figure-viewer.ts detaches it from the unit before the unit is moved into
+   the dialog and re-appends it on restore — an already-enlarged figure has no use for a "view
+   enlarged" button anyway. That is also what keeps this rule from silently breaking again the way
+   it did before (work `figure-view-trigger-scope-and-position`): the button simply never leaves
+   the one container this selector requires. */
 .md-body .figure-view {
 	position: relative;
 }
