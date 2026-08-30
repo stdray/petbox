@@ -23,6 +23,7 @@ import { initJsonHighlight } from "./json-highlight";
 import { initMethodologyPresetLead } from "./methodology-preset";
 import { initMethodologyPreview } from "./methodology-preview";
 import { initNodeEdit } from "./nodeEdit";
+import { initNodeShare } from "./nodeShare";
 import { initWorkflowViz } from "./workflow-viz";
 
 Alpine.start();
@@ -32,6 +33,7 @@ initBoardColumnsDialog();
 initBoardPage();
 initNodeEdit();
 initCommentThreads();
+initNodeShare();
 initWorkflowViz();
 initMethodologyPreview();
 initMethodologyPresetLead();

@@ -156,6 +156,12 @@
 						}
 					</span>
 				}
+				@* node-share-ui (spec node-share / node-share-scope): opens _NodeShareModal below, which
+				   is where project/board/node identity lives — this button only says "a node share,
+				   default scope". The scope itself (body / full) is picked in the modal, because it is
+				   baked into the minted token and cannot be widened by the reader afterwards. *@
+				<button type="button" class="btn btn-ghost btn-xs" data-node-share-open data-scope="node"
+					data-testid="node-share-open" title="Create a public link to this node">Share</button>
 				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
 			</div>
 		</div>
@@ -342,3 +348,8 @@
 {
 	<partial name="_WorkflowModal" model="Model.WorkflowJson" />
 }
+
+@* node-share-ui: ONE dialog per page, serving both the header Share button above and every
+   per-comment share button inside the thread partial. Deliberately outside the reader-view
+   <article> — it is editorial chrome, like the workflow modal. *@
+<partial name="_NodeShareModal" model="@(new PetBox.Web.Pages.Shared.NodeShareModalModel(Model.ProjectKey, Model.Detail.Board, node.NodeId))" />
