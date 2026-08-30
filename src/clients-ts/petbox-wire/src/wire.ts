@@ -81,7 +81,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENT_DEF_OFFLINE_STALE_MARKER,
@@ -103,6 +103,15 @@ import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { findDanglingTargets, formatDanglingTargets } from "./definition-integrity.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
+import {
+  cascadeErrors,
+  formatCascadeProvenance,
+  formatCascadeReport,
+  formatCascadeTrace,
+  LayerSourceError,
+  resolveDefinitionLayers,
+  type CascadeResolution,
+} from "./layer-cascade.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import {
@@ -228,6 +237,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
     "       npx petbox-wire status [--offline]\n" +
     "       npx petbox-wire doctor [--offline]\n" +
+    "       npx petbox-wire layers [dir...]\n" +
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
@@ -306,6 +316,17 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
     "             (same taxonomy as apply — policy block is not a hard crash; doctor never reports 4,\n" +
     "             it skips no step of its own).\n" +
+    "layers       Diagnose the definition-layer cascade: which layer directories exist on this\n" +
+    "             machine, where they physically live, and — by FIELD, never \"the files differ\" —\n" +
+    "             what they disagree about. Built on layer-cascade.ts's own resolver (base layer\n" +
+    "             excluded: it still ships as a flat JSON inside the package, not a directory, so\n" +
+    "             this command says so instead of silently comparing two of three layers). With no\n" +
+    "             <dir> arguments, checks this command's own conventional defaults: ~/.petbox/agents\n" +
+    "             (user) and <project root>/.petbox/agents (project) — pass explicit directories\n" +
+    "             (lowest priority first) to check anything else. Never writes; never touches apply's\n" +
+    "             own exit code. Exit 0 clean (2+ layers, zero cascade errors); 1 diverged (a cascade\n" +
+    "             ERROR was found — E0-E5/E1); 2 usage; 3 COULD NOT CHECK (fewer than two layers\n" +
+    "             present, or a present layer's source is broken) — never confused with 0 or 1.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -390,6 +411,11 @@ function isApplyCommand(argv: string[]): boolean {
 
 function isStatusCommand(argv: string[]): boolean {
   return argv[0] === "status";
+}
+
+// Local diagnostic subcommand (offline; no project/key) — see runLayers below.
+function isLayersCommand(argv: string[]): boolean {
+  return argv[0] === "layers";
 }
 
 // Local role/profile subcommands (offline; no project/key).
@@ -1305,6 +1331,164 @@ function runModelUnset(argv: string[]): void {
   log(`next: petbox-wire apply`);
 }
 
+// `layers` — diagnostic-only subcommand answering the two questions manual `find` + hashing used
+// to answer by hand (card role-definition-cascade-revisit, requirement 1, never covered by the
+// accepted idea's spec_plan): which definition LAYERS exist on this machine, where they
+// physically live, and — by FIELD, not "the files differ" — what they disagree about. Read-only:
+// never writes, never calls resolveApplyDefinition/the server, never gates apply's own exit code.
+//
+// Built entirely on layer-cascade.ts's resolveDefinitionLayers — this file does not re-derive a
+// second comparator. The resolver's own contract (see that module's header) is that the
+// directory list is the CALLER's decision; nothing in the codebase has yet picked a fixed
+// location for the "user"/"project" layers (the client-side merge itself, P5, has not landed —
+// see idea role-definitions-live-in-files), so the defaults below are this command's own,
+// documented choice — `~/.petbox/agents` for user, `<project root>/.petbox/agents` for project —
+// consistent with the architecture sketch (research/wire-source-of-truth/30-architecture.md §3)
+// and with every other `~/.petbox/*` path already in this package. Pass explicit directories on
+// the command line (lowest priority first, same order resolveDefinitionLayers takes) to check
+// anything else, e.g. a one-off scratch layout while proving this command works.
+//
+// The "base" layer is deliberately NOT a candidate here: it still ships as a flat JSON file
+// inside the package (agent-definition.ts's DEFAULT_AGENT_DEFINITION), not a layer directory —
+// that migration step (client-side merge) has not landed. This command says so OUT LOUD instead
+// of quietly comparing only two of three layers and looking complete.
+//
+// The trap this must not repeat (observation doctor-drift-check-silent-skip-unregistered-dir):
+// "no divergence" and "could not check" must never look the same. Every early return below prints
+// to stderr and uses a DIFFERENT exit code (LAYERS_EXIT.cannotCheck) than both the clean path
+// (LAYERS_EXIT.ok) and the found-a-problem path (LAYERS_EXIT.cascadeError) — a script branching on
+// exit code, not just prose, cannot confuse the three.
+//
+// Exit codes (own small taxonomy, not WIRE_EXIT's — this command never touches apply's roster):
+//   0  clean       — 2+ layers present, resolved, zero cascade ERRORs (E0-E5/E1; warnings do not
+//                    change the exit code — a W3 replica-layer nudge is not a hard problem)
+//   1  diverged    — cascade resolved but reported at least one ERROR (dangling target, orphan
+//                    tombstone, incomplete new role, replace+append conflict, bad filename/mode)
+//   2  usage       — bad arguments
+//   3  cannotCheck — fewer than 2 layers present (nothing to diverge from), or a present layer's
+//                    source is broken/unreadable (LayerSourceError) — NEVER folded into 0 or 1
+const LAYERS_EXIT = { ok: 0, cascadeError: 1, usage: 2, cannotCheck: 3 } as const;
+
+type LayerCandidate = { readonly label: string; readonly dir: string };
+
+function defaultLayerCandidates(cwd: string): LayerCandidate[] {
+  const { root } = resolveApplyRoot(cwd);
+  return [
+    { label: "user", dir: join(homedir(), ".petbox", "agents") },
+    { label: "project", dir: join(root, ".petbox", "agents") },
+  ];
+}
+
+function runLayers(argv: string[]): void {
+  const explicitDirs: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+    if (a === "--help" || a === "-h") usage(0);
+    if (a.startsWith("-")) {
+      console.error(`layers: unexpected flag: ${a}`);
+      usage(LAYERS_EXIT.usage);
+    }
+    explicitDirs.push(resolve(a));
+  }
+
+  const usingDefaults = explicitDirs.length === 0;
+  const candidates: LayerCandidate[] = usingDefaults
+    ? defaultLayerCandidates(process.cwd())
+    : explicitDirs.map((d, i) => ({ label: `arg${i + 1}:${basename(d)}`, dir: d }));
+
+  log(
+    `layers: checking ${candidates.length} candidate layer location(s), lowest priority first ` +
+      `(${usingDefaults ? "this command's own conventional defaults" : "explicit directories from argv"}):`,
+  );
+  if (usingDefaults) {
+    log(
+      `  base                 N/A       bundled inside the package as default-agents.json — NOT ` +
+        `yet a layer directory (client-side merge, P5, has not landed); excluded here, not silently skipped.`,
+    );
+  }
+
+  const present: LayerCandidate[] = [];
+  for (const c of candidates) {
+    let exists = false;
+    try {
+      exists = existsSync(c.dir) && statSync(c.dir).isDirectory();
+    } catch {
+      exists = false;
+    }
+    log(`  ${c.label.padEnd(20)} ${exists ? "PRESENT  " : "absent   "} ${c.dir}`);
+    if (exists) present.push(c);
+  }
+
+  if (present.length === 0) {
+    console.error(
+      "layers: CANNOT CHECK — no layer directory exists on this machine at any candidate " +
+        "location above. This is NOT \"no divergence\": nothing was read, nothing was compared.",
+    );
+    exitWith(LAYERS_EXIT.cannotCheck);
+    return;
+  }
+  if (present.length === 1) {
+    console.error(
+      `layers: CANNOT CHECK — only one layer is present (${present[0]!.label} at ` +
+        `${present[0]!.dir}). Nothing to diverge from. This is NOT "no divergence": divergence ` +
+        "needs at least two layers to compare.",
+    );
+    exitWith(LAYERS_EXIT.cannotCheck);
+    return;
+  }
+
+  let resolution: CascadeResolution;
+  try {
+    resolution = resolveDefinitionLayers(present.map((c) => c.dir));
+  } catch (e) {
+    if (e instanceof LayerSourceError) {
+      console.error(
+        `layers: CANNOT CHECK — a present layer's source is broken and could not be read: ` +
+          `${e.message}`,
+      );
+      exitWith(LAYERS_EXIT.cannotCheck);
+      return;
+    }
+    throw e;
+  }
+
+  log("");
+  log("layers: resolved layers (lowest priority first):");
+  for (const l of resolution.layers) log(`  ${l.name}  mode=${l.mode}  ${l.dir}`);
+
+  log("");
+  log("layers: cascade trace — what each layer did to the roster:");
+  log(resolution.trace.length > 0 ? formatCascadeTrace(resolution) : "  (no roles resolved)");
+
+  log("");
+  log("layers: per-field provenance — which layer supplied each field of each resolved role:");
+  log(
+    resolution.definition.roles.length > 0
+      ? formatCascadeProvenance(resolution)
+      : "  (no roles resolved)",
+  );
+
+  log("");
+  log("layers: cascade diagnostics — problems, never ordinary field overrides:");
+  log(formatCascadeReport(resolution));
+
+  const errors = cascadeErrors(resolution);
+  if (errors.length > 0) {
+    console.error(
+      `layers: DIVERGED — ${errors.length} cascade ERROR(s) found across ${present.length} ` +
+        `layer(s); see diagnostics above.`,
+    );
+    exitWith(LAYERS_EXIT.cascadeError);
+    return;
+  }
+  log(
+    `layers: clean — ${present.length} layer(s) compared, zero cascade errors ` +
+      `(this IS the "no divergence problem" answer, reached by actually checking).`,
+  );
+  exitWith(LAYERS_EXIT.ok);
+}
+
 // ---- small helpers ---------------------------------------------------------
 
 const log = (msg: string) => console.log(msg);
@@ -2135,6 +2319,10 @@ async function main(): Promise<void> {
   }
   if (isModelCommand(argv)) {
     runModel(argv);
+    return;
+  }
+  if (isLayersCommand(argv)) {
+    runLayers(argv);
     return;
   }
 
