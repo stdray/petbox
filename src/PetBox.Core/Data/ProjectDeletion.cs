@@ -49,6 +49,9 @@ public static class ProjectDeletion
 		await db.DataTables.Where(t => t.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.SavedQueries.Where(q => q.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.ShareLinks.Where(s => s.ProjectKey == projectKey).DeleteAsync(ct);
+		// The OTHER share-token family (M053). A capability token outliving the project it publishes
+		// would be a row nothing can revoke through the normal door and nothing owns.
+		await db.NodeShares.Where(s => s.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.Logs.Where(l => l.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.TaskBoards.Where(b => b.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.MemoryStores.Where(m => m.ProjectKey == projectKey).DeleteAsync(ct);

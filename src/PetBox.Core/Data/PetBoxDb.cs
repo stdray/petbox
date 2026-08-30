@@ -18,6 +18,9 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<DataTable> DataTables => this.GetTable<DataTable>();
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
+	// The OTHER share-token family (M053, spec node-share): a public link onto one task node. Its
+	// own table rather than a widened ShareLinks — see M053_NodeShares for why.
+	public ITable<NodeShare> NodeShares => this.GetTable<NodeShare>();
 	// One-shot uploaded bodies awaiting substitution into a write (work/write-body-by-reference).
 	// core.db and not a per-project file: the blob's tenant is a column, and the prune job sweeps
 	// every project in one statement rather than opening N files per tick.
@@ -190,6 +193,24 @@ public sealed class PetBoxDb : DataConnection
 			.Property(s => s.ColumnsJson).HasDataType(DataType.Text).IsNullable(false)
 			.Property(s => s.ModesJson).HasDataType(DataType.Text).IsNullable(false)
 			.Property(s => s.CreatedBy).HasLength(100).IsNullable(false);
+
+		// M053 (spec node-share). EVERY column declared, for the reason spelled out on ShareLink above
+		// and on BodyRefBlob below — an undeclared column on a partially-Fluent entity is dropped from
+		// the schema cache. Here the one that would hurt most is ExpiresAt: it is NULLABLE by design
+		// (null = never expires), so a dropped mapping would read back null for EVERY link and turn a
+		// 10-minute token into a permanent one, while the mint call reported success.
+		builder.Entity<NodeShare>()
+			.HasTableName("node_shares")
+			.HasPrimaryKey(s => s.Id)
+			.Property(s => s.Id).HasLength(40).IsNullable(false)
+			.Property(s => s.ProjectKey).HasLength(100).IsNullable(false)
+			.Property(s => s.Board).HasLength(100).IsNullable(false)
+			.Property(s => s.NodeId).HasLength(32).IsNullable(false)
+			.Property(s => s.CommentId).HasLength(32).IsNullable(true)
+			.Property(s => s.Scope).HasLength(16).IsNullable(false)
+			.Property(s => s.CreatedAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(s => s.CreatedBy).HasLength(100).IsNullable(false)
+			.Property(s => s.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(true);
 
 		// M052 (work/write-body-by-reference). EVERY column declared, for the reason the ApiKey block
 		// above documents four separate times: on a partially-Fluent entity an undeclared column is

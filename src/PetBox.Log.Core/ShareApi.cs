@@ -123,9 +123,16 @@ public static class ShareApi
 	// Hard delete, not soft: the row must stop being READABLE immediately, and there is no second
 	// consumer of a "revoked but still present" ShareLinks row anywhere in the tree — a soft-delete flag
 	// would just be one more place GetTsvAsync/Share.cshtml.cs could forget to check.
+	//
+	// TWO TOKEN FAMILIES, ONE ROUTE (work `node-share-backend`). Node sharing added a second table of
+	// capability tokens (node_shares) and NO revoke endpoint of its own: the token in the URL is
+	// opaque, so which table it lives in is the SYSTEM's question, not the revoker's. This handler
+	// therefore asks IShareRevocationService, which looks in the log directory first and the node
+	// directory second. The log path is unchanged — same query, same order, same answer — so nothing
+	// about the shipped feature moved; a token that is not a log link simply costs one more lookup.
 	[TenantFrom(TenantSource.BodyField, "projectKey")]
 	static async Task<IResult> DeleteShareAsync(
-		IShareLinkDirectory shareLinks,
+		IShareRevocationService revocation,
 		string token,
 		[FromBody] ShareDeleteRequest req,
 		CancellationToken ct)
@@ -133,7 +140,7 @@ public static class ShareApi
 		if (string.IsNullOrWhiteSpace(req.ProjectKey))
 			return Results.BadRequest(new ErrorResponse("ProjectKey required"));
 
-		var deleted = await shareLinks.DeleteAsync(token, req.ProjectKey, ct);
+		var deleted = await revocation.RevokeAsync(token, req.ProjectKey, ct);
 		return deleted
 			? Results.Ok(new DeletedResponse(true))
 			: Results.NotFound(new ErrorResponse("share link not found"));

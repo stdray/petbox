@@ -1596,6 +1596,45 @@
         }
       }
     },
+    "/api/share/node": {
+      "post": {
+        "tags": [
+          "NodeShareApi"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeShareCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeShareCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/{projectKey}/agent-defs": {
       "get": {
         "tags": [
@@ -3460,6 +3499,63 @@
           }
         }
       },
+      "NodeShareCreateRequest": {
+        "required": [
+          "projectKey",
+          "board",
+          "nodeId",
+          "scope"
+        ],
+        "type": "object",
+        "properties": {
+          "projectKey": {
+            "type": "string"
+          },
+          "board": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "commentId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "ttlMinutes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "NodeShareCreatedResponse": {
+        "required": [
+          "id",
+          "expiresAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "NodeView": {
         "required": [
           "id",
@@ -4109,6 +4205,9 @@
     },
     {
       "name": "SessionApi"
+    },
+    {
+      "name": "NodeShareApi"
     },
     {
       "name": "AgentDefsApi"

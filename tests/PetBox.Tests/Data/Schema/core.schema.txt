@@ -246,3 +246,16 @@ TABLE llm_routes
   INDEX ix_llm_routes_level origin=c (Scope, ScopeKey)
   INDEX sqlite_autoindex_llm_routes_1 UNIQUE origin=pk (Id)
   INDEX ux_llm_routes_level_capability_tier_endpoint_model UNIQUE origin=c (Scope, ScopeKey, Capability, Tier, Endpoint, Model)
+
+TABLE node_shares
+  COL Board TEXT NOT NULL
+  COL CommentId TEXT NULL
+  COL CreatedAt DATETIME NOT NULL
+  COL CreatedBy TEXT NOT NULL DEFAULT 'system'
+  COL ExpiresAt DATETIME NULL
+  COL Id TEXT NOT NULL PK1
+  COL NodeId TEXT NOT NULL
+  COL ProjectKey TEXT NOT NULL
+  COL Scope TEXT NOT NULL DEFAULT 'body'
+  INDEX IX_node_shares_ExpiresAt origin=c (ExpiresAt)
+  INDEX sqlite_autoindex_node_shares_1 UNIQUE origin=pk (Id)
