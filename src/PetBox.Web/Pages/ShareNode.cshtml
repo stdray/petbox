@@ -45,64 +45,65 @@
    said. *@
 @if (Model.Node is { } node)
 {
-	<div class="max-w-3xl mx-auto">
-		@* No breadcrumb, no board link, no "open in PetBox" — every one of those is an invitation
-		   into a UI this reader has no account for, and the first two would disclose the node's
-		   neighbourhood on top of it. *@
-		<h1 class="text-xl font-semibold mb-1" data-testid="share-node-title">@node.Title</h1>
+	@* NO width container, on purpose (owner decision): the public face of a node stretches exactly
+	   like the PRIVATE one, ProjectHome/TaskBoardNode.cshtml, which has no max-w wrapper either.
+	   The public LOG share's `max-w-6xl` is a deliberately different story, not a precedent. *@
+	@* No breadcrumb, no board link, no "open in PetBox" — every one of those is an invitation
+	   into a UI this reader has no account for, and the first two would disclose the node's
+	   neighbourhood on top of it. *@
+	<h1 class="text-xl font-semibold mb-1" data-testid="share-node-title">@node.Title</h1>
 
-		<div class="flex items-baseline gap-2 flex-wrap text-xs opacity-60 mb-4" data-testid="share-node-meta">
-			<span class="font-mono" data-testid="share-node-key">@node.Key</span>
-			<span class="badge badge-xs badge-ghost" data-testid="share-node-status">@node.Status</span>
-			@if (!string.IsNullOrEmpty(node.Type))
-			{
-				<span class="badge badge-xs badge-ghost" data-testid="share-node-type">@node.Type</span>
-			}
-			@if (node.Priority != 0)
-			{
-				<span data-testid="share-node-priority">P@node.Priority</span>
-			}
-			@foreach (var tag in node.Tags)
-			{
-				<span class="badge badge-xs badge-ghost">@tag</span>
-			}
-			@if (node.Updated is { } updated)
-			{
-				<time class="local-time font-mono" datetime="@updated.ToString("o")" data-testid="share-node-updated">@updated.ToString("yyyy-MM-dd HH:mm")</time>
-			}
-		</div>
-
-		@* scope=comment shows the comment ALONE: no node body, and (see the page model) no
-		   neighbouring comments either. The title above stays — a quote with no indication of what
-		   it is attached to is worse than useless — but the body it was written under does not. *@
-		@if (Model.ShowBody)
+	<div class="flex items-baseline gap-2 flex-wrap text-xs opacity-60 mb-4" data-testid="share-node-meta">
+		<span class="font-mono" data-testid="share-node-key">@node.Key</span>
+		<span class="badge badge-xs badge-ghost" data-testid="share-node-status">@node.Status</span>
+		@if (!string.IsNullOrEmpty(node.Type))
 		{
-			@if (!string.IsNullOrEmpty(node.Body))
-			{
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "share-node-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
-			}
-			else
-			{
-				<p class="text-base opacity-40 italic" data-testid="share-node-body-empty">(no body)</p>
-			}
-
-			@if (node.Commits.Count > 0)
-			{
-				<div class="mt-3 flex items-center gap-2 flex-wrap text-xs" data-testid="share-node-commits">
-					@foreach (var sha in node.Commits)
-					{
-						<span class="badge badge-xs badge-ghost font-mono">@sha</span>
-					}
-				</div>
-			}
+			<span class="badge badge-xs badge-ghost" data-testid="share-node-type">@node.Type</span>
 		}
-
-		@* Rendered for `comment` and `full`, skipped entirely for `body` — a token that publishes
-		   the body must not even show an empty "Comments" heading, which would tell the reader a
-		   discussion exists (or does not) that the grant said nothing about. *@
-		@if (Model.Scope != PetBox.Core.Models.NodeShareScopes.Body)
+		@if (node.Priority != 0)
 		{
-			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, ShowAddForm: false, ReadOnly: true))" />
+			<span data-testid="share-node-priority">P@(node.Priority)</span>
+		}
+		@foreach (var tag in node.Tags)
+		{
+			<span class="badge badge-xs badge-ghost">@tag</span>
+		}
+		@if (node.Updated is { } updated)
+		{
+			<time class="local-time font-mono" datetime="@updated.ToString("o")" data-testid="share-node-updated">@updated.ToString("yyyy-MM-dd HH:mm")</time>
 		}
 	</div>
+
+	@* scope=comment shows the comment ALONE: no node body, and (see the page model) no
+	   neighbouring comments either. The title above stays — a quote with no indication of what
+	   it is attached to is worse than useless — but the body it was written under does not. *@
+	@if (Model.ShowBody)
+	{
+		@if (!string.IsNullOrEmpty(node.Body))
+		{
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "share-node-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
+		}
+		else
+		{
+			<p class="text-base opacity-40 italic" data-testid="share-node-body-empty">(no body)</p>
+		}
+
+		@if (node.Commits.Count > 0)
+		{
+			<div class="mt-3 flex items-center gap-2 flex-wrap text-xs" data-testid="share-node-commits">
+				@foreach (var sha in node.Commits)
+				{
+					<span class="badge badge-xs badge-ghost font-mono">@sha</span>
+				}
+			</div>
+		}
+	}
+
+	@* Rendered for `comment` and `full`, skipped entirely for `body` — a token that publishes
+	   the body must not even show an empty "Comments" heading, which would tell the reader a
+	   discussion exists (or does not) that the grant said nothing about. *@
+	@if (Model.Scope != PetBox.Core.Models.NodeShareScopes.Body)
+	{
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, ShowAddForm: false, ReadOnly: true))" />
+	}
 }
