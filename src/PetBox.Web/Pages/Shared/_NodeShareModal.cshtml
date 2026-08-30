@@ -1,13 +1,20 @@
 @model PetBox.Web.Pages.Shared.NodeShareModalModel
-@* Share modal for ONE task node and its discussion (spec `node-share`, `node-share-scope`; card
-   `node-share-ui`). Shaped after the log-query share modal (Logs/Index.cshtml) so the two read as
-   the same affordance, but it is its OWN dialog with its own id: the two mint through different
-   endpoints and the node one carries a scope the query one has no concept of.
+@* Share modal for ONE task node and its discussion (spec `node-share`, `node-share-scope`,
+   `share-link-revocable`; cards `node-share-ui`, `node-share-scope-switch-orphans-live-links`).
+   Shaped after the log-query share modal (Logs/Index.cshtml) so the two read as the same
+   affordance, but it is its OWN dialog with its own id: the two mint through different endpoints
+   and the node one carries a scope the query one has no concept of.
 
    The dialog — not the buttons — carries project/board/nodeId. Every opener on this page (the
    header Share button AND every per-comment share button inside _CommentThread) then needs only
    the part that differs between them (scope, and the comment id), instead of repeating the node's
    identity on every comment row. ts/nodeShare.ts reads the identity off this element.
+
+   MINTING IS A BUTTON, not a side effect of looking. Opening this dialog used to issue a public
+   link immediately, and switching scope issued another; only the newest was revocable, and an
+   indefinite token that nothing on the page can name can never be withdrawn (there is no "list
+   share links" verb, by design). So: Create link issues, and every issued link gets its OWN row
+   with its OWN Revoke — a second link is added beside the first, never on top of it.
 
    Rendered ONLY by the node detail page. The public share page renders _CommentThread with
    ShowAddForm:false and no modal at all — nodeShare.ts's open handler is a no-op without this
@@ -21,13 +28,13 @@
 		<h3 id="node-share-title" class="text-lg font-semibold mb-1" data-testid="node-share-title">Share this node</h3>
 		<p class="text-xs opacity-70 mb-3">
 			The link carries an opaque token. Anyone holding it can read what you picked below —
-			without signing in — until you revoke it.
+			without signing in — until you revoke it. Nothing is issued until you press Create link.
 		</p>
 
 		@* Scope is chosen at MINT time and baked into the token (spec node-share-scope): the reader
-		   cannot widen it later. Switching here therefore mints a DIFFERENT link rather than
-		   re-pointing the one on screen — nodeShare.ts re-creates on change. Hidden entirely when
-		   the modal was opened from a single comment (the comment IS the scope). *@
+		   cannot widen it later. Switching here therefore chooses what the NEXT Create issues — it
+		   neither re-points nor replaces a link already listed below. Hidden entirely when the modal
+		   was opened from a single comment (the comment IS the scope). *@
 		<div class="flex flex-col gap-1 mb-3" data-testid="node-share-scope-choice">
 			<label class="flex items-center gap-2 cursor-pointer">
 				<input type="radio" name="node-share-scope" value="body" class="radio radio-sm" checked
@@ -41,26 +48,57 @@
 			</label>
 		</div>
 
-		<div class="join w-full">
-			<input id="node-share-url" type="text" readonly data-testid="node-share-url"
-				class="input input-sm input-bordered join-item w-full font-mono text-xs" />
-			<button type="button" class="btn btn-sm join-item" data-node-share-copy
-				data-testid="node-share-copy">Copy</button>
+		<div class="flex items-center gap-2 mb-1">
+			<button type="button" class="btn btn-sm btn-primary" data-node-share-create
+				data-testid="node-share-create"
+				title="Issue a public link with the scope selected above">Create link</button>
+			<span id="node-share-status" data-testid="node-share-status" class="text-xs opacity-70"></span>
 		</div>
 
-		@* Says out loud what "no ttlMinutes" means. A link with no expiry is the default here, so
-		   the strip states it rather than sitting blank and letting the reader assume a timer. *@
-		<p id="node-share-expiry" data-testid="node-share-expiry" class="text-xs opacity-60 mt-2"></p>
+		@* Every link issued on this page, newest first. Each row owns its token and its own Revoke:
+		   that is what makes "a live link nothing can revoke" structurally impossible while the page
+		   lives. Rows are cloned from the template below by ts/nodeShare.ts. *@
+		<div id="node-share-links" data-testid="node-share-links">
+			@* Before the first mint: the shape of what a link will look like, with every control
+			   inert. nodeShare.ts REMOVES this block once a real row exists, so the disabled Copy /
+			   Revoke here can never be confused with a live link's own. *@
+			<div data-node-share-placeholder data-testid="node-share-placeholder">
+				<div class="join w-full">
+					<input type="text" readonly disabled data-testid="node-share-url"
+						placeholder="No link yet"
+						class="input input-sm input-bordered join-item w-full font-mono text-xs" />
+					<button type="button" class="btn btn-sm join-item" disabled data-node-share-copy
+						data-testid="node-share-copy">Copy</button>
+					<button type="button" class="btn btn-sm btn-error btn-outline join-item" disabled
+						data-node-share-revoke data-testid="node-share-revoke"
+						title="Revoke this link — anyone holding it loses access immediately">Revoke</button>
+				</div>
+				<p class="text-xs opacity-60 mt-1">Nothing has been issued yet — press Create link.</p>
+			</div>
+			@* Shown only after every issued link has been revoked (the placeholder is gone by then). *@
+			<p data-node-share-empty data-testid="node-share-empty" style="display:none"
+				class="text-xs opacity-60">No live links — press Create link to issue another.</p>
+		</div>
 
-		@* Revoke is the ONLY withdrawal mechanism for an indefinite link, so it ships with the modal
-		   rather than as a later addition (the log modal had to learn this the hard way — see
-		   share-link-revocation-finish). Starts disabled; nodeShare.ts enables it once a token
-		   actually exists to revoke, so it can never fire against an empty or failed modal. *@
-		<div class="mt-3 flex items-center gap-2">
-			<button type="button" class="btn btn-sm btn-error btn-outline" data-node-share-revoke
-				data-testid="node-share-revoke" disabled
-				title="Revoke this link — anyone holding it loses access immediately">Revoke</button>
-			<span id="node-share-revoke-status" data-testid="node-share-revoke-status" class="text-xs opacity-70"></span>
+		@* One issued link. The meta line says out loud both what the token carries and what "no
+		   ttlMinutes" means: an unbounded link is the default here, so it is stated rather than left
+		   blank for the reader to assume a timer. *@
+		<template data-node-share-row-template>
+			<div class="mt-2" data-node-share-link>
+				<div class="join w-full">
+					<input type="text" readonly data-node-share-url data-testid="node-share-link-url"
+						class="input input-sm input-bordered join-item w-full font-mono text-xs" />
+					<button type="button" class="btn btn-sm join-item" data-node-share-copy
+						data-testid="node-share-link-copy">Copy</button>
+					<button type="button" class="btn btn-sm btn-error btn-outline join-item" data-node-share-revoke
+						data-testid="node-share-link-revoke"
+						title="Revoke this link — anyone holding it loses access immediately">Revoke</button>
+				</div>
+				<p class="text-xs opacity-60 mt-1" data-node-share-meta data-testid="node-share-link-meta"></p>
+			</div>
+		</template>
+
+		<div class="mt-3 flex items-center">
 			<form method="dialog" class="ml-auto"><button class="btn btn-sm btn-ghost">Close</button></form>
 		</div>
 	</div>
