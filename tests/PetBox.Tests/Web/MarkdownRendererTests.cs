@@ -3,6 +3,36 @@ using PetBox.Web.Rendering;
 
 namespace PetBox.Tests.Web;
 
+// The text inside rendered <code> elements, markup stripped and entities decoded.
+//
+// Tests about a code block's CONTENT have to go through this rather than substring-matching the
+// raw HTML, because since `md-code-syntax-highlighting` a block with a known language is tokenized
+// and its text is interleaved with <span> elements: `var line1 = 1;` is real, visible, copyable
+// text on the page, but it is no longer one contiguous run of markup. Matching the rendered text
+// is also the stronger assertion — it is what a reader, a copy/paste and a browser find actually
+// see, which is the property those tests were written to protect in the first place.
+static class MarkdownCodeText
+{
+	static readonly Regex TagRx = new("<[^>]*>", RegexOptions.Compiled);
+
+	public static string VisibleCodeText(string html)
+	{
+		var text = new System.Text.StringBuilder();
+		var at = 0;
+		while (true)
+		{
+			var start = html.IndexOf("<code", at, StringComparison.Ordinal);
+			if (start < 0) break;
+			var open = html.IndexOf('>', start) + 1;
+			var end = html.IndexOf("</code>", open, StringComparison.Ordinal);
+			if (open <= 0 || end < 0) break;
+			text.Append(System.Net.WebUtility.HtmlDecode(TagRx.Replace(html[open..end], ""))).Append('\n');
+			at = end + 1;
+		}
+		return text.ToString();
+	}
+}
+
 // The server-side markdown renderer (IMarkdownRenderer / MarkdownRenderer): Markdig with the
 // client-parity pipeline (advanced extensions + soft-break-as-hard-break) followed by HtmlSanitizer
 // (Ganss.Xss). Read surfaces render markdown → sanitized HTML on the SERVER so the initial DOM
@@ -428,7 +458,14 @@ public sealed class MarkdownDesignLayerTests
 		var html = Html("## Real\n\n```sh\n## not a heading\n```");
 
 		html.Split("<section class=\"md-section\">").Length.Should().Be(2, "only the real `##` opens a section");
-		html.Should().Contain("## not a heading", "the fenced line stays literal code");
+		// Asserted on the block's VISIBLE TEXT rather than on the raw HTML. Since
+		// `md-code-syntax-highlighting` a `sh` block is tokenized, so `## not a heading` reaches
+		// the browser as a comment split across two <span>s and no longer appears as one literal
+		// run anywhere in the markup. The claim being made here was never about the markup — it is
+		// that the line stays CODE instead of becoming an <h2> — and stripping the tags back off
+		// states exactly that, without caring how the text is coloured.
+		MarkdownCodeText.VisibleCodeText(html).Should().Contain("## not a heading", "the fenced line stays literal code");
+		html.Should().NotContain("<h2>not a heading</h2>");
 	}
 
 	[Fact]
@@ -872,8 +909,14 @@ public sealed class MarkdownRendererCodeFoldTests
 	{
 		// The cap is presentational. Truncating the HTML would break copy/paste, browser find and
 		// reader-view — the exact things server-side rendering exists for.
+		//
+		// Read on the block's VISIBLE TEXT, not the raw HTML: since `md-code-syntax-highlighting`
+		// a `csharp` block is tokenized, so `var` sits in its own <span> and `var line1 = 1;` is no
+		// longer one contiguous run of markup. What this test protects — every line is still THERE
+		// — is a claim about the text a reader and a copy/paste get, and that is now what it reads.
 		var html = Html(Fence(40));
-		for (var i = 1; i <= 40; i++) html.Should().Contain($"var line{i} = {i};");
+		var text = MarkdownCodeText.VisibleCodeText(html);
+		for (var i = 1; i <= 40; i++) text.Should().Contain($"var line{i} = {i};");
 	}
 
 	[Fact]
