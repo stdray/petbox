@@ -983,3 +983,96 @@ public sealed class MarkdownRendererCodeFoldTests
 		html.Should().NotContain("<script");
 	}
 }
+
+// Work `md-code-wrap-not-scroll`: long lines in a code block wrap instead of hiding behind a
+// horizontal scrollbar. That is a decision about how the box DRAWS text, and this file exists to
+// hold the line that it stayed one — the owner's own argument for calling it "pure styling" was
+// that no break characters get inserted, and the cheap way to make wrapping work is to break that
+// promise. Every plausible shortcut is the same bug wearing a different codepoint:
+//
+//   <wbr>            a real element in the markup; copies as nothing in some browsers, but it is
+//                    markup inside the code text and browser-find stops matching across it
+//   U+00AD           soft hyphen — copies out, and pastes a stray hyphen into a shell command
+//   U+200B           zero-width space — copies out INVISIBLY, which is worse: a pasted command
+//                    fails with an error that names a character the reader cannot see
+//
+// So the contract is exact equality between the source and the text the page shows, not "looks
+// right". VisibleCodeText is the right side of that comparison on purpose: it is the text after
+// tag-stripping and entity decoding — what a copy/paste and a browser find actually get.
+public sealed class MarkdownCodeCopyFidelityTests
+{
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	// The real shape from the card that prompted the work: one `ip route` line, 298 characters, no
+	// space anywhere near the wrap point in the middle of it, plus a long unbroken URL and a long
+	// Windows path. These are exactly the tokens `overflow-wrap: anywhere` has to break visually —
+	// and exactly the tokens a break character would be tempting to insert into.
+	static readonly string LongLine =
+		"ip route add 10.8.0.0/24 via 192.168.1.1 dev eth0 src 192.168.1.42 metric 100 table "
+		+ new string('x', 298 - 84);
+
+	const string LongUrl =
+		"https://example.invalid/a/very/long/path/that/never/breaks/because/it/has/no/spaces/in/it/at/all/index.html?token=abcdefghijklmnopqrstuvwxyz0123456789";
+
+	const string LongPath = @"C:\Users\someone\AppData\Local\Programs\SomeVendor\SomeProduct\bin\tools\subtool\runner.exe";
+
+	// Characters a "make it wrap" shortcut inserts. Checked on the RAW HTML, not the visible text:
+	// <wbr> would be stripped by the tag regex and a test that only compared visible text would
+	// sail straight past it.
+	static readonly (string Needle, string What)[] Forbidden =
+	[
+		("<wbr", "a <wbr> element"),
+		("&shy;", "an HTML soft-hyphen entity"),
+		("&#173;", "a numeric soft-hyphen entity"),
+		("\u00ad", "a soft hyphen (U+00AD)"),
+		("\u200b", "a zero-width space (U+200B)"),
+		("\u200c", "a zero-width non-joiner (U+200C)"),
+		("\u2060", "a word joiner (U+2060)"),
+	];
+
+	static void AssertRoundTrips(string sourceLine, string language)
+	{
+		var html = R.RenderToHtml($"```{language}\n{sourceLine}\n```");
+
+		foreach (var (needle, what) in Forbidden)
+			html.Should().NotContain(needle,
+				$"wrapping is done by CSS alone — {what} in the markup would paste into the reader's shell");
+
+		MarkdownCodeText.VisibleCodeText(html).TrimEnd('\n').Should().Be(sourceLine,
+			"the block must copy out as the EXACT source line, character for character");
+	}
+
+	[Theory]
+	// No language: the block is emitted verbatim, not tokenized.
+	[InlineData("")]
+	// With a language the block goes through TextMate highlighting and its text is interleaved with
+	// <span class="hl-*"> elements. Those spans are the one place a break character could be
+	// smuggled in unnoticed, so the fidelity claim has to be made on this path too.
+	[InlineData("bash")]
+	public void A298CharacterCommand_CopiesOutUnchanged(string language) => AssertRoundTrips(LongLine, language);
+
+	[Theory]
+	[InlineData("")]
+	[InlineData("text")]
+	public void ALongUrl_CopiesOutUnchanged(string language) => AssertRoundTrips(LongUrl, language);
+
+	[Theory]
+	[InlineData("")]
+	[InlineData("powershell")]
+	public void ALongWindowsPath_CopiesOutUnchanged(string language) => AssertRoundTrips(LongPath, language);
+
+	[Fact]
+	public void ALongLine_InsideAFoldedBlock_AlsoCopiesOutUnchanged()
+	{
+		// The wrapper the fold adds is the other place markup gets injected around code. Twelve
+		// lines puts the block past FoldLineThreshold, and the long line is one of them.
+		var lines = Enumerable.Range(1, 11).Select(i => $"echo {i}").Append(LongLine);
+		var html = R.RenderToHtml("```bash\n" + string.Join("\n", lines) + "\n```");
+
+		html.Should().Contain("md-code-fold", "twelve lines must still be folded");
+		foreach (var (needle, what) in Forbidden)
+			html.Should().NotContain(needle, $"the fold wrapper must not introduce {what} either");
+		MarkdownCodeText.VisibleCodeText(html).Should().Contain(LongLine,
+			"folding hides lines visually; it must not rewrite the one long line inside them");
+	}
+}

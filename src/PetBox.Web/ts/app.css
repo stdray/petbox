@@ -393,6 +393,28 @@
 	background-color: oklch(var(--n) / 0.4);
 	border-radius: 0.4rem;
 	padding: 0.6em 0.8em;
+	/* Work `md-code-wrap-not-scroll`. A long command WRAPS; it is never parked behind a horizontal
+	   scrollbar. The owner's call, and the reason it is a pure style change: nothing is inserted
+	   into the text — no <wbr>, no soft hyphen, no zero-width space — so the block still copies out
+	   as the exact source (MarkdownRendererTests pins that on the HTML, the E2E reads the rendered
+	   textContent back).
+
+	   Two declarations, because one is not enough. `pre-wrap` alone only breaks at soft-wrap
+	   opportunities that already exist, and the offending content is precisely the kind with none:
+	   a 298-character command line, a URL, a Windows path. `overflow-wrap: anywhere` is what lets
+	   the break land mid-token when a "word" cannot fit a line on its own; `break-word` looks
+	   equivalent here but does not feed the min-content size, so a <pre> in a flex/grid parent could
+	   still force the parent wide. Neither changes the copied string, only where the box draws it.
+
+	   `overflow-x: auto` STAYS, and is not a leftover. With the two rules above nothing can overflow,
+	   so no scrollbar is ever reachable (the E2E asserts scrollWidth == clientWidth at 1440px and
+	   380px). What it buys: (a) the folded block below sets `overflow-y: hidden`, and a `visible`
+	   other axis would compute to `auto` there anyway — stating it keeps folded and unfolded blocks
+	   the same kind of box; (b) on a browser that ignores `overflow-wrap: anywhere` the block
+	   degrades to the old scroller instead of painting text outside its own rounded surface. Being a
+	   scroll container is also what makes scrollWidth a meaningful thing to assert on. */
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 	overflow-x: auto;
 	margin: 0.5em 0;
 }
@@ -436,8 +458,14 @@
 	   A browser too old for `lh` drops the whole declaration and renders the block uncapped —
 	   the same benign degradation as the `:has()` fallback at the end of this section. */
 	max-height: calc(10lh + 1.2em);
-	/* Horizontal scrolling is inherited from `.md-body pre` and must stay. Vertically the box
-	   CLIPS instead of scrolling, deliberately: a ten-line inner scroller would swallow the page's
+	/* The horizontal axis is inherited from `.md-body pre` and must not be restated here: since
+	   `md-code-wrap-not-scroll` the lines WRAP, so what is inherited is a scroll container that
+	   never has anything to scroll. That interacts with the cap in a way worth stating out loud —
+	   the cap counts VISIBLE line boxes (`10lh`) while the renderer decides to fold on SOURCE lines
+	   (>10), so a folded block whose lines wrap shows fewer than ten source lines before the
+	   control. That is the intended trade: the cap's job is to bound the block's height on the
+	   page, and the control's label still names the source-line count the reader will get.
+	   Vertically the box CLIPS instead of scrolling, deliberately: a ten-line inner scroller would swallow the page's
 	   wheel scroll every time the pointer crossed a code block, and the labelled control below the
 	   block is the way to the rest. Nothing is lost — the <pre> still contains the whole listing,
 	   so select-all, copy, browser find and reader-view all see every line. */
