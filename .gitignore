@@ -111,6 +111,7 @@ secrets.local.env
 !.claude/skills/petbox-methodology-system/
 !.claude/skills/analysis-workspace/
 !.claude/skills/factory-run/
+!.claude/skills/comprehension-check/
 
 # opencode (personal)
 .opencode/
