@@ -372,6 +372,102 @@
 	padding: 0;
 	font-size: 0.85em;
 }
+/* ── Long code block: capped height + an explicit disclosure ──────────────────────────────
+   Work `md-code-block-height-cap`. `.md-body pre` above has only overflow-x, so a long listing
+   grew to whatever height it wanted and pushed the rest of the body off the screen.
+
+   The split of labour matters: the SERVER decides WHICH blocks are long (it can count source
+   lines; CSS cannot) and wraps only those in `.md-code-fold` + a `<details>` control
+   (Rendering/MarkdownDesignLayer.cs). A short block gets no wrapper, no control and no cap —
+   nothing here can touch it. This sheet only caps what was already marked as long.
+
+   No script is involved anywhere: `<details>` toggles itself and `:has()` reads the resulting
+   `open` attribute. That is a requirement, not an aesthetic — `.md-body` also renders on
+   Pages/ShareNode.cshtml, an anonymous page whose layout ships this stylesheet and NO JS bundle,
+   so a script-driven fold would be permanently stuck shut there. */
+.md-body .md-code-fold {
+	margin: 0.5em 0;
+}
+.md-body .md-code-fold > pre {
+	/* The wrapper carries the block's margins now, so the pre must not add its own on top. */
+	margin: 0;
+	/* Exactly MarkdownDesignLayerExtension.FoldLineThreshold (10) rendered lines, plus the block's
+	   own vertical padding (1.2em = `padding: 0.6em 0.8em`, top and bottom).
+
+	   `lh` — the PRE's own line-height — is the unit, and that is a correctness point, not a
+	   stylistic one. The obvious formula, ten times the CODE's line box, is wrong: the code inside
+	   renders at 0.85em, but a line box is never shorter than its block's own strut, and the pre's
+	   strut (1.62 × 16.5px = 26.73px) is taller than the code's line box (22.72px). Measured on a
+	   laid-out 40-line block: 26.73px per line — the strut, every time. A cap built from the code's
+	   smaller box showed eight and a half lines while every number in it looked defensible. `1lh`
+	   IS that pitch, with no conversion factor to get wrong, and it follows the line-height if that
+	   ever changes. (The E2E test does not take this on faith either: it divides a real 40-line
+	   block's scrollHeight by 40 and checks the cap against THAT.)
+
+	   A browser too old for `lh` drops the whole declaration and renders the block uncapped —
+	   the same benign degradation as the `:has()` fallback at the end of this section. */
+	max-height: calc(10lh + 1.2em);
+	/* Horizontal scrolling is inherited from `.md-body pre` and must stay. Vertically the box
+	   CLIPS instead of scrolling, deliberately: a ten-line inner scroller would swallow the page's
+	   wheel scroll every time the pointer crossed a code block, and the labelled control below the
+	   block is the way to the rest. Nothing is lost — the <pre> still contains the whole listing,
+	   so select-all, copy, browser find and reader-view all see every line. */
+	overflow-y: hidden;
+}
+/* The entire expand mechanism. */
+.md-body .md-code-fold:has(> .md-code-fold-toggle[open]) > pre {
+	max-height: none;
+}
+.md-body .md-code-fold-toggle {
+	margin-top: 0.25em;
+}
+.md-body .md-code-fold-toggle > summary {
+	display: inline-block;
+	list-style: none;
+	cursor: pointer;
+	user-select: none;
+	font-family: var(--md-font-mono);
+	font-size: 0.78em;
+	line-height: 1.5;
+	color: var(--md-ink-soft);
+	border: 1px solid var(--md-rule);
+	border-radius: 0.3rem;
+	padding: 0.1em 0.55em;
+}
+/* No background of its own: this control renders both on the page ground and inside a section,
+   which have different surfaces — a fixed fill would be invisible against one of them. */
+.md-body .md-code-fold-toggle > summary:hover,
+.md-body .md-code-fold-toggle > summary:focus-visible {
+	color: var(--md-ink);
+	border-color: var(--md-rule-strong);
+}
+/* WebKit still hides the disclosure triangle through its own pseudo-element, not `list-style`. */
+.md-body .md-code-fold-toggle > summary::-webkit-details-marker {
+	display: none;
+}
+/* One label per state; the closed one names the size so the reader knows what the click costs. */
+.md-body .md-code-fold-less {
+	display: none;
+}
+.md-body .md-code-fold-toggle[open] .md-code-fold-more {
+	display: none;
+}
+.md-body .md-code-fold-toggle[open] .md-code-fold-less {
+	display: inline;
+}
+/* Without `:has()` the control could not lift the cap, leaving a clipped block and no way to the
+   rest of it. Where selector support can be tested, drop BOTH the cap and the control instead —
+   the block then renders full height, exactly as it did before this feature. This is a safety
+   net rather than a supported configuration: the oklch() colours throughout this sheet already
+   require a browser of the same generation as `:has()`. */
+@supports not selector(:has(*)) {
+	.md-body .md-code-fold > pre {
+		max-height: none;
+	}
+	.md-body .md-code-fold-toggle {
+		display: none;
+	}
+}
 .md-body blockquote {
 	border-left: 3px solid var(--md-rule-strong);
 	padding-left: 0.8em;
@@ -397,9 +493,13 @@
 .md-body .md-section > :last-child {
 	margin-bottom: 0;
 }
-/* A table/code block is allowed to reach the section's edges. */
+/* A table/code block is allowed to reach the section's edges. The third selector is the SAME
+   claim for a folded listing: `md-code-block-height-cap` puts a `.md-code-fold` wrapper between
+   the section and the <pre>, so the direct-child selector above stops matching and the block
+   would silently lose its own surface inside a section. */
 .md-body .md-section > .md-table-scroll,
-.md-body .md-section > pre {
+.md-body .md-section > pre,
+.md-body .md-section > .md-code-fold > pre {
 	background-color: var(--md-surface-2);
 }
 

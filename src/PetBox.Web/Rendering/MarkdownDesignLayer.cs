@@ -22,6 +22,15 @@ namespace PetBox.Web.Rendering;
 //      horizontal overflow. A wide table previously widened its whole container (tables had no
 //      overflow-x of their own anywhere in the app).
 //
+//   3. CODE FOLD. A code block LONGER than FoldLineThreshold lines is wrapped in
+//      <div class="md-code-fold"> together with a <details> disclosure control, and CSS caps the
+//      <pre> until that control is opened (work `md-code-block-height-cap`). The DECISION is made
+//      here, on the AST, because it is a decision about the SOURCE — how many lines the author
+//      wrote — and CSS cannot count lines: a `max-height` alone would cap every block, handing a
+//      two-line snippet the same clipped box and the same control as a 200-line listing. So the
+//      server marks WHICH blocks are long and how long they are, and CSS does the folding. A short
+//      block is not wrapped at all and its markup is byte-identical to what it was before.
+//
 // Both wrappers are emitted with a class, and the sanitizer strips `class` by default — see
 // MarkdownRenderer.BuildSanitizer, which allowlists exactly these class names. Emitting them
 // without that allowlist entry renders the wrappers invisible (the elements survive, bare and
@@ -35,6 +44,22 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 
 	// The per-table horizontal scroller. Wraps exactly one Table.
 	public sealed class TableScrollBlock() : ContainerBlock(null);
+
+	// The fold wrapper around ONE long code block. Carries the source line count so the disclosure
+	// control can name it ("Show all 42 lines") — a control that only says "expand" makes the
+	// reader click to find out whether it is worth clicking.
+	public sealed class CodeFoldBlock() : ContainerBlock(null)
+	{
+		public int CodeLines { get; init; }
+	}
+
+	// A code block longer than this many SOURCE lines gets the fold. The number is a line count and
+	// not a height because it is a property of the text, not of the viewport: the same body renders
+	// on a node page, a board card and an anonymous share page, and "10 lines" means the same thing
+	// on all three. The matching VISUAL cap (app.css `.md-code-fold > pre`) is exactly this many
+	// code line-boxes plus the block's own padding, so the collapsed box shows precisely the lines
+	// the threshold talks about. Strictly greater-than: a block of exactly 10 lines is short.
+	internal const int FoldLineThreshold = 10;
 
 	public void Setup(MarkdownPipelineBuilder pipeline) => pipeline.DocumentProcessed += Restructure;
 
@@ -51,6 +76,8 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 			html.ObjectRenderers.Insert(0, new SectionBlockRenderer());
 		if (!html.ObjectRenderers.Contains<TableScrollBlockRenderer>())
 			html.ObjectRenderers.Insert(0, new TableScrollBlockRenderer());
+		if (!html.ObjectRenderers.Contains<CodeFoldBlockRenderer>())
+			html.ObjectRenderers.Insert(0, new CodeFoldBlockRenderer());
 	}
 
 	// Runs on every parse (MarkdownPipelineBuilder.DocumentProcessed), so BOTH render paths in
@@ -61,6 +88,7 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 	{
 		Sectionize(document);
 		WrapTables(document);
+		FoldLongCodeBlocks(document);
 	}
 
 	// Group top-level blocks into one SectionBlock per `##`. Content before the first `##` (a lead
@@ -110,6 +138,31 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 			}
 	}
 
+	// Wrap every code block longer than the threshold — at any depth, so a listing inside a section,
+	// a list item or a blockquote is covered too. Both markdown code forms are CodeBlock subtypes
+	// (FencedCodeBlock for ```fences```, CodeBlock itself for the four-space indented form), so
+	// matching the base type covers both; `Lines` is the block's CONTENT lines, fences excluded
+	// (measured — see this card's probe), which is exactly what a reader sees in the box.
+	//
+	// CodeBlock is a LeafBlock, so the recursion below can never descend INTO one: a ``` fence
+	// drawn inside a fenced block is text, not a block, and cannot be folded twice.
+	static void FoldLongCodeBlocks(ContainerBlock container)
+	{
+		for (var i = 0; i < container.Count; i++)
+			switch (container[i])
+			{
+				case CodeBlock code when code.Lines.Count > FoldLineThreshold:
+					var fold = new CodeFoldBlock { CodeLines = code.Lines.Count };
+					container.RemoveAt(i);
+					container.Insert(i, fold);
+					fold.Add(code);
+					break;
+				case ContainerBlock inner:
+					FoldLongCodeBlocks(inner);
+					break;
+			}
+	}
+
 	sealed class SectionBlockRenderer : HtmlObjectRenderer<SectionBlock>
 	{
 		protected override void Write(HtmlRenderer renderer, SectionBlock obj)
@@ -128,6 +181,35 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 			renderer.EnsureLine();
 			renderer.WriteLine("<div class=\"md-table-scroll\">");
 			renderer.WriteChildren(obj);
+			renderer.WriteLine("</div>");
+		}
+	}
+
+	// The disclosure control is a NATIVE <details>, and it is emitted AFTER the <pre> rather than
+	// around it, for three reasons that all come from where this markup has to work:
+	//
+	//   * NO SCRIPT. The anonymous share page (Pages/ShareNode.cshtml on _PublicLayout) ships a
+	//     stylesheet and no JS bundle at all, so anything script-driven would simply not expand
+	//     there. <details> toggles itself in the browser; CSS reads the resulting `open` attribute
+	//     (app.css `.md-code-fold:has(> .md-code-fold-toggle[open])`) and lifts the cap.
+	//   * THE CODE IS NOT INSIDE THE CONTROL. Putting the <pre> inside <summary> would also have
+	//     worked with pure CSS, but then every click on the code toggles the fold — selecting a
+	//     line would fight the widget. Here the <details> has no content of its own; it is a
+	//     labelled switch that a sibling selector reads.
+	//   * REAL MARKUP, IN READING ORDER. The <pre> stays a plain, complete <pre> in document order
+	//     with the whole listing in it — reader-view, "select all", copy/paste and text search get
+	//     the full block whether or not it is expanded (the cap is presentational only). Nothing is
+	//     truncated in the HTML; only its rendered height is.
+	sealed class CodeFoldBlockRenderer : HtmlObjectRenderer<CodeFoldBlock>
+	{
+		protected override void Write(HtmlRenderer renderer, CodeFoldBlock obj)
+		{
+			renderer.EnsureLine();
+			renderer.WriteLine("<div class=\"md-code-fold\">");
+			renderer.WriteChildren(obj);
+			renderer.WriteLine("<details class=\"md-code-fold-toggle\"><summary>"
+				+ $"<span class=\"md-code-fold-more\">Show all {obj.CodeLines} lines</span>"
+				+ "<span class=\"md-code-fold-less\">Show less</span></summary></details>");
 			renderer.WriteLine("</div>");
 		}
 	}

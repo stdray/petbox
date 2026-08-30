@@ -181,3 +181,105 @@ test("no reading measure caps .md-body or .md-body p — the container cap node-
 			"and the global container cap node-detail-read-width removed must not come back either",
 	);
 });
+
+// ── The long-code-block fold (work `md-code-block-height-cap`) ──────────────────────────────────
+//
+// The feature is split across three files that must agree, and every way it breaks is silent:
+//
+//   * MarkdownDesignLayer.cs decides WHICH blocks fold (source lines > FoldLineThreshold);
+//   * this sheet caps the folded ones at what is supposed to be that same number of lines;
+//   * the section container's "a code block may reach my edges" rule is a DIRECT-child selector
+//     that the new wrapper silently steps out from under.
+//
+// So the cap is not asserted as a pixel value — it is asserted to be DERIVED from the things it
+// depends on. `max-height: calc(10lh + 1.2em)` is only correct while 10 is the renderer's threshold
+// and 1.2em is twice the block's vertical padding.
+//
+// The `lh` unit is itself load-bearing and the first version of this feature got it wrong, so the
+// mistake is pinned out below rather than just fixed: the cap was written as ten times the CODE's
+// line box (0.85em × 1.62), which is smaller than the PRE's strut — and a line box is never shorter
+// than its block's strut, so the box rendered eight and a half lines while every factor in it
+// looked right. `1lh` is the pre's own line-height, which IS the pitch the lines lay out at.
+const foldCapRx = /max-height:\s*calc\(\s*(\d+)lh\s*\+\s*([\d.]+)em\s*\)/;
+
+// The single declaration's value for `prop` in a rule body, e.g. "0.85em".
+function decl(body: string, prop: string): string {
+	const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(body);
+	assert.ok(m, `expected a \`${prop}\` declaration in \`${body.trim()}\``);
+	return m[1].trim();
+}
+
+test("the code-fold cap is DERIVED from the renderer's threshold and the block's own padding", () => {
+	const capped = foldCapRx.exec(ruleBody(".md-body .md-code-fold > pre"));
+	assert.ok(capped, "`.md-body .md-code-fold > pre` must cap the block with a calc() in the documented shape");
+	const [, lines, padding] = capped;
+
+	// The line count is the RENDERER's threshold — read from the C# source, not restated here. A
+	// cap of 10 lines under a threshold of 25 would fold nothing visible for fifteen more lines.
+	const layer = readFileSync(fileURLToPath(new URL("../Rendering/MarkdownDesignLayer.cs", import.meta.url)), "utf8");
+	const threshold = /FoldLineThreshold\s*=\s*(\d+)/.exec(layer);
+	assert.ok(threshold, "MarkdownDesignLayer.cs must declare FoldLineThreshold");
+	assert.equal(lines, threshold[1], "the CSS cap must show exactly as many lines as the renderer calls 'long'");
+
+	// Plus the block's own vertical padding, top and bottom — otherwise the last line is eaten by
+	// the padding the cap forgot to account for.
+	const vertical = Number.parseFloat(decl(ruleBody(".md-body pre"), "padding").split(/\s+/)[0]);
+	assert.equal(Number.parseFloat(padding), vertical * 2, "the cap must add the pre's top AND bottom padding");
+});
+
+test("the cap measures the PRE's line box, never the code's smaller one", () => {
+	// The bug this pins out: `.md-body pre code` renders at 0.85em, but a line box is never shorter
+	// than its block's strut, so the pre's line-height is the pitch the lines actually lay out at.
+	// A cap expressed through the code's font-size measures something the page never renders.
+	const cap = ruleBody(".md-body .md-code-fold > pre");
+	const codeScale = decl(ruleBody(".md-body pre code"), "font-size");
+	assert.equal(
+		cap.includes(Number.parseFloat(codeScale).toString()),
+		false,
+		`the cap must not be built from the code font-size (${codeScale}) — it is not what the lines are spaced by`,
+	);
+	assert.match(cap, /\dlh/, "the cap is expressed in `lh`, the pre's own line-height");
+});
+
+test("a short code block is never capped — only the wrapper the renderer adds is", () => {
+	// The whole point of deciding server-side. A `max-height` on the bare `.md-body pre` would cap
+	// every two-line snippet as well, and no test of the renderer could see it.
+	assert.equal(/max-height/.test(ruleBody(".md-body pre")), false, "`.md-body pre` must carry no height cap");
+	assert.ok(/overflow-x:\s*auto/.test(ruleBody(".md-body pre")), "horizontal scrolling must survive the feature");
+	assert.equal(
+		/overflow-x/.test(ruleBody(".md-body .md-code-fold > pre")),
+		false,
+		"the fold must not restate overflow-x — the block keeps the horizontal scrolling it already had",
+	);
+});
+
+test("the cap is lifted by the native <details>, with no script in the loop", () => {
+	// `.md-body` renders on Pages/ShareNode.cshtml, an anonymous page whose layout ships this
+	// stylesheet and no JS bundle at all: a script-driven fold would be stuck shut there forever.
+	const open = ruleBody(".md-body .md-code-fold:has(> .md-code-fold-toggle[open]) > pre");
+	assert.match(open, /max-height:\s*none/, "opening the disclosure must remove the cap outright");
+});
+
+test("without :has() support BOTH the cap and the control are dropped, never the cap alone", () => {
+	// The failure mode being excluded: a clipped block next to a control that cannot lift it.
+	const at = css.indexOf("@supports not selector(:has(*))");
+	assert.notEqual(at, -1, "a `@supports not selector(:has(*))` fallback must exist");
+	const body = balancedBody(css, at);
+	assert.match(body, /\.md-body \.md-code-fold > pre \{[^}]*max-height:\s*none/, "the cap must be lifted");
+	assert.match(body, /\.md-body \.md-code-fold-toggle \{[^}]*display:\s*none/, "the dead control must be hidden");
+});
+
+test("a folded block still reaches the edges of its section", () => {
+	// `.md-section > pre` stops matching the moment the fold wrapper sits between the two, and the
+	// block would quietly lose the surface that distinguishes it inside a section.
+	const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, sel, body]) => ({
+		selector: sel.trim().replace(/\s+/g, " "),
+		body,
+	}));
+	const edge = rules.find((r) => r.selector.includes(".md-body .md-section > pre"));
+	assert.ok(edge, "the section's code-block surface rule is missing entirely");
+	assert.ok(
+		edge.selector.includes(".md-body .md-section > .md-code-fold > pre"),
+		"the section surface rule must also name the FOLDED shape of the same block",
+	);
+});
