@@ -275,7 +275,7 @@ public sealed class ShareApiAuthzTests : IClassFixture<ShareApiAuthzFixture>
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		var result = await ShareTools.RevokeAsync(
-			scope.ServiceProvider.GetRequiredService<IShareLinkDirectory>(),
+			scope.ServiceProvider.GetRequiredService<IShareRevocationService>(),
 			ShareApiAuthzFixture.ProjA, token);
 
 		result.Revoked.Should().BeTrue();
@@ -300,9 +300,9 @@ public sealed class ShareApiAuthzTests : IClassFixture<ShareApiAuthzFixture>
 		var token = await CreateShareAsync(ShareApiAuthzFixture.KeyA, ShareApiAuthzFixture.ProjA);
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var shareLinks = scope.ServiceProvider.GetRequiredService<IShareLinkDirectory>();
+		var revocation = scope.ServiceProvider.GetRequiredService<IShareRevocationService>();
 
-		var act = async () => await ShareTools.RevokeAsync(shareLinks, ShareApiAuthzFixture.ProjB, token);
+		var act = async () => await ShareTools.RevokeAsync(revocation, ShareApiAuthzFixture.ProjB, token);
 		await act.Should().ThrowAsync<InvalidOperationException>()
 			.WithMessage("share link not found",
 				"ProjB's caller must not be able to revoke ProjA's token by knowing its value");
@@ -317,10 +317,10 @@ public sealed class ShareApiAuthzTests : IClassFixture<ShareApiAuthzFixture>
 	public async Task ShareRevokeTool_UnknownToken_AnswersIdenticallyToAForeignOne()
 	{
 		using var scope = _fx.Factory.Services.CreateScope();
-		var shareLinks = scope.ServiceProvider.GetRequiredService<IShareLinkDirectory>();
+		var revocation = scope.ServiceProvider.GetRequiredService<IShareRevocationService>();
 
 		var act = async () => await ShareTools.RevokeAsync(
-			shareLinks, ShareApiAuthzFixture.ProjB, "tok-never-existed-at-all");
+			revocation, ShareApiAuthzFixture.ProjB, "tok-never-existed-at-all");
 		await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("share link not found");
 	}
 

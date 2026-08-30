@@ -109,6 +109,24 @@ public sealed partial class RetentionService(
 			LogShareLinksFailed(logger, ex);
 		}
 
+		// The OTHER share-token family (M053, spec node-share). Same sweep, ONE deliberate difference:
+		// `ExpiresAt != null` is written out even though SQLite would never match a NULL against `<`
+		// anyway. A never-expiring link (spec `node-share-lifetime`) is not "expired long ago", it has
+		// no expiry — and that has to be legible HERE, in the job that would otherwise be the thing
+		// silently deleting it, rather than left to a reader's knowledge of three-valued logic.
+		try
+		{
+			var expiredShares = await db.NodeShares
+				.Where((NodeShare s) => s.ExpiresAt != null && s.ExpiresAt < now)
+				.DeleteAsync(token: ct);
+			if (expiredShares > 0)
+				LogNodeSharesSwept(logger, expiredShares);
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			LogNodeSharesFailed(logger, ex);
+		}
+
 		try
 		{
 			var dash = await resolver.GetAsync<DashboardSettings>(Scope.System, "$", ct).ConfigureAwait(false);
@@ -141,6 +159,13 @@ public sealed partial class RetentionService(
 
 	[LoggerMessage(EventId = 104, Level = LogLevel.Error, Message = "Share-link retention sweep failed")]
 	static partial void LogShareLinksFailed(ILogger logger, Exception ex);
+
+	[LoggerMessage(EventId = 107, Level = LogLevel.Information,
+		Message = "Retention: deleted {Count} expired node share links")]
+	static partial void LogNodeSharesSwept(ILogger logger, int count);
+
+	[LoggerMessage(EventId = 108, Level = LogLevel.Error, Message = "Node-share retention sweep failed")]
+	static partial void LogNodeSharesFailed(ILogger logger, Exception ex);
 
 	[LoggerMessage(EventId = 105, Level = LogLevel.Information,
 		Message = "Retention: deleted {Count} expired health reports")]

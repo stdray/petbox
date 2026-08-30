@@ -289,9 +289,15 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 			+ "share-link-revocable added a seventh: DELETE /api/share/{token} takes the SAME "
 			+ "[TenantFrom(BodyField, \"projectKey\")] declaration CreateShareAsync already carries, for the "
 			+ "same reason — revoke reuses the create endpoint's own tenant-proof mechanism rather than "
-			+ "inventing a second one", [
+			+ "inventing a second one. node-share-backend added an eighth, POST /api/share/node, for "
+			+ "the same reason yet again: minting a public link onto a task node names its project in "
+			+ "the BODY, so the route has no slot to aim and the declaration is what makes the field "
+			+ "actually read. Its REVOKE is not a ninth entry — there is no /api/share/node/{token} "
+			+ "DELETE at all; the token is opaque, so DELETE /api/share/{token} above searches both "
+			+ "token families through IShareRevocationService", [
 			"rest:POST /api/health",
 			"rest:POST /api/share",
+			"rest:POST /api/share/node",
 			"rest:DELETE /api/share/{token}",
 			"rest:POST /api/ui/board-filter-prefs",
 			"rest:POST /api/ui/project",
@@ -424,9 +430,12 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(224,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 59 REST + 66 Razor + 99 MCP "
-			+ "(was 58 REST / 223 before write-body-by-reference added rest:POST /api/blobs/{{projectKey}} — the "
+		_host.Surfaces.Should().HaveCount(225,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 60 REST + 66 Razor + 99 MCP "
+			+ "(was 59 REST / 224 before node-share-backend added rest:POST /api/share/node — the MINT half of "
+			+ "public node links; there is deliberately no revoke twin, DELETE /api/share/{{token}} searches "
+			+ "both token families instead, which is why one card added exactly one surface; "
+			+ "was 58 REST / 223 before write-body-by-reference added rest:POST /api/blobs/{{projectKey}} — the "
 			+ "raw-body upload the `bodyRef` parameter references, REST rather than MCP on purpose; "
 			+ "was 98 MCP / 222 before observation-edges-promote-and-nail added mcp:tasks_observation_promote; "
 			+ "65 Razor / 97 MCP / 220 before owner-away-digest-delivery added the owner digest's TWO doors — "

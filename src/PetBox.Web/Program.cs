@@ -939,6 +939,12 @@ public partial class Program
 		// The share-token door: ShareLinks had no owner (Pages.ShareModel's anonymous resolve page and
 		// PetBox.Log.Core.ShareApi's create/TSV endpoints both opened core.db directly for it).
 		builder.Services.AddScoped<PetBox.Core.Data.IShareLinkDirectory, PetBox.Core.Data.ShareLinkDirectory>();
+		// The SECOND share-token family (M053, spec node-share): a public link onto one task node.
+		// Its own door onto its own table; the two are joined only at REVOKE, by the service below —
+		// a token is opaque, so one DELETE /api/share/{token} and one mcp:share_revoke must find
+		// either kind without the caller knowing which it holds.
+		builder.Services.AddScoped<PetBox.Core.Data.INodeShareDirectory, PetBox.Core.Data.NodeShareDirectory>();
+		builder.Services.AddScoped<PetBox.Core.Data.IShareRevocationService, PetBox.Core.Data.ShareRevocationService>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
@@ -1527,7 +1533,13 @@ public partial class Program
 		}
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Tasks))
+		{
 			PetBox.Web.Sessions.SessionApi.MapSessionEndpoints(app);
+			// Minting a public link onto a task node. Gated by Tasks, NOT by Logging: it publishes a
+			// node, and the only thing it shares with the log family is the revoke route — which is
+			// mapped over there and whose behaviour for log tokens is unchanged.
+			PetBox.Web.Tasks.NodeShareApi.MapNodeShareEndpoints(app);
+		}
 
 		// Portable agent-definition store (Core DB; always on — no feature flag).
 		PetBox.Web.AgentDefs.AgentDefsApi.MapAgentDefsEndpoints(app);

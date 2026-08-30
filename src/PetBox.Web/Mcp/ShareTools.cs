@@ -41,17 +41,23 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class ShareTools
 {
+	// TWO TOKEN FAMILIES, ONE VERB (work `node-share-backend`). Node sharing (POST /api/share/node)
+	// mints into a SECOND table and gets no revoke tool of its own: the agent holding a loose link
+	// has the URL, not the table name, so this verb takes IShareRevocationService and that service
+	// looks in both directories (logs first — the log path is byte-for-byte what it was). Splitting
+	// revoke per family would mean an operator had to know which kind of link they were killing
+	// before they could kill it, which is precisely the wrong thing to require in a hurry.
 	[McpServerTool(Name = "share_revoke", Title = "Revoke a share link", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ShareRevokedResult))]
-	[Description("Revokes a share link (the token minted by the Logs page's Share button / POST /api/share), immediately and independently of its TTL: the row is HARD-deleted, so both the anonymous TSV export (GET /api/share/{token}/tsv) and the anonymous HTML page (/ui/share/{token}) stop serving it on the very next request. Takes `projectKey` (the project that OWNS the link — must match the calling ApiKey's project claim) and `token` (the opaque id in the share URL). A token that does not exist under that project — never existed, already revoked, or belongs to a DIFFERENT project — answers with the identical 'share link not found' error, so this verb cannot be used to probe which tokens exist elsewhere. There is deliberately no companion 'list share links' verb: a token is addressable by value only. Requires no scope beyond an authenticated key authorized for `projectKey` — the same entitlement that mints the link.")]
+	[Description("Revokes a share link — EITHER kind: a log export minted by the Logs page's Share button / POST /api/share, or a public task-node link minted by POST /api/share/node. Immediate and independent of any TTL (a node link may have none at all): the row is HARD-deleted, so every anonymous reader of it — the TSV export (GET /api/share/{token}/tsv), the log page (/ui/share/{token}), the node page (/ui/share/node/{token}) — stops serving it on the very next request. Takes `projectKey` (the project that OWNS the link — must match the calling ApiKey's project claim) and `token` (the opaque id in the share URL); you do NOT have to know which kind of link it is. A token that does not exist under that project — never existed, already revoked, or belongs to a DIFFERENT project — answers with the identical 'share link not found' error, so this verb cannot be used to probe which tokens exist elsewhere. There is deliberately no companion 'list share links' verb: a token is addressable by value only. Requires no scope beyond an authenticated key authorized for `projectKey` — the same entitlement that mints the link.")]
 	public static async Task<ShareRevokedResult> RevokeAsync(
-		IShareLinkDirectory shareLinks,
+		IShareRevocationService revocation,
 		[Description("Project key that owns the share link — must match the calling ApiKey's project claim.")] string projectKey,
-		[Description("The opaque share token: the last path segment of /ui/share/{token}.")] string token,
+		[Description("The opaque share token: the last path segment of /ui/share/{token} or /ui/share/node/{token}.")] string token,
 		CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(token)) throw new ArgumentException("token is required");
 
-		var revoked = await shareLinks.DeleteAsync(token, projectKey, ct);
+		var revoked = await revocation.RevokeAsync(token, projectKey, ct);
 
 		// Same wording, and the same indistinguishability, as the REST twin's 404 body. An
 		// InvalidOperationException (not Unauthorized) because it is NOT an authorization answer: the
