@@ -20,7 +20,7 @@
 // without that carve-out, the very first `wire`/`apply` after this fix would block on every
 // skill file the owner already has on disk.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeArtifact } from "./apply-write.ts";
 import { hasPetboxMarker, PETBOX_MARKER_LINE, readArtifactState, type ArtifactState } from "./origin-marker.ts";
@@ -329,4 +329,131 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
       }
       return `the server responded with HTTP ${probe.status} (reachable — not a transport/connectivity failure)`;
   }
+}
+
+// ---- opencode salience index (bug: opencode-skills-not-autoinjected) --------------------------
+//
+// opencode ALREADY resolves a skill's body lazily, on demand, via its native `skill` tool — the
+// exact same progressive-disclosure shape Claude Code and Droid use (confirmed against
+// https://opencode.ai/docs/skills/ and https://docs.factory.ai/harness/skills: cheap name+
+// description always listed, full body fetched only on an explicit call). That mechanism is not
+// missing and must not be duplicated (project rule m-9a5acb03389d4337bef2407131e59e19: "don't
+// duplicate a cheap surface into an expensive one" — an earlier version of this fix injected full
+// bodies, ~47.5KB across the six petbox-* skills in this repo, into EVERY session's system
+// prompt; reserve returned it for exactly this reason). What was actually missing was salience:
+// the agent has to notice a skill exists, pick the right one, and decide to call it, with nothing
+// forcing that noticing to happen. So this module builds a SALIENCE INDEX, not a body copy: one
+// short line per petbox-* skill naming WHEN to call it, derived from that skill's own
+// `description:` frontmatter (the "Use ..." sentence — the house convention every current
+// petbox-* skill already follows) so it can never drift into a second copy of the skill's
+// content. The actual body still arrives lazily, through the untouched native `skill` tool.
+//
+// Scoped to `petbox*` skill directories only — the family opencode-plugin.ts is already
+// responsible for keeping current (the generic PROJECT_SKILLS templates, plus repo-native ones
+// like petbox-methodology-system that ship hand-written outside the template pipeline) — not
+// every skill on disk. Reads the MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}`
+// substitution, post any user edits), never re-renders a template.
+
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
+
+/**
+ * Extract the frontmatter `description:` value from a raw SKILL.md — either a single-line
+ * scalar (`description: text`) or a folded block scalar (`description: >-\n  line one\n  line
+ * two`), the two forms every current petbox-* skill uses. `null` when there is no frontmatter or
+ * no description field (caller degrades to "no trigger for this skill" rather than guessing).
+ */
+export function extractSkillDescription(raw: string): string | null {
+  const fm = raw.match(FRONTMATTER_RE);
+  if (!fm) return null;
+  const yaml = fm[0];
+  const block = yaml.match(/^description:\s*[|>][-+]?[ \t]*\r?\n((?:[ \t]+\S.*\r?\n?)+)/m);
+  const blockText = block?.[1];
+  if (blockText !== undefined) {
+    return blockText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join(" ");
+  }
+  const single = yaml.match(/^description:[ \t]*(.+?)\r?$/m);
+  const singleText = single?.[1];
+  return singleText !== undefined ? singleText.trim() : null;
+}
+
+/**
+ * The one sentence a description names as WHEN to reach for the skill — every current petbox-*
+ * skill's description states this as a sentence starting "Use ..." (see the petbox-* SKILL.md
+ * files under .claude/skills). Falls back to the description's first sentence when no such
+ * sentence is found, so a future skill that doesn't follow the convention still gets some
+ * one-line trigger, not none.
+ */
+export function extractSkillTrigger(description: string): string {
+  const sentences = description
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/(?<=\.)\s+/);
+  const useSentence = sentences.find((s) => /^Use\b/.test(s.trim()));
+  return (useSentence ?? sentences[0] ?? "").trim();
+}
+
+export type PetboxSkillTrigger = { readonly name: string; readonly trigger: string };
+
+/**
+ * One trigger line per `petbox*`-named skill materialized under `<root>/.claude/skills/`, sorted
+ * by directory name for a stable order. A skill whose description can't be parsed is skipped
+ * (never injects a blank line). `[]` when the skills directory is absent (wire apply not run
+ * yet) or empty — never throws (best-effort, same contract as every other opencode-plugin.ts
+ * injector).
+ */
+export function readPetboxSkillTriggers(root: string): PetboxSkillTrigger[] {
+  const dir = join(root, ".claude", "skills");
+  let dirNames: string[];
+  try {
+    dirNames = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith("petbox"))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  const out: PetboxSkillTrigger[] = [];
+  for (const name of dirNames) {
+    try {
+      const raw = readFileSync(join(dir, name, "SKILL.md"), "utf8");
+      const description = extractSkillDescription(raw);
+      if (!description) continue;
+      out.push({ name, trigger: extractSkillTrigger(description) });
+    } catch {
+      // missing/unreadable SKILL.md under a petbox* dir — skip it, best-effort
+    }
+  }
+  return out;
+}
+
+/**
+ * Render the salience index for opencode's system prompt, or `null` when there is nothing to
+ * index (mirrors fetchCanonBlock's "best-effort, degrades to nothing" shape so the caller can
+ * `if (block) output.system.push(block)` uniformly). Each line names the trigger condition and
+ * the exact skill name to call — the body itself is never inlined; `skill(name)` still fetches
+ * it, lazily, same as always.
+ */
+export function buildAutoSkillsIndex(root: string): string | null {
+  const triggers = readPetboxSkillTriggers(root);
+  if (triggers.length === 0) return null;
+  const lines = triggers.map((t) => `- ${t.trigger} → \`${t.name}\``);
+  return ["## PetBox skills — call `skill(name)` on match, don't browse first", "", ...lines].join("\n");
+}
+
+/**
+ * Per-session "already injected" gate, shared shape for any opencode hook that must fire once
+ * per session rather than once per turn (`experimental.chat.system.transform` runs on every
+ * turn — see opencode-plugin.ts's own comment on why). `sessionID` undefined (a shape the SDK
+ * types allow) degrades to "always inject" — never silently skip content because an id was
+ * missing.
+ */
+export function shouldInjectOnce(seen: Set<string>, sessionID: string | undefined): boolean {
+  if (!sessionID) return true;
+  if (seen.has(sessionID)) return false;
+  seen.add(sessionID);
+  return true;
 }

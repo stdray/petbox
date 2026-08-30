@@ -13,14 +13,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
+  buildAutoSkillsIndex,
   buildSkillReports,
   checkSkillFile,
   describeWorkspaceProbeFailure,
+  extractSkillDescription,
+  extractSkillTrigger,
   formatSkillFile,
   PROJECT_SKILLS,
   probeWorkspace,
+  readPetboxSkillTriggers,
   SKILL_SURFACES,
   renderSkillTemplate,
+  shouldInjectOnce,
   writeSkillFiles,
   type SkillWriteOutcome,
   type WorkspaceProbeResult,
@@ -512,4 +517,200 @@ test("probeWorkspace: 200 valid JSON with no workspace field stays 'no-workspace
   } finally {
     await fake.close();
   }
+});
+
+// ---- opencode salience index (bug: opencode-skills-not-autoinjected) --------------------------
+
+function writeSkillMd(skillsDir: string, name: string, body: string): void {
+  const dir = join(skillsDir, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), body, "utf8");
+}
+
+test("extractSkillDescription: folded block scalar (description: >-) joins lines with single spaces", () => {
+  const raw = "---\nname: petbox-foo\ndescription: >-\n  Pay for the change.\n  Use before writing a long body.\n---\n\n# Foo\n";
+  assert.equal(extractSkillDescription(raw), "Pay for the change. Use before writing a long body.");
+});
+
+test("extractSkillDescription: single-line scalar (no >-)", () => {
+  const raw = "---\nname: petbox-foo\ndescription: Pay for the change. Use before writing a long body.\n---\n\n# Foo\n";
+  assert.equal(extractSkillDescription(raw), "Pay for the change. Use before writing a long body.");
+});
+
+test("extractSkillDescription: no frontmatter, or frontmatter with no description — null", () => {
+  assert.equal(extractSkillDescription("# Foo\n\nNo frontmatter.\n"), null);
+  assert.equal(extractSkillDescription("---\nname: petbox-foo\n---\n\n# Foo\n"), null);
+});
+
+test("extractSkillTrigger: picks the sentence starting 'Use', not the first sentence", () => {
+  assert.equal(
+    extractSkillTrigger("Pay for the change, not the whole text. Use before any long write. Covers more detail."),
+    "Use before any long write.",
+  );
+});
+
+test("extractSkillTrigger: no 'Use' sentence — falls back to the first sentence, never empty", () => {
+  assert.equal(extractSkillTrigger("Does a thing. Does another thing."), "Does a thing.");
+});
+
+test("readPetboxSkillTriggers: no .claude/skills directory at all — [] (wire apply never ran)", () => {
+  const root = freshDir();
+  try {
+    assert.deepEqual(readPetboxSkillTriggers(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readPetboxSkillTriggers: only petbox*-prefixed dirs, sorted; non-petbox, bodyless, and description-less dirs skipped", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    writeSkillMd(
+      skillsDir,
+      "petbox-write-economy",
+      "---\nname: petbox-write-economy\ndescription: >-\n  Pay for the change. Use before any long write.\n---\n\n# Write economy\n",
+    );
+    writeSkillMd(
+      skillsDir,
+      "petbox-agent-factory",
+      "---\nname: petbox-agent-factory\ndescription: Compile artifacts. Use after role changes.\n---\n\n# Agent factory\n",
+    );
+    writeSkillMd(skillsDir, "factory-run", "---\nname: factory-run\ndescription: Use for factory runs.\n---\n\n# Factory run — not petbox, must be excluded\n");
+    writeSkillMd(skillsDir, "petbox-no-description", "---\nname: petbox-no-description\n---\n\n# No description field\n");
+    // A petbox*-named dir with no SKILL.md inside (e.g. mid-write, or a stray folder) — skipped,
+    // not an error for the whole read.
+    mkdirSync(join(skillsDir, "petbox-empty"), { recursive: true });
+
+    const triggers = readPetboxSkillTriggers(root);
+    assert.deepEqual(
+      triggers.map((t) => t.name),
+      ["petbox-agent-factory", "petbox-write-economy"], // sorted; factory-run, petbox-no-description, petbox-empty absent
+    );
+    assert.equal(triggers.find((t) => t.name === "petbox-write-economy")!.trigger, "Use before any long write.");
+    assert.equal(triggers.find((t) => t.name === "petbox-agent-factory")!.trigger, "Use after role changes.");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A skill that HAS a description but doesn't follow the "Use ..." house convention is not
+// enforced at write time (no wire/lint gate requires it) — this pins what the reader-facing
+// consequence is: NOT a silent drop from the index (that would be the exact salience defect this
+// card fixes, just relocated), but a weaker trigger (the description's first sentence, which
+// reads as "what this is" rather than "when to call it"). A description that is present but
+// blank IS excluded — there is nothing sensible to show, so omitting beats injecting an empty
+// line.
+test("readPetboxSkillTriggers: a description with no 'Use' sentence is still included (first-sentence fallback), never silently dropped; a blank description IS excluded", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    writeSkillMd(
+      skillsDir,
+      "petbox-no-use-sentence",
+      "---\nname: petbox-no-use-sentence\ndescription: Does a thing. Covers detail with no trigger sentence.\n---\n\n# No Use sentence\n",
+    );
+    writeSkillMd(skillsDir, "petbox-blank-description", "---\nname: petbox-blank-description\ndescription:\n---\n\n# Blank description\n");
+
+    const triggers = readPetboxSkillTriggers(root);
+    assert.deepEqual(triggers.map((t) => t.name), ["petbox-no-use-sentence"]); // blank one excluded
+    assert.equal(triggers[0]!.trigger, "Does a thing.", "falls back to the first sentence, not dropped");
+
+    const index = buildAutoSkillsIndex(root)!;
+    assert.match(index, /Does a thing\. → `petbox-no-use-sentence`/, "the fallback trigger must actually reach the injected index, not just the pure function");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildAutoSkillsIndex: null when no petbox skills are materialized", () => {
+  const root = freshDir();
+  try {
+    assert.equal(buildAutoSkillsIndex(root), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// THE regression this card (opencode-skills-not-autoinjected) is about: before this fix,
+// opencode-plugin.ts had no equivalent of this block at all — the agent only ever saw skill
+// NAMES (available_skills) and had to decide, unprompted, to call `skill` for the right one.
+// This pins what closes that gap: one line per discovered petbox-* skill naming ITS OWN trigger
+// condition and the exact name to call — never the skill's body (that stays behind the native,
+// unmodified `skill` tool — see skill-files.ts's module comment on why full-body injection was
+// rejected: ~47.5KB across six skills, every session, duplicating a mechanism that already
+// exists on all three harnesses).
+test("buildAutoSkillsIndex: one line per discovered skill, trigger + exact name, no body content", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    writeSkillMd(
+      skillsDir,
+      "petbox-node-authoring",
+      "---\nname: petbox-node-authoring\ndescription: >-\n  How to structure a node body. Use before writing any node/comment body longer than a couple of lines.\n---\n\n# Body authoring\n\nFull instructions the index must NOT contain.\n",
+    );
+    writeSkillMd(
+      skillsDir,
+      "petbox-write-economy",
+      "---\nname: petbox-write-economy\ndescription: >-\n  Pay for the change. Use before any tasks_upsert call whose body is more than a few lines.\n---\n\n# Write economy\n\nFull instructions the index must NOT contain.\n",
+    );
+
+    const index = buildAutoSkillsIndex(root)!;
+    assert.match(index, /^## PetBox skills — call `skill\(name\)` on match, don't browse first$/m);
+    assert.match(
+      index,
+      /Use before writing any node\/comment body longer than a couple of lines\. → `petbox-node-authoring`/,
+    );
+    assert.match(
+      index,
+      /Use before any tasks_upsert call whose body is more than a few lines\. → `petbox-write-economy`/,
+    );
+    assert.doesNotMatch(index, /Full instructions the index must NOT contain/, "the skill BODY must never be inlined");
+    // Compact by construction: the whole index must stay far smaller than either full body would
+    // be alone — the property the earlier (rejected) full-body approach violated.
+    assert.ok(
+      Buffer.byteLength(index, "utf8") < 700,
+      `index unexpectedly large: ${Buffer.byteLength(index, "utf8")} bytes`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Regression guard tied to the REAL, currently-shipped descriptions (templates/ + this repo's
+// own petbox-methodology-system) rather than synthetic fixtures only — every one of them must
+// still parse to a non-empty "Use ..." trigger, proving the house convention this module relies
+// on actually holds for the full current skill set, not just the two hand-picked examples above.
+test("extractSkillTrigger against every REAL current petbox-* skill description yields a non-empty 'Use ...' trigger", () => {
+  const specs = [...PROJECT_SKILLS.map((s) => s.dir), "petbox-methodology-system"];
+  for (const dir of specs) {
+    const path =
+      dir === "petbox-methodology-system"
+        ? join(HERE, "..", "..", "..", "..", ".claude", "skills", dir, "SKILL.md")
+        : join(TEMPLATES_ROOT, dir, "SKILL.md");
+    let raw: string;
+    try {
+      raw = readFileSync(path, "utf8");
+    } catch {
+      continue; // petbox-methodology-system may not be present in every checkout layout — skip, don't fail
+    }
+    const description = extractSkillDescription(raw);
+    assert.ok(description, `${dir}: description must be parseable from frontmatter`);
+    const trigger = extractSkillTrigger(description!);
+    assert.match(trigger, /^Use\b/, `${dir}: expected a "Use ..." trigger sentence, got: "${trigger}"`);
+  }
+});
+
+test("shouldInjectOnce: true the first time per sessionID, false thereafter for that id, true again for a different id", () => {
+  const seen = new Set<string>();
+  assert.equal(shouldInjectOnce(seen, "sess-1"), true);
+  assert.equal(shouldInjectOnce(seen, "sess-1"), false);
+  assert.equal(shouldInjectOnce(seen, "sess-1"), false);
+  assert.equal(shouldInjectOnce(seen, "sess-2"), true);
+});
+
+test("shouldInjectOnce: undefined sessionID always injects (never silently drop content for a missing id)", () => {
+  const seen = new Set<string>();
+  assert.equal(shouldInjectOnce(seen, undefined), true);
+  assert.equal(shouldInjectOnce(seen, undefined), true);
 });
