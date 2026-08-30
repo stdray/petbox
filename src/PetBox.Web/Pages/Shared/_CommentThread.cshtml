@@ -123,12 +123,20 @@
 							data-scope="comment" data-comment-id="@c.Id"
 							data-testid="comment-share" title="Create a public link to this comment">share</button>
 					}
-					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
-					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
-					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
-						<input type="hidden" name="id" value="@c.Id" />
-						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
-					</form>
+					@* ReadOnly (node-share-public-page): the per-comment MUTATION controls, gated as a
+					   block. NOT gated on ShowAddForm — the board's list views pass that false and must
+					   keep reply/edit/delete (they have the handlers); the anonymous public share page
+					   passes ReadOnly and must have none of them. See CommentThreadModel.ReadOnly for
+					   what was actually leaking before this gate existed. *@
+					@if (!Model.ReadOnly)
+					{
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+						<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
+							<input type="hidden" name="id" value="@c.Id" />
+							<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+						</form>
+					}
 				</span>
 			</div>
 		</div>
@@ -138,30 +146,38 @@
 		   "comment-read-body" (same element's role, just one fewer wrapper div). *@
 		<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 
-		@* Edit form — same comment, in place. `version` is the watermark baseline read on
-		   this render; a stale one comes back as a conflict (surfaced as the page Error),
-		   never a silent clobber, mirroring node edit-respects-guards. *@
-		<form method="post" asp-page-handler="CommentEdit" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none">
-			<input type="hidden" name="id" value="@c.Id" />
-			<input type="hidden" name="version" value="@c.Version" />
-			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">@c.Body</textarea>
-			<div class="flex items-center gap-2">
-				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
-				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
-			</div>
-		</form>
+		@* The two hidden mutation forms, behind the same ReadOnly gate as their toggle buttons
+		   above. Hiding them with CSS would not be enough on a public surface: `style="display:none"`
+		   still ships the markup, and these two carry the comment's body a SECOND time inside an
+		   editable textarea plus the node's internal NodeId — content and identifiers a reader who
+		   was granted one node has no business receiving, whether or not a browser paints them. *@
+		@if (!Model.ReadOnly)
+		{
+			@* Edit form — same comment, in place. `version` is the watermark baseline read on
+			   this render; a stale one comes back as a conflict (surfaced as the page Error),
+			   never a silent clobber, mirroring node edit-respects-guards. *@
+			<form method="post" asp-page-handler="CommentEdit" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none">
+				<input type="hidden" name="id" value="@c.Id" />
+				<input type="hidden" name="version" value="@c.Version" />
+				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">@c.Body</textarea>
+				<div class="flex items-center gap-2">
+					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+				</div>
+			</form>
 
-		@* Reply form — a plain add scoped to this comment via the hidden parentId; the
-		   service rejects a parentId that isn't an active comment under the SAME node. *@
-		<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none">
-			<input type="hidden" name="nodeId" value="@Model.NodeId" />
-			<input type="hidden" name="parentId" value="@c.Id" />
-			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
-			<div class="flex items-center gap-2">
-				<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
-				<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
-			</div>
-		</form>
+			@* Reply form — a plain add scoped to this comment via the hidden parentId; the
+			   service rejects a parentId that isn't an active comment under the SAME node. *@
+			<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none">
+				<input type="hidden" name="nodeId" value="@Model.NodeId" />
+				<input type="hidden" name="parentId" value="@c.Id" />
+				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+				<div class="flex items-center gap-2">
+					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+				</div>
+			</form>
+		}
 	</div>
 }
 

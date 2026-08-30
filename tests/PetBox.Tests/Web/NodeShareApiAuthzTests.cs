@@ -266,17 +266,35 @@ public sealed class NodeShareApiAuthzTests : IClassFixture<NodeShareApiAuthzFixt
 
 	// ── MINT: LIFETIME (spec node-share-lifetime) ────────────────────────────────────────────────
 
+	// RETARGETED by work node-share-public-page. This test was written as "the stored row has a NULL
+	// ExpiresAt" because on the day it was written there was no public reader to ask — the row's
+	// state was the only observable. There is one now (page:/ShareNode), so the claim is measured
+	// where it actually matters: a link minted with no TTL SERVES ITS CONTENT. The row assertion is
+	// kept as the mechanism control (null, not a far-future date), but it is no longer the evidence.
+	//
+	// The failure this guards is specific and silent: a reader that compared `ExpiresAt < UtcNow`
+	// by hand would see default(DateTime) for a NULL and 404 every permanent link ever minted,
+	// while every row-level test in this file stayed green. Hence NodeShare.IsExpiredAt.
 	[Fact]
-	public async Task Mint_WithoutTtl_HasNoExpiryAtAll_AndSaysSoInTheResponse()
+	public async Task Mint_WithoutTtl_NeverExpires_AndThePublicPageServesIt()
 	{
 		var minted = await MintAsync();
 
 		minted.ExpiresAt.Should().BeNull(
 			"the response must say 'no expiry' rather than encode it as some far-future date");
 
-		using var scope = _fx.Factory.Services.CreateScope();
-		using var db = OpenCore(scope);
-		db.NodeShares.First(s => s.Id == minted.Id).ExpiresAt.Should().BeNull();
+		using (var scope = _fx.Factory.Services.CreateScope())
+		using (var db = OpenCore(scope))
+			db.NodeShares.First(s => s.Id == minted.Id).ExpiresAt.Should().BeNull();
+
+		// Anonymous on purpose: no cookie, no X-Api-Key — the token is the whole authorization.
+		using var page = await _client.GetAsync($"/ui/share/node/{minted.Id}");
+
+		page.StatusCode.Should().Be(HttpStatusCode.OK,
+			"a link with no expiry is not expired — the public reader must serve it, and this is the "
+			+ "assertion that would catch a null-unsafe expiry comparison that the row-state check cannot");
+		(await page.Content.ReadAsStringAsync()).Should().Contain("the published body",
+			"and serving it means the node's content, not an empty shell with a 200 on it");
 	}
 
 	[Fact]
@@ -308,10 +326,20 @@ public sealed class NodeShareApiAuthzTests : IClassFixture<NodeShareApiAuthzFixt
 
 	// ── REVOKE: ONE ROUTE, TWO TOKEN FAMILIES ────────────────────────────────────────────────────
 
+	// RETARGETED by work node-share-public-page, same reason as the lifetime test above: "the row is
+	// gone" was a proxy for "it stopped serving", chosen because no reader existed to ask. Now the
+	// claim is made where the owner actually cares about it — the SAME token, served before revoke
+	// and 404 after, with no request in between. A revoke that deleted the row but left a cached or
+	// otherwise still-answering page would have passed the old assertion and failed the real one.
 	[Fact]
-	public async Task Revoke_NodeToken_ThroughTheExistingShareRoute_HardDeletesIt()
+	public async Task Revoke_NodeToken_ThroughTheExistingShareRoute_ImmediatelyStopsThePublicPage()
 	{
 		var minted = await MintAsync();
+
+		// The control: it really was serving. Without this, a page that 404s for an unrelated reason
+		// would let the revoke assertion below pass while proving nothing.
+		using (var before = await _client.GetAsync($"/ui/share/node/{minted.Id}"))
+			before.StatusCode.Should().Be(HttpStatusCode.OK, "the link serves before it is revoked");
 
 		using var resp = await _client.SendAsync(RevokeReq(
 			NodeShareApiAuthzFixture.KeyA, minted.Id, NodeShareApiAuthzFixture.ProjA));
@@ -319,10 +347,15 @@ public sealed class NodeShareApiAuthzTests : IClassFixture<NodeShareApiAuthzFixt
 		resp.StatusCode.Should().Be(HttpStatusCode.OK,
 			"node sharing got no revoke route of its own — the existing one must find this token");
 
+		using (var after = await _client.GetAsync($"/ui/share/node/{minted.Id}"))
+			after.StatusCode.Should().Be(HttpStatusCode.NotFound,
+				"revoke is a hard delete and the reader holds nothing of its own — the very next request "
+				+ "must be refused. For a link with no TTL this is the ONLY way it ever stops serving");
+
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = OpenCore(scope);
 		db.NodeShares.Any(s => s.Id == minted.Id).Should().BeFalse(
-			"revoke is a hard delete — for a link with no TTL it is the only way it ever stops serving");
+			"the mechanism behind that 404 is a hard delete, not a flag the reader could forget to read");
 	}
 
 	[Fact]

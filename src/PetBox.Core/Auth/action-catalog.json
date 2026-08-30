@@ -1199,7 +1199,22 @@
 			],
 			"bg": [],
 			"internal": [],
-			"note": "ОТДЕЛЬНОЕ действие от share.token-create, а не вторая поверхность того же: объём гранта другой (узел/комментарий, а не KQL по логу), таблица другая (node_shares, M053), и срок жизни другой — ExpiresAt NULLABLE, null = бессрочно (spec `node-share-lifetime`), тогда как у логовой ссылки TTL обязателен и по умолчанию 1440 мин. ОТЗЫВА в этой записи нет намеренно: своего DELETE у узловых ссылок не появилось — токен непрозрачен, поэтому существующий rest:DELETE /api/share/{token} и mcp:share_revoke (см. share.revoke) ищут его в ОБЕИХ справочниках через IShareRevocationService. Публичного чтения тоже пока нет: /ui/share/node/{token} — отдельная карта, и до неё ни одной поверхности анонимного чтения узловых ссылок в дереве не существует."
+			"note": "ОТДЕЛЬНОЕ действие от share.token-create, а не вторая поверхность того же: объём гранта другой (узел/комментарий, а не KQL по логу), таблица другая (node_shares, M053), и срок жизни другой — ExpiresAt NULLABLE, null = бессрочно (spec `node-share-lifetime`), тогда как у логовой ссылки TTL обязателен и по умолчанию 1440 мин. ОТЗЫВА в этой записи нет намеренно: своего DELETE у узловых ссылок не появилось — токен непрозрачен, поэтому существующий rest:DELETE /api/share/{token} и mcp:share_revoke (см. share.revoke) ищут его в ОБЕИХ справочниках через IShareRevocationService. Читателя, которого на дату этой записи ещё не было, добавила карта node-share-public-page — см. отдельное действие share.node-token-read."
+		},
+		{
+			"id": "share.node-token-read",
+			"source": "spec node-share, node-share-confinement, node-share-scope @work/node-share-public-page (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "share",
+			"action": "прочитать узел (или один комментарий) по share-token, анонимно",
+			"target": "share-token",
+			"targetNote": "Класс К (capability-token), как у share.token-read: page:/ShareNode — [AllowAnonymous] + [TenantExempt(CapabilityToken)], тенанта в маршруте НЕТ и написать его некуда. Цель полностью определяет СТРОКА node_shares: (ProjectKey, Board, NodeId, CommentId, Scope) — вызывающий приносит только токен. Истечение проверяет сам ридер через NodeShare.IsExpiredAt (ExpiresAt NULL = не истекает никогда), INodeShareDirectory.FindAsync его намеренно не складывает внутрь.",
+			"targetSource": null,
+			"surfaces": [
+				"page:/ShareNode"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "ОТДЕЛЬНОЕ действие от share.token-read, хотя оба «прочитать по токену»: там цель — лог и KQL-срез по нему, здесь — узел доски и его обсуждение, и справочник другой (INodeShareDirectory). Ровно ОДНА поверхность и никакого REST-близнеца: машиночитаемой проекции опубликованного узла нет намеренно — потребитель такой ссылки всегда человек, открывающий URL, а второй выход тем же токеном пришлось бы отдельно доказывать по объёму. Объём гранта не обсуждается при чтении: Scope выбран при выпуске (body|comment|full) и хранится в строке. Удержание (spec `node-share-confinement`) обеспечивается НЕ проверкой, а тем, чего страница не передаёт в _MdBody: NodeRefs и MemoryRefs пустые, поэтому `[[slug]]` и ключи памяти остаются текстом и не утекают ни ссылкой в закрытый UI, ни ЗАГОЛОВКОМ приватного узла; сам IMarkdownRenderer не менялся. Отзыв — жёсткое удаление строки (IShareRevocationService), поэтому гасит выдачу со следующего же запроса; ненайденный, отозванный, истёкший и удалённый узел дают один и тот же 404, чтобы анонимная поверхность не стала оракулом существования."
 		},
 		{
 			"id": "share.token-read",

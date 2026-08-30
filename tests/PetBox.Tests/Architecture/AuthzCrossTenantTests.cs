@@ -3,7 +3,9 @@ using PetBox.Core.Auth;
 namespace PetBox.Tests.Architecture;
 
 // STEP 4 of work `authz-default-deny-delivery`: the cross-tenant test, over THE SAME enumeration the
-// ratchet guards (AuthzSurfaces — 224 surfaces: 59 REST, 66 Razor, 99 MCP; was 223/58 REST before
+// ratchet guards (AuthzSurfaces — 226 surfaces: 60 REST, 67 Razor, 99 MCP; was 225/66 Razor before
+// node-share-public-page added page:/ShareNode, the anonymous reader of a node share token; was
+// 224/59 REST before node-share-backend added rest:POST /api/share/node; was 223/58 REST before
 // write-body-by-reference added POST /api/blobs/{projectKey}, the raw-body upload half of `bodyRef`
 // — a REST surface and deliberately not an MCP one, because a JSON argument would reintroduce the
 // escaping cost the mechanism exists to remove; was 222/98 MCP before
@@ -213,6 +215,11 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 		("CAPABILITY TOKEN — addressed by a share token, which IS the authorization", [
 			"rest:GET /api/share/{token}/tsv",
 			"page:/Share",
+			// node-share-public-page: the same class for the same reason, on the second token family
+			// (node_shares). /ui/share/node/{token} has no tenant in its route and no body to write one
+			// into — the STORED ROW names the project, the board, the node, the comment AND the scope,
+			// so the probe has nowhere to aim another tenant. What confines it is the row, not a check.
+			"page:/ShareNode",
 		]),
 
 		("FEEDBACK — writes into, and reads back out of, the vendor's own project, never the caller's "
@@ -430,9 +437,14 @@ public sealed class AuthzCrossTenantTests : IClassFixture<AuthzCrossTenantHost>
 
 		(refused + deviations + notAddressable).Should().Be(_host.Surfaces.Count,
 			"every surface lands in exactly one bucket");
-		_host.Surfaces.Should().HaveCount(225,
-			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 60 REST + 66 Razor + 99 MCP "
-			+ "(was 59 REST / 224 before node-share-backend added rest:POST /api/share/node — the MINT half of "
+		_host.Surfaces.Should().HaveCount(226,
+			"the inventory this test is driven by is the ratchet's (AuthzSurfaces): 60 REST + 67 Razor + 99 MCP "
+			+ "(was 66 Razor / 225 before node-share-public-page added page:/ShareNode — the anonymous READER "
+			+ "half of public node links, and the last of the three doors that feature needs: mint, revoke "
+			+ "(shared with the log family), read. It is a Razor page and deliberately not a REST twin — there "
+			+ "is no machine-readable projection of a shared node, because every consumer of one of these "
+			+ "links is a person opening a URL; "
+			+ "was 59 REST / 224 before node-share-backend added rest:POST /api/share/node — the MINT half of "
 			+ "public node links; there is deliberately no revoke twin, DELETE /api/share/{{token}} searches "
 			+ "both token families instead, which is why one card added exactly one surface; "
 			+ "was 58 REST / 223 before write-body-by-reference added rest:POST /api/blobs/{{projectKey}} — the "
