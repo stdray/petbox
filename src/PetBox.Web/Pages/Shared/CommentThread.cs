@@ -36,7 +36,25 @@ public sealed record CommentThreadModel(
 	// agent). Null = the copy button doesn't render — a caller that can't cheaply produce an
 	// absolute URL (or doesn't want to) still gets the native `#comment-{id}` hash-anchor link
 	// on the timestamp for free, no JS required.
-	string? NodeUrl = null);
+	string? NodeUrl = null,
+	// node-share-public-page: drop EVERY per-comment mutation control — the reply/edit/delete
+	// buttons and the three forms behind them. Defaults false, so every pre-existing caller renders
+	// exactly what it rendered before.
+	//
+	// Deliberately NOT ShowAddForm, though the public page passes false for both. The two ask
+	// different questions and collapsing them would break a working surface: the board's LIST views
+	// pass ShowAddForm:false (starting a NEW thread is a node-detail affordance —
+	// board-comment-form-list-noise) while remaining fully authoring-capable, and TaskBoardModel
+	// really does expose the CommentAdd/CommentEdit/CommentDelete handlers those per-comment forms
+	// post to. A list view must keep its inline reply/edit/delete; the public reader must have none.
+	//
+	// Why it had to exist: ShowAddForm:false was believed to make this partial safe to reuse on an
+	// anonymous surface, and it was not. It gated the ROOT add form and the share button, but the
+	// per-comment controls rendered unconditionally — so the public page served an anonymous reader
+	// delete buttons, an antiforgery token, the node's internal NodeId in a hidden field, and every
+	// comment body a SECOND time inside an editable <textarea>. Caught by
+	// NodeSharePublicPageTests.ThePage_OffersNoWayToComment_AndNoWayToMintFurtherLinks.
+	bool ReadOnly = false);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.
