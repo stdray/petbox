@@ -41,3 +41,11 @@ file content. Walking `fixture-card.md`'s 4 bullets against `work/` by hand:
 Headline: **NOT COVERED — bullet 2, "Add `sub(a, b)` to `work/calc.js`"** (plus 3 and 4,
 which are direct consequences of 2 and of the missing file already caught in Step 2).
 Bullet 2 is the one Step 2 alone cannot see, which is the point of running both steps.
+
+## Note on the diff-overlap check
+
+`--base <ref>` (e.g. `--base origin/main`) reruns the same artifact check plus a real
+`git diff --stat`/`--numstat` overlap. Verified against this fixture's own commit: the
+touch check matches on `--numstat` (full, untruncated paths), not `--stat` (which
+abbreviates long paths with a `.../` prefix for display and would otherwise silently mark
+a genuinely touched file as NOT TOUCHED).

@@ -76,20 +76,25 @@ if [ "$base_ref" = "-" ]; then
   echo "== Diff overlap == (skipped: --base -)"
 else
   echo "== Diff overlap (git diff --stat ${base_ref}...HEAD in $repo) =="
-  if ! touched="$(git -C "$repo" diff --stat "${base_ref}...HEAD" 2>&1)"; then
+  # --stat truncates long paths with a ".../" prefix for display, which breaks a plain
+  # substring match even for a file that WAS touched. Show --stat for humans, but match
+  # against --numstat, which always prints the full, untruncated path.
+  if ! touched_display="$(git -C "$repo" diff --stat "${base_ref}...HEAD" 2>&1)"; then
     echo "could not diff against $base_ref — is it fetched? raw error:"
-    echo "$touched"
+    echo "$touched_display"
     overall_ok=1
+    touched_paths=""
   else
-    if [ -z "$touched" ]; then
+    if [ -z "$touched_display" ]; then
       echo "(no diff — nothing touched at all)"
       if [ "${#artifacts[@]}" -gt 0 ]; then overall_ok=1; fi
     else
-      echo "$touched"
+      echo "$touched_display"
     fi
+    touched_paths="$(git -C "$repo" diff --numstat "${base_ref}...HEAD" 2>/dev/null | cut -f3-)"
     echo
     for a in "${artifacts[@]}"; do
-      if echo "$touched" | grep -qF -- "$a"; then
+      if echo "$touched_paths" | grep -qF -- "$a"; then
         echo "TOUCHED     $a"
       else
         echo "NOT TOUCHED $a"
