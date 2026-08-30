@@ -29,7 +29,7 @@
 	// live-verification finding (sticky-filter-hides-board-silently): filter bar hoisted OUT of the
 	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
 	// visible no matter how many nodes matched.
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, RecurrenceUnavailable: !Model.Runtime.IsObservationKind(Model.KindSlug), ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 }
 <partial name="_BoardFilterSort" model="filterSortModel" />
 @if (Model.Nodes.Count == 0)

@@ -4,13 +4,18 @@ namespace PetBox.Web.Rendering;
 
 // Which node properties a board's cards/rows/columns show (spec board-view-fields): the ONE
 // config every view partial (Tree/Outline/Kanban's card, Table's row) reads to decide what to
-// render, so the SAME 9-field vocabulary (BoardFieldNames) works identically in every view mode —
+// render, so the SAME field vocabulary (BoardFieldNames) works identically in every view mode —
 // the mode only picks the DEFAULT (below), never a ceiling on what's togglable. Threaded through
 // TaskBoardModel.TaskNodeCard and read directly off TaskBoardModel by the partials that don't go
 // through TaskNodeCard (Kanban/Outline/Table).
 public sealed record BoardFieldConfig(
 	bool Slug, bool Type, bool Status, bool Priority, bool Tags, bool UpdatedAt,
-	bool Delivery, bool BlockedBy, bool Body)
+	bool Delivery, bool BlockedBy, bool Body,
+	// recurrence-and-session-provenance-as-board-fields: trailing + defaulted (not slotted in
+	// alongside the original nine above) so every EXISTING positional/named `new BoardFieldConfig(
+	// ...)` call site in this codebase — including test fixtures pinning the original nine-field
+	// shape — keeps compiling unchanged; only Default/FromKeys (below) ever need to set them.
+	bool Recurrence = false, bool Sessions = false)
 {
 	public static readonly BoardFieldConfig None = new(false, false, false, false, false, false, false, false, false);
 
@@ -25,6 +30,8 @@ public sealed record BoardFieldConfig(
 		BoardFieldNames.Delivery => Delivery,
 		BoardFieldNames.BlockedBy => BlockedBy,
 		BoardFieldNames.Body => Body,
+		BoardFieldNames.Recurrence => Recurrence,
+		BoardFieldNames.Sessions => Sessions,
 		_ => false,
 	};
 
@@ -47,7 +54,39 @@ public sealed record BoardFieldConfig(
 			set.Contains(BoardFieldNames.Slug), set.Contains(BoardFieldNames.Type), set.Contains(BoardFieldNames.Status),
 			set.Contains(BoardFieldNames.Priority), set.Contains(BoardFieldNames.Tags),
 			set.Contains(BoardFieldNames.UpdatedAt), set.Contains(BoardFieldNames.Delivery),
-			set.Contains(BoardFieldNames.BlockedBy), set.Contains(BoardFieldNames.Body));
+			set.Contains(BoardFieldNames.BlockedBy), set.Contains(BoardFieldNames.Body),
+			set.Contains(BoardFieldNames.Recurrence), set.Contains(BoardFieldNames.Sessions));
+	}
+
+	// board-view-fields' forward-compat rule for a SAVED preference (recurrence-and-session-
+	// provenance-as-board-fields, the highest-risk part of that card): `fieldsCsv` alone cannot
+	// distinguish "the owner explicitly unchecked this key" from "this key didn't exist when the
+	// preference was last saved" — a saved csv simply omits both a deliberately-off key AND a
+	// key from the future. `fieldsKnownCsv` (BoardViewPreference.FieldsKnown, written alongside
+	// Fields as BoardFieldNames.AllCsv on every dialog Apply) is the vocabulary that WAS known at
+	// save time, so per key:
+	//   - key IS in fieldsKnownCsv  -> honour fieldsCsv (the owner's explicit choice, on OR off —
+	//     naively falling back to `defaults` whenever a key is simply absent from fieldsCsv would
+	//     make it impossible to ever turn a field off, since "off" and "not yet saved" would look
+	//     identical).
+	//   - key is NOT in fieldsKnownCsv -> fall back to `defaults`. This is the fix for the reported
+	//     bug: an owner who saved the observation board's field selection before `recurrence`
+	//     existed has no way to have "known and unchecked" it, so the counter reappears via the
+	//     default rather than staying silently suppressed forever.
+	// A null/empty fieldsKnownCsv is NOT an empty known-set — it means the preference was written
+	// by a build from before FieldsKnown existed, where the owner nonetheless saw the nine keys of
+	// BoardFieldNames.LegacyKnownCsv. Substituting that list keeps their customization (an
+	// unchecked Tags stays unchecked) while still defaulting the keys that came later; returning
+	// `defaults` wholesale here would fix the missing counter by quietly resetting everything else
+	// they had chosen, which is a second bug wearing the first one's clothes.
+	public static BoardFieldConfig FromSaved(string? fieldsCsv, string? fieldsKnownCsv, BoardFieldConfig defaults)
+	{
+		var knownCsv = string.IsNullOrEmpty(fieldsKnownCsv) ? BoardFieldNames.LegacyKnownCsv : fieldsKnownCsv;
+		var known = knownCsv.Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var saved = FromKeys(fieldsCsv?.Split(',', StringSplitOptions.RemoveEmptyEntries));
+		var merged = BoardFieldNames.Options.Select(o => o.Key)
+			.Where(key => known.Contains(key) ? saved.Has(key) : defaults.Has(key));
+		return FromKeys(merged);
 	}
 
 	// The DEFAULT preset for a (view mode, kind) pair — PURE CODE, not methodology-definition data
@@ -69,6 +108,13 @@ public sealed record BoardFieldConfig(
 	public static BoardFieldConfig Default(string viewMode, MethodologyRuntime runtime, string? kindSlug, bool outlineBodyDefault)
 	{
 		var delivery = runtime.DeliveryOf(kindSlug) is not null;
+		// spec observation-recurrence-visible-on-card: Recurrence defaults ON, but ONLY on an
+		// observation-kind board — every other board's TaskNodeView.Observation is always null
+		// (TasksService only loads it for that kind), so defaulting it on elsewhere would toggle a
+		// checkbox that can never render anything. Same signal in every view mode; the mode switch
+		// below never touches it. Sessions (below) is the opposite posture: meaningful everywhere,
+		// but opt-in everywhere (board-view-fields' own "don't default to noise nobody asked for").
+		var recurrence = runtime.IsObservationKind(kindSlug);
 		return viewMode switch
 		{
 			// Slug (the node key) defaults ON in every mode below: kanban never showed it before this
@@ -78,13 +124,13 @@ public sealed record BoardFieldConfig(
 			// new opinion.
 			BoardViewModeNames.Kanban => new BoardFieldConfig(
 				Slug: true, Type: true, Status: false, Priority: true, Tags: true, UpdatedAt: false,
-				Delivery: delivery, BlockedBy: false, Body: false),
+				Delivery: delivery, BlockedBy: false, Body: false, Recurrence: recurrence, Sessions: false),
 			BoardViewModeNames.Table => new BoardFieldConfig(
 				Slug: true, Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true,
-				Delivery: delivery, BlockedBy: false, Body: false),
+				Delivery: delivery, BlockedBy: false, Body: false, Recurrence: recurrence, Sessions: false),
 			BoardViewModeNames.Outline => new BoardFieldConfig(
 				Slug: true, Type: false, Status: false, Priority: false, Tags: false, UpdatedAt: false,
-				Delivery: delivery, BlockedBy: false, Body: outlineBodyDefault),
+				Delivery: delivery, BlockedBy: false, Body: outlineBodyDefault, Recurrence: recurrence, Sessions: false),
 			// Tree and Tags (tag-groups is a projection over the tree, same card) — close to the
 			// pre-config tree-card look (status badge, delivery badge, body) plus the two fields
 			// most useful in a spacious card: Tags (the grouping context) and BlockedBy (the one
@@ -93,7 +139,7 @@ public sealed record BoardFieldConfig(
 			// filter criteria without being restated on every card.
 			_ => new BoardFieldConfig(
 				Slug: true, Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
-				Delivery: delivery, BlockedBy: true, Body: true),
+				Delivery: delivery, BlockedBy: true, Body: true, Recurrence: recurrence, Sessions: false),
 		};
 	}
 }

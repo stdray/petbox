@@ -6,11 +6,17 @@
    that disambiguates "the dialog submitted a deliberately empty selection" from "no `fields` query
    param at all" (unchecked checkboxes don't post — TaskBoardModel.FieldsSetParam). Persisting the
    choice for future page loads (so it survives navigating away and back, and applies before the
-   NEXT view switch too — "выбор действует в любом режиме просмотра") is ts/board.ts's job:
-   initBoardViewPersistence saves the checked set to localStorage on submit, keyed the SAME way the
-   view-mode preference already is (board-view-fields storage: тот же механизм). Skipped entirely
-   when ViewMode is empty (Search's cross-scope table reuse — no board-view-meta there to persist
-   against, and Fields there is the fixed kitchen-sink set, not a per-board choice). *@
+   NEXT view switch too — "выбор действует в любом режиме просмотра") is SERVER-side, not
+   ts/board.ts: this GET form's `fieldsSet=1`/`fields=` land back on TaskBoard.cshtml.cs, which
+   writes them into the per-board BoardViewPreference row (board-view-cross-device — the same
+   [Setting]/ISettingsResolver mechanism every other cross-device board preference, e.g. Mode/By/
+   Columns, already uses) and reads that row back on every subsequent visit, from any device. There
+   is no ts/board.ts / localStorage half to this (correcting a stale claim this comment used to
+   make — board.ts has no field-selection code at all; the module carries an explicit
+   ui-state-single-mechanism-guard against reintroducing raw localStorage for state the server must
+   render correctly on first paint, which a field selection is). Skipped entirely when ViewMode is
+   empty (Search's cross-scope table reuse — no board-view-meta there to persist against, and
+   Fields there is the fixed kitchen-sink set, not a per-board choice). *@
 @if (!string.IsNullOrEmpty(Model.ViewMode))
 {
 	<button type="button" class="btn btn-ghost btn-xs" data-testid="board-fields-toggle" title="Choose which properties to show" aria-label="Choose properties">⚙ fields</button>
@@ -30,20 +36,34 @@
 				<input type="hidden" name="fieldsSet" value="1" />
 				@foreach (var (key, label) in BoardFieldNames.Options)
 				{
-					// board-view-outline-show-bodies: Body is disabled (not just unchecked) when the
-					// current board's outline is Navigate — checking it would have zero effect on the
-					// render, so a live checkbox would be a lie. Still posts nothing when disabled
-					// (browsers never submit a disabled control), matching what the outline actually
-					// does with it.
-					var disabled = Model.BodyUnavailable && key == BoardFieldNames.Body;
+					// board-view-outline-show-bodies / recurrence-and-session-provenance-as-board-
+					// fields: a field is disabled (not just unchecked) — and its label says why —
+					// when checking it would have ZERO effect on the render, the SAME idiom for both
+					// cases: Body on a Navigate-kind outline (checking it would never reveal a body
+					// inline), Recurrence on a non-observation board (TaskNodeView.Observation is
+					// always null there, so there is nothing for the badge to show). Still posts
+					// nothing when disabled (browsers never submit a disabled control), matching what
+					// the render actually does with it either way. Sessions has NO such gate — every
+					// node on every board kind carries origin-session data, so it is always checkable.
+					var disabled = (key == BoardFieldNames.Body && Model.BodyUnavailable)
+						|| (key == BoardFieldNames.Recurrence && Model.RecurrenceUnavailable);
+					var disabledReason = key switch
+					{
+						BoardFieldNames.Body when Model.BodyUnavailable => " (opens on its own page here)",
+						BoardFieldNames.Recurrence when Model.RecurrenceUnavailable => " (observation boards only)",
+						_ => "",
+					};
 					<label class="label cursor-pointer justify-start gap-2 @(disabled ? "opacity-50" : "")">
 						<input type="checkbox" name="fields" value="@key" class="checkbox checkbox-sm" data-testid="field-@key" checked="@(Model.Fields.Has(key) ? "checked" : null)" disabled="@(disabled ? "disabled" : null)" />
-						<span class="label-text">@label@(disabled ? " (opens on its own page here)" : "")</span>
+						<span class="label-text">@label@disabledReason</span>
 					</label>
 				}
 				<div class="mt-2 flex items-center gap-2">
 					<button type="submit" class="btn btn-sm btn-primary" data-testid="fields-apply">Apply</button>
-					<span class="text-xs opacity-60">slug/status/type/priority/tags/updated/delivery/blocked-by/body</span>
+					@* Built from BoardFieldNames.Options (not hand-typed) so this hint can never drift
+					   from the checkbox list above it again — it already had, once, before this task
+					   added recurrence/sessions (board-view-fields' original nine names, hardcoded). *@
+					<span class="text-xs opacity-60">@string.Join("/", BoardFieldNames.Options.Select(o => o.Key))</span>
 				</div>
 			</form>
 		</div>

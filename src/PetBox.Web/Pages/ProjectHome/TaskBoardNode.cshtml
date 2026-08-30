@@ -185,6 +185,14 @@
 			}
 		</div>
 
+		@* spec node-session-provenance-visible-in-ui: UNCONDITIONAL here, unlike the board card/row/
+		   kanban/outline callers (BoardFieldNames.Sessions) — this page has no fields dialog to gate
+		   on (board-view-fields is a board-view affordance; a node detail page has always shown
+		   everything it knows about ONE node), and the spec explicitly requires this to show "на
+		   детальной странице" too. Right next to the timestamps block above: both are "when/who
+		   touched this node" provenance. *@
+		<partial name="_NodeSessionProvenanceBadge" model="new PetBox.Web.Pages.Shared.NodeSessionProvenanceModel(node.OriginSessionId, node.OriginSessions, Model.WorkspaceKey, Model.ProjectKey)" />
+
 		@* observation-ui-distinct-from-task: standalone, loud banner (spec
 		   observation-regression-signalled-on-card) — a no-op when node.Observation has no
 		   RecurredAfterFixAt (every non-observation node, and most observation nodes). *@

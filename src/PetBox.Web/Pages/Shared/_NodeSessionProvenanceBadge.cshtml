@@ -1,0 +1,50 @@
+@model PetBox.Web.Pages.Shared.NodeSessionProvenanceModel
+@* spec node-session-provenance-visible-in-ui: a node's session provenance, rendered as links to
+   each transcript's own page (Routes.ProjectSession) — TaskNodeView already carried
+   OriginSessionId/OriginSessions (node-origin-provenance) but nothing in Pages/ rendered either
+   before this partial (identifier-provenance-blind-spots: "25 из 25 свежих узлов work без
+   origin-сессии" — invisible, not necessarily absent). Visibility is a board-view-fields toggle
+   (BoardFieldNames.Sessions) the CALLER applies before including this partial — unlike Recurrence,
+   Sessions is meaningful on every board kind (every node carries these fields), so there is no
+   kind gate here, only the field's on/off.
+
+   Two requirements from the spec, both handled here:
+   1. "отличая сессию создания от прочих коснувшихся" — the origin/create session (OriginSessionId)
+      renders FIRST, in the filled `badge-neutral` the rest of this partial family (recurrence
+      count, delivery) uses for "the one number that matters"; every other touching session
+      (OriginSessions minus the origin) renders in the quieter `badge-ghost`, same weight the
+      relations panel gives a secondary link. Never the same visual weight, so a reader never has
+      to guess which one is which.
+   2. "пустой провенанс ДОЛЖЕН оставаться отличим от непоказанного" — when this partial IS
+      included (the field is on) but the node has no session at all (OriginSessionId is "" and
+      OriginSessions is empty/null), that is rendered as an explicit `node-session-provenance-empty`
+      dash, not nothing. Only turning the field OFF (the caller skipping this partial) renders
+      nothing — indistinguishable-from-broken is exactly the defect observation-recurrence-visible-
+      on-card already fixed for the recurrence counter; this is the same fix for session provenance.
+
+   Ids render TRUNCATED to 8 chars (enough to eyeball two sessions apart, short enough to sit in a
+   badge row without dominating it) with the full id in the link's `title` and in the href itself
+   (Routes.ProjectSession never truncates — only the visible label does). *@
+@{
+	var origin = Model.OriginSessionId;
+	var touched = (Model.OriginSessions ?? []).Where(s => !string.Equals(s, origin, StringComparison.Ordinal)).ToList();
+	var hasOrigin = !string.IsNullOrEmpty(origin);
+	var hasAny = hasOrigin || touched.Count > 0;
+}
+<span class="inline-flex items-center gap-1 flex-wrap" data-testid="node-session-provenance">
+	@if (!hasAny)
+	{
+		<span class="text-xs opacity-50 italic" data-testid="node-session-provenance-empty">no session recorded</span>
+	}
+	else
+	{
+		@if (hasOrigin)
+		{
+			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, origin)" class="badge badge-neutral badge-xs font-mono" title="origin session @origin" data-testid="node-session-origin">@origin[..Math.Min(8, origin.Length)]</a>
+		}
+		@foreach (var s in touched)
+		{
+			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, s)" class="badge badge-ghost badge-xs font-mono" title="touched by session @s" data-testid="node-session-touched">@s[..Math.Min(8, s.Length)]</a>
+		}
+	}
+</span>

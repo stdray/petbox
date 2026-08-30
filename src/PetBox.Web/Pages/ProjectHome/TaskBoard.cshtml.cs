@@ -618,12 +618,20 @@ public sealed class TaskBoardModel : PageModel
 		// mode+kind default. FieldsSetParam is the disambiguator between "no `fields` in the URL"
 		// (use the saved/default) and "the dialog submitted a deliberately empty selection"
 		// (FieldsParam null or []), which an absent-vs-empty check on FieldsParam alone can't tell
-		// apart (unchecked checkboxes don't post).
+		// apart (unchecked checkboxes don't post). A dialog submission always carries the FULL
+		// current Options list (every checkbox posts its state or is simply absent when unchecked),
+		// so it needs no per-key merge — BoardFieldConfig.FromKeys(FieldsParam) alone is already
+		// "everything the owner just saw, honoured". The SAVED-preference branch is the one that
+		// needs the merge: BoardFieldConfig.FromSaved (recurrence-and-session-provenance-as-board-
+		// fields) resolves each key against DefaultFields unless FieldsKnown says the owner already
+		// had a chance to see and (un)check it — see that method's own header comment for why a
+		// naive "saved csv or default" cascade can't tell a deliberate opt-out from a field that
+		// didn't exist yet.
 		DefaultFields = BoardFieldConfig.Default(ResolvedViewMode, Runtime, KindSlug, OutlineRevealMode == OutlineRevealModeNames.InlineLazy);
 		Fields = !string.IsNullOrEmpty(FieldsSetParam)
 			? BoardFieldConfig.FromKeys(FieldsParam)
-			: savedPref?.Fields is { } savedFieldsCsv
-				? BoardFieldConfig.FromKeys(savedFieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
+			: savedPref is not null
+				? BoardFieldConfig.FromSaved(savedPref.Fields, savedPref.FieldsKnown, DefaultFields)
 				: DefaultFields;
 
 		// kanban-column-picker: the SAME cascade as Fields just above — explicit `?columns=`+
@@ -652,9 +660,14 @@ public sealed class TaskBoardModel : PageModel
 			if (!string.IsNullOrEmpty(FieldsSetParam))
 			{
 				var fieldsCsv = Fields.ToCsv();
-				if (nextPref.Fields != fieldsCsv)
+				// recurrence-and-session-provenance-as-board-fields: FieldsKnown is stamped to the
+				// CURRENT full vocabulary (BoardFieldNames.AllCsv) on every explicit Apply, not just
+				// when Fields' own text happens to change — an Apply that leaves the checked set
+				// unchanged is still the owner's first chance to have SEEN whatever fields exist
+				// today, and that's exactly what FromSaved needs recorded to stop defaulting them.
+				if (nextPref.Fields != fieldsCsv || nextPref.FieldsKnown != BoardFieldNames.AllCsv)
 				{
-					nextPref = nextPref with { Fields = fieldsCsv };
+					nextPref = nextPref with { Fields = fieldsCsv, FieldsKnown = BoardFieldNames.AllCsv };
 					changed = true;
 				}
 			}

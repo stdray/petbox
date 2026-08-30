@@ -40,7 +40,13 @@ public sealed record TaskTableRow(
 	// null except on the `observations` board (TaskNodeView's own contract), so every OTHER row is
 	// unaffected. Default null: Search's cross-scope ToRow doesn't resolve it (out of scope, same
 	// posture as BlockedBy above), so its rows never show these.
-	ObservationSignalView? Observation = null);
+	ObservationSignalView? Observation = null,
+	// node-session-provenance-visible-in-ui: TaskNodeView's own OriginSessionId/OriginSessions,
+	// threaded through for the shared _NodeSessionProvenanceBadge partial — same posture as
+	// Observation just above (every board's row carries it; Search's cross-scope ToRow doesn't
+	// resolve it, out of scope here). "" default matches TaskNodeView.OriginSessionId's own
+	// write-once "" = none-recorded default.
+	string OriginSessionId = "", IReadOnlyList<string>? OriginSessions = null);
 
 // ShowScopeColumns=true renders workspace/project/board columns ahead of key (cross-scope
 // search, where a row's location isn't implicit from the page it's on); false omits them
@@ -78,4 +84,11 @@ public sealed record TaskTableModel(
 	// PAGE (TaskBoardModel.ObservationFixedByLinks) and threaded here so _TaskTable.cshtml never
 	// resolves per-row. Null on Search's cross-scope table (Observation itself is never resolved
 	// there either — see Observation's own comment above).
-	IReadOnlyDictionary<string, LinkDto>? ObservationFixedByLinks = null);
+	IReadOnlyDictionary<string, LinkDto>? ObservationFixedByLinks = null,
+	// recurrence-and-session-provenance-as-board-fields: whether THIS board's resolved kind is
+	// `observation` (MethodologyRuntime.IsObservationKind) — _TaskTable.cshtml needs this ONE bit
+	// to disable the Recurrence checkbox in its own _BoardFieldsDialog the same way BodyUnavailable
+	// disables Body, and this partial (unlike the tree/kanban/outline callers) has no Runtime/
+	// KindSlug of its own to ask. Default false: Search's cross-scope table never sets it — harmless,
+	// since its ViewMode is always "" there and the dialog is skipped entirely (see _BoardFieldsDialog).
+	bool IsObservationBoard = false);
