@@ -190,6 +190,40 @@ public sealed class NodeShareUiTests : IClassFixture<NodeShareUiFixture>
 			"an unbounded link with no revoke control is a link that can never be taken back");
 	}
 
+	// node-share-scope-switch-orphans-live-links: issuing a public token must be something the user
+	// ASKED for. The modal used to mint on open and again on every scope change, so merely looking
+	// at the dialog leaked an indefinite link nothing could name afterwards. The markup half of the
+	// fix is a Create control plus an inert preview; the behavioural half (open/scope-change send no
+	// POST, and no minted token loses its Revoke) is asserted in ts/nodeShare.test.ts, which the
+	// Cake `Test` target runs through WebTsTest.
+	[Fact]
+	public async Task NodeShareModal_IssuesOnlyOnAnExplicitControl_AndStartsWithEveryLinkActionInert()
+	{
+		var html = await NodePageHtmlAsync();
+
+		html.Should().Contain("data-testid=\"node-share-create\"",
+			"minting a public capability token must be an explicit press, not a side effect of opening a dialog");
+		html.Should().Contain("data-node-share-create",
+			"and the script must have an attribute hook to listen for it");
+
+		// The pre-mint state: the URL field and both link actions are present but disabled, so the
+		// modal shows what a link WILL look like without pretending one exists.
+		html.Should().Contain("readonly disabled data-testid=\"node-share-url\"",
+			"there is no link yet, so the URL field must not look like it holds one");
+		html.Should().Contain("disabled data-node-share-copy",
+			"nothing to copy before a link is issued");
+		html.Should().Contain("data-node-share-revoke data-testid=\"node-share-revoke\"",
+			"nothing to revoke before a link is issued either — the control is inert, not absent");
+
+		// Each issued link gets its OWN row with its OWN Revoke: a second link is added beside the
+		// first, never on top of it. That row template is what makes "a live token with no revoke
+		// button" impossible while the page lives.
+		html.Should().Contain("data-node-share-row-template",
+			"issued links are rendered from a template, one row each");
+		html.Should().Contain("data-testid=\"node-share-link-revoke\"",
+			"and every issued link carries its own Revoke — the previous one is not displaced by the next");
+	}
+
 	// ── THE COMMENT BUTTON ───────────────────────────────────────────────────────────────────────
 
 	[Fact]
@@ -318,6 +352,16 @@ public sealed class NodeShareUiTests : IClassFixture<NodeShareUiFixture>
 			"and it is not written into the request body under that key either");
 		script.Should().Contain("Never expires",
 			"and the modal must SAY so rather than leaving the expiry strip blank");
+
+		// node-share-scope-switch-orphans-live-links. Two structural claims, because the behavioural
+		// ones (opening and scope-switching send no POST) belong in ts/nodeShare.test.ts:
+		script.Should().Contain("[data-node-share-create]",
+			"minting must hang off an explicit control — it used to fire from showModal() and from the "
+			+ "scope radios, which leaked an indefinite token on every glance at the dialog");
+		script.Should().NotContain("let minted",
+			"and no single module-level slot may hold \"the\" token: overwriting that variable is what "
+			+ "made every previous token unrevocable — a share token is addressable only by value, and "
+			+ "there is no verb that lists them");
 	}
 
 	[Fact]
@@ -325,15 +369,22 @@ public sealed class NodeShareUiTests : IClassFixture<NodeShareUiFixture>
 	{
 		var script = NodeShareScriptSource();
 
-		script.Should().Contain("target.closest(\"[data-node-share-revoke]\")",
+		script.Should().Contain("target.closest<HTMLElement>(\"[data-node-share-revoke]\")",
 			"the Revoke control must be listened for");
 		script.Should().Contain("method: \"DELETE\"");
-		script.Should().Contain("`/api/share/${encodeURIComponent(link.token)}`",
-			"aimed at the revoke endpoint for the token the modal is showing");
-		script.Should().Contain("JSON.stringify({ projectKey: link.project })",
+		script.Should().Contain("`/api/share/${encodeURIComponent(token)}`",
+			"aimed at the revoke endpoint for the token of the row whose button was pressed");
+		script.Should().Contain("JSON.stringify({ projectKey: project })",
 			"the revoke contract carries the project in the body");
 		script.Should().Contain("window.confirm(",
 			"revocation is irreversible — it asks first, like the log share modal");
+
+		// The token's ONLY record on the client is its own row, so the row may go only after the
+		// server confirmed the DELETE. Dropping it first would hide a still-live token on any failure.
+		script.Should().Contain("row.dataset[\"token\"]",
+			"each row carries the token its own Revoke button withdraws");
+		script.Should().Contain("row.remove();",
+			"and the row is what disappears on a successful revoke — nothing else was holding the token");
 	}
 
 	// The site bundle must actually pull the module in; a module nothing imports ships to nobody.
