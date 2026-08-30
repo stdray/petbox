@@ -1,0 +1,7 @@
+{
+  "slug": "reserve",
+  "tier": "reserve",
+  "requiredCapabilities": ["mcp_subagent"],
+  "spawn": { "allowed": false },
+  "escalation": { "available": false }
+}
