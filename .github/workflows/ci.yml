@@ -159,6 +159,22 @@ jobs:
       - name: Cake SdkChecks target (TS + Python SDK lint/typecheck/test)
         run: ./build.sh --target=SdkChecks
 
+  # Code-quality gate — `jb inspectcode` via scripts/inspect-gate.cs, defined in
+  # .github/workflows/inspect.yml (kept as its own file for the jb-tool/inspectcode caching
+  # detail; called here as a reusable workflow). Runs ONLY at the `deploy` tag, i.e. once per
+  # deploy, on the exact merged/tagged tree about to ship — NOT on every branch push and NOT
+  # on every push to `main`. Owner decision 2026-08-30 (work/inspect-gate-once-on-merged-tree):
+  # a branch never lands on main byte-for-byte (merge commits, squashes), so checking it on
+  # every push checked a state that wasn't the one that mattered, while the merged tree itself
+  # went unchecked. `deploy` below `needs:` this job, so a real finding (exit 1 inside
+  # inspect.yml) blocks the deploy; exit 2 (tool couldn't run — not a code finding) is
+  # downgraded to a warning inside inspect.yml and does NOT block deploy (see that file's `Run
+  # inspect-gate` step for the rationale). This job does not need `secrets: inherit` — the
+  # inspect gate does not use any repo secret.
+  inspect:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
+    uses: ./.github/workflows/inspect.yml
+
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
     runs-on: ubuntu-latest
@@ -237,7 +253,7 @@ jobs:
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
-    needs: [publish, test]
+    needs: [publish, test, inspect]
     runs-on: ubuntu-latest
     # Job-level group, independent of the workflow-level `concurrency:` above (which
     # groups by commit sha so a `main` push and the `deploy` tag move don't double-run

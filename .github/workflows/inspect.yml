@@ -1,21 +1,20 @@
 name: Inspect
 
-# Separate workflow from ci.yml on purpose: ci.yml triggers on `push: branches: [main]` (plus a
-# handful of release tags), and widening that trigger to every branch would also fire `test`,
-# `sdk`, and `publish` on every feature push — far more than this gate needs. This workflow's
-# only job is `jb inspectcode` via scripts/inspect-gate.cs, formerly run locally from
-# .githooks/pre-push (see AGENTS.md and scripts/inspect-gate.cs for the gate's own rationale and
-# exit-code contract).
+# Reusable workflow, called from ci.yml's `inspect` job on the `deploy` tag push only — NOT
+# triggered on its own push event any more. Owner decision 2026-08-30 (work/
+# inspect-gate-once-on-merged-tree): running this on every branch push checked a tree state
+# that never lands on main verbatim, while the state that actually matters — the merged tree
+# about to ship — went unchecked. `deploy` in ci.yml now `needs: [..., inspect]`, so this job
+# runs exactly once per deploy, on the exact commit the `deploy` tag points to, before the
+# deploy job's steps execute. Kept as a separate file (rather than inlined as a job in ci.yml)
+# purely for the caching/setup detail below (jb is a ~978MB global tool with its own pinned
+# version and settings-keyed inspectcode cache) — no longer to dodge triggering ci.yml's other
+# jobs, since this no longer has its own push trigger at all. `workflow_dispatch` stays for an
+# ad-hoc manual run (e.g. to debug a finding on a branch by hand) — see AGENTS.md and
+# scripts/inspect-gate.cs for the gate's own rationale and exit-code contract.
 on:
-  push:
-    branches: ['**']
+  workflow_call:
   workflow_dispatch:
-
-concurrency:
-  # A second push to the same branch makes the first run's verdict moot — cancel it rather than
-  # let two runs of the same ~1-3 min gate race for the machine.
-  group: inspect-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -95,8 +94,27 @@ jobs:
       # scripts/inspect-gate.cs does not catch (only UnauthorizedAccessException,
       # WaitHandleCannotBeOpenedException, and IOException are handled there) — --no-lock skips
       # the mutex path entirely rather than relying on that catch clause covering it.
+      # Exit 1 (findings survived) fails this step, and this job now blocks the `deploy` job in
+      # ci.yml via `needs:` — a real finding correctly stops the deploy. Exit 2 (`COULD NOT
+      # VERIFY`, the tool itself never got a clean run after 3 attempts) is NOT a code finding —
+      # under the old push-triggered scheme it never blocked anything because the verdict came
+      # back asynchronously after the push already landed. Now that this job sits in the deploy
+      # tag's critical path, exit 2 would otherwise block a prod deploy for a reason that has
+      # nothing to do with the code being deployed (a JetBrains-tool hiccup on the runner).
+      # Decision (work/inspect-gate-once-on-merged-tree): downgrade exit 2 to a `::warning::`
+      # and let the job succeed — deploy proceeds on an inconclusive inspect run rather than
+      # being blocked by one. Exit 1 and exit 0 are passed through unchanged.
       - name: Run inspect-gate
-        run: dotnet run scripts/inspect-gate.cs -- --no-lock --caches-home "${{ steps.inspect-cache-home.outputs.path }}"
+        run: |
+          set +e
+          dotnet run scripts/inspect-gate.cs -- --no-lock --caches-home "${{ steps.inspect-cache-home.outputs.path }}"
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::warning::inspect-gate exited 2 (COULD NOT VERIFY — tool infra issue, not a code finding). Not blocking deploy; see AGENTS.md and work/inspect-gate-once-on-merged-tree."
+            exit 0
+          fi
+          exit "$code"
 
       - name: Measure caches-home size
         if: always()
