@@ -7,6 +7,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Web.Pages.Shared;
+using PetBox.Web.Rendering;
 
 namespace PetBox.Web.Pages;
 
@@ -68,6 +69,20 @@ public sealed class ShareNodeModel : PageModel
 
 	public string? CommitUrlTemplate { get; private set; }
 
+	// `[[#comment]]` references (comment-slug-and-refs), built from `Thread` — the comments this
+	// page is ACTUALLY RENDERING — and from nothing else. That one sentence is the whole confinement
+	// story for this feature, and it is the same shape as the NodeRefs/MemoryRefs decision above
+	// (see the Razor's header): the page withholds DATA, the renderer grows no "public" mode.
+	//
+	// It follows, with no branch anywhere, that:
+	//   scope=body    → Thread is empty  → an EMPTY map → every reference in the body is plain text;
+	//   scope=comment → Thread is the ONE published comment → a self-reference links, a reference to
+	//                   a neighbour is plain text — so the link neither leads into a UI this reader
+	//                   cannot open nor discloses that the neighbour exists;
+	//   scope=full    → the whole published thread → references work inside the share.
+	public IReadOnlyDictionary<string, NodeRefTarget> CommentRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
+
 	public bool ShowBody => Scope != NodeShareScopes.Comment;
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
@@ -107,6 +122,10 @@ public sealed class ShareNodeModel : PageModel
 			PetBox.Core.Settings.Scope.Project, share.ProjectKey, ct)).CommitUrlTemplate;
 
 		Thread = await BuildThreadAsync(share, detail.Board, ct);
+		// Built from Thread, not from the node's comments — see the property's own note. The
+		// distinction is the feature: BuildThreadAsync has already applied the token's scope, so this
+		// map cannot hold a comment the reader is not being shown, whatever the body mentions.
+		CommentRefs = CommentRefMap.Build(Thread.Select(l => l.Comment));
 		return Page();
 	}
 

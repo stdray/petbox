@@ -36,6 +36,16 @@
      * NodeUrl: null (the default). The copy-a-permalink button builds an in-app URL that only a
        signed-in reader can open; the native `#comment-{id}` hash anchors still work here for free.
 
+     * CommentRefs: NOT null, and that is the interesting one. `[[#comment]]` references
+       (comment-slug-and-refs) point INSIDE this very page, so blanking the map would be the wrong
+       answer — a reader of a full-thread share should be able to follow a body's reference to the
+       segment printed below it. What is withheld instead is the map's CONTENT: ShareNodeModel
+       builds it from `Thread`, the comments this page actually renders, so a reference to anything
+       outside the grant resolves to nothing and stays plain text. scope=body publishes no comments
+       and therefore an empty map; scope=comment publishes exactly one, so a reference to a
+       NEIGHBOURING comment neither links into a UI this reader cannot open nor discloses that the
+       neighbour exists. Same mechanism as the two maps above — withhold data, not behaviour.
+
    The cut fields (OriginSessionId, OriginSessions, DecisionPending, Observation, Relations,
    Ancestors) are absent because ShareNodeModel.PublicNode has no property for them at all — there
    is nothing here to forget to leave out.
@@ -81,7 +91,7 @@
 	{
 		@if (!string.IsNullOrEmpty(node.Body))
 		{
-			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "share-node-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "share-node-body", CommitUrlTemplate = Model.CommitUrlTemplate, CommentRefs = Model.CommentRefs })" />
 		}
 		else
 		{
@@ -104,6 +114,6 @@
 	   discussion exists (or does not) that the grant said nothing about. *@
 	@if (Model.Scope != PetBox.Core.Models.NodeShareScopes.Body)
 	{
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, ShowAddForm: false, ReadOnly: true))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, ShowAddForm: false, ReadOnly: true, CommentRefs: Model.CommentRefs))" />
 	}
 }

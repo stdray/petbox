@@ -145,6 +145,14 @@ public sealed class TaskBoardNodeModel : PageModel
 	public IReadOnlyDictionary<string, NodeRefTarget> MemoryRefs { get; private set; }
 		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
 
+	// `[[#comment]]` references (comment-slug-and-refs), keyed by BOTH address forms of every
+	// comment on this page — its id and its slug. This is the PRIVATE surface, so the map is the
+	// node's whole thread: every reference a body can make to a comment of this node resolves, and
+	// nothing else does (v1 is same-node only). No query of its own — LoadAsync already holds the
+	// rows. Empty until LoadAsync runs, so a bare page-model construction renders references literal.
+	public IReadOnlyDictionary<string, NodeRefTarget> CommentRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -221,8 +229,18 @@ public sealed class TaskBoardNodeModel : PageModel
 		var memoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
 			? await MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, [draft], ct)
 			: MemoryRefs;
+		// The FOURTH context input (comment-slug-and-refs). Unlike the three above, resolving it
+		// needs a read this handler does not otherwise make — so the cheap pre-scan gates it: a
+		// draft that mentions no comment costs nothing, and a preview is recomputed on a debounce
+		// while the author types. The author pastes the reference from the `ref` button right below
+		// the editor, so a preview that showed it as literal text would read as "it did not work".
+		// (Fully qualified: this page's own `CommentRefs` PROPERTY shadows the type of the same name
+		// in expression position — the pre-existing NodeRefs/MemoryRefs naming, not a new clash.)
+		var commentRefs = PetBox.Web.Rendering.CommentRefs.ExtractTokens([draft]).Count == 0
+			? CommentRefs
+			: CommentRefMap.Build(await _comments.ListForNodeAsync(ProjectKey, detail.Board, detail.Node.NodeId, ct));
 
-		return Content(_markdown.RenderToHtml(draft, commitUrlTemplate, nodeRefs, memoryRefs), PreviewContentType);
+		return Content(_markdown.RenderToHtml(draft, commitUrlTemplate, nodeRefs, memoryRefs, commentRefs), PreviewContentType);
 	}
 
 	// decision-pending-has-no-ui: set or clear the owner-decision-pending flag from the UI — the
@@ -398,6 +416,12 @@ public sealed class TaskBoardNodeModel : PageModel
 		MemoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
 			? await MemoryRefMap.BuildAsync(_memory, User, _catalog, WorkspaceKey, ProjectKey, bodies, ct)
 			: MemoryRefs;
+
+		// `[[#comment]]` references (comment-slug-and-refs): built from the SAME rows the thread is
+		// about to render, so it costs nothing beyond the read that already happened. On this page
+		// the rendered set is the whole thread — which is exactly what makes the public page's
+		// narrower set (ShareNodeModel) a confinement rather than a special case.
+		CommentRefs = CommentRefMap.Build(comments);
 
 		// live-verification finding: resolve the regression banner's fixed-by target to a slug
 		// (ObservationFixedByResolver) — a single-node point read, same cost posture as NodeRefs/

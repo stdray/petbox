@@ -54,7 +54,11 @@ public sealed record CommentThreadModel(
 	// delete buttons, an antiforgery token, the node's internal NodeId in a hidden field, and every
 	// comment body a SECOND time inside an editable <textarea>. Caught by
 	// NodeSharePublicPageTests.ThePage_OffersNoWayToComment_AndNoWayToMintFurtherLinks.
-	bool ReadOnly = false);
+	bool ReadOnly = false,
+	// `[[#comment]]` references inside comment bodies resolve exactly as they do in the node body
+	// (comment-slug-and-refs) — a thread quoting its own earlier segment is the commonest case there
+	// is. Null = plain text, which is what every surface that renders no thread of its own passes.
+	IReadOnlyDictionary<string, NodeRefTarget>? CommentRefs = null);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.

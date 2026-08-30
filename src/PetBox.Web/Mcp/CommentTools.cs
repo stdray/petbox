@@ -40,6 +40,11 @@ public static class CommentTools
 		exactly like tasks_upsert). `body` is GFM markdown — `##` headings and REAL newlines, NOT
 		literal `\n`, NOT `==headings==`. `applied` is the SINGLE source of truth — false = nothing
 		written, see conflicts[]. Requires tasks:write.
+		`slug` is an OPTIONAL human-readable address for the comment, unique WITHIN ITS OWNING NODE
+		(not globally): it is what lets a body write `[[#slug]]` and get a link that survives a
+		reorder — a position never does. Shape `[a-z][a-z0-9_-]{0,99}`. WRITE-ONCE: a comment that
+		already carries one refuses a different slug and refuses a clear, through conflicts[] —
+		re-pointing an address would silently turn every `[[#slug]]` mention of it into plain text.
 		`fragment` is a POINT edit of `body`: a list of {old, new} applied IN ORDER to the CURRENT
 		text, so the call costs the size of the CHANGE, not the size of the whole body. Mutually
 		exclusive with `body`. Each `old` must occur EXACTLY once — zero matches or two or more
@@ -80,7 +85,7 @@ public static class CommentTools
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
+		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new), slug? (the comment's human-readable address within its owning node — unique there, shaped [a-z][a-z0-9_-]{0,99}, WRITE-ONCE once set; omit to leave a create without one and a patch as it is) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
@@ -115,7 +120,7 @@ public static class CommentTools
 				node = await tasks.ResolveNodeRefAsync(projectKey, i.Node!, board, ct);
 			}
 			parsed.Add(new CommentItem(i.Id, node, i.ParentId, i.Author, i.Body, i.Tags, i.Version,
-				FragmentEditDto.ToCore(i.Fragment), bodyRefs.For(i.BodyRef)));
+				FragmentEditDto.ToCore(i.Fragment), bodyRefs.For(i.BodyRef), i.Slug));
 		}
 
 		var r = await comments.UpsertAsync(projectKey, board, parsed, atomic, ct);
@@ -147,7 +152,7 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_search", Title = "Read node comments (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsSearchResult))]
-	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
+	[Description("THE comment read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic chronological list of active comments, optionally scoped to one `board` and/or one `node` (a node reference — a slug key or a 32-hex NodeId, both accepted). With `q`: a lexical FTS relevance SELECTION over comment bodies in the same scope, NOT an enumeration (semantic isn't wired for comments yet, so a query runs on the lexical floor — `retrievers` reports semantic:false). Bodies follow the uniform bodyLen knob (omitted = a ~240-char snippet in BOTH modes, listing and `q` alike; fetch one full comment with comments_get). Hard ~30k-char output budget: overflow rows are prefix-cut + flagged (truncated/omitted/hint). `includeUrl` adds an absolute `url` per row — the owner node's page plus this comment's `#comment-{id}` anchor — the same affordance tasks_search has; `slug` (when the comment has one) is its human-readable address within that node. Tracking changes since a known version cursor (added/updated/removed, including tombstones this search cannot show)? Use comments_delta instead — it's the way to enumerate a board's comments incrementally. Requires tasks:read.\n\nCost — your context pays it. Same query, same rows: bodyLen:0 = 1x, the default snippet ~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long comment can add thousands of chars on its own.\nCheap path: search with bodyLen:0, read the row identities, then comments_get the 1-3 comments you actually need. Use -1 only when you already know the ids and there are few.\nPulling full bodies across a wide limit \"just in case\" is the most expensive habit available here: it routinely spends a third of the response budget on text you will not read.")]
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
@@ -156,6 +161,7 @@ public static class CommentTools
 		[Description("Scope to one owner node: a node reference — its slug key or its 32-hex NodeId (both accepted). The slug resolves on `board` when `board` is given; when `board` is omitted it resolves PROJECT-WIDE and must be unambiguous (2+ boards sharing the slug is an error naming them — pass the NodeId then). A node that matches nothing → an empty result (not an error). A response row's `nodeId` is a valid `node` here — reading and writing address the same owner node.")] string? node = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet, in a listing or with q alike; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
+		[Description("Include an absolute `url` permalink to each comment (off by default) — the owner node's page plus the comment's own `#comment-{id}` anchor.")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -174,7 +180,8 @@ public static class CommentTools
 		// same ModuleMcp.DefaultSnippet constant tasks_search/memory_search use, not a second
 		// number. Shaped BEFORE the budget so it measures the real wire payload. A full comment
 		// body is still one comments_get away.
-		var rows = res.Items.Select(c => Shape(c, bodyLen, ModuleMcp.DefaultSnippet)).ToList();
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		var rows = res.Items.Select(c => Shape(c, bodyLen, ModuleMcp.DefaultSnippet, urlPrefix)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null;
 		return omitted == 0
@@ -202,18 +209,19 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_get", Title = "Get one comment in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentView))]
-	[Description("Return ONE comment in FULL by its id (the addressed single read; mirrors memory_get/tasks_node_get). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). The body is COMPLETE by default; the uniform bodyLen knob still applies. Requires tasks:read.")]
+	[Description("Return ONE comment in FULL by its id (the addressed single read; mirrors memory_get/tasks_node_get). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). The body is COMPLETE by default; the uniform bodyLen knob still applies. `includeUrl` adds an absolute `url` — the owner node's page plus this comment's `#comment-{id}` anchor. Requires tasks:read.")]
 	public static async Task<CommentView> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
+		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string id,
 		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("Include an absolute `url` permalink to this comment (off by default) — the owner node's page plus its own `#comment-{id}` anchor.")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var c = await comments.GetAsync(projectKey, id, ct)
 			?? throw new InvalidOperationException($"comment '{id}' not found or already deleted in project '{projectKey}'");
-		return Shape(c, bodyLen, ModuleMcp.FullBody);
+		return Shape(c, bodyLen, ModuleMcp.FullBody, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct));
 	}
 
 	[McpServerTool(Name = "comments_delete", Title = "Delete a node comment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentDeleteResult))]
@@ -231,9 +239,39 @@ public static class CommentTools
 	// With a query the answer is capped even when the caller asks for nothing specific.
 	const int DefaultSearchLimit = 20;
 
-	// Apply the uniform bodyLen contract to one comment's wire body (null → the serializer omits it).
-	static CommentView Shape(CommentView c, int? bodyLen, int dflt) =>
-		c with { Body = ModuleMcp.Body(c.Body, bodyLen, dflt) ?? string.Empty };
+	// Apply the uniform bodyLen contract to one comment's wire body (null → the serializer omits it),
+	// and attach the permalink when the caller asked for one (`urlPrefix` null = they did not).
+	static CommentView Shape(CommentView c, int? bodyLen, int dflt, string? urlPrefix = null) =>
+		c with
+		{
+			Body = ModuleMcp.Body(c.Body, bodyLen, dflt) ?? string.Empty,
+			Url = urlPrefix is null ? null : urlPrefix + c.NodeId + "#comment-" + c.Id,
+		};
+
+	// The absolute prefix a comment permalink is built on — `{scheme}://{host}/ui/{ws}/{project}/
+	// tasks/node/` — mirroring TasksTools.UrlPrefixAsync (same shape, same "no HttpContext / no
+	// workspace ⇒ no url" refusals, one workspace resolution for the whole response).
+	//
+	// It addresses the owner node by its stable NodeId alias, NOT by the {board}/{slug} URL nodes'
+	// own includeUrl emits. Two reasons, both structural: a CommentView carries the owner's NodeId
+	// and no board at all (comments_search can span boards), so the slug form would need a node read
+	// PER DISTINCT OWNER — an N+1 on a read verb whose whole job is to be cheap; and the alias route
+	// is board-independent, so the link keeps working if the node later moves boards. The `#comment-`
+	// anchor is the one _CommentThread already renders, so the link lands on the comment itself.
+	//
+	// This URL is the SIGNED-IN one. A reader without an account still needs a share token minted for
+	// them (the client report asked for a link that resolves in the shared view too — that is a
+	// different object, deliberately not derivable from a comment id).
+	static async Task<string?> UrlPrefixAsync(
+		IHttpContextAccessor http, ITasksService tasks, string projectKey, bool includeUrl, CancellationToken ct)
+	{
+		if (!includeUrl) return null;
+		var req = http.HttpContext?.Request;
+		if (req is null) return null;
+		var ws = await tasks.ResolveWorkspaceAsync(projectKey, ct);
+		if (string.IsNullOrEmpty(ws)) return null;
+		return $"{req.Scheme}://{req.Host}{Routes.ProjectTasks(ws, projectKey)}/node/";
+	}
 
 	// Surfaced on CommentsSearchResult.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =

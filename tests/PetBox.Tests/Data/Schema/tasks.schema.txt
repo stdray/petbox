@@ -29,10 +29,12 @@ TABLE comments
   COL NodeId TEXT NOT NULL
   COL ParentId TEXT NULL
   COL PrevKey TEXT NULL
+  COL Slug TEXT NULL
   COL Updated TEXT NOT NULL
   COL Version INTEGER NOT NULL PK2
   INDEX ix_comments_active origin=c (ActiveTo, Board, NodeId)
   INDEX ix_comments_parent origin=c (ParentId) WHERE ActiveTo IS NULL
+  INDEX ix_comments_slug origin=c (NodeId, Slug) WHERE ActiveTo IS NULL AND Slug IS NOT NULL
   INDEX sqlite_autoindex_comments_1 UNIQUE origin=pk (Key, Version)
   INDEX ux_comments_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
 

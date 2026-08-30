@@ -133,7 +133,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		patched.Updated.Should().ContainSingle(c => c.Id == id);       // echo covers ONLY this call
 		patched.CurrentVersion.Should().BeGreaterThan(created.CurrentVersion);
 
-		var got = await CommentTools.GetAsync(http, Flags(), _comments, Proj, id, bodyLen: -1);
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
 		got.Body.Should().Be("edited body");
 		got.Tags.Should().Equal("artifact:plan");                       // survived the tags-omitted patch
 	}
@@ -152,7 +152,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		stale.Updated.Should().BeEmpty();
 		stale.Conflicts.Should().ContainSingle(c => c.Id == id && c.Kind == "Stale");
 
-		(await CommentTools.GetAsync(http, Flags(), _comments, Proj, id, bodyLen: -1)).Body.Should().Be("v2");
+		(await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1)).Body.Should().Be("v2");
 	}
 
 	[Fact]
@@ -223,7 +223,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 	public async Task Get_MissingId_IsError()
 	{
 		var http = Http();
-		var act = () => CommentTools.GetAsync(http, Flags(), _comments, Proj, "no-such-comment");
+		var act = () => CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, "no-such-comment");
 		await act.Should().ThrowAsync<InvalidOperationException>();
 	}
 }
