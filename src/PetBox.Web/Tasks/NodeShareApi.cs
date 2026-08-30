@@ -31,11 +31,9 @@ public sealed record NodeShareCreatedResponse(string Id, DateTime? ExpiresAt);
 // this in" is the system's question and DELETE /api/share/{token} (plus mcp:share_revoke) answers it
 // for BOTH families through IShareRevocationService. One button, one tool — see that service.
 //
-// There is no public READ route here either: /ui/share/node/{token} is its own work item. The model
-// and the directory are shaped for it (the row names project, board, node, comment and scope, so the
-// reader needs nothing from the caller but the token), but nothing is published until that page
-// exists — a mint endpoint whose links resolve to a 404 is a smaller, more honest gap than a reader
-// nobody has reviewed.
+// There is no public READ route here either: the reader is the Razor page /ui/share/node/{token}
+// (Pages/ShareNode.cshtml), and the stored row alone drives it — the row names project, board, node,
+// comment and scope, so the reader needs nothing from the caller but the token.
 public static class NodeShareApi
 {
 	public static void MapNodeShareEndpoints(this IEndpointRouteBuilder app)
