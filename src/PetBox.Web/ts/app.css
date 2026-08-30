@@ -601,10 +601,22 @@
    the containment the enlarged view needs. `box` is now the flex shell (fixed-height controls
    row + a content viewport that owns its own scrolling) rather than the scrolling element itself
    — v1 let the whole box scroll, which would drag the controls row along with it; scoping the
-   scroll to `content` keeps the zoom/close controls put. */
+   scroll to `content` keeps the zoom/close controls put.
+   `height: 92vh` (not just `max-height`) is deliberate (work `dialog-figure-smaller-than-page`):
+   with only a max-height, a box shrink-wraps to its content like any other flex column, so the
+   available area for `content`/`figure-view-zoom-layer` below stays INDEFINITE whenever the held
+   figure is naturally shorter than the viewport — and a percentage height (needed to give the
+   svg a real box to fill) resolves against an indefinite ancestor as if it were `auto`, which is
+   exactly how this regressed: the figure left `.md-body` (whose `figure svg { width: 100% }`
+   rule no longer reaches it) for a box with no definite size of its own, so the `<svg>`'s
+   `viewBox`-only intrinsic size fell back to the UA replaced-element default of 300×150 — smaller
+   than the 874px-wide rendering on the node page. A `height` (not `max-height`) makes the box's
+   size — and everything sized as a percentage of it below — definite regardless of the held
+   figure's own size, closing that gap. */
 .figure-view-dialog-box {
 	width: min(94vw, 1100px);
 	max-width: 94vw;
+	height: 92vh;
 	max-height: 92vh;
 	display: flex;
 	flex-direction: column;
@@ -622,13 +634,69 @@
 }
 /* Zoom (v2, work `figure-viewer-zoom-controls`): a permanent dialog-owned layer that carries the
    translate+scale transform. It never leaves the dialog — only the held unit moves in and out of
-   it — so the unit itself is never transformed and restoreHeld never has to undo one. */
+   it — so the unit itself is never transformed and restoreHeld never has to undo one.
+   `height: 100%` (not `min-height`) for the same reason as the box above: a flex item's resolved
+   main size counts as definite for its own descendants' percentage heights even though it was
+   never an explicit CSS length (CSS Flexbox § definite sizes) — `content` above is such a flex
+   item (of `box`, now itself definite height), so this layer's height is definite too, and that
+   definiteness is what the figure/svg sizing below depends on. */
 .figure-view-zoom-layer {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	min-height: 100%;
+	height: 100%;
 	transform-origin: center center;
+}
+/* The held figure itself, while it sits in the zoom layer (this selector only ever matches there
+   — see the HeldUnit/MOVE-never-clone comment in figure-viewer.ts): filling the layer's now-
+   definite box (a CSS grid, not flex — see the svg rule below for why), row 1 taking whatever
+   space remains after row 2's own natural (caption) height, same top-to-bottom stack
+   `.md-body figure`'s `display: block` gives it on the page. `margin: 0` clears the UA default
+   `<figure>` margin (1em 40px) — left in place, 100%-sized content would overflow the layer by
+   exactly that margin and force a needless scrollbar on `.figure-view-dialog-content`. */
+.figure-view-dialog-content .figure-view {
+	display: grid;
+	grid-template-rows: 1fr auto;
+	justify-items: center;
+	align-items: center;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+}
+/* The actual fix (work `dialog-figure-smaller-than-page`).
+   Tried and rejected first: `object-fit: contain` on a `width: 100%; height: 100%` box — it
+   fills the grid/flex cell with the svg's OWN element box regardless of the drawing's aspect
+   ratio, then letterboxes the rendered content inside it. Never distorts the drawing, but
+   decouples `getBoundingClientRect()` from what's actually visible (measured empirically: a
+   400×900 test figure and a 900×380 one both reported the SAME element box, ~991×682 — the
+   shared cell, not either drawing's real footprint), which breaks the one thing this task
+   measures by.
+   Tried and rejected second: a flex column relying on the flexbox aspect-ratio transfer (a
+   stretched cross size feeding the main-axis flex basis via the intrinsic ratio, for a
+   replaced element with no intrinsic width/height of its own — of which an SVG with only a
+   `viewBox` is exactly the case the page's `.md-body figure svg` rule above already depends
+   on). It measurably worked for a WIDE drawing but not a TALL one: `align-items: stretch`
+   (flexbox's cross-axis default) pins the item's cross size (width, in a column) to the full
+   container width regardless of the main axis outcome, and shrinking the transferred main size
+   back down to fit available space does not reliably re-shrink that pinned cross size in
+   return — measured 991×682 for the tall test figure, matching neither its own 400:900 ratio
+   nor the container's — a live cross-browser flexbox rough edge, not a bug in this rule.
+   This is the plain (pre-flexbox) CSS2.1/Images auto-sizing algorithm for a replaced element
+   instead: `justify-items`/`align-items: center` above (not `stretch`) leaves the svg to size
+   ITSELF rather than being pinned to the grid cell's edges, and `width: auto; height: auto`
+   with `max-width: 100%; max-height: 100%` — both percentages of the now-definite cell —
+   caps that self-sizing in BOTH axes at once from the intrinsic ratio, arriving at the
+   largest box that fits both without a stretch/shrink tug-of-war between two axes. `min-width:
+   0; min-height: 0` clear the grid-item default `min-width/height: auto` (which floors
+   shrinking at the content-based size) so the box can still shrink past that floor when the
+   drawing genuinely needs to. */
+.figure-view-dialog-content .figure-view svg {
+	min-width: 0;
+	min-height: 0;
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
 }
 /* Past fit, dragging replaces native scroll — running both at once over the same gesture would
    fight each other, so overflow switches to hidden for the duration. */
