@@ -791,3 +791,152 @@ public sealed class MarkdownRendererSvgDiagramTests
 
 	static string Normalize(string html) => Regex.Replace(html, "-[0-9a-f]{12}(?=[\"')#])", "-ID");
 }
+
+// Long-code-block folding (work `md-code-block-height-cap`). `.md-body pre` had only overflow-x, so
+// a long listing grew to any height and pushed the rest of the body off the screen.
+//
+// The height cap itself is CSS and is not observable here — what IS observable, and what these
+// tests pin, is the decision the SERVER makes and CSS cannot: WHICH blocks are long. CSS can only
+// cap unconditionally, which would hand a two-line snippet the same clipped box and the same
+// control as a 200-line listing. So the renderer counts SOURCE lines and wraps only what exceeds
+// the threshold; everything below it must come out exactly as it did before this feature.
+//
+// The other half these tests hold down is that NOTHING IS TRUNCATED IN THE HTML. The fold is
+// presentational: the <pre> still carries every line, so copy/paste, browser find and reader-view
+// (the whole reason read surfaces render server-side at all) still see the complete listing.
+public sealed class MarkdownRendererCodeFoldTests
+{
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	static string Html(string md) => R.RenderToHtml(md);
+
+	// A fenced block with exactly `lines` content lines, each one identifiable.
+	static string Fence(int lines) =>
+		"```csharp\n" + string.Join("\n", Enumerable.Range(1, lines).Select(i => $"var line{i} = {i};")) + "\n```";
+
+	// --- the threshold: a short block is left completely alone -----------------------------------
+
+	[Theory]
+	[InlineData(1)]
+	[InlineData(2)]
+	[InlineData(9)]
+	[InlineData(10)] // the threshold is strictly greater-than: exactly 10 lines is still short
+	public void ShortCodeBlock_IsNotWrappedAndGetsNoControl(int lines)
+	{
+		var html = Html(Fence(lines));
+		html.Should().Contain("<pre>");
+		html.Should().NotContain("md-code-fold");
+		html.Should().NotContain("<details");
+		html.Should().NotContain("<summary");
+	}
+
+	[Fact]
+	public void ShortCodeBlock_RendersExactlyAsItDidBeforeTheFeature()
+	{
+		// Not "contains" but the WHOLE output: the promise for a short block is that its markup is
+		// untouched, and a stray wrapper or attribute would still satisfy every Contain above.
+		Html("```\nalpha\nbeta\n```")
+			.Should().Be("<pre><code>alpha\nbeta\n</code></pre>\n");
+	}
+
+	// --- past the threshold: wrapper + a native disclosure control -------------------------------
+
+	[Theory]
+	[InlineData(11)]
+	[InlineData(12)]
+	[InlineData(40)]
+	public void LongCodeBlock_IsWrappedAndGetsADisclosureControl(int lines)
+	{
+		var html = Html(Fence(lines));
+		html.Should().Contain("<div class=\"md-code-fold\">");
+		html.Should().Contain("<details class=\"md-code-fold-toggle\">");
+		html.Should().Contain("<summary>");
+		// The control names the size — a bare "expand" makes the reader click to find out whether
+		// clicking was worth it.
+		html.Should().Contain($"Show all {lines} lines");
+	}
+
+	[Fact]
+	public void FoldControl_IsClosedByDefault_AndSitsAfterTheBlock()
+	{
+		var html = Html(Fence(30));
+		html.Should().NotContain("md-code-fold-toggle\" open");
+		html.IndexOf("</pre>", StringComparison.Ordinal)
+			.Should().BeLessThan(html.IndexOf("<details", StringComparison.Ordinal),
+				"the control belongs under the block it expands, in reading order — and the code must "
+				+ "not sit inside <summary>, where every click on it would toggle the fold");
+	}
+
+	[Fact]
+	public void FoldedBlock_StillCarriesEveryLine()
+	{
+		// The cap is presentational. Truncating the HTML would break copy/paste, browser find and
+		// reader-view — the exact things server-side rendering exists for.
+		var html = Html(Fence(40));
+		for (var i = 1; i <= 40; i++) html.Should().Contain($"var line{i} = {i};");
+	}
+
+	[Fact]
+	public void FoldWrapperClasses_SurviveTheSanitizer()
+	{
+		// The sanitizer allows `class` but pins its VALUES (MarkdownRenderer.DesignLayerClasses);
+		// a name missing from that list renders the control unstyled and uncapped — the quiet way
+		// this feature would half-work.
+		var html = Html(Fence(20));
+		foreach (var name in new[] { "md-code-fold", "md-code-fold-toggle", "md-code-fold-more", "md-code-fold-less" })
+			html.Should().Contain($"class=\"{name}\"");
+	}
+
+	[Fact]
+	public void LineCount_CountsContentLinesOnly_NotTheFences()
+	{
+		// 12 content lines, two of them blank; the ``` fences are not lines of code.
+		var body = "```\n" + string.Join("\n", "a", "", "c", "d", "e", "f", "g", "", "i", "j", "k", "l") + "\n```";
+		Html(body).Should().Contain("Show all 12 lines");
+	}
+
+	// --- every code form, at every depth ---------------------------------------------------------
+
+	[Fact]
+	public void IndentedCodeBlock_IsFoldedToo()
+	{
+		// The four-space form is a different Markdig type but the same thing on screen.
+		var indented = "text\n\n" + string.Join("\n", Enumerable.Range(1, 15).Select(i => $"    line{i}")) + "\n";
+		Html(indented).Should().Contain("<div class=\"md-code-fold\">").And.Contain("Show all 15 lines");
+	}
+
+	[Fact]
+	public void CodeBlockInsideAListItem_IsFolded()
+	{
+		var md = "- item\n\n  ```\n" + string.Join("\n", Enumerable.Range(1, 14).Select(i => $"  x{i}")) + "\n  ```\n";
+		Html(md).Should().Contain("md-code-fold");
+	}
+
+	// --- the interaction with the section container ---------------------------------------------
+
+	[Fact]
+	public void FoldedBlock_InsideASection_StaysInsideThatSection()
+	{
+		// `##` groups its content into <section class="md-section">, and that section's "a code
+		// block may reach my edges" rule is a DIRECT-child selector. The wrapper landing between
+		// the two is exactly what app.css's third selector there covers; if this nesting ever came
+		// out differently, that CSS would be aimed at nothing.
+		var html = Html("## Heading\n\n" + Fence(20));
+		var section = html.IndexOf("<section class=\"md-section\">", StringComparison.Ordinal);
+		var fold = html.IndexOf("<div class=\"md-code-fold\">", StringComparison.Ordinal);
+		var close = html.IndexOf("</section>", StringComparison.Ordinal);
+		section.Should().BeGreaterThanOrEqualTo(0);
+		fold.Should().BeGreaterThan(section);
+		close.Should().BeGreaterThan(fold);
+	}
+
+	[Fact]
+	public void FoldedBlock_KeepsHtmlInsideItEscaped()
+	{
+		// The wrapper must not change what the code block itself is: text, never live markup.
+		var html = Html("```html\n" + string.Join("\n", Enumerable.Repeat("<script>alert(1)</script>", 12)) + "\n```");
+		html.Should().Contain("md-code-fold");
+		html.Should().Contain("&lt;script&gt;");
+		html.Should().NotContain("<script");
+	}
+}

@@ -280,6 +280,15 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 	[
 		"md-section",
 		"md-table-scroll",
+		// The long-code-block fold (work `md-code-block-height-cap`). Four names, one wrapper: the
+		// container the CSS cap hangs off, the <details> the `:has()` selector reads, and the two
+		// label spans it swaps. `details`/`summary`/`span` are already allowed TAGS in
+		// HtmlSanitizer's defaults (measured), so only the classes needed adding — without them the
+		// control renders as an unstyled, uncapped disclosure triangle.
+		"md-code-fold",
+		"md-code-fold-toggle",
+		"md-code-fold-more",
+		"md-code-fold-less",
 		"markdown-alert",
 		"markdown-alert-title",
 		"markdown-alert-note",
