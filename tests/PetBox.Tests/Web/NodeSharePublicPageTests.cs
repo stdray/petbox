@@ -46,6 +46,10 @@ public sealed class NodeSharePublicPageFixture : IAsyncLifetime
 	public const string SiblingMarker = "ZZ-SIBLING-COMMENT-ZZ";
 	public const string CommentAuthor = "ZZ-AUTHOR-ZZ";
 
+	// Named because the meta-row test asserts the rendered TEXT `P7`, not just that a priority
+	// element exists — see PriorityBadge_ShowsTheNumber_NotTheUnevaluatedRazorExpression.
+	public const int NodePriority = 7;
+
 	public WebApplicationFactory<Program> Factory { get; private set; } = null!;
 
 	public string NodeId { get; private set; } = "";
@@ -98,7 +102,7 @@ public sealed class NodeSharePublicPageFixture : IAsyncLifetime
 				Body = $"{NodeBodyMarker}\n\nsee [[{PrivateSlug}]] for the rest",
 				PartOf = ParentSlug,
 				DecisionPending = true,
-				Priority = 7,
+				Priority = NodePriority,
 				Tags = ["area:ui"],
 				Status = "InProgress",
 			},
@@ -431,5 +435,53 @@ public sealed class NodeSharePublicPageTests : IClassFixture<NodeSharePublicPage
 			"that button copies a URL into the closed UI — useless to this reader and a pointer inward");
 		html.Should().Contain($"id=\"comment-{_fx.RootCommentId}\"",
 			"the native per-comment anchor is free and leaks nothing");
+	}
+
+	// ── THE META ROW SHIPS VALUES, NOT RAZOR SOURCE ──────────────────────────────────────────────
+	//
+	// `P@node.Priority` is not an expression in a Razor TEMPLATE: `word@word.word` trips Razor's
+	// e-mail-address heuristic, so the whole run is emitted verbatim and the page shipped the
+	// literal text "P@node.Priority" to every reader. Explicit parens — `P@(node.Priority)` — are
+	// the fix, and the only thing that distinguishes the two is the TEXT.
+	//
+	// That is why this test exists at all: the page's markup was already covered, but by
+	// element-presence assertions (`data-testid="share-node-priority"` is there), and a
+	// presence assertion cannot tell a rendered value from the un-evaluated source that produced
+	// the very same element. Anything that asserts on this row asserts on its text.
+	[Fact]
+	public async Task PriorityBadge_ShowsTheNumber_NotTheUnevaluatedRazorExpression()
+	{
+		var html = await GetHtmlAsync(await _fx.MintAsync(NodeShareScopes.Body));
+
+		html.Should().Contain(
+			$"data-testid=\"share-node-priority\">P{NodeSharePublicPageFixture.NodePriority}<",
+			"the badge must carry the node's actual priority, and the element existing is not evidence "
+			+ "that it does");
+
+		html.Should().NotContain("@node",
+			"no `@node…` may reach the browser: every occurrence is a Razor expression the e-mail "
+			+ "heuristic swallowed and printed as source, whichever property it was reading");
+	}
+
+	// The public face of a node stretches like the PRIVATE one (ProjectHome/TaskBoardNode.cshtml,
+	// which has no width wrapper at all) — owner decision, 2026-08-30. The `max-w-3xl mx-auto`
+	// container this page was born with is gone; the public LOG share's `max-w-6xl` is a separate,
+	// deliberate choice and not a precedent to re-copy here.
+	[Fact]
+	public async Task ThePage_CapsNoWidth_LikeThePrivateNodePage()
+	{
+		var html = await GetHtmlAsync(await _fx.MintAsync(NodeShareScopes.Full));
+
+		html.Should().NotContain("max-w-3xl",
+			"a width cap here makes the shared node narrower than the same node's private page");
+
+		// Structural, and deliberately not a class blacklist: what was removed is the WRAPPER, and
+		// the page content must now start at the body like it does on the private page. A blacklist
+		// would also fire on a `max-w-*` that legitimately belongs to rendered markdown content.
+		var bodyAt = html.IndexOf("<body", StringComparison.Ordinal);
+		var titleAt = html.IndexOf("data-testid=\"share-node-title\"", StringComparison.Ordinal);
+		html[bodyAt..titleAt].Should().NotContain("<div",
+			"nothing wraps the page content any more — a container reintroduced here is exactly how "
+			+ "the width cap would come back");
 	}
 }
