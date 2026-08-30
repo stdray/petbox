@@ -267,6 +267,17 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		// `<div class="fixed inset-0">` in a body still gets a bare <div>.
 		s.AllowedAttributes.Add("class");
 		foreach (var name in DesignLayerClasses) s.AllowedClasses.Add(name);
+		// Syntax-highlighting token classes (work `md-code-syntax-highlighting`). This is the step
+		// the feature dies at if it is forgotten, and it dies INVISIBLY: the spans still render,
+		// the tests that assert on the renderer's output still pass, and the page is grey. Markdig's
+		// own `language-csharp` class on <code> is the standing proof — it has always been emitted
+		// and has never survived this allowlist, so no `language-*` class reaches a browser today.
+		//
+		// The list is short because the highlighter maps a TextMate scope HIERARCHY (hundreds of
+		// open-ended names) down to three roles before it ever emits HTML — see
+		// MarkdownCodeHighlighter.EmittedClasses, which is that exact set and is pinned to this
+		// allowlist by a test.
+		foreach (var name in MarkdownCodeHighlighter.EmittedClasses) s.AllowedClasses.Add(name);
 		ConfigureSvgSubset(s);
 		return s;
 	}

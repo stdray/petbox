@@ -32,6 +32,7 @@
 	<ItemGroup>
 		<PackageReference Include="Markdig" />
 		<PackageReference Include="HtmlSanitizer" />
+		<PackageReference Include="TextMateSharp.Grammars" />
 		<PackageReference Include="Seq.Extensions.Logging" />
 		<PackageReference Include="ModelContextProtocol.AspNetCore" />
 		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />

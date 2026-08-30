@@ -62,6 +62,17 @@
 		     1.0.0-beta.216 — a stable AngleSharp.Css 1.0.0, so no prerelease is left in the graph.
 		     No bespoke AngleSharp pin needed. -->
 		<PackageVersion Include="HtmlSanitizer" Version="9.1.973" />
+		<!-- Server-side syntax highlighting for fenced code blocks (work `md-code-syntax-highlighting`).
+		     TextMateSharp runs VS Code's own TextMate grammars as a pure .NET library — no Node in the
+		     render path, which is what got Shiki rejected. .Grammars carries the grammar set (64
+		     languages, VS Code's `shell-unix-bash.tmLanguage.json` among them) as embedded resources
+		     and pulls TextMateSharp itself; the core is pinned alongside it because central transitive
+		     pinning is on. The THEME half of the library is deliberately unused — scopes are mapped to
+		     three CSS classes and app.css owns the colours, so light/dark and all four daisyUI themes
+		     keep working. Chosen over ColorCode-Universal on measurement, not preference: ColorCode
+		     ships 25 hardcoded grammars and no shell at all. -->
+		<PackageVersion Include="TextMateSharp" Version="2.0.4" />
+		<PackageVersion Include="TextMateSharp.Grammars" Version="2.0.4" />
 		<!-- RS0030: bans a SYMBOL outright, so "this table has one owning service" is a compile
 		     error rather than a convention. Wired for every project in Directory.Build.props; the
 		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->

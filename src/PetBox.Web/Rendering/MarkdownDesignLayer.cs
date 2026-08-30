@@ -78,6 +78,13 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 			html.ObjectRenderers.Insert(0, new TableScrollBlockRenderer());
 		if (!html.ObjectRenderers.Contains<CodeFoldBlockRenderer>())
 			html.ObjectRenderers.Insert(0, new CodeFoldBlockRenderer());
+		// Syntax highlighting (work `md-code-syntax-highlighting`) REPLACES Markdig's own code-block
+		// renderer rather than being inserted before it: the highlighted and the plain path must
+		// emit the same <pre><code> shape, and the plain path IS Markdig's, reached by `base.Write`.
+		// Replace<T> matches the subclass too, so re-running Setup on a fresh renderer per render
+		// (which MarkdownRenderer does) stays idempotent.
+		if (html.ObjectRenderers.FindExact<HighlightingCodeBlockRenderer>() is null)
+			html.ObjectRenderers.Replace<CodeBlockRenderer>(new HighlightingCodeBlockRenderer());
 	}
 
 	// Runs on every parse (MarkdownPipelineBuilder.DocumentProcessed), so BOTH render paths in
@@ -161,6 +168,53 @@ public sealed class MarkdownDesignLayerExtension : IMarkdownExtension
 					FoldLongCodeBlocks(inner);
 					break;
 			}
+	}
+
+	// Highlighting changes what is INSIDE <code>; the fold above changes the wrapper AROUND <pre>.
+	// They compose because they act at different moments and on different things: the fold decides
+	// on the AST in DocumentProcessed, counting SOURCE lines, before any HTML exists — so nothing
+	// this renderer emits can move that count — and CodeFoldBlockRenderer then renders its child
+	// code block straight through here. A long block is therefore folded AND highlighted.
+	//
+	// The markup is deliberately byte-identical to Markdig's own except for the class on <code> and
+	// the token spans inside it, because app.css measures the collapsed height in `lh` of the <pre>
+	// (`max-height: calc(10lh + 1.2em)`). The token spans carry COLOUR ONLY — no font-weight, no
+	// font-style, no line-height — so a highlighted line box is exactly as tall as a plain one and
+	// the cap keeps showing the ten lines it promises.
+	sealed class HighlightingCodeBlockRenderer : CodeBlockRenderer
+	{
+		protected override void Write(HtmlRenderer renderer, CodeBlock obj)
+		{
+			if (renderer.EnableHtmlForBlock && obj is FencedCodeBlock fenced && TryHighlight(fenced, out var inner))
+			{
+				renderer.EnsureLine();
+				renderer.Write("<pre><code class=\"");
+				renderer.Write(MarkdownCodeHighlighter.HighlightedCodeClass);
+				renderer.Write("\">");
+				renderer.Write(inner);
+				renderer.WriteLine("</code></pre>");
+				return;
+			}
+			// No info string, an unknown language, an oversized block or a grammar fault: Markdig's
+			// own rendering, unchanged. This is the "degrades to a plain block" contract — never an
+			// empty block, never a lost character.
+			base.Write(renderer, obj);
+		}
+
+		static bool TryHighlight(FencedCodeBlock fenced, out string inner)
+		{
+			inner = "";
+			var scope = MarkdownCodeHighlighter.ResolveScope(fenced.Info);
+			if (scope is null) return false;
+			// Rebuild the source from the block's own lines. Markdig's renderer writes each line
+			// followed by a newline, so the trailing one below reproduces its output exactly.
+			var lines = new string[fenced.Lines.Count];
+			for (var i = 0; i < lines.Length; i++) lines[i] = fenced.Lines.Lines[i].Slice.ToString();
+			var highlighted = MarkdownCodeHighlighter.Highlight(string.Join('\n', lines), scope);
+			if (highlighted is null) return false;
+			inner = highlighted + '\n';
+			return true;
+		}
 	}
 
 	sealed class SectionBlockRenderer : HtmlObjectRenderer<SectionBlock>

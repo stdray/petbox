@@ -196,6 +196,35 @@
 	--md-partial-fill: oklch(var(--wa) / 0.12);
 	--md-proposed: oklch(var(--in));
 	--md-proposed-fill: oklch(var(--in) / 0.12);
+
+	/* Syntax highlighting, THREE roles and no more (md-code-syntax-highlighting). The server maps
+	   TextMate's scope hierarchy — hundreds of open-ended names — down to these three before it
+	   emits any HTML, so this is the whole palette, not a sample of it. The brief was "not a
+	   Christmas tree": comments recede, strings take one colour, keywords take one accent, and
+	   everything else stays ordinary code text. A token-per-scope theme is the thing being
+	   avoided, not an ideal being approximated.
+
+	   Derived from the daisyUI semantic vars like every other token here, which is what makes all
+	   FOUR themes work — but NOT used raw, and that part was measured on screen rather than
+	   assumed. daisyUI tunes --p/--su as FILL colours, each with a paired foreground (--pc/--suc)
+	   meant to sit on top of it; they are not promised to be legible AS TEXT on a neutral surface.
+	   On retro that promise breaks badly: raw --p is a pale salmon at OKLCH lightness 0.77 against
+	   this block's 0.84 backdrop — a difference of 0.07, which renders `if`/`then`/`public` as
+	   barely-there ghosts. Raw --su on nord is the same failure, milder (0.77 on 0.90).
+
+	   So each accent is mixed 60/40 toward --bc, the theme's OWN body-text colour. That is the
+	   self-correcting part: --bc is dark on the light themes and light on the dark one, so the mix
+	   always moves the accent toward whichever end is legible on that theme, with no per-theme
+	   block to keep in sync. Smallest measured lightness gap against the code backdrop after the
+	   mix, per theme: dark 0.48, light 0.42, nord 0.31, retro 0.27 — all comfortable. It also drains
+	   some chroma, which is the "not a Christmas tree" brief pulling in the same direction.
+
+	   COLOUR ONLY — deliberately no font-weight, no font-style, no line-height. The folded-block
+	   cap is `calc(10lh + 1.2em)`, ten line boxes of the <pre>; a bold or italic run could change
+	   the rendered height of a line box through font metrics and quietly cost the cap a line. */
+	--md-hl-comment: var(--md-muted);
+	--md-hl-string: color-mix(in oklch, oklch(var(--su)) 60%, oklch(var(--bc)));
+	--md-hl-keyword: color-mix(in oklch, oklch(var(--p)) 60%, oklch(var(--bc)));
 }
 
 /* Dark tokens, declared TWICE so the explicit switch wins in both directions — mirroring how
@@ -467,6 +496,29 @@
 	.md-body .md-code-fold-toggle {
 		display: none;
 	}
+}
+/* ── Syntax highlighting ──────────────────────────────────────────────────────────────────
+   Work `md-code-syntax-highlighting`. The tokenizing happens on the SERVER
+   (Rendering/MarkdownCodeHighlighter.cs, TextMateSharp over VS Code's own grammars) and reaches
+   here as three class names inside a `<code class="md-hl">`. That split is not an implementation
+   detail: `.md-body` also renders on Pages/ShareNode.cshtml, an anonymous page that ships this
+   stylesheet and NO JS bundle at all, so a client-side highlighter could not colour anything
+   there. It is also why the colours live in CSS rather than in the markup — the library can emit
+   a VS Code theme's hex colours directly, but a baked colour cannot follow a theme switch, and
+   the sanitizer's CSS-property filter would drop the inline style anyway.
+
+   The `code.md-hl` scoping is load-bearing in a small way: raw HTML in a body is deliberately
+   KEPT (see Rendering/MarkdownRenderer.cs), so an author can write `<span class="hl-string">` by
+   hand. Inside a highlighted block that is the renderer's own markup; anywhere else it should
+   colour nothing, and this selector is what makes that true. */
+.md-body code.md-hl .hl-comment {
+	color: var(--md-hl-comment);
+}
+.md-body code.md-hl .hl-string {
+	color: var(--md-hl-string);
+}
+.md-body code.md-hl .hl-keyword {
+	color: var(--md-hl-keyword);
 }
 .md-body blockquote {
 	border-left: 3px solid var(--md-rule-strong);
