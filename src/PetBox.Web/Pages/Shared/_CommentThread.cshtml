@@ -98,6 +98,31 @@
 					{
 						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-permalink-copy" data-copy="@(Model.NodeUrl)#comment-@c.Id" title="Copy link to this comment">link</button>
 					}
+					@* node-share-ui: mint a PUBLIC link to this one comment (scope=comment), next to the
+					   private "link" permalink above — the two are deliberately different things and sit
+					   side by side so the difference is visible at the moment of choosing: `link` copies
+					   an in-app URL that still requires an account, this one hands out a token anyone can
+					   read without signing in.
+
+					   Gated on ShowAddForm, NOT on NodeUrl. ShowAddForm is this partial's existing
+					   "am I on the node's own authoring surface?" switch (board-comment-form-list-noise),
+					   and the surfaces that pass it false are exactly the ones that must never offer to
+					   mint anything: list views, and — the case that matters here — the PUBLIC share page
+					   itself, which renders this same partial for an anonymous reader. A share button
+					   there would invite a reader of a shared link to widen it into new links of their
+					   own. The gate is what keeps this partial safe to reuse on that page; see
+					   NodeShareUiTests. (Belt and braces: the modal that actually mints lives only on the
+					   node detail page, so an opener without it is inert anyway.)
+
+					   Identity (project/board/node) is NOT repeated here — it lives on the modal's
+					   <dialog> (_NodeShareModal.cshtml); this button carries only what differs per
+					   comment. That is also why the partial's model needed no new fields. *@
+					@if (Model.ShowAddForm)
+					{
+						<button type="button" class="btn btn-ghost btn-xs" data-node-share-open
+							data-scope="comment" data-comment-id="@c.Id"
+							data-testid="comment-share" title="Create a public link to this comment">share</button>
+					}
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
 					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
