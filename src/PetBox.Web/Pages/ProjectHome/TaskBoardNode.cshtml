@@ -62,7 +62,15 @@
 
 		<div class="flex items-baseline justify-between gap-2 flex-wrap">
 			<h1 class="text-2xl font-semibold @(nodeTerminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
-			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+			@* node-header-action-row-layout: `shrink-0` DROPPED. It pinned this container at
+			   max-content, so its own `flex-wrap` could never engage and the row simply ran off the
+			   viewport — measured at an 800px window, `Share`/`edit` sat at x≈759..851 with
+			   documentElement.scrollWidth 851 > clientWidth 800, i.e. the two buttons were only
+			   reachable by horizontal-scrolling the whole page. Without it the container shrinks to
+			   the space it has and wraps instead: same 800px window now measures scrollWidth 800,
+			   with the Share/edit span dropping to a second right-aligned line, clear of the status
+			   select. Wide (1440px) layout is byte-for-byte unchanged. *@
+			<div class="flex items-center gap-1 flex-wrap justify-end">
 				@if (!string.IsNullOrEmpty(node.Type))
 				{
 					<span class="badge badge-ghost badge-sm" data-testid="node-type">@node.Type</span>
@@ -156,13 +164,23 @@
 						}
 					</span>
 				}
-				@* node-share-ui (spec node-share / node-share-scope): opens _NodeShareModal below, which
-				   is where project/board/node identity lives — this button only says "a node share,
-				   default scope". The scope itself (body / full) is picked in the modal, because it is
-				   baked into the minted token and cannot be widened by the reader afterwards. *@
-				<button type="button" class="btn btn-ghost btn-xs" data-node-share-open data-scope="node"
-					data-testid="node-share-open" title="Create a public link to this node">Share</button>
-				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
+				@* node-header-action-row-layout: the status-change form is the KEY action in this row,
+				   but `Share` and `edit` sat exactly one `gap-1` away from its "→" submit — the same
+				   distance that separates the select from its own button — so all of it read as one
+				   group and the key action was lost among the auxiliary ones. Fix is grouping only:
+				   the two auxiliary buttons get their own span with a wider left margin (the row's
+				   gap-1 + ml-3), which also keeps them together as one unit when the row wraps on a
+				   narrow window. The buttons themselves, their labels, testids and behaviour are
+				   untouched, and no new visual language is introduced — just spacing. *@
+				<span class="inline-flex items-center gap-1 ml-3">
+					@* node-share-ui (spec node-share / node-share-scope): opens _NodeShareModal below, which
+					   is where project/board/node identity lives — this button only says "a node share,
+					   default scope". The scope itself (body / full) is picked in the modal, because it is
+					   baked into the minted token and cannot be widened by the reader afterwards. *@
+					<button type="button" class="btn btn-ghost btn-xs" data-node-share-open data-scope="node"
+						data-testid="node-share-open" title="Create a public link to this node">Share</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
+				</span>
 			</div>
 		</div>
 
