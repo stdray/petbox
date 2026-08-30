@@ -1,6 +1,4 @@
 using System.Security.Cryptography;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
