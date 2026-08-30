@@ -250,23 +250,33 @@ history now, while the current plan and status are the boards above.
    and if it looks abandoned, say so instead of removing it.
 9. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
-10. **Delegating to workers (fan-out):** role rules — what each declared role may do, the
-   self-intro contract, escalation — live in exactly ONE place: the
-   server agent definition (`agent_def_get('default')`, project `$system`). Do not
-   hand-copy that prose here; it drifts the moment either side changes (this rule used to
-   quote a worker preamble that fell out of sync with the definition — see work
-   `agents-md-canon-boundary`). Its compiled, per-harness form is what a spawned subagent
-   actually reads at start — for Claude Code that is the PROJECT-LOCAL, gitignored
-   `.claude/agents/<role>.md` (produced by `petbox-wire apply`; **not**
-   `~/.claude/agents/worker.md` — no role files live at user scope). See
+10. **Delegating to workers (fan-out):** role rules — what each role may do, the
+   self-intro contract, escalation — have one canonical BASIS: the git-committed
+   `src/common/default-agents.json`, with local user/project overlay files cascading
+   on top (accepted idea `role-definitions-live-in-files`, decision D3 in
+   `research/wire-source-of-truth/06-decisions.md`).
+   `src/clients-ts/petbox-wire/src/default-agents.json` is a GENERATED copy
+   (`src/clients-ts/petbox-wire/scripts/sync-default-agents.mjs`, run on
+   pretest/pretypecheck/prepack) — never edit it by hand. The server `agent_def`
+   store is being retired in stages (work `layer-resolver` →
+   `wire-stops-fetching-definition` → `agent-defs-server-teardown`, all pending):
+   edit the files, not the server — but until stage 2 lands the wire still resolves
+   via the server (see [doc/agent-wiring.md](doc/agent-wiring.md) §2d), so a file
+   edit alone does not yet change live compiled roles. Do not hand-copy role prose
+   here either; it drifts the moment either side changes (this rule used to quote a
+   worker preamble that fell out of sync with the definition — see work
+   `agents-md-canon-boundary`). What a spawned subagent actually reads at start is
+   the compiled per-harness file — for Claude Code that is the PROJECT-LOCAL,
+   gitignored `.claude/agents/<role>.md` (produced by `petbox-wire apply`; **not**
+   `~/.claude/agents/` — no role files live at user scope). See
    [doc/agent-wiring.md](doc/agent-wiring.md) §2d for the apply mechanics and the
    harness→path table.
    A spawned subagent does NOT run the SessionStart hook — it never sees the memory
    banner, canon, or the definition automatically — so until `apply` has been run in a
    given checkout, the spawn brief is the only delivery channel: fetch the current
-   worker-role notes from the definition and open the brief with them (strengthen per
-   task, never weaken; never dictate the model or the self-intro line — the subagent
-   states what it actually runs as).
+   worker-role notes from the canonical basis and open the brief with them
+   (strengthen per task, never weaken; never dictate the model or the self-intro line —
+   the subagent states what it actually runs as).
 
 ## Build entry points
 
