@@ -1,0 +1,5 @@
+{
+  "name": "default",
+  "mode": "replace",
+  "comment": "Базис. mode=replace потому, что ниже него ничего нет: базис ВСЕГДА заявляет состав целиком. Стенд-ин для src/common/default-agents.json, разложенный по файлам."
+}

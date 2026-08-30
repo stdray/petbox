@@ -1,0 +1,7 @@
+{
+  "slug": "orchestrator",
+  "tier": "orchestrator",
+  "requiredCapabilities": ["mcp_main_session", "spawn_subagents"],
+  "spawn": { "allowed": true, "allowedRoles": ["worker", "reserve"] },
+  "escalation": { "available": true, "targets": ["reserve"] }
+}

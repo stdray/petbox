@@ -1,0 +1,5 @@
+{
+  "name": "project:petbox",
+  "mode": "overlay",
+  "comment": "Проектный слой, лежит в репе (.petbox/agents/). Одинаков у всех, кто в проекте."
+}

@@ -1,0 +1,4 @@
+{
+  "slug": "worker",
+  "escalation": { "available": false }
+}
