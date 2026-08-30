@@ -123,6 +123,27 @@
 							data-scope="comment" data-comment-id="@c.Id"
 							data-testid="comment-share" title="Create a public link to this comment">share</button>
 					}
+					@* comment-slug-and-refs, part 3: hand the author the READY MARKDOWN for a reference
+					   to this comment — `[[#slug]]` when it has a slug, `[[#{id}]]` otherwise. Nobody
+					   types a 32-hex id by hand, so the affordance is what makes the syntax usable at
+					   all; it is the same reasoning (and the same global [data-copy] handler,
+					   ts/config.ts) as the `link` button above.
+
+					   Gated on ShowAddForm AND !ReadOnly, which is NOT redundant. Those are two
+					   different questions and each one alone is the wrong gate here:
+					     * ShowAddForm alone does NOT suppress per-comment controls — it never has
+					       (observations/commentthread-showaddform-does-not-gate-per-comment-mutations);
+					     * ReadOnly alone would keep this button on the board's LIST views, which are
+					       fully authoring-capable but have no body-editor to paste into and no
+					       `#comment-{id}` anchors on the page for the reference to land on.
+					   The conjunction is exactly "the node's own authoring surface, and it is
+					   writable" — the one place where copying a reference for a body is meaningful. *@
+					@if (Model.ShowAddForm && !Model.ReadOnly)
+					{
+						<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-bodyref-copy"
+							data-copy="[[#@(string.IsNullOrEmpty(c.Slug) ? c.Id : c.Slug)]]"
+							title="Copy a reference to paste into a body: [[#@(string.IsNullOrEmpty(c.Slug) ? c.Id : c.Slug)]]">ref</button>
+					}
 					@* ReadOnly (node-share-public-page): the per-comment MUTATION controls, gated as a
 					   block. NOT gated on ShowAddForm — the board's list views pass that false and must
 					   keep reply/edit/delete (they have the handlers); the anonymous public share page
@@ -144,7 +165,7 @@
 		   md-body div below (data-testid="comment-body") is now the direct show/hide toggle
 		   target; ts/commentThread.ts was updated to query "comment-body" instead of the old
 		   "comment-read-body" (same element's role, just one fewer wrapper div). *@
-		<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
+		<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs, CommentRefs = Model.CommentRefs })" />
 
 		@* The two hidden mutation forms, behind the same ReadOnly gate as their toggle buttons
 		   above. Hiding them with CSS would not be enough on a public surface: `style="display:none"`

@@ -467,6 +467,13 @@ public sealed record CommentItemInput
 	public string? BodyRef { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }
 	public long Version { get; init; }
+	// comment-slug-and-refs: the comment's human-readable address WITHIN ITS OWNING NODE — the thing
+	// that makes a segment quotable from a body as `[[#slug]]` and survives a reorder, which a
+	// position never does. Optional everywhere: omitted leaves a create without one and a patch with
+	// whatever it already had. Unique among the node's active comments (two comments under DIFFERENT
+	// nodes may share a slug), shaped `[a-z][a-z0-9_-]{0,99}`, and WRITE-ONCE — see CommentItem.Slug
+	// for why a set slug is never re-pointed.
+	public string? Slug { get; init; }
 }
 
 // One item of a relations_create batch. `from`/`to` are each a node REFERENCE — a slug key or a

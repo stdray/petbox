@@ -18,9 +18,14 @@ public interface IMarkdownRenderer
 	// (`m-<32hex>` / `ac-<12hex>`) to a target, that key in a plain text run becomes a link to the
 	// entry (memory-key-mention-link); a key the caller could not resolve UNAMBIGUOUSLY — missing,
 	// present in several stores/scopes, or living in a sensitive store — is simply not in the map
-	// and stays literal. All three transforms exclude code spans/blocks and existing links. With no
-	// context at all the output is byte-identical to the plain path.
+	// and stays literal. When `commentRefs` maps a comment token — its per-node slug or its 32-hex
+	// id — to a target, a `[[#token]]` reference in a plain text run becomes a link to that comment
+	// (comment-ref-links); a token the CALLER chose not to put in the map stays literal, which is
+	// how the public share page confines references to the comments it actually published without
+	// this renderer growing an "anonymous" mode. All four transforms exclude code spans/blocks and
+	// existing links. With no context at all the output is byte-identical to the plain path.
 	string RenderToHtml(string? markdown, string? commitUrlTemplate = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs = null,
-		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs = null);
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? commentRefs = null);
 }

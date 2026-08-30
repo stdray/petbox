@@ -23,10 +23,22 @@ public sealed record CommentRow : TemporalRow
 	[Column, NotNull] public string Author { get; init; } = string.Empty;
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 
-	// Only the content (Body/Author/ParentId) can differ between revisions; Board/NodeId
+	// comment-slug-and-refs: an OPTIONAL human-readable address for this comment, unique among the
+	// ACTIVE comments of the OWNING NODE — not globally, and not per board. Null is the normal
+	// state: every comment written before this field existed has none and keeps working everywhere
+	// (a comment is still addressed by its Key/GUID, which is what `#comment-{id}` and the
+	// resolution map key off first).
+	//
+	// PAYLOAD, not identity: the Key stays the GUID. That is the whole reason a slug change is NOT
+	// a node-style rename — a node's Key IS its slug, so renaming one is a re-key the temporal
+	// engine carries through PrevKey lineage; here the identity never moves, so PrevKey has nothing
+	// to say about a slug edit and the service refuses one instead (see CommentService.UpsertAsync).
+	[Column, Nullable] public string? Slug { get; init; }
+
+	// Only the content (Body/Author/ParentId/Slug) can differ between revisions; Board/NodeId
 	// are immutable identity (excluded, like TaskNode excludes Board/NodeId).
 	public override bool SamePayload(TemporalRow other) =>
-		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId;
+		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId && c.Slug == Slug;
 
 	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
 	{
@@ -35,6 +47,7 @@ public sealed record CommentRow : TemporalRow
 		if (c.Body != Body) fields.Add("body");
 		if (c.Author != Author) fields.Add("author");
 		if (c.ParentId != ParentId) fields.Add("parentId");
+		if (c.Slug != Slug) fields.Add("slug");
 		return fields;
 	}
 

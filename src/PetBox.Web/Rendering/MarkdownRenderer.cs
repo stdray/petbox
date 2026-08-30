@@ -48,6 +48,13 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 	static readonly Regex MemoryRefRx = new(MemoryRefs.KeyPattern,
 		RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+	// A `[[#comment]]` comment reference (comment-slug-and-refs). Disjoint from NodeRefRx by the
+	// `#`, and — like every other member of the family — only a token the CALLER put in the map
+	// becomes a link. There is no "anonymous mode" here and no branch on who is reading: the public
+	// share page simply hands down a map holding only the comments it actually rendered.
+	static readonly Regex CommentRefRx = new(CommentRefs.TokenPattern,
+		RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
 	readonly MarkdownPipeline _pipeline;
 	readonly HtmlSanitizer _sanitizer;
 
@@ -78,25 +85,27 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 
 	public string RenderToHtml(string? markdown, string? commitUrlTemplate = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs = null,
-		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs = null)
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? commentRefs = null)
 	{
 		if (string.IsNullOrEmpty(markdown)) return "";
 
 		var hasTemplate = CommitUrl.HasTemplate(commitUrlTemplate);
 		var hasNodeRefs = nodeRefs is { Count: > 0 };
 		var hasMemoryRefs = memoryRefs is { Count: > 0 };
+		var hasCommentRefs = commentRefs is { Count: > 0 };
 
 		// No usable context → the original single-pass path, byte-identical to pre-feature output.
-		if (!hasTemplate && !hasNodeRefs && !hasMemoryRefs)
+		if (!hasTemplate && !hasNodeRefs && !hasMemoryRefs && !hasCommentRefs)
 			return _sanitizer.Sanitize(Markdown.ToHtml(markdown, _pipeline));
 
 		// Context present: parse to the AST, then in ONE walk autolink standalone commit hashes,
-		// resolve `[[slug]]` mentions and link resolved memory keys inside plain text runs (code
-		// spans/blocks carry no LiteralInline, existing links are skipped), then render with the
-		// SAME pipeline. Per-call, no shared mutable state.
+		// resolve `[[slug]]` mentions, `[[#comment]]` references and resolved memory keys inside
+		// plain text runs (code spans/blocks carry no LiteralInline, existing links are skipped),
+		// then render with the SAME pipeline. Per-call, no shared mutable state.
 		var doc = Markdown.Parse(markdown, _pipeline);
 		Linkify(doc, hasTemplate ? commitUrlTemplate! : null, hasNodeRefs ? nodeRefs : null,
-			hasMemoryRefs ? memoryRefs : null);
+			hasMemoryRefs ? memoryRefs : null, hasCommentRefs ? commentRefs : null);
 
 		using var writer = new StringWriter();
 		var renderer = new HtmlRenderer(writer);
@@ -116,7 +125,8 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 	// bracket-delimiter handling), so a per-run scan would never see the whole pattern.
 	static void Linkify(MarkdownDocument doc, string? template,
 		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs,
-		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs)
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs,
+		IReadOnlyDictionary<string, NodeRefTarget>? commentRefs)
 	{
 		// Snapshot maximal groups of consecutive LiteralInline siblings (outside links) first —
 		// splicing the tree would break a live walk. `Descendants<LiteralInline>()` yields them in
@@ -144,14 +154,15 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		if (current is { Count: > 0 }) groups.Add(current);
 
 		foreach (var run in groups)
-			LinkifyRun(run, template, nodeRefs, memoryRefs);
+			LinkifyRun(run, template, nodeRefs, memoryRefs, commentRefs);
 	}
 
 	// Rewrite one run of consecutive literal siblings: match over their COMBINED text, splice the
 	// resulting [text?, link, …] sequence in place, and drop the originals.
 	static void LinkifyRun(List<LiteralInline> run, string? template,
 		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs,
-		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs)
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs,
+		IReadOnlyDictionary<string, NodeRefTarget>? commentRefs)
 	{
 		var text = string.Concat(run.Select(l => l.Content.ToString()));
 
@@ -161,6 +172,23 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		// unresolvable mention renders as its original text, brackets included.
 		var repls = new List<(int Index, int Length, LinkInline Link)>();
 		var refSpans = new List<(int Start, int End)>();
+		// `[[#comment]]` references, before the node mentions: the two shapes are disjoint (a node
+		// mention cannot start with `#`), so the order is not a tie-break — it just keeps the most
+		// specific shape first. Claiming the span even when the token does NOT resolve is what the
+		// ordering is for: an identifier inside an unresolved `[[#…]]` must not then be picked up by
+		// the memory-key or commit-hash pass and linked to something else entirely. An unresolved
+		// reference renders as its original text, brackets included.
+		//
+		// The SPAN scan is unconditional — it runs even with no comment map at all (the public share
+		// page's `body` scope, every board list view). That is deliberate: a surface that publishes
+		// no comment map must render `[[#…]]` as PLAIN TEXT, and "plain text" must not quietly mean
+		// "whatever the commit-hash rule makes of the identifier inside it".
+		foreach (Match m in CommentRefRx.Matches(text))
+		{
+			refSpans.Add((m.Index, m.Index + m.Length));
+			if (commentRefs is not null && commentRefs.TryGetValue(m.Groups[1].Value, out var target))
+				repls.Add((m.Index, m.Length, NodeRefLink(target, "#" + m.Groups[1].Value)));
+		}
 		if (nodeRefs is not null)
 		{
 			foreach (Match m in NodeRefRx.Matches(text))
@@ -222,13 +250,15 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		return link;
 	}
 
-	// A mention link (a `[[slug]]` node ref, or a memory key): href = the resolved URL, title
-	// attribute = the target's title, link TEXT = the mention as written (a bare slug, no brackets —
-	// even if the node was since renamed; or the memory key verbatim).
-	static LinkInline NodeRefLink(NodeRefTarget target, string slug)
+	// A mention link (a `[[slug]]` node ref, a memory key, or a `[[#comment]]` reference): href =
+	// the resolved URL, title attribute = the target's title, link TEXT = the mention as written (a
+	// bare slug, no brackets — even if the node was since renamed; or the memory key verbatim),
+	// UNLESS the target supplies its own `Text`. Only comment refs do, and only because a comment
+	// may be addressed by a 32-hex id, which is not anchor text a reader can use.
+	static LinkInline NodeRefLink(NodeRefTarget target, string mention)
 	{
 		var link = new LinkInline(target.Url, target.Title ?? "");
-		link.AppendChild(new LiteralInline(slug));
+		link.AppendChild(new LiteralInline(target.Text ?? mention));
 		return link;
 	}
 

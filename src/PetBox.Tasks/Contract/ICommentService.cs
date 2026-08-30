@@ -20,6 +20,9 @@ public interface ICommentService
 	// address an ALREADY-ACTIVE comment (an intra-batch forward reference is not expressible), so
 	// nothing cascades here: every item is independent. A rejected CREATE has no id yet, so its
 	// conflict is keyed by the item's POSITION ("#0", "#1", …).
+	// `slug` (comment-slug-and-refs) is the only write door for a comment's human-readable address:
+	// unique among the ACTIVE comments of its owning node, WRITE-ONCE once set, and refused with a
+	// reason on a duplicate, an invalid shape, or an attempted change/clear — see CommentItem.Slug.
 	Task<CommentBatchResult> UpsertAsync(
 		string projectKey, string board, IReadOnlyList<CommentItem> items, bool atomic = true, CancellationToken ct = default);
 
@@ -87,7 +90,14 @@ public sealed record CommentView(
 	IReadOnlyList<string> Tags,
 	long Version,
 	DateTime Created,
-	DateTime Updated);
+	DateTime Updated,
+	// comment-slug-and-refs: the comment's optional human-readable address within its OWNING NODE
+	// (see CommentRow.Slug). Null — the normal state — means it has none and is addressed by `Id`.
+	string? Slug = null,
+	// An absolute permalink to this comment, filled ONLY when the caller asked for it
+	// (comments_get / comments_search `includeUrl`, mirroring tasks_node_get). Null otherwise —
+	// the service itself has no idea what host it is served from, so this is an ADAPTER field.
+	string? Url = null);
 
 // Outcome of add/edit, mirroring the temporal upsert result shape used by sessions/tasks.
 public sealed record CommentUpsertResult(
@@ -119,7 +129,19 @@ public sealed record CommentItem(
 	// the CALLER's authority; mutually exclusive with Body and Fragment alike. Unlike Fragment this
 	// is legal on a CREATE: a bodyRef REPLACES the text rather than patching it, so there is nothing
 	// it needs to match against.
-	BodyRefResolution? BodyRef = null);
+	BodyRefResolution? BodyRef = null,
+	// comment-slug-and-refs: the comment's human-readable address within its owning node.
+	//   null  = OMITTED — a create gets no slug, a patch keeps the one it has (the `tags` posture).
+	//   ""    = an explicit CLEAR request, which is refused once a slug is set (see below).
+	//   value = set it. Shape: `[a-z][a-z0-9_-]{0,99}`, the same flat-slug shape a board key has,
+	//           because `[[#slug]]` mentions have to be able to carry it.
+	// WRITE-ONCE by decision: a comment that already carries a slug refuses any DIFFERENT slug and
+	// refuses a clear. The address exists to be quotable from other bodies; re-pointing it would
+	// silently turn every existing `[[#slug]]` mention into plain text — the exact silent-breakage
+	// class this feature was opened to remove. A node's rename survives because a node's Key IS its
+	// slug and the temporal engine carries the old identity in PrevKey lineage; a comment's identity
+	// is its GUID and its slug is payload, so there is no lineage edge here to reuse.
+	string? Slug = null);
 
 // Outcome of a comments_upsert batch, mirroring the tasks_upsert ack: `Applied` is the single
 // source of truth (false ⇒ nothing written, `Conflicts` explains every rejected id); on success

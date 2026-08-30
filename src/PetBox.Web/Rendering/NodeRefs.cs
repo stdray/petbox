@@ -2,11 +2,17 @@ using System.Text.RegularExpressions;
 
 namespace PetBox.Web.Rendering;
 
-// A resolved `[[slug]]` mention target handed to MarkdownRenderer: the node's detail-page URL and
-// its title (rendered as the link's `title` attribute). The renderer never touches the DB — a
-// caller (a page model) resolves the slugs and builds this map, so the renderer stays a pure text
-// transform. Title is null/empty when the node has none (then no title attribute is emitted).
-public sealed record NodeRefTarget(string Url, string? Title);
+// A resolved mention target handed to MarkdownRenderer — used by all three resolution maps
+// (`[[slug]]` node refs, memory keys, `[[#comment]]` comment refs): the target's URL and its title
+// (rendered as the link's `title` attribute). The renderer never touches the DB — a caller (a page
+// model) resolves the mentions and builds this map, so the renderer stays a pure text transform.
+// Title is null/empty when the target has none (then no title attribute is emitted).
+//
+// `Text` overrides the link's visible text, which otherwise stays the mention AS WRITTEN (the
+// family default: a `[[slug]]` node ref reads as its slug even after a rename). It exists for
+// comment refs, whose written form may be a 32-hex id — unreadable as anchor text — so
+// CommentRefMap supplies "author · date" instead. Null = keep the mention's own text.
+public sealed record NodeRefTarget(string Url, string? Title, string? Text = null);
 
 // Mention-scanning helper for `[[slug]]` node references. The renderer applies the PRECISE
 // exclusions (code spans/blocks, existing links); this cheap pre-scan over raw markdown just

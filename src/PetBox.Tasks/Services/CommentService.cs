@@ -43,6 +43,22 @@ public sealed class CommentService : ICommentService
 					.Where(c => editIds.Contains(c.Key) && c.Board == board && c.ActiveTo == null).ToListAsync(ct))
 				.ToDictionary(c => c.Key, StringComparer.Ordinal);
 
+		// comment-slug-and-refs: the slugs already CLAIMED under each node this batch touches, as
+		// (nodeId, slug) -> the comment Key holding it. Read once for the whole batch (the same
+		// posture as `currentById` above), then extended as items in THIS batch claim theirs — so an
+		// intra-batch duplicate is refused exactly like a stored one, instead of both landing and
+		// leaving the node with two comments answering to the same address.
+		var touchedNodes = items.Where(i => !string.IsNullOrWhiteSpace(i.NodeId)).Select(i => i.NodeId!)
+			.Concat(currentById.Values.Select(c => c.NodeId))
+			.Distinct(StringComparer.Ordinal).ToList();
+		var slugOwners = new Dictionary<(string NodeId, string Slug), string>();
+		if (touchedNodes.Count > 0)
+			foreach (var row in await ctx.GetTable<CommentRow>()
+						 .Where(c => c.Board == board && c.ActiveTo == null && c.Slug != null && touchedNodes.Contains(c.NodeId))
+						 .Select(c => new { c.Key, c.NodeId, c.Slug })
+						 .ToListAsync(ct))
+				slugOwners[(row.NodeId, row.Slug!)] = row.Key;
+
 		var desired = new List<CommentRow>(items.Count);
 		var itemByKey = new Dictionary<string, CommentItem>(StringComparer.Ordinal);
 		// Keys that entered `desired` via the PATCH branch below — each one's presence in
@@ -57,6 +73,49 @@ public sealed class CommentService : ICommentService
 		// independent. A rejected CREATE has no id yet, so its conflict is keyed by the item's
 		// POSITION (#0, #1 …) — the only handle the caller holds for it.
 		var rejected = new List<TemporalConflict>();
+
+		// The slug an item's desired revision must carry. THREE refusals, all ArgumentException so
+		// they ride the same channel every other per-item guard here uses (an atomic batch throws,
+		// a partial one records a per-item conflict):
+		//   * an invalid shape (CommentSlug.Validate);
+		//   * a slug already held by ANOTHER comment under the same node — stored or claimed
+		//     earlier in this very batch;
+		//   * ANY change of a slug that is already set, a clear ("") included. Write-once, by
+		//     decision: see CommentItem.Slug for why a node's rename does not generalize here.
+		// `requested` null = omitted, so the current value is inherited (the `tags` posture) and a
+		// create simply gets none — which is why every comment written before this field existed
+		// keeps round-tripping through an ordinary body PATCH untouched.
+		string? ResolveSlug(string? requested, string? currentSlug, string nodeId, string selfKey)
+		{
+			if (requested is null) return currentSlug;
+
+			var trimmed = requested.Trim();
+			if (trimmed.Length == 0)
+			{
+				if (currentSlug is null) return null; // nothing to clear — an honest no-op, not a refusal
+				throw new ArgumentException(
+					$"comment '{selfKey}' already carries slug '{currentSlug}' — a comment slug is write-once and cannot be "
+					+ "cleared: bodies elsewhere may quote it, and dropping it would silently turn those mentions into plain text");
+			}
+
+			var slug = CommentSlug.Validate(trimmed);
+			if (currentSlug is not null)
+				return currentSlug == slug
+					? currentSlug
+					: throw new ArgumentException(
+						$"comment '{selfKey}' already carries slug '{currentSlug}' — a comment slug is write-once and cannot be "
+						+ $"changed to '{slug}': bodies elsewhere may quote the old one, and re-pointing it would silently turn "
+						+ "those mentions into plain text");
+
+			if (slugOwners.TryGetValue((nodeId, slug), out var owner) && !string.Equals(owner, selfKey, StringComparison.Ordinal))
+				throw new ArgumentException(
+					$"slug '{slug}' is already used by comment '{owner}' under this node — a comment slug is unique within its "
+					+ "owning node (two comments under DIFFERENT nodes may share one)");
+
+			slugOwners[(nodeId, slug)] = selfKey;
+			return slug;
+		}
+
 		for (var i = 0; i < items.Count; i++)
 		{
 			var it = items[i];
@@ -126,7 +185,21 @@ public sealed class CommentService : ICommentService
 					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, curForFragment.Version, patched.Error));
 					continue;
 				}
-				desired.Add(curForFragment with { Version = it.Version, Body = patched.Body });
+				// A `slug` riding along with a fragment edit is judged by the SAME rule as anywhere
+				// else — it just rides this branch's channel (conflicts[] in atomic and partial mode
+				// alike), like every other fragment refusal, instead of the throw the ordinary branch
+				// below uses. Silently ignoring the field would be the one unacceptable option.
+				string? fragmentSlug;
+				try
+				{
+					fragmentSlug = ResolveSlug(it.Slug, curForFragment.Slug, curForFragment.NodeId, it.Id!);
+				}
+				catch (ArgumentException ex)
+				{
+					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, curForFragment.Version, ex.Message));
+					continue;
+				}
+				desired.Add(curForFragment with { Version = it.Version, Body = patched.Body, Slug = fragmentSlug });
 				itemByKey[it.Id!] = it;
 				patchedKeys.Add(it.Id!);
 				continue;
@@ -160,6 +233,10 @@ public sealed class CommentService : ICommentService
 						ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
 						Author = it.Author ?? string.Empty,
 						Body = it.Body!,
+						// The id is minted first so a slug claimed here is claimed BY this comment —
+						// which is what makes a SECOND item in the same batch asking for the same slug
+						// under the same node a refusal, rather than a silent second holder.
+						Slug = ResolveSlug(it.Slug, null, it.NodeId!, id),
 					});
 					itemByKey[id] = it;
 				}
@@ -168,7 +245,7 @@ public sealed class CommentService : ICommentService
 					// PATCH
 					if (!currentById.TryGetValue(it.Id!, out var cur))
 						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
-					desired.Add(cur with { Version = it.Version, Body = it.Body! });
+					desired.Add(cur with { Version = it.Version, Body = it.Body!, Slug = ResolveSlug(it.Slug, cur.Slug, cur.NodeId, it.Id!) });
 					itemByKey[it.Id!] = it;
 					patchedKeys.Add(it.Id!);
 				}
@@ -459,7 +536,7 @@ public sealed class CommentService : ICommentService
 
 	static CommentView ToView(CommentRow r, ILookup<string, string> tags) =>
 		new(r.Key, r.NodeId, r.ParentId, r.Author, r.Body,
-			tags[r.Key].OrderBy(t => t, StringComparer.Ordinal).ToList(), r.Version, r.Created, r.Updated);
+			tags[r.Key].OrderBy(t => t, StringComparer.Ordinal).ToList(), r.Version, r.Created, r.Updated, r.Slug);
 
 	static CommentUpsertResult Map(TemporalUpsertResult<CommentRow> r, string id) =>
 		new(r.Applied, r.CurrentVersion, r.Applied ? id : null,

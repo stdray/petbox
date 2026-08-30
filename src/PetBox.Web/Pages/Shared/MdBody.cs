@@ -42,4 +42,10 @@ public sealed record MdBodyModel
 	// unambiguously to a non-sensitive store; an unresolved/ambiguous key stays literal. Null on the
 	// live edit preview (ServerRender=false).
 	public IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs { get; init; }
+
+	// Optional token→target map for `[[#comment]]` references (comment-slug-and-refs). When set, a
+	// reference to a comment the CALLER put in the map becomes a link to its `#comment-{id}` anchor;
+	// anything else — a comment outside this map, a deleted one, a typo — stays literal. Null on the
+	// live edit preview only when the draft mentions none (see TaskBoardNodeModel.OnPostPreviewAsync).
+	public IReadOnlyDictionary<string, NodeRefTarget>? CommentRefs { get; init; }
 }
