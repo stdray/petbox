@@ -245,11 +245,39 @@ test("a short code block is never capped — only the wrapper the renderer adds 
 	// The whole point of deciding server-side. A `max-height` on the bare `.md-body pre` would cap
 	// every two-line snippet as well, and no test of the renderer could see it.
 	assert.equal(/max-height/.test(ruleBody(".md-body pre")), false, "`.md-body pre` must carry no height cap");
-	assert.ok(/overflow-x:\s*auto/.test(ruleBody(".md-body pre")), "horizontal scrolling must survive the feature");
 	assert.equal(
 		/overflow-x/.test(ruleBody(".md-body .md-code-fold > pre")),
 		false,
-		"the fold must not restate overflow-x — the block keeps the horizontal scrolling it already had",
+		"the fold must not restate overflow-x — the block keeps the horizontal behaviour it already had",
+	);
+});
+
+// Work `md-code-wrap-not-scroll`. The owner's decision: a long command wraps, it is never parked
+// behind a horizontal scrollbar. Both halves are load-bearing and this pins both, because dropping
+// `overflow-wrap` is the silent half-fix — `pre-wrap` on its own looks like it works until the
+// content is a 298-character line with no space in it, which is exactly the content that prompted
+// the work.
+test("a code block WRAPS long lines instead of hiding them behind a horizontal scrollbar", () => {
+	const pre = ruleBody(".md-body pre");
+	assert.match(pre, /white-space:\s*pre-wrap/, "long lines must wrap, not extend past the block's right edge");
+	assert.match(
+		pre,
+		/overflow-wrap:\s*anywhere/,
+		"`pre-wrap` alone cannot break a token with no space in it — a long URL or command would still overflow",
+	);
+});
+
+// The same sentence in reverse, and the boundary the work was told not to cross: a TABLE still
+// scrolls. A table cannot reflow into a narrow column without destroying the row alignment that
+// makes it readable, so `.md-table-scroll` keeps its own scroller and must never pick up the
+// wrapping rules above.
+test("wrapping is code-block-only — a table still scrolls horizontally", () => {
+	const scroll = ruleBody(".md-body .md-table-scroll");
+	assert.match(scroll, /overflow-x:\s*auto/, "a wide table still scrolls inside its own wrapper");
+	assert.equal(
+		/white-space|overflow-wrap/.test(scroll),
+		false,
+		"the code-block wrapping decision must not leak onto tables",
 	);
 });
 
