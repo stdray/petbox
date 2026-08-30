@@ -110,6 +110,36 @@ export function agentFilesDir(harness: HarnessId): string {
   }
 }
 
+/**
+ * The basename this role's artifact is emitted under for `harness`. THE single computation
+ * point (bug: artifact-integrity-dangling-and-orphans): planApply's write path and
+ * apply-orphans.ts's delete path both call it, so "what apply writes" and "what apply
+ * considers legitimately ours" can never drift — a drift here would have the sweep delete a
+ * live role's file, or leave a real orphan behind.
+ *
+ * droid is the reason this cannot be a template string at the call site: Factory's
+ * DroidValidator only accepts [a-z0-9_-], so the emitted name goes through sanitizeDroidName
+ * (namespaced FIRST, then sanitized — see renderDroidMarkdown).
+ */
+export function artifactBasename(harness: HarnessId, roleOrSlug: { readonly slug: string } | string): string {
+  const name = emittedRoleName(roleOrSlug);
+  return harness === "droid" ? `${sanitizeDroidName(name)}.md` : `${name}.md`;
+}
+
+/**
+ * Every basename `harness`'s agent directory legitimately holds for `definition` — one per
+ * DECLARED role, including roles the truthfulness gate will skip. Deliberately built from
+ * `definition.roles` and not from an ApplyPlan's files: a role blocked by the gate is still a
+ * role of this definition, and its (stale) artifact is a gate problem to fix, never an orphan
+ * to delete.
+ */
+export function expectedArtifactBasenames(
+  definition: AgentDefinition,
+  harness: HarnessId,
+): ReadonlySet<string> {
+  return new Set(definition.roles.map((role) => artifactBasename(harness, role)));
+}
+
 /** Shared role body (spawn / escalation / caps / notes). No protocol inject here. */
 export function buildRoleBody(role: AgentRole): string {
   const lines: string[] = [];
@@ -334,8 +364,7 @@ export function planApply(
       const shapeWarning = modelShapeWarning(role, harness, model);
       if (shapeWarning) warnings.push(shapeWarning);
     }
-    const fileName =
-      harness === "droid" ? `${sanitizeDroidName(emittedRoleName(role))}.md` : `${emittedRoleName(role)}.md`;
+    const fileName = artifactBasename(harness, role);
     // Pre-namespacing name — same file this role used to emit before petbox-namespaced-agent-names.
     // The writer uses this to find + remove an owned leftover (never a foreign file at that path).
     const legacyFileName = harness === "droid" ? `${sanitizeDroidName(role.slug)}.md` : `${role.slug}.md`;

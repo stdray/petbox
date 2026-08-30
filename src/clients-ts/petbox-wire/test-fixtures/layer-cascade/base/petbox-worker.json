@@ -1,0 +1,7 @@
+{
+  "slug": "worker",
+  "tier": "worker",
+  "requiredCapabilities": ["mcp_subagent"],
+  "spawn": { "allowed": false },
+  "escalation": { "available": true, "targets": ["reserve"] }
+}

@@ -1,0 +1,4 @@
+{
+  "slug": "orchestrator",
+  "spawn": { "allowed": true, "allowedRoles": ["worker", "review"] }
+}
