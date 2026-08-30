@@ -1,18 +1,15 @@
 ---
 name: comprehension-check
 description: >-
-  Sverka (comprehension check) of finished work against a task card, aimed at "done not
-  fully" rather than "done not the right thing". Use right after reading a delegated task
-  card, before touching code, to write down what it commits to and what it excludes — and
-  again at the end, before reporting Review or before an orchestrator accepts a worker's
-  result, to walk the diff against those points and name anything left uncovered. Not an
-  automatic gate: nothing calls this by itself, the worker or orchestrator invokes it on
-  purpose. Two of its four steps are pure mechanical checks that need no model judgment at
-  all — do the artifacts the card named exist, did the named test go green, does the diff
-  touch what the card said it would.
+  Check finished work against its task card — catches "done not fully", not "done not
+  the right thing". Call right after reading a delegated card (write down what it
+  commits to and what it excludes), and again before reporting Review or accepting a
+  worker's result (walk the diff against those points, name anything uncovered). Never
+  an automatic gate — worker or orchestrator invokes it on purpose; the
+  artifact/test/diff checks are mechanical, no model judgment.
 ---
 
-# Comprehension check — sverka postanovki
+# Comprehension check — result vs task card
 
 A weak-model worker and a stronger-model orchestrator already hold process discipline well
 (instructions, MCP calls, methodology gates). What both miss, quietly, is whether the
