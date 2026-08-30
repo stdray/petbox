@@ -60,12 +60,17 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     // is exactly the bug this rename set out to close.
     const workerRole = definition.roles.find((r) => r.slug === "worker");
     const workerName = emittedRoleName(workerRole ?? "worker");
+    // The delegate-by-default rule, its threshold and the cost rationale behind it live ONLY in
+    // the portable definition's orchestrator notes (point 3), rendered below — never restated
+    // here. Two sources of prose about the same behavior is itself a defect (bug:
+    // kit-prose-contradicts-server-definition; card: orchestrator-delegate-rule-portable-and-priced);
+    // this banner line stays a pointer, not a second copy, so it can never drift from the notes.
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
 \`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
 
-**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`${workerName}\`.
+Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 3.
 
 Orchestrator notes (from definition): ${notes}`;
   }
