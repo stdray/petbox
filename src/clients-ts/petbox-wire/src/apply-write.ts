@@ -65,12 +65,22 @@ export function writeArtifact(absPath: string, content: string): WriteOutcome {
 export type LegacyCleanupOutcome = "removed" | "kept-foreign" | "absent";
 
 /**
- * Remove an old, pre-namespacing artifact at `absPath` IF AND ONLY IF it carries our origin
- * marker. Returns "absent" when there is nothing there (the common steady-state case once
- * migration has run once), "removed" when an owned leftover was deleted, "kept-foreign" when
- * something exists there that is NOT ours — left untouched, never deleted, never renamed.
+ * Delete the file at `absPath` IF AND ONLY IF it carries our origin marker. The single
+ * deletion primitive of this package: "absent" when there is nothing there, "removed" when an
+ * owned file was deleted, "kept-foreign" when something exists there that is NOT ours — left
+ * untouched, never deleted, never renamed. Unreadable counts as foreign, exactly like
+ * writeArtifact: never destroy what we could not even inspect.
+ *
+ * Two callers with two DIFFERENT reasons, and they must not be conflated
+ * (bug: artifact-integrity-dangling-and-orphans):
+ *   - cleanupLegacyArtifact — a RENAME leftover (`worker.md` superseded by `petbox-worker.md`).
+ *     The role still exists; only its filename moved. Runs per written file, right after the
+ *     replacement landed.
+ *   - apply-orphans.ts's sweepOrphanArtifacts — a role that is GONE from the definition. No
+ *     replacement exists or ever will; the file is a standing instruction to use a role that
+ *     no longer exists. Runs as its own pass over the harness's agent directory.
  */
-export function cleanupLegacyArtifact(absPath: string): LegacyCleanupOutcome {
+export function removeOwnedArtifact(absPath: string): LegacyCleanupOutcome {
   if (!existsSync(absPath)) return "absent";
   let existing: string;
   try {
@@ -81,4 +91,14 @@ export function cleanupLegacyArtifact(absPath: string): LegacyCleanupOutcome {
   if (!hasPetboxMarker(existing)) return "kept-foreign";
   unlinkSync(absPath);
   return "removed";
+}
+
+/**
+ * Remove an old, pre-namespacing artifact at `absPath` IF AND ONLY IF it carries our origin
+ * marker. Returns "absent" when there is nothing there (the common steady-state case once
+ * migration has run once), "removed" when an owned leftover was deleted, "kept-foreign" when
+ * something exists there that is NOT ours — left untouched, never deleted, never renamed.
+ */
+export function cleanupLegacyArtifact(absPath: string): LegacyCleanupOutcome {
+  return removeOwnedArtifact(absPath);
 }

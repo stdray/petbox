@@ -97,8 +97,10 @@ import {
   type AgentDefinition,
 } from "./agent-definition.ts";
 import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
+import { sweepOrphanArtifacts } from "./apply-orphans.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
+import { findDanglingTargets, formatDanglingTargets } from "./definition-integrity.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
@@ -436,6 +438,16 @@ async function runDoctor(argv: string[]): Promise<void> {
     });
     definition = resolved.definition;
     validateAgentDefinition(definition);
+    // Same referential-integrity gate apply applies, on the same resolution (doctor exists to
+    // gate the definition apply would compile — doctor-gates-wrong-definition). A doctor that
+    // says OK while apply hard-fails on the very next command is worse than no doctor.
+    const dangling = findDanglingTargets(definition);
+    if (dangling.length > 0) {
+      throw new Error(
+        `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
+          formatDanglingTargets(dangling),
+      );
+    }
   } catch (e) {
     console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
     // exitWith + return, never a hard process.exit() — see wire-exit.ts's header for why
@@ -701,17 +713,31 @@ async function performApply(opts: {
 }): Promise<ApplyRunResult> {
   const { root, via } = resolveApplyRoot(process.cwd());
   let definition: AgentDefinition;
+  let resolved: ResolvedAgentDefinition;
   let rolesData: RolesFile;
   try {
-    definition = (
-      await resolveApplyDefinition({
-        offline: opts.offline,
-        definitionKey: opts.definitionKey,
-        cwd: process.cwd(),
-        label: opts.label,
-      })
-    ).definition;
+    resolved = await resolveApplyDefinition({
+      offline: opts.offline,
+      definitionKey: opts.definitionKey,
+      cwd: process.cwd(),
+      label: opts.label,
+    });
+    definition = resolved.definition;
     validateAgentDefinition(definition);
+    // Referential integrity of what we are about to RENDER (bug:
+    // artifact-integrity-dangling-and-orphans, spec definition-truthfulness). A role whose
+    // artifact names a spawn/escalation target that is not in this definition would ship an
+    // instruction to use a `subagent_type` that does not exist on disk. That is a refusal, not
+    // a warning: a partially-written set of artifacts where one of them lies is worse than no
+    // write at all, so this runs BEFORE the first file is touched.
+    const dangling = findDanglingTargets(definition);
+    if (dangling.length > 0) {
+      throw new Error(
+        `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
+          formatDanglingTargets(dangling) +
+          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+      );
+    }
     // strict: a corrupt roles.json must hard-fail apply, not silently compile as "no bindings"
     // (wire-silent-failures-invisible — the 2026-07-12 "worker rides on Opus" incident shape).
     rolesData = loadRoles(homedir(), { strict: true });
@@ -729,7 +755,35 @@ async function performApply(opts: {
   }
 
   log(`${opts.label}: root=${root} (via ${via})`);
-  log(`${opts.label}: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
+  // One grep-able line naming WHICH document this run compiled and WHERE it came from. D18
+  // makes this load-bearing, not cosmetic: stage 2's confirmation is "apply ran on all three
+  // harnesses WITHOUT going to the server for the definition", and that is unprovable unless
+  // apply states its own resolution path in its summary rather than only in the narrative lines
+  // resolveApplyDefinition prints above.
+  const versionSuffix =
+    resolved.key !== undefined && resolved.version !== undefined
+      ? ` key=${resolved.key} v${resolved.version}`
+      : "";
+  log(
+    `${opts.label}: definition="${definition.name}" source=${resolved.source}${versionSuffix}` +
+      `${resolved.stale ? " (stale)" : ""}, harnesses=${HARNESS_IDS.join(",")}`,
+  );
+
+  // Orphan sweep gate (bug: artifact-integrity-dangling-and-orphans). Deleting the artifact of
+  // a role that left the definition is only safe when the definition is the AUTHORITATIVE one.
+  // A degraded resolve — LKG replica, or the kit's offline baseline after a network blip or a
+  // 404 — legitimately holds FEWER roles than the project really has, and sweeping against it
+  // would delete live roles' artifacts because the network hiccuped. Server-sourced only, for
+  // now; when the source of truth moves to file layers (D13/D18 stage 2) that source joins this
+  // gate, and the server one leaves with the rest of the server path.
+  const orphanSweepSource = resolved.source === "server";
+  if (!orphanSweepSource) {
+    log(
+      `${opts.label}: orphan sweep skipped — the definition came from '${resolved.source}', not the ` +
+        `server; a degraded resolve may be missing roles this project really has, and deleting ` +
+        `their artifacts on that basis would be destructive.`,
+    );
+  }
 
   let written = 0;
   const writtenHarnesses: string[] = [];
@@ -780,6 +834,26 @@ async function performApply(opts: {
         } else if (legacyOutcome === "kept-foreign") {
           log(
             `${opts.label}: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
+          );
+        }
+      }
+    }
+
+    // Orphan sweep — a role that is GONE from the definition (apply-orphans.ts). Runs per
+    // harness, AFTER its writes, and independently of them: a role skipped by the truthfulness
+    // gate is still declared and its file is never a candidate. Removal still requires our
+    // origin marker, so a user's own file in the petbox-* namespace is reported and kept.
+    if (orphanSweepSource) {
+      for (const orphan of sweepOrphanArtifacts(root, harness, definition)) {
+        if (orphan.outcome === "removed") {
+          log(
+            `${opts.label}: removed ${orphan.path} — its role is no longer in definition ` +
+              `"${definition.name}" (orphan artifact, ours by origin marker)`,
+          );
+        } else {
+          log(
+            `${opts.label}: left ${orphan.path} in place — no role by that name in the definition, ` +
+              `but the file carries no PetBox origin marker, so it is not ours to delete.`,
           );
         }
       }
