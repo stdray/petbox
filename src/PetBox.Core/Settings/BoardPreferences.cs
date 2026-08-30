@@ -20,6 +20,22 @@ public sealed record BoardViewPreference
 	// JSON-trivial to encode/decode through SettingsResolver's generic "json" fallback branch.
 	public string? Fields { get; init; }
 
+	// recurrence-and-session-provenance-as-board-fields: the FULL field vocabulary
+	// (BoardFieldNames.AllCsv shape) that was KNOWN when `Fields` above was last written — not the
+	// enabled subset Fields itself carries. Read together with Fields through
+	// BoardFieldConfig.FromSaved (see its own header comment for the exact per-key rule): a key
+	// present here means the owner had the chance to see and (un)check it, so Fields' silence on it
+	// means "deliberately off"; a key ABSENT here — including every key when this whole property is
+	// null, the shape every preference saved before this property existed carries permanently — means
+	// "didn't exist yet", so BoardFieldConfig.Default decides it instead. This is what makes a NEW
+	// field (recurrence, and any future one) actually reach an owner's already-customized board
+	// instead of reading as "explicitly turned off" forever, without also making it impossible to
+	// turn an EXISTING field off (board-view-fields' original whole-CSV-omission scheme could not
+	// tell those two cases apart). Riding in this SAME record needs no migration (BoardPreferences'
+	// header comment: BoardViewPreference is JSON through SettingsResolver's generic "json" branch) —
+	// a stored document from before this property existed simply deserializes it as null.
+	public string? FieldsKnown { get; init; }
+
 	// kanban-column-picker: which kanban columns (workflow-status slugs) are visible, same CSV
 	// shape as Fields above (BoardColumnConfig.ToCsv()) — rides along in this SAME per-board
 	// record for the same reason Fields does (board-view-cross-device's header comment): both

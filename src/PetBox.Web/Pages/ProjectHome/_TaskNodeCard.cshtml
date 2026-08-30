@@ -67,9 +67,21 @@
 				{
 					<span class="badge badge-warning badge-xs" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 				}
-				@* observation-ui-distinct-from-task: n.Observation is null on every board except
-				   `observations`, so this is a no-op on every other card. *@
-				<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+				@* observation-ui-distinct-from-task / board-view-fields: n.Observation is null on
+				   every board except `observations`, so this is a no-op on every other card even
+				   when Fields.Recurrence is on; on an observation board it's still gated on the
+				   field (BoardFieldConfig.Default only turns it on there by default — the dialog
+				   lets the owner turn it off). *@
+				@if (Model.Fields.Recurrence)
+				{
+					<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+				}
+				@* spec node-session-provenance-visible-in-ui: off by default (BoardFieldConfig.
+				   Default) — an opt-in detail, unlike Recurrence never gated by board kind. *@
+				@if (Model.Fields.Sessions)
+				{
+					<partial name="_NodeSessionProvenanceBadge" model="new PetBox.Web.Pages.Shared.NodeSessionProvenanceModel(n.OriginSessionId, n.OriginSessions, Model.WorkspaceKey, Model.ProjectKey)" />
+				}
 				@if (Model.Fields.Type && !string.IsNullOrEmpty(n.Type))
 				{
 					<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>

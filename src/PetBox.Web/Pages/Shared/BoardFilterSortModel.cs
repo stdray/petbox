@@ -27,6 +27,13 @@ namespace PetBox.Web.Pages.Shared;
 // body inline (wiki-like boards would ship megabytes on load) regardless of the dialog checkbox.
 // Every other caller (Kanban/Table/Tree) leaves it false; the dialog just disables the Body
 // checkbox and says why instead of silently ignoring a selection the user can still make.
+// recurrence-and-session-provenance-as-board-fields: RecurrenceUnavailable is the SAME idiom for
+// the Recurrence field — true whenever this board's resolved kind ISN'T `observation`
+// (MethodologyRuntime.IsObservationKind), where TaskNodeView.Observation is always null
+// (TasksService only loads it for that kind), so checking the box would have zero effect. Every
+// caller computes this the same way (Tree/Kanban/Outline read Runtime/KindSlug directly off
+// TaskBoardModel; _TaskTable.cshtml has neither, so it reads TaskTableModel.IsObservationBoard,
+// resolved once by _BoardViewTable.cshtml).
 // board-filters-server-state: ActiveOnly/SortBy/SortDesc are the SERVER-RESOLVED control state
 // (TaskBoardModel.ActiveOnly/SortBy/SortDesc — a global, cross-device [Setting]) — the bar renders
 // the checkbox `checked`/select `selected`/arrow glyph from these directly, so the FIRST response
@@ -47,6 +54,7 @@ public sealed record BoardFilterSortModel(
 	string? By = null,
 	PetBox.Web.Pages.ProjectHome.BoardColumnsDialogModel? ColumnsDialog = null,
 	bool BodyUnavailable = false,
+	bool RecurrenceUnavailable = false,
 	bool ActiveOnly = true,
 	string SortBy = "priority",
 	bool SortDesc = false,

@@ -1,7 +1,13 @@
 @model PetBox.Web.Pages.Shared.ObservationSignalModel
-@* spec observation-recurrence-visible-on-card: the recurrence counter, shown only once the
-   observation has actually recurred (RecurrenceCount > 1 — a first-ever sighting stays 1 and
-   renders nothing here, same threshold the spec names).
+@* spec observation-recurrence-visible-on-card: the recurrence counter, shown INDEPENDENTLY of its
+   value — including a first-ever sighting (RecurrenceCount == 1). This partial used to gate the
+   whole block on `RecurrenceCount > 1`; recurrence-and-session-provenance-as-board-fields removed
+   that threshold (work recurrence-and-session-provenance-as-board-fields, filed after the owner
+   reported the counter missing from a card whose count was exactly 1 — the threshold made "no
+   recurrence yet" indistinguishable from "the mechanism is broken"). The ONLY remaining gate is
+   `Model.Observation is not null` (below) — null on every non-observation board, same as before.
+   Visibility itself is now a board-view-fields toggle (BoardFieldNames.Recurrence) the CALLER
+   applies before including this partial, not a threshold inside it.
    live-verification finding (2026-08-28, owner screenshot on `observations/live3-prov-check-
    cache-evict`): count and last-seen used to sit as two text runs inside ONE <span>, separated
    only by incidental markup whitespace — the served page rendered them with NO visible gap at
@@ -15,7 +21,7 @@
    row. The count is now its own bold, slightly-larger chip (badge-sm vs the badge-xs siblings it
    sits among); the last-seen time is explicitly labelled ("last seen …") and visually
    subordinate (opacity-60, small text) — the two can never again be mistaken for one value. *@
-@if (Model.Observation is { RecurrenceCount: > 1 } o)
+@if (Model.Observation is { } o)
 {
 	<span class="inline-flex items-center gap-1" data-testid="node-observation-recurrence" title="recurred @o.RecurrenceCount times">
 		<span class="badge badge-neutral badge-sm font-bold font-mono" data-testid="node-observation-recurrence-count">×@o.RecurrenceCount</span>

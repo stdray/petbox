@@ -128,4 +128,146 @@ public sealed class BoardFieldConfigTests
 		BoardFieldConfig.Default(BoardViewModeNames.Outline, MethodologyRuntime.PresetsOnly, "spec", outlineBodyDefault: false)
 			.Body.Should().BeFalse();
 	}
+
+	// recurrence-and-session-provenance-as-board-fields: FromKeys/Has round-trip the two new keys
+	// exactly like the original nine (BoardFieldNames.Recurrence/Sessions).
+	[Fact]
+	public void FromKeys_RecognizesRecurrenceAndSessions()
+	{
+		var cfg = BoardFieldConfig.FromKeys([BoardFieldNames.Recurrence, BoardFieldNames.Sessions]);
+		cfg.Recurrence.Should().BeTrue();
+		cfg.Sessions.Should().BeTrue();
+		cfg.Has(BoardFieldNames.Recurrence).Should().BeTrue();
+		cfg.Has(BoardFieldNames.Sessions).Should().BeTrue();
+		cfg.Slug.Should().BeFalse();
+	}
+
+	[Fact]
+	public void ToCsv_RoundTripsThroughFromKeys_WithRecurrenceAndSessions()
+	{
+		var cfg = new BoardFieldConfig(
+			Slug: true, Type: false, Status: false, Priority: false, Tags: false, UpdatedAt: false,
+			Delivery: false, BlockedBy: false, Body: false, Recurrence: true, Sessions: true);
+		var roundTripped = BoardFieldConfig.FromKeys(cfg.ToCsv().Split(',', StringSplitOptions.RemoveEmptyEntries));
+		roundTripped.Should().Be(cfg);
+	}
+
+	// spec observation-recurrence-visible-on-card: Recurrence defaults ON, but ONLY for the
+	// observation kind — the whole reason BoardFieldConfig.Default now takes a runtime-resolved
+	// "is this an observation board" bit (MethodologyRuntime.IsObservationKind) instead of a
+	// hardcoded false. Every view mode gets the SAME answer — the mode switch never touches it.
+	[Theory]
+	[InlineData(BoardViewModeNames.Tree)]
+	[InlineData(BoardViewModeNames.Outline)]
+	[InlineData(BoardViewModeNames.Kanban)]
+	[InlineData(BoardViewModeNames.Table)]
+	public void Default_RecurrenceField_OnForObservationKind_InEveryMode(string viewMode) =>
+		BoardFieldConfig.Default(viewMode, MethodologyRuntime.PresetsOnly, "observation", outlineBodyDefault: false)
+			.Recurrence.Should().BeTrue();
+
+	[Theory]
+	[InlineData(BoardViewModeNames.Tree)]
+	[InlineData(BoardViewModeNames.Outline)]
+	[InlineData(BoardViewModeNames.Kanban)]
+	[InlineData(BoardViewModeNames.Table)]
+	public void Default_RecurrenceField_OffForNonObservationKinds_InEveryMode(string viewMode) =>
+		BoardFieldConfig.Default(viewMode, MethodologyRuntime.PresetsOnly, "work", outlineBodyDefault: false)
+			.Recurrence.Should().BeFalse();
+
+	// board-view-fields' own "don't default to noise nobody asked for" posture, applied to the new
+	// Sessions field: opt-in everywhere, unlike Recurrence's kind-gated default — including on an
+	// observation board, where Recurrence itself just defaulted ON above (the two fields are
+	// independent toggles, not a package deal).
+	[Theory]
+	[InlineData(BoardViewModeNames.Tree, "observation")]
+	[InlineData(BoardViewModeNames.Outline, "observation")]
+	[InlineData(BoardViewModeNames.Kanban, "observation")]
+	[InlineData(BoardViewModeNames.Table, "work")]
+	public void Default_SessionsField_AlwaysOff(string viewMode, string kindSlug) =>
+		BoardFieldConfig.Default(viewMode, MethodologyRuntime.PresetsOnly, kindSlug, outlineBodyDefault: false)
+			.Sessions.Should().BeFalse();
+
+	// board-view-fields bullet 3 (the highest-risk part of recurrence-and-session-provenance-as-
+	// board-fields): a saved preference from BEFORE FieldsKnown existed (FieldsKnown null) must
+	// give the NEW keys their fresh default — that is what makes the reported bug ("×1 counter
+	// missing from a card whose board-level Fields CSV predates the recurrence key") go away on
+	// the FIRST post-deploy page load rather than only after the owner re-applies the dialog —
+	// while STILL keeping the choices the owner actually made. Null FieldsKnown means "written by
+	// a build that knew the nine LegacyKnownCsv keys", not "the owner knew nothing": resetting
+	// their whole layout to default would fix the counter by breaking everything around it.
+	[Fact]
+	public void FromSaved_FieldsKnownNull_DefaultsNewKeys_ButKeepsLegacyChoices()
+	{
+		var defaults = new BoardFieldConfig(
+			Slug: true, Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
+			Delivery: false, BlockedBy: true, Body: true, Recurrence: true, Sessions: false);
+		// A pre-existing saved CSV that (deliberately, from the owner's POV) turned Tags and
+		// BlockedBy off and kept Slug/Body on — but never recorded FieldsKnown.
+		var result = BoardFieldConfig.FromSaved(fieldsCsv: "slug,body", fieldsKnownCsv: null, defaults);
+
+		result.Slug.Should().BeTrue();
+		result.Body.Should().BeTrue();
+		// Legacy keys the owner left unchecked stay unchecked, even though `defaults` turns them on.
+		result.Tags.Should().BeFalse();
+		result.BlockedBy.Should().BeFalse();
+		// Keys that did not exist at save time take the default — the actual bug fix.
+		result.Recurrence.Should().BeTrue();
+		result.Sessions.Should().BeFalse();
+	}
+
+	// The other half of bullet 3: once FieldsKnown IS recorded, a key INSIDE it is the owner's
+	// explicit choice — including a DELIBERATE off — and must NOT fall back to default. This is
+	// the naive-implementation trap the card calls out: "key absent -> use default" would make it
+	// impossible to ever turn an existing field off.
+	[Fact]
+	public void FromSaved_KnownKey_HonoursExplicitOff_EvenWhenDefaultWouldTurnItOn()
+	{
+		var defaults = new BoardFieldConfig(
+			Slug: true, Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
+			Delivery: false, BlockedBy: true, Body: true, Recurrence: true, Sessions: false);
+		// Tags/Body/Recurrence are all ON in `defaults` above; the saved Fields csv leaves all
+		// three out while FieldsKnown says the owner DID see all of them (the full vocabulary).
+		var result = BoardFieldConfig.FromSaved(
+			fieldsCsv: "slug", fieldsKnownCsv: BoardFieldNames.AllCsv, defaults);
+		result.Slug.Should().BeTrue();
+		result.Tags.Should().BeFalse();
+		result.Body.Should().BeFalse();
+		result.Recurrence.Should().BeFalse();
+	}
+
+	// A key that's simply NEW relative to what FieldsKnown recorded (a real future-field scenario,
+	// not the "nothing was ever recorded" edge case above) still falls back to default, while a
+	// key already inside FieldsKnown keeps the owner's explicit choice — the actual forward-compat
+	// promise: "any future field reaches an already-customized board without resurrecting fields
+	// the owner deliberately turned off."
+	[Fact]
+	public void FromSaved_KeyMissingFromFieldsKnown_FallsBackToDefault_ButKnownKeysStayExplicit()
+	{
+		var defaults = new BoardFieldConfig(
+			Slug: true, Type: false, Status: false, Priority: false, Tags: true, UpdatedAt: false,
+			Delivery: false, BlockedBy: false, Body: false, Recurrence: true, Sessions: false);
+		// FieldsKnown recorded every key EXCEPT recurrence (simulating a preference saved between
+		// this task's BoardFieldNames.Recurrence landing in code and the owner's next dialog Apply
+		// — an intermediate state a rolling deploy can genuinely produce). The owner explicitly
+		// turned Tags off (known, absent from Fields) and left Slug on (known, present).
+		var knownWithoutRecurrence = string.Join(",",
+			BoardFieldNames.Options.Select(o => o.Key).Where(k => k != BoardFieldNames.Recurrence));
+		var result = BoardFieldConfig.FromSaved(fieldsCsv: "slug", fieldsKnownCsv: knownWithoutRecurrence, defaults);
+		result.Slug.Should().BeTrue();
+		result.Tags.Should().BeFalse(); // known + explicitly unchecked -> stays off, not defaults' "on"
+		result.Recurrence.Should().BeTrue(); // unknown -> falls back to defaults' "on"
+	}
+
+	// An empty-string FieldsKnown is the same case as null (a preference written before the
+	// mechanism existed), not "a set with nothing in it" — same LegacyKnownCsv substitution.
+	[Fact]
+	public void FromSaved_FieldsKnownEmptyString_IsTreatedLikeNull()
+	{
+		var defaults = BoardFieldConfig.None with { Tags = true, Recurrence = true };
+		var result = BoardFieldConfig.FromSaved(fieldsCsv: "slug", fieldsKnownCsv: "", defaults);
+
+		result.Slug.Should().BeTrue();
+		result.Tags.Should().BeFalse();   // legacy key, explicitly unchecked -> stays off
+		result.Recurrence.Should().BeTrue(); // not a legacy key -> takes the default
+	}
 }

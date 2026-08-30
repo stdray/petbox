@@ -88,6 +88,18 @@ public sealed class MethodologyRuntime
 	public MethodologyDeliveryDef? DeliveryOf(string? kindSlug) =>
 		ResolvedKind(kindSlug)?.Delivery;
 
+	// Is this the builtin `observation` kind (spec observation-recurrence-visible-on-card)? Same
+	// whole-object resolution as DeliveryOf/AutoWireFrom/LinkConstraints above — the ONE place that
+	// compares a resolved kind's own slug against the "observation" literal, so a caller (board-
+	// view-fields' recurrence default, the fields dialog's disabled-checkbox reason) asks THIS
+	// instead of repeating the string comparison itself. Compares the RESOLVED kind's own slug
+	// (ResolvedKind(kindSlug)?.Kind), not the kindSlug parameter directly — a definition-declared
+	// kind's Kind field is always the same string as its dictionary key, so this is equivalent to
+	// comparing kindSlug itself; phrasing it through ResolvedKind keeps this resolver shaped
+	// exactly like its siblings and correct if that ever stops being true.
+	public bool IsObservationKind(string? kindSlug) =>
+		string.Equals(ResolvedKind(kindSlug)?.Kind, "observation", StringComparison.OrdinalIgnoreCase);
+
 	// The methodology-declared default view mode for a kind (methodology-default-view-field):
 	// merged PER FIELD, NOT per kind like ResolvedKind below (board-view-defaults-not-
 	// applied-existing-instances) — a board provisioned from the quartet/classic BUILTIN

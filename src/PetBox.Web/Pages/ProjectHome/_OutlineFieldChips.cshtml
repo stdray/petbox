@@ -25,6 +25,19 @@
 {
 	<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />
 }
+@* board-view-fields / observation-ui-distinct-from-task: outline never called
+   _ObservationRecurrenceBadge at all before this task — n.Observation is null on every
+   non-observation board regardless, so this is a no-op there. *@
+@if (Model.Fields.Recurrence)
+{
+	<partial name="_ObservationRecurrenceBadge" model="new ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+}
+@* spec node-session-provenance-visible-in-ui: off by default, opt-in on any board kind — same
+   gate as every other view mode. *@
+@if (Model.Fields.Sessions)
+{
+	<partial name="_NodeSessionProvenanceBadge" model="new NodeSessionProvenanceModel(n.OriginSessionId, n.OriginSessions, Model.WorkspaceKey, Model.ProjectKey)" />
+}
 @if (Model.Fields.UpdatedAt && n.UpdatedAt is not null)
 {
 	<time class="local-time text-xs opacity-60" datetime="@n.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@n.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>

@@ -37,7 +37,10 @@
 			DecisionPending: n.DecisionPending,
 			// observation-ui-distinct-from-task: already on TaskNodeView (n.Observation), just not
 			// threaded into the table row projection until now — no service change needed.
-			Observation: n.Observation);
+			Observation: n.Observation,
+			// node-session-provenance-visible-in-ui: same posture — already on TaskNodeView, just
+			// not threaded into the row projection until now.
+			OriginSessionId: n.OriginSessionId, OriginSessions: n.OriginSessions);
 	}).ToList();
 }
-<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly, ObservationFixedByLinks: Model.ObservationFixedByLinks)" />
+<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly, ObservationFixedByLinks: Model.ObservationFixedByLinks, IsObservationBoard: Model.Runtime.IsObservationKind(Model.KindSlug))" />

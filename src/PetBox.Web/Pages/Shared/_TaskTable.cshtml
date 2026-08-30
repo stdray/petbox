@@ -21,7 +21,7 @@
 	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
 	// visible no matter how many rows matched (still gated on Model.ShowFilterBar, unchanged: a
 	// grouped multi-table caller — Search's per-project sections — still shows exactly ONE bar).
-	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", BodyUnavailable: true, RecurrenceUnavailable: !Model.IsObservationBoard, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 }
 @if (Model.ShowFilterBar)
 {
@@ -51,6 +51,7 @@ else
 					@if (fields.UpdatedAt) { <th>updated</th> }
 					@if (fields.Delivery) { <th>delivery</th> }
 					@if (fields.BlockedBy) { <th>blocked by</th> }
+					@if (fields.Sessions) { <th>sessions</th> }
 				</tr>
 			</thead>
 			<tbody data-testid="board-nodes" data-sort-scope>
@@ -84,9 +85,13 @@ else
 							{
 								<span class="badge badge-warning badge-xs" data-testid="node-decision-pending-badge" title="waiting on the owner's decision">⏳ waiting on you</span>
 							}
-							@* observation-ui-distinct-from-task: Observation is null on every board except
-							   `observations`, so this is a no-op on every other row. *@
-							<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" />
+							@* observation-ui-distinct-from-task / board-view-fields: Observation is null on
+							   every board except `observations`, so this is a no-op on every other row even
+							   when fields.Recurrence is on. *@
+							@if (fields.Recurrence)
+							{
+								<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(row.Observation, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" />
+							}
 							@if (fields.Slug)
 							{
 								<span class="font-mono text-xs opacity-50">@row.Key</span>
@@ -140,6 +145,13 @@ else
 						@if (fields.BlockedBy)
 						{
 							<td><partial name="_BlockedByChips" model="@(new BlockedByChipsModel(Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty, row.BlockedBy))" /></td>
+						}
+						@* spec node-session-provenance-visible-in-ui: its OWN column here (unlike the
+						   card views, table has no natural "next to the title" spot for a second badge
+						   row without crowding the key cell) — off by default, opt-in on any board kind. *@
+						@if (fields.Sessions)
+						{
+							<td><partial name="_NodeSessionProvenanceBadge" model="new PetBox.Web.Pages.Shared.NodeSessionProvenanceModel(row.OriginSessionId, row.OriginSessions, Model.WorkspaceKey ?? string.Empty, Model.ProjectKey ?? string.Empty)" /></td>
 						}
 					</tr>
 				}

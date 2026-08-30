@@ -18,7 +18,7 @@
 	// live-verification finding (sticky-filter-hides-board-silently): filter bar hoisted OUT of the
 	// non-empty branch — see _BoardViewTree.cshtml's identical comment for why. Its state must be
 	// visible no matter how many nodes matched.
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, RecurrenceUnavailable: !Model.Runtime.IsObservationKind(Model.KindSlug), ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc, DecisionPendingOnly: Model.DecisionPendingOnly);
 }
 <partial name="_BoardFilterSort" model="filterSortModel" />
 @if (Model.Nodes.Count == 0)
@@ -148,6 +148,19 @@ else
 									{
 										<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />
 									}
+									@* board-view-fields / observation-ui-distinct-from-task: a kanban card never
+									   called _ObservationRecurrenceBadge at all before this task — n.Observation is
+									   null on every non-observation board regardless, so this is a no-op there. *@
+									@if (Model.Fields.Recurrence)
+									{
+										<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+									}
+									@* spec node-session-provenance-visible-in-ui: off by default, opt-in on any
+									   board kind — see _TaskNodeCard's identical gate for the same reasoning. *@
+									@if (Model.Fields.Sessions)
+									{
+										<partial name="_NodeSessionProvenanceBadge" model="new PetBox.Web.Pages.Shared.NodeSessionProvenanceModel(n.OriginSessionId, n.OriginSessions, Model.WorkspaceKey, Model.ProjectKey)" />
+									}
 									@if (Model.Fields.UpdatedAt && n.UpdatedAt is not null)
 									{
 										<time class="local-time" datetime="@n.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@n.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
@@ -220,6 +233,16 @@ else
 									</div>
 								}
 								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>
+								@* board-view-fields / node-session-provenance-visible-in-ui: same gates as the
+								   main columns above — see that block's comments for why. *@
+								@if (Model.Fields.Recurrence)
+								{
+									<partial name="_ObservationRecurrenceBadge" model="new PetBox.Web.Pages.Shared.ObservationSignalModel(n.Observation, Model.WorkspaceKey, Model.ProjectKey)" />
+								}
+								@if (Model.Fields.Sessions)
+								{
+									<partial name="_NodeSessionProvenanceBadge" model="new PetBox.Web.Pages.Shared.NodeSessionProvenanceModel(n.OriginSessionId, n.OriginSessions, Model.WorkspaceKey, Model.ProjectKey)" />
+								}
 								@if (blocked && Model.Fields.BlockedBy)
 								{
 									<partial name="_BlockedByChips" model="new BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
