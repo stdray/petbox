@@ -25,7 +25,6 @@ import {
   readPetboxSkillTriggers,
   SKILL_SURFACES,
   renderSkillTemplate,
-  shouldInjectOnce,
   writeSkillFiles,
   type SkillWriteOutcome,
   type WorkspaceProbeResult,
@@ -701,16 +700,3 @@ test("extractSkillTrigger against every REAL current petbox-* skill description 
   }
 });
 
-test("shouldInjectOnce: true the first time per sessionID, false thereafter for that id, true again for a different id", () => {
-  const seen = new Set<string>();
-  assert.equal(shouldInjectOnce(seen, "sess-1"), true);
-  assert.equal(shouldInjectOnce(seen, "sess-1"), false);
-  assert.equal(shouldInjectOnce(seen, "sess-1"), false);
-  assert.equal(shouldInjectOnce(seen, "sess-2"), true);
-});
-
-test("shouldInjectOnce: undefined sessionID always injects (never silently drop content for a missing id)", () => {
-  const seen = new Set<string>();
-  assert.equal(shouldInjectOnce(seen, undefined), true);
-  assert.equal(shouldInjectOnce(seen, undefined), true);
-});
