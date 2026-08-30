@@ -444,16 +444,11 @@ export function buildAutoSkillsIndex(root: string): string | null {
   return ["## PetBox skills — call `skill(name)` on match, don't browse first", "", ...lines].join("\n");
 }
 
-/**
- * Per-session "already injected" gate, shared shape for any opencode hook that must fire once
- * per session rather than once per turn (`experimental.chat.system.transform` runs on every
- * turn — see opencode-plugin.ts's own comment on why). `sessionID` undefined (a shape the SDK
- * types allow) degrades to "always inject" — never silently skip content because an id was
- * missing.
- */
-export function shouldInjectOnce(seen: Set<string>, sessionID: string | undefined): boolean {
-  if (!sessionID) return true;
-  if (seen.has(sessionID)) return false;
-  seen.add(sessionID);
-  return true;
-}
+// NOTE: a `shouldInjectOnce` per-session gate used to live here, used by opencode-plugin.ts to
+// push the salience index only on a session's first turn. It was removed, not fixed: the
+// assumption under it — that a block pushed into one request "stays in the model's context" —
+// is false for opencode, which rebuilds the system prompt from scratch for every request (and
+// whose FIRST request per session is the small-model title generation, sharing the session id).
+// The gate therefore delivered the index to the title request and to nothing else. See the
+// injection site in opencode-plugin.ts for the live measurement, and
+// opencode-plugin-system-transform.test.ts for the regression that pins it.

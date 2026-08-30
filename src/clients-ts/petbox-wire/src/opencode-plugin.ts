@@ -30,7 +30,7 @@ import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
-import { buildAutoSkillsIndex, shouldInjectOnce } from "./skill-files.ts";
+import { buildAutoSkillsIndex } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
@@ -54,14 +54,11 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     defNote = agentDefinitionBannerNote(got);
   }
 
-  // Sessions the petbox-* skills SALIENCE INDEX has already been injected into (bug:
-  // opencode-skills-not-autoinjected) — chat.system.transform fires on EVERY turn, but the
-  // index only needs to land once per session (it stays in the model's context from then on);
-  // see shouldInjectOnce's doc comment. This is an index of WHEN to call `skill(name)`, not the
-  // skill bodies themselves — those still arrive lazily through opencode's own native `skill`
-  // tool, unchanged (see skill-files.ts's module comment for why: don't duplicate a cheap
-  // surface into an expensive one).
-  const injectedSkillsFor = new Set<string>();
+  // The petbox-* skills SALIENCE INDEX is pushed on EVERY request, deliberately — see the
+  // injection site at the bottom of chat.system.transform for the measurement that forced this.
+  // This is an index of WHEN to call `skill(name)`, not the skill bodies themselves — those still
+  // arrive lazily through opencode's own native `skill` tool, unchanged (see skill-files.ts's
+  // module comment for why: don't duplicate a cheap surface into an expensive one).
 
   // Avoid re-POSTing the same state when session.idle fires repeatedly.
   const lastPushed = new Map<string, string>();
@@ -121,7 +118,7 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // opencode never had a clean equivalent of that hook to port it to.)
   return {
     // Port of pull-memory — make the memory protocol part of the system prompt.
-    "experimental.chat.system.transform": async (input, output) => {
+    "experimental.chat.system.transform": async (_input, output) => {
       if (!resolved) return;
       // Stale-base warning first, so it stays prominent — see worktree-base-guard.ts. This
       // handler can fire on EVERY turn (opencode is long-lived), so the module throttles its
@@ -139,16 +136,33 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
       // Append the curated memory canon when available (best-effort; degrades to nothing).
       const canon = await fetchCanonBlock(resolved);
       if (canon) output.system.push(canon);
-      // Inject the petbox-* skills salience index (bug: opencode-skills-not-autoinjected) —
-      // once per session, not every turn (shouldInjectOnce): this hook is opencode's only
-      // injection point and, per the capability matrix (harness-capabilities.ts), fires
-      // identically for main sessions and subagents, which is exactly the path Claude Code's
-      // SessionStart hook cannot reach (AGENTS.md §10). A short "when to call which skill" list,
-      // NOT the bodies — those stay behind opencode's own lazy `skill` tool (skill-files.ts).
-      if (shouldInjectOnce(injectedSkillsFor, input.sessionID)) {
-        const skillsIndex = buildAutoSkillsIndex(directory ?? "");
-        if (skillsIndex) output.system.push(skillsIndex);
-      }
+      // Inject the petbox-* skills salience index (bug: opencode-skills-not-autoinjected) — on
+      // EVERY request, exactly like the protocol and canon blocks above, NOT once per session.
+      //
+      // The first fix gated this behind a per-session "already injected" set, reasoning that the
+      // block "stays in the model's context from then on". It does not. opencode builds the
+      // system prompt FRESH for every request: `LLMRequestPrep.prepare` constructs a
+      // single-element array (the base prompt), fires this hook over it, and sends the result —
+      // nothing a previous turn pushed survives into the next one. Measured live (opencode
+      // 1.18.25, instrumented plugin, one `opencode run`, one session):
+      //
+      //   call 1  model=deepseek-v4-flash  system.length BEFORE the hook = 1
+      //   call 2  model=deepseek-v4-pro    system.length BEFORE the hook = 1
+      //
+      // Worse, call 1 is opencode's small-model SESSION-TITLE generation, and it carries the same
+      // sessionID as the real chat request — so the once-per-session gate was consumed by the
+      // title request and the agent's actual prompt never received the index at all. That is
+      // exactly what the live check saw: the agent quoted the canon block (pushed unconditionally,
+      // right above) while answering STRING NOT FOUND for the skills index.
+      //
+      // Cost of pushing every time is the honest one: ~810 B per request in this repo, an order
+      // of magnitude under the canon block already sitting next to it, and it buys the ONLY thing
+      // this injection is for — the index being in the prompt the agent actually answers from.
+      // Per the capability matrix (harness-capabilities.ts) this hook fires identically for main
+      // sessions and subagents, which is the path Claude Code's SessionStart hook cannot reach
+      // (AGENTS.md §10).
+      const skillsIndex = buildAutoSkillsIndex(directory ?? "");
+      if (skillsIndex) output.system.push(skillsIndex);
     },
 
     // Port of push-session — mirror the finished turn into PetBox's Session module.
