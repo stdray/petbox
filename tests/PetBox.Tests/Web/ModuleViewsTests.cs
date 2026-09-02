@@ -1785,11 +1785,13 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("sessions-empty");
 	}
 
-	// ui-session-gfm-render: the session detail page renders its content as GFM markdown through the
-	// ONE shared renderer (_MdBody / IMarkdownRenderer) — the multi-message `### role` headers become
-	// real <h3> headings and code fences become <pre><code>, not a raw `### user …` blob in a <pre>.
+	// session-body-render-cleanup: the session detail page reverted GFM rendering (observations
+	// session-gfm-render-shipped-ahead-of-its-own-decision, markdig-parses-80x-deeper-than-it-renders
+	// — a real transcript, e.g. ANSI logs, can carry unbalanced `[` that blew past Markdig's render
+	// nesting cap and 500'd the page). Content now renders as escaped plain text in a <pre> — the
+	// `### role` headers and code fences stay literal, nothing goes through _MdBody/IMarkdownRenderer.
 	[Fact]
-	public async Task SessionDetail_RendersContentAsGfmMarkdown_NotRawBlob()
+	public async Task SessionDetail_RendersContentAsPlainText_NotMarkdown()
 	{
 		const string sessionId = "gfm-session";
 		using (var scope = _factory.Services.CreateScope())
@@ -1814,15 +1816,17 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 
-		// The `### role` headers are rendered to real heading markup by the shared renderer …
-		html.Should().Contain("<h3");
-		html.Should().MatchRegex("<h3[^>]*>user</h3>");
-		html.Should().MatchRegex("<h3[^>]*>assistant</h3>");
-		// … the code fence became a code block, and it went through the shared _MdBody surface …
-		html.Should().Contain("<pre><code>");
+		// The transcript still carries its own data-testid, but as a plain <pre>, not the shared
+		// _MdBody surface …
+		html.Should().Contain("data-testid=\"session-content\"");
 		html.Should().Contain("data-testid=\"session-body\"");
-		// … so the raw markdown header text is NOT emitted literally.
-		html.Should().NotContain("### user");
+		// … so the `### role` headers are NOT promoted to real heading markup — they stay literal …
+		html.Should().NotContain("<h3");
+		html.Should().Contain("### user");
+		html.Should().Contain("### assistant");
+		// … the code fence is NOT turned into a code block — the raw backtick fence survives.
+		html.Should().NotContain("<pre><code>");
+		html.Should().Contain("```");
 	}
 
 	[Fact]
