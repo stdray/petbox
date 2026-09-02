@@ -54,7 +54,9 @@ function setupProject(): { home: string; projectDir: string; envVar: string } {
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(
     join(skillDir, "SKILL.md"),
-    ["---", "name: petbox-demo", `description: A demo skill. ${SKILL_TRIGGER}`, "---", "", SKILL_BODY_SENTINEL, ""].join(
+    // `petbox-digest: auto` is what puts a skill in the index — the directory name does not
+    // (spec: wire-skill-invocation-mode).
+    ["---", "name: petbox-demo", `description: A demo skill. ${SKILL_TRIGGER}`, "petbox-digest: auto", "---", "", SKILL_BODY_SENTINEL, ""].join(
       "\n",
     ),
     "utf8",

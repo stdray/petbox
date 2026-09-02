@@ -1846,6 +1846,14 @@ function reportSkillOutcomes(label: string, outcomes: SkillWriteOutcome[]): stri
           `PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
           `not one wire/apply wrote before. Nothing was touched.`,
       );
+    } else if (outcome.kind === "declared-manual") {
+      // NOT a refusal and NOT an error (spec: wire-skill-manual-declared-not-error): the project
+      // declared this path its own, the kit honoured that. Never enters `blocked`, so it can
+      // never reach the exit code — stdout, like every other normal outcome.
+      log(
+        `${label}: left skill ${outcome.path} alone — declared \`petbox: manual\`, the project ` +
+          `owns this path. Nothing was written.`,
+      );
     } else {
       log(`${label}: wrote ${outcome.path}` + (outcome.reason !== "new" ? ` (${outcome.reason})` : ""));
     }

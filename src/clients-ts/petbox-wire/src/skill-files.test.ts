@@ -22,14 +22,23 @@ import {
   formatSkillFile,
   PROJECT_SKILLS,
   probeWorkspace,
-  readPetboxSkillTriggers,
+  readAutoDigestSkillTriggers,
   SKILL_SURFACES,
   renderSkillTemplate,
   writeSkillFiles,
   type SkillWriteOutcome,
   type WorkspaceProbeResult,
 } from "./skill-files.ts";
-import { hasPetboxMarker, PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import {
+  hasPetboxMarker,
+  isDeclaredManual,
+  PETBOX_DIGEST_KEY,
+  PETBOX_MANUAL_LINE,
+  PETBOX_MARKER_LINE,
+  readArtifactState,
+  readDigestMode,
+  readPetboxProvenance,
+} from "./origin-marker.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_ROOT = join(HERE, "templates");
@@ -38,13 +47,16 @@ function freshDir(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-skill-test-"));
 }
 
-// The legacy (pre-marker) rendering: what the OLD template — before this fix added
-// `petbox: managed` to the three templates' frontmatter — would have produced for the same
-// project/workspace. Used to set up "already materialized by an old wire" fixtures.
+// The legacy (pre-declaration) rendering: what the OLD template — before `petbox: managed` and
+// `petbox-digest: <mode>` were added to the templates' frontmatter — would have produced for the
+// same project/workspace. Used to set up "already materialized by an old wire" fixtures. BOTH
+// lines come back out: a file left by a pre-fix wire carries neither.
 function legacyRender(spec: string, project: string, workspace: string): string {
   const tpl = readFileSync(join(TEMPLATES_ROOT, spec, "SKILL.md"), "utf8");
   const rendered = renderSkillTemplate(tpl, project, workspace);
-  return rendered.replace(new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m"), "");
+  return rendered
+    .replace(new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m"), "")
+    .replace(new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+\\r?\\n`, "m"), "");
 }
 
 function pathFor(dir: string, surface: string[], specDir: string): string {
@@ -182,6 +194,114 @@ test("every template's frontmatter carries the PetBox origin marker", () => {
   for (const spec of PROJECT_SKILLS) {
     const body = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
     assert.ok(hasPetboxMarker(body), `${spec.dir}: template frontmatter must carry \`${PETBOX_MARKER_LINE}\``);
+  }
+});
+
+// ---- provenance + invocation-mode declarations (work: wire-skill-declared-provenance-and-mode;
+// spec: wire-skill-provenance-states, wire-skill-invocation-mode,
+// wire-skill-manual-declared-not-error) -------------------------------------------------------
+
+// THE safety property of the whole provenance change, and the reason `hasPetboxMarker` had to
+// stop accepting any `petbox: <token>`: that gate decides both what apply OVERWRITES and what
+// cleanupLegacyArtifact DELETES. If `petbox: manual` satisfied it, a path the project had
+// explicitly claimed as its own would be silently rewritten — and, once the skill pipeline calls
+// the cleanup (work: wire-skill-cleanup-on-replace), silently deleted.
+test("provenance: `petbox: manual` is NOT the managed marker — never overwritable, never deletable", () => {
+  const managed = `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\nbody`;
+  const manual = `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nbody`;
+  const undeclared = "---\nname: x\n---\n\nbody";
+
+  assert.equal(readPetboxProvenance(managed), "managed");
+  assert.equal(readPetboxProvenance(manual), "manual");
+  assert.equal(readPetboxProvenance(undeclared), null);
+  // An unrecognized value is undeclared, not "close enough to managed".
+  assert.equal(readPetboxProvenance("---\nname: x\npetbox: something-else\n---\n\nbody"), null);
+
+  assert.equal(hasPetboxMarker(managed), true);
+  assert.equal(hasPetboxMarker(manual), false, "a manual file must never pass the write/delete gate");
+  assert.equal(isDeclaredManual(manual), true);
+  assert.equal(isDeclaredManual(managed), false);
+});
+
+test("provenance: the `petbox-digest` key is never mistaken for the `petbox` provenance key", () => {
+  const digestOnly = `---\nname: x\n${PETBOX_DIGEST_KEY}: auto\n---\n\nbody`;
+  assert.equal(readPetboxProvenance(digestOnly), null, "`petbox-digest:` must not satisfy `petbox:`");
+  assert.equal(hasPetboxMarker(digestOnly), false);
+  assert.equal(readDigestMode(digestOnly), "auto");
+  assert.equal(readDigestMode(`---\nname: x\n${PETBOX_DIGEST_KEY}: manual\n---\n\nbody`), "manual");
+  assert.equal(readDigestMode("---\nname: x\n---\n\nbody"), null, "no declaration is not 'auto'");
+  // Body prose must never be read as a declaration — same frontmatter scoping the marker has.
+  assert.equal(readDigestMode(`---\nname: x\n---\n\nprose mentioning ${PETBOX_DIGEST_KEY}: auto`), null);
+});
+
+test("readArtifactState: a declared-manual file is its own state, not 'foreign'", () => {
+  const dir = freshDir();
+  try {
+    const p = join(dir, "manual.md");
+    writeFileSync(p, `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nmine\n`, "utf8");
+    assert.equal(readArtifactState(p), "manual");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The registry field and the template frontmatter are two copies of the same fact; this is the
+// one thing that keeps them from drifting (same discipline as the PROJECT_SKILLS<->templates/
+// and PROJECT_SKILLS<->README parity tests above).
+test("every PROJECT_SKILLS entry's template declares the invocation mode its spec claims", () => {
+  for (const spec of PROJECT_SKILLS) {
+    const body = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+    assert.equal(
+      readDigestMode(body),
+      spec.digestMode,
+      `${spec.dir}: PROJECT_SKILLS says digestMode "${spec.digestMode}" but templates/${spec.dir}/SKILL.md declares "${readDigestMode(body)}"`,
+    );
+  }
+});
+
+// Trap named in the work card: this is code that DELETES and OVERWRITES files in the owner's
+// personal `.claude/skills`. A path the project declared manual must survive apply untouched,
+// and — the second half, spec wire-skill-manual-declared-not-error — must not be reported as a
+// conflict, because a conflict is what drives apply's exit 1.
+test("writeSkillFiles: a file declared `petbox: manual` survives apply byte-for-byte and is NOT a conflict", () => {
+  const dir = freshDir();
+  const target = pathFor(dir, SKILL_SURFACES[0]!, "petbox");
+  try {
+    const mine = `---\nname: petbox\ndescription: my own replacement. Use always.\n${PETBOX_MANUAL_LINE}\n---\n\n# MY version of this skill\n`;
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, mine, "utf8");
+
+    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(outcome.kind, "declared-manual", `expected a declared-manual skip, got ${JSON.stringify(outcome)}`);
+    assert.notEqual(outcome.kind, "blocked", "a declared manual path is a legal state, never a conflict");
+    assert.equal(readFileSync(target, "utf8"), mine, "a declared-manual file must be left byte-for-byte untouched");
+    // Every OTHER surface/skill still got written — the skip is per path, not a whole-run abort.
+    assert.ok(
+      outcomes.some((o) => o.kind === "written"),
+      "the rest of the delivery must still land",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a manual declaration survives a SECOND apply too (never migrated, never promoted)", () => {
+  const dir = freshDir();
+  const target = pathFor(dir, SKILL_SURFACES[0]!, "petbox-methodology");
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    // The owner takes this path over after the first apply: content the kit itself wrote, with
+    // the provenance flipped to manual.
+    const taken = readFileSync(target, "utf8").replace(PETBOX_MARKER_LINE, PETBOX_MANUAL_LINE);
+    writeFileSync(target, taken, "utf8");
+
+    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(outcome.kind, "declared-manual");
+    assert.equal(readFileSync(target, "utf8"), taken);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -552,42 +672,87 @@ test("extractSkillTrigger: no 'Use' sentence — falls back to the first sentenc
   assert.equal(extractSkillTrigger("Does a thing. Does another thing."), "Does a thing.");
 });
 
-test("readPetboxSkillTriggers: no .claude/skills directory at all — [] (wire apply never ran)", () => {
+test("readAutoDigestSkillTriggers: no .claude/skills directory at all — [] (wire apply never ran)", () => {
   const root = freshDir();
   try {
-    assert.deepEqual(readPetboxSkillTriggers(root), []);
+    assert.deepEqual(readAutoDigestSkillTriggers(root), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("readPetboxSkillTriggers: only petbox*-prefixed dirs, sorted; non-petbox, bodyless, and description-less dirs skipped", () => {
+// THE selection rule this card changes (spec: wire-skill-invocation-mode). Every fixture here is
+// chosen so the DIRECTORY NAME points the opposite way from the declaration: if selection still
+// went by the `petbox-` prefix, this test fails on three of the four dirs at once.
+test("readAutoDigestSkillTriggers: selects by the `petbox-digest: auto` DECLARATION, never by the directory name", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    // Declared auto, NOT petbox-named — must be IN (the prefix rule would have dropped it).
+    writeSkillMd(
+      skillsDir,
+      "write-economy",
+      `---\nname: write-economy\ndescription: >-\n  Pay for the change. Use before any long write.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Write economy\n`,
+    );
+    // Declared manual, petbox-named — must be OUT (the prefix rule would have kept it).
+    writeSkillMd(
+      skillsDir,
+      "petbox-factory-run",
+      `---\nname: petbox-factory-run\ndescription: Use for factory runs.\n${PETBOX_DIGEST_KEY}: manual\n---\n\n# Factory run\n`,
+    );
+    // Undeclared, petbox-named — must be OUT. This is the live case named in the card:
+    // `petbox-methodology-system` is prefixed but repo-native, and the prefix rule injected it
+    // into every session.
+    writeSkillMd(
+      skillsDir,
+      "petbox-methodology-system",
+      "---\nname: petbox-methodology-system\ndescription: Use when operating $system's methodology.\n---\n\n# Repo-native\n",
+    );
+    // Declared auto, petbox-named — must be IN.
+    writeSkillMd(
+      skillsDir,
+      "petbox-agent-factory",
+      `---\nname: petbox-agent-factory\ndescription: Compile artifacts. Use after role changes.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Agent factory\n`,
+    );
+    // Declared auto but no description — nothing sensible to show, skipped.
+    writeSkillMd(skillsDir, "petbox-no-description", `---\nname: petbox-no-description\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# No description\n`);
+    // A dir with no SKILL.md inside (mid-write, or a stray folder) — skipped, not an error for
+    // the whole read.
+    mkdirSync(join(skillsDir, "petbox-empty"), { recursive: true });
+
+    const triggers = readAutoDigestSkillTriggers(root);
+    assert.deepEqual(
+      triggers.map((t) => t.name),
+      ["petbox-agent-factory", "write-economy"], // sorted; every other fixture excluded
+    );
+    assert.equal(triggers.find((t) => t.name === "write-economy")!.trigger, "Use before any long write.");
+    assert.equal(triggers.find((t) => t.name === "petbox-agent-factory")!.trigger, "Use after role changes.");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A project may declare a delivered skill's path its own AND still want it in its digest — the
+// two axes are independent (provenance = may the kit write here; mode = should the agent be told
+// about it). This repo's own `petbox-methodology-system` is exactly that combination.
+test("readAutoDigestSkillTriggers: provenance and invocation mode are independent axes", () => {
   const root = freshDir();
   try {
     const skillsDir = join(root, ".claude", "skills");
     writeSkillMd(
       skillsDir,
-      "petbox-write-economy",
-      "---\nname: petbox-write-economy\ndescription: >-\n  Pay for the change. Use before any long write.\n---\n\n# Write economy\n",
+      "mine-but-auto",
+      `---\nname: mine-but-auto\ndescription: Use when the project says so.\n${PETBOX_MANUAL_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Mine\n`,
     );
     writeSkillMd(
       skillsDir,
-      "petbox-agent-factory",
-      "---\nname: petbox-agent-factory\ndescription: Compile artifacts. Use after role changes.\n---\n\n# Agent factory\n",
+      "kit-but-manual",
+      `---\nname: kit-but-manual\ndescription: Use only when explicitly called.\n${PETBOX_MARKER_LINE}\n${PETBOX_DIGEST_KEY}: manual\n---\n\n# Kit's\n`,
     );
-    writeSkillMd(skillsDir, "factory-run", "---\nname: factory-run\ndescription: Use for factory runs.\n---\n\n# Factory run — not petbox, must be excluded\n");
-    writeSkillMd(skillsDir, "petbox-no-description", "---\nname: petbox-no-description\n---\n\n# No description field\n");
-    // A petbox*-named dir with no SKILL.md inside (e.g. mid-write, or a stray folder) — skipped,
-    // not an error for the whole read.
-    mkdirSync(join(skillsDir, "petbox-empty"), { recursive: true });
-
-    const triggers = readPetboxSkillTriggers(root);
     assert.deepEqual(
-      triggers.map((t) => t.name),
-      ["petbox-agent-factory", "petbox-write-economy"], // sorted; factory-run, petbox-no-description, petbox-empty absent
+      readAutoDigestSkillTriggers(root).map((t) => t.name),
+      ["mine-but-auto"],
     );
-    assert.equal(triggers.find((t) => t.name === "petbox-write-economy")!.trigger, "Use before any long write.");
-    assert.equal(triggers.find((t) => t.name === "petbox-agent-factory")!.trigger, "Use after role changes.");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -600,18 +765,22 @@ test("readPetboxSkillTriggers: only petbox*-prefixed dirs, sorted; non-petbox, b
 // reads as "what this is" rather than "when to call it"). A description that is present but
 // blank IS excluded — there is nothing sensible to show, so omitting beats injecting an empty
 // line.
-test("readPetboxSkillTriggers: a description with no 'Use' sentence is still included (first-sentence fallback), never silently dropped; a blank description IS excluded", () => {
+test("readAutoDigestSkillTriggers: a description with no 'Use' sentence is still included (first-sentence fallback), never silently dropped; a blank description IS excluded", () => {
   const root = freshDir();
   try {
     const skillsDir = join(root, ".claude", "skills");
     writeSkillMd(
       skillsDir,
       "petbox-no-use-sentence",
-      "---\nname: petbox-no-use-sentence\ndescription: Does a thing. Covers detail with no trigger sentence.\n---\n\n# No Use sentence\n",
+      `---\nname: petbox-no-use-sentence\ndescription: Does a thing. Covers detail with no trigger sentence.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# No Use sentence\n`,
     );
-    writeSkillMd(skillsDir, "petbox-blank-description", "---\nname: petbox-blank-description\ndescription:\n---\n\n# Blank description\n");
+    writeSkillMd(
+      skillsDir,
+      "petbox-blank-description",
+      `---\nname: petbox-blank-description\ndescription:\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Blank description\n`,
+    );
 
-    const triggers = readPetboxSkillTriggers(root);
+    const triggers = readAutoDigestSkillTriggers(root);
     assert.deepEqual(triggers.map((t) => t.name), ["petbox-no-use-sentence"]); // blank one excluded
     assert.equal(triggers[0]!.trigger, "Does a thing.", "falls back to the first sentence, not dropped");
 
@@ -622,7 +791,7 @@ test("readPetboxSkillTriggers: a description with no 'Use' sentence is still inc
   }
 });
 
-test("buildAutoSkillsIndex: null when no petbox skills are materialized", () => {
+test("buildAutoSkillsIndex: null when no skill declares auto invocation", () => {
   const root = freshDir();
   try {
     assert.equal(buildAutoSkillsIndex(root), null);
@@ -646,12 +815,12 @@ test("buildAutoSkillsIndex: one line per discovered skill, trigger + exact name,
     writeSkillMd(
       skillsDir,
       "petbox-node-authoring",
-      "---\nname: petbox-node-authoring\ndescription: >-\n  How to structure a node body. Use before writing any node/comment body longer than a couple of lines.\n---\n\n# Body authoring\n\nFull instructions the index must NOT contain.\n",
+      `---\nname: petbox-node-authoring\ndescription: >-\n  How to structure a node body. Use before writing any node/comment body longer than a couple of lines.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Body authoring\n\nFull instructions the index must NOT contain.\n`,
     );
     writeSkillMd(
       skillsDir,
       "petbox-write-economy",
-      "---\nname: petbox-write-economy\ndescription: >-\n  Pay for the change. Use before any tasks_upsert call whose body is more than a few lines.\n---\n\n# Write economy\n\nFull instructions the index must NOT contain.\n",
+      `---\nname: petbox-write-economy\ndescription: >-\n  Pay for the change. Use before any tasks_upsert call whose body is more than a few lines.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Write economy\n\nFull instructions the index must NOT contain.\n`,
     );
 
     const index = buildAutoSkillsIndex(root)!;

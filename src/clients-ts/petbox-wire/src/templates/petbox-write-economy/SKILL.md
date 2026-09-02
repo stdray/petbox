@@ -8,6 +8,7 @@ description: >-
   existing body), why raw UTF-8 beats \uXXXX escaping, the bodyLen read contract — and, just as
   important, the cases where none of this is worth the extra call.
 petbox: managed
+petbox-digest: auto
 ---
 
 # Write economy: pay for the change, not the text

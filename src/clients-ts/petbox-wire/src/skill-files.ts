@@ -23,7 +23,16 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeArtifact } from "./apply-write.ts";
-import { hasPetboxMarker, PETBOX_MARKER_LINE, readArtifactState, type ArtifactState } from "./origin-marker.ts";
+import {
+  hasPetboxMarker,
+  isDeclaredManual,
+  PETBOX_DIGEST_KEY,
+  PETBOX_MARKER_LINE,
+  readArtifactState,
+  readDigestMode,
+  type ArtifactState,
+  type SkillDigestMode,
+} from "./origin-marker.ts";
 
 // Skill surfaces wire.ts writes rendered skill bodies into. opencode is intentionally absent: it
 // discovers skills through its Claude-compatible path (`.claude/skills/…`), and a second
@@ -42,15 +51,22 @@ export type SkillTemplateSpec = {
   dir: string;
   // Whether the template uses the {{WORKSPACE}} placeholder (only `petbox` does, for its UI URL).
   needsWorkspace: boolean;
+  // Invocation mode (spec: wire-skill-invocation-mode). "auto" = the agent is told about this
+  // skill unprompted, through the salience digest (buildAutoSkillsIndex below); "manual" = it is
+  // reachable only by an explicit `skill(name)` call. The registry value here is the DECLARED
+  // intent; the template's own frontmatter carries `petbox-digest: <mode>` and is what the
+  // digest actually reads on disk — the two are pinned together by a parity test
+  // (skill-files.test.ts), the same discipline PROJECT_SKILLS<->templates/ already has.
+  digestMode: SkillDigestMode;
 };
 
 // Every skill wire.ts renders into a freshly-wired project (see writeSkillFiles / wire.ts step 7).
 export const PROJECT_SKILLS: SkillTemplateSpec[] = [
-  { dir: "petbox", needsWorkspace: true },
-  { dir: "petbox-agent-factory", needsWorkspace: false },
-  { dir: "petbox-methodology", needsWorkspace: false },
-  { dir: "petbox-write-economy", needsWorkspace: false },
-  { dir: "petbox-node-authoring", needsWorkspace: false },
+  { dir: "petbox", needsWorkspace: true, digestMode: "auto" },
+  { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "auto" },
+  { dir: "petbox-methodology", needsWorkspace: false, digestMode: "auto" },
+  { dir: "petbox-write-economy", needsWorkspace: false, digestMode: "auto" },
+  { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto" },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has
@@ -59,17 +75,26 @@ export function renderSkillTemplate(tpl: string, project: string, workspace: str
   return tpl.replace(/\{\{PROJECT\}\}/g, project).replace(/\{\{WORKSPACE\}\}/g, workspace);
 }
 
-// What the PRE-marker template used to render, byte-for-byte, for the migration carve-out below.
-// The marker is the ONLY thing added to the templates by this fix (see module comment), so
-// stripping its exact line back out of a freshly rendered body reconstructs the legacy output —
-// no separate "old template" copy to keep in sync.
+// What the PRE-declaration template used to render, byte-for-byte, for the migration carve-out
+// below. The two declaration lines (`petbox: managed` from the clobber fix, `petbox-digest: …`
+// from the invocation-mode contract) are the ONLY things those two changes added to the
+// templates, so stripping both back out of a freshly rendered body reconstructs the legacy
+// output — no separate "old template" copy to keep in sync. Both must be stripped: a file
+// materialized by a pre-fix wire carries NEITHER, so leaving the digest line in would make the
+// comparison miss and a legitimate migration candidate would be refused instead.
 const MARKER_LINE_WITH_EOL = new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m");
+const DIGEST_LINE_WITH_EOL = new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+[ \\t]*\\r?\\n`, "m");
 function stripMarkerLine(rendered: string): string {
-  return rendered.replace(MARKER_LINE_WITH_EOL, "");
+  return rendered.replace(MARKER_LINE_WITH_EOL, "").replace(DIGEST_LINE_WITH_EOL, "");
 }
 
 export type SkillWriteOutcome =
   | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "migrated" }
+  // The project declared this path its own (`petbox: manual`). Left untouched — and this is a
+  // LEGAL outcome, not a conflict: it must never reach an exit code (spec:
+  // wire-skill-manual-declared-not-error). Distinct from "blocked", which is the undeclared
+  // foreign file the operator still has to sort out by hand.
+  | { readonly kind: "declared-manual"; readonly path: string }
   | { readonly kind: "blocked"; readonly path: string };
 
 // Write one rendered skill body to `absPath`, same clobber contract as apply-write.ts's
@@ -85,6 +110,12 @@ function writeSkillArtifact(absPath: string, rendered: string, legacyRendered: s
       existing = readFileSync(absPath, "utf8");
     } catch {
       existing = undefined; // unreadable — let writeArtifact's own guard classify it (blocked)
+    }
+    // Declared manual — the project owns this path. Checked BEFORE the migration carve-out and
+    // before writeArtifact, because both of those would otherwise write: nothing here may touch
+    // the file, and the caller must not treat the skip as a failure.
+    if (existing !== undefined && isDeclaredManual(existing)) {
+      return { kind: "declared-manual", path: absPath };
     }
     if (existing !== undefined && !hasPetboxMarker(existing) && existing === legacyRendered) {
       mkdirSync(dirname(absPath), { recursive: true });
@@ -143,6 +174,9 @@ export type SkillFileReport = {
 export function checkSkillFile(absPath: string, rendered: string | undefined): SkillFileReport {
   const state = readArtifactState(absPath);
   if (state === "absent") return { path: absPath, state, matchesTemplate: false };
+  // Declared manual: the kit does not render this path, so "does it match the template" is not a
+  // question that has an answer — never a drift report, never a foreign report.
+  if (state === "manual") return { path: absPath, state, matchesTemplate: "unknown" };
   if (rendered === undefined) return { path: absPath, state, matchesTemplate: "unknown" };
   if (state === "foreign") return { path: absPath, state, matchesTemplate: false };
   let content: string;
@@ -164,11 +198,15 @@ export function formatSkillFile(report: SkillFileReport): string {
       ? "not materialized"
       : report.state === "foreign"
         ? "BLOCKED — a foreign (non-PetBox) file sits here"
-        : "materialized (ours)";
+        : report.state === "manual"
+          ? "declared manual (`petbox: manual`) — the project owns this path"
+          : "materialized (ours)";
   const match =
-    report.matchesTemplate === "unknown"
-      ? " — template match unknown (workspace not resolved; run online to verify)"
-      : report.matchesTemplate
+    report.state === "manual"
+      ? " — left alone on purpose, not compared"
+      : report.matchesTemplate === "unknown"
+        ? " — template match unknown (workspace not resolved; run online to verify)"
+        : report.matchesTemplate
         ? " — matches the current template"
         : report.state === "ours"
           ? " — DRIFTED from the current template (re-run apply/wire to refresh)"
@@ -348,11 +386,17 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
 // petbox-* skill already follows) so it can never drift into a second copy of the skill's
 // content. The actual body still arrives lazily, through the untouched native `skill` tool.
 //
-// Scoped to `petbox*` skill directories only — the family opencode-plugin.ts is already
-// responsible for keeping current (the generic PROJECT_SKILLS templates, plus repo-native ones
-// like petbox-methodology-system that ship hand-written outside the template pipeline) — not
-// every skill on disk. Reads the MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}`
-// substitution, post any user edits), never re-renders a template.
+// Scoped by DECLARATION, not by directory name: a skill enters the digest iff its materialized
+// frontmatter says `petbox-digest: auto` (spec: wire-skill-invocation-mode). The earlier rule
+// — "directory name starts with petbox" — is gone, and it had to go: every delivered skill is
+// heading for a `petbox-*` name (work: petbox-skill-naming), after which the prefix separates
+// nothing. It was already wrong today — `petbox-methodology-system` is `petbox-` prefixed,
+// repo-native, and not in the kit's delivery at all, yet the prefix rule put it in every
+// opencode session's system prompt; a skill that exists to be called deliberately
+// (`comprehension-check`, `factory-run`) would join it the moment it is renamed. Reads the
+// MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}` substitution, post any user edits),
+// never re-renders a template — so a project can take a delivered skill out of its own digest
+// by editing one frontmatter line, without the kit knowing anything about it.
 
 const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
 
@@ -399,18 +443,20 @@ export function extractSkillTrigger(description: string): string {
 export type PetboxSkillTrigger = { readonly name: string; readonly trigger: string };
 
 /**
- * One trigger line per `petbox*`-named skill materialized under `<root>/.claude/skills/`, sorted
- * by directory name for a stable order. A skill whose description can't be parsed is skipped
+ * One trigger line per skill materialized under `<root>/.claude/skills/` whose frontmatter
+ * DECLARES `petbox-digest: auto`, sorted by directory name for a stable order. Every other
+ * skill on disk — declared `manual`, or carrying no declaration at all (a project's own skill,
+ * whatever it is named) — is out. A skill whose description can't be parsed is skipped too
  * (never injects a blank line). `[]` when the skills directory is absent (wire apply not run
  * yet) or empty — never throws (best-effort, same contract as every other opencode-plugin.ts
  * injector).
  */
-export function readPetboxSkillTriggers(root: string): PetboxSkillTrigger[] {
+export function readAutoDigestSkillTriggers(root: string): PetboxSkillTrigger[] {
   const dir = join(root, ".claude", "skills");
   let dirNames: string[];
   try {
     dirNames = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name.startsWith("petbox"))
+      .filter((e) => e.isDirectory())
       .map((e) => e.name)
       .sort();
   } catch {
@@ -420,11 +466,12 @@ export function readPetboxSkillTriggers(root: string): PetboxSkillTrigger[] {
   for (const name of dirNames) {
     try {
       const raw = readFileSync(join(dir, name, "SKILL.md"), "utf8");
+      if (readDigestMode(raw) !== "auto") continue; // declaration, never the directory name
       const description = extractSkillDescription(raw);
       if (!description) continue;
       out.push({ name, trigger: extractSkillTrigger(description) });
     } catch {
-      // missing/unreadable SKILL.md under a petbox* dir — skip it, best-effort
+      // missing/unreadable SKILL.md under a skill dir — skip it, best-effort
     }
   }
   return out;
@@ -438,7 +485,7 @@ export function readPetboxSkillTriggers(root: string): PetboxSkillTrigger[] {
  * it, lazily, same as always.
  */
 export function buildAutoSkillsIndex(root: string): string | null {
-  const triggers = readPetboxSkillTriggers(root);
+  const triggers = readAutoDigestSkillTriggers(root);
   if (triggers.length === 0) return null;
   const lines = triggers.map((t) => `- ${t.trigger} → \`${t.name}\``);
   return ["## PetBox skills — call `skill(name)` on match, don't browse first", "", ...lines].join("\n");
