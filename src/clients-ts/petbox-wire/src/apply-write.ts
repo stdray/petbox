@@ -25,20 +25,34 @@ import { dirname } from "node:path";
 import { hasPetboxMarker } from "./origin-marker.ts";
 
 export type WriteOutcome =
-  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" }
+  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "unchanged" }
   | { readonly kind: "blocked"; readonly path: string };
+
+export type WriteArtifactOptions = {
+  /** Compute and return the outcome WITHOUT touching the filesystem (task:
+   * kit-version-lands-everywhere-and-sweeps item 2 — a registry-wide `apply --all` must be able
+   * to preview outcomes across other people's project directories before writing anything).
+   * Never set by any existing caller; defaults to false, so a bare `writeArtifact(path, content)`
+   * behaves exactly as before, byte for byte. */
+  readonly dryRun?: boolean;
+};
 
 /**
  * Write one generated file to `absPath`.
  *  - Path does not exist → write it (reason "new").
  *  - Path exists and its frontmatter carries our origin marker → overwrite silently
- *    (reason "own") — this is the routine, expected re-apply case.
+ *    (reason "own", or "unchanged" in a dry run when the content is already byte-identical) —
+ *    this is the routine, expected re-apply case.
  *  - Path exists and does NOT carry our marker (a real file we did not create, or one we
  *    cannot even read) → refuse. Returns "blocked"; the file is left byte-for-byte untouched.
  * Never throws for the ordinary cases above (a directory-creation failure still throws — that
  * is a genuine environment error, not a clobber decision).
+ *
+ * `opts.dryRun: true` computes the SAME outcome (including the clobber-refusal check) but never
+ * calls mkdirSync/writeFileSync — the one place that distinction is made, so a preview run and a
+ * real run can never disagree about what would happen.
  */
-export function writeArtifact(absPath: string, content: string): WriteOutcome {
+export function writeArtifact(absPath: string, content: string, opts: WriteArtifactOptions = {}): WriteOutcome {
   const existed = existsSync(absPath);
   if (existed) {
     let existing: string;
@@ -52,6 +66,11 @@ export function writeArtifact(absPath: string, content: string): WriteOutcome {
     if (!hasPetboxMarker(existing)) {
       return { kind: "blocked", path: absPath };
     }
+    if (opts.dryRun) {
+      return { kind: "written", path: absPath, reason: existing === content ? "unchanged" : "own" };
+    }
+  } else if (opts.dryRun) {
+    return { kind: "written", path: absPath, reason: "new" };
   }
   mkdirSync(dirname(absPath), { recursive: true });
   writeFileSync(absPath, content, "utf8");
@@ -79,8 +98,11 @@ export type LegacyCleanupOutcome = "removed" | "kept-foreign" | "absent";
  *   - apply-orphans.ts's sweepOrphanArtifacts — a role that is GONE from the definition. No
  *     replacement exists or ever will; the file is a standing instruction to use a role that
  *     no longer exists. Runs as its own pass over the harness's agent directory.
+ *
+ * `dryRun: true` returns the same verdict ("removed" means "would be removed") without calling
+ * unlinkSync — same preview contract as writeArtifact's `opts.dryRun` above.
  */
-export function removeOwnedArtifact(absPath: string): LegacyCleanupOutcome {
+export function removeOwnedArtifact(absPath: string, opts: WriteArtifactOptions = {}): LegacyCleanupOutcome {
   if (!existsSync(absPath)) return "absent";
   let existing: string;
   try {
@@ -89,7 +111,7 @@ export function removeOwnedArtifact(absPath: string): LegacyCleanupOutcome {
     return "kept-foreign";
   }
   if (!hasPetboxMarker(existing)) return "kept-foreign";
-  unlinkSync(absPath);
+  if (!opts.dryRun) unlinkSync(absPath);
   return "removed";
 }
 
@@ -99,6 +121,6 @@ export function removeOwnedArtifact(absPath: string): LegacyCleanupOutcome {
  * migration has run once), "removed" when an owned leftover was deleted, "kept-foreign" when
  * something exists there that is NOT ours — left untouched, never deleted, never renamed.
  */
-export function cleanupLegacyArtifact(absPath: string): LegacyCleanupOutcome {
-  return removeOwnedArtifact(absPath);
+export function cleanupLegacyArtifact(absPath: string, opts: WriteArtifactOptions = {}): LegacyCleanupOutcome {
+  return removeOwnedArtifact(absPath, opts);
 }

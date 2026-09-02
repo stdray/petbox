@@ -16,7 +16,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -33,15 +33,19 @@ import {
   bannerBudgetWarnThresholdBytes,
   type BannerBudgetLeg,
   computeBannerBudgetLegs,
+  computeRegistryStatusRow,
   computeRosterState,
   formatBannerBudgetLeg,
   formatCanonLeg,
   formatDefinitionSource,
+  formatRegistryStatusRow,
   formatRoleModelSource,
   formatRosterState,
   resolveRoleModelSource,
   roleRelativePath,
 } from "./status.ts";
+import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { PROJECT_SKILLS, renderSkillTemplate } from "./skill-files.ts";
 import { readArtifactState } from "./origin-marker.ts";
 import type { RolesFile } from "./roles.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
@@ -582,4 +586,164 @@ test("CLI: unregistered, non-git cwd -> canon/skills report n/a, still exits 0",
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });
   }
+});
+
+// ---- registry-wide status (task kit-version-lands-everywhere-and-sweeps item 4) --------------
+
+const REGISTRY_STATUS_TEMPLATES_ROOT = join(import.meta.dirname, "templates");
+
+function writeFixtureSkill(root: string, dir: string, content: string): void {
+  const skillDir = join(root, ".claude", "skills", dir);
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, "SKILL.md"), content, "utf8");
+}
+
+test("computeRegistryStatusRow: missing directory -> verdict 'missing-dir', every skill counted missing", () => {
+  const dir = freshDir("petbox-registry-status-missing-");
+  rmSync(dir, { recursive: true, force: true }); // the whole point: it must NOT exist
+  const row = computeRegistryStatusRow({ prefix: dir, project: "p", envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+  assert.equal(row.verdict, "missing-dir");
+  assert.equal(row.presentSkills, 0);
+  assert.equal(row.missingSkills.length, PROJECT_SKILLS.length);
+});
+
+test("computeRegistryStatusRow: every skill materialized and byte-identical to its template -> verdict 'ok'", () => {
+  const dir = freshDir("petbox-registry-status-ok-");
+  try {
+    const project = "registry-status-ok-project";
+    for (const spec of PROJECT_SKILLS) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      // needsWorkspace templates render fine with "" — computeRegistryStatusRow itself never
+      // compares them (rendered stays undefined for those), so any marker-bearing content there
+      // that isn't foreign is enough for "present"; using the real render keeps this fixture
+      // honest either way.
+      const rendered = renderSkillTemplate(tpl, project, "");
+      writeFixtureSkill(dir, spec.dir, rendered);
+    }
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "ok", JSON.stringify(row));
+    assert.equal(row.presentSkills, PROJECT_SKILLS.length);
+    assert.deepEqual(row.missingSkills, []);
+    assert.deepEqual(row.driftedSkills, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeRegistryStatusRow: a materialized skill that no longer matches its template -> verdict 'stale', named in driftedSkills", () => {
+  const dir = freshDir("petbox-registry-status-drift-");
+  try {
+    const project = "registry-status-drift-project";
+    for (const spec of PROJECT_SKILLS) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      const rendered = renderSkillTemplate(tpl, project, "");
+      const nonWorkspace = !spec.needsWorkspace;
+      writeFixtureSkill(dir, spec.dir, nonWorkspace ? rendered + "\nstale extra line\n" : rendered);
+    }
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "stale");
+    // Every non-workspace skill was mutated, so every one of them must be named as drifted.
+    const expectedDrifted = PROJECT_SKILLS.filter((s) => !s.needsWorkspace).map((s) => s.dir).sort();
+    assert.deepEqual([...row.driftedSkills].sort(), expectedDrifted);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeRegistryStatusRow: a skill never materialized -> named in missingSkills, verdict 'stale'", () => {
+  const dir = freshDir("petbox-registry-status-partial-");
+  try {
+    const project = "registry-status-partial-project";
+    const specs = PROJECT_SKILLS.slice(1); // skip the first entry entirely
+    for (const spec of specs) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+    }
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "stale");
+    assert.deepEqual(row.missingSkills, [PROJECT_SKILLS[0]!.dir]);
+    assert.equal(row.presentSkills, specs.length);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeRegistryStatusRow: a foreign (non-PetBox) file at a skill path -> counted present but named in foreignPaths, verdict 'stale'", () => {
+  const dir = freshDir("petbox-registry-status-foreign-");
+  try {
+    const project = "registry-status-foreign-project";
+    const [foreignSpec, ...rest] = PROJECT_SKILLS;
+    writeFixtureSkill(dir, foreignSpec!.dir, "# someone else's file, no petbox marker at all\n");
+    for (const spec of rest) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+    }
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "stale");
+    assert.equal(row.foreignPaths.length, 1);
+    assert.ok(row.foreignPaths[0]!.includes(foreignSpec!.dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeRegistryStatusRow: a legacy pre-rename skill dir still present -> named in legacyLeftovers, verdict 'stale'", () => {
+  const dir = freshDir("petbox-registry-status-legacy-");
+  try {
+    const project = "registry-status-legacy-project";
+    const specWithLegacy = PROJECT_SKILLS.find((s) => (s.legacyDirs?.length ?? 0) > 0);
+    assert.ok(specWithLegacy, "expected at least one PROJECT_SKILLS entry with legacyDirs to exercise this");
+    for (const spec of PROJECT_SKILLS) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+    }
+    // Plant the pre-rename leftover the sweep is supposed to have removed but didn't.
+    writeFixtureSkill(dir, specWithLegacy!.legacyDirs![0]!, `${PETBOX_MARKER_LINE}\nstale legacy copy\n`);
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "stale");
+    assert.equal(row.legacyLeftovers.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("formatRegistryStatusRow: every verdict reads distinctly", () => {
+  const ok = formatRegistryStatusRow({
+    project: "p1",
+    dir: "/d1",
+    verdict: "ok",
+    presentSkills: 8,
+    totalSkills: 8,
+    missingSkills: [],
+    driftedSkills: [],
+    foreignPaths: [],
+    legacyLeftovers: [],
+  });
+  const stale = formatRegistryStatusRow({
+    project: "p2",
+    dir: "/d2",
+    verdict: "stale",
+    presentSkills: 6,
+    totalSkills: 8,
+    missingSkills: ["petbox-card-check"],
+    driftedSkills: ["petbox-methodology"],
+    foreignPaths: [],
+    legacyLeftovers: [],
+  });
+  const missing = formatRegistryStatusRow({
+    project: "p3",
+    dir: "/d3",
+    verdict: "missing-dir",
+    presentSkills: 0,
+    totalSkills: 8,
+    missingSkills: [],
+    driftedSkills: [],
+    foreignPaths: [],
+    legacyLeftovers: [],
+  });
+  assert.match(ok, /OK/);
+  assert.match(stale, /STALE/);
+  assert.match(stale, /petbox-card-check/);
+  assert.match(stale, /petbox-methodology/);
+  assert.match(missing, /MISSING DIRECTORY/);
 });

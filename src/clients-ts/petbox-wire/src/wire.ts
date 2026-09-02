@@ -118,6 +118,7 @@ import {
   buildSkillReports,
   describeWorkspaceProbeFailure,
   formatSkillFile,
+  PROJECT_SKILLS,
   probeWorkspace,
   writeSkillFiles,
   type SkillWriteResult,
@@ -127,6 +128,7 @@ import {
   bannerBudgetLegsOrUnreachable,
   bannerBudgetWarnThresholdBytes,
   formatBannerBudgetLeg,
+  runRegistryStatus,
   runStatus,
 } from "./status.ts";
 import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
@@ -139,7 +141,8 @@ import {
   WIRE_EXIT,
 } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
-import { resolveProject } from "./registry.ts";
+import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
+import { readRegistry, registryPath, resolveProject, type RegistryEntry } from "./registry.ts";
 import {
   canonicalAgentId,
   DEFAULT_ROLE_MODEL_SEED,
@@ -234,8 +237,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>]\n" +
     "       npx petbox-wire update\n" +
-    "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
-    "       npx petbox-wire status [--offline]\n" +
+    "       npx petbox-wire apply [--definition <key>] [--offline] [--all [--dry-run]]\n" +
+    "       npx petbox-wire status [--offline] [--all]\n" +
     "       npx petbox-wire doctor [--offline]\n" +
     "       npx petbox-wire layers [dir...]\n" +
     "       npx petbox-wire roles\n" +
@@ -290,6 +293,13 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             workspace probe failed, so skills were not refreshed). An INTENTIONAL skip stays 0:\n" +
     "             --offline and an unregistered directory are things you asked for. When 1 or 3 also\n" +
     "             apply they win the code; the skip still shows in the printed summary.\n" +
+    "             --all runs apply once per registered project (~/.petbox/projects.json) instead of\n" +
+    "             cwd only, with a per-project outcome line (written/unchanged/refused/missing-dir/\n" +
+    "             error) and an aggregate exit code (the strongest across every project). A registry\n" +
+    "             entry whose directory no longer exists is reported and skipped, never aborts the\n" +
+    "             rest of the sweep. --dry-run computes and prints every outcome WITHOUT writing or\n" +
+    "             deleting anything — use it before a bare `--all`, which writes into every registered\n" +
+    "             project's working directory, including ones with uncommitted changes.\n" +
     "status       Print FACT, not a verdict: per declared role x harness, the materialized artifact\n" +
     "             path, its bound model, WHERE that model came from (roster = ~/.petbox/roles.json;\n" +
     "             seed = DEFAULT_ROLE_MODEL_SEED preview, roles.json absent, nothing written; none =\n" +
@@ -300,7 +310,13 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             (materialized? byte-identical to the current template?). Reads the SAME resolvers\n" +
     "             apply/doctor use; never gates, never writes. --offline skips the definition/canon/\n" +
     "             skill-template network calls (materialization-only facts still print). Always exits\n" +
-    "             0 unless status itself crashes — it asserts nothing about correctness.\n" +
+    "             0 unless status itself crashes — it asserts nothing about correctness. Also prints\n" +
+    "             whether npm's published 'latest' kit is behind this checkout's local `main` (best-\n" +
+    "             effort — skipped outside a git checkout with a resolvable `main` ref).\n" +
+    "             --all: one screen across the WHOLE registry instead of cwd only — one row per\n" +
+    "             registered project (skill composition vs. the currently installed kit's templates,\n" +
+    "             and what's wrong), plus the same npm-wire tag line once at the top. Read-only\n" +
+    "             (never writes), safe to run against every project in the registry.\n" +
     "doctor       Resolve the agent definition the same way apply does (server → LKG cache → built-in\n" +
     "             default), then run the truthfulness gate for every known harness against THAT\n" +
     "             definition, with the harness's local binding fed into the gate — so a roles.json id\n" +
@@ -604,6 +620,25 @@ async function runDoctor(argv: string[]): Promise<void> {
     }
   }
 
+  // npm-wire tag drift (task kit-version-lands-everywhere-and-sweeps item 3): a merge to `main`
+  // does NOT publish the kit — only a pushed `npm-wire` tag does (.github/workflows/ci.yml). That
+  // gap used to be silent: nothing told an operator main had moved on without the tag following.
+  // Best-effort/skip-by-default (npm-wire-drift.ts) — only fires when this cwd is a git checkout
+  // with a local `main` ref AND the npm registry answers; every other machine gets a clean skip,
+  // never a failure, never touching the exit code (informational, like every other doctor drift
+  // check). Never gated on the skill/banner checks' `resolvedForSkillCheck` — this one needs no
+  // registered project, only local git + a public network call.
+  if (offline) {
+    log("doctor: npm-wire tag check skipped (--offline).");
+  } else {
+    const npmDrift = await checkNpmWireDrift(process.cwd());
+    if (npmDrift.status === "ahead" || npmDrift.status === "diverged") {
+      console.error(`doctor: ${formatNpmWireDrift(npmDrift)}`);
+    } else {
+      log(`doctor: ${formatNpmWireDrift(npmDrift)}`);
+    }
+  }
+
   // Session-banner budget check (card canon-write-gate-banner-budget) — informational only, same
   // skip taxonomy as the drift checks above (--offline / unregistered project / unreachable
   // server all degrade to a named skip, never a failure, never touching the exit code). Runs the
@@ -736,8 +771,21 @@ async function performApply(opts: {
   definitionKey: string;
   offline: boolean;
   label: string;
+  /** Directory apply resolves/writes against. Defaults to process.cwd() — the single-project
+   * `apply`/`wire` path. `apply --all` (runApplyAll below) passes each registry entry's own
+   * directory here instead, so a registry sweep never depends on this process's cwd. */
+  cwd?: string;
+  /** Compute and print every outcome WITHOUT writing/deleting anything (task:
+   * kit-version-lands-everywhere-and-sweeps item 2's "show what would be done first" gate for a
+   * registry-wide sweep across OTHER people's project directories). Flows into writeArtifact,
+   * removeOwnedArtifact/cleanupLegacyArtifact, sweepOrphanArtifacts and writeSkillFiles — the
+   * same primitives the real write path uses, so a preview and a real run can never disagree.
+   * Defaults to false; every existing single-project caller is unaffected. */
+  dryRun?: boolean;
 }): Promise<ApplyRunResult> {
-  const { root, via } = resolveApplyRoot(process.cwd());
+  const cwd = opts.cwd ?? process.cwd();
+  const dryRun = opts.dryRun ?? false;
+  const { root, via } = resolveApplyRoot(cwd);
   let definition: AgentDefinition;
   let resolved: ResolvedAgentDefinition;
   let rolesData: RolesFile;
@@ -745,7 +793,7 @@ async function performApply(opts: {
     resolved = await resolveApplyDefinition({
       offline: opts.offline,
       definitionKey: opts.definitionKey,
-      cwd: process.cwd(),
+      cwd,
       label: opts.label,
     });
     definition = resolved.definition;
@@ -828,25 +876,29 @@ async function performApply(opts: {
     let clobberedThisHarness = false;
     for (const file of plan.files) {
       const abs = join(root, file.relativePath);
-      const outcome = writeArtifact(abs, file.content);
+      const outcome = writeArtifact(abs, file.content, { dryRun });
       if (outcome.kind === "blocked") {
         clobberBlocked = true;
         clobberedThisHarness = true;
         clobberedPaths.push(abs);
         console.error(
-          `${opts.label}: REFUSED to overwrite ${abs} — it exists and does not carry the PetBox ` +
-            `origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, not ` +
-            `one apply wrote before. Nothing was touched. Move it aside (or rename the role) and ` +
-            `re-run apply.`,
+          `${opts.label}: ${dryRun ? "would refuse" : "REFUSED"} to overwrite ${abs} — it exists and does not ` +
+            `carry the PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
+            `not one apply wrote before. ${dryRun ? "Nothing would be touched." : "Nothing was touched."} Move ` +
+            `it aside (or rename the role) and re-run apply.`,
         );
         continue;
       }
-      log(
-        `${opts.label}: wrote ${abs}` +
-          (outcome.reason === "own" ? " (updated in place — ours)" : ""),
-      );
-      written++;
-      writtenThisHarness++;
+      if (outcome.reason !== "unchanged") {
+        log(
+          `${opts.label}: ${dryRun ? "would write" : "wrote"} ${abs}` +
+            (outcome.reason === "own" ? " (updated in place — ours)" : ""),
+        );
+        written++;
+        writtenThisHarness++;
+      } else {
+        log(`${opts.label}: ${abs} unchanged (already matches)`);
+      }
 
       // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
       // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
@@ -854,9 +906,12 @@ async function performApply(opts: {
       // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
       if (file.legacyRelativePath !== file.relativePath) {
         const legacyAbs = join(root, file.legacyRelativePath);
-        const legacyOutcome = cleanupLegacyArtifact(legacyAbs);
+        const legacyOutcome = cleanupLegacyArtifact(legacyAbs, { dryRun });
         if (legacyOutcome === "removed") {
-          log(`${opts.label}: removed legacy unprefixed ${legacyAbs} (ours, superseded by ${abs})`);
+          log(
+            `${opts.label}: ${dryRun ? "would remove" : "removed"} legacy unprefixed ${legacyAbs} ` +
+              `(ours, superseded by ${abs})`,
+          );
         } else if (legacyOutcome === "kept-foreign") {
           log(
             `${opts.label}: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
@@ -870,11 +925,11 @@ async function performApply(opts: {
     // gate is still declared and its file is never a candidate. Removal still requires our
     // origin marker, so a user's own file in the petbox-* namespace is reported and kept.
     if (orphanSweepSource) {
-      for (const orphan of sweepOrphanArtifacts(root, harness, definition)) {
+      for (const orphan of sweepOrphanArtifacts(root, harness, definition, { dryRun })) {
         if (orphan.outcome === "removed") {
           log(
-            `${opts.label}: removed ${orphan.path} — its role is no longer in definition ` +
-              `"${definition.name}" (orphan artifact, ours by origin marker)`,
+            `${opts.label}: ${dryRun ? "would remove" : "removed"} ${orphan.path} — its role is no longer in ` +
+              `definition "${definition.name}" (orphan artifact, ours by origin marker)`,
           );
         } else {
           log(
@@ -949,8 +1004,10 @@ async function performApply(opts: {
         join(HERE, "templates"),
         resolvedForSkills.project,
         probe.workspace,
+        PROJECT_SKILLS,
+        { dryRun },
       );
-      const blockedSkillPaths = reportSkillOutcomes(opts.label, skillOutcomes);
+      const blockedSkillPaths = reportSkillOutcomes(opts.label, skillOutcomes, dryRun);
       if (blockedSkillPaths.length > 0) {
         clobberBlocked = true;
         clobberedPaths.push(...blockedSkillPaths);
@@ -1026,11 +1083,15 @@ async function performApply(opts: {
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
+  let all = false;
+  let dryRun = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
     if (a === "--help" || a === "-h") usage(0);
     else if (a === "--offline") offline = true;
+    else if (a === "--all") all = true;
+    else if (a === "--dry-run") dryRun = true;
     else if (a === "--definition") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) {
@@ -1050,19 +1111,165 @@ async function runApply(argv: string[]): Promise<void> {
       usage(WIRE_EXIT.usage);
     }
   }
+  // --dry-run outside --all is legal (previews the single cwd project) but --all without
+  // --dry-run on the FULL registry is the exact trap the card names: a mass write into other
+  // people's working directories, some of which may carry uncommitted work. Never refuse it —
+  // the owner may genuinely want that — but never let it happen quietly either: say so loudly
+  // before touching anything, once, above the per-project lines.
+  if (all && !dryRun) {
+    log(
+      "apply --all: WRITING to every registered project directory (no --dry-run). " +
+        "Re-run with --dry-run first if you have not already previewed this.",
+    );
+  }
 
   // Seed a fresh machine's roster BEFORE compiling — apply now refuses any declared role with
   // no local binding (reserve-unbound-inherits-session-model), so a bare `apply` on a machine
   // that never ran full `wire` needs this too, not just wire's own step 11 (see
   // seedDefaultRoleBindingsIfMissing's doc comment). No-op when roles.json already exists.
   seedDefaultRoleBindingsIfMissing("apply");
-  const result = await performApply({ definitionKey, offline, label: "apply" });
+
+  if (all) {
+    const code = await runApplyAll({ definitionKey, offline, dryRun });
+    exitWith(code);
+    return;
+  }
+
+  const result = await performApply({ definitionKey, offline, dryRun, label: "apply" });
   // Same libuv race doctor/status hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
   // src\win\async.c): performApply's definition resolve + workspace probe are live network
   // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
   // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
   // own message just printed. exitWith (wire-exit.ts) is the one sanctioned spelling of the fix.
   exitWith(result.code);
+}
+
+// One row of `apply --all`'s per-project outcome — the "built-in row" for the card's requirement
+// that a mass apply reports a understandable per-project verdict, not just an aggregate exit
+// code. `outcome` is a closed enum so a caller (and a test) can branch on it without parsing
+// prose: "written" — at least one file was written/would be written and nothing was refused;
+// "unchanged" — the project was reached and every file already matched (a true no-op, dry or
+// not); "refused" — at least one clobber refusal (see ApplyRunResult.hardError); "missing" — the
+// registry's directory no longer exists on disk (a stale entry — this must NEVER abort the rest
+// of the sweep, per the card); "error" — performApply threw something neither of the above
+// covers (a genuinely unexpected failure for THIS project only).
+export type RegistryApplyOutcome = "written" | "unchanged" | "refused" | "missing" | "error";
+
+export type RegistryApplyRow = {
+  readonly project: string;
+  readonly dir: string;
+  readonly outcome: RegistryApplyOutcome;
+  readonly detail: string;
+  readonly code: number;
+};
+
+/**
+ * Run `performApply` once per entry in the global registry (~/.petbox/projects.json), instead of
+ * once against the caller's own cwd. This is the "прогон по всему реестру" the card asks for:
+ * one call sweeps every registered project directory, with a per-project outcome line, and a
+ * directory that no longer exists on disk is reported and skipped — it never aborts the rest of
+ * the run (bug this closes: there was no such command at all; `apply` only ever knew its own
+ * cwd).
+ *
+ * Never throws: an unexpected failure for ONE registry entry is caught and reported as that
+ * entry's own "error" row, exactly like the missing-directory case, so one bad entry can never
+ * take down the sweep for the other seven. The RETURNED exit code is the strongest across every
+ * row (wire-exit.ts's strongestExitCode) — a hard failure on entry 3 of 8 still shows every
+ * other project's real outcome, but the process exit code still reflects it.
+ */
+async function runApplyAll(opts: {
+  readonly definitionKey: string;
+  readonly offline: boolean;
+  readonly dryRun: boolean;
+}): Promise<number> {
+  const entries = readRegistry();
+  const label = opts.dryRun ? "apply --all --dry-run" : "apply --all";
+  log(`${label}: ${entries.length} registered project(s) in ${registryPath()}`);
+  const rows: RegistryApplyRow[] = [];
+  for (const entry of entries) {
+    rows.push(await applyToRegistryEntry(entry, opts));
+  }
+
+  log("");
+  log(`${label}: per-project outcome:`);
+  for (const row of rows) {
+    log(`${label}:   ${row.project} (${row.dir}) — ${row.outcome}: ${row.detail}`);
+  }
+  const written = rows.filter((r) => r.outcome === "written").length;
+  const unchanged = rows.filter((r) => r.outcome === "unchanged").length;
+  const refused = rows.filter((r) => r.outcome === "refused").length;
+  const missing = rows.filter((r) => r.outcome === "missing").length;
+  const errored = rows.filter((r) => r.outcome === "error").length;
+  log(
+    `${label}: summary — ${rows.length} project(s): written=${written} unchanged=${unchanged} ` +
+      `refused=${refused} missing=${missing} error=${errored}.`,
+  );
+
+  const code = strongestExitCode(...rows.map((r) => r.code));
+  return code;
+}
+
+async function applyToRegistryEntry(
+  entry: RegistryEntry,
+  opts: { readonly definitionKey: string; readonly offline: boolean; readonly dryRun: boolean },
+): Promise<RegistryApplyRow> {
+  const dir = entry.prefix;
+  if (!existsSync(dir)) {
+    // A registry entry whose directory is gone (moved, deleted, a worktree cleaned up) must
+    // never fail the whole sweep — the card is explicit about this trap. Reported, skipped, and
+    // counted as "ok" for exit-code purposes (WIRE_EXIT.ok): a stale registry row is a cleanup
+    // item for the owner, not a defect in THIS run.
+    return {
+      project: entry.project,
+      dir,
+      outcome: "missing",
+      detail: `directory no longer exists — skipped (registry entry is stale)`,
+      code: WIRE_EXIT.ok,
+    };
+  }
+  try {
+    const result = await performApply({
+      definitionKey: opts.definitionKey,
+      offline: opts.offline,
+      dryRun: opts.dryRun,
+      cwd: dir,
+      label: `apply[${entry.project}]`,
+    });
+    if (result.hardError) {
+      return {
+        project: entry.project,
+        dir,
+        outcome: "refused",
+        detail:
+          result.clobberBlockedPaths.length > 0
+            ? `refused to overwrite ${result.clobberBlockedPaths.length} non-PetBox file(s)`
+            : `hard failure (see log lines above)`,
+        code: result.code,
+      };
+    }
+    if (result.written === 0) {
+      return { project: entry.project, dir, outcome: "unchanged", detail: "no changes", code: result.code };
+    }
+    return {
+      project: entry.project,
+      dir,
+      outcome: "written",
+      detail: `${opts.dryRun ? "would write" : "wrote"} ${result.written} file(s)`,
+      code: result.code,
+    };
+  } catch (e) {
+    // Genuinely unexpected — performApply itself already catches its own known failure modes and
+    // returns a result record; reaching here means something outside that contract threw (e.g. a
+    // filesystem permission error on THIS specific directory). One entry's surprise must not cost
+    // the rest of the registry its results.
+    return {
+      project: entry.project,
+      dir,
+      outcome: "error",
+      detail: e instanceof Error ? e.message : String(e),
+      code: WIRE_EXIT.hard,
+    };
+  }
 }
 
 // Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
@@ -1701,6 +1908,54 @@ function kitFingerprint(root: string): string {
 
 type CopyKitResult = { before: string; after: string; skipped: boolean };
 
+// Orphan cleanup — STABLE must be an EXACT MIRROR of HERE at EVERY depth, never a UNION. cpSync
+// overwrites but never DELETES, so an entry the shipped kit dropped would keep standing next to
+// its NEWER peers. This used to compare only the TOP-LEVEL of STABLE against the top level of
+// HERE, which caught a whole file/dir vanishing (e.g. the retired prompt-rag.ts) but missed
+// anything ONE LEVEL DEEPER — a subdirectory that survives (e.g. `templates/`) while entries
+// INSIDE it are renamed or dropped, so the diff never even looked inside.
+//
+// Bug caught live (task: kit-version-lands-everywhere-and-sweeps, measured 2026-09-02): after
+// `templates/analysis-workspace` and `templates/factory-run` were renamed to
+// `templates/petbox-analysis-workspace` / `templates/petbox-factory-run`, `update` left the OLD
+// directories standing in ~/.petbox/wire/templates/ right next to the new ones — both complets at
+// once, forever, because `templates` itself still existed on both sides so the old top-level-only
+// diff never recursed into it.
+//
+// The fix: recurse the same "not on the other side → remove" rule at every directory level, not
+// just the root. STABLE holds nothing but a verbatim copy of HERE, so this is still "belongs to
+// the kit" by LOCATION, not a name guess — the same reasoning the top-level version already
+// relied on, just no longer stopping one level too early.
+function pruneStaleMirrorEntries(hereDir: string, stableDir: string, label: string): void {
+  if (!existsSync(stableDir)) return;
+  const hereEntries = existsSync(hereDir) ? new Set(readdirSync(hereDir)) : new Set<string>();
+  for (const name of readdirSync(stableDir)) {
+    const stableAbs = join(stableDir, name);
+    if (!hereEntries.has(name)) {
+      rmSync(stableAbs, { recursive: true, force: true });
+      log(
+        `${label} orphan cleanup: removed ${relative(STABLE, stableAbs).replace(/\\/g, "/")} ` +
+          `from ${STABLE} (not shipped by this kit).`,
+      );
+      continue;
+    }
+    const hereAbs = join(hereDir, name);
+    let hereIsDir: boolean;
+    let stableIsDir: boolean;
+    try {
+      hereIsDir = statSync(hereAbs).isDirectory();
+      stableIsDir = statSync(stableAbs).isDirectory();
+    } catch {
+      continue; // raced away between readdir and stat — cpSync below will settle it
+    }
+    // Both sides agree it's a directory → recurse to catch renames/drops nested inside it
+    // (this is the templates/ case). A file<->dir type flip is left to cpSync's overwrite.
+    if (hereIsDir && stableIsDir) {
+      pruneStaleMirrorEntries(hereAbs, stableAbs, label);
+    }
+  }
+}
+
 // Copy the running kit (HERE — an npx cache dir or a checkout's src/) into the stable location
 // (~/.petbox/wire/), overwriting. Every global hook/plugin link is computed from STABLE, so the
 // wiring keeps working after npx evicts its cache or a checkout moves. Copies the whole src dir
@@ -1713,19 +1968,9 @@ function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
     return { before, after: before, skipped: true };
   }
   mkdirSync(STABLE, { recursive: true });
-  // Orphan cleanup — STABLE must be an EXACT MIRROR of HERE, never a UNION. cpSync overwrites but
-  // never DELETES, so a file the shipped kit dropped (e.g. the retired prompt-rag.ts / mcp-client.ts)
-  // would keep standing next to its NEWER peers → version skew: a leftover module importing a symbol
-  // the current registry.ts no longer exports → SyntaxError at hook time. Remove every top-level
-  // STABLE entry absent from HERE before copying, so the install can only ever match the shipped kit.
-  // (The settings-side half of that removal is pruneLegacyPromptRagHooks — files AND hooks must go.)
-  const hereEntries = new Set(readdirSync(HERE));
-  for (const name of readdirSync(STABLE)) {
-    if (!hereEntries.has(name)) {
-      rmSync(join(STABLE, name), { recursive: true, force: true });
-      log(`${label} orphan cleanup: removed ${name} from ${STABLE} (not shipped by this kit).`);
-    }
-  }
+  // (The settings-side half of this removal is pruneLegacyPromptRagHooks — files AND hooks must
+  // go.) See pruneStaleMirrorEntries's own comment for why this now recurses.
+  pruneStaleMirrorEntries(HERE, STABLE, label);
   cpSync(HERE, STABLE, { recursive: true, force: true });
   const after = kitFingerprint(STABLE);
   log(`${label} stable copy: kit installed to ${STABLE} (from ${HERE}); hash ${before} → ${after}.`);
@@ -1836,15 +2081,15 @@ function mergeMcpServer(path: string, name: string, server: unknown): void {
 // "blocked" ones (bug: skill-files-clobber-and-apply-skips) — a real, non-PetBox file already
 // sat at that path and was left byte-for-byte untouched; the caller decides what a non-empty
 // return does to its own exit code.
-function reportSkillOutcomes(label: string, result: SkillWriteResult): string[] {
+function reportSkillOutcomes(label: string, result: SkillWriteResult, dryRun: boolean = false): string[] {
   const blocked: string[] = [];
   for (const outcome of result.writes) {
     if (outcome.kind === "blocked") {
       blocked.push(outcome.path);
       console.error(
-        `${label}: REFUSED to overwrite skill ${outcome.path} — it exists and does not carry the ` +
-          `PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
-          `not one wire/apply wrote before. Nothing was touched.`,
+        `${label}: ${dryRun ? "would refuse" : "REFUSED"} to overwrite skill ${outcome.path} — it exists and ` +
+          `does not carry the PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a ` +
+          `real file, not one wire/apply wrote before. ${dryRun ? "Nothing would be touched." : "Nothing was touched."}`,
       );
     } else if (outcome.kind === "declared-manual") {
       // NOT a refusal and NOT an error (spec: wire-skill-manual-declared-not-error): the project
@@ -1854,8 +2099,13 @@ function reportSkillOutcomes(label: string, result: SkillWriteResult): string[] 
         `${label}: left skill ${outcome.path} alone — declared \`petbox: manual\`, the project ` +
           `owns this path. Nothing was written.`,
       );
+    } else if (outcome.reason === "unchanged") {
+      log(`${label}: skill ${outcome.path} unchanged (already matches)`);
     } else {
-      log(`${label}: wrote ${outcome.path}` + (outcome.reason !== "new" ? ` (${outcome.reason})` : ""));
+      log(
+        `${label}: ${dryRun ? "would write" : "wrote"} ${outcome.path}` +
+          (outcome.reason !== "new" ? ` (${outcome.reason})` : ""),
+      );
     }
   }
   // Pre-rename sweep (bug: wire-skill-cleanup-on-replace) — same wording and same rules as the
@@ -1865,7 +2115,8 @@ function reportSkillOutcomes(label: string, result: SkillWriteResult): string[] 
   for (const cleanup of result.cleanups) {
     if (cleanup.outcome === "removed") {
       log(
-        `${label}: removed legacy skill ${cleanup.path} (ours, superseded by the current name)` +
+        `${label}: ${dryRun ? "would remove" : "removed"} legacy skill ${cleanup.path} ` +
+          `(ours, superseded by the current name)` +
           (cleanup.removedDir ? " — and its now-empty directory" : ""),
       );
     } else if (cleanup.outcome === "kept-foreign") {
@@ -2321,15 +2572,21 @@ async function main(): Promise<void> {
   }
   if (isStatusCommand(argv)) {
     let offline = false;
+    let all = false;
     for (let i = 1; i < argv.length; i++) {
       const a = argv[i];
       if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
       if (a === "--help" || a === "-h") usage(0);
       else if (a === "--offline") offline = true;
+      else if (a === "--all") all = true;
       else {
         console.error(`status: unexpected argument: ${a}`);
         usage(WIRE_EXIT.usage);
       }
+    }
+    if (all) {
+      await runRegistryStatus({ offline, cwd: process.cwd() });
+      return;
     }
     await runStatus({ offline, cwd: process.cwd() });
     return;

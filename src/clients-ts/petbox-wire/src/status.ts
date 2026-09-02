@@ -31,7 +31,7 @@
 //
 // Plain TS for native node type-stripping: zero deps.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -46,9 +46,10 @@ import { CANON_BODY_BUDGET_CHARS, fetchCanonBlock, fetchCanonLegs, type CanonLeg
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
+import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
 import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
-import { resolveProject, type ResolvedProject } from "./registry.ts";
+import { readRegistry, resolveProject, type RegistryEntry, type ResolvedProject } from "./registry.ts";
 import {
   DEFAULT_ROLE_MODEL_SEED,
   loadRoles,
@@ -68,6 +69,7 @@ import {
   formatSkillFile,
   PROJECT_SKILLS,
   probeWorkspace,
+  renderSkillTemplate,
   SKILL_SURFACES,
 } from "./skill-files.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
@@ -439,6 +441,17 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
 
   const resolvedProject: ResolvedProject | null = resolveProject(root);
 
+  // npm-wire tag drift (task kit-version-lands-everywhere-and-sweeps item 3): best-effort/skip
+  // outside a git checkout with a local `main` ref — see npm-wire-drift.ts's header. Printed
+  // once, up front, next to `root=` — it is a machine-wide fact (which kit version npm ships),
+  // not a per-project one.
+  if (opts.offline) {
+    log("status: npm-wire tag check skipped (--offline).");
+  } else {
+    const npmDrift = await checkNpmWireDrift(root);
+    log(`status: ${formatNpmWireDrift(npmDrift)}`);
+  }
+
   // ---- pillar 1: definition ----
   const resolvedDef = await resolveAgentDefinitionWithLkg({
     offline: opts.offline,
@@ -542,6 +555,147 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   // reproducible crash on a hard process.exit(). Set exitCode + return, letting Node drain the
   // event loop naturally, after unref'ing whatever handle is still mid-close (see wire.ts's
   // doctor exit points / hook-drain.ts for the identical fix).
+  process.exitCode = WIRE_EXIT.ok;
+  unrefLingeringHandles();
+}
+
+// ---- registry-wide status (task kit-version-lands-everywhere-and-sweeps item 4) --------------
+//
+// The owner's actual question — "is everything on the same, latest scheme" — is about the WHOLE
+// registry, not one project someone happens to be sitting in. `status` (above) answers that one
+// project deeply; this answers every registered project SHALLOWLY, one screen, one row per
+// project: skill composition vs. the CURRENTLY installed kit's templates, and what's wrong if
+// anything. Deliberately network-free (buildSkillReports/checkSkillFile with `workspace:
+// undefined` — every PROJECT_SKILLS template except `petbox` renders fully from `project` alone,
+// so a byte-compare works without a live probe; `petbox` itself is skipped from the byte compare
+// and just checked for presence) — this has to be safe to run against SIX OTHER PEOPLE'S working
+// directories without touching their network or their disk (read-only, always).
+
+export type RegistryStatusRow = {
+  readonly project: string;
+  readonly dir: string;
+  readonly verdict: "ok" | "stale" | "missing-dir";
+  readonly presentSkills: number;
+  readonly totalSkills: number;
+  readonly missingSkills: readonly string[];
+  readonly driftedSkills: readonly string[];
+  readonly foreignPaths: readonly string[];
+  readonly legacyLeftovers: readonly string[];
+};
+
+/** One row's read-only verdict for `entry`. Never throws, never writes — an unreadable template
+ * or a missing directory degrades the row, it never aborts the caller's loop over the rest of
+ * the registry (same "one bad entry can't sink the sweep" rule `apply --all` follows). */
+export function computeRegistryStatusRow(entry: RegistryEntry, templatesRoot: string = TEMPLATES_ROOT): RegistryStatusRow {
+  const dir = entry.prefix;
+  const totalSkills = PROJECT_SKILLS.length;
+  if (!existsSync(dir)) {
+    return {
+      project: entry.project,
+      dir,
+      verdict: "missing-dir",
+      presentSkills: 0,
+      totalSkills,
+      missingSkills: PROJECT_SKILLS.map((s) => s.dir),
+      driftedSkills: [],
+      foreignPaths: [],
+      legacyLeftovers: [],
+    };
+  }
+  const missingSkills: string[] = [];
+  const driftedSkills: string[] = [];
+  const foreignPaths: string[] = [];
+  const legacyLeftovers: string[] = [];
+  let presentSkills = 0;
+  for (const spec of PROJECT_SKILLS) {
+    let anyPresent = false;
+    let anyDrift = false;
+    let rendered: string | undefined;
+    if (!spec.needsWorkspace) {
+      try {
+        const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
+        rendered = renderSkillTemplate(tpl, entry.project, "");
+      } catch {
+        rendered = undefined; // this kit build no longer ships this template — treat as unknown
+      }
+    }
+    for (const surface of SKILL_SURFACES) {
+      const absPath = join(dir, ...surface, spec.dir, "SKILL.md");
+      const report = checkSkillFile(absPath, rendered);
+      if (report.state === "ours" || report.state === "manual") anyPresent = true;
+      if (report.state === "foreign") {
+        foreignPaths.push(absPath);
+        anyPresent = true; // materialized, just not something we can vouch for
+      }
+      if (report.state === "ours" && report.matchesTemplate === false) anyDrift = true;
+      for (const legacyDir of spec.legacyDirs ?? []) {
+        if (existsSync(join(dir, ...surface, legacyDir, "SKILL.md"))) {
+          legacyLeftovers.push(join(dir, ...surface, legacyDir, "SKILL.md"));
+        }
+      }
+    }
+    if (anyPresent) presentSkills++;
+    else missingSkills.push(spec.dir);
+    if (anyDrift) driftedSkills.push(spec.dir);
+  }
+  const verdict: "ok" | "stale" =
+    missingSkills.length === 0 && driftedSkills.length === 0 && foreignPaths.length === 0 && legacyLeftovers.length === 0
+      ? "ok"
+      : "stale";
+  return { project: entry.project, dir, verdict, presentSkills, totalSkills, missingSkills, driftedSkills, foreignPaths, legacyLeftovers };
+}
+
+export function formatRegistryStatusRow(row: RegistryStatusRow): string {
+  if (row.verdict === "missing-dir") {
+    return `${row.project} (${row.dir}) — MISSING DIRECTORY (stale registry entry)`;
+  }
+  const skillsCol = `${row.presentSkills}/${row.totalSkills} skills`;
+  if (row.verdict === "ok") {
+    return `${row.project} (${row.dir}) — OK, ${skillsCol}`;
+  }
+  const parts: string[] = [];
+  if (row.missingSkills.length > 0) parts.push(`missing: ${row.missingSkills.join(",")}`);
+  if (row.driftedSkills.length > 0) parts.push(`drifted: ${row.driftedSkills.join(",")}`);
+  if (row.foreignPaths.length > 0) parts.push(`foreign: ${row.foreignPaths.length} file(s)`);
+  if (row.legacyLeftovers.length > 0) parts.push(`legacy leftovers: ${row.legacyLeftovers.length} file(s)`);
+  return `${row.project} (${row.dir}) — STALE, ${skillsCol} (${parts.join("; ")})`;
+}
+
+/**
+ * `status --all`: one screen answering "is everything on the same, latest scheme" across the
+ * WHOLE registry (~/.petbox/projects.json), not just cwd. Prints the npm-wire tag check once
+ * (machine-wide fact, same as runStatus's own line), then one row per registered project. Never
+ * writes anything, never gates an exit code beyond WIRE_EXIT.ok — same "status asserts nothing,
+ * it reports" contract runStatus already carries; a stale/missing row is visible in the table,
+ * not in the process exit code (that would make `status --all` a gate, which is `doctor`'s job,
+ * not this command's — kept deliberately out of scope here per the card).
+ */
+export async function runRegistryStatus(opts: { readonly offline: boolean; readonly cwd: string }): Promise<void> {
+  const entries = readRegistry();
+  log(`status --all: ${entries.length} registered project(s) in ~/.petbox/projects.json`);
+
+  if (opts.offline) {
+    log("status --all: npm-wire tag check skipped (--offline).");
+  } else {
+    const npmDrift = await checkNpmWireDrift(opts.cwd);
+    log(`status --all: ${formatNpmWireDrift(npmDrift)}`);
+  }
+
+  log("");
+  log("status --all: project / skills / discrepancies (one row per registered project):");
+  const rows = entries.map((e) => computeRegistryStatusRow(e));
+  for (const row of rows) {
+    log(`status --all:   ${formatRegistryStatusRow(row)}`);
+  }
+
+  const ok = rows.filter((r) => r.verdict === "ok").length;
+  const stale = rows.filter((r) => r.verdict === "stale").length;
+  const missingDir = rows.filter((r) => r.verdict === "missing-dir").length;
+  log("");
+  log(
+    `status --all: summary — ${rows.length} project(s): ok=${ok} stale=${stale} missing-dir=${missingDir}.` +
+      (stale > 0 ? " Run `petbox-wire apply --all` (preview first with --dry-run) to bring stale projects current." : ""),
+  );
   process.exitCode = WIRE_EXIT.ok;
   unrefLingeringHandles();
 }
