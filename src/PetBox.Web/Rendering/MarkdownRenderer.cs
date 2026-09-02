@@ -9,7 +9,6 @@ using Markdig.Renderers;
 using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
-using Microsoft.Extensions.Logging;
 
 namespace PetBox.Web.Rendering;
 
