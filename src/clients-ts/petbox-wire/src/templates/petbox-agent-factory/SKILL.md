@@ -2,6 +2,7 @@
 name: petbox-agent-factory
 description: On-demand compile of per-harness agent artifacts from portable PetBox definitions + local role→model bindings. Use after role/profile changes — not every session; never invent models; never put this procedure into canon.
 petbox: managed
+petbox-digest: auto
 ---
 
 # Agent factory (on-demand skill)

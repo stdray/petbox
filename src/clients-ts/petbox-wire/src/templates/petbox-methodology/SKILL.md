@@ -7,6 +7,7 @@ description: >-
   which artifacts or links a gate requires — are PROJECT-SPECIFIC and fetched at runtime here,
   never assumed from another project.
 petbox: managed
+petbox-digest: auto
 ---
 
 # PetBox methodology — read the live rules, don't assume them

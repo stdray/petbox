@@ -196,6 +196,10 @@ export function roleRelativePath(harness: HarnessId, role: AgentRole): string {
 export function formatArtifactState(relPath: string, state: ArtifactState): string {
   if (state === "absent") return `${relPath} (not materialized yet)`;
   if (state === "ours") return `${relPath} (materialized, ours)`;
+  // `petbox: manual` — declared by the project as its own. Left alone on purpose, so it must not
+  // read as BLOCKED: that word tells the operator to go fix something, and there is nothing here
+  // to fix (spec: wire-skill-manual-declared-not-error).
+  if (state === "manual") return `${relPath} (declared manual — the project owns this path)`;
   return `${relPath} (BLOCKED — a foreign file sits here, not ours)`;
 }
 

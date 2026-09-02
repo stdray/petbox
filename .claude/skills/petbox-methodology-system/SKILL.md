@@ -12,6 +12,8 @@ description: >-
   Done/accepted), the spec-writing format, the observations board (defect-like findings,
   promotion, auto-fix/regression), and the exact MCP tool sequences + gotchas. Canon:
   doc/methodology.md.
+petbox: manual
+petbox-digest: auto
 ---
 
 # PetBox methodology — $system operator's guide

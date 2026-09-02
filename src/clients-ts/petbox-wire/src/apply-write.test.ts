@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { renderAgentMarkdown } from "./apply-artifacts.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
-import { hasPetboxMarker, PETBOX_MARKER_LINE } from "./origin-marker.ts";
+import { hasPetboxMarker, PETBOX_MANUAL_LINE, PETBOX_MARKER_LINE } from "./origin-marker.ts";
 
 function freshDir(): string {
   return mkdtempSync(join(tmpdir(), "petbox-apply-write-"));
@@ -22,6 +22,32 @@ test("hasPetboxMarker: true only for our marker inside frontmatter, never body t
   assert.equal(hasPetboxMarker(`---\nname: x\n---\n\nbody mentions petbox: managed here`), false);
   assert.equal(hasPetboxMarker("no frontmatter at all"), false);
   assert.equal(hasPetboxMarker(""), false);
+});
+
+// The write/delete gate is VALUE-exact, not key-exact (spec: wire-skill-provenance-states).
+// This is the primitive both guards are built on: writeArtifact will not overwrite what does not
+// pass it, and removeOwnedArtifact/cleanupLegacyArtifact will not DELETE what does not pass it.
+// Before the provenance states existed the pattern was `^petbox:\s*\S+` — any value at all — so
+// a file a project had declared `petbox: manual` satisfied it and was both overwritable and
+// deletable. These three assertions are the whole reason that pattern got narrowed.
+test("the write/delete gate rejects `petbox: manual` — a declared-manual file is neither overwritten nor deleted", () => {
+  const dir = freshDir();
+  try {
+    const manualBody = `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\nthe project's own file\n`;
+    assert.equal(hasPetboxMarker(manualBody), false, "`petbox: manual` must not satisfy the managed gate");
+
+    const abs = join(dir, "petbox-worker.md");
+    writeFileSync(abs, manualBody, "utf8");
+
+    assert.equal(writeArtifact(abs, "REPLACEMENT").kind, "blocked", "must refuse to overwrite a manual file");
+    assert.equal(readFileSync(abs, "utf8"), manualBody, "manual file must be byte-for-byte untouched");
+
+    assert.equal(cleanupLegacyArtifact(abs), "kept-foreign", "must refuse to DELETE a manual file");
+    assert.equal(existsSync(abs), true, "manual file must still exist after a cleanup pass");
+    assert.equal(readFileSync(abs, "utf8"), manualBody);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("writeArtifact: fresh path (no existing file) is written, reason 'new'", () => {

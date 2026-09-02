@@ -9,6 +9,7 @@ description: >-
   worth drawing. Ships a zero-dependency validator to self-check a draft body before you write
   it.
 petbox: managed
+petbox-digest: auto
 ---
 
 # Body authoring: structure for a reader, not for yourself

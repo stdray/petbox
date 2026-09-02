@@ -120,7 +120,7 @@ import {
   formatSkillFile,
   probeWorkspace,
   writeSkillFiles,
-  type SkillWriteOutcome,
+  type SkillWriteResult,
 } from "./skill-files.ts";
 import {
   BANNER_BUDGET_WARN_FRACTION,
@@ -1836,9 +1836,9 @@ function mergeMcpServer(path: string, name: string, server: unknown): void {
 // "blocked" ones (bug: skill-files-clobber-and-apply-skips) — a real, non-PetBox file already
 // sat at that path and was left byte-for-byte untouched; the caller decides what a non-empty
 // return does to its own exit code.
-function reportSkillOutcomes(label: string, outcomes: SkillWriteOutcome[]): string[] {
+function reportSkillOutcomes(label: string, result: SkillWriteResult): string[] {
   const blocked: string[] = [];
-  for (const outcome of outcomes) {
+  for (const outcome of result.writes) {
     if (outcome.kind === "blocked") {
       blocked.push(outcome.path);
       console.error(
@@ -1846,8 +1846,33 @@ function reportSkillOutcomes(label: string, outcomes: SkillWriteOutcome[]): stri
           `PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
           `not one wire/apply wrote before. Nothing was touched.`,
       );
+    } else if (outcome.kind === "declared-manual") {
+      // NOT a refusal and NOT an error (spec: wire-skill-manual-declared-not-error): the project
+      // declared this path its own, the kit honoured that. Never enters `blocked`, so it can
+      // never reach the exit code — stdout, like every other normal outcome.
+      log(
+        `${label}: left skill ${outcome.path} alone — declared \`petbox: manual\`, the project ` +
+          `owns this path. Nothing was written.`,
+      );
     } else {
       log(`${label}: wrote ${outcome.path}` + (outcome.reason !== "new" ? ` (${outcome.reason})` : ""));
+    }
+  }
+  // Pre-rename sweep (bug: wire-skill-cleanup-on-replace) — same wording and same rules as the
+  // agent-role rename cleanup above: an owned leftover is removed, anything not ours is named
+  // and kept. Never a blocked path: keeping a file we may not delete is the correct outcome,
+  // not a failure of the run.
+  for (const cleanup of result.cleanups) {
+    if (cleanup.outcome === "removed") {
+      log(
+        `${label}: removed legacy skill ${cleanup.path} (ours, superseded by the current name)` +
+          (cleanup.removedDir ? " — and its now-empty directory" : ""),
+      );
+    } else if (cleanup.outcome === "kept-foreign") {
+      log(
+        `${label}: left ${cleanup.path} in place — not ours (no \`petbox: managed\` origin marker); ` +
+          `not renamed or deleted.`,
+      );
     }
   }
   return blocked;
