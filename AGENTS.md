@@ -137,9 +137,13 @@ history now, while the current plan and status are the boards above.
    `Run inspect-gate` step and does NOT block the deploy. The MAIN run blocks nothing;
    it exists so the set of checks that can fail a deploy is visible BEFORE the tag is
    moved (work/inspect-visible-before-tag-move — before it, a one-line finding surfaced
-   only in the deploy run and cost two extra CI runs to clear). Practical consequence:
-   **a red `inspect` on the main run means the deploy tag will be refused — fix it
-   before moving the tag.** Do NOT wait for a green `inspect` run before merging a
+   only in the deploy run and cost two extra CI runs to clear). Practical consequence: the main
+   run is a head start, NOT something to wait on. **Owner's rule (2026-09-02): push
+   `main` and move the deploy tag immediately — never idle waiting for the main run in
+   any form. If the tag run fails, fix it and move the tag again.** Moving the tag right
+   away cancels the main run through the concurrency group, which is fine and costs
+   nothing; the main run earns its keep on merges nobody tags right away, where a red
+   `inspect` is then visible to whoever deploys next. Do NOT wait for a green `inspect` run before merging a
    branch into main — merges are still gated by the Cake `Test`/`Verify` targets only;
    `inspect` has nothing to say about a branch tree.
    The gate is part of NEITHER `Test`/`Verify` nor any git hook (there is no pre-push
