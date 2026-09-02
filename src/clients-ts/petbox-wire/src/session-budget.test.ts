@@ -13,9 +13,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
+import { CANON_PROJECT_SECTION_MARKER, CANON_WORKSPACE_SECTION_MARKER } from "./canon.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import {
   assembleSessionBanner,
+  describeCanonDegradation,
   HARNESS_INLINE_HARD_LIMIT_BYTES,
   SESSION_BANNER_BUDGET_BYTES,
 } from "./session-budget.ts";
@@ -49,6 +51,99 @@ test("assembleSessionBanner: canon alone would blow the budget — DROPPED, prot
   assert.ok(result.text.includes("RULE 7"), "the gate rule must never be a casualty of canon size");
   assert.equal(result.overBudget, true);
   assert.equal(result.canonBytes, Buffer.byteLength(canon, "utf8"));
+});
+
+// --- canon-degrade-by-legs-not-all-or-nothing ---
+//
+// The canon block carries two independent legs. Before this, ONE byte of overage cost the agent
+// BOTH — the project canon (the specific, expensive-to-re-derive one) went out with the
+// workspace canon in a single jump. The ladder is: whole block → project leg only → nothing.
+//
+// The section markers come from canon.ts rather than being retyped here on purpose: the cut is
+// only correct while it uses the same text the renderer wrote, and a rename must break the
+// renderer and the cut together, not silently turn the cut into a no-op.
+
+function canonBlock(projectBody: string, workspaceBody: string | null): string {
+  let out = "## PetBox memory canon\n\nThe curated memory index (canon) for this project.";
+  out += `${CANON_PROJECT_SECTION_MARKER}demo)\n\n${projectBody}`;
+  if (workspaceBody !== null) out += `${CANON_WORKSPACE_SECTION_MARKER}\n\n${workspaceBody}`;
+  return out;
+}
+
+test("assembleSessionBanner: over budget by a little — the WORKSPACE leg is shed and the project leg survives", () => {
+  const protocol = "P".repeat(4000);
+  const projectBody = "J".repeat(1000);
+  const whole = canonBlock(projectBody, "W".repeat(3000));
+  const projectOnly = canonBlock(projectBody, null);
+  // Exactly enough room for protocol + join + the project leg, and not one byte more.
+  const budget = 4000 + 2 + Buffer.byteLength(projectOnly, "utf8");
+
+  const result = assembleSessionBanner(protocol, whole, budget);
+  assert.equal(result.canonLegs, "project-only");
+  assert.equal(result.canonIncluded, true, "the project leg must survive an overage the workspace leg caused");
+  assert.ok(result.text.startsWith(protocol), "the mandatory protocol block still leads, byte-for-byte");
+  assert.ok(result.text.includes(projectBody), "project canon must still be in the shipped banner");
+  assert.ok(!result.text.includes(CANON_WORKSPACE_SECTION_MARKER), "the workspace section must be gone");
+  assert.equal(result.canonBytes, Buffer.byteLength(whole, "utf8"), "canonBytes still reports what was CONSIDERED");
+  assert.equal(result.canonIncludedBytes, Buffer.byteLength(projectOnly, "utf8"));
+  assert.equal(result.totalBytes, Buffer.byteLength(result.text, "utf8"));
+  assert.ok(result.totalBytes <= budget);
+  assert.equal(result.overBudget, true, "a degraded banner is still a reportable overage");
+});
+
+test("assembleSessionBanner: shedding the workspace leg is not enough — both legs go, protocol intact", () => {
+  const protocol = "P".repeat(4000);
+  const projectOnly = canonBlock("J".repeat(1000), null);
+  const budget = 4000 + 2 + Buffer.byteLength(projectOnly, "utf8") - 1; // one byte short of the project leg
+
+  const result = assembleSessionBanner(protocol, canonBlock("J".repeat(1000), "W".repeat(3000)), budget);
+  assert.equal(result.canonLegs, "none");
+  assert.equal(result.canonIncluded, false);
+  assert.equal(result.canonIncludedBytes, 0);
+  assert.equal(result.text, protocol, "the mandatory protocol block must survive byte-for-byte");
+  assert.equal(result.overBudget, true);
+});
+
+test("assembleSessionBanner: a workspace-ONLY canon has no intermediate rung — it is dropped whole, never reduced to a bare heading", () => {
+  const protocol = "P".repeat(4000);
+  const workspaceOnly = `## PetBox memory canon${CANON_WORKSPACE_SECTION_MARKER}\n\n${"W".repeat(5000)}`;
+  const result = assembleSessionBanner(protocol, workspaceOnly, 5000);
+  assert.equal(result.canonLegs, "none");
+  assert.equal(result.text, protocol, "shipping a lone '## PetBox memory canon' heading would be noise, not context");
+});
+
+test("assembleSessionBanner: a canon with no workspace leg at all reports 'none', never a phantom shed leg", () => {
+  const protocol = "P".repeat(4000);
+  const result = assembleSessionBanner(protocol, canonBlock("J".repeat(6000), null), 5000);
+  assert.equal(result.canonLegs, "none");
+  assert.equal(result.canonIncluded, false);
+});
+
+test("assembleSessionBanner: a fitting two-leg canon is untouched — the ladder only runs on an overage", () => {
+  const protocol = "P".repeat(1000);
+  const whole = canonBlock("J".repeat(500), "W".repeat(500));
+  const result = assembleSessionBanner(protocol, whole, SESSION_BANNER_BUDGET_BYTES);
+  assert.equal(result.canonLegs, "both");
+  assert.equal(result.overBudget, false);
+  assert.ok(result.text.includes(CANON_WORKSPACE_SECTION_MARKER));
+  assert.equal(result.canonIncludedBytes, Buffer.byteLength(whole, "utf8"));
+});
+
+test("describeCanonDegradation NAMES the leg that was shed — the log line the old all-or-nothing path could not write", () => {
+  const protocol = "P".repeat(4000);
+  const projectOnly = canonBlock("J".repeat(1000), null);
+  const budget = 4000 + 2 + Buffer.byteLength(projectOnly, "utf8");
+
+  const degraded = assembleSessionBanner(protocol, canonBlock("J".repeat(1000), "W".repeat(3000)), budget);
+  assert.match(describeCanonDegradation(degraded), /WORKSPACE LEG DROPPED, project leg KEPT \(\d+B of \d+B\)/);
+
+  const gone = assembleSessionBanner(protocol, canonBlock("J".repeat(1000), "W".repeat(3000)), budget - 1);
+  assert.match(describeCanonDegradation(gone), /DROPPED ENTIRELY, both legs/);
+
+  const kept = assembleSessionBanner(protocol, canonBlock("J".repeat(10), "W".repeat(10)), SESSION_BANNER_BUDGET_BYTES);
+  assert.match(describeCanonDegradation(kept), /^KEPT/);
+
+  assert.match(describeCanonDegradation(assembleSessionBanner(protocol, null)), /not available at all/);
 });
 
 test("assembleSessionBanner: dropped banner always stays at or under the HARD harness limit", () => {

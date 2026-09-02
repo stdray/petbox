@@ -357,10 +357,16 @@ export function formatBannerBudgetLeg(leg: BannerBudgetLeg): string {
       : `protocol=${banner.protocolBytes}B (no canon) = ${combinedBytes}B`;
   let verdict: string;
   if (banner.overBudget) {
-    verdict =
-      banner.canonBytes > 0
-        ? `canon DROPPED — over budget by ${-marginBytes}B`
-        : `PROTOCOL ALONE over budget by ${-marginBytes}B (nothing left to drop)`;
+    if (banner.canonBytes === 0) {
+      verdict = `PROTOCOL ALONE over budget by ${-marginBytes}B (nothing left to drop)`;
+    } else if (banner.canonLegs === "project-only") {
+      // Degraded but not lost: the ladder shed the workspace leg and the project leg still
+      // shipped (canon-degrade-by-legs-not-all-or-nothing). Reading this as a flat "canon
+      // DROPPED" would overstate the loss and hide which leg actually went.
+      verdict = `canon WORKSPACE LEG DROPPED (project leg kept, ${banner.canonIncludedBytes}B) — over budget by ${-marginBytes}B`;
+    } else {
+      verdict = `canon DROPPED — over budget by ${-marginBytes}B`;
+    }
   } else if (banner.canonBytes === 0) {
     verdict = `no canon available, margin ${marginBytes}B`;
   } else {

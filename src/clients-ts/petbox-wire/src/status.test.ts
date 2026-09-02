@@ -336,7 +336,7 @@ test("computeBannerBudgetLegs: a canon that fits startup's shorter protocol can 
 test("formatBannerBudgetLeg: canon INCLUDED reads the margin", () => {
   const leg: BannerBudgetLeg = {
     source: "startup",
-    banner: { text: "", totalBytes: 150, protocolBytes: 100, canonBytes: 50, canonIncluded: true, overBudget: false },
+    banner: { text: "", totalBytes: 150, protocolBytes: 100, canonBytes: 50, canonIncluded: true, canonLegs: "both", canonIncludedBytes: 50, overBudget: false },
     combinedBytes: 152,
     marginBytes: 48,
   };
@@ -346,7 +346,7 @@ test("formatBannerBudgetLeg: canon INCLUDED reads the margin", () => {
 test("formatBannerBudgetLeg: canon DROPPED reads the overage, not just a bare 'over budget'", () => {
   const leg: BannerBudgetLeg = {
     source: "resume",
-    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 50, canonIncluded: false, overBudget: true },
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 50, canonIncluded: false, canonLegs: "none", canonIncludedBytes: 0, overBudget: true },
     combinedBytes: 152,
     marginBytes: -2,
   };
@@ -356,7 +356,7 @@ test("formatBannerBudgetLeg: canon DROPPED reads the overage, not just a bare 'o
 test("formatBannerBudgetLeg: protocol ALONE over budget reads distinctly from canon-dropped (nothing left to drop)", () => {
   const leg: BannerBudgetLeg = {
     source: "startup",
-    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, overBudget: true },
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, canonLegs: "none", canonIncludedBytes: 0, overBudget: true },
     combinedBytes: 100,
     marginBytes: -5,
   };
@@ -366,7 +366,7 @@ test("formatBannerBudgetLeg: protocol ALONE over budget reads distinctly from ca
 test("formatBannerBudgetLeg: no canon at all (healthy) reads distinctly from canon-included", () => {
   const leg: BannerBudgetLeg = {
     source: "startup",
-    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, overBudget: false },
+    banner: { text: "", totalBytes: 100, protocolBytes: 100, canonBytes: 0, canonIncluded: false, canonLegs: "none", canonIncludedBytes: 0, overBudget: false },
     combinedBytes: 100,
     marginBytes: 9300,
   };

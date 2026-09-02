@@ -24,6 +24,7 @@
 // wording might suggest (that "2KB" is the preview length once truncation has already
 // triggered, not the inline threshold). Confirmed identical on both "SessionStart:startup" and
 // "SessionStart:resume" hook names — the gate is on stdout size, not the hook event.
+import { CANON_PROJECT_SECTION_MARKER, CANON_WORKSPACE_SECTION_MARKER } from "./canon.ts";
 import { appendWireLogRaw } from "./wire-log.ts";
 
 export const HARNESS_INLINE_HARD_LIMIT_BYTES = 10_000;
@@ -39,6 +40,13 @@ export const HARNESS_INLINE_HARD_LIMIT_BYTES = 10_000;
 // a document.
 export const SESSION_BANNER_BUDGET_BYTES = 9_400;
 
+/**
+ * Which canon legs survived the budget (canon-degrade-by-legs-not-all-or-nothing):
+ * `both` — the block went in whole; `project-only` — the workspace leg was shed to make room;
+ * `none` — no canon at all (either none was offered, or shedding workspace was not enough).
+ */
+export type CanonLegsIncluded = "both" | "project-only" | "none";
+
 export type SessionBannerResult = {
   /** What actually goes to stdout — always the mandatory protocol block, plus canon iff it fit. */
   text: string;
@@ -48,8 +56,12 @@ export type SessionBannerResult = {
   protocolBytes: number;
   /** Byte length of the canon block that was CONSIDERED, 0 when no canon was available at all. */
   canonBytes: number;
-  /** True iff the canon block is present in `text`. */
+  /** True iff ANY canon leg is present in `text`. See `canonLegs` for which ones. */
   canonIncluded: boolean;
+  /** Which canon legs actually made it into `text`. */
+  canonLegs: CanonLegsIncluded;
+  /** Byte length of the canon text actually SHIPPED in `text` (0 when none survived). */
+  canonIncludedBytes: number;
   /**
    * True iff assembling protocol+canon together would have exceeded `budgetBytes` — i.e. this
    * session's banner is a degraded case (canon dropped, or — the rarer, worse case — the
@@ -69,43 +81,90 @@ export type SessionBannerResult = {
 // (this is exactly how rules 4-7 went missing in the original bug: the harness's cut lands
 // wherever the cumulative byte count crosses its own line, not at a markdown heading). Protocol
 // always wins the budget; canon is what degrades.
+//
+// Canon degrades LEG BY LEG, not all-or-nothing (work canon-degrade-by-legs-not-all-or-nothing).
+// The block carries two independent legs — the project canon and the workspace canon — and the
+// project one is the more specific, more expensive-to-re-derive of the two, so a single byte of
+// overage used to cost the agent BOTH. The ladder is now: whole block → project leg only →
+// nothing, re-checking the budget at each rung and stopping at the first that fits. This is
+// insurance against any future drift (protocol, canon or wrapper), not a fix for one incident.
 export function assembleSessionBanner(
   protocol: string,
   canon: string | null,
   budgetBytes: number = SESSION_BANNER_BUDGET_BYTES,
 ): SessionBannerResult {
   const protocolBytes = Buffer.byteLength(protocol, "utf8");
-  if (!canon) {
-    return {
-      text: protocol,
-      totalBytes: protocolBytes,
-      protocolBytes,
-      canonBytes: 0,
-      canonIncluded: false,
-      overBudget: protocolBytes > budgetBytes,
-    };
-  }
-  const canonBytes = Buffer.byteLength(canon, "utf8");
-  const combined = `${protocol}\n\n${canon}`;
-  const combinedBytes = Buffer.byteLength(combined, "utf8");
-  if (combinedBytes <= budgetBytes) {
-    return {
-      text: combined,
-      totalBytes: combinedBytes,
-      protocolBytes,
-      canonBytes,
-      canonIncluded: true,
-      overBudget: false,
-    };
-  }
-  return {
+  const bare = (canonBytes: number): SessionBannerResult => ({
     text: protocol,
     totalBytes: protocolBytes,
     protocolBytes,
     canonBytes,
     canonIncluded: false,
-    overBudget: true,
+    canonLegs: "none",
+    canonIncludedBytes: 0,
+    overBudget: canonBytes > 0 || protocolBytes > budgetBytes,
+  });
+  if (!canon) return bare(0);
+
+  const canonBytes = Buffer.byteLength(canon, "utf8");
+  const withCanon = (kept: string, legs: Exclude<CanonLegsIncluded, "none">): SessionBannerResult => {
+    const text = `${protocol}\n\n${kept}`;
+    return {
+      text,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      protocolBytes,
+      canonBytes,
+      canonIncluded: true,
+      canonLegs: legs,
+      canonIncludedBytes: Buffer.byteLength(kept, "utf8"),
+      overBudget: legs !== "both",
+    };
   };
+
+  const whole = withCanon(canon, "both");
+  if (whole.totalBytes <= budgetBytes) return whole;
+
+  // Rung two: shed the workspace leg. `null` when there is no workspace leg to shed, or when
+  // shedding it would leave nothing but the block's own heading — in either case there is no
+  // intermediate rung and the ladder goes straight to the bottom.
+  const projectOnly = dropWorkspaceLeg(canon);
+  if (projectOnly !== null) {
+    const degraded = withCanon(projectOnly, "project-only");
+    if (degraded.totalBytes <= budgetBytes) return degraded;
+  }
+  return bare(canonBytes);
+}
+
+/**
+ * Cut the workspace leg off a rendered canon block, keeping everything before it. Returns null
+ * when the cut is not worth making: no workspace section at all, or nothing but the block
+ * heading would survive it (a workspace-only canon).
+ *
+ * `lastIndexOf` on purpose: the project leg's body is owner-authored markdown that may itself
+ * contain a `### Workspace` heading, and the workspace section is always rendered last (canon.ts
+ * buildBlock), so the LAST occurrence is the section boundary while the first may not be.
+ */
+function dropWorkspaceLeg(canon: string): string | null {
+  const at = canon.lastIndexOf(CANON_WORKSPACE_SECTION_MARKER);
+  if (at < 0) return null;
+  const kept = canon.slice(0, at).trimEnd();
+  return kept.includes(CANON_PROJECT_SECTION_MARKER) ? kept : null;
+}
+
+/**
+ * One clause naming WHICH canon legs the budget cost this session — the part the pre-existing
+ * overage log could not say (it only reported the fact of a drop, so "canon DROPPED" covered
+ * both "we lost the workspace index" and "we lost everything"). Lives here, next to the ladder
+ * that produces the outcome, so pull-memory's wire.log line and status/doctor's report cannot
+ * word the same state differently.
+ */
+export function describeCanonDegradation(result: SessionBannerResult): string {
+  if (result.canonLegs === "both") return "KEPT (still risks harness truncation)";
+  if (result.canonLegs === "project-only") {
+    return `WORKSPACE LEG DROPPED, project leg KEPT (${result.canonIncludedBytes}B of ${result.canonBytes}B)`;
+  }
+  if (result.canonBytes === 0) return "not available at all";
+  return `DROPPED ENTIRELY, both legs (${result.canonBytes}B) — shedding the workspace leg alone was not enough`;
 }
 
 // Loud-failure channel for a budget overage — per the wire-silent-failures-invisible taxonomy,
