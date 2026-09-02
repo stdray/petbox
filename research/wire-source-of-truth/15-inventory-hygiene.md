@@ -23,6 +23,9 @@
    рендерится из `src/clients-ts/petbox-wire/src/templates/` (там только 5 директорий,
    один-в-один с PROJECT_SKILLS). Значит это ручная работа владельца поверх кита, не артефакт
    wire.
+   [Правка 2026-09-02: `petbox-methodology-system` с тех пор перенесён (переносимая часть — в
+   китовый шаблон `templates/petbox-methodology/`) и удалён из `.claude/skills/`; замер
+   2026-08-30 выше не переписываю, это был факт на тот момент.]
 3. На уровне пользователя (`~/.claude/skills`) стоят `droid-handoff`, `pi-handoff`,
    `playwright-cli` — тоже без префикса. `pi-handoff` — симлинк на `D:\my\prj\llama-tooling\pi-handoff`
    (другой репозиторий), `droid-handoff` зарегистрирован в `~/.claude.json:1867` — оба явно

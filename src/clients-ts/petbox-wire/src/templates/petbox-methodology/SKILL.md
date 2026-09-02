@@ -85,3 +85,73 @@ A rejection here is the methodology working, not a bug. Re-read the guide's `inv
 `kind`/`rule` you tripped, supply the missing link/artifact/reason, and retry. If it still
 doesn't make sense after reading the guide, that itself is worth reporting — through this
 project's own intake/triage path, or to its maintainer — rather than working around it.
+
+## Writing a spec node (if this project has a `spec` board)
+
+- **Format (terse-normative, EARS-lite + RFC 2119):** the node **title** is the capability; the
+  **body** is one normative line stating the obligation plus its condition/consequence, or
+  empty. Keywords: MUST / SHOULD / MAY (or this project's own language for the same three
+  strengths). Tag functional requirements with one axis, non-functional/invariant ones with
+  another — check the guide's `tag_axes` invariant for the actual prefixes this project uses.
+- **Altitude:** a spec node is a promise that survives reimplementation. The mechanism (data
+  shape, validation rules, API verbs, storage layout) is NOT a requirement — that belongs in the
+  work task. Test: *"would this change if we reimplemented without changing the promise?"* Yes →
+  work task; no → spec.
+- **Atomic but few:** one requirement per node, but at the owner altitude there are usually only
+  a handful — an umbrella node plus a few leaves. Don't pre-atomize implementation into the spec.
+
+## Triaging intake (if this project has an `intake` board)
+
+Intake holds raw, unrouted findings — bugs, questions, wishes — not yet placed on the pipeline.
+Skip it when the destination is already obvious (the report names it, or the diagnosis is clear)
+and create the node at the destination directly instead of parking it:
+- Spec-less hygiene → a work `chore` (no spec link needed).
+- A bug against an EXISTING spec requirement → a work `bug`, with whatever spec link this
+  project's `link_constraint` invariants require.
+- Nothing in the spec reflects the ask at all → an idea, so it goes through the idea→accept→spec
+  gate before any work node is opened for it.
+An intake item with no matching spec never gets a shortcut straight into work — a `feature`/`bug`
+work node still needs the spec link its own invariants demand.
+
+## The observations board — platform-wide, present in every project
+
+`observations` is a system-built-in board, auto-created per project, and lives outside this
+methodology instance's gates (it never enters the owner's decision queue or digest). The regular
+task tools apply as-is: `tasks_search`, `tasks_node_get`, `tasks_upsert`, `tasks_delta`,
+`comments_*`.
+
+- **Status is a value, not an FSM:** `seen` (open) → `promoted` (open) → `fixed` (terminal ok);
+  `declined` (terminal cancel).
+- **Dedup with recurrence, on every write:** a similar finding landing on this board — automatic
+  or a manual `tasks_upsert` — does not create a duplicate. It bumps the existing node's
+  `recurrenceCount`/`lastSeenAt` instead, reported back as `deduped:[{requestedKey, existingKey,
+  existingNodeId, recurrenceCount}]`. Only fires on a purely-creating batch (every node
+  `version:0`, no deletes) — don't mix creates with edits in one call.
+- **Promotion — `tasks_observation_promote`:** turns a `seen` observation into a real `work` task
+  (`type` required: `feature|bug|chore`) or an idea (`targetBoard:"work"|"ideas"`, plus
+  `key`/`title`/`body`/`links`/`tags`/`sessionId`). Creates an `observation_obligation` relation
+  (visible in `relations` from both sides) and moves the observation to `promoted` — it stays
+  addressable, it does not disappear.
+- **Fix-pinning, automatic:** the linked obligation reaching a terminal-ok status flips the
+  observation to `fixed` (stamps `fixedByNodeId`/`fixedAt`); a terminal-not-ok status reopens it
+  to `seen` — the problem wasn't fixed, it was abandoned.
+- **Regression detector:** a fresh hit of the same problem after a fix reopens the observation to
+  `seen`, stamps `recurredAfterFixAt`, surfaces it higher in search, and sets
+  `decisionPending:true` on the task that had "fixed" it — the task's own terminal status is
+  **not** reopened automatically, an owner call, to keep cycle-time metrics honest.
+  `recurrenceCount`/`lastSeenAt`/`recurredAfterFixAt`/`fixedByNodeId`/`fixedAt` all ride the
+  `observation` field on search/node-get hits.
+- A defect-like finding (broken, unexpected, contradicts docs, a process defect) goes straight
+  onto this board yourself — never into memory, never into a generic intake bucket. It dedups by
+  recurrence, so "already observed" is never a reason to stay silent.
+
+## Practical MCP gotchas
+
+- **Soft-delete:** `tasks_upsert` with `{key, deleted:true}` is a temporal close, history kept —
+  delete children first, or the whole subtree in one batch.
+- **`bodyLen`:** most read tools omit node bodies by default (a compact index only — identity,
+  status, title, tags, links). Pass `bodyLen:<N>` for a per-node body snippet (first N chars,
+  `…` when cut; a large N is effectively the full body).
+- **Response size:** a board detail call can return a large payload (tens of thousands of
+  characters for a busy board). Pass a high `sinceVersion`, or narrow with `underNode:<slug>` /
+  `groupBy`, to keep the response small; null fields are omitted from the JSON either way.

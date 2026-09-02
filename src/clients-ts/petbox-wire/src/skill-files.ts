@@ -536,10 +536,12 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
 // frontmatter says `petbox-digest: auto` (spec: wire-skill-invocation-mode). The earlier rule
 // — "directory name starts with petbox" — is gone, and it had to go: every delivered skill is
 // heading for a `petbox-*` name (work: petbox-skill-naming), after which the prefix separates
-// nothing. It was already wrong today — `petbox-methodology-system` is `petbox-` prefixed,
-// repo-native, and not in the kit's delivery at all, yet the prefix rule put it in every
-// opencode session's system prompt; a skill that exists to be called deliberately
-// (`petbox-card-check`, `petbox-factory-run`) is `petbox-`/deliberate and would have joined it. Reads the
+// nothing. It was already wrong in principle: nothing stops a project from giving a repo-native,
+// kit-undelivered skill a `petbox-` prefixed name (this repo's own `petbox-methodology-system`
+// was exactly that case, before it was folded into the kit template and removed), yet the
+// directory-name rule would still put it in every opencode session's system prompt; a skill that
+// exists to be called deliberately (`petbox-card-check`, `petbox-factory-run`) is
+// `petbox-`/deliberate and would have joined it too. Reads the
 // MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}` substitution, post any user edits),
 // never re-renders a template — so a project can take a delivered skill out of its own digest
 // by editing one frontmatter line, without the kit knowing anything about it.
