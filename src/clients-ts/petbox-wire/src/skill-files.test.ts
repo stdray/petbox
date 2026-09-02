@@ -1387,12 +1387,21 @@ test("this repo's tracked (git ls-files), non-parameterized .claude/skills/ copi
     );
     checked++;
   }
-  // If this ever hits 0 (and nothing was excluded as parameterized either), either the tracked
-  // whitelist emptied out or `git ls-files`/repoRoot broke — either way the test would be
-  // silently vacuous, which is worse than not having it.
-  assert.ok(
-    checked > 0 || skippedParameterized > 0,
-    "expected at least one PROJECT_SKILLS entry to be tracked in this checkout (compared or excluded as parameterized)",
+  // The default since 2026-09-02: petbox-wire DEFINES the kit skills and git does not version
+  // them, so in this checkout the expected number of tracked kit skills is ZERO and the loop
+  // above is expected to compare nothing. That is the invariant worth pinning — a kit skill
+  // that reappears in `git ls-files` means someone re-added a copy git would then fight the
+  // kit over. (`petbox-methodology-system` stays tracked on purpose: it has no kit template,
+  // so it is the project's own skill and is not a PROJECT_SKILLS entry at all.)
+  const trackedKitSkills = PROJECT_SKILLS.map((s) => `.claude/skills/${s.dir}/SKILL.md`).filter(
+    (rel) => trackedSkillPaths.has(rel),
   );
+  assert.deepEqual(
+    trackedKitSkills,
+    [],
+    "kit-delivered skills must not be tracked by git — petbox-wire defines them; " +
+      `found tracked: ${trackedKitSkills.join(", ")}`,
+  );
+  assert.equal(checked + skippedParameterized, trackedKitSkills.length);
 });
 
