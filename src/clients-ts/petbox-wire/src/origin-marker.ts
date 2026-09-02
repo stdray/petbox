@@ -31,6 +31,19 @@ export const PETBOX_MANUAL_LINE = `${PETBOX_MARKER_KEY}: ${PETBOX_MANUAL_VALUE}`
 export const PETBOX_DIGEST_KEY = "petbox-digest";
 export type SkillDigestMode = "auto" | "manual";
 
+// The frontmatter key Claude Code (and Droid, which reads the same SKILL.md shape) actually
+// honors to keep a skill out of automatic model-invocation — a DIFFERENT lever from
+// `petbox-digest` above, which only opencode's kit-built index reads (skill-files.ts /
+// opencode-plugin.ts). `petbox-digest: manual` alone does nothing on Claude Code or Droid: the
+// skill's full description still ships into every session's system prompt, and worse, if that
+// description reads like "Use when X" it invites the harness to invoke it unprompted anyway
+// (task: skill-descriptions-control-what-enters-context). Every `petbox-digest: manual` template
+// MUST also carry this key so the two harnesses that respect it actually keep the skill out of
+// automatic invocation — parity enforced by a test in skill-files.test.ts, same discipline as
+// PROJECT_SKILLS<->templates/ and the digest-mode parity above.
+export const DISABLE_MODEL_INVOCATION_KEY = "disable-model-invocation";
+export const DISABLE_MODEL_INVOCATION_LINE = `${DISABLE_MODEL_INVOCATION_KEY}: true`;
+
 /**
  * The three ORIGIN states of a file on a path the kit may want to write
  * (spec: wire-skill-provenance-states):
@@ -105,6 +118,13 @@ export function isDeclaredManual(content: string): boolean {
 export function readDigestMode(content: string): SkillDigestMode | null {
   const value = frontmatterValue(content, PETBOX_DIGEST_KEY);
   return value === "auto" || value === "manual" ? value : null;
+}
+
+/** True only for a frontmatter `disable-model-invocation: true` — the Claude-Code/Droid lever
+ * that actually keeps a skill out of automatic invocation (see the constant's own comment for
+ * why this is a separate key from `petbox-digest`). */
+export function isModelInvocationDisabled(content: string): boolean {
+  return frontmatterValue(content, DISABLE_MODEL_INVOCATION_KEY) === "true";
 }
 
 // Materialization fact for one path apply/wire may have written: absent (never written), ours

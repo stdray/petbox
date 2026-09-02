@@ -3,11 +3,10 @@ name: petbox-node-authoring
 description: >-
   How to structure the BODY of a {{PROJECT}} node or comment so a person reads it, not an agent.
   Use before writing any node/comment body longer than a couple of lines, and before reaching for
-  a diagram. Covers what GFM formatting already gives you for free, the callout convention (GFM
-  alerts), the diagram convention (a sanitized inline-SVG subset, not mermaid) and its
-  caption-states-the-claim discipline — and, the part that matters most, when a diagram is NOT
-  worth drawing. Ships a zero-dependency validator to self-check a draft body before you write
-  it.
+  a diagram. The formatting conventions, the callout syntax, and the actual test for whether a
+  diagram earns its place all live in the skill body — open it before writing, don't answer from
+  this description alone. Ships a zero-dependency validator to self-check a draft body before you
+  write it.
 petbox: managed
 petbox-digest: auto
 ---
