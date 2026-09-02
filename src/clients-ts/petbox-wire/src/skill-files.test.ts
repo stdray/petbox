@@ -568,6 +568,183 @@ test("writeSkillFiles: a spec with no legacyDirs sweeps nothing (the steady stat
   }
 });
 
+// ---- refill safety (work: wire-skill-refill-project-skills) ----------------------------------
+//
+// The card that grew PROJECT_SKILLS states the intent as "the kit becomes the only source of
+// truth for managed paths — wipe the hand-made copies and keep only the kit's". That sentence is
+// one careless step away from "the kit owns the whole skills directory", which would take the
+// owner's `petbox-methodology-system` (repo-native, deliberately NEVER shipped: the kit carries
+// the generic `petbox-methodology` pointer instead) and their personal integrations with it.
+// The tests below pin the boundary against a tree shaped like the REAL $system checkout, not a
+// synthetic one-file fixture: an apply may touch a PROJECT_SKILLS path and nothing else, ever.
+
+/** Files under the skills roots that an apply must never write, delete, or reorder. */
+function bystanderTree(dir: string): Record<string, string> {
+  const seen: Record<string, string> = {};
+  for (const surface of SKILL_SURFACES) {
+    const root = join(dir, ...surface);
+    if (!existsSync(root)) continue;
+    const walk = (rel: string): void => {
+      for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+        const next = rel ? join(rel, entry.name) : entry.name;
+        if (entry.isDirectory()) walk(next);
+        else seen[join(...surface, next)] = readFileSync(join(root, next), "utf8");
+      }
+    };
+    walk("");
+  }
+  return seen;
+}
+
+test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths — a declared-manual skill and a foreign one survive byte-for-byte, and nothing is deleted", () => {
+  const dir = freshDir();
+  try {
+    // A repo-native skill the kit must never carry, declared manual — the live $system case.
+    const methodologySystem = `---\nname: petbox-methodology-system\ndescription: >-\n  Operate PetBox's OWN project methodology. Use when creating or refining ideas on $system itself.\n${PETBOX_MANUAL_LINE}\n---\n\n# $system-specific operator detail the kit must never overwrite\n`;
+    // The owner's personal integrations: no frontmatter marker at all — foreign, hands off.
+    const droidHandoff = "# droid-handoff\n\nMY integration. Not part of any delivery.\n";
+    const playwright = `---\nname: playwright-cli\ndescription: Automate browser interactions. Use for browser work.\n---\n\n# not ours\n`;
+    // A multi-file skill the kit does NOT ship (see the SKILL.md-only limitation): its auxiliary
+    // files are the ones with no legal place to carry a marker, so they must simply be left alone.
+    const script = "#!/usr/bin/env bash\nset -euo pipefail\necho mechanical check\n";
+    const fixture = "// Intentionally incomplete fixture.\nexport const add = (a, b) => a + b;\n";
+
+    const bystanders: Array<[string, string]> = [];
+    for (const surface of SKILL_SURFACES) {
+      bystanders.push(
+        [join(dir, ...surface, "petbox-methodology-system", "SKILL.md"), methodologySystem],
+        [join(dir, ...surface, "droid-handoff", "SKILL.md"), droidHandoff],
+        [join(dir, ...surface, "playwright-cli", "SKILL.md"), playwright],
+        [join(dir, ...surface, "comprehension-check", "scripts", "mechanical_check.sh"), script],
+        [join(dir, ...surface, "comprehension-check", "self-test", "work", "calc.js"), fixture],
+      );
+    }
+    for (const [path, body] of bystanders) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, body, "utf8");
+    }
+    const before = bystanderTree(dir);
+
+    // Two applies: the second is the one that would expose a "now that I own this, clean up"
+    // sweep that only triggers once the delivery is already in place.
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes, cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+
+    assert.deepEqual(cleanups, [], "the delivered set declares no renames — an apply must delete nothing");
+    const managedPaths = new Set(
+      PROJECT_SKILLS.flatMap((spec) => SKILL_SURFACES.map((surface) => pathFor(dir, surface, spec.dir))),
+    );
+    for (const outcome of writes) {
+      assert.ok(managedPaths.has(outcome.path), `apply wrote outside PROJECT_SKILLS: ${outcome.path}`);
+    }
+    for (const [path, body] of bystanders) {
+      assert.ok(existsSync(path), `an apply deleted a file it does not own: ${path}`);
+      assert.equal(readFileSync(path, "utf8"), body, `an apply rewrote a file it does not own: ${path}`);
+    }
+    // Nothing vanished anywhere under the roots, and every surviving bystander is unchanged.
+    const after = bystanderTree(dir);
+    for (const [rel, body] of Object.entries(before)) {
+      assert.equal(after[rel], body, `bystander changed or disappeared after apply: ${rel}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("refill: a declared-manual file AT a PROJECT_SKILLS path is skipped, not refilled — including the newly added entries", () => {
+  const dir = freshDir();
+  try {
+    const mine: Record<string, string> = {};
+    for (const spec of PROJECT_SKILLS) {
+      const target = pathFor(dir, SKILL_SURFACES[0]!, spec.dir);
+      const body = `---\nname: ${spec.dir}\ndescription: MY replacement for ${spec.dir}. Use never.\n${PETBOX_MANUAL_LINE}\n---\n\n# mine, hands off\n`;
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, body, "utf8");
+      mine[target] = body;
+    }
+
+    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+
+    for (const [target, body] of Object.entries(mine)) {
+      const outcome = writes.find((o) => o.path === target) as SkillWriteOutcome;
+      assert.equal(outcome.kind, "declared-manual", `${target}: expected declared-manual, got ${outcome.kind}`);
+      assert.equal(readFileSync(target, "utf8"), body, `${target}: a manual declaration must survive the refill`);
+    }
+    // The OTHER surface still received the whole delivery — a manual declaration is per path.
+    for (const spec of PROJECT_SKILLS) {
+      const other = pathFor(dir, SKILL_SURFACES[1]!, spec.dir);
+      assert.ok(hasPetboxMarker(readFileSync(other, "utf8")), `${other}: the rest of the delivery must still land`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("refill: the owner's pre-existing hand-placed copy of a NEWLY shipped skill migrates in place, it does not come back BLOCKED", () => {
+  const dir = freshDir();
+  // What makes item 3 of the card land quietly: the owner already has a hand-placed copy of both
+  // of these at the delivery path, carrying NEITHER declaration line. That is exactly the
+  // migration carve-out's input, so the refill must PROMOTE it, not refuse it as foreign.
+  //
+  // Scope, stated so this is not over-read: the fixture is derived from the template via
+  // legacyRender, so this pins the CARVE-OUT (both declaration lines stripped, checked before
+  // writeArtifact's foreign guard) for the newly added entries — proven by mutation: drop the
+  // digest line from stripMarkerLine and every path here comes back "blocked". It does NOT pin
+  // "the template equals the owner's current file"; that comparison cannot be a test, because
+  // the first successful apply rewrites the owner's file WITH the markers and would invert it.
+  // Verbatim-ness is a property of how the templates were produced, enforced at authoring time.
+  const added = ["analysis-workspace", "factory-run"];
+  try {
+    for (const specDir of added) {
+      for (const surface of SKILL_SURFACES) {
+        const target = pathFor(dir, surface, specDir);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, legacyRender(specDir, "hellopet", "newpet"), "utf8");
+      }
+    }
+
+    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+
+    for (const specDir of added) {
+      for (const surface of SKILL_SURFACES) {
+        const target = pathFor(dir, surface, specDir);
+        const outcome = writes.find((o) => o.path === target) as SkillWriteOutcome;
+        assert.equal(outcome.kind, "written", `${target}: expected a write, got ${JSON.stringify(outcome)}`);
+        assert.equal(
+          outcome.reason,
+          "migrated",
+          `${target}: an unmarked hand-placed copy must be PROMOTED, not blocked — if this says "new"/"own" the template body has drifted from the skill source`,
+        );
+        const body = readFileSync(target, "utf8");
+        assert.ok(hasPetboxMarker(body), `${target}: the refilled copy must carry the origin marker`);
+        assert.equal(readDigestMode(body), "manual", `${target}: these two ship out of the automatic digest`);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("digest: the automatic index carries exactly the four auto skills — agent-factory is no longer in it", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const index = buildAutoSkillsIndex(dir)!;
+    const auto = PROJECT_SKILLS.filter((s) => s.digestMode === "auto").map((s) => s.dir);
+    assert.deepEqual(auto.sort(), ["petbox", "petbox-methodology", "petbox-node-authoring", "petbox-write-economy"]);
+    for (const name of auto) assert.match(index, new RegExp(`\`${name}\``), `${name} must be in the digest`);
+    for (const name of ["petbox-agent-factory", "analysis-workspace", "factory-run"]) {
+      assert.doesNotMatch(
+        index,
+        new RegExp(`\`${name}\``),
+        `${name} is petbox-digest: manual — it must cost no system-prompt room`,
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- template-drift comparison (bugs: skill-files-clobber-and-apply-skips [item 3],
 // builtin-definition-drifts-no-catchup [item 3]) -----------------------------------------------
 // Moved here from status.test.ts along with checkSkillFile/formatSkillFile/buildSkillReports
