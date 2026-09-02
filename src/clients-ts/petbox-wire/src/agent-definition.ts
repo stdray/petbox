@@ -96,6 +96,28 @@ const DEFAULT_AGENT_DEFINITION_PATH = join(import.meta.dirname, "default-agents.
  */
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = loadDefaultAgentDefinition();
 
+/**
+ * This package's own `package.json` version (e.g. "0.1.0-ci.2197") — a LABEL for
+ * DEFAULT_AGENT_DEFINITION in apply/status output ("kit baseline v0.1.0-ci.2197"), never a
+ * definition version number (the JSON document above carries no `version` field of its own; that
+ * concept belonged to the server envelope this kit no longer fetches for user-scope roles — card
+ * user-scope-roles-rendered-from-cwd-project-definition). Best-effort: package.json is always
+ * present in a real install (npm ships it unconditionally, independent of the `files`
+ * allowlist), so this degrading to "unknown" instead of throwing is a belt-and-suspenders
+ * fallback, not an expected path.
+ */
+export const KIT_VERSION: string = loadKitVersion();
+
+function loadKitVersion(): string {
+  try {
+    const raw = readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function loadDefaultAgentDefinition(): AgentDefinition {
   let raw: string;
   try {
