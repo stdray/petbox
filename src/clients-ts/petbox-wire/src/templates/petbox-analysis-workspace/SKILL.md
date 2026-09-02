@@ -7,9 +7,10 @@ description: >-
   Use when the task has multiple independent areas to cover, needs a fan-out of several
   subagents, or would otherwise blow the context budget re-deriving the same ground truth
   repeatedly. Not for a small task, a single file, or a short question — see "When not to
-  use this" below.
+  use this" below. Never automatic — the caller invokes it on purpose.
 petbox: managed
 petbox-digest: manual
+disable-model-invocation: true
 ---
 
 # Analysis workspace — staged files over repeated calls

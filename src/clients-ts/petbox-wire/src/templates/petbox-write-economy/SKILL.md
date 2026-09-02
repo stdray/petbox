@@ -4,9 +4,9 @@ description: >-
   Pay for the CHANGE you are making, not for the whole text. Use before any tasks_upsert /
   comments_upsert / memory_remember / memory_upsert / session_append call whose body is more
   than a few lines, and before any read that only needs headers or a couple of known keys.
-  Covers bodyRef (upload text once, reference it by a short id), fragment (point-patch an
-  existing body), why raw UTF-8 beats \uXXXX escaping, the bodyLen read contract — and, just as
-  important, the cases where none of this is worth the extra call.
+  The actual mechanism — which technique applies, the exact call shape, and when none of
+  this is worth the extra call — lives in the skill body; open it before writing the call,
+  don't answer from this description alone.
 petbox: managed
 petbox-digest: auto
 ---

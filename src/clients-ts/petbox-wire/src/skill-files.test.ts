@@ -33,6 +33,7 @@ import {
 import {
   hasPetboxMarker,
   isDeclaredManual,
+  isModelInvocationDisabled,
   PETBOX_DIGEST_KEY,
   PETBOX_MANUAL_LINE,
   PETBOX_MARKER_LINE,
@@ -256,6 +257,26 @@ test("every PROJECT_SKILLS entry's template declares the invocation mode its spe
       readDigestMode(body),
       spec.digestMode,
       `${spec.dir}: PROJECT_SKILLS says digestMode "${spec.digestMode}" but templates/${spec.dir}/SKILL.md declares "${readDigestMode(body)}"`,
+    );
+  }
+});
+
+// `petbox-digest: manual` is read ONLY by the kit's own opencode index (skill-files.ts /
+// opencode-plugin.ts) — Claude Code and Droid have never heard of it. The lever THEY honor is
+// `disable-model-invocation: true` (task: skill-descriptions-control-what-enters-context). A
+// template can drift the two declarations apart silently — nothing else here would catch it —
+// so pin them together the same way digestMode<->template is pinned above: every manual template
+// must ALSO carry the Claude-Code/Droid lever, and no auto template may carry it (an auto skill
+// that also disabled model invocation would never be reachable on those two harnesses at all).
+test("every `petbox-digest: manual` template also disables model-invocation (Claude Code / Droid lever)", () => {
+  for (const spec of PROJECT_SKILLS) {
+    const body = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+    assert.equal(
+      isModelInvocationDisabled(body),
+      spec.digestMode === "manual",
+      spec.digestMode === "manual"
+        ? `${spec.dir}: digestMode "manual" but templates/${spec.dir}/SKILL.md is missing \`disable-model-invocation: true\` — Claude Code and Droid would still surface it unprompted`
+        : `${spec.dir}: digestMode "auto" but templates/${spec.dir}/SKILL.md declares \`disable-model-invocation: true\` — it would never be reachable on Claude Code or Droid`,
     );
   }
 });

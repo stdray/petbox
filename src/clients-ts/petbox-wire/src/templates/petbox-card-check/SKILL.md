@@ -8,6 +8,7 @@ description: >-
   sentence whether the result does what the card is FOR. Never automatic — the caller
   invokes it on purpose.
 petbox: managed
+disable-model-invocation: true
 petbox-digest: manual
 ---
 
