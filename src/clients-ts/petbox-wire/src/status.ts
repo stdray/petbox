@@ -32,7 +32,8 @@
 // Plain TS for native node type-stripping: zero deps.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DEFINITION_KEY,
@@ -40,8 +41,11 @@ import {
   type ResolvedAgentDefinition,
 } from "./agent-def-fetch.ts";
 import { emittedRoleName, type AgentDefinition, type AgentRole } from "./agent-definition.ts";
-import { agentFilesDir, sanitizeDroidName } from "./apply-artifacts.ts";
+import { agentFilesDir, planApply, sanitizeDroidName } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
+import { classifyManagedPaths, formatGitState, type GitStateReport } from "./git-state.ts";
+import { managedPathsForGitState, projectRoleFiles } from "./managed-paths.ts";
+import { loadWireConfig, userAgentFilesRoot, type RoleScope } from "./role-scope.ts";
 import { CANON_BODY_BUDGET_CHARS, fetchCanonBlock, fetchCanonLegs, type CanonLegState } from "./canon.ts";
 import { HARNESS_IDS, type HarnessId } from "./harness-capabilities.ts";
 import { allowedModels } from "./harness-models.ts";
@@ -283,6 +287,99 @@ export function formatRoleModelSource(
   };
 }
 
+// ---- roles as FILES, per scope (card: normalize-all-environments-to-default item 3) ----------
+//
+// The gap this closes, measured 2026-09-02: `status` looked at SKILLS only. Roles — 90 files
+// across eight projects — were never checked by anything, and they had silently split into two
+// generations (`petbox-orchestrator.md` carried the current prose in two projects and an old one
+// in four; droid's `petbox-worker-highstakes` was bound to a concrete model id in some and
+// `inherit` in others). A default nobody measures is not a default, so this counts them: present
+// and matching, present and DRIFTED from what apply would render right now, absent, or foreign.
+//
+// Read-only, and it must stay so — `status --all` runs this against seven other people's working
+// directories.
+
+export type RoleFilesReport = {
+  readonly harness: HarnessId;
+  readonly dir: string;
+  /** Ours (origin marker) and byte-identical to what apply would render right now. */
+  readonly current: number;
+  /** Ours, but different from the current render — the invisible axis this card is about. */
+  readonly drifted: readonly string[];
+  /** Declared by the definition, nothing on disk. */
+  readonly missing: readonly string[];
+  /** Something else's file sits on a path apply would want — apply refuses these. */
+  readonly foreign: readonly string[];
+};
+
+/**
+ * Classify the role artifacts for ONE harness in ONE directory against the definition. `agentDir`
+ * is the harness's agent directory itself — the project's (`<root>/.claude/agents`) or the user
+ * profile's (`~/.claude/agents`) — because the two layouts differ and this function must not
+ * re-derive either (role-scope.ts owns the user side, apply-artifacts.ts the project side).
+ */
+export function computeRoleFilesReport(
+  agentDir: string,
+  harness: HarnessId,
+  definition: AgentDefinition,
+  rolesData: RolesFile,
+): RoleFilesReport {
+  const drifted: string[] = [];
+  const missing: string[] = [];
+  const foreign: string[] = [];
+  let current = 0;
+  let plan;
+  try {
+    plan = planApply(definition, harness, resolveAgentRoles(rolesData, harness));
+  } catch {
+    // A definition this harness cannot plan at all is a fact for doctor, not a crash for status.
+    return { harness, dir: agentDir, current: 0, drifted: [], missing: [], foreign: [] };
+  }
+  for (const file of plan.files) {
+    const abs = join(agentDir, basename(file.relativePath));
+    const state = readArtifactState(abs);
+    if (state === "absent") {
+      missing.push(abs);
+      continue;
+    }
+    if (state === "foreign") {
+      foreign.push(abs);
+      continue;
+    }
+    if (state === "manual") continue; // the owner declared this path theirs — not ours to judge
+    let content: string;
+    try {
+      content = readFileSync(abs, "utf8");
+    } catch {
+      drifted.push(abs); // ours by marker but unreadable now — that is a discrepancy, not a match
+      continue;
+    }
+    if (content === file.content) current++;
+    else drifted.push(abs);
+  }
+  return { harness, dir: agentDir, current, drifted, missing, foreign };
+}
+
+export function formatRoleFilesReport(report: RoleFilesReport): string {
+  const problems: string[] = [];
+  if (report.drifted.length > 0) problems.push(`drifted: ${report.drifted.length}`);
+  if (report.missing.length > 0) problems.push(`missing: ${report.missing.length}`);
+  if (report.foreign.length > 0) problems.push(`foreign: ${report.foreign.length}`);
+  return (
+    `${report.harness} (${report.dir}) — ${report.current} current` +
+    (problems.length > 0 ? `, ${problems.join(", ")}` : ", nothing else")
+  );
+}
+
+/** The user-profile role reports for all three harnesses — a MACHINE fact, printed once. */
+export function computeUserRoleReports(
+  definition: AgentDefinition,
+  rolesData: RolesFile,
+  homeDir: string = homedir(),
+): RoleFilesReport[] {
+  return HARNESS_IDS.map((h) => computeRoleFilesReport(userAgentFilesRoot(h, homeDir), h, definition, rolesData));
+}
+
 // ---- pillar 3: canon --------------------------------------------------------
 
 export function formatCanonLeg(label: string, state: CanonLegState): string {
@@ -489,6 +586,33 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
     }
   }
 
+  // ---- roles as files, per scope (card item 3) ----
+  // The per-role lines above answer "what model, from where"; this answers "where do the FILES
+  // live and are they the same generation", which nothing used to ask at all.
+  const machineScope: RoleScope = loadWireConfig().roleScope;
+  log("");
+  log(`status: role FILES by scope (machine policy: roles → ${machineScope}):`);
+  for (const report of computeUserRoleReports(definition, rolesData)) {
+    log(`status:   [user]    ${formatRoleFilesReport(report)}`);
+  }
+  for (const harness of HARNESS_IDS) {
+    log(
+      `status:   [project] ${formatRoleFilesReport(
+        computeRoleFilesReport(join(root, agentFilesDir(harness)), harness, definition, rolesData),
+      )}`,
+    );
+  }
+  const projectRoles = projectRoleFiles(root);
+  log(
+    machineScope === "user"
+      ? `status:   project role copies present: ${projectRoles.length} (target under this policy: 0)`
+      : `status:   project role copies present: ${projectRoles.length}`,
+  );
+
+  // ---- git state of managed paths (card item 5) ----
+  log("");
+  log(`status: ${formatGitState(classifyManagedPaths(root, managedPathsForGitState(root)))}`);
+
   // ---- pillar 3: canon ----
   log("");
   if (opts.offline) {
@@ -581,12 +705,25 @@ export type RegistryStatusRow = {
   readonly driftedSkills: readonly string[];
   readonly foreignPaths: readonly string[];
   readonly legacyLeftovers: readonly string[];
+  /**
+   * Generated ROLE artifacts still sitting in this project tree (card item 3). Under the "user"
+   * role policy the target is zero — the same five roles live once in the harness profiles — so a
+   * non-empty list here makes the row stale. Under the "project" policy they are expected and do
+   * not, on their own, make anything stale.
+   */
+  readonly projectRoleFiles: readonly string[];
+  /** git classification of every managed path (card item 5). */
+  readonly git: GitStateReport;
 };
 
 /** One row's read-only verdict for `entry`. Never throws, never writes — an unreadable template
  * or a missing directory degrades the row, it never aborts the caller's loop over the rest of
  * the registry (same "one bad entry can't sink the sweep" rule `apply --all` follows). */
-export function computeRegistryStatusRow(entry: RegistryEntry, templatesRoot: string = TEMPLATES_ROOT): RegistryStatusRow {
+export function computeRegistryStatusRow(
+  entry: RegistryEntry,
+  templatesRoot: string = TEMPLATES_ROOT,
+  roleScope: RoleScope = loadWireConfig().roleScope,
+): RegistryStatusRow {
   const dir = entry.prefix;
   const totalSkills = PROJECT_SKILLS.length;
   if (!existsSync(dir)) {
@@ -600,6 +737,8 @@ export function computeRegistryStatusRow(entry: RegistryEntry, templatesRoot: st
       driftedSkills: [],
       foreignPaths: [],
       legacyLeftovers: [],
+      projectRoleFiles: [],
+      git: { repo: false, states: [], tracked: 0, ignored: 0, untracked: 0, absent: 0 },
     };
   }
   const missingSkills: string[] = [];
@@ -638,11 +777,36 @@ export function computeRegistryStatusRow(entry: RegistryEntry, templatesRoot: st
     else missingSkills.push(spec.dir);
     if (anyDrift) driftedSkills.push(spec.dir);
   }
+  const roleFiles = projectRoleFiles(dir);
+  const git = classifyManagedPaths(dir, managedPathsForGitState(dir));
+  // "on the single policy" means every managed path is IGNORED or absent — never committed
+  // (`one-c`: 25 tracked) and never loose (`infra`, `petsonde`: 25 untracked with no .gitignore
+  // at all). A directory that is not a git repository has no policy to be off, so it never
+  // counts against the row.
+  const gitOffPolicy = git.repo && (git.tracked > 0 || git.untracked > 0);
+  const roleCopiesOffPolicy = roleScope === "user" && roleFiles.length > 0;
   const verdict: "ok" | "stale" =
-    missingSkills.length === 0 && driftedSkills.length === 0 && foreignPaths.length === 0 && legacyLeftovers.length === 0
+    missingSkills.length === 0 &&
+    driftedSkills.length === 0 &&
+    foreignPaths.length === 0 &&
+    legacyLeftovers.length === 0 &&
+    !roleCopiesOffPolicy &&
+    !gitOffPolicy
       ? "ok"
       : "stale";
-  return { project: entry.project, dir, verdict, presentSkills, totalSkills, missingSkills, driftedSkills, foreignPaths, legacyLeftovers };
+  return {
+    project: entry.project,
+    dir,
+    verdict,
+    presentSkills,
+    totalSkills,
+    missingSkills,
+    driftedSkills,
+    foreignPaths,
+    legacyLeftovers,
+    projectRoleFiles: roleFiles,
+    git,
+  };
 }
 
 export function formatRegistryStatusRow(row: RegistryStatusRow): string {
@@ -650,15 +814,22 @@ export function formatRegistryStatusRow(row: RegistryStatusRow): string {
     return `${row.project} (${row.dir}) — MISSING DIRECTORY (stale registry entry)`;
   }
   const skillsCol = `${row.presentSkills}/${row.totalSkills} skills`;
+  const rolesCol = `${row.projectRoleFiles.length} project role file(s)`;
+  const gitCol = row.git.repo
+    ? `git tracked=${row.git.tracked} ignored=${row.git.ignored} untracked=${row.git.untracked}`
+    : "not a git repo";
   if (row.verdict === "ok") {
-    return `${row.project} (${row.dir}) — OK, ${skillsCol}`;
+    return `${row.project} (${row.dir}) — OK, ${skillsCol}, ${rolesCol}, ${gitCol}`;
   }
   const parts: string[] = [];
   if (row.missingSkills.length > 0) parts.push(`missing: ${row.missingSkills.join(",")}`);
   if (row.driftedSkills.length > 0) parts.push(`drifted: ${row.driftedSkills.join(",")}`);
   if (row.foreignPaths.length > 0) parts.push(`foreign: ${row.foreignPaths.length} file(s)`);
   if (row.legacyLeftovers.length > 0) parts.push(`legacy leftovers: ${row.legacyLeftovers.length} file(s)`);
-  return `${row.project} (${row.dir}) — STALE, ${skillsCol} (${parts.join("; ")})`;
+  if (row.projectRoleFiles.length > 0) parts.push(`role copies still in the project: ${row.projectRoleFiles.length}`);
+  if (row.git.repo && row.git.tracked > 0) parts.push(`managed paths COMMITTED: ${row.git.tracked}`);
+  if (row.git.repo && row.git.untracked > 0) parts.push(`managed paths untracked (not ignored): ${row.git.untracked}`);
+  return `${row.project} (${row.dir}) — STALE, ${skillsCol}, ${rolesCol}, ${gitCol} (${parts.join("; ")})`;
 }
 
 /**
@@ -681,9 +852,29 @@ export async function runRegistryStatus(opts: { readonly offline: boolean; reado
     log(`status --all: ${formatNpmWireDrift(npmDrift)}`);
   }
 
+  // Roles under the "user" policy are a MACHINE fact, identical for every project — printed once,
+  // above the table, never repeated per row. Needs the definition, so it degrades to a note when
+  // the resolve fails rather than taking the sweep down with it (status never gates).
+  const roleScope: RoleScope = loadWireConfig().roleScope;
   log("");
-  log("status --all: project / skills / discrepancies (one row per registered project):");
-  const rows = entries.map((e) => computeRegistryStatusRow(e));
+  log(`status --all: role policy: roles → ${roleScope} scope (~/.petbox/wire.json)`);
+  try {
+    const resolvedDef = await resolveAgentDefinitionWithLkg({
+      offline: opts.offline,
+      definitionKey: DEFAULT_DEFINITION_KEY,
+    });
+    const rolesData = loadRoles();
+    log(`status --all: user-scope role files (machine-wide, ${resolvedDef.definition.roles.length} declared role(s)):`);
+    for (const report of computeUserRoleReports(resolvedDef.definition, rolesData)) {
+      log(`status --all:   ${formatRoleFilesReport(report)}`);
+    }
+  } catch {
+    log("status --all: user-scope role files: could not resolve a definition to compare against — skipped.");
+  }
+
+  log("");
+  log("status --all: project / skills / role copies / git (one row per registered project):");
+  const rows = entries.map((e) => computeRegistryStatusRow(e, TEMPLATES_ROOT, roleScope));
   for (const row of rows) {
     log(`status --all:   ${formatRegistryStatusRow(row)}`);
   }

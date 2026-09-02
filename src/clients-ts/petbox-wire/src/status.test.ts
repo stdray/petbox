@@ -718,6 +718,8 @@ test("formatRegistryStatusRow: every verdict reads distinctly", () => {
     driftedSkills: [],
     foreignPaths: [],
     legacyLeftovers: [],
+    projectRoleFiles: [],
+    git: { repo: false, states: [], tracked: 0, ignored: 0, untracked: 0, absent: 0 },
   });
   const stale = formatRegistryStatusRow({
     project: "p2",
@@ -729,6 +731,8 @@ test("formatRegistryStatusRow: every verdict reads distinctly", () => {
     driftedSkills: ["petbox-methodology"],
     foreignPaths: [],
     legacyLeftovers: [],
+    projectRoleFiles: [],
+    git: { repo: false, states: [], tracked: 0, ignored: 0, untracked: 0, absent: 0 },
   });
   const missing = formatRegistryStatusRow({
     project: "p3",
@@ -740,6 +744,8 @@ test("formatRegistryStatusRow: every verdict reads distinctly", () => {
     driftedSkills: [],
     foreignPaths: [],
     legacyLeftovers: [],
+    projectRoleFiles: [],
+    git: { repo: false, states: [], tracked: 0, ignored: 0, untracked: 0, absent: 0 },
   });
   assert.match(ok, /OK/);
   assert.match(stale, /STALE/);

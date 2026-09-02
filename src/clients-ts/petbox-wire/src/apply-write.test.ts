@@ -4,7 +4,7 @@
 // Run: node --test src/apply-write.test.ts
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -144,7 +144,7 @@ test("cleanupLegacyArtifact: a FOREIGN file at the legacy path is left alone —
 
 // --- end-to-end-ish: a real renderAgentMarkdown output round-trips through the guard ---
 
-test("a freshly rendered role file always carries the marker, so a second apply run is a silent no-op re-write", () => {
+test("a freshly rendered role file carries the marker; an identical second run is 'unchanged', a changed one is 'own'", () => {
   const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
   const content = renderAgentMarkdown(role);
   assert.ok(hasPetboxMarker(content));
@@ -156,9 +156,20 @@ test("a freshly rendered role file always carries the marker, so a second apply 
     assert.equal(first.kind, "written");
     assert.equal(first.reason, "new");
 
+    // Byte-identical re-run: "unchanged", and nothing is written. This used to report "own" —
+    // a real re-apply claimed to have written every file it had just written, which made
+    // idempotence unobservable (card: normalize-all-environments-to-default item 6).
     const second = writeArtifact(abs, content);
     assert.equal(second.kind, "written");
-    assert.equal(second.reason, "own");
+    assert.equal(second.reason, "unchanged");
+    const mtimeBefore = statSync(abs).mtimeMs;
+    writeArtifact(abs, content);
+    assert.equal(statSync(abs).mtimeMs, mtimeBefore, "an unchanged file must not be touched at all");
+
+    // A file of ours whose CONTENT differs is still overwritten silently — the routine re-render.
+    const changed = writeArtifact(abs, content + "\nnew line from a newer template\n");
+    assert.equal(changed.kind, "written");
+    assert.equal(changed.reason, "own");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

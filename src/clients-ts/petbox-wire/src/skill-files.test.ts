@@ -345,12 +345,26 @@ test("writeSkillFiles: every written skill carries the origin marker", () => {
   }
 });
 
-test("writeSkillFiles: a re-run overwrites its own marked files silently (reason 'own')", () => {
+test("writeSkillFiles: an identical re-run is 'unchanged' (idempotent), a changed template is still 'own'", () => {
   const dir = freshDir();
   try {
     writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    assert.ok(outcomes.every((o) => o.kind === "written" && o.reason === "own"));
+    // Was "own" — a re-run reported every file as re-written even when nothing differed, which is
+    // what made "run it twice, the second is a no-op" uncheckable (card:
+    // normalize-all-environments-to-default item 6). Overwriting our own CHANGED file still is.
+    assert.ok(
+      outcomes.every((o) => o.kind === "written" && o.reason === "unchanged"),
+      `identical re-run must be unchanged; got ${JSON.stringify(outcomes.map((o) => (o.kind === "written" ? o.reason : o.kind)))}`,
+    );
+    const first = outcomes[0]!;
+    assert.equal(first.kind, "written");
+    // Real frontmatter — the marker is only ever read from the `---` block (origin-marker.ts).
+    writeFileSync(first.path, `---\nname: x\n${PETBOX_MARKER_LINE}\n---\nan older generation\n`, "utf8");
+    const { writes: after } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const refreshed = after.find((o) => o.path === first.path)!;
+    assert.equal(refreshed.kind, "written");
+    assert.equal(refreshed.kind === "written" ? refreshed.reason : "", "own");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

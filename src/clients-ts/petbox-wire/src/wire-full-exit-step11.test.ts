@@ -195,7 +195,10 @@ function assertExit(run: Run, expected: number, out: string, what: string): void
 // Step 11 ran to completion and the run reached its OWN end. This is the guard on the decision the
 // fix must not break: propagating the code must never turn into aborting at step 11.
 function assertRunWasNotInterrupted(w: Wired): void {
-  assert.match(w.out, /\[11\/10\]: result written=/, `step 11 must reach its own result line. Full output:\n${w.out}`);
+  // `result roleScope=` — the old `result written=N` counter was RENAMED, not quietly repaired:
+  // it counted ROLE writes only while every reader took it for "files" (card:
+  // normalize-all-environments-to-default item 4). File counts now live on the `summary` line.
+  assert.match(w.out, /\[11\/10\]: result roleScope=/, `step 11 must reach its own result line. Full output:\n${w.out}`);
   assert.match(
     w.out,
     /wire: (step 11|self-smoke FAILED)|^done\./m,
@@ -336,7 +339,7 @@ test("a FAILING step 11 still does not abort the run: apply keeps writing past t
     // this test's business.
     assert.match(
       w.out,
-      /\[11\/10\]: result written=\d+ ok=\[opencode,droid\] partial=\[claude-code\]/,
+      /\[11\/10\]: result roleScope=project ok=\[opencode,droid\] partial=\[claude-code\]/,
       `apply must report the partial write it actually performed. Full output:\n${w.out}`,
     );
     assertRunWasNotInterrupted(w);

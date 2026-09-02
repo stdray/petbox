@@ -73,7 +73,12 @@ test("apply --all --offline --dry-run: writes NOTHING, reports every project inc
     assert.match(out, /missing/i);
     assert.match(out, /would write/i);
     // Summary line accounts for both rows.
+    // This `written=1` is the PER-PROJECT count in the `--all` tail ("2 project(s): written=1"),
+    // not the per-file counter — that one was renamed to `writes=` (card:
+    // normalize-all-environments-to-default item 4) and is asserted separately below.
     assert.match(out, /written=1/);
+    // The preview's own file counts, from the same ledger the "would write" lines came from.
+    assert.match(out, /writes=15 \(roles=15 skills=0\)/);
     assert.match(out, /missing=1/);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
