@@ -92,6 +92,7 @@ import {
 import { readWireLogTail, wireLog, wireLogPath } from "./wire-log.ts";
 import {
   DEFAULT_AGENT_DEFINITION,
+  KIT_VERSION,
   diffAgentDefinitions,
   validateAgentDefinition,
   type AgentDefinition,
@@ -1320,11 +1321,8 @@ async function runApply(argv: string[]): Promise<void> {
 
   if (roleScope === "user") {
     const userRoles = await applyUserRoles({
-      definitionKey,
-      offline,
       dryRun,
       adopt,
-      cwd: process.cwd(),
       label: "apply [roles:user]",
     });
     const result = await performApply({
@@ -1416,11 +1414,8 @@ async function runApplyAll(opts: {
   const userRoleCodes: number[] = [];
   if (opts.roleScope === "user") {
     const userRoles = await applyUserRoles({
-      definitionKey: opts.definitionKey,
-      offline: opts.offline,
       dryRun: opts.dryRun,
       adopt: opts.adopt,
-      cwd: process.cwd(),
       label: `${label} [roles:user]`,
     });
     userRoleCodes.push(userRoles.code);
@@ -1455,9 +1450,31 @@ async function runApplyAll(opts: {
  * normalize-all-environments-to-default item 1). 15 files instead of 90, and the only copy that
  * exists, so there is nothing left to drift against.
  *
- * The definition is resolved for the caller's OWN directory, not per project: user-scope roles are
- * machine-wide by construction, so asking eight projects for eight possibly-different definitions
- * and then writing them all to the same 15 paths would be last-write-wins nonsense.
+ * The definition is the kit's own bundled baseline (DEFAULT_AGENT_DEFINITION, agent-definition.ts)
+ * — NEVER resolved against the caller's cwd or any per-project server document (card:
+ * user-scope-roles-rendered-from-cwd-project-definition). Measured 2026-09-02: the old code called
+ * resolveApplyDefinition(cwd), so the SAME `apply --all --dry-run` reported "using server
+ * definition default v20" from $system and "default v1" from pochtar — a run from the wrong
+ * directory silently downgraded the whole machine profile to whichever project's server document
+ * happened to be stale, and said nothing alarming. User-scope roles are a MACHINE fact, not a
+ * per-project one; asking N registered projects for N possibly-different documents and writing
+ * them all to the same 15 paths was always last-write-wins nonsense — the fix is to stop asking
+ * any project at all. The kit baseline is:
+ *   - deterministic by construction: identical bytes from any cwd, on any machine running the
+ *     same kit build — no registry lookup, no network, no server-side drift to inherit;
+ *   - never "unavailable": it ships inside the npm package (package.json's `files` allowlist) and
+ *     is validated at module import time (agent-definition.ts's loadDefaultAgentDefinition) — a
+ *     missing/corrupt copy throws loudly there, before this function ever runs, so there is no
+ *     separate "source unreachable" branch to write here;
+ *   - never a silent downgrade: there is exactly one baseline per kit build, so "older than what
+ *     was already rendered" can only happen by running an OLDER kit binary, which is a kit-version
+ *     drift question (npm-wire-drift.ts) orthogonal to this function, not a per-invocation choice;
+ *   - already the SAME content the server-sourced definitions were converging on: verified live
+ *     2026-09-02 against the owner's real profile — the 15 files already rendered from $system's
+ *     server document (v20) are byte-for-byte identical to what this baseline renders today, on
+ *     every one of the three harnesses. Confirms this is not a downgrade in substance, only in
+ *     mechanism (matches the source-of-truth research in research/wire-source-of-truth: git is
+ *     already canonical, server documents are replicas).
  *
  * Two things this deliberately does NOT do:
  *  - no pre-namespacing legacy cleanup (`worker.md` next to `petbox-worker.md`). Those unprefixed
@@ -1465,15 +1482,14 @@ async function runApplyAll(opts: {
  *    the only thing such a probe could ever find is somebody else's file, which is exactly what
  *    `~/.factory/droids/worker.md` is on the owner's machine today.
  *  - no `.gitignore` policy. A harness profile is not a project checkout.
- * The orphan sweep DOES run, under the same server-source gate as the project path: a role dropped
- * from the definition must lose its user-scope file too, or it outlives the roster forever.
+ * The orphan sweep always runs now (unconditionally, unlike the project-scope path's server-source
+ * gate): the baseline is never a degraded partial replica, so a role dropped from it can never be
+ * mistaken for a network hiccup — its user-scope file must go too, or it outlives the roster
+ * forever.
  */
 async function applyUserRoles(opts: {
-  readonly definitionKey: string;
-  readonly offline: boolean;
   readonly dryRun: boolean;
   readonly adopt: AdoptSet;
-  readonly cwd: string;
   readonly label: string;
 }): Promise<ApplyRunResult> {
   const ledger: ApplyLedger = createLedger();
@@ -1485,17 +1501,12 @@ async function applyUserRoles(opts: {
   };
 
   let definition: AgentDefinition;
-  let resolved: ResolvedAgentDefinition;
   let rolesData: RolesFile;
   try {
-    resolved = await resolveApplyDefinition({
-      offline: opts.offline,
-      definitionKey: opts.definitionKey,
-      cwd: opts.cwd,
-      label: opts.label,
-    });
-    definition = resolved.definition;
-    validateAgentDefinition(definition);
+    // DEFAULT_AGENT_DEFINITION is already validated at module import time (agent-definition.ts) —
+    // re-validating here would be a second copy of that same check, not extra safety.
+    definition = DEFAULT_AGENT_DEFINITION;
+    log(`${opts.label}: source=kit baseline (default-agents.json), kit v${KIT_VERSION} — same on every cwd/machine running this build`);
     const dangling = findDanglingTargets(definition);
     if (dangling.length > 0) {
       throw new Error(
@@ -1521,7 +1532,10 @@ async function applyUserRoles(opts: {
   const partialHarnesses: string[] = [];
   const blockedHarnesses: string[] = [];
   let clobberBlocked = false;
-  const orphanSweepSource = resolved.source === "server";
+  // Always authoritative (see the function doc comment): the kit baseline is never a degraded
+  // partial replica the way a server/LKG resolve could be, so the project-scope path's
+  // server-source gate does not apply here.
+  const orphanSweepSource = true;
 
   for (const harness of HARNESS_IDS) {
     const dir = userAgentFilesRoot(harness, homedir());
@@ -3181,11 +3195,8 @@ async function main(): Promise<void> {
   const userRoleResult =
     step11Scope === "user"
       ? await applyUserRoles({
-          definitionKey: DEFAULT_DEFINITION_KEY,
-          offline: false,
           dryRun: false,
           adopt: NO_ADOPT,
-          cwd: dir,
           label: "[11/10 roles:user]",
         })
       : undefined;

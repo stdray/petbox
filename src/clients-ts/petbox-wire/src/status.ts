@@ -40,7 +40,13 @@ import {
   resolveAgentDefinitionWithLkg,
   type ResolvedAgentDefinition,
 } from "./agent-def-fetch.ts";
-import { emittedRoleName, type AgentDefinition, type AgentRole } from "./agent-definition.ts";
+import {
+  DEFAULT_AGENT_DEFINITION,
+  KIT_VERSION,
+  emittedRoleName,
+  type AgentDefinition,
+  type AgentRole,
+} from "./agent-definition.ts";
 import { agentFilesDir, planApply, sanitizeDroidName } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { classifyManagedPaths, formatGitState, type GitStateReport } from "./git-state.ts";
@@ -589,10 +595,21 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   // ---- roles as files, per scope (card item 3) ----
   // The per-role lines above answer "what model, from where"; this answers "where do the FILES
   // live and are they the same generation", which nothing used to ask at all.
+  //
+  // [user] is compared against DEFAULT_AGENT_DEFINITION (the kit's own bundled baseline), NEVER
+  // against `definition` (pillar 1's per-project, cwd-resolved document) — that was the exact bug
+  // (card user-scope-roles-rendered-from-cwd-project-definition): comparing machine-wide files
+  // against a per-cwd definition made `status` say "current" or "drifted" depending on which
+  // directory the operator happened to run it from. computeUserRoleReports' own `drifted` count
+  // against the baseline IS the staleness check the card asks for — a file that no longer matches
+  // what THIS kit build would render is stale, whether that is because someone hand-edited it or
+  // because the kit was upgraded since the last apply; there is no separate "version" to compare,
+  // because the baseline has no version axis other than the kit build itself.
   const machineScope: RoleScope = loadWireConfig().roleScope;
   log("");
   log(`status: role FILES by scope (machine policy: roles → ${machineScope}):`);
-  for (const report of computeUserRoleReports(definition, rolesData)) {
+  log(`status:   [user] source: kit baseline (default-agents.json), kit v${KIT_VERSION} — deterministic, independent of cwd`);
+  for (const report of computeUserRoleReports(DEFAULT_AGENT_DEFINITION, rolesData)) {
     log(`status:   [user]    ${formatRoleFilesReport(report)}`);
   }
   for (const harness of HARNESS_IDS) {
@@ -853,23 +870,28 @@ export async function runRegistryStatus(opts: { readonly offline: boolean; reado
   }
 
   // Roles under the "user" policy are a MACHINE fact, identical for every project — printed once,
-  // above the table, never repeated per row. Needs the definition, so it degrades to a note when
-  // the resolve fails rather than taking the sweep down with it (status never gates).
+  // above the table, never repeated per row.
+  //
+  // Source is DEFAULT_AGENT_DEFINITION (the kit's own bundled baseline), never a per-project
+  // server resolve (card user-scope-roles-rendered-from-cwd-project-definition — this used to call
+  // resolveAgentDefinitionWithLkg with no projectKey at all, which can never hit a live server or
+  // find any project's LKG cache and so always silently fell back to the SAME baseline anyway,
+  // just via a network-shaped code path with a pointless try/catch around it). Naming the source
+  // explicitly, plus the kit version, is what lets an operator answer "is this stale" without a
+  // second resolve: computeUserRoleReports' own `drifted` count against this SAME baseline below
+  // already says so.
   const roleScope: RoleScope = loadWireConfig().roleScope;
   log("");
   log(`status --all: role policy: roles → ${roleScope} scope (~/.petbox/wire.json)`);
-  try {
-    const resolvedDef = await resolveAgentDefinitionWithLkg({
-      offline: opts.offline,
-      definitionKey: DEFAULT_DEFINITION_KEY,
-    });
+  log(`status --all: user-scope role source: kit baseline (default-agents.json), kit v${KIT_VERSION} — deterministic, independent of cwd`);
+  {
     const rolesData = loadRoles();
-    log(`status --all: user-scope role files (machine-wide, ${resolvedDef.definition.roles.length} declared role(s)):`);
-    for (const report of computeUserRoleReports(resolvedDef.definition, rolesData)) {
+    log(
+      `status --all: user-scope role files (machine-wide, ${DEFAULT_AGENT_DEFINITION.roles.length} declared role(s)):`,
+    );
+    for (const report of computeUserRoleReports(DEFAULT_AGENT_DEFINITION, rolesData)) {
       log(`status --all:   ${formatRoleFilesReport(report)}`);
     }
-  } catch {
-    log("status --all: user-scope role files: could not resolve a definition to compare against — skipped.");
   }
 
   log("");
