@@ -124,22 +124,28 @@ history now, while the current plan and status are the boards above.
    directory), build the image (`docker build .`) before moving the deploy tag.
    **The Cake gate is not the only gate between a change and prod.** `jb inspectcode`
    runs in CI (`.github/workflows/inspect.yml`, a reusable workflow called from ci.yml's
-   `inspect` job; script: `scripts/inspect-gate.cs`) EXACTLY ONCE per deploy, on the
-   `deploy` tag push — the exact merged tree about to ship — not on branch pushes and
-   not on pushes to `main` (owner decision 2026-08-30,
+   `inspect` job; script: `scripts/inspect-gate.cs`) on the `deploy` tag push AND on
+   pushes to `main` — never on any other branch (owner decision 2026-08-30,
    work/inspect-gate-once-on-merged-tree: a branch tree never lands on main
-   byte-for-byte, so per-push checks missed the one tree that mattered). Do NOT wait
-   for a green `inspect` run before merging — merges are gated by the Cake
-   `Test`/`Verify` targets only; ci.yml's `deploy` job (`needs: [publish, test,
-   inspect]`) blocks the prod deploy instead, at the exact tagged commit. Exit 1
-   (findings survived at ERROR severity) fails the job and stops the deploy. Exit 2
-   (COULD NOT VERIFY — the tool itself couldn't run after 3 attempts, not a code
-   finding) is downgraded to a `::warning::` inside inspect.yml's `Run inspect-gate`
-   step and does NOT block the deploy. Residual risk, chosen explicitly: a finding can
-   sit unnoticed on `main` until the next `deploy` tag push — nothing checks earlier.
+   byte-for-byte, so per-branch checks missed the one tree that mattered; a push to
+   `main` IS that merged tree, and it is the tree the `deploy` tag is moved onto).
+   **The two runs are not the same gate.** The TAG run is the blocking one: ci.yml's
+   `deploy` job (`needs: [publish, test, inspect]`) stops the prod deploy at the exact
+   tagged commit. Exit 1 (findings survived at ERROR severity) fails the job and stops
+   the deploy. Exit 2 (COULD NOT VERIFY — the tool itself couldn't run after 3
+   attempts, not a code finding) is downgraded to a `::warning::` inside inspect.yml's
+   `Run inspect-gate` step and does NOT block the deploy. The MAIN run blocks nothing;
+   it exists so the set of checks that can fail a deploy is visible BEFORE the tag is
+   moved (work/inspect-visible-before-tag-move — before it, a one-line finding surfaced
+   only in the deploy run and cost two extra CI runs to clear). Practical consequence:
+   **a red `inspect` on the main run means the deploy tag will be refused — fix it
+   before moving the tag.** Do NOT wait for a green `inspect` run before merging a
+   branch into main — merges are still gated by the Cake `Test`/`Verify` targets only;
+   `inspect` has nothing to say about a branch tree.
    The gate is part of NEITHER `Test`/`Verify` nor any git hook (there is no pre-push
    hook), so a green local gate proves nothing about it. Run it by hand to debug a
-   finding or pre-check a branch: `dotnet run scripts/inspect-gate.cs` (~45-160s).
+   finding or pre-check a branch: `dotnet run scripts/inspect-gate.cs` (~45-160s) —
+   still the only way to know before pushing at all.
    Mechanically fixable findings: `./build.ps1 -Target CleanupCode` — it rewrites
    files, so run it and review its diff BEFORE committing; deliberately wired into
    neither CI nor `Test`/`Verify` (see build.cs).
