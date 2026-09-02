@@ -8,6 +8,8 @@ description: >-
   accepted work cards, "прогони всё это"), especially when the owner will be away and the
   orchestrator must keep going alone. Not for a single task, for exploratory work, or for
   tasks that mostly touch the same files — see "When not to use this".
+petbox: managed
+petbox-digest: manual
 ---
 
 # Factory run — many prepared tasks, one unattended pass

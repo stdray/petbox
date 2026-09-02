@@ -8,6 +8,8 @@ description: >-
   subagents, or would otherwise blow the context budget re-deriving the same ground truth
   repeatedly. Not for a small task, a single file, or a short question — see "When not to
   use this" below.
+petbox: managed
+petbox-digest: manual
 ---
 
 # Analysis workspace — staged files over repeated calls
