@@ -61,7 +61,7 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     const workerRole = definition.roles.find((r) => r.slug === "worker");
     const workerName = emittedRoleName(workerRole ?? "worker");
     // The delegate-by-default rule, its threshold and the cost rationale behind it live ONLY in
-    // the portable definition's orchestrator notes (point 3), rendered below — never restated
+    // the portable definition's orchestrator notes (point 2), rendered below — never restated
     // here. Two sources of prose about the same behavior is itself a defect (bug:
     // kit-prose-contradicts-server-definition; card: orchestrator-delegate-rule-portable-and-priced);
     // this banner line stays a pointer, not a second copy, so it can never drift from the notes.
@@ -70,7 +70,7 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
 Then next line, your self-intro — exactly:
 \`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
 
-Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 3.
+Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 2.
 
 Orchestrator notes (from definition): ${notes}`;
   }
@@ -116,13 +116,11 @@ ${intro}
 
 - **Facts — \`${memorySearch}\`** (no \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\`); full body: \`${memoryGet}\`.
 - **Conversations — \`${sessionSearch}\`**: HOW something was decided, error text, detail a fact wouldn't carry; each hit carries the message ordinal → \`${sessionGet}\`.
-- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` ONLY when this session's banner fits its size budget. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`; no scope = cascades project+workspace) — you MUST pass \`usageSource:"machine"\` on this call: it is an automated protocol-mandated pull, not a deliberate search, and omitting the argument silently mis-records it as deliberate.
+- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` when the banner budget allows. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`) — you MUST pass \`usageSource:"machine"\`.
 
-**Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts). Curated/temporal edits: \`${memoryUpsert}\`. The server also autocaptures after each session — don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
+**Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`scope\` = workspace for cross-project/user facts); curated/temporal edits: \`${memoryUpsert}\`. Don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
 
-**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (do not invent board/type/status).
-
-**Defect-like findings are observations, not memory facts:** something broken, behaving unexpectedly, or contradicting docs is a node on the built-in \`observations\` board (\`${tasksSearch}\`/\`${tasksUpsert}\`), not a memory entry — the session extractor also files these automatically. To turn a real one into work or an idea: \`${tasksObservationPromote}\`.`;
+**Findings are filed, not worked around:** something broken, unexpected, or contradicting docs — a process/doc defect included — belongs on the built-in \`observations\` board (\`${tasksSearch}\`/\`${tasksUpsert}\`), never a memory entry. That board is outside the decision queue, so a full one is not backlog pressure; promote a real one via \`${tasksObservationPromote}\`, or file a card via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (never invent board/type/status).`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {

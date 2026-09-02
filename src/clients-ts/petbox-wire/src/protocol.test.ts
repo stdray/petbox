@@ -64,6 +64,70 @@ test("buildProtocol's canon-fallback memory_get instruction MANDATES usageSource
   assert.match(fallbackLine!, /MUST pass/);
 });
 
+// --- protocol-block-unowned-budget-hog: the protocol block is the banner's LARGEST fixed
+// consumer (it was 6378 B of a 9400 B budget — 68% — and drifted ~170 B between edits, more than
+// the whole remaining margin, so the canon leg was silently dropped on session after session).
+// The owner's decision (intake canon-trim-budget-decision) is a DIAGNOSTIC ceiling, not a write
+// gate: SESSION_BANNER_BUDGET_BYTES and the 10 000 B hard limit stay untouched, and nothing
+// rejects a canon write — this assert is the ceiling's teeth. It is measured on BOTH source legs
+// because `resume`/`compact` append a suffix and are therefore the worst case (that ~94 B is
+// exactly what pushed the live 2026-07-26 resume banner 4 B over budget). ---
+
+export const PROTOCOL_BLOCK_CEILING_BYTES = 5_400;
+
+test("the protocol block stays under its diagnostic ceiling on every source leg", () => {
+  for (const source of ["startup", "resume", "compact"] as const) {
+    const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code", source });
+    const bytes = Buffer.byteLength(text, "utf8");
+    assert.ok(
+      bytes <= PROTOCOL_BLOCK_CEILING_BYTES,
+      `protocol block for source=${source} is ${bytes} B, over the ${PROTOCOL_BLOCK_CEILING_BYTES} B ceiling — ` +
+        "it is crowding the canon out of the banner. Trim the block or the orchestrator notes; " +
+        "do NOT raise this number without an owner decision (intake canon-trim-budget-decision).",
+    );
+  }
+});
+
+// The load-bearing rules must survive any future trim of the notes: each of these is a rule that
+// exists ONLY in this banner (the spawned subagent never runs the SessionStart hook), so losing
+// one loses it everywhere. Anchors are phrase-level on purpose — reword them consciously.
+test("the trimmed protocol block still carries every load-bearing orchestrator rule", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
+  const required: ReadonlyArray<readonly [string, RegExp]> = [
+    ["no model at spawn", /Never pass a model at spawn/],
+    ["escalate by ROLE, not model", /`worker-highstakes` ROLE/],
+    ["delegate by default", /Delegate by default/],
+    ["no errand role", /no errand role/],
+    ["reserve triggers are events", /Reserve triggers on EVENTS/],
+    ["never dictate a self-intro", /Never dictate a subagent's self-intro/],
+    ["never accept unseen verification", /Never accept a verification you did not see/],
+    ["tools lie about remote state", /tools LIE about remote state/],
+    ["never self-set Done", /Never self-set Done\/accepted/],
+    ["lane axis is conditional", /tasks_methodology_rules_get/],
+    ["stale InProgress circuit breaker", /Circuit breaker for stale `InProgress`/],
+  ];
+  for (const [name, re] of required) {
+    assert.match(text, re, `load-bearing rule missing from the banner: ${name}`);
+  }
+});
+
+// The self-intro block points at the delegate-by-default rule BY NUMBER ("Orchestrator notes,
+// point N") — the one numbered cross-reference in the kit. Renumbering the notes without
+// updating it silently aims the pointer at a different rule.
+test("the by-number cross-reference in the self-intro resolves to the delegate-by-default point", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
+  const ref = /Orchestrator notes, point (\d+)\./.exec(text);
+  assert.ok(ref, `self-intro must carry the numbered delegation pointer:\n${text}`);
+  const notes = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")?.notes ?? "";
+  const target = notes.split("\n").find((l) => l.startsWith(`${ref![1]}. `));
+  assert.ok(target, `orchestrator notes have no point ${ref![1]}`);
+  assert.match(
+    target!,
+    /Delegate by default/,
+    `point ${ref![1]} is not the delegation rule — renumbering the notes broke the cross-reference`,
+  );
+});
+
 test("buildProtocol for droid CONTAINS spawn/orchestrator prose (Factory spawns via Task)", () => {
   const text = buildProtocol(project, mcpPetboxTool, { harness: "droid" });
   const lower = text.toLowerCase();
