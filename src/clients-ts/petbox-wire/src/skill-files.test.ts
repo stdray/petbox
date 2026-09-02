@@ -5,6 +5,7 @@
 // Run: node --test src/skill-files.test.ts   (Node >= 23.6 native TS type-stripping; no build step)
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1298,46 +1299,81 @@ test("extractSkillTrigger against every REAL current petbox-* skill description 
 //
 // The parity tests above pin templates/ against PROJECT_SKILLS, README.md, and each other; NONE
 // of them look at `<repoRoot>/.claude/skills/<dir>/SKILL.md` — the copies THIS project ($system)
-// itself carries, tracked by an explicit .gitignore whitelist specifically so the kit's own repo
-// dogfoods its own output. Those tracked copies are NOT re-rendered by this test suite; they are
-// only ever refreshed by an actual `wire`/`apply` run (or, historically, a by-hand commit).
+// itself carries, tracked by an explicit .gitignore whitelist (line ~109) specifically so the
+// kit's own repo dogfoods its own output. Those tracked copies are NOT re-rendered by this test
+// suite; they are only ever refreshed by an actual `wire`/`apply` run (or, historically, a
+// by-hand commit).
 //
 // Measured live 2026-09-02: commit 0daca301 edited templates/petbox-analysis-workspace/SKILL.md
 // and templates/petbox-factory-run/SKILL.md (added `disable-model-invocation: true`) but did NOT
 // touch the tracked .claude/skills/ copies of either — nothing here caught it, and `apply`
-// surfaced the drift only later, as a dirty working tree. This test is the missing catch: for
-// every PROJECT_SKILLS entry whose tracked copy exists in THIS checkout, it must be
-// byte-for-byte identical to the current template.
+// surfaced the drift only later, as a dirty working tree. This test is the missing catch.
 //
-// Byte-for-byte, not rendered: none of the tracked copies below sit under a placeholder-bearing
-// template that would need {{PROJECT}}/{{WORKSPACE}} substitution to compare — verified by eye
-// (`diff -q`) against every template PROJECT_SKILLS names. If a future skill both needs
-// rendering AND gets tracked here, this comment is the trip wire to update the comparison, not a
-// promise the code enforces on its own.
+// TWO caught-live mistakes this version fixes over the first draft (bug class:
+// e2e-red-in-worktree-green-in-main-checkout — a check whose selection depends on what happens
+// to sit on THIS disk, not on what the repo actually declares, drifts by checkout):
 //
-// A PROJECT_SKILLS entry with NO tracked copy in this repo (most of them — $system's own
-// .claude/skills/ only tracks a few, plus its own project-specific petbox-methodology-system,
-// which carries no kit template at all and is out of PROJECT_SKILLS entirely) is a silent skip,
-// not a failure: not every skill this kit ships to OTHER projects is one $system's own working
-// tree happens to track.
-test("this repo's tracked .claude/skills/ copies are byte-identical to the current kit templates", () => {
+//   1. Selection must be by REAL GIT TRACKING (`git ls-files .claude/skills`), never by
+//      `existsSync`. `.claude/skills/petbox/SKILL.md` is NOT in the .gitignore whitelist above —
+//      it is a materialized ARTIFACT `apply` writes locally, gitignored like any other. A fresh
+//      worktree never has it on disk (existsSync -> skip, silently green); the primary checkout
+//      does, because someone ran `apply` there (existsSync -> compared, and FAILS — see point 2).
+//      Picking files by disk presence made this test's verdict depend on which checkout happened
+//      to have run `apply` recently, not on what the repo declares tracked. `git ls-files` is the
+//      one source of truth both checkouts agree on.
+//   2. Placeholder-bearing templates must be excluded BY CONTENT (`{{` in the template), never by
+//      name. `templates/petbox/SKILL.md` is the one template using `{{PROJECT}}`/`{{WORKSPACE}}`;
+//      its MATERIALIZED form (after `apply` substitutes `$system` etc.) can never be byte-equal
+//      to the raw template, and comparing it that way is not a drift `apply`/`wire` can fix by
+//      re-running — the assertion's own remedy text would be a lie. A future parameterized
+//      template must trip this same exclusion automatically, without anyone remembering to add
+//      its name to a list.
+//
+// A PROJECT_SKILLS entry that is either untracked in THIS repo or placeholder-bearing is a
+// silent skip, not a failure — most PROJECT_SKILLS entries are for OTHER projects' working
+// trees, not $system's own.
+test("this repo's tracked (git ls-files), non-parameterized .claude/skills/ copies are byte-identical to the current kit templates", (t) => {
   const repoRoot = join(HERE, "..", "..", "..", "..");
+  let trackedSkillPaths: Set<string>;
+  try {
+    const out = execFileSync("git", ["ls-files", ".claude/skills"], { cwd: repoRoot, encoding: "utf8" });
+    trackedSkillPaths = new Set(
+      out
+        .split(/\r?\n/)
+        .map((l) => l.trim().replace(/\\/g, "/"))
+        .filter(Boolean),
+    );
+  } catch {
+    t.skip("git not on PATH, or repoRoot is not a git checkout — nothing to compare");
+    return;
+  }
   let checked = 0;
+  let skippedParameterized = 0;
   for (const spec of PROJECT_SKILLS) {
-    const trackedPath = join(repoRoot, ".claude", "skills", spec.dir, "SKILL.md");
-    if (!existsSync(trackedPath)) continue; // not tracked in this checkout — nothing to compare
-    const tracked = readFileSync(trackedPath, "utf8");
+    const relPath = `.claude/skills/${spec.dir}/SKILL.md`;
+    if (!trackedSkillPaths.has(relPath)) continue; // not tracked by git in this checkout
     const template = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+    if (template.includes("{{")) {
+      // Parameterized — the tracked copy is a RENDER, never byte-equal to the raw template by
+      // construction. Excluded by content, not by naming petbox/petbox-methodology/etc. here.
+      skippedParameterized++;
+      continue;
+    }
+    const tracked = readFileSync(join(repoRoot, ".claude", "skills", spec.dir, "SKILL.md"), "utf8");
     assert.equal(
       tracked,
       template,
-      `.claude/skills/${spec.dir}/SKILL.md has drifted from templates/${spec.dir}/SKILL.md — ` +
+      `${relPath} has drifted from templates/${spec.dir}/SKILL.md — ` +
         `re-run apply/wire in this repo and commit the refreshed tracked copy.`,
     );
     checked++;
   }
-  // If this ever hits 0, either the tracked whitelist emptied out or the repoRoot path broke —
-  // either way the test would be silently vacuous, which is worse than not having it.
-  assert.ok(checked > 0, "expected at least one PROJECT_SKILLS entry to have a tracked .claude/skills/ copy to compare");
+  // If this ever hits 0 (and nothing was excluded as parameterized either), either the tracked
+  // whitelist emptied out or `git ls-files`/repoRoot broke — either way the test would be
+  // silently vacuous, which is worse than not having it.
+  assert.ok(
+    checked > 0 || skippedParameterized > 0,
+    "expected at least one PROJECT_SKILLS entry to be tracked in this checkout (compared or excluded as parameterized)",
+  );
 });
 
