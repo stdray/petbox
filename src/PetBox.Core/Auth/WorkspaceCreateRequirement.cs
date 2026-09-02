@@ -11,10 +11,12 @@ namespace PetBox.Core.Auth;
 // identity at sign-in would answer with a stale number, in the direction that grants access. It is
 // read from the DB, at the moment the question is asked.
 //
-// COST: this handler is NOT on the hot path. It runs only where the policy is declared (the
-// self-service create page) and where the CTA is rendered (the no-workspace empty state, which a
-// user with a workspace never sees) — not on every request. Two indexed core-db reads when it does
-// run: one Users row, one WorkspaceMembers count.
+// COST: this handler runs on EVERY page that renders the sidebar (_WorkspaceSelector asks it to
+// decide whether to offer "+ New workspace"), plus the self-service create page and the
+// no-workspace empty state. Two indexed core-db reads per run: one Users row, one
+// WorkspaceMembers count — and a sysadmin short-circuits before either. Cheap, but no longer off
+// the hot path: if it ever shows up in a profile, cache it per-request on NavigationContext
+// rather than baking the answer into the cookie (see above for why the cookie is wrong).
 public sealed class WorkspaceCreateRequirement : IAuthorizationRequirement;
 
 public sealed class WorkspaceCreateAuthorizationHandler(WorkspaceProvisioning provisioning)
