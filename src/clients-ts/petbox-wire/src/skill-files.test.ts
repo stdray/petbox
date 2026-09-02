@@ -26,6 +26,7 @@ import {
   SKILL_SURFACES,
   renderSkillTemplate,
   writeSkillFiles,
+  type SkillTemplateSpec,
   type SkillWriteOutcome,
   type WorkspaceProbeResult,
 } from "./skill-files.ts";
@@ -66,7 +67,7 @@ function pathFor(dir: string, surface: string[], specDir: string): string {
 test("writeSkillFiles writes every PROJECT_SKILLS entry into every SKILL_SURFACES root", () => {
   const dir = freshDir();
   try {
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     assert.equal(outcomes.length, PROJECT_SKILLS.length * SKILL_SURFACES.length);
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
@@ -271,7 +272,7 @@ test("writeSkillFiles: a file declared `petbox: manual` survives apply byte-for-
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, mine, "utf8");
 
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "declared-manual", `expected a declared-manual skip, got ${JSON.stringify(outcome)}`);
     assert.notEqual(outcome.kind, "blocked", "a declared manual path is a legal state, never a conflict");
@@ -296,7 +297,7 @@ test("writeSkillFiles: a manual declaration survives a SECOND apply too (never m
     const taken = readFileSync(target, "utf8").replace(PETBOX_MARKER_LINE, PETBOX_MANUAL_LINE);
     writeFileSync(target, taken, "utf8");
 
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "declared-manual");
     assert.equal(readFileSync(target, "utf8"), taken);
@@ -324,7 +325,7 @@ test("writeSkillFiles: a re-run overwrites its own marked files silently (reason
   const dir = freshDir();
   try {
     writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     assert.ok(outcomes.every((o) => o.kind === "written" && o.reason === "own"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -339,7 +340,7 @@ test("writeSkillFiles: a foreign file (no marker, different content) is blocked 
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, foreign, "utf8");
 
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked");
     assert.equal(readFileSync(target, "utf8"), foreign, "foreign file must be left byte-for-byte untouched");
@@ -367,7 +368,7 @@ test("writeSkillFiles: an unmarked file byte-identical to the pre-marker render 
 
     // The very first wire/apply after this fix must NOT block on the owner's own already-
     // materialized skills — it must recognize them as ours and promote them.
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
     assert.ok(
       outcomes.every((o) => o.kind === "written" && o.reason === "migrated"),
       `expected every outcome to be a migration: ${JSON.stringify(outcomes)}`,
@@ -393,10 +394,175 @@ test("writeSkillFiles: an unmarked file that differs from the pre-marker render 
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, edited, "utf8");
 
-    const outcomes = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked", "an owner edit on top of the legacy render must never be silently migrated");
     assert.equal(readFileSync(target, "utf8"), edited, "edited file must be left byte-for-byte untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- rename cleanup (bug: wire-skill-cleanup-on-replace; spec: wire-skill-replace-no-orphans)
+//
+// `cleanupLegacyArtifact` existed for exactly this and had ONE caller — the agent-role rename in
+// wire.ts — while the skill write pipeline had none at all, so a renamed skill's old SKILL.md
+// stayed on disk forever. These tests run against a FIXTURE registry (writeSkillFiles' `specs`
+// parameter): the delivered set has no renames of its own yet, and a mechanism that deletes
+// files in the owner's `.claude/skills` must not sit untested until its first real caller lands.
+
+/** A one-skill templates root + registry whose skill used to live under `legacyDirs`. */
+function fixtureRegistry(legacyDirs: string[]): { templatesRoot: string; specs: SkillTemplateSpec[] } {
+  const templatesRoot = freshDir();
+  mkdirSync(join(templatesRoot, "petbox-renamed"), { recursive: true });
+  writeFileSync(
+    join(templatesRoot, "petbox-renamed", "SKILL.md"),
+    `---\nname: petbox-renamed\ndescription: A renamed skill. Use always.\n${PETBOX_MARKER_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Renamed\n`,
+    "utf8",
+  );
+  return { templatesRoot, specs: [{ dir: "petbox-renamed", needsWorkspace: false, digestMode: "auto", legacyDirs }] };
+}
+
+/** Put a file at the pre-rename path, as an earlier delivery would have left it. */
+function seedLegacy(dir: string, surface: string[], legacyDir: string, body: string): string {
+  const p = join(dir, ...surface, legacyDir, "SKILL.md");
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, body, "utf8");
+  return p;
+}
+
+test("writeSkillFiles: a renamed skill's OWNED pre-rename copy is removed, and its emptied directory with it", () => {
+  const dir = freshDir();
+  const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
+  try {
+    const legacyPaths = SKILL_SURFACES.map((s) =>
+      seedLegacy(dir, s, "petbox-old-name", `---\nname: petbox-old-name\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+    );
+
+    const { writes, cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+
+    assert.ok(writes.every((o) => o.kind === "written"), "the replacement must land on every surface");
+    assert.equal(cleanups.length, SKILL_SURFACES.length, "one sweep per surface");
+    for (const [i, surface] of SKILL_SURFACES.entries()) {
+      const legacyPath = legacyPaths[i]!;
+      assert.equal(existsSync(legacyPath), false, `orphaned ${legacyPath} must be gone`);
+      assert.equal(
+        existsSync(join(dir, ...surface, "petbox-old-name")),
+        false,
+        "the emptied legacy skill directory must not be left behind either",
+      );
+      assert.equal(existsSync(pathFor(dir, surface, "petbox-renamed")), true, "the new path must exist");
+    }
+    assert.ok(cleanups.every((c) => c.outcome === "removed" && c.removedDir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(templatesRoot, { recursive: true, force: true });
+  }
+});
+
+// The trap the work card names explicitly: this code DELETES files in a personal
+// `.claude/skills`. Deletion is permitted for exactly one state — `petbox: managed`, the paths
+// the kit was the only source of truth for. These two tests are the guard rails, and they are
+// the reason the marker gate had to become value-exact in the provenance commit: under the old
+// `^petbox:\s*\S+` pattern the declared-manual file below satisfied it and was UNLINKED.
+test("writeSkillFiles: a FOREIGN file at the pre-rename path survives the sweep, untouched", () => {
+  const dir = freshDir();
+  const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
+  const surface = SKILL_SURFACES[0]!;
+  try {
+    const mine = "# my own notes\n\nnever generated by wire, no frontmatter at all\n";
+    const legacyPath = seedLegacy(dir, surface, "petbox-old-name", mine);
+
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+
+    assert.equal(existsSync(legacyPath), true, "a foreign file must NEVER be deleted by the sweep");
+    assert.equal(readFileSync(legacyPath, "utf8"), mine, "and must be byte-for-byte untouched");
+    assert.equal(cleanups.find((c) => c.path === legacyPath)!.outcome, "kept-foreign");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(templatesRoot, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a file declared `petbox: manual` at the pre-rename path survives the sweep, untouched", () => {
+  const dir = freshDir();
+  const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
+  const surface = SKILL_SURFACES[0]!;
+  try {
+    const claimed = `---\nname: petbox-old-name\n${PETBOX_MANUAL_LINE}\n---\n\n# I took this path over\n`;
+    const legacyPath = seedLegacy(dir, surface, "petbox-old-name", claimed);
+
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+
+    assert.equal(existsSync(legacyPath), true, "a declared-manual file must NEVER be deleted by the sweep");
+    assert.equal(readFileSync(legacyPath, "utf8"), claimed, "and must be byte-for-byte untouched");
+    assert.equal(cleanups.find((c) => c.path === legacyPath)!.outcome, "kept-foreign");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(templatesRoot, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a legacy directory holding anything the kit did not write survives as a directory", () => {
+  const dir = freshDir();
+  const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
+  const surface = SKILL_SURFACES[0]!;
+  try {
+    const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`);
+    const companion = join(dir, ...surface, "petbox-old-name", "references", "notes.md");
+    mkdirSync(dirname(companion), { recursive: true });
+    writeFileSync(companion, "the owner's own reference material\n", "utf8");
+
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+
+    assert.equal(existsSync(legacyPath), false, "our own SKILL.md at the old name still goes");
+    assert.equal(existsSync(companion), true, "but nothing else in that directory is ours to remove");
+    const cleanup = cleanups.find((c) => c.path === legacyPath)!;
+    assert.equal(cleanup.outcome, "removed");
+    assert.equal(cleanup.removedDir, false, "a non-empty legacy directory must be kept");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(templatesRoot, { recursive: true, force: true });
+  }
+});
+
+// Same rule the agent-role rename cleanup in wire.ts follows: never orphan a skill by deleting
+// the old copy when the replacement could not be written. If the sweep ran unconditionally, a
+// project that had claimed the NEW path would end up with neither copy of the skill on disk.
+test("writeSkillFiles: no sweep at all when the replacement did not land (blocked / declared-manual)", () => {
+  for (const [label, newBody] of [
+    ["blocked (foreign at the new path)", "# a real file of mine, no marker\n"],
+    ["declared-manual (project owns the new path)", `---\nname: x\n${PETBOX_MANUAL_LINE}\n---\n\n# mine\n`],
+  ] as const) {
+    const dir = freshDir();
+    const { templatesRoot, specs } = fixtureRegistry(["petbox-old-name"]);
+    const surface = SKILL_SURFACES[0]!;
+    try {
+      const legacyPath = seedLegacy(dir, surface, "petbox-old-name", `---\nname: x\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`);
+      const newPath = pathFor(dir, surface, "petbox-renamed");
+      mkdirSync(dirname(newPath), { recursive: true });
+      writeFileSync(newPath, newBody, "utf8");
+
+      const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+
+      assert.equal(
+        existsSync(legacyPath),
+        true,
+        `${label}: the old copy must survive — deleting it would leave the project with no copy at all`,
+      );
+      assert.equal(cleanups.some((c) => c.path === legacyPath), false, `${label}: no sweep must have been attempted`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(templatesRoot, { recursive: true, force: true });
+    }
+  }
+});
+
+test("writeSkillFiles: a spec with no legacyDirs sweeps nothing (the steady state)", () => {
+  const dir = freshDir();
+  try {
+    const { cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    assert.deepEqual(cleanups, [], "the delivered set declares no renames yet — nothing may be deleted");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

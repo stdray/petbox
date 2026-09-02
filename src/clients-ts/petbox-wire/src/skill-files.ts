@@ -19,10 +19,21 @@
 // rendered, in which case it is a leftover from before this fix and gets promoted ("migrated") —
 // without that carve-out, the very first `wire`/`apply` after this fix would block on every
 // skill file the owner already has on disk.
+//
+// Rename cleanup (bug: wire-skill-cleanup-on-replace): the write loop below also SWEEPS the
+// paths a previous delivery used, per `SkillTemplateSpec.legacyDirs`. `cleanupLegacyArtifact`
+// existed for exactly this and had one caller — the agent-role rename in wire.ts — while the
+// skill pipeline had none, so renaming a delivered skill's directory left its old SKILL.md on
+// disk forever: a standing instruction to use a skill that no longer exists, which no later
+// `wire`, `apply`, `doctor` or `status` would ever mention again (they all iterate the CURRENT
+// PROJECT_SKILLS and never look at a name that left it). Deletion keeps that function's
+// contract untouched — a `petbox: managed` file and nothing else — so a foreign file, or one
+// the project declared `petbox: manual`, survives the sweep at an old name just as it survives
+// a write at the current one.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeArtifact } from "./apply-write.ts";
+import { cleanupLegacyArtifact, writeArtifact, type LegacyCleanupOutcome } from "./apply-write.ts";
 import {
   hasPetboxMarker,
   isDeclaredManual,
@@ -58,6 +69,13 @@ export type SkillTemplateSpec = {
   // digest actually reads on disk — the two are pinned together by a parity test
   // (skill-files.test.ts), the same discipline PROJECT_SKILLS<->templates/ already has.
   digestMode: SkillDigestMode;
+  // Directory names this skill was delivered under BEFORE (bug: wire-skill-cleanup-on-replace).
+  // After the current path is successfully written, each of these is swept: the kit was the only
+  // source of truth for what it put there, so leaving it behind is a standing instruction to
+  // read a skill that no longer exists. Removal still requires the `petbox: managed` marker —
+  // a foreign or declared-manual file at an old name is reported and kept, never deleted.
+  // Empty/absent for a skill that has never moved.
+  legacyDirs?: readonly string[];
 };
 
 // Every skill wire.ts renders into a freshly-wired project (see writeSkillFiles / wire.ts step 7).
@@ -129,27 +147,85 @@ function writeSkillArtifact(absPath: string, rendered: string, legacyRendered: s
     : { kind: "written", path: absPath, reason: outcome.reason };
 }
 
-// Render every PROJECT_SKILLS entry from templatesRoot and write it into every SKILL_SURFACES
-// root under dir. Returns one outcome per (skill × surface), in write order, for the caller's
+/** One swept pre-rename path. `outcome` is cleanupLegacyArtifact's own verdict, unchanged. */
+export type SkillCleanupOutcome = {
+  readonly path: string;
+  readonly outcome: LegacyCleanupOutcome;
+  /** True when the emptied skill directory was removed too (no orphan folder left behind). */
+  readonly removedDir: boolean;
+};
+
+export type SkillWriteResult = {
+  /** One per (skill × surface), in write order. */
+  readonly writes: SkillWriteOutcome[];
+  /** One per swept pre-rename path — only for specs that declare `legacyDirs`. */
+  readonly cleanups: SkillCleanupOutcome[];
+};
+
+/**
+ * Remove the SKILL.md a previous delivery left at `legacyDir`, and the directory with it once it
+ * is empty (bug: wire-skill-cleanup-on-replace — a leftover folder is an orphan even when the
+ * only file in it is gone). Deletion goes through cleanupLegacyArtifact, so its contract holds
+ * unchanged: ONLY a `petbox: managed` file is ever unlinked. A foreign file, a file the project
+ * declared `petbox: manual`, or one we could not even read is reported and left exactly where it
+ * is. The directory is removed only when it is empty, which means a legacy skill folder holding
+ * anything else the kit did not write (a `references/`, the project's own notes) survives whole.
+ */
+function cleanupLegacySkillDir(dir: string, surface: string[], legacyDir: string): SkillCleanupOutcome {
+  const legacySkillDir = join(dir, ...surface, legacyDir);
+  const legacyPath = join(legacySkillDir, "SKILL.md");
+  const outcome = cleanupLegacyArtifact(legacyPath);
+  let removedDir = false;
+  if (outcome === "removed") {
+    try {
+      rmdirSync(legacySkillDir); // throws ENOTEMPTY when anything else lives there — then keep it
+      removedDir = true;
+    } catch {
+      // not empty, or already gone — either way there is nothing of ours left to remove
+    }
+  }
+  return { path: legacyPath, outcome, removedDir };
+}
+
+// Render every `specs` entry from templatesRoot and write it into every SKILL_SURFACES root
+// under dir. Returns one write outcome per (skill × surface), in write order, for the caller's
 // log lines — a "blocked" outcome means a real, non-PetBox file already sat at that path and was
-// left byte-for-byte untouched (see writeSkillArtifact above).
+// left byte-for-byte untouched, and "declared-manual" means the project owns that path (see
+// writeSkillArtifact above) — plus one cleanup outcome per swept pre-rename path.
+//
+// `specs` defaults to PROJECT_SKILLS and exists so the rename/cleanup behaviour can be exercised
+// against a fixture registry: the delivered set has no legacy names of its own yet (the renames
+// land in petbox-skill-naming), and a mechanism that DELETES FILES must not go untested until
+// the day its first real caller appears.
 export function writeSkillFiles(
   dir: string,
   templatesRoot: string,
   project: string,
   workspace: string,
-): SkillWriteOutcome[] {
-  const outcomes: SkillWriteOutcome[] = [];
-  for (const spec of PROJECT_SKILLS) {
+  specs: readonly SkillTemplateSpec[] = PROJECT_SKILLS,
+): SkillWriteResult {
+  const writes: SkillWriteOutcome[] = [];
+  const cleanups: SkillCleanupOutcome[] = [];
+  for (const spec of specs) {
     const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
     const rendered = renderSkillTemplate(tpl, project, workspace);
     const legacyRendered = stripMarkerLine(rendered);
     for (const surface of SKILL_SURFACES) {
       const skillPath = join(dir, ...surface, spec.dir, "SKILL.md");
-      outcomes.push(writeSkillArtifact(skillPath, rendered, legacyRendered));
+      const outcome = writeSkillArtifact(skillPath, rendered, legacyRendered);
+      writes.push(outcome);
+      // Sweep the pre-rename copies ONLY after the replacement actually landed — never orphan a
+      // skill by deleting the old file when the new one could not be written (identical rule to
+      // the agent-role rename cleanup in wire.ts, which this pipeline had no equivalent of).
+      // "blocked" and "declared-manual" are both non-writes, so neither triggers a sweep.
+      if (outcome.kind !== "written") continue;
+      for (const legacyDir of spec.legacyDirs ?? []) {
+        if (legacyDir === spec.dir) continue;
+        cleanups.push(cleanupLegacySkillDir(dir, surface, legacyDir));
+      }
     }
   }
-  return outcomes;
+  return { writes, cleanups };
 }
 
 // ---- template-drift comparison (bugs: skill-files-clobber-and-apply-skips [item 3],
