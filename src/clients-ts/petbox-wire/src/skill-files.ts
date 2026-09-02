@@ -43,6 +43,7 @@ import {
   readDigestMode,
   type ArtifactState,
   type SkillDigestMode,
+  type SkillInvocationMode,
 } from "./origin-marker.ts";
 
 // Skill surfaces wire.ts writes rendered skill bodies into. opencode is intentionally absent: it
@@ -62,13 +63,29 @@ export type SkillTemplateSpec = {
   dir: string;
   // Whether the template uses the {{WORKSPACE}} placeholder (only `petbox` does, for its UI URL).
   needsWorkspace: boolean;
-  // Invocation mode (spec: wire-skill-invocation-mode). "auto" = the agent is told about this
-  // skill unprompted, through the salience digest (buildAutoSkillsIndex below); "manual" = it is
-  // reachable only by an explicit `skill(name)` call. The registry value here is the DECLARED
-  // intent; the template's own frontmatter carries `petbox-digest: <mode>` and is what the
-  // digest actually reads on disk — the two are pinned together by a parity test
-  // (skill-files.test.ts), the same discipline PROJECT_SKILLS<->templates/ already has.
+  // Digest mode (spec: wire-skill-invocation-mode). "auto" = the agent is told about this skill
+  // unprompted, through the salience digest (buildAutoSkillsIndex below); "manual" = it is left
+  // out of that digest. The registry value here is the DECLARED intent; the template's own
+  // frontmatter carries `petbox-digest: <mode>` and is what the digest actually reads on disk —
+  // the two are pinned together by a parity test (skill-files.test.ts), the same discipline
+  // PROJECT_SKILLS<->templates/ already has.
+  //
+  // This is DELIBERATELY a separate axis from `invocation` below (task:
+  // card-check-must-stay-agent-invocable, which split the two after they were conflated by
+  // commit 0daca301): a skill can be out of the salience digest yet still callable by the agent
+  // on its own initiative once it decides the task fits — `petbox-card-check` is exactly that
+  // case, `digestMode: "manual"` + `invocation: "agent"`.
   digestMode: SkillDigestMode;
+  // Who is allowed to invoke this skill at all (spec: card-check-must-stay-agent-invocable).
+  // "agent" = the model may call it itself (via the Skill tool / `skill(name)`), same as any
+  // other skill. "user" = the OWNER decided this skill only ever runs from an explicit human
+  // slash-command; the template's frontmatter carries `disable-model-invocation: true`, which is
+  // the actual Claude-Code/Droid lever that refuses a model-initiated call
+  // (`isModelInvocationDisabled` in origin-marker.ts) — pinned together by a parity test
+  // (skill-files.test.ts). Independent of `digestMode`: an "agent" skill can still be
+  // `digestMode: "manual"` (not surfaced unprompted, but callable once the agent decides it
+  // applies) — `petbox-card-check` is that combination.
+  invocation: SkillInvocationMode;
   // Directory names this skill was delivered under BEFORE (bug: wire-skill-cleanup-on-replace).
   // After the current path is successfully written, each of these is swept: the kit was the only
   // source of truth for what it put there, so leaving it behind is a standing instruction to
@@ -80,14 +97,30 @@ export type SkillTemplateSpec = {
 
 // Every skill wire.ts renders into a freshly-wired project (see writeSkillFiles / wire.ts step 7).
 export const PROJECT_SKILLS: SkillTemplateSpec[] = [
-  { dir: "petbox", needsWorkspace: true, digestMode: "auto" },
-  { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "manual" },
-  { dir: "petbox-methodology", needsWorkspace: false, digestMode: "auto" },
-  { dir: "petbox-write-economy", needsWorkspace: false, digestMode: "auto" },
-  { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto" },
-  { dir: "petbox-analysis-workspace", needsWorkspace: false, digestMode: "manual", legacyDirs: ["analysis-workspace"] },
-  { dir: "petbox-factory-run", needsWorkspace: false, digestMode: "manual", legacyDirs: ["factory-run"] },
-  { dir: "petbox-card-check", needsWorkspace: false, digestMode: "manual" },
+  { dir: "petbox", needsWorkspace: true, digestMode: "auto", invocation: "agent" },
+  { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "manual", invocation: "user" },
+  { dir: "petbox-methodology", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
+  { dir: "petbox-write-economy", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
+  { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
+  {
+    dir: "petbox-analysis-workspace",
+    needsWorkspace: false,
+    digestMode: "manual",
+    invocation: "user",
+    legacyDirs: ["analysis-workspace"],
+  },
+  {
+    dir: "petbox-factory-run",
+    needsWorkspace: false,
+    digestMode: "manual",
+    invocation: "user",
+    legacyDirs: ["factory-run"],
+  },
+  // digestMode "manual" (not surfaced unprompted) but invocation "agent" — the whole point of
+  // this task: the agent must be able to call this validation on its own initiative before
+  // handing a card to a worker or moving one to Review, even though it never shows up in the
+  // salience digest.
+  { dir: "petbox-card-check", needsWorkspace: false, digestMode: "manual", invocation: "agent" },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has

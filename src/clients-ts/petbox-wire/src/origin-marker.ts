@@ -44,6 +44,16 @@ export type SkillDigestMode = "auto" | "manual";
 export const DISABLE_MODEL_INVOCATION_KEY = "disable-model-invocation";
 export const DISABLE_MODEL_INVOCATION_LINE = `${DISABLE_MODEL_INVOCATION_KEY}: true`;
 
+// Who may invoke a skill at all — a SEPARATE axis from both provenance and `petbox-digest` above
+// (task: card-check-must-stay-agent-invocable, which split this out after commit 0daca301
+// conflated it with `petbox-digest: manual`). "agent" = the model may call it itself, same as any
+// other skill; "user" = the owner decided this one only ever runs from an explicit human
+// slash-command. PROJECT_SKILLS (skill-files.ts) declares the intent per skill; the template's
+// frontmatter carries the actual Claude-Code/Droid lever (`disable-model-invocation: true` for
+// "user") that `isModelInvocationDisabled` below reads — the two are pinned together by a parity
+// test in skill-files.test.ts.
+export type SkillInvocationMode = "user" | "agent";
+
 /**
  * The three ORIGIN states of a file on a path the kit may want to write
  * (spec: wire-skill-provenance-states):
