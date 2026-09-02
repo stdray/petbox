@@ -249,6 +249,48 @@ test("cache stickiness: the empty leg never resurrects itself from cache after b
   });
 });
 
+// canon-degrade-by-legs-not-all-or-nothing, end to end: the block here is rendered by canon.ts's
+// OWN buildBlock (via a real fetch against the fake server), not hand-assembled — so this proves
+// the budget ladder can actually find the workspace boundary in the text the renderer produces,
+// which a unit test over a synthetic string cannot.
+test("end-to-end: an over-budget REAL two-leg canon block sheds only the workspace leg, project canon survives", async () => {
+  const projectBody = "- project fact\n".repeat(60);
+  const workspaceBody = "- workspace fact\n".repeat(120);
+  const { baseUrl, close } = await startFakeCanonServer(
+    jsonHandler({
+      project: { body: projectBody, updatedAt: new Date().toISOString(), version: 3 },
+      workspace: { body: workspaceBody, updatedAt: new Date().toISOString(), version: 4 },
+    }),
+  );
+  try {
+    await withIsolatedHome(async () => {
+      const canon = await fetchCanonBlock(resolvedFor(baseUrl));
+      assert.ok(canon, "fixture assumption: the fake server yields a two-leg block");
+      assert.ok(canon!.includes("### Workspace"), "fixture assumption: the block really has a workspace leg");
+
+      const protocol = buildProtocol("fake-project", mcpPetboxTool, {
+        source: "startup",
+        harness: "claude-code",
+        definition: DEFAULT_AGENT_DEFINITION,
+      });
+      // A budget that fits the protocol and the project leg but NOT the workspace leg: the exact
+      // shape of the incident this ladder exists for.
+      const projectOnlyBytes = Buffer.byteLength(canon!.slice(0, canon!.lastIndexOf("\n\n### Workspace")), "utf8");
+      const budget = Buffer.byteLength(protocol, "utf8") + 2 + projectOnlyBytes;
+
+      const banner = assembleSessionBanner(protocol, canon, budget);
+      assert.equal(banner.canonLegs, "project-only");
+      assert.ok(banner.text.includes("### Project (fake-project)"), "the project leg must still be delivered");
+      assert.ok(banner.text.includes("- project fact"), "and with its actual curated body, not just the heading");
+      assert.ok(!banner.text.includes("### Workspace"), "the workspace leg is what pays for the overage");
+      assert.ok(!banner.text.includes("- workspace fact"));
+      assert.ok(banner.totalBytes <= budget);
+    });
+  } finally {
+    await close();
+  }
+});
+
 test("end-to-end: assembleSessionBanner with the new attributed-heading shape ships exactly one empty-canon line, comfortably inside budget", async () => {
   const { baseUrl, close } = await startFakeCanonServer(jsonHandler({ project: EMPTY_LEG, workspace: null }));
   try {

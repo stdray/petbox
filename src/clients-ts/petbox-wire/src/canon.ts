@@ -55,6 +55,20 @@ const EMPTY_CANON_VERSION = 0;
 // canon-banner-empty-notice-unlabelled item 3).
 const EMPTY_CANON_TEXT = "canon is empty — curate with memory_upsert (store `canon`, key `index`, budget 10k)";
 
+/**
+ * The exact markers that open each leg's section inside a rendered canon block, exported so
+ * session-budget.ts can shed the WORKSPACE leg alone when the banner is over budget
+ * (canon-degrade-by-legs-not-all-or-nothing) instead of throwing both legs away in one jump.
+ * They are constants rather than a string literal repeated at the split site for one reason:
+ * the split is only correct as long as it uses the SAME text buildBlock wrote. Both include
+ * their leading blank line, so a slice at the marker leaves the preceding section intact.
+ *
+ * Workspace is always rendered LAST (see buildBlock), which is what makes shedding it a
+ * suffix cut rather than a splice.
+ */
+export const CANON_PROJECT_SECTION_MARKER = "\n\n### Project (";
+export const CANON_WORKSPACE_SECTION_MARKER = "\n\n### Workspace";
+
 function cacheDir(): string {
   return join(homedir(), ".petbox", "cache");
 }
@@ -109,14 +123,14 @@ function buildBlock(project: string, resp: CanonResponse | null): { text: string
     out += `\n\nThe curated memory index (canon) for this project — pointers to durable facts; pull full bodies via memory_get/memory_search.`;
   }
   if (projectLeg.kind === "content") {
-    out += `\n\n### Project (${project})\n\n${projectLeg.body}`;
+    out += `${CANON_PROJECT_SECTION_MARKER}${project})\n\n${projectLeg.body}`;
   } else if (projectLeg.kind === "empty") {
-    out += `\n\n### Project (${project}) — empty\n\n${EMPTY_CANON_TEXT}`;
+    out += `${CANON_PROJECT_SECTION_MARKER}${project}) — empty\n\n${EMPTY_CANON_TEXT}`;
   }
   if (workspaceLeg.kind === "content") {
-    out += `\n\n### Workspace\n\n${workspaceLeg.body}`;
+    out += `${CANON_WORKSPACE_SECTION_MARKER}\n\n${workspaceLeg.body}`;
   } else if (workspaceLeg.kind === "empty") {
-    out += `\n\n### Workspace — empty\n\n${EMPTY_CANON_TEXT}`;
+    out += `${CANON_WORKSPACE_SECTION_MARKER} — empty\n\n${EMPTY_CANON_TEXT}`;
   }
   return { text: out, hasContent };
 }

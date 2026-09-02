@@ -26,6 +26,7 @@ import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 import {
   assembleSessionBanner,
+  describeCanonDegradation,
   HARNESS_INLINE_HARD_LIMIT_BYTES,
   logBudgetOverage,
   SESSION_BANNER_BUDGET_BYTES,
@@ -119,7 +120,7 @@ async function main(): Promise<void> {
         `pull-memory[${resolved.project}]: session banner exceeded budget — ` +
           `protocol=${banner.protocolBytes}B canon=${banner.canonBytes}B ` +
           `budget=${SESSION_BANNER_BUDGET_BYTES}B hard-limit=${HARNESS_INLINE_HARD_LIMIT_BYTES}B — ` +
-          `canon ${banner.canonIncluded ? "KEPT (still risks harness truncation)" : "DROPPED from this session's banner"}. ` +
+          `canon ${describeCanonDegradation(banner)}. ` +
           `Shrink the canon (memory_upsert store canon key index) or raise the budget deliberately.`,
       );
     }
