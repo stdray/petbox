@@ -23,7 +23,7 @@
 //
 // Plain TS for native node type-stripping: zero deps.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentDefinition } from "./agent-definition.ts";
 import { agentFilesDir, expectedArtifactBasenames } from "./apply-artifacts.ts";
@@ -56,7 +56,22 @@ export function sweepOrphanArtifacts(
   definition: AgentDefinition,
   opts: { readonly dryRun?: boolean } = {},
 ): OrphanOutcome[] {
-  const dir = join(root, agentFilesDir(harness));
+  return sweepOrphanArtifactsIn(join(root, agentFilesDir(harness)), harness, definition, opts);
+}
+
+/**
+ * The same sweep against an ARBITRARY agent directory. Exists because role artifacts no longer
+ * live only in project trees: with `--roles=user` the authoritative copy sits in the harness's own
+ * profile (`~/.claude/agents`, `~/.config/opencode/agents`, `~/.factory/droids` — role-scope.ts),
+ * and a role dropped from the definition has to lose its file THERE too. Same marker gate, same
+ * namespace gate; only the directory is a parameter.
+ */
+export function sweepOrphanArtifactsIn(
+  dir: string,
+  harness: HarnessId,
+  definition: AgentDefinition,
+  opts: { readonly dryRun?: boolean } = {},
+): OrphanOutcome[] {
   if (!existsSync(dir)) return [];
   let entries: string[];
   try {
@@ -79,6 +94,60 @@ export function sweepOrphanArtifacts(
     const outcome = removeOwnedArtifact(abs, opts);
     if (outcome === "absent") continue; // raced away between readdir and unlink
     outcomes.push({ path: abs, outcome });
+  }
+  return outcomes;
+}
+
+/**
+ * Remove EVERY generated role artifact in `harness`'s PROJECT agent directory under `root` — not
+ * just the orphans (card: normalize-all-environments-to-default item 1).
+ *
+ * This is the migration to user-scope roles: once the same five roles are rendered once into the
+ * harness's own profile, the per-project copies are duplicates that can only drift, and 90 of them
+ * across eight projects already had. Unlike sweepOrphanArtifacts this does NOT consult the
+ * definition — a role that is still perfectly current is exactly what is being removed here,
+ * because its authoritative copy now lives somewhere else.
+ *
+ * Everything else is identical and non-negotiable: a candidate must match our namespace AND carry
+ * the `petbox: managed` marker, or it is reported and left byte-for-byte alone. `pruneEmptyDir`
+ * additionally removes the now-empty directory itself — used for opencode's legacy singular
+ * `.opencode/agent`, which the target layout drops entirely; `rmdirSync` throws ENOTEMPTY when
+ * anything else lives there, so a directory holding someone's own files always survives.
+ */
+export function sweepProjectRoleArtifacts(
+  root: string,
+  harness: HarnessId,
+  opts: { readonly dryRun?: boolean; readonly pruneEmptyDir?: boolean } = {},
+): OrphanOutcome[] {
+  const dir = join(root, agentFilesDir(harness));
+  if (!existsSync(dir)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir).sort();
+  } catch {
+    return [];
+  }
+
+  const outcomes: OrphanOutcome[] = [];
+  for (const name of entries) {
+    if (!OURS_RE.test(name)) continue;
+    const abs = join(dir, name);
+    try {
+      if (!statSync(abs).isFile()) continue;
+    } catch {
+      continue;
+    }
+    const outcome = removeOwnedArtifact(abs, { ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}) });
+    if (outcome === "absent") continue;
+    outcomes.push({ path: abs, outcome });
+  }
+
+  if (opts.pruneEmptyDir && !opts.dryRun && outcomes.every((o) => o.outcome !== "kept-foreign")) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // not empty (someone else's files live here) or already gone — either way, leave it
+    }
   }
   return outcomes;
 }

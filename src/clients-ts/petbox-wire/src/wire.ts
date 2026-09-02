@@ -81,7 +81,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENT_DEF_OFFLINE_STALE_MARKER,
@@ -97,9 +97,31 @@ import {
   type AgentDefinition,
 } from "./agent-definition.ts";
 import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
-import { sweepOrphanArtifacts } from "./apply-orphans.ts";
+import { sweepOrphanArtifacts, sweepOrphanArtifactsIn, sweepProjectRoleArtifacts } from "./apply-orphans.ts";
+import { createAdoptSet, NO_ADOPT, type AdoptSet } from "./adopt-paths.ts";
+import {
+  createLedger,
+  formatAction,
+  formatSummaryLine,
+  summarize,
+  type ApplyAction,
+  type ApplyLedger,
+  type ApplySummary,
+} from "./apply-ledger.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
+import { upsertGitignoreBlock } from "./gitignore-block.ts";
+import { managedGitignoreEntries } from "./managed-paths.ts";
+import {
+  isRoleScope,
+  loadWireConfig,
+  resolveRoleScope,
+  ROLE_SCOPES,
+  saveWireConfig,
+  userAgentFilesRoot,
+  wireConfigPath,
+  type RoleScope,
+} from "./role-scope.ts";
 import { findDanglingTargets, formatDanglingTargets } from "./definition-integrity.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
@@ -238,6 +260,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "                       [--telemetry] [--telemetry-log <name>]\n" +
     "       npx petbox-wire update\n" +
     "       npx petbox-wire apply [--definition <key>] [--offline] [--all [--dry-run]]\n" +
+    "                             [--roles=project|user] [--adopt <abs path>]...\n" +
     "       npx petbox-wire status [--offline] [--all]\n" +
     "       npx petbox-wire doctor [--offline]\n" +
     "       npx petbox-wire layers [dir...]\n" +
@@ -299,7 +322,27 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             entry whose directory no longer exists is reported and skipped, never aborts the\n" +
     "             rest of the sweep. --dry-run computes and prints every outcome WITHOUT writing or\n" +
     "             deleting anything — use it before a bare `--all`, which writes into every registered\n" +
-    "             project's working directory, including ones with uncommitted changes.\n" +
+    "             project's working directory, including ones with uncommitted changes. Its per-file\n" +
+    "             lines and its summary come from ONE ledger, so the preview's counts are the counts\n" +
+    "             of the run that would execute (skill writes used to be invisible to the old\n" +
+    "             role-only counter, printing a 12-write project as 'unchanged').\n" +
+    "             --roles=project|user picks WHERE role artifacts are rendered. project (default,\n" +
+    "             historical): into each project tree. user: ONCE into the three harness profiles —\n" +
+    "             ~/.claude/agents, ~/.config/opencode/agents (plural; the singular `agent` is\n" +
+    "             opencode legacy), ~/.factory/droids — 15 files instead of 90, and each project's own\n" +
+    "             role copies are then swept (marker-gated: a file without `petbox: managed` is\n" +
+    "             reported and kept, never deleted). Skills stay per-project either way — their\n" +
+    "             bodies carry {{PROJECT}} substitution. The choice is REMEMBERED in\n" +
+    "             ~/.petbox/wire.json, so a later plain `apply`, `wire` step 11 or hook does not\n" +
+    "             silently re-create the project copies. --dry-run never persists it.\n" +
+    "             Every apply also writes the kit's managed paths into the project's .gitignore, in a\n" +
+    "             delimited block that is the only region it ever reads or replaces.\n" +
+    "             --adopt <absolute path> (repeatable): treat the file at THAT EXACT PATH as an old\n" +
+    "             PetBox render and overwrite it even though it carries no origin marker — the escape\n" +
+    "             hatch for the pre-marker `petbox/SKILL.md` copies. There is deliberately no --force\n" +
+    "             and no bulk variant: a path you did not name is still refused and still exits 1, and\n" +
+    "             a `petbox: manual` declaration outranks --adopt. A named path apply never considered\n" +
+    "             is reported and exits 1 rather than passing silently.\n" +
     "status       Print FACT, not a verdict: per declared role x harness, the materialized artifact\n" +
     "             path, its bound model, WHERE that model came from (roster = ~/.petbox/roles.json;\n" +
     "             seed = DEFAULT_ROLE_MODEL_SEED preview, roles.json absent, nothing written; none =\n" +
@@ -732,11 +775,17 @@ async function runDoctor(argv: string[]): Promise<void> {
 // with it (exit with the code, or just log and continue — see performApply below).
 type ApplyRunResult = {
   readonly code: number;
-  readonly written: number;
+  /**
+   * Every outcome this pass produced, folded from the SAME ledger the log lines were rendered
+   * from (apply-ledger.ts). Replaces the old `written` field, which counted ROLE writes only and
+   * was read everywhere as "files": a project where apply wrote twelve skill files and no role
+   * files reported "unchanged — no changes" (observation apply-all-summary-undercounts-writes).
+   * Renamed rather than repaired so no caller can keep the old meaning by accident.
+   */
+  readonly summary: ApplySummary;
   readonly writtenHarnesses: readonly string[];
   readonly partialHarnesses: readonly string[];
   readonly blockedHarnesses: readonly string[];
-  readonly clobberBlockedPaths: readonly string[];
   readonly hardError: boolean;
 };
 
@@ -782,9 +831,31 @@ async function performApply(opts: {
    * same primitives the real write path uses, so a preview and a real run can never disagree.
    * Defaults to false; every existing single-project caller is unaffected. */
   dryRun?: boolean;
+  /**
+   * WHERE role artifacts go (card: normalize-all-environments-to-default item 1). "project" is
+   * the historical behavior, unchanged. "user" means the roles were already rendered ONCE into
+   * the harness profiles by applyUserRoles — so this pass renders NO roles here and instead
+   * sweeps the project's own copies, which are now duplicates that can only drift.
+   * Skills are unaffected by this axis: their bodies carry {{PROJECT}} substitution, so they are
+   * per-project by construction (skill-files.ts).
+   */
+  roleScope?: RoleScope;
+  /** `--adopt` paths. Defaults to the empty set — no path is ever adoptable unless named. */
+  adopt?: AdoptSet;
 }): Promise<ApplyRunResult> {
   const cwd = opts.cwd ?? process.cwd();
   const dryRun = opts.dryRun ?? false;
+  const roleScope = opts.roleScope ?? "project";
+  const adopt = opts.adopt ?? NO_ADOPT;
+  const ledger = createLedger();
+  // Every outcome goes through here: recorded first, THEN rendered from the recorded action.
+  // There is deliberately no way to print an outcome line without counting it (apply-ledger.ts).
+  const emit = (action: ApplyAction): void => {
+    ledger.record(action);
+    const rendered = formatAction(opts.label, action, dryRun);
+    if (rendered.stderr) console.error(rendered.text);
+    else log(rendered.text);
+  };
   const { root, via } = resolveApplyRoot(cwd);
   let definition: AgentDefinition;
   let resolved: ResolvedAgentDefinition;
@@ -819,11 +890,10 @@ async function performApply(opts: {
     console.error(`${opts.label}: hard failure — ${e instanceof Error ? e.message : String(e)}`);
     return {
       code: WIRE_EXIT.hard,
-      written: 0,
+      summary: summarize(ledger.actions),
       writtenHarnesses: [],
       partialHarnesses: [],
       blockedHarnesses: [],
-      clobberBlockedPaths: [],
       hardError: true,
     };
   }
@@ -859,7 +929,6 @@ async function performApply(opts: {
     );
   }
 
-  let written = 0;
   const writtenHarnesses: string[] = [];
   const partialHarnesses: string[] = [];
   const blockedHarnesses: string[] = [];
@@ -867,91 +936,123 @@ async function performApply(opts: {
   // ours sat where we needed to write. Distinct from the truthfulness gate: it can happen even
   // when every role is capability/model-clean, so it needs its own signal into the exit code.
   let clobberBlocked = false;
-  const clobberedPaths: string[] = [];
-  for (const harness of HARNESS_IDS) {
-    const roleModels = resolveAgentRoles(rolesData, harness);
-    const plan = planApply(definition, harness, roleModels);
 
-    let writtenThisHarness = 0;
-    let clobberedThisHarness = false;
-    for (const file of plan.files) {
-      const abs = join(root, file.relativePath);
-      const outcome = writeArtifact(abs, file.content, { dryRun });
-      if (outcome.kind === "blocked") {
-        clobberBlocked = true;
-        clobberedThisHarness = true;
-        clobberedPaths.push(abs);
-        console.error(
-          `${opts.label}: ${dryRun ? "would refuse" : "REFUSED"} to overwrite ${abs} — it exists and does not ` +
-            `carry the PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a real file, ` +
-            `not one apply wrote before. ${dryRun ? "Nothing would be touched." : "Nothing was touched."} Move ` +
-            `it aside (or rename the role) and re-run apply.`,
+  // ---- roles --------------------------------------------------------------------------------
+  // Under roleScope "user" the roles were already rendered ONCE into the harness profiles
+  // (applyUserRoles, called by the caller before this sweep) — so this project gets no role
+  // render at all, only the removal of the copies it still holds. See the option's doc comment.
+  if (roleScope === "user") {
+    for (const harness of HARNESS_IDS) {
+      // opencode's project directory is the singular `.opencode/agent`, which the target layout
+      // drops entirely (the user-scope name is the plural `agents`) — so its now-empty directory
+      // goes too. rmdirSync refuses a non-empty directory, so a project keeping its own files
+      // there is never touched.
+      for (const swept of sweepProjectRoleArtifacts(root, harness, {
+        dryRun,
+        pruneEmptyDir: harness === "opencode",
+      })) {
+        emit(
+          swept.outcome === "removed"
+            ? {
+                kind: "remove",
+                subject: "role",
+                path: swept.path,
+                note: `project copy — roles now render into the ${harness} user profile`,
+              }
+            : { kind: "kept", subject: "role", path: swept.path },
         );
-        continue;
-      }
-      if (outcome.reason !== "unchanged") {
-        log(
-          `${opts.label}: ${dryRun ? "would write" : "wrote"} ${abs}` +
-            (outcome.reason === "own" ? " (updated in place — ours)" : ""),
-        );
-        written++;
-        writtenThisHarness++;
-      } else {
-        log(`${opts.label}: ${abs} unchanged (already matches)`);
-      }
-
-      // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
-      // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
-      // deleting the old file when the new one could not be written. Never touches a path that
-      // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
-      if (file.legacyRelativePath !== file.relativePath) {
-        const legacyAbs = join(root, file.legacyRelativePath);
-        const legacyOutcome = cleanupLegacyArtifact(legacyAbs, { dryRun });
-        if (legacyOutcome === "removed") {
-          log(
-            `${opts.label}: ${dryRun ? "would remove" : "removed"} legacy unprefixed ${legacyAbs} ` +
-              `(ours, superseded by ${abs})`,
-          );
-        } else if (legacyOutcome === "kept-foreign") {
-          log(
-            `${opts.label}: left ${legacyAbs} in place — not ours (no PetBox origin marker); not renamed or deleted.`,
-          );
-        }
       }
     }
+  } else {
+    for (const harness of HARNESS_IDS) {
+      const roleModels = resolveAgentRoles(rolesData, harness);
+      const plan = planApply(definition, harness, roleModels);
 
-    // Orphan sweep — a role that is GONE from the definition (apply-orphans.ts). Runs per
-    // harness, AFTER its writes, and independently of them: a role skipped by the truthfulness
-    // gate is still declared and its file is never a candidate. Removal still requires our
-    // origin marker, so a user's own file in the petbox-* namespace is reported and kept.
-    if (orphanSweepSource) {
-      for (const orphan of sweepOrphanArtifacts(root, harness, definition, { dryRun })) {
-        if (orphan.outcome === "removed") {
-          log(
-            `${opts.label}: ${dryRun ? "would remove" : "removed"} ${orphan.path} — its role is no longer in ` +
-              `definition "${definition.name}" (orphan artifact, ours by origin marker)`,
-          );
+      let writtenThisHarness = 0;
+      let clobberedThisHarness = false;
+      for (const file of plan.files) {
+        const abs = join(root, file.relativePath);
+        adopt.consider(abs);
+        const outcome = writeArtifact(abs, file.content, { dryRun, adopt: adopt.has(abs) });
+        if (outcome.kind === "blocked") {
+          clobberBlocked = true;
+          clobberedThisHarness = true;
+          emit({ kind: "refuse", subject: "role", path: abs });
+          continue;
+        }
+        if (outcome.reason !== "unchanged") {
+          emit({
+            kind: "write",
+            subject: "role",
+            path: abs,
+            ...(outcome.reason === "own"
+              ? { note: "updated in place — ours" }
+              : outcome.reason === "adopted"
+                ? { note: "ADOPTED — unmarked file overwritten because --adopt named this exact path" }
+                : {}),
+          });
+          writtenThisHarness++;
         } else {
-          log(
-            `${opts.label}: left ${orphan.path} in place — no role by that name in the definition, ` +
-              `but the file carries no PetBox origin marker, so it is not ours to delete.`,
+          emit({ kind: "unchanged", subject: "role", path: abs });
+        }
+
+        // Namespacing rename cleanup: remove an OWNED pre-rename unprefixed leftover now that its
+        // petbox-<role> replacement exists. Only after a successful write — never orphan a role by
+        // deleting the old file when the new one could not be written. Never touches a path that
+        // lacks our marker (cleanupLegacyArtifact's own contract — see apply-write.ts).
+        if (file.legacyRelativePath !== file.relativePath) {
+          const legacyAbs = join(root, file.legacyRelativePath);
+          const legacyOutcome = cleanupLegacyArtifact(legacyAbs, { dryRun });
+          if (legacyOutcome === "removed") {
+            emit({
+              kind: "remove",
+              subject: "legacy",
+              path: legacyAbs,
+              note: `unprefixed, ours, superseded by ${abs}`,
+            });
+          } else if (legacyOutcome === "kept-foreign") {
+            emit({ kind: "kept", subject: "legacy", path: legacyAbs });
+          }
+        }
+      }
+
+      // Orphan sweep — a role that is GONE from the definition (apply-orphans.ts). Runs per
+      // harness, AFTER its writes, and independently of them: a role skipped by the truthfulness
+      // gate is still declared and its file is never a candidate. Removal still requires our
+      // origin marker, so a user's own file in the petbox-* namespace is reported and kept.
+      if (orphanSweepSource) {
+        for (const orphan of sweepOrphanArtifacts(root, harness, definition, { dryRun })) {
+          emit(
+            orphan.outcome === "removed"
+              ? {
+                  kind: "remove",
+                  subject: "orphan",
+                  path: orphan.path,
+                  note: `its role is no longer in definition "${definition.name}"`,
+                }
+              : {
+                  kind: "kept",
+                  subject: "orphan",
+                  path: orphan.path,
+                  note: "no role by that name in the definition",
+                },
           );
         }
       }
-    }
 
-    for (const w of plan.warnings) {
-      console.error(`${opts.label}: warn — ${w}`);
-    }
-
-    if (plan.violations.length > 0 || clobberedThisHarness) {
-      if (plan.violations.length > 0) {
-        console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      for (const w of plan.warnings) {
+        console.error(`${opts.label}: warn — ${w}`);
       }
-      if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
-      else blockedHarnesses.push(plan.harness);
-    } else if (writtenThisHarness > 0) {
-      writtenHarnesses.push(plan.harness);
+
+      if (plan.violations.length > 0 || clobberedThisHarness) {
+        if (plan.violations.length > 0) {
+          console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+        }
+        if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
+        else blockedHarnesses.push(plan.harness);
+      } else if (writtenThisHarness > 0) {
+        writtenHarnesses.push(plan.harness);
+      }
     }
   }
 
@@ -1005,33 +1106,60 @@ async function performApply(opts: {
         resolvedForSkills.project,
         probe.workspace,
         PROJECT_SKILLS,
-        { dryRun },
+        { dryRun, adopt: (p: string) => (adopt.consider(p), adopt.has(p)) },
       );
-      const blockedSkillPaths = reportSkillOutcomes(opts.label, skillOutcomes, dryRun);
-      if (blockedSkillPaths.length > 0) {
-        clobberBlocked = true;
-        clobberedPaths.push(...blockedSkillPaths);
-      }
+      if (reportSkillOutcomes(emit, skillOutcomes)) clobberBlocked = true;
     }
   }
 
+  // ---- the single git policy for managed paths (card item 5) ---------------------------------
+  // Owner decision 2026-09-02: managed paths belong in the PROJECT's `.gitignore`, not in
+  // `.git/info/exclude`. Only the kit's own delimited block is ever read or replaced
+  // (gitignore-block.ts); every other line in the file is copied through byte for byte. Skipped
+  // entirely when the root is not a git working tree — there is nothing for a `.gitignore` to
+  // mean there, and writing one into a plain directory would be litter.
+  if (via === "git") {
+    const gitignorePath = join(root, ".gitignore");
+    const outcome = upsertGitignoreBlock(gitignorePath, managedGitignoreEntries(), { dryRun });
+    emit(
+      outcome === "unchanged"
+        ? { kind: "unchanged", subject: "gitignore", path: gitignorePath }
+        : {
+            kind: "write",
+            subject: "gitignore",
+            path: gitignorePath,
+            note:
+              outcome === "new"
+                ? "created — managed-path block"
+                : "managed-path block updated (other lines untouched)",
+          },
+    );
+  }
+
+  const summaryCounts = summarize(ledger.actions);
   // Structured summary (machine-readable-ish one line + human detail above). skillsSkipped is
   // always present (never silently dropped) so a machine reader can tell "no skip" from "skip
   // information was omitted" — null means the skills step actually ran (skipped nothing).
   const summary = {
-    writtenFiles: written,
+    ...summaryCounts,
+    roleScope,
     writtenHarnesses,
     partialHarnesses,
     blockedHarnesses,
-    clobberBlockedPaths: clobberedPaths,
     skillsSkipped: skillsSkip ?? null,
   };
+  // The counted summary comes from the SAME ledger the per-file lines above were rendered from —
+  // that identity is the whole point of the module, and it is what the "would write" counting
+  // test asserts (apply-ledger.test.ts / apply-all-registry.test.ts).
+  log(formatSummaryLine(opts.label, summaryCounts, dryRun));
   log(
-    `${opts.label}: result written=${written} ` +
+    `${opts.label}: result roleScope=${roleScope} ` +
       `ok=[${writtenHarnesses.join(",")}] ` +
       `partial=[${partialHarnesses.join(",")}] ` +
       `blocked=[${blockedHarnesses.join(",")}]` +
-      (clobberedPaths.length > 0 ? ` clobber-refused=[${clobberedPaths.join(",")}]` : ""),
+      (summaryCounts.refusedPaths.length > 0
+        ? ` clobber-refused=[${summaryCounts.refusedPaths.join(",")}]`
+        : ""),
   );
 
   const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
@@ -1057,7 +1185,7 @@ async function performApply(opts: {
     log(`${opts.label}: done — all known harnesses accepted every role.`);
   } else if (clobberBlocked) {
     console.error(
-      `${opts.label}: hard failure — refused to overwrite ${clobberedPaths.length} non-PetBox ` +
+      `${opts.label}: hard failure — refused to overwrite ${summaryCounts.refused} non-PetBox ` +
         `file(s) (exit ${WIRE_EXIT.hard}). ${JSON.stringify(summary)}`,
     );
   } else {
@@ -1068,11 +1196,10 @@ async function performApply(opts: {
 
   return {
     code,
-    written,
+    summary: summaryCounts,
     writtenHarnesses,
     partialHarnesses,
     blockedHarnesses,
-    clobberBlockedPaths: clobberedPaths,
     hardError: clobberBlocked,
   };
 }
@@ -1085,6 +1212,8 @@ async function runApply(argv: string[]): Promise<void> {
   let offline = false;
   let all = false;
   let dryRun = false;
+  let roleScopeFlag: RoleScope | undefined;
+  const adoptPaths: string[] = [];
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
@@ -1092,7 +1221,38 @@ async function runApply(argv: string[]): Promise<void> {
     else if (a === "--offline") offline = true;
     else if (a === "--all") all = true;
     else if (a === "--dry-run") dryRun = true;
-    else if (a === "--definition") {
+    else if (a.startsWith("--roles=")) {
+      const v = a.slice("--roles=".length).trim();
+      if (!isRoleScope(v)) {
+        console.error(`apply: --roles must be one of ${ROLE_SCOPES.join("|")} (got '${v}')`);
+        usage(WIRE_EXIT.usage);
+      }
+      roleScopeFlag = v;
+    } else if (a === "--roles") {
+      const v = argv[++i];
+      if (!v || !isRoleScope(v.trim())) {
+        console.error(`apply: --roles requires one of ${ROLE_SCOPES.join("|")}`);
+        usage(WIRE_EXIT.usage);
+      }
+      roleScopeFlag = v.trim() as RoleScope;
+    } else if (a === "--adopt") {
+      // Repeatable, and ABSOLUTE only. A relative path would be resolved against whatever cwd
+      // apply happens to run in, which under `--all` is not the directory the file lives in —
+      // the operator would name one path and adopt another. Refuse instead of guessing.
+      const v = argv[++i];
+      if (!v || v.startsWith("--")) {
+        console.error("apply: --adopt requires an absolute path (repeat the flag for more than one)");
+        usage(WIRE_EXIT.usage);
+      }
+      if (!isAbsolute(v)) {
+        console.error(
+          `apply: --adopt needs an ABSOLUTE path; got '${v}'. A relative path would resolve against ` +
+            `this process's cwd, which under --all is not the directory the file lives in.`,
+        );
+        usage(WIRE_EXIT.usage);
+      }
+      adoptPaths.push(v);
+    } else if (a === "--definition") {
       const v = argv[++i];
       if (!v || v.startsWith("--")) {
         console.error("apply: --definition requires a non-empty key");
@@ -1129,19 +1289,81 @@ async function runApply(argv: string[]): Promise<void> {
   // seedDefaultRoleBindingsIfMissing's doc comment). No-op when roles.json already exists.
   seedDefaultRoleBindingsIfMissing("apply");
 
+  // WHERE roles go. An explicit `--roles=` wins; otherwise the machine policy in
+  // ~/.petbox/wire.json, so a plain `apply` (a hook's, `update`'s, or full `wire`'s step 11)
+  // never silently re-renders 90 project copies of roles the owner just moved into the profile.
+  const { scope: roleScope, source: roleScopeSource } = resolveRoleScope(roleScopeFlag, homedir());
+  log(`apply: roles → ${roleScope} scope (from ${roleScopeSource})`);
+  if (roleScopeFlag !== undefined && !dryRun) {
+    // Persist the DECISION, not the run. A --dry-run must leave the machine exactly as it found
+    // it, this file included — a preview that changed the policy would make the next real run
+    // behave differently from the one that was previewed.
+    saveWireConfig({ roleScope: roleScopeFlag }, homedir());
+    log(`apply: remembered roleScope=${roleScopeFlag} in ${wireConfigPath(homedir())}`);
+  } else if (roleScopeFlag !== undefined && dryRun) {
+    log(`apply: --dry-run — roleScope=${roleScopeFlag} NOT persisted (a preview writes nothing).`);
+  }
+
+  const adopt = createAdoptSet(adoptPaths);
+  if (adopt.size > 0) {
+    log(
+      `apply: --adopt is active for ${adopt.size} explicitly named path(s). Nothing else changes ` +
+        `behavior: any other unmarked file is still refused, and the run still exits ${WIRE_EXIT.hard}.`,
+    );
+  }
+
   if (all) {
-    const code = await runApplyAll({ definitionKey, offline, dryRun });
-    exitWith(code);
+    const code = await runApplyAll({ definitionKey, offline, dryRun, roleScope, adopt });
+    exitWith(strongestExitCode(code, reportUnmatchedAdopt(adopt)));
     return;
   }
 
-  const result = await performApply({ definitionKey, offline, dryRun, label: "apply" });
+  if (roleScope === "user") {
+    const userRoles = await applyUserRoles({
+      definitionKey,
+      offline,
+      dryRun,
+      adopt,
+      cwd: process.cwd(),
+      label: "apply [roles:user]",
+    });
+    const result = await performApply({
+      definitionKey,
+      offline,
+      dryRun,
+      roleScope,
+      adopt,
+      label: "apply",
+    });
+    exitWith(strongestExitCode(userRoles.code, result.code, reportUnmatchedAdopt(adopt)));
+    return;
+  }
+
+  const result = await performApply({ definitionKey, offline, dryRun, roleScope, adopt, label: "apply" });
   // Same libuv race doctor/status hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
   // src\win\async.c): performApply's definition resolve + workspace probe are live network
   // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
   // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
   // own message just printed. exitWith (wire-exit.ts) is the one sanctioned spelling of the fix.
-  exitWith(result.code);
+  exitWith(strongestExitCode(result.code, reportUnmatchedAdopt(adopt)));
+}
+
+/**
+ * A `--adopt` path apply never even looked at is a FAILED INSTRUCTION, not a no-op: the operator
+ * typed a path (a typo, a stale one, one from a project not in this sweep) and got a silent exit
+ * 0 with nothing adopted. Reported by name and folded into the exit code as a hard failure —
+ * nothing was written on its account, so this can only ever turn a quiet success into a loud one.
+ */
+function reportUnmatchedAdopt(adopt: AdoptSet): number {
+  const unmatched = adopt.unmatched();
+  if (unmatched.length === 0) return WIRE_EXIT.ok;
+  console.error(
+    `apply: --adopt named ${unmatched.length} path(s) apply never considered — nothing was adopted for ` +
+      `them (exit ${WIRE_EXIT.hard}):\n` +
+      unmatched.map((p) => `  ${p}`).join("\n") +
+      `\nCheck the spelling, and that the path is one apply actually writes in a registered project.`,
+  );
+  return WIRE_EXIT.hard;
 }
 
 // One row of `apply --all`'s per-project outcome — the "built-in row" for the card's requirement
@@ -1181,10 +1403,29 @@ async function runApplyAll(opts: {
   readonly definitionKey: string;
   readonly offline: boolean;
   readonly dryRun: boolean;
+  readonly roleScope: RoleScope;
+  readonly adopt: AdoptSet;
 }): Promise<number> {
   const entries = readRegistry();
   const label = opts.dryRun ? "apply --all --dry-run" : "apply --all";
   log(`${label}: ${entries.length} registered project(s) in ${registryPath()}`);
+
+  // Roles under the user scope are a MACHINE fact, not a per-project one: rendering them inside
+  // the loop would write the identical 15 files eight times over. Once, up front, before any
+  // project is touched — and its exit code folds into the sweep's like any row's.
+  const userRoleCodes: number[] = [];
+  if (opts.roleScope === "user") {
+    const userRoles = await applyUserRoles({
+      definitionKey: opts.definitionKey,
+      offline: opts.offline,
+      dryRun: opts.dryRun,
+      adopt: opts.adopt,
+      cwd: process.cwd(),
+      label: `${label} [roles:user]`,
+    });
+    userRoleCodes.push(userRoles.code);
+  }
+
   const rows: RegistryApplyRow[] = [];
   for (const entry of entries) {
     rows.push(await applyToRegistryEntry(entry, opts));
@@ -1205,13 +1446,183 @@ async function runApplyAll(opts: {
       `refused=${refused} missing=${missing} error=${errored}.`,
   );
 
-  const code = strongestExitCode(...rows.map((r) => r.code));
+  const code = strongestExitCode(...userRoleCodes, ...rows.map((r) => r.code));
   return code;
+}
+
+/**
+ * Render the role artifacts ONCE into the three harnesses' USER profiles (card:
+ * normalize-all-environments-to-default item 1). 15 files instead of 90, and the only copy that
+ * exists, so there is nothing left to drift against.
+ *
+ * The definition is resolved for the caller's OWN directory, not per project: user-scope roles are
+ * machine-wide by construction, so asking eight projects for eight possibly-different definitions
+ * and then writing them all to the same 15 paths would be last-write-wins nonsense.
+ *
+ * Two things this deliberately does NOT do:
+ *  - no pre-namespacing legacy cleanup (`worker.md` next to `petbox-worker.md`). Those unprefixed
+ *    names were never written into a user profile by us, so there is nothing of ours to clean —
+ *    the only thing such a probe could ever find is somebody else's file, which is exactly what
+ *    `~/.factory/droids/worker.md` is on the owner's machine today.
+ *  - no `.gitignore` policy. A harness profile is not a project checkout.
+ * The orphan sweep DOES run, under the same server-source gate as the project path: a role dropped
+ * from the definition must lose its user-scope file too, or it outlives the roster forever.
+ */
+async function applyUserRoles(opts: {
+  readonly definitionKey: string;
+  readonly offline: boolean;
+  readonly dryRun: boolean;
+  readonly adopt: AdoptSet;
+  readonly cwd: string;
+  readonly label: string;
+}): Promise<ApplyRunResult> {
+  const ledger: ApplyLedger = createLedger();
+  const emit = (action: ApplyAction): void => {
+    ledger.record(action);
+    const rendered = formatAction(opts.label, action, opts.dryRun);
+    if (rendered.stderr) console.error(rendered.text);
+    else log(rendered.text);
+  };
+
+  let definition: AgentDefinition;
+  let resolved: ResolvedAgentDefinition;
+  let rolesData: RolesFile;
+  try {
+    resolved = await resolveApplyDefinition({
+      offline: opts.offline,
+      definitionKey: opts.definitionKey,
+      cwd: opts.cwd,
+      label: opts.label,
+    });
+    definition = resolved.definition;
+    validateAgentDefinition(definition);
+    const dangling = findDanglingTargets(definition);
+    if (dangling.length > 0) {
+      throw new Error(
+        `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
+          formatDanglingTargets(dangling) +
+          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+      );
+    }
+    rolesData = loadRoles(homedir(), { strict: true });
+  } catch (e) {
+    console.error(`${opts.label}: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    return {
+      code: WIRE_EXIT.hard,
+      summary: summarize(ledger.actions),
+      writtenHarnesses: [],
+      partialHarnesses: [],
+      blockedHarnesses: [],
+      hardError: true,
+    };
+  }
+
+  const writtenHarnesses: string[] = [];
+  const partialHarnesses: string[] = [];
+  const blockedHarnesses: string[] = [];
+  let clobberBlocked = false;
+  const orphanSweepSource = resolved.source === "server";
+
+  for (const harness of HARNESS_IDS) {
+    const dir = userAgentFilesRoot(harness, homedir());
+    log(`${opts.label}: [${harness}] user-scope agent dir = ${dir}`);
+    const roleModels = resolveAgentRoles(rolesData, harness);
+    const plan = planApply(definition, harness, roleModels);
+
+    let writtenThisHarness = 0;
+    let clobberedThisHarness = false;
+    for (const file of plan.files) {
+      // basename ONLY: planApply's relativePath carries the PROJECT layout, and two of the three
+      // user-scope directories differ from it (opencode's is `agents`, not `agent`). Taking the
+      // filename and re-rooting it is the whole translation — never a string edit of the path.
+      const abs = join(dir, basename(file.relativePath));
+      opts.adopt.consider(abs);
+      const outcome = writeArtifact(abs, file.content, {
+        dryRun: opts.dryRun,
+        adopt: opts.adopt.has(abs),
+      });
+      if (outcome.kind === "blocked") {
+        clobberBlocked = true;
+        clobberedThisHarness = true;
+        emit({ kind: "refuse", subject: "role", path: abs });
+        continue;
+      }
+      if (outcome.reason !== "unchanged") {
+        emit({
+          kind: "write",
+          subject: "role",
+          path: abs,
+          ...(outcome.reason === "own"
+            ? { note: "updated in place — ours" }
+            : outcome.reason === "adopted"
+              ? { note: "ADOPTED — unmarked file overwritten because --adopt named this exact path" }
+              : {}),
+        });
+        writtenThisHarness++;
+      } else {
+        emit({ kind: "unchanged", subject: "role", path: abs });
+      }
+    }
+
+    if (orphanSweepSource) {
+      for (const orphan of sweepOrphanArtifactsIn(dir, harness, definition, { dryRun: opts.dryRun })) {
+        emit(
+          orphan.outcome === "removed"
+            ? {
+                kind: "remove",
+                subject: "orphan",
+                path: orphan.path,
+                note: `its role is no longer in definition "${definition.name}"`,
+              }
+            : {
+                kind: "kept",
+                subject: "orphan",
+                path: orphan.path,
+                note: "no role by that name in the definition",
+              },
+        );
+      }
+    }
+
+    for (const w of plan.warnings) console.error(`${opts.label}: warn — ${w}`);
+
+    if (plan.violations.length > 0 || clobberedThisHarness) {
+      if (plan.violations.length > 0) {
+        console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      }
+      if (writtenThisHarness > 0) partialHarnesses.push(plan.harness);
+      else blockedHarnesses.push(plan.harness);
+    } else if (writtenThisHarness > 0) {
+      writtenHarnesses.push(plan.harness);
+    }
+  }
+
+  const summaryCounts = summarize(ledger.actions);
+  log(formatSummaryLine(opts.label, summaryCounts, opts.dryRun));
+  const code = classifyApplyExit({
+    hardError: clobberBlocked,
+    hadTruthfulnessBlock: partialHarnesses.length > 0 || blockedHarnesses.length > 0,
+    unintendedIncomplete: false,
+  });
+  return {
+    code,
+    summary: summaryCounts,
+    writtenHarnesses,
+    partialHarnesses,
+    blockedHarnesses,
+    hardError: clobberBlocked,
+  };
 }
 
 async function applyToRegistryEntry(
   entry: RegistryEntry,
-  opts: { readonly definitionKey: string; readonly offline: boolean; readonly dryRun: boolean },
+  opts: {
+    readonly definitionKey: string;
+    readonly offline: boolean;
+    readonly dryRun: boolean;
+    readonly roleScope: RoleScope;
+    readonly adopt: AdoptSet;
+  },
 ): Promise<RegistryApplyRow> {
   const dir = entry.prefix;
   if (!existsSync(dir)) {
@@ -1232,6 +1643,8 @@ async function applyToRegistryEntry(
       definitionKey: opts.definitionKey,
       offline: opts.offline,
       dryRun: opts.dryRun,
+      roleScope: opts.roleScope,
+      adopt: opts.adopt,
       cwd: dir,
       label: `apply[${entry.project}]`,
     });
@@ -1241,20 +1654,32 @@ async function applyToRegistryEntry(
         dir,
         outcome: "refused",
         detail:
-          result.clobberBlockedPaths.length > 0
-            ? `refused to overwrite ${result.clobberBlockedPaths.length} non-PetBox file(s)`
+          result.summary.refusedPaths.length > 0
+            ? `refused to overwrite ${result.summary.refusedPaths.length} non-PetBox file(s)`
             : `hard failure (see log lines above)`,
         code: result.code,
       };
     }
-    if (result.written === 0) {
+    // filesWritten, not the old role-only counter: a project whose only change was twelve skill
+    // files used to report "unchanged — no changes" here while the lines above it listed twelve
+    // writes (observation apply-all-summary-undercounts-writes). Removals count as a change too —
+    // a project that only had its role copies swept is not "unchanged" either.
+    if (result.summary.filesWritten === 0 && result.summary.removed === 0) {
       return { project: entry.project, dir, outcome: "unchanged", detail: "no changes", code: result.code };
     }
+    // Neutral wording on purpose ("writes=", not "would write"): the per-file lines are the only
+    // place those two verbs appear, which is what lets the counting test grep for them and
+    // compare against the summary without counting the summary itself (apply-ledger.ts).
+    const parts = [
+      `writes=${result.summary.filesWritten} (roles=${result.summary.roleFilesWritten} ` +
+        `skills=${result.summary.skillFilesWritten})`,
+      ...(result.summary.removed > 0 ? [`removals=${result.summary.removed}`] : []),
+    ];
     return {
       project: entry.project,
       dir,
       outcome: "written",
-      detail: `${opts.dryRun ? "would write" : "wrote"} ${result.written} file(s)`,
+      detail: parts.join(", "),
       code: result.code,
     };
   } catch (e) {
@@ -2077,56 +2502,71 @@ function mergeMcpServer(path: string, name: string, server: unknown): void {
   writeJson(path, data);
 }
 
-// Log every writeSkillFiles outcome under `label` and return the absolute paths of any
-// "blocked" ones (bug: skill-files-clobber-and-apply-skips) — a real, non-PetBox file already
-// sat at that path and was left byte-for-byte untouched; the caller decides what a non-empty
-// return does to its own exit code.
-function reportSkillOutcomes(label: string, result: SkillWriteResult, dryRun: boolean = false): string[] {
-  const blocked: string[] = [];
+/**
+ * A ledger of its own for a caller that has none — full `wire`'s step 7, which writes skills once
+ * outside any apply pass. Same lines, same counting rule; the only difference is that nobody else
+ * folds these actions into an exit code (step 11's apply re-runs the same writes right after).
+ */
+function reportSkillOutcomesStandalone(label: string, result: SkillWriteResult): boolean {
+  const ledger = createLedger();
+  return reportSkillOutcomes((action) => {
+    ledger.record(action);
+    const rendered = formatAction(label, action, false);
+    if (rendered.stderr) console.error(rendered.text);
+    else log(rendered.text);
+  }, result);
+}
+
+/**
+ * Fold one writeSkillFiles result into the caller's ledger. Returns true when at least one path
+ * was REFUSED (the caller's clobber flag / exit 1). It no longer prints anything itself and no
+ * longer returns the blocked paths: every line and every count now comes from the ledger, which
+ * is what makes the `--dry-run` summary provably the summary of the run that would execute
+ * (observation apply-all-summary-undercounts-writes — skill writes used to be invisible to the
+ * counter entirely, so `one-c` with 12 real writes printed as "unchanged").
+ */
+function reportSkillOutcomes(emit: (action: ApplyAction) => void, result: SkillWriteResult): boolean {
+  let refused = false;
   for (const outcome of result.writes) {
     if (outcome.kind === "blocked") {
-      blocked.push(outcome.path);
-      console.error(
-        `${label}: ${dryRun ? "would refuse" : "REFUSED"} to overwrite skill ${outcome.path} — it exists and ` +
-          `does not carry the PetBox origin marker (no \`petbox: managed\` in its frontmatter), so it is a ` +
-          `real file, not one wire/apply wrote before. ${dryRun ? "Nothing would be touched." : "Nothing was touched."}`,
-      );
+      refused = true;
+      emit({ kind: "refuse", subject: "skill", path: outcome.path });
     } else if (outcome.kind === "declared-manual") {
       // NOT a refusal and NOT an error (spec: wire-skill-manual-declared-not-error): the project
-      // declared this path its own, the kit honoured that. Never enters `blocked`, so it can
-      // never reach the exit code — stdout, like every other normal outcome.
-      log(
-        `${label}: left skill ${outcome.path} alone — declared \`petbox: manual\`, the project ` +
-          `owns this path. Nothing was written.`,
-      );
+      // declared this path its own, the kit honoured that. Never a refusal, so it can never
+      // reach the exit code.
+      emit({ kind: "manual", subject: "skill", path: outcome.path });
     } else if (outcome.reason === "unchanged") {
-      log(`${label}: skill ${outcome.path} unchanged (already matches)`);
+      emit({ kind: "unchanged", subject: "skill", path: outcome.path });
     } else {
-      log(
-        `${label}: ${dryRun ? "would write" : "wrote"} ${outcome.path}` +
-          (outcome.reason !== "new" ? ` (${outcome.reason})` : ""),
-      );
+      emit({
+        kind: "write",
+        subject: "skill",
+        path: outcome.path,
+        ...(outcome.reason === "adopted"
+          ? { note: "ADOPTED — unmarked file overwritten because --adopt named this exact path" }
+          : outcome.reason !== "new"
+            ? { note: outcome.reason }
+            : {}),
+      });
     }
   }
-  // Pre-rename sweep (bug: wire-skill-cleanup-on-replace) — same wording and same rules as the
-  // agent-role rename cleanup above: an owned leftover is removed, anything not ours is named
-  // and kept. Never a blocked path: keeping a file we may not delete is the correct outcome,
-  // not a failure of the run.
+  // Pre-rename sweep (bug: wire-skill-cleanup-on-replace) — same rules as the agent-role rename
+  // cleanup above: an owned leftover is removed, anything not ours is named and kept. Never a
+  // refusal: keeping a file we may not delete is the correct outcome, not a failure of the run.
   for (const cleanup of result.cleanups) {
     if (cleanup.outcome === "removed") {
-      log(
-        `${label}: ${dryRun ? "would remove" : "removed"} legacy skill ${cleanup.path} ` +
-          `(ours, superseded by the current name)` +
-          (cleanup.removedDir ? " — and its now-empty directory" : ""),
-      );
+      emit({
+        kind: "remove",
+        subject: "skill",
+        path: cleanup.path,
+        note: `legacy name, ours, superseded${cleanup.removedDir ? " — and its now-empty directory" : ""}`,
+      });
     } else if (cleanup.outcome === "kept-foreign") {
-      log(
-        `${label}: left ${cleanup.path} in place — not ours (no \`petbox: managed\` origin marker); ` +
-          `not renamed or deleted.`,
-      );
+      emit({ kind: "kept", subject: "skill", path: cleanup.path });
     }
   }
-  return blocked;
+  return refused;
 }
 
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
@@ -2177,7 +2617,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // (node/comment BODY structure). Rendered once per skill (see PROJECT_SKILLS in
   // skill-files.ts — the one place a new skill is registered), then dropped into every native
   // skill surface (writeSkillFiles / skill-files.ts).
-  reportSkillOutcomes("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace));
+  reportSkillOutcomesStandalone("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace));
 }
 
 // ---- step 7b: telemetry (opt-in, --telemetry) ------------------------------
@@ -2733,9 +3173,26 @@ async function main(): Promise<void> {
   // step exists to close — a machine whose agent artifacts were never written is then
   // indistinguishable, to a script, from a fully wired one.
   seedDefaultRoleBindingsIfMissing("[11/10]");
+  // The machine's remembered role-scope policy (~/.petbox/wire.json) applies here too — a full
+  // `wire` re-run on a machine that moved its roles into the harness profiles must not silently
+  // re-create the project copies it just deleted (card: normalize-all-environments-to-default).
+  const step11Scope = loadWireConfig(homedir()).roleScope;
+  log(`[11/10] roles → ${step11Scope} scope (machine policy: ${wireConfigPath(homedir())})`);
+  const userRoleResult =
+    step11Scope === "user"
+      ? await applyUserRoles({
+          definitionKey: DEFAULT_DEFINITION_KEY,
+          offline: false,
+          dryRun: false,
+          adopt: NO_ADOPT,
+          cwd: dir,
+          label: "[11/10 roles:user]",
+        })
+      : undefined;
   const applyResult = await performApply({
     definitionKey: DEFAULT_DEFINITION_KEY,
     offline: false,
+    roleScope: step11Scope,
     label: "[11/10]",
   });
   if (applyResult.code !== WIRE_EXIT.ok) {
@@ -2758,6 +3215,9 @@ async function main(): Promise<void> {
     runCodeSoFar,
     smokeOk ? WIRE_EXIT.ok : WIRE_EXIT.hard,
     applyResult.code,
+    // The user-scope role pass is part of step 11 when the machine policy says so; its failure
+    // must not be weaker than the project pass's for the sole reason of being a separate call.
+    userRoleResult?.code ?? WIRE_EXIT.ok,
   );
 
   // Terminal message set depends on the smoke outcome AND on step 11 — a failure must be the LAST

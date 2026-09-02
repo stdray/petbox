@@ -143,7 +143,11 @@ function stripMarkerLine(rendered: string): string {
 }
 
 export type SkillWriteOutcome =
-  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "unchanged" | "migrated" }
+  | {
+      readonly kind: "written";
+      readonly path: string;
+      readonly reason: "new" | "own" | "unchanged" | "migrated" | "adopted";
+    }
   // The project declared this path its own (`petbox: manual`). Left untouched — and this is a
   // LEGAL outcome, not a conflict: it must never reach an exit code (spec:
   // wire-skill-manual-declared-not-error). Distinct from "blocked", which is the undeclared
@@ -161,7 +165,7 @@ function writeSkillArtifact(
   absPath: string,
   rendered: string,
   legacyRendered: string,
-  opts: { readonly dryRun?: boolean } = {},
+  opts: { readonly dryRun?: boolean; readonly adopt?: boolean } = {},
 ): SkillWriteOutcome {
   if (existsSync(absPath)) {
     let existing: string | undefined;
@@ -251,7 +255,13 @@ export function writeSkillFiles(
   project: string,
   workspace: string,
   specs: readonly SkillTemplateSpec[] = PROJECT_SKILLS,
-  opts: { readonly dryRun?: boolean } = {},
+  opts: {
+    readonly dryRun?: boolean;
+    /** `--adopt` membership test for ONE path (card: normalize-all-environments-to-default item
+     * 2). A predicate rather than a set so this module never has to know how paths are
+     * normalized across platforms — that belongs to adopt-paths.ts, which owns the comparison. */
+    readonly adopt?: (absPath: string) => boolean;
+  } = {},
 ): SkillWriteResult {
   const writes: SkillWriteOutcome[] = [];
   const cleanups: SkillCleanupOutcome[] = [];
@@ -261,7 +271,10 @@ export function writeSkillFiles(
     const legacyRendered = stripMarkerLine(rendered);
     for (const surface of SKILL_SURFACES) {
       const skillPath = join(dir, ...surface, spec.dir, "SKILL.md");
-      const outcome = writeSkillArtifact(skillPath, rendered, legacyRendered, opts);
+      const outcome = writeSkillArtifact(skillPath, rendered, legacyRendered, {
+        ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+        ...(opts.adopt !== undefined ? { adopt: opts.adopt(skillPath) } : {}),
+      });
       writes.push(outcome);
       // Sweep the pre-rename copies ONLY after the replacement actually landed — never orphan a
       // skill by deleting the old file when the new one could not be written (identical rule to
@@ -272,7 +285,13 @@ export function writeSkillFiles(
       if (outcome.kind !== "written") continue;
       for (const legacyDir of spec.legacyDirs ?? []) {
         if (legacyDir === spec.dir) continue;
-        cleanups.push(cleanupLegacySkillDir(dir, surface, legacyDir, opts));
+        // Explicitly narrowed to { dryRun } — `--adopt` is a WRITE-side lever only. A sweep
+        // deletes, and deletion stays marker-gated with no override anywhere in this package.
+        cleanups.push(
+          cleanupLegacySkillDir(dir, surface, legacyDir, {
+            ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+          }),
+        );
       }
     }
   }

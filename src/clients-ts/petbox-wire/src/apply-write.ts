@@ -22,10 +22,14 @@
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { hasPetboxMarker } from "./origin-marker.ts";
+import { hasPetboxMarker, readPetboxProvenance } from "./origin-marker.ts";
 
 export type WriteOutcome =
-  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "unchanged" }
+  | {
+      readonly kind: "written";
+      readonly path: string;
+      readonly reason: "new" | "own" | "unchanged" | "adopted";
+    }
   | { readonly kind: "blocked"; readonly path: string };
 
 export type WriteArtifactOptions = {
@@ -35,14 +39,27 @@ export type WriteArtifactOptions = {
    * Never set by any existing caller; defaults to false, so a bare `writeArtifact(path, content)`
    * behaves exactly as before, byte for byte. */
   readonly dryRun?: boolean;
+  /**
+   * This EXACT path was named on the command line with `--adopt` (card:
+   * normalize-all-environments-to-default item 2). An unmarked file here is then treated as an
+   * old PetBox render rather than a stranger's file and is overwritten (reason "adopted").
+   *
+   * Deliberately a per-path boolean the CALLER resolves, never a set this module searches and
+   * never a global "force": the whole safety property of `--adopt` is that it changes the verdict
+   * for the paths the operator typed and for nothing else. A `petbox: manual` declaration still
+   * wins over it — that is the project asserting ownership, not an unmarked leftover.
+   */
+  readonly adopt?: boolean;
 };
 
 /**
  * Write one generated file to `absPath`.
  *  - Path does not exist → write it (reason "new").
- *  - Path exists and its frontmatter carries our origin marker → overwrite silently
- *    (reason "own", or "unchanged" in a dry run when the content is already byte-identical) —
- *    this is the routine, expected re-apply case.
+ *  - Path exists, carries our origin marker, and the content DIFFERS → overwrite silently
+ *    (reason "own") — this is the routine, expected re-apply case.
+ *  - Path exists, is ours, and the content is already byte-identical → reason "unchanged", and
+ *    nothing is written at all (dry run or not — see the comparison's own comment on why that
+ *    symmetry is the point).
  *  - Path exists and does NOT carry our marker (a real file we did not create, or one we
  *    cannot even read) → refuse. Returns "blocked"; the file is left byte-for-byte untouched.
  * Never throws for the ordinary cases above (a directory-creation failure still throws — that
@@ -54,20 +71,36 @@ export type WriteArtifactOptions = {
  */
 export function writeArtifact(absPath: string, content: string, opts: WriteArtifactOptions = {}): WriteOutcome {
   const existed = existsSync(absPath);
+  let adopted = false;
   if (existed) {
     let existing: string;
     try {
       existing = readFileSync(absPath, "utf8");
     } catch {
       // Unreadable existing entry (permissions, a directory, binary junk, ...) — treat as
-      // foreign rather than guess; never overwrite something we could not even inspect.
+      // foreign rather than guess; never overwrite something we could not even inspect. Not
+      // adoptable either: `--adopt` says "this is an old render of ours", and a file we cannot
+      // read is one we cannot say that about.
       return { kind: "blocked", path: absPath };
     }
     if (!hasPetboxMarker(existing)) {
-      return { kind: "blocked", path: absPath };
+      // `petbox: manual` outranks `--adopt`: that is the PROJECT declaring the path its own, a
+      // live statement, not an unmarked leftover from before the marker existed.
+      const declaredManual = readPetboxProvenance(existing) === "manual";
+      if (!opts.adopt || declaredManual) return { kind: "blocked", path: absPath };
+      adopted = true;
     }
+    // Byte-identical → "unchanged", in a REAL run as well as a dry one, and no write at all.
+    //
+    // This used to be a dry-run-only comparison, and that made idempotence unobservable: a second
+    // real `apply` re-wrote every file it had just written and reported each one as "wrote …
+    // (updated in place — ours)". A re-run that says it wrote 15 files is indistinguishable, to a
+    // reader and to a script, from one that actually changed something — so "run it twice and the
+    // second run is a no-op" (card: normalize-all-environments-to-default item 6) could not be
+    // checked at all. Comparing here also stops touching mtimes on files nothing changed.
+    if (existing === content) return { kind: "written", path: absPath, reason: "unchanged" };
     if (opts.dryRun) {
-      return { kind: "written", path: absPath, reason: existing === content ? "unchanged" : "own" };
+      return { kind: "written", path: absPath, reason: adopted ? "adopted" : "own" };
     }
   } else if (opts.dryRun) {
     return { kind: "written", path: absPath, reason: "new" };
@@ -77,7 +110,7 @@ export function writeArtifact(absPath: string, content: string, opts: WriteArtif
   return {
     kind: "written",
     path: absPath,
-    reason: existed ? "own" : "new",
+    reason: existed ? (adopted ? "adopted" : "own") : "new",
   };
 }
 
