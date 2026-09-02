@@ -161,18 +161,35 @@ jobs:
 
   # Code-quality gate — `jb inspectcode` via scripts/inspect-gate.cs, defined in
   # .github/workflows/inspect.yml (kept as its own file for the jb-tool/inspectcode caching
-  # detail; called here as a reusable workflow). Runs ONLY at the `deploy` tag, i.e. once per
-  # deploy, on the exact merged/tagged tree about to ship — NOT on every branch push and NOT
-  # on every push to `main`. Owner decision 2026-08-30 (work/inspect-gate-once-on-merged-tree):
-  # a branch never lands on main byte-for-byte (merge commits, squashes), so checking it on
-  # every push checked a state that wasn't the one that mattered, while the merged tree itself
-  # went unchecked. `deploy` below `needs:` this job, so a real finding (exit 1 inside
-  # inspect.yml) blocks the deploy; exit 2 (tool couldn't run — not a code finding) is
-  # downgraded to a warning inside inspect.yml and does NOT block deploy (see that file's `Run
-  # inspect-gate` step for the rationale). This job does not need `secrets: inherit` — the
-  # inspect gate does not use any repo secret.
+  # detail; called here as a reusable workflow). Runs on the `deploy` tag AND on pushes to
+  # `main` — NOT on any other branch push. Owner decision 2026-08-30
+  # (work/inspect-gate-once-on-merged-tree): a branch never lands on main byte-for-byte (merge
+  # commits, squashes), so checking it on every branch push checked a state that wasn't the one
+  # that mattered. That still holds — and it is exactly why `main` belongs here: a push to main
+  # IS a merged tree, and it is the tree the `deploy` tag is later moved onto.
+  #
+  # The two runs are not the same gate. The tag run is the BLOCKING one: `deploy` below
+  # `needs:` this job, so a real finding (exit 1 inside inspect.yml) stops the deploy; exit 2
+  # (tool couldn't run — not a code finding) is downgraded to a warning inside inspect.yml and
+  # does NOT block deploy (see that file's `Run inspect-gate` step for the rationale). The main
+  # run blocks nothing — it exists so the set of checks that CAN fail a deploy is visible before
+  # the tag is moved (work/inspect-visible-before-tag-move). Without it, a one-line finding
+  # surfaced only in the deploy run and cost two extra CI runs to clear: 2026-09-02, main run
+  # 33639422069 went green with `inspect` skipped, the tag run 33636812323 then died on a single
+  # RedundantUsingDirective, and the fix push could not be verified on main at all.
+  #
+  # It costs no extra RUN and no extra wall-clock: the job is added to a run that already
+  # happens, and inspect (5:09-6:14 observed) finishes inside `test` (6:46-8:17 observed), which
+  # it runs in parallel with. It is ~6 extra machine-minutes per main push, free on this public
+  # repo. The workflow-level `concurrency:` above groups the main run and the tag run by commit
+  # sha and lets the tag cancel the main run, so moving the tag without waiting for main cancels
+  # this job too — the second run is only ever paid when we deliberately wait for main's verdict,
+  # i.e. when we want it. Running on main also puts the jb-tool and inspectcode caches back on
+  # the default branch, where every ref can restore them; a cache written on a tag ref cannot be
+  # restored from main.
+  # This job does not need `secrets: inherit` — the inspect gate does not use any repo secret.
   inspect:
-    if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
+    if: github.event_name == 'push' && (github.ref == 'refs/tags/deploy' || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/inspect.yml
 
   publish:

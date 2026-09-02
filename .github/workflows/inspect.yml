@@ -1,12 +1,15 @@
 name: Inspect
 
-# Reusable workflow, called from ci.yml's `inspect` job on the `deploy` tag push only — NOT
-# triggered on its own push event any more. Owner decision 2026-08-30 (work/
-# inspect-gate-once-on-merged-tree): running this on every branch push checked a tree state
-# that never lands on main verbatim, while the state that actually matters — the merged tree
-# about to ship — went unchecked. `deploy` in ci.yml now `needs: [..., inspect]`, so this job
-# runs exactly once per deploy, on the exact commit the `deploy` tag points to, before the
-# deploy job's steps execute. Kept as a separate file (rather than inlined as a job in ci.yml)
+# Reusable workflow, called from ci.yml's `inspect` job on the `deploy` tag push and on pushes
+# to `main` — NOT triggered on its own push event any more, and never on any other branch.
+# Owner decision 2026-08-30 (work/inspect-gate-once-on-merged-tree): running this on every
+# branch push checked a tree state that never lands on main verbatim, while the state that
+# actually matters — the merged tree about to ship — went unchecked. `deploy` in ci.yml
+# `needs: [..., inspect]`, so the TAG call is the blocking one: it runs on the exact commit the
+# `deploy` tag points to, before the deploy job's steps execute. The MAIN call blocks nothing —
+# it is there so a finding is visible before the tag is moved rather than only after the deploy
+# has already failed (work/inspect-visible-before-tag-move); see ci.yml's `inspect` job for the
+# cost accounting. Kept as a separate file (rather than inlined as a job in ci.yml)
 # purely for the caching/setup detail below (jb is a ~978MB global tool with its own pinned
 # version and settings-keyed inspectcode cache) — no longer to dodge triggering ci.yml's other
 # jobs, since this no longer has its own push trigger at all. `workflow_dispatch` stays for an
