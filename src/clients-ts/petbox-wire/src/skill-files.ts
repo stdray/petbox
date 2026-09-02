@@ -81,10 +81,12 @@ export type SkillTemplateSpec = {
 // Every skill wire.ts renders into a freshly-wired project (see writeSkillFiles / wire.ts step 7).
 export const PROJECT_SKILLS: SkillTemplateSpec[] = [
   { dir: "petbox", needsWorkspace: true, digestMode: "auto" },
-  { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "auto" },
+  { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "manual" },
   { dir: "petbox-methodology", needsWorkspace: false, digestMode: "auto" },
   { dir: "petbox-write-economy", needsWorkspace: false, digestMode: "auto" },
   { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto" },
+  { dir: "analysis-workspace", needsWorkspace: false, digestMode: "manual" },
+  { dir: "factory-run", needsWorkspace: false, digestMode: "manual" },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has
