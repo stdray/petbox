@@ -26,7 +26,7 @@ export const PETBOX_MANUAL_LINE = `${PETBOX_MARKER_KEY}: ${PETBOX_MANUAL_VALUE}`
 // Invocation-mode declaration, a SEPARATE frontmatter key from the provenance one above
 // (spec: wire-skill-invocation-mode). Provenance answers "may the kit write/delete this path";
 // mode answers "should an agent be told about this skill without being asked". They are
-// independent axes — a kit-managed skill can be manual-invocation (`factory-run`), and a
+// independent axes — a kit-managed skill can be manual-invocation (`petbox-factory-run`), and a
 // project's own manual-provenance skill is simply never in the kit's digest at all.
 export const PETBOX_DIGEST_KEY = "petbox-digest";
 export type SkillDigestMode = "auto" | "manual";

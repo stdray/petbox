@@ -1,5 +1,5 @@
 ---
-name: analysis-workspace
+name: petbox-analysis-workspace
 description: >-
   Run a voluminous, multi-part investigation (a cross-cutting audit, a large refactor
   survey, "what's the state of X across the codebase") as staged files in an external
