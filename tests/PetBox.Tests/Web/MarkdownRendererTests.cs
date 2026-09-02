@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
 using PetBox.Web.Rendering;
 
@@ -1074,5 +1075,58 @@ public sealed class MarkdownCodeCopyFidelityTests
 			html.Should().NotContain(needle, $"the fold wrapper must not introduce {what} either");
 		MarkdownCodeText.VisibleCodeText(html).Should().Contain(LongLine,
 			"folding hides lines visually; it must not rewrite the one long line inside them");
+	}
+}
+
+// session-page-500-markdig-depth-limit: a real session transcript could nest block containers
+// (blockquotes, in the reported case) past Markdig's own MaximumNestingDepth (default 128, pinned
+// on the Markdig 1.3.2 in Directory.Packages.props — confirmed by reflection, no public API change
+// applied this round), which throws Markdig.Helpers.ThrowHelper's ArgumentException
+// ("...depth limit exceeded") straight out of both RenderToHtml paths and 500'd the page
+// (Pages/Shared/_MdBody.cshtml → @Html.Raw, and TaskBoardNode.cshtml.cs OnPostPreviewAsync).
+// RenderToHtml must now degrade instead: catch broadly, log, and return the ORIGINAL text
+// HTML-encoded (never routed through HtmlSanitizer — nothing here was ever parsed HTML).
+public sealed class MarkdownRendererDepthLimitFallbackTests
+{
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	// One line of N "> " prefixes opens N nested blockquotes. 300 is comfortably past the 128
+	// default and was confirmed (outside this suite, against the pinned Markdig 1.3.2) to trip
+	// ThrowHelper.CheckDepthLimit reliably — 128 itself already throws, 100 does not.
+	static string DeeplyNested(string tail) => string.Concat(Enumerable.Repeat("> ", 300)) + tail;
+
+	[Fact]
+	public void DepthLimitExceeded_DoesNotThrow_AndReturnsNonEmptyHtml()
+	{
+		var md = DeeplyNested("too deep");
+
+		var act = () => R.RenderToHtml(md);
+
+		act.Should().NotThrow("a render failure must degrade, never propagate out of RenderToHtml");
+		R.RenderToHtml(md).Should().NotBeNullOrEmpty();
+	}
+
+	[Fact]
+	public void DepthLimitExceeded_FallbackCarriesTheOriginalTextEscaped()
+	{
+		var md = DeeplyNested("too deep marker XYZZY");
+
+		var html = R.RenderToHtml(md);
+
+		// The fallback shows the RAW source (including the literal "> " markers) rather than
+		// trying to reparse it — hand-escaped with the same encoder the renderer uses, so this
+		// assertion pins the actual escaping contract, not just "some encoding happened".
+		html.Should().Contain(HtmlEncoder.Default.Encode(md));
+	}
+
+	[Fact]
+	public void DepthLimitExceeded_WithEmbeddedScript_ScriptIsEscapedNotLive()
+	{
+		var md = DeeplyNested("before <script>alert(1)</script> after");
+
+		var html = R.RenderToHtml(md);
+
+		html.Should().NotContain("<script", "the fallback must never hand back a live element");
+		html.Should().Contain("&lt;script&gt;alert(1)&lt;/script&gt;");
 	}
 }

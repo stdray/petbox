@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using Ganss.Xss;
@@ -8,6 +9,7 @@ using Markdig.Renderers;
 using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using Microsoft.Extensions.Logging;
 
 namespace PetBox.Web.Rendering;
 
@@ -57,9 +59,14 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 
 	readonly MarkdownPipeline _pipeline;
 	readonly HtmlSanitizer _sanitizer;
+	readonly ILogger<MarkdownRenderer>? _log;
 
-	public MarkdownRenderer()
+	// `log` is OPTIONAL (default null) so the existing `new MarkdownRenderer()` call in tests, and
+	// any other direct construction, keep compiling unchanged; DI (Program.cs) supplies the real
+	// ILogger<MarkdownRenderer> automatically because the parameter type is resolvable.
+	public MarkdownRenderer(ILogger<MarkdownRenderer>? log = null)
 	{
+		_log = log;
 		var builder = new MarkdownPipelineBuilder()
 			.UseAdvancedExtensions()
 			.UseSoftlineBreakAsHardlineBreak()
@@ -90,6 +97,34 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 	{
 		if (string.IsNullOrEmpty(markdown)) return "";
 
+		try
+		{
+			return RenderCore(markdown, commitUrlTemplate, nodeRefs, memoryRefs, commentRefs);
+		}
+		catch (Exception ex)
+		{
+			// The input is untrusted AND machine-generated (agent-authored node/comment bodies,
+			// pasted session transcripts) — Markdig or the sanitizer can throw on a shape neither
+			// anticipated. The case that prompted this (session-page-500-markdig-depth-limit) is
+			// Markdig's own nesting-depth guard (Markdig.Helpers.ThrowHelper throwing
+			// ArgumentException, "...depth limit exceeded" — a real transcript's blockquote/list
+			// nesting past MaximumNestingDepth), but the next malformed shape will throw a
+			// DIFFERENT exception type, so the catch is deliberately `Exception`, not
+			// `ArgumentException`. Degrading to the escaped source text keeps one bad body from
+			// taking the whole page down with a 500; the caller (a Razor page via @Html.Raw)
+			// never sees an exception from this method.
+			_log?.LogWarning(ex,
+				"markdown render failed ({Length} chars) — falling back to escaped plain text",
+				markdown.Length);
+			return RenderFallback(markdown);
+		}
+	}
+
+	string RenderCore(string markdown, string? commitUrlTemplate,
+		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs,
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs,
+		IReadOnlyDictionary<string, NodeRefTarget>? commentRefs)
+	{
 		var hasTemplate = CommitUrl.HasTemplate(commitUrlTemplate);
 		var hasNodeRefs = nodeRefs is { Count: > 0 };
 		var hasMemoryRefs = memoryRefs is { Count: > 0 };
@@ -113,6 +148,18 @@ public sealed class MarkdownRenderer : IMarkdownRenderer
 		renderer.Render(doc);
 		writer.Flush();
 		return _sanitizer.Sanitize(writer.ToString());
+	}
+
+	// The safe degrade when the renderer could not turn `markdown` into HTML at all: the ORIGINAL
+	// text, HTML-encoded BY HAND (never routed through the sanitizer — that cleans up already-parsed
+	// HTML, and nothing here has been parsed), wrapped in <pre> so line breaks/whitespace still read
+	// like the source, plus a short visible notice that rendering failed. Because the encoding is
+	// direct (HtmlEncoder, not "sanitize whatever came out"), a `<script>` in the source is inert
+	// text here by construction, not by allowlist.
+	static string RenderFallback(string markdown)
+	{
+		var encoded = HtmlEncoder.Default.Encode(markdown);
+		return "<p><em>Markdown could not be rendered; showing raw text.</em></p>\n<pre>" + encoded + "</pre>";
 	}
 
 	// Rewrite every plain text run: commit-hash words → commit-view links (when `template` is set),
