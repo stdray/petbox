@@ -110,7 +110,7 @@ function stripMarkerLine(rendered: string): string {
 }
 
 export type SkillWriteOutcome =
-  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "migrated" }
+  | { readonly kind: "written"; readonly path: string; readonly reason: "new" | "own" | "unchanged" | "migrated" }
   // The project declared this path its own (`petbox: manual`). Left untouched — and this is a
   // LEGAL outcome, not a conflict: it must never reach an exit code (spec:
   // wire-skill-manual-declared-not-error). Distinct from "blocked", which is the undeclared
@@ -124,7 +124,12 @@ export type SkillWriteOutcome =
 // leftover from before this fix, not a foreign file — it is promoted in place (reason
 // "migrated"). Anything else unmarked is a real user file and is refused, untouched, same as
 // writeArtifact.
-function writeSkillArtifact(absPath: string, rendered: string, legacyRendered: string): SkillWriteOutcome {
+function writeSkillArtifact(
+  absPath: string,
+  rendered: string,
+  legacyRendered: string,
+  opts: { readonly dryRun?: boolean } = {},
+): SkillWriteOutcome {
   if (existsSync(absPath)) {
     let existing: string | undefined;
     try {
@@ -139,12 +144,14 @@ function writeSkillArtifact(absPath: string, rendered: string, legacyRendered: s
       return { kind: "declared-manual", path: absPath };
     }
     if (existing !== undefined && !hasPetboxMarker(existing) && existing === legacyRendered) {
-      mkdirSync(dirname(absPath), { recursive: true });
-      writeFileSync(absPath, rendered, "utf8");
+      if (!opts.dryRun) {
+        mkdirSync(dirname(absPath), { recursive: true });
+        writeFileSync(absPath, rendered, "utf8");
+      }
       return { kind: "written", path: absPath, reason: "migrated" };
     }
   }
-  const outcome = writeArtifact(absPath, rendered);
+  const outcome = writeArtifact(absPath, rendered, opts);
   return outcome.kind === "blocked"
     ? { kind: "blocked", path: absPath }
     : { kind: "written", path: absPath, reason: outcome.reason };
@@ -174,12 +181,17 @@ export type SkillWriteResult = {
  * is. The directory is removed only when it is empty, which means a legacy skill folder holding
  * anything else the kit did not write (a `references/`, the project's own notes) survives whole.
  */
-function cleanupLegacySkillDir(dir: string, surface: string[], legacyDir: string): SkillCleanupOutcome {
+function cleanupLegacySkillDir(
+  dir: string,
+  surface: string[],
+  legacyDir: string,
+  opts: { readonly dryRun?: boolean } = {},
+): SkillCleanupOutcome {
   const legacySkillDir = join(dir, ...surface, legacyDir);
   const legacyPath = join(legacySkillDir, "SKILL.md");
-  const outcome = cleanupLegacyArtifact(legacyPath);
+  const outcome = cleanupLegacyArtifact(legacyPath, opts);
   let removedDir = false;
-  if (outcome === "removed") {
+  if (outcome === "removed" && !opts.dryRun) {
     try {
       rmdirSync(legacySkillDir); // throws ENOTEMPTY when anything else lives there — then keep it
       removedDir = true;
@@ -206,6 +218,7 @@ export function writeSkillFiles(
   project: string,
   workspace: string,
   specs: readonly SkillTemplateSpec[] = PROJECT_SKILLS,
+  opts: { readonly dryRun?: boolean } = {},
 ): SkillWriteResult {
   const writes: SkillWriteOutcome[] = [];
   const cleanups: SkillCleanupOutcome[] = [];
@@ -215,16 +228,18 @@ export function writeSkillFiles(
     const legacyRendered = stripMarkerLine(rendered);
     for (const surface of SKILL_SURFACES) {
       const skillPath = join(dir, ...surface, spec.dir, "SKILL.md");
-      const outcome = writeSkillArtifact(skillPath, rendered, legacyRendered);
+      const outcome = writeSkillArtifact(skillPath, rendered, legacyRendered, opts);
       writes.push(outcome);
       // Sweep the pre-rename copies ONLY after the replacement actually landed — never orphan a
       // skill by deleting the old file when the new one could not be written (identical rule to
       // the agent-role rename cleanup in wire.ts, which this pipeline had no equivalent of).
-      // "blocked" and "declared-manual" are both non-writes, so neither triggers a sweep.
+      // "blocked" and "declared-manual" are both non-writes, so neither triggers a sweep. In a
+      // dry run the "write" was only simulated, but the SAME would-sweep preview still applies —
+      // opts.dryRun flows into cleanupLegacySkillDir below, same as the write above.
       if (outcome.kind !== "written") continue;
       for (const legacyDir of spec.legacyDirs ?? []) {
         if (legacyDir === spec.dir) continue;
-        cleanups.push(cleanupLegacySkillDir(dir, surface, legacyDir));
+        cleanups.push(cleanupLegacySkillDir(dir, surface, legacyDir, opts));
       }
     }
   }

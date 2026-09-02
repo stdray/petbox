@@ -7,9 +7,11 @@ description: >-
   prepared, mostly independent tasks must all land (a folder of session briefs, a set of
   accepted work cards, "прогони всё это"), especially when the owner will be away and the
   orchestrator must keep going alone. Not for a single task, for exploratory work, or for
-  tasks that mostly touch the same files — see "When not to use this".
+  tasks that mostly touch the same files — see "When not to use this". Never automatic —
+  the caller invokes it on purpose.
 petbox: managed
 petbox-digest: manual
+disable-model-invocation: true
 ---
 
 # Factory run — many prepared tasks, one unattended pass

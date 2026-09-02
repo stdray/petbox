@@ -54,6 +54,7 @@ export function sweepOrphanArtifacts(
   root: string,
   harness: HarnessId,
   definition: AgentDefinition,
+  opts: { readonly dryRun?: boolean } = {},
 ): OrphanOutcome[] {
   const dir = join(root, agentFilesDir(harness));
   if (!existsSync(dir)) return [];
@@ -75,7 +76,7 @@ export function sweepOrphanArtifacts(
     } catch {
       continue;
     }
-    const outcome = removeOwnedArtifact(abs);
+    const outcome = removeOwnedArtifact(abs, opts);
     if (outcome === "absent") continue; // raced away between readdir and unlink
     outcomes.push({ path: abs, outcome });
   }

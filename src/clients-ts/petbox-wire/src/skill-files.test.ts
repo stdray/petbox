@@ -1293,3 +1293,51 @@ test("extractSkillTrigger against every REAL current petbox-* skill description 
   }
 });
 
+// ---- templates/ <-> this repo's OWN tracked skill copies (task
+// kit-version-lands-everywhere-and-sweeps item 5) --------------------------------------------
+//
+// The parity tests above pin templates/ against PROJECT_SKILLS, README.md, and each other; NONE
+// of them look at `<repoRoot>/.claude/skills/<dir>/SKILL.md` — the copies THIS project ($system)
+// itself carries, tracked by an explicit .gitignore whitelist specifically so the kit's own repo
+// dogfoods its own output. Those tracked copies are NOT re-rendered by this test suite; they are
+// only ever refreshed by an actual `wire`/`apply` run (or, historically, a by-hand commit).
+//
+// Measured live 2026-09-02: commit 0daca301 edited templates/petbox-analysis-workspace/SKILL.md
+// and templates/petbox-factory-run/SKILL.md (added `disable-model-invocation: true`) but did NOT
+// touch the tracked .claude/skills/ copies of either — nothing here caught it, and `apply`
+// surfaced the drift only later, as a dirty working tree. This test is the missing catch: for
+// every PROJECT_SKILLS entry whose tracked copy exists in THIS checkout, it must be
+// byte-for-byte identical to the current template.
+//
+// Byte-for-byte, not rendered: none of the tracked copies below sit under a placeholder-bearing
+// template that would need {{PROJECT}}/{{WORKSPACE}} substitution to compare — verified by eye
+// (`diff -q`) against every template PROJECT_SKILLS names. If a future skill both needs
+// rendering AND gets tracked here, this comment is the trip wire to update the comparison, not a
+// promise the code enforces on its own.
+//
+// A PROJECT_SKILLS entry with NO tracked copy in this repo (most of them — $system's own
+// .claude/skills/ only tracks a few, plus its own project-specific petbox-methodology-system,
+// which carries no kit template at all and is out of PROJECT_SKILLS entirely) is a silent skip,
+// not a failure: not every skill this kit ships to OTHER projects is one $system's own working
+// tree happens to track.
+test("this repo's tracked .claude/skills/ copies are byte-identical to the current kit templates", () => {
+  const repoRoot = join(HERE, "..", "..", "..", "..");
+  let checked = 0;
+  for (const spec of PROJECT_SKILLS) {
+    const trackedPath = join(repoRoot, ".claude", "skills", spec.dir, "SKILL.md");
+    if (!existsSync(trackedPath)) continue; // not tracked in this checkout — nothing to compare
+    const tracked = readFileSync(trackedPath, "utf8");
+    const template = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+    assert.equal(
+      tracked,
+      template,
+      `.claude/skills/${spec.dir}/SKILL.md has drifted from templates/${spec.dir}/SKILL.md — ` +
+        `re-run apply/wire in this repo and commit the refreshed tracked copy.`,
+    );
+    checked++;
+  }
+  // If this ever hits 0, either the tracked whitelist emptied out or the repoRoot path broke —
+  // either way the test would be silently vacuous, which is worse than not having it.
+  assert.ok(checked > 0, "expected at least one PROJECT_SKILLS entry to have a tracked .claude/skills/ copy to compare");
+});
+
