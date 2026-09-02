@@ -1,4 +1,0 @@
-# Artifacts the fixture card names in its "Чем закрывается" section.
-.claude/skills/comprehension-check/self-test/work/calc.js
-.claude/skills/comprehension-check/self-test/work/calc.test.js
-.claude/skills/comprehension-check/self-test/work/README.md

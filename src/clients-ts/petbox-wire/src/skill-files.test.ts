@@ -606,7 +606,7 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
     const playwright = `---\nname: playwright-cli\ndescription: Automate browser interactions. Use for browser work.\n---\n\n# not ours\n`;
     // A multi-file skill the kit does NOT ship (see the SKILL.md-only limitation): its auxiliary
     // files are the ones with no legal place to carry a marker, so they must simply be left alone.
-    const script = "#!/usr/bin/env bash\nset -euo pipefail\necho mechanical check\n";
+    const script = "#!/usr/bin/env bash\nset -euo pipefail\necho helper\n";
     const fixture = "// Intentionally incomplete fixture.\nexport const add = (a, b) => a + b;\n";
 
     const bystanders: Array<[string, string]> = [];
@@ -615,8 +615,8 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
         [join(dir, ...surface, "petbox-methodology-system", "SKILL.md"), methodologySystem],
         [join(dir, ...surface, "droid-handoff", "SKILL.md"), droidHandoff],
         [join(dir, ...surface, "playwright-cli", "SKILL.md"), playwright],
-        [join(dir, ...surface, "comprehension-check", "scripts", "mechanical_check.sh"), script],
-        [join(dir, ...surface, "comprehension-check", "self-test", "work", "calc.js"), fixture],
+        [join(dir, ...surface, "multi-file-bystander", "scripts", "helper.sh"), script],
+        [join(dir, ...surface, "multi-file-bystander", "self-test", "work", "calc.js"), fixture],
       );
     }
     for (const [path, body] of bystanders) {
@@ -733,7 +733,7 @@ test("digest: the automatic index carries exactly the four auto skills — agent
     const auto = PROJECT_SKILLS.filter((s) => s.digestMode === "auto").map((s) => s.dir);
     assert.deepEqual(auto.sort(), ["petbox", "petbox-methodology", "petbox-node-authoring", "petbox-write-economy"]);
     for (const name of auto) assert.match(index, new RegExp(`\`${name}\``), `${name} must be in the digest`);
-    for (const name of ["petbox-agent-factory", "analysis-workspace", "factory-run"]) {
+    for (const name of ["petbox-agent-factory", "analysis-workspace", "factory-run", "petbox-card-check"]) {
       assert.doesNotMatch(
         index,
         new RegExp(`\`${name}\``),
