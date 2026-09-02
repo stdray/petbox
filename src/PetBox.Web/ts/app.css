@@ -294,8 +294,10 @@
    there is no typography plugin, so re-assert a compact, readable set scoped to .md-body.
 
    Scope note: .md-body is shared by every read surface — node body and edit preview, board card,
-   outline row, comment thread, the five /doc pages and the session page. That uniformity is the
-   accepted decision for this layer; there is deliberately no per-surface opt-in class. */
+   outline row, comment thread and the five /doc pages. That uniformity is the accepted decision
+   for this layer; there is deliberately no per-surface opt-in class. The session page (transcript
+   body) is NOT part of this scope — see work `session-body-render-cleanup` and .session-body
+   below: a transcript is not authored markdown, so it renders as plain text, not through here. */
 .md-body {
 	font-family: var(--md-font-prose);
 	color: var(--md-ink);
@@ -969,6 +971,19 @@
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 	font-size: 0.75rem;
 	line-height: 1rem;
+}
+
+/* Session transcript body (Session.cshtml, work `session-body-render-cleanup`): plain,
+   escaped text in a <pre> — no markdown rendering, so this is deliberately NOT .md-body. Same
+   long-line handling as .md-body pre and for the same reason (`md-code-wrap-not-scroll`): a raw
+   transcript line (an ANSI log, a long path) has no soft-wrap opportunity on its own, so
+   `overflow-wrap: anywhere` lets the break land mid-token instead of forcing a horizontal
+   scrollbar; `overflow-x: auto` stays as an inert safety net. Nothing is inserted into the text
+   (no <wbr>, no soft hyphen), so it still copies out as the exact source. */
+.session-body {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	overflow-x: auto;
 }
 
 /* Selection contrast. The UA default (and the inactive-window gray) is near-invisible

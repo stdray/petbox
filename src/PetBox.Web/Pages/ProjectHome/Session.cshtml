@@ -27,13 +27,14 @@
 			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, Model.SessionId)" class="link link-hover" data-testid="session-view-full">view full session</a>
 		</div>
 	}
-	@* Session content is GFM markdown (agents write `### user` / `### assistant` role headers,
-	   code blocks, lists). Render it via the ONE shared markdown renderer (_MdBody / IMarkdownRenderer)
-	   — the same server-side, sanitized pipeline node bodies and comments use — so role headers become
-	   real headings and code blocks/long lines render sanely, instead of a raw `<pre>` blob. *@
-	<article class="card bg-base-200 border border-base-300" data-testid="session-content">
-		<div class="card-body p-4">
-			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.DisplayContent, TestId = "session-body" })" />
-		</div>
-	</article>
+	@* Session content is a transcript, not authored markdown — do NOT run it through the shared
+	   markdown renderer (_MdBody / IMarkdownRenderer): work `session-body-render-cleanup` reverted
+	   that (observations `session-gfm-render-shipped-ahead-of-its-own-decision`,
+	   `markdig-parses-80x-deeper-than-it-renders` — a real transcript, e.g. ANSI logs, can carry
+	   unbalanced `[` that blows past Markdig's render nesting cap and 500s the page). Razor
+	   escapes the `@Model.DisplayContent` expression itself, so this stays plain, safe text in a
+	   <pre> — no @Html.Raw. *@
+	<div data-testid="session-content">
+		<pre class="session-body" data-testid="session-body">@Model.DisplayContent</pre>
+	</div>
 }
