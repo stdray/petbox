@@ -2,6 +2,7 @@
 name: petbox
 description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Use to record/read plans, durable notes and working-session state for $system development.
 petbox: managed
+petbox-digest: auto
 ---
 
 This project is connected to a PetBox instance over MCP (server `petbox`, https://petbox.3po.su).
