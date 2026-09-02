@@ -1,5 +1,5 @@
 ---
-name: factory-run
+name: petbox-factory-run
 description: >-
   Run a batch of already-written task statements to completion in one unattended pass —
   fan out one implementer per task into its own worktree, merge sequentially, gate the
@@ -184,7 +184,7 @@ evidence is not, however green its tests.
 
 - **A single task**, or two. The pipeline's overhead only pays off across a batch.
 - **Exploratory work** where the goal is understanding, not landing changes — use
-  `analysis-workspace` instead.
+  `petbox-analysis-workspace` instead.
 - **Tasks that mostly touch the same files.** Recon should establish independence first;
   heavy overlap means the batch should be a sequence, not a fan-out.
 - **No prepared statements.** Writing the briefs is its own job; this skill starts where

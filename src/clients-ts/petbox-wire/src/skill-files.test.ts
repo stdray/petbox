@@ -558,11 +558,32 @@ test("writeSkillFiles: no sweep at all when the replacement did not land (blocke
   }
 });
 
-test("writeSkillFiles: a spec with no legacyDirs sweeps nothing (the steady state)", () => {
+test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (petbox-skill-naming)", () => {
   const dir = freshDir();
   try {
+    const legacyPaths: string[] = [];
+    for (const surface of SKILL_SURFACES) {
+      legacyPaths.push(
+        seedLegacy(dir, surface, "analysis-workspace", `---\nname: analysis-workspace\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+        seedLegacy(dir, surface, "factory-run", `---\nname: factory-run\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+      );
+    }
+
     const { cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    assert.deepEqual(cleanups, [], "the delivered set declares no renames yet — nothing may be deleted");
+
+    for (const legacyPath of legacyPaths) {
+      assert.equal(existsSync(legacyPath), false, `orphaned ${legacyPath} must be gone`);
+    }
+    const removed = cleanups.filter((c) => c.outcome === "removed");
+    assert.equal(removed.length, legacyPaths.length, "one removal per (legacy skill x surface)");
+    assert.ok(
+      removed.some((c) => c.path.includes("analysis-workspace")),
+      "cleanup must name the analysis-workspace legacy dir it deleted",
+    );
+    assert.ok(
+      removed.some((c) => c.path.includes("factory-run")),
+      "cleanup must name the factory-run legacy dir it deleted",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -596,7 +617,7 @@ function bystanderTree(dir: string): Record<string, string> {
   return seen;
 }
 
-test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths — a declared-manual skill and a foreign one survive byte-for-byte, and nothing is deleted", () => {
+test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths — a declared-manual skill and a foreign one survive byte-for-byte, and only the renamed skills' legacy copies are swept", () => {
   const dir = freshDir();
   try {
     // A repo-native skill the kit must never carry, declared manual — the live $system case.
@@ -625,12 +646,51 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
     }
     const before = bystanderTree(dir);
 
-    // Two applies: the second is the one that would expose a "now that I own this, clean up"
-    // sweep that only triggers once the delivery is already in place.
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    // Real pre-rename copies of the two renamed skills — owned (petbox: managed), so unlike the
+    // bystanders above, THESE must be swept. Seeded after `before` so the survival check below
+    // stays scoped to the true bystanders.
+    const legacy: Array<[string, string]> = [];
+    for (const surface of SKILL_SURFACES) {
+      legacy.push(
+        [
+          join(dir, ...surface, "analysis-workspace", "SKILL.md"),
+          `---\nname: analysis-workspace\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`,
+        ],
+        [
+          join(dir, ...surface, "factory-run", "SKILL.md"),
+          `---\nname: factory-run\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`,
+        ],
+      );
+    }
+    for (const [path, body] of legacy) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, body, "utf8");
+    }
+
+    // Two applies: the first is the one that sweeps the seeded legacy copies now that the
+    // renamed skills' own delivery has landed; the second is the one that would expose a "now
+    // that I own this, clean up" sweep that only triggers once the delivery is already in place
+    // — asserting on it pins that a second apply finds nothing left to re-delete.
+    const first = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const { writes, cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
 
-    assert.deepEqual(cleanups, [], "the delivered set declares no renames — an apply must delete nothing");
+    const removed = first.cleanups.filter((c) => c.outcome === "removed");
+    assert.equal(removed.length, legacy.length, "the first apply must sweep every seeded legacy copy");
+    assert.ok(
+      removed.some((c) => c.path.includes("analysis-workspace")),
+      "cleanup must name the analysis-workspace legacy dir it deleted",
+    );
+    assert.ok(
+      removed.some((c) => c.path.includes("factory-run")),
+      "cleanup must name the factory-run legacy dir it deleted",
+    );
+    for (const [path] of legacy) {
+      assert.equal(existsSync(path), false, `swept legacy copy must be gone: ${path}`);
+    }
+    assert.ok(
+      cleanups.every((c) => c.outcome === "absent"),
+      "the second apply finds nothing left to sweep — the first apply already deleted it",
+    );
     const managedPaths = new Set(
       PROJECT_SKILLS.flatMap((spec) => SKILL_SURFACES.map((surface) => pathFor(dir, surface, spec.dir))),
     );
@@ -693,7 +753,7 @@ test("refill: the owner's pre-existing hand-placed copy of a NEWLY shipped skill
   // "the template equals the owner's current file"; that comparison cannot be a test, because
   // the first successful apply rewrites the owner's file WITH the markers and would invert it.
   // Verbatim-ness is a property of how the templates were produced, enforced at authoring time.
-  const added = ["analysis-workspace", "factory-run"];
+  const added = ["petbox-analysis-workspace", "petbox-factory-run"];
   try {
     for (const specDir of added) {
       for (const surface of SKILL_SURFACES) {
@@ -733,7 +793,7 @@ test("digest: the automatic index carries exactly the four auto skills — agent
     const auto = PROJECT_SKILLS.filter((s) => s.digestMode === "auto").map((s) => s.dir);
     assert.deepEqual(auto.sort(), ["petbox", "petbox-methodology", "petbox-node-authoring", "petbox-write-economy"]);
     for (const name of auto) assert.match(index, new RegExp(`\`${name}\``), `${name} must be in the digest`);
-    for (const name of ["petbox-agent-factory", "analysis-workspace", "factory-run", "petbox-card-check"]) {
+    for (const name of ["petbox-agent-factory", "petbox-analysis-workspace", "petbox-factory-run", "petbox-card-check"]) {
       assert.doesNotMatch(
         index,
         new RegExp(`\`${name}\``),
