@@ -418,6 +418,21 @@ test("adopt set: matching is normalized (slash direction, and case on win32 only
 // 5: the single git policy.
 // ---------------------------------------------------------------------------------------------
 
+test("gitignore entries: SKILL paths only — no role globs are ever written into a project's repo", () => {
+  const entries = managedGitignoreEntries();
+  // Runs with no git binary and no temp project, so the decision stays pinned even on a machine
+  // where the end-to-end .gitignore test below bails out.
+  assert.ok(entries.length > 0);
+  assert.ok(entries.every((e) => e.startsWith(".claude/skills/") || e.startsWith(".factory/skills/")), entries.join(","));
+  assert.equal(
+    entries.some((e) => e.includes("/agents") || e.includes("/agent/") || e.includes("/droids")),
+    false,
+    `role paths must not appear — after the normalization a project holds none, so these would be ` +
+      `ignore rules for known-empty paths in someone else's repository: ${entries.join(",")}`,
+  );
+  assert.deepEqual([...entries].sort(), entries, "the block must be sorted, or it churns between applies");
+});
+
 test("gitignore block: spliced into an existing file without disturbing any other line, and idempotent", () => {
   const entries = ["a/", "b/"];
   const original = "node_modules/\n*.log\n";
@@ -454,6 +469,16 @@ test("gitignore policy: apply writes the managed block into the project's .gitig
     const gi = readFileSync(join(proj, ".gitignore"), "utf8");
     assert.match(gi, /^# mine\nbuild\/\n/, "the project's own lines must survive untouched");
     for (const e of managedGitignoreEntries()) assert.ok(gi.includes(`\n${e}\n`), `missing ignore entry ${e}`);
+    // The block covers SKILLS only (owner decision 2026-09-02). Role globs were in here and came
+    // back out: after the normalization a project holds no role artifacts at all, so those rules
+    // would be ignore lines for known-empty paths written into seven other people's repositories.
+    // Asserted against the rendered file, not just the entry list — iterating the function's own
+    // output would pass whatever the function happened to return, which is exactly what let the
+    // role globs sit here unnoticed.
+    for (const roleDir of [".claude/agents", ".opencode/agent", ".factory/droids"]) {
+      assert.equal(gi.includes(roleDir), false, `.gitignore must carry no role path, found ${roleDir}:\n${gi}`);
+    }
+    assert.ok(gi.includes("\n.claude/skills/petbox/\n") && gi.includes("\n.factory/skills/petbox/\n"));
 
     const second = runWire(["apply", "--offline", "--roles=user"], homeDir, proj);
     assert.equal(second.status, WIRE_EXIT.ok, `output:\n${second.out}`);

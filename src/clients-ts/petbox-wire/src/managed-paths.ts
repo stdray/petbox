@@ -39,18 +39,28 @@ export function managedAgentDirs(): string[] {
 }
 
 /**
- * The `.gitignore` block's entries. Skill folders whole; role artifacts by glob only (see header).
- * Stable, sorted, and independent of what happens to exist on disk — the block must not churn
- * from one apply to the next, or item 6's idempotency check would fail for a cosmetic reason.
+ * The `.gitignore` block's entries: SKILL folders, and nothing else.
+ *
+ * Role globs were in here and were taken back out (owner decision 2026-09-02). After the
+ * normalization a project holds no role artifacts at all — they render once into the harness
+ * profiles and each project's copies are swept — so `.claude/agents/petbox-*.md` and its two
+ * siblings are ignore rules for paths that are known to be empty, written into SEVEN OTHER
+ * PEOPLE'S repositories. The owner's ask is that other consumers end up in this same state, and
+ * the fewer traces the kit leaves in their repos the better. The one thing those globs bought —
+ * cover for someone running an OLD kit that still renders roles per project — is not worth the
+ * price: an old kit writes an old `.gitignore` too.
+ *
+ * Role paths are still CLASSIFIED by the git-state report (projectRoleFiles below feeds it), so a
+ * project that somehow still holds committed or loose role copies is reported. Reporting them and
+ * writing ignore rules for them are different jobs.
+ *
+ * Stable, sorted, and independent of what happens to exist on disk — the block must not churn from
+ * one apply to the next, or the idempotency check would fail for a cosmetic reason.
  */
 export function managedGitignoreEntries(): string[] {
-  const skills = managedSkillDirs()
+  return managedSkillDirs()
     .map((d) => `${d}/`)
     .sort();
-  const roles = managedAgentDirs()
-    .map((d) => `${d}/petbox-*.md`)
-    .sort();
-  return [...skills, ...roles];
 }
 
 /**
