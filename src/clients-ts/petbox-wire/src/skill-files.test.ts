@@ -262,22 +262,24 @@ test("every PROJECT_SKILLS entry's template declares the invocation mode its spe
   }
 });
 
-// `petbox-digest: manual` is read ONLY by the kit's own opencode index (skill-files.ts /
-// opencode-plugin.ts) — Claude Code and Droid have never heard of it. The lever THEY honor is
-// `disable-model-invocation: true` (task: skill-descriptions-control-what-enters-context). A
-// template can drift the two declarations apart silently — nothing else here would catch it —
-// so pin them together the same way digestMode<->template is pinned above: every manual template
-// must ALSO carry the Claude-Code/Droid lever, and no auto template may carry it (an auto skill
-// that also disabled model invocation would never be reachable on those two harnesses at all).
-test("every `petbox-digest: manual` template also disables model-invocation (Claude Code / Droid lever)", () => {
+// `disable-model-invocation: true` is read by Claude Code and Droid (never by the kit's own
+// opencode index — that one reads `petbox-digest`, pinned separately above). It used to be
+// DERIVED from `digestMode === "manual"` here, which conflated two independent axes: "should this
+// skill be surfaced unprompted" (digestMode) and "may the model call this skill AT ALL"
+// (invocation). Commit 0daca301 set `disable-model-invocation: true` on all four `digestMode:
+// manual` templates on that false equivalence, which broke `petbox-card-check` — a
+// digest-manual skill an AGENT must still be able to invoke on its own initiative (task:
+// card-check-must-stay-agent-invocable). `invocation` on PROJECT_SKILLS (skill-files.ts) is now
+// the explicit, independent declaration; this test pins ONLY that axis to the template lever.
+test("every PROJECT_SKILLS `invocation: \"user\"` template disables model-invocation (Claude Code / Droid lever), and no `invocation: \"agent\"` template does", () => {
   for (const spec of PROJECT_SKILLS) {
     const body = readFileSync(join(TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
     assert.equal(
       isModelInvocationDisabled(body),
-      spec.digestMode === "manual",
-      spec.digestMode === "manual"
-        ? `${spec.dir}: digestMode "manual" but templates/${spec.dir}/SKILL.md is missing \`disable-model-invocation: true\` — Claude Code and Droid would still surface it unprompted`
-        : `${spec.dir}: digestMode "auto" but templates/${spec.dir}/SKILL.md declares \`disable-model-invocation: true\` — it would never be reachable on Claude Code or Droid`,
+      spec.invocation === "user",
+      spec.invocation === "user"
+        ? `${spec.dir}: invocation "user" but templates/${spec.dir}/SKILL.md is missing \`disable-model-invocation: true\` — Claude Code and Droid would still let the model call it`
+        : `${spec.dir}: invocation "agent" but templates/${spec.dir}/SKILL.md declares \`disable-model-invocation: true\` — the agent would never be able to call it on Claude Code or Droid`,
     );
   }
 });
@@ -442,7 +444,10 @@ function fixtureRegistry(legacyDirs: string[]): { templatesRoot: string; specs: 
     `---\nname: petbox-renamed\ndescription: A renamed skill. Use always.\n${PETBOX_MARKER_LINE}\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Renamed\n`,
     "utf8",
   );
-  return { templatesRoot, specs: [{ dir: "petbox-renamed", needsWorkspace: false, digestMode: "auto", legacyDirs }] };
+  return {
+    templatesRoot,
+    specs: [{ dir: "petbox-renamed", needsWorkspace: false, digestMode: "auto", invocation: "agent", legacyDirs }],
+  };
 }
 
 /** Put a file at the pre-rename path, as an earlier delivery would have left it. */
