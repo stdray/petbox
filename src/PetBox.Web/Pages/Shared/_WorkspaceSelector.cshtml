@@ -1,4 +1,6 @@
+@using Microsoft.AspNetCore.Authorization
 @inject PetBox.Web.Navigation.INavigationContext Nav
+@inject IAuthorizationService AuthorizationService
 @{
 	// Split out of the former _ZoneSelectors (nav-project-selector-placement): the workspace
 	// selector + pin stay together at the top of every sidebar (/ui, /ui/admin) — this is
@@ -13,6 +15,17 @@
 	// currently in. Admin pages live under /ui/admin/...; everything else is the /ui zone.
 	var path = Context.Request.Path.Value ?? string.Empty;
 	var zone = path.StartsWith("/ui/admin", StringComparison.OrdinalIgnoreCase) ? "admin" : "ui";
+
+	// second-workspace-unreachable-from-ui: the ONLY other entry point into
+	// Routes.NewWorkspace() is the "/" empty-state CTA, which a caller with a workspace never
+	// reaches again (Index redirects it straight to the dashboard). This partial is the caller's
+	// permanent nav, so it is where a second (or later) workspace has to be reachable from — same
+	// CanCreateWorkspace policy Index.cshtml.cs asks, so the two can never disagree about who gets
+	// the link. Not cached on NavigationContext: this partial renders exactly once per request
+	// (either _Layout's sidebar or _AdminSidebar, never both), so there is nothing to reuse and
+	// nothing to save by caching it.
+	var canCreateWorkspace = Nav.IsAuthenticated
+		&& (await AuthorizationService.AuthorizeAsync(Context.User, "CanCreateWorkspace")).Succeeded;
 }
 <div class="px-2 pt-2" data-testid="nav-workspace-selector">
 	<div class="flex items-center gap-1">
@@ -38,4 +51,9 @@
 		</form>
 		<partial name="_SidebarPin" />
 	</div>
+	@if (canCreateWorkspace)
+	{
+		<a href="@Routes.NewWorkspace()" class="btn btn-ghost btn-xs w-full justify-start mt-1 opacity-70 hover:opacity-100"
+			data-testid="sidebar-create-workspace">+ New workspace</a>
+	}
 </div>

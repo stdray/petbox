@@ -146,6 +146,43 @@ public sealed class WorkspaceSelfProvisioningFixture : IAsyncLifetime
 			CreatedAt = DateTime.UtcNow,
 			WorkspaceQuota = 0,
 		});
+
+		// second-workspace-unreachable-from-ui: three accounts for the sidebar "+ New workspace"
+		// link, each already owning/viewing a normal (non-empty-state) workspace page — the whole
+		// point is that the link must be reachable AFTER the first workspace, not only on "/".
+		//
+		// roomy: quota 5, 1 workspace owned — room left under the quota, link must show.
+		var roomyId = await db.InsertWithInt64IdentityAsync(new User
+		{
+			Username = "roomy",
+			PasswordHash = PasswordHash,
+			CreatedAt = DateTime.UtcNow,
+			WorkspaceQuota = 5,
+		});
+		await db.InsertAsync(new Workspace { Key = "roomy-ws", Name = "Roomy", Description = "", CreatedAt = DateTime.UtcNow });
+		await db.SeedMemberAsync(roomyId, "roomy-ws", WorkspaceRole.Admin);
+
+		// maxed: quota 1, 1 workspace owned — owned == quota, link must NOT show.
+		var maxedId = await db.InsertWithInt64IdentityAsync(new User
+		{
+			Username = "maxed",
+			PasswordHash = PasswordHash,
+			CreatedAt = DateTime.UtcNow,
+			WorkspaceQuota = 1,
+		});
+		await db.InsertAsync(new Workspace { Key = "maxed-ws", Name = "Maxed", Description = "", CreatedAt = DateTime.UtcNow });
+		await db.SeedMemberAsync(maxedId, "maxed-ws", WorkspaceRole.Admin);
+
+		// noquota: quota 0, but a MEMBER (not owner — ownership needs a quota-backed create) of
+		// roomy-ws, so it too has a normal workspace page to view. Link must NOT show.
+		var noQuotaId = await db.InsertWithInt64IdentityAsync(new User
+		{
+			Username = "noquota",
+			PasswordHash = PasswordHash,
+			CreatedAt = DateTime.UtcNow,
+			WorkspaceQuota = 0,
+		});
+		await db.SeedMemberAsync(noQuotaId, "roomy-ws", WorkspaceRole.Viewer);
 	}
 
 	public async ValueTask DisposeAsync()
@@ -637,5 +674,52 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		WorkspaceExists("sys-ws-a").Should().BeTrue();
 		WorkspaceExists("sys-ws-b").Should().BeTrue(
 			"two creates from an account whose quota is 0 — a sysadmin is unlimited");
+	}
+
+	// ---- second-workspace-unreachable-from-ui: the sidebar "+ New workspace" link ----
+	//
+	// _WorkspaceSelector renders on EVERY page (it is the sidebar, not the empty state), so these
+	// hit a normal workspace status page — proving the link is reachable after the first
+	// workspace, which is exactly what "/" (redirected away the moment a workspace exists) cannot
+	// offer any more.
+
+	[Fact]
+	public async Task Quota_with_room_left_shows_the_sidebar_create_link_on_a_normal_page()
+	{
+		var auth = await LoginAsync("roomy");
+
+		using var resp = await GetAsync("/ui/roomy-ws", auth);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("sidebar-create-workspace",
+			"quota 5, 1 owned — room left under the allowance, so the sidebar must offer a way to a "
+			+ "second workspace instead of only the unreachable '/' empty-state CTA");
+	}
+
+	[Fact]
+	public async Task Owned_equal_to_quota_hides_the_sidebar_create_link()
+	{
+		var auth = await LoginAsync("maxed");
+
+		using var resp = await GetAsync("/ui/maxed-ws", auth);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().NotContain("sidebar-create-workspace",
+			"quota 1, 1 already owned — the allowance is spent, and a link into a 403 must not be shown");
+	}
+
+	[Fact]
+	public async Task Zero_quota_hides_the_sidebar_create_link()
+	{
+		var auth = await LoginAsync("noquota");
+
+		using var resp = await GetAsync("/ui/roomy-ws", auth);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.OK, "a Viewer membership is enough to view someone else's workspace");
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().NotContain("sidebar-create-workspace",
+			"quota 0 — this account may never create a workspace, sidebar link included");
 	}
 }
