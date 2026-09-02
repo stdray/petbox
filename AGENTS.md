@@ -60,8 +60,8 @@ observation. When the promoted obligation reaches a terminal-ok status the obser
 auto-flips to `fixed`; a later recurrence of the same problem reopens it to `seen` and flags
 the task that had fixed it. The session-facts extractor's judge has a fourth verdict,
 `observe`, that routes defect-like findings here instead of into memory. Procedure and tool
-details: the `petbox-methodology-system` skill; role-facing prose lives on the server agent-def,
-not here.
+details: the `petbox-methodology` skill (kit-delivered, wired into this project too); role-facing
+prose lives on the server agent-def, not here.
 
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
 [doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a

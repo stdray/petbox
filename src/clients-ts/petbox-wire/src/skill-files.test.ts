@@ -634,11 +634,12 @@ test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (p
 //
 // The card that grew PROJECT_SKILLS states the intent as "the kit becomes the only source of
 // truth for managed paths — wipe the hand-made copies and keep only the kit's". That sentence is
-// one careless step away from "the kit owns the whole skills directory", which would take the
-// owner's `petbox-methodology-system` (repo-native, deliberately NEVER shipped: the kit carries
-// the generic `petbox-methodology` pointer instead) and their personal integrations with it.
-// The tests below pin the boundary against a tree shaped like the REAL $system checkout, not a
-// synthetic one-file fixture: an apply may touch a PROJECT_SKILLS path and nothing else, ever.
+// one careless step away from "the kit owns the whole skills directory", which would take a
+// repo-native, deliberately-never-shipped skill (the owner's `petbox-methodology-system` used to
+// be exactly that, before it was folded into the kit's generic `petbox-methodology` pointer and
+// removed) and their personal integrations with it. The tests below pin the boundary against a
+// tree shaped like the REAL $system checkout, not a synthetic one-file fixture: an apply may
+// touch a PROJECT_SKILLS path and nothing else, ever.
 
 /** Files under the skills roots that an apply must never write, delete, or reorder. */
 function bystanderTree(dir: string): Record<string, string> {
@@ -661,7 +662,9 @@ function bystanderTree(dir: string): Record<string, string> {
 test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths — a declared-manual skill and a foreign one survive byte-for-byte, and only the renamed skills' legacy copies are swept", () => {
   const dir = freshDir();
   try {
-    // A repo-native skill the kit must never carry, declared manual — the live $system case.
+    // A repo-native skill the kit must never carry, declared manual — this was the live $system
+    // case (`petbox-methodology-system`) until it was folded into the kit template and removed;
+    // kept here as a synthetic fixture, the scenario it guards is still real.
     const methodologySystem = `---\nname: petbox-methodology-system\ndescription: >-\n  Operate PetBox's OWN project methodology. Use when creating or refining ideas on $system itself.\n${PETBOX_MANUAL_LINE}\n---\n\n# $system-specific operator detail the kit must never overwrite\n`;
     // The owner's personal integrations: no frontmatter marker at all — foreign, hands off.
     const droidHandoff = "# droid-handoff\n\nMY integration. Not part of any delivery.\n";
@@ -1144,9 +1147,9 @@ test("readAutoDigestSkillTriggers: selects by the `petbox-digest: auto` DECLARAT
       "petbox-factory-run",
       `---\nname: petbox-factory-run\ndescription: Use for factory runs.\n${PETBOX_DIGEST_KEY}: manual\n---\n\n# Factory run\n`,
     );
-    // Undeclared, petbox-named — must be OUT. This is the live case named in the card:
-    // `petbox-methodology-system` is prefixed but repo-native, and the prefix rule injected it
-    // into every session.
+    // Undeclared, petbox-named — must be OUT. This mirrors a real case the card named:
+    // `petbox-methodology-system` was prefixed but repo-native, and the old prefix rule used to
+    // inject it into every session (it has since been folded into the kit template and removed).
     writeSkillMd(
       skillsDir,
       "petbox-methodology-system",
@@ -1178,7 +1181,8 @@ test("readAutoDigestSkillTriggers: selects by the `petbox-digest: auto` DECLARAT
 
 // A project may declare a delivered skill's path its own AND still want it in its digest — the
 // two axes are independent (provenance = may the kit write here; mode = should the agent be told
-// about it). This repo's own `petbox-methodology-system` is exactly that combination.
+// about it). This repo's own `petbox-methodology-system` was exactly that combination
+// (`petbox: manual`, `petbox-digest: auto`) before it was folded into the kit template.
 test("readAutoDigestSkillTriggers: provenance and invocation mode are independent axes", () => {
   const root = freshDir();
   try {
@@ -1289,23 +1293,17 @@ test("buildAutoSkillsIndex: one line per discovered skill, trigger + exact name,
   }
 });
 
-// Regression guard tied to the REAL, currently-shipped descriptions (templates/ + this repo's
-// own petbox-methodology-system) rather than synthetic fixtures only — every one of them must
-// still parse to a non-empty "Use ..." trigger, proving the house convention this module relies
-// on actually holds for the full current skill set, not just the two hand-picked examples above.
+// Regression guard tied to the REAL, currently-shipped descriptions (templates/) rather than
+// synthetic fixtures only — every one of them must still parse to a non-empty "Use ..." trigger,
+// proving the house convention this module relies on actually holds for the full current skill
+// set, not just the two hand-picked examples above. (Used to also read this repo's own
+// petbox-methodology-system off disk in a try/catch that silently `continue`d when the file was
+// absent — after that skill was folded into the kit template and deleted, that branch would have
+// skipped forever without failing anything; removed rather than left as permanent dead weight.)
 test("extractSkillTrigger against every REAL current petbox-* skill description yields a non-empty 'Use ...' trigger", () => {
-  const specs = [...PROJECT_SKILLS.map((s) => s.dir), "petbox-methodology-system"];
-  for (const dir of specs) {
-    const path =
-      dir === "petbox-methodology-system"
-        ? join(HERE, "..", "..", "..", "..", ".claude", "skills", dir, "SKILL.md")
-        : join(TEMPLATES_ROOT, dir, "SKILL.md");
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf8");
-    } catch {
-      continue; // petbox-methodology-system may not be present in every checkout layout — skip, don't fail
-    }
+  for (const dir of PROJECT_SKILLS.map((s) => s.dir)) {
+    const path = join(TEMPLATES_ROOT, dir, "SKILL.md");
+    const raw = readFileSync(path, "utf8");
     const description = extractSkillDescription(raw);
     assert.ok(description, `${dir}: description must be parseable from frontmatter`);
     const trigger = extractSkillTrigger(description!);
@@ -1391,8 +1389,11 @@ test("this repo's tracked (git ls-files), non-parameterized .claude/skills/ copi
   // them, so in this checkout the expected number of tracked kit skills is ZERO and the loop
   // above is expected to compare nothing. That is the invariant worth pinning — a kit skill
   // that reappears in `git ls-files` means someone re-added a copy git would then fight the
-  // kit over. (`petbox-methodology-system` stays tracked on purpose: it has no kit template,
-  // so it is the project's own skill and is not a PROJECT_SKILLS entry at all.)
+  // kit over. (Until 2026-09-02 `git ls-files .claude/skills` also carried
+  // `petbox-methodology-system` — a project-native skill with no kit template, so not a
+  // PROJECT_SKILLS entry and irrelevant to this assertion — but it has since been folded into
+  // the kit's `petbox-methodology` template and removed, so `.claude/skills` is untracked
+  // entirely now.)
   const trackedKitSkills = PROJECT_SKILLS.map((s) => `.claude/skills/${s.dir}/SKILL.md`).filter(
     (rel) => trackedSkillPaths.has(rel),
   );

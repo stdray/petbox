@@ -101,7 +101,7 @@ parts that losing track of any one of them is a real risk.
 ## Relation to PetBox methodology
 
 The working folder is a **draft space** — nothing in it is authoritative. Only the
-consolidated, ratified cards get promoted onto real boards (see the `petbox-methodology-system`
+consolidated, ratified cards get promoted onto real boards (see the `petbox-methodology`
 skill for the idea → spec → work gates); code is never written ahead of an accepted card.
 Treat the working folder the same way you'd treat scratch notes before a spec_plan
 artifact: useful for thinking, not itself a source of truth.

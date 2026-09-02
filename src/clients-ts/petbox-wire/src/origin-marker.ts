@@ -64,8 +64,9 @@ export type SkillInvocationMode = "user" | "agent";
  *   - null      — undeclared: a foreign file. Same refusal as before, exit 1 at the call site.
  * Deliberately a declaration, never a name/prefix heuristic: every delivered skill is heading
  * for a `petbox-*` directory name (work: petbox-skill-naming), after which a name tells you
- * nothing about who owns the file. `petbox-methodology-system` is the live proof — `petbox-`
- * prefixed, repo-native, never delivered by the kit.
+ * nothing about who owns the file — a repo-native skill is free to pick a `petbox-`-prefixed
+ * name too (this repo's own `petbox-methodology-system` did, before it was folded into the kit
+ * template and removed); the declaration is the only thing that tells them apart.
  */
 export type PetboxProvenance = "managed" | "manual";
 

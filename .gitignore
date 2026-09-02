@@ -103,12 +103,12 @@ secrets.local.env
 
 # Claude Code (personal)
 .claude/*
-# ...except the skills whose content is canon and should be tracked/distributed. The rest
-# of .claude/skills is wired in locally from src/clients-ts/petbox-wire templates and stays
-# untracked. Un-ignore each level explicitly — git will not descend into an ignored dir.
+# ...except any project-native skill whose content is canon and should be tracked/distributed
+# (none currently — every skill under .claude/skills is now kit-delivered from
+# src/clients-ts/petbox-wire templates and stays untracked). Structure kept for the next one:
+# un-ignore each level explicitly, since git will not descend into an ignored dir.
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/petbox-methodology-system/
 
 # opencode (personal)
 .opencode/
