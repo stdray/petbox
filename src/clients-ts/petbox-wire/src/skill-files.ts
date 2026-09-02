@@ -87,6 +87,7 @@ export const PROJECT_SKILLS: SkillTemplateSpec[] = [
   { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto" },
   { dir: "analysis-workspace", needsWorkspace: false, digestMode: "manual" },
   { dir: "factory-run", needsWorkspace: false, digestMode: "manual" },
+  { dir: "petbox-card-check", needsWorkspace: false, digestMode: "manual" },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has
@@ -471,7 +472,7 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
 // nothing. It was already wrong today — `petbox-methodology-system` is `petbox-` prefixed,
 // repo-native, and not in the kit's delivery at all, yet the prefix rule put it in every
 // opencode session's system prompt; a skill that exists to be called deliberately
-// (`comprehension-check`, `factory-run`) would join it the moment it is renamed. Reads the
+// (`petbox-card-check`, `factory-run`) is `petbox-`/deliberate and would have joined it. Reads the
 // MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}` substitution, post any user edits),
 // never re-renders a template — so a project can take a delivered skill out of its own digest
 // by editing one frontmatter line, without the kit knowing anything about it.

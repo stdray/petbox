@@ -74,13 +74,16 @@ your machine actually has.
   convention, and when a diagram is not worth drawing), plus the **methodology** skill under
   `.claude/skills/petbox-methodology/` and `.factory/skills/petbox-methodology/` (a thin,
   project-agnostic pointer that fetches this project's live task-methodology rules at runtime
-  instead of assuming another project's), plus two **procedure** skills — **analysis-workspace**
+  instead of assuming another project's), plus three **procedure** skills — **analysis-workspace**
   (run a voluminous multi-part investigation as staged files in an external folder instead of
-  hundreds of tool calls) and **factory-run** (drive a batch of prepared task statements to
-  completion in one unattended pass) — under the same two roots.
+  hundreds of tool calls), **factory-run** (drive a batch of prepared task statements to
+  completion in one unattended pass) and **petbox-card-check** (is the ask checkable before a
+  card is sent, and does the result cover it — bullet by bullet against the real diff) — under
+  the same two roots.
   Only the first four are in the agent's automatic skill digest (`petbox-digest: auto`);
-  **agent-factory**, **analysis-workspace** and **factory-run** are `petbox-digest: manual`,
-  reachable by an explicit `skill(name)` call and costing no system-prompt room otherwise.
+  **agent-factory**, **analysis-workspace**, **factory-run** and **petbox-card-check** are
+  `petbox-digest: manual`, reachable by an explicit `skill(name)` call and costing no
+  system-prompt room otherwise.
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a
