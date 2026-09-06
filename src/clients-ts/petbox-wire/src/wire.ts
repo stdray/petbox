@@ -113,6 +113,7 @@ import {
   type ApplySummary,
 } from "./apply-ledger.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
+import { userProfileCollision } from "./role-dir-collision.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { upsertGitignoreBlock } from "./gitignore-block.ts";
 import { managedGitignoreEntries } from "./managed-paths.ts";
@@ -909,6 +910,26 @@ async function performApply(opts: {
   // render at all, only the removal of the copies it still holds. See the option's doc comment.
   if (roleScope === "user") {
     for (const harness of HARNESS_IDS) {
+      // COLLISION GUARD (card: wire-apply-guard-registered-dir). When `root` IS the home
+      // directory — which is exactly what resolveApplyRoot hands back for an `apply` run from
+      // $HOME, since HOME is not a git working tree and the cwd fallback takes over — then
+      // `join(root, agentFilesDir(h))` and `userAgentFilesRoot(h)` are the SAME directory for
+      // claude-code (~/.claude/agents) and droid (~/.factory/droids). The sweep below would then
+      // delete, as "project copies", the very files applyUserRoles rendered moments earlier in
+      // this same command: measured 10 of 15, silently, exit 0. Asked per harness because
+      // opencode does NOT collide (project `.opencode/agent` vs user `.config/opencode/agents`)
+      // and a guard resting on that accident would be no guard at all. See role-dir-collision.ts
+      // for why the comparison is not string equality.
+      const collision = userProfileCollision(root, harness, homedir());
+      if (collision) {
+        log(
+          `${opts.label}: sweep SKIPPED for ${harness} — the project role directory is the user ` +
+            `profile itself (${collision.projectDir}). Nothing here is a project copy: these are ` +
+            `the user-scope roles this run just rendered. Root ${root} was resolved from cwd, not ` +
+            `from a git working tree.`,
+        );
+        continue;
+      }
       // opencode's project directory is the singular `.opencode/agent`, which the target layout
       // drops entirely (the user-scope name is the plural `agents`) — so its now-empty directory
       // goes too. rmdirSync refuses a non-empty directory, so a project keeping its own files
