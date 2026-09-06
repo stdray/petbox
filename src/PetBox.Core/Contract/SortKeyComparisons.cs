@@ -13,4 +13,10 @@ public static class SortKeyComparisons
 	// Numeric comparison of two sort keys that are invariant-culture longs.
 	public static int CompareLong(string a, string b) =>
 		long.Parse(a, CultureInfo.InvariantCulture).CompareTo(long.Parse(b, CultureInfo.InvariantCulture));
+
+	// Instant (timestamp) comparison of two sort keys that are invariant-culture roundtrip
+	// "O"-format date-times — same idiom, same reason as CompareLong (compare as instants, never as text).
+	public static int CompareInstant(string a, string b) =>
+		DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
 }

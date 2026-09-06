@@ -303,9 +303,7 @@ public sealed class TasksModel : PageModel
 	{
 		TaskSortBy.Priority => SortKeyComparisons.CompareLong,
 		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
-		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) =>
-			DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-				.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
+		TaskSortBy.Created or TaskSortBy.Updated => SortKeyComparisons.CompareInstant,
 		TaskSortBy.Relevance => static (_, _) => throw new ArgumentException(
 			"project-tasks-search: the row this cursor names is no longer in the ranked pool, and a relevance "
 			+ "position cannot be re-derived from its score. Drop the cursor and start the search over."),
