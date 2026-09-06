@@ -687,7 +687,7 @@ public sealed partial class TasksService : ITasksService
 	static string? SliceBody(string? body, int bodyLen)
 	{
 		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
-		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+		return BodySnippets.TruncateWithEllipsis(body, bodyLen);
 	}
 
 	// Map include_boards (quartet kind names) to a BoardKind set; null/empty = all (no filter). A
