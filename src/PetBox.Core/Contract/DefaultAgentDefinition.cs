@@ -1,33 +1,28 @@
 namespace PetBox.Core.Contract;
 
-// THE SERVER'S VIEW of the portable baseline roster, loaded from the ONE canonical copy —
-// src/common/default-agents.json, embedded into this assembly at build time. It is what
-// ProjectAgentDefSeeder writes into every project the server creates, so a fresh project's
-// AUTHORITATIVE definition exists instead of being empty (before this, the kit's very first line
-// to a newcomer was "no server-side definition for this project yet — using kit default
-// baseline", and there was nothing to edit).
+// THE CI RATCHET over the portable baseline roster — src/common/default-agents.json, embedded into
+// this assembly at build time and parsed + validated here.
 //
-// ONE FILE, TWO READERS, NO RATCHET. The wiring kit reads the SAME src/common/default-agents.json
-// as its offline fallback (a build step copies it into the npm package — see src/common/README.md
-// and src/clients-ts/petbox-wire/scripts/sync-default-agents.mjs). An earlier design kept a C#
-// transcription of the kit's TS constant plus a test that compared them; that is a ratchet against
-// a divergence that only exists because the copy exists. There is no second copy to diverge now,
-// so there is nothing to ratchet — the test that remains validates that the single source is
-// CORRECT (DefaultAgentDefinitionTests), not that two of them agree.
+// IT IS A RATCHET AND NOTHING ELSE NOW. The server used to also STORE a per-project copy of this
+// document (a temporal table, a REST surface, `agent_def_*`, an admin editor) and seed it into every
+// project it created. That whole surface is gone — work agent-defs-server-teardown: the wiring kit
+// builds its definition from files on disk (base < user < project) and never asks the server for
+// one, which left the stored copies as authoritative-looking drift nothing read. What survives is
+// this: the shipped baseline is loaded and checked ON BUILD, so a malformed or self-inconsistent
+// `default-agents.json` goes red in CI instead of on a user's machine at wire time.
 //
-// LOUD ON LOAD, NOT SILENT AT SEED TIME. Parse + validation happen in a Lazy that throws: a
-// malformed or self-inconsistent baseline fails the first read (tests, and the first project
-// creation on a server) instead of quietly seeding a project a broken document. The seeder's
-// catch-all deliberately does NOT hide this from the tests — DefaultAgentDefinitionTests touches
-// Document directly.
+// ONE FILE, TWO READERS. The wiring kit reads the SAME src/common/default-agents.json (a build step
+// copies it into the npm package — see src/common/README.md and
+// src/clients-ts/petbox-wire/scripts/sync-default-agents.mjs). There is no second C# transcription
+// to compare against, so this does not ratchet two copies into agreement — it validates that the
+// SINGLE source is CORRECT (DefaultAgentDefinitionTests).
 //
-// NOT A LIVE MIRROR of any project's document: once seeded, a project OWNS its definition and
-// diverges freely — that is the point of seeding it. Re-seeding when this baseline moves is a
-// separate piece of work (work seed-agent-def-on-project-create names it and defers it).
+// LOUD ON LOAD. Parse + validation happen in a Lazy that THROWS: a broken baseline fails the first
+// read rather than degrading into something a caller has to notice.
 public static class DefaultAgentDefinition
 {
-	// The key every seeded roster lands on — the same slug the kit asks the server for
-	// (agent-def-fetch.ts's DEFAULT_DEFINITION_KEY).
+	// The document's own name/slug — what the shipped baseline calls itself, asserted by
+	// DefaultAgentDefinitionTests.
 	public const string Key = "default";
 
 	// Set by PetBox.Core.csproj's <EmbeddedResource LogicalName="...">, so the name does not
@@ -66,8 +61,9 @@ public static class DefaultAgentDefinition
 	/// The checks the SHARED schema cannot express and the kit's validateAgentDefinition does not
 	/// make: unique slugs, prose that is actually there, and every slug named as a spawn or
 	/// escalation target resolving to a role in this same document (a typo there produces a role
-	/// artifact that points at nothing). Public so the test suite exercises the real rule rather
-	/// than a re-implementation of it.
+	/// artifact that points at nothing — the failure the kit would otherwise hit at wire time, on
+	/// a user's machine). Public so the test suite exercises the real rule rather than a
+	/// re-implementation of it.
 	public static void Validate(AgentDefinitionDoc doc)
 	{
 		AgentDefinitionJson.Validate(doc);
@@ -79,8 +75,26 @@ public static class DefaultAgentDefinition
 				throw new InvalidOperationException($"default agent definition: duplicate role slug '{role.Slug}'");
 			if (string.IsNullOrWhiteSpace(role.Notes))
 				throw new InvalidOperationException(
-					$"default agent definition: role '{role.Slug}' has no notes — a seeded roster whose roles " +
-					"carry no prose is the empty document this baseline exists to replace");
+					$"default agent definition: role '{role.Slug}' has no notes — the kit renders this role's " +
+					"artifact from that prose, and a role that briefs nobody is the empty skeleton this " +
+					"baseline exists to replace");
+
+			// The capability axis, checked against the ONE server-side catalog
+			// (AgentDefinitionCapabilities, kept equal to the kit's harness-capabilities.ts by
+			// AgentDefinitionCapabilitiesSyncTests). A capability id is only meaningful if the
+			// harness matrix declares it: a typo here does not fail anywhere in the kit — it
+			// silently makes the role require a capability NO harness has, and the compiler drops
+			// the role's artifact on every harness. That is precisely the failure this baseline
+			// must not be allowed to ship, so it is a hard error on THIS document (a project's own
+			// on-disk layers stay free to name a capability a future harness declares).
+			foreach (var capability in role.RequiredCapabilities ?? [])
+			{
+				if (!AgentDefinitionCapabilities.Set.Contains(capability))
+					throw new InvalidOperationException(
+						$"default agent definition: role '{role.Slug}' requires capability '{capability}', which no " +
+						$"harness declares (known: {string.Join(", ", AgentDefinitionCapabilities.All)}) — add it to " +
+						"src/clients-ts/petbox-wire/src/harness-capabilities.ts and AgentDefinitionCapabilities, or fix the typo");
+			}
 		}
 
 		foreach (var role in doc.Roles)

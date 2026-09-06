@@ -3,21 +3,28 @@ using PetBox.Core.Contract;
 
 namespace PetBox.Tests.AgentDefs;
 
-// Work seed-agent-def-on-project-create: src/common/default-agents.json is THE canonical portable
-// roster — one file, two readers. The .NET server embeds it (PetBox.Core.csproj) and seeds it into
-// every project it creates (ProjectAgentDefSeeder); the wiring kit copies it into its npm package
-// and exports it as DEFAULT_AGENT_DEFINITION, its offline fallback.
+// src/common/default-agents.json is THE canonical portable roster — one file, two readers. The .NET
+// server embeds it (PetBox.Core.csproj); the wiring kit copies it into its npm package and exports
+// it as DEFAULT_AGENT_DEFINITION, the baseline layer every rendered role artifact starts from.
+//
+// THIS FILE IS THE CI RATCHET OVER THAT DOCUMENT, and after work agent-defs-server-teardown it is
+// the ONLY reason the server still parses it at all: the per-project store, its REST/MCP/admin
+// surfaces and the seeder are gone, so nothing on the server reads a definition at run time any
+// more. What must not be lost is WHERE a broken baseline is discovered — in this build, not on a
+// user's machine at wire time, where a bad `default-agents.json` means an agent renders with no
+// briefing (or does not render at all) and the failure looks like a harness bug.
 //
 // THIS IS NOT A DRIFT RATCHET, and the difference matters. An earlier design kept a C#
 // transcription of the kit's TS constant and compared the two; comparing copies only guards a
 // problem the copies create. With one file there is nothing to compare — so what a test can still
 // be useful for is whether the SINGLE SOURCE IS CORRECT. Everything below asks that question:
 // it parses, it carries the roles the wiring expects, its cross-references resolve, its prose is
-// actually there, and it stays portable (no model binding).
+// actually there, its capabilities are ones a harness declares, and it stays portable (no model
+// binding).
 //
-// The rules live in DefaultAgentDefinition.Validate (which runs on LOAD, so a broken document
-// fails the first read on a server too, rather than being seeded into somebody's project). The
-// tests exercise THAT method — they do not re-implement it, which would just be another copy.
+// The rules live in DefaultAgentDefinition.Validate (which runs on LOAD, in a Lazy that throws, so
+// a broken document fails the first read rather than degrading quietly). The tests exercise THAT
+// method — they do not re-implement it, which would just be another copy.
 public sealed class DefaultAgentDefinitionTests
 {
 	// The roster the wiring expects to find. Not a style preference: petbox-wire renders one agent
@@ -153,6 +160,31 @@ public sealed class DefaultAgentDefinitionTests
 			[Role("worker") with { Escalation = new AgentDefinitionEscalation(true, ["nobody"]) }]));
 
 		act.Should().Throw<InvalidOperationException>().WithMessage("*escalates to 'nobody'*");
+	}
+
+	// The capability axis, and the reason AgentDefinitionCapabilities is still load-bearing after the
+	// server-side store was torn down: a requiredCapabilities id no harness declares is invisible
+	// where it is written and fails far away — the kit's compiler emits no artifact for a role whose
+	// requirements nothing meets, so the role simply is not there. On THIS document that is a build
+	// error. AgentDefinitionCapabilitiesSyncTests holds the other end (the C# list == the kit's
+	// harness-capabilities.ts), which is what makes "known" mean the same thing on both sides.
+	[Fact]
+	public void Validate_RejectsACapabilityNoHarnessDeclares()
+	{
+		var act = () => DefaultAgentDefinition.Validate(new AgentDefinitionDoc("d",
+			[Role("worker") with { RequiredCapabilities = ["mcp_subagnet"] }]));
+
+		act.Should().Throw<InvalidOperationException>()
+			.WithMessage("*requires capability 'mcp_subagnet', which no harness declares*");
+	}
+
+	[Fact]
+	public void Validate_AcceptsEveryCapabilityTheCatalogDeclares()
+	{
+		var act = () => DefaultAgentDefinition.Validate(new AgentDefinitionDoc("d",
+			[Role("worker") with { RequiredCapabilities = [.. AgentDefinitionCapabilities.All] }]));
+
+		act.Should().NotThrow("the catalog IS the allowed set — a known id must never be refused");
 	}
 
 	[Fact]
