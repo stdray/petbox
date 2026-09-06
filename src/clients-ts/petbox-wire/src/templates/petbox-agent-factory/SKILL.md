@@ -25,7 +25,19 @@ Owner axis is `$HOME`; definitions are portable across machines, models are not.
 
 ## Procedure
 
-1. Inspect / switch / set local binding as needed:
+1. See what the definition currently IS, and which layer said what:
+   ```bash
+   npx petbox-wire layers
+   ```
+   Prints every layer in play, what each did to the roster (added / patched a field / tombstoned
+   a role / replaced the roster), and, per role and field, which layer supplied it. To CHANGE a
+   role, edit a layer — `~/.petbox/agents/` for a machine-wide change, `<root>/.petbox/agents/`
+   for one project — never a generated agent file. A layer holds `layer.json` (its name and
+   `"mode": "overlay" | "replace"`) plus `petbox-<slug>.json` (add a role, or patch just the
+   fields it names), `petbox-<slug>.md` (replace its prose), `petbox-<slug>.append.md` (add a
+   section attributed to that layer) and `{"slug": "...", "removed": true}` (tombstone).
+   Exit **3** here means the command could not compare anything — read it, it says which.
+2. Inspect / switch / set local binding as needed:
    ```bash
    npx petbox-wire roles
    npx petbox-wire profile use <name>
@@ -37,12 +49,12 @@ Owner axis is `$HOME`; definitions are portable across machines, models are not.
    id landing in the claude-code block) is refused, not silently written. For claude-code, name a
    TIER ALIAS (`sonnet|opus|haiku|fable|inherit`), never a concrete id — see "Never invent a
    model id" below.
-2. Gate:
+3. Gate:
    ```bash
    npx petbox-wire doctor
    ```
    Doctor reports truthfulness violations (role + capability + harness). Exit 3 on a violation — fix before apply.
-3. Materialize:
+4. Materialize:
    ```bash
    npx petbox-wire apply
    ```
