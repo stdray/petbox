@@ -1,12 +1,9 @@
 using FluentMigrator.Runner;
 using FluentMigrator.Runner.Initialization;
-using LinqToDB;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
-using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Migrations;
-using PetBox.Core.Models;
 
 // FluentMigrator ships its OWN `MigrationRunner` in FluentMigrator.Runner, which this file must
 // import for IMigrationRunner/AddSQLite. The alias keeps `MigrationRunner.Run(...)` below meaning
