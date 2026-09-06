@@ -128,8 +128,11 @@ public static class ApiKeyScopes
 	// why "the same key, the same scope, a different answer" was reachable two different ways:
 	//
 	//   * SEPARATORS. ScopeAuthorizationHandler, DeployApi, HealthApi, Data*/Log*Tools and WhoAmI
-	//     split on ',' ALONE; ModuleMcp, KeyIssuer, AgentDefsApi, McpToolScopeFilter, MemoryApi and
-	//     SessionApi split on ',' ' ' ';'. A key stored as "data:read logs:query" — which Validate
+	//     split on ',' ALONE; ModuleMcp, KeyIssuer, McpToolScopeFilter, MemoryApi and SessionApi
+	//     split on ',' ' ' ';' (a sixteenth, AgentDefsApi, was in that second group and no longer
+	//     exists — work agent-defs-server-teardown deleted the module; the counts below are the
+	//     historical finding, not a present-day census).
+	//     A key stored as "data:read logs:query" — which Validate
 	//     below accepts verbatim, because it splits on all three — was ONE opaque token to the first
 	//     group and TWO scopes to the second. MemoryApi/SessionApi additionally omitted TrimEntries,
 	//     so " data:read" was a third answer again.
