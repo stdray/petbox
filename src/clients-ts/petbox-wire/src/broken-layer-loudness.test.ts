@@ -31,6 +31,7 @@ import { agentFilesDir } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const HERE = import.meta.dirname;
 const WIRE_TS = join(HERE, "wire.ts");
@@ -51,7 +52,7 @@ function writeBrokenProjectLayer(root: string): string {
 
 test("apply: a broken layer is a HARD refusal — exit 1, the absolute path and the parser's message on stderr, and NOT ONE artifact written", () => {
   const homeDir = freshDir("petbox-broken-home-");
-  const projectDir = freshDir("petbox-broken-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-broken-proj-"));
   try {
     const broken = writeBrokenProjectLayer(projectDir);
     const res = spawnSync(process.execPath, [WIRE_TS, "apply"], {
@@ -84,7 +85,7 @@ test("apply: a broken layer discovered on a SECOND run leaves the artifacts from
   // "Nothing was written" has to mean nothing CHANGED, not merely nothing was created — the
   // realistic shape is an operator editing a layer under a project that already has artifacts.
   const homeDir = freshDir("petbox-broken-home-");
-  const projectDir = freshDir("petbox-broken-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-broken-proj-"));
   try {
     const env = { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined };
     const first = spawnSync(process.execPath, [WIRE_TS, "apply"], { cwd: projectDir, encoding: "utf8", env });
@@ -109,7 +110,7 @@ test("apply --roles=user: when the USER pass already wrote and the PROJECT pass 
   // layer, and the operator's last line was "Nothing was written" + exit 1 — which reads as "the
   // machine is untouched" and is false in the direction that stops them looking.
   const homeDir = freshDir("petbox-partial-home-");
-  const projectDir = freshDir("petbox-partial-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-partial-proj-"));
   try {
     // A cascade ERROR rather than an unreadable file, deliberately: this is the refusal path that
     // OWNS the "Nothing was written" sentence, so both halves of the fix are visible in one run.
@@ -149,7 +150,7 @@ test("apply --roles=user: when the USER pass already wrote and the PROJECT pass 
 
 test("apply --roles=user on a CLEAN run says nothing about partiality — the reconciliation fires only when the two passes actually disagree", () => {
   const homeDir = freshDir("petbox-partial-clean-home-");
-  const projectDir = freshDir("petbox-partial-clean-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-partial-clean-proj-"));
   try {
     const res = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=user"], {
       cwd: projectDir,

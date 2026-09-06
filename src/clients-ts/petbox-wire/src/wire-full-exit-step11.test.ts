@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 const PROJECT = "wire-step11-exit-proj";
@@ -115,7 +116,7 @@ async function wireAgainst(
   prepare: (dirs: { homeDir: string; projectDir: string }) => void = () => {},
 ): Promise<Wired & { cleanup: () => void }> {
   const homeDir = freshDir("petbox-step11-home-");
-  const projectDir = freshDir("petbox-step11-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-step11-proj-"));
   prepare({ homeDir, projectDir });
   const run = await new Promise<Run>((resolve, reject) => {
     const child = spawn(

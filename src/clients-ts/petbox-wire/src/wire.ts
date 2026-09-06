@@ -821,6 +821,44 @@ async function performApply(opts: {
     else log(rendered.text);
   };
   const { root, via } = resolveApplyRoot(cwd);
+  // SCATTER GUARD (card: wire-apply-guard-registered-dir, second scenario). `via === "cwd"` means
+  // resolveApplyRoot found NO git working tree and fell back to "wherever this process happened to
+  // be started" — it is a fallback, not an answer. Under roleScope=project that fallback is the
+  // instruction to render 5 roles × 3 harness layouts into that directory, so a friend who ran
+  // `petbox-wire apply` from their home directory (or a downloads folder, or a shell that had not
+  // cd'd anywhere) got 15 files scattered where nothing will ever maintain them — and one of the
+  // three trees, `~/.opencode/agent`, is not even a path any harness reads any more.
+  //
+  // The distinction that makes this safe is `via` itself, and it is exactly the right axis:
+  //   - via="git" — a real checkout, including a FRESH CLONE that is not registered yet. That
+  //     case is documented, intentional and unchanged: root = the clone's top, skills are skipped
+  //     with "run `wire` here first", exit 0 (apply-skills-skip.test.ts). Never refused here.
+  //   - via="cwd" — there is no project. Refuse rather than guess one.
+  // NOT keyed on the registry: HOME could be a registered prefix and the scatter would be just as
+  // wrong, so "is this path in ~/.petbox/projects.json" answers a different question entirely.
+  //
+  // roleScope=user is untouched by this: it renders into the harness profiles and needs no project
+  // at all, which is precisely why it is the hint below.
+  if (roleScope === "project" && via === "cwd") {
+    console.error(
+      `${opts.label}: REFUSED — ${root} is not a git working tree, so it is not a project; apply ` +
+        `fell back to the current directory only because it had nothing better. Rendering ` +
+        `roleScope=project here would scatter ${HARNESS_IDS.length} harness layouts of role files ` +
+        `into a directory nothing maintains. Nothing was written by this step (${opts.label}).\n` +
+        `  To install the roles for this MACHINE (they belong in the harness profiles, not in a ` +
+        `directory): petbox-wire apply --roles=user\n` +
+        `  To wire a PROJECT: run this from inside its checkout (any directory under its git ` +
+        `working tree will do).`,
+    );
+    return {
+      code: WIRE_EXIT.hard,
+      summary: summarize(ledger.actions),
+      writtenHarnesses: [],
+      partialHarnesses: [],
+      blockedHarnesses: [],
+      hardError: true,
+    };
+  }
   let definition: AgentDefinition;
   let local: LocalDefinition;
   let rolesData: RolesFile;

@@ -33,6 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -107,7 +108,7 @@ function runApplyOnline(
 
 test("apply (online) exits 1 (not 127, not 0) after a clobber refusal — no hard process.exit race", async () => {
   const homeDir = freshDir("petbox-apply-race-home-");
-  const projectDir = freshDir("petbox-apply-race-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-race-proj-"));
   const fake = await startFakeServer();
   try {
     writeOnlineRegistry(homeDir, projectDir, "apply-race-test-proj", fake.baseUrl);

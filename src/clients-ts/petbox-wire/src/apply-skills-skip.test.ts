@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -140,7 +141,7 @@ function runApplyOffline(cwd: string, homeDir: string): { stdout: string; stderr
 
 test("apply (online, workspace probe hits HTTP 500): UNINTENTIONAL skills skip — exits 4 (incomplete), names the skip, and summary carries it", async () => {
   const homeDir = freshDir("petbox-apply-skip-home-");
-  const projectDir = freshDir("petbox-apply-skip-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-skip-proj-"));
   const fake = await startFakeServer((_req, res) => {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "internal" }));
@@ -186,7 +187,7 @@ test("apply (online, workspace probe hits HTTP 500): UNINTENTIONAL skills skip �
 
 test("apply --offline: skills skip is INTENTIONAL — unchanged behavior, still a full 'done' line, summary marks intentional:true", () => {
   const homeDir = freshDir("petbox-apply-skip-home-");
-  const projectDir = freshDir("petbox-apply-skip-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-skip-proj-"));
   try {
     const { stdout, stderr, status } = runApplyOffline(projectDir, homeDir);
     const out = stdout + stderr;
@@ -222,7 +223,7 @@ test("apply --offline: skills skip is INTENTIONAL — unchanged behavior, still 
 
 test("PRIORITY: clobber refusal (1) outranks incomplete (4) — and the skip is still named in summary", async () => {
   const homeDir = freshDir("petbox-apply-prio-home-");
-  const projectDir = freshDir("petbox-apply-prio-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-prio-proj-"));
   const fake = await startFakeServer((_req, res) => {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "internal" }));
@@ -265,7 +266,7 @@ test("PRIORITY: clobber refusal (1) outranks incomplete (4) — and the skip is 
 
 test("PRIORITY: truthfulness block (3) outranks incomplete (4) — and the skip is still named in summary", async () => {
   const homeDir = freshDir("petbox-apply-prio-home-");
-  const projectDir = freshDir("petbox-apply-prio-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-prio-proj-"));
   const fake = await startFakeServer((_req, res) => {
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "internal" }));

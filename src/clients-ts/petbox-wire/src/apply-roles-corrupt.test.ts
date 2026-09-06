@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -54,7 +55,7 @@ function writeCorruptRoles(homeDir: string): string {
 
 test("apply HARD-FAILS on a corrupt roles.json — exit WIRE_EXIT.hard, message names the file and the incident shape", () => {
   const homeDir = freshDir("petbox-apply-corrupt-home-");
-  const projectDir = freshDir("petbox-apply-corrupt-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-corrupt-proj-"));
   try {
     const rolesFilePath = writeCorruptRoles(homeDir);
 
@@ -87,7 +88,7 @@ test("apply HARD-FAILS on a corrupt roles.json — exit WIRE_EXIT.hard, message 
 
 test("doctor stays offline-safe against the SAME corrupt roles.json — never crashes, reports it via wire.log instead", () => {
   const homeDir = freshDir("petbox-doctor-corrupt-home-");
-  const projectDir = freshDir("petbox-doctor-corrupt-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-doctor-corrupt-proj-"));
   try {
     writeCorruptRoles(homeDir);
 
