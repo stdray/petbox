@@ -141,6 +141,7 @@ import {
   type ResolveLayersOptions,
 } from "./layer-cascade.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { petboxKeysJsonPath, petboxWireMirrorDir } from "./petbox-dir.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import {
   buildSkillReports,
@@ -241,7 +242,7 @@ const SANDBOX_BASE_URL: string | undefined = loopbackSandboxBaseUrl();
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Stable install location: the kit is copied here and every global hook/plugin link points at
 // it, so wiring survives npx cache eviction and does not depend on any checkout.
-const STABLE = join(homedir(), ".petbox", "wire");
+const STABLE = petboxWireMirrorDir();
 
 // ---- arg parsing -----------------------------------------------------------
 
@@ -1720,7 +1721,7 @@ function runRoles(argv: string[]): void {
   const data = loadRoles();
   if (isEmptyRoles(data) && !data.profiles[data.activeProfile]) {
     log(
-      `roles: no bindings in ${join(homedir(), ".petbox", "roles.json")} (activeProfile would be "default").\n` +
+      `roles: no bindings in ${rolesPath()} (activeProfile would be "default").\n` +
         `  Bindings are local — set models in that file or via a future apply path; nothing is invented.`,
     );
     return;
@@ -1755,7 +1756,7 @@ function runProfile(argv: string[]): void {
   log(
     `profile: activeProfile = "${next.activeProfile}"` +
       (created ? " (created empty profile shell)" : "") +
-      `\n  wrote ${join(homedir(), ".petbox", "roles.json")}` +
+      `\n  wrote ${rolesPath()}` +
       `\n  re-run apply to rebuild artifacts (profile use does not compile).`,
   );
 }
@@ -2055,7 +2056,7 @@ const log = (msg: string) => console.log(msg);
 // configs still reference ${ENV_VAR}, so persistKeyForAgents() additionally materializes a real
 // environment variable per platform.
 function keysStorePath(): string {
-  return join(homedir(), ".petbox", "keys.json");
+  return petboxKeysJsonPath();
 }
 
 // Read a key from the store. Returns "" if the file/entry is missing.
@@ -2387,7 +2388,7 @@ function runUpdate(argv: string[]): void {
 // Reuse the envVar of an existing registry entry for this exact prefix, so a plain re-run
 // stays idempotent even when the var name was customized via --env in the past.
 function registryEnvVar(prefix: string): string | undefined {
-  const data = readJson(join(homedir(), ".petbox", "projects.json"));
+  const data = readJson(registryPath());
   const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
   const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
   const hit = entries.find((e) => norm(String(e?.prefix ?? "")) === norm(prefix));
@@ -2399,7 +2400,7 @@ function registryEnvVar(prefix: string): string | undefined {
 // The entry is rewritten whole, so a retired key from an older kit (the removed `promptRag` gate)
 // is dropped on the next wire rather than lingering as dead config.
 function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl: string): void {
-  const path = join(homedir(), ".petbox", "projects.json");
+  const path = registryPath();
   const data = readJson(path) ?? {};
   const entries: any[] = Array.isArray(data.entries) ? data.entries : [];
   const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();

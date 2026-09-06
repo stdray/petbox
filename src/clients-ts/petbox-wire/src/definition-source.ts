@@ -58,13 +58,14 @@ import {
   type CascadeDiagnostic,
   type CascadeResolution,
 } from "./layer-cascade.ts";
+import { PETBOX_DIRNAME } from "./petbox-dir.ts";
 import { wireLog } from "./wire-log.ts";
 
 /** Provenance name of the shipped floor. Short on purpose — it is printed once per field. */
 export const BASE_LAYER_NAME = "base";
 
 /** Every optional layer lives at `<root>/.petbox/agents`; only the root differs. */
-export const LAYER_DIR_SEGMENTS = [".petbox", "agents"] as const;
+export const LAYER_DIR_SEGMENTS = [PETBOX_DIRNAME, "agents"] as const;
 
 export type DefinitionLayerLabel = "user" | "project";
 

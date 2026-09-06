@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { classifyModel } from "./harness-models.ts";
+import { petboxDir } from "./petbox-dir.ts";
 import { wireLog } from "./wire-log.ts";
 
 export type RoleBinding = {
@@ -73,7 +74,7 @@ function agentLookupKeys(agent: string): readonly string[] {
 }
 
 export function rolesPath(homeDir: string = homedir()): string {
-  return join(homeDir, ".petbox", "roles.json");
+  return join(petboxDir(homeDir), "roles.json");
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

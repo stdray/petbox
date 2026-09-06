@@ -30,8 +30,8 @@
 // imports, zero deps.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { petboxCacheDir } from "./petbox-dir.ts";
 import type { ResolvedProject } from "./registry.ts";
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -69,12 +69,8 @@ const EMPTY_CANON_TEXT = "canon is empty — curate with memory_upsert (store `c
 export const CANON_PROJECT_SECTION_MARKER = "\n\n### Project (";
 export const CANON_WORKSPACE_SECTION_MARKER = "\n\n### Workspace";
 
-function cacheDir(): string {
-  return join(homedir(), ".petbox", "cache");
-}
-
 function cachePath(project: string): string {
-  return join(cacheDir(), `${project}.canon.md`);
+  return join(petboxCacheDir(), `${project}.canon.md`);
 }
 
 type LegStatus =
@@ -221,7 +217,7 @@ export async function fetchCanonLegs(
 
 async function writeCache(project: string, block: string): Promise<void> {
   try {
-    await mkdir(cacheDir(), { recursive: true });
+    await mkdir(petboxCacheDir(), { recursive: true });
     await writeFile(cachePath(project), block, "utf8");
   } catch {
     // best-effort: a failed cache write must not affect the returned block

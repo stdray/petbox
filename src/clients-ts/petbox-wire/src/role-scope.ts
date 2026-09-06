@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HarnessId } from "./harness-capabilities.ts";
+import { petboxDir } from "./petbox-dir.ts";
 import { wireLog } from "./wire-log.ts";
 
 /** Where `apply` renders ROLE artifacts. Skills are unaffected by this axis — always per-project. */
@@ -78,7 +79,7 @@ export type WireConfig = {
 const DEFAULT_WIRE_CONFIG: WireConfig = { roleScope: "project" };
 
 export function wireConfigPath(homeDir: string = homedir()): string {
-  return join(homeDir, ".petbox", "wire.json");
+  return join(petboxDir(homeDir), "wire.json");
 }
 
 /**
