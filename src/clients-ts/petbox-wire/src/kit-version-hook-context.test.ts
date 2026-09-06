@@ -1,32 +1,52 @@
 // Regression test for card kit-version-unknown-inside-hooks.
 //
 // THE BUG (confirmed live, 2026-09-06): agent-definition.ts's loadKitVersion() reads
-// `../package.json` relative to its OWN import.meta.dirname. That resolves fine from an npx
-// cache dir or a checkout (package.json sits right next to `src/` there) — but pull-memory.ts /
-// droid-pull-memory.ts / opencode-plugin.ts all run from the STABLE mirror (~/.petbox/wire/),
-// where wire.ts's copyKitToStable copies only HERE (this src/ dir), never the sibling
-// package.json. `../package.json` from a hook's dirname then resolves to
-// ~/.petbox/package.json, which does not exist — KIT_VERSION was "unknown" in EVERY hook.
+// `../package.json` relative to its OWN import.meta.dirname. That resolves fine from a checkout
+// (`node wire.ts ...` run straight from `src/`) — but pull-memory.ts / droid-pull-memory.ts /
+// opencode-plugin.ts all run from the STABLE mirror (~/.petbox/wire/), where wire.ts's
+// copyKitToStable copies only HERE (this src/ dir), never a sibling package.json.
+// `../package.json` from a hook's dirname then resolves to ~/.petbox/package.json, which does
+// not exist — KIT_VERSION was "unknown" in EVERY hook.
 //
-// A second, independent gap (found while measuring the live SessionStart banner for this fix):
-// nothing in protocol.ts's buildProtocol() — the ONE shared banner builder all three harnesses'
-// SessionStart injectors call — ever referenced KIT_VERSION at all. Fixing loadKitVersion() alone
-// would have left the banner exactly as silent as before; a test that only imports KIT_VERSION
-// in-process (this test file's own directory always has package.json next to it) would not catch
-// EITHER half of that regression. So this file tests both halves as REAL child processes, from a
-// REAL mirror shape, the same way copyKitToStable actually produces it:
+// A second, independent gap (found while measuring the live SessionStart banner for the first
+// fix): nothing in protocol.ts's buildProtocol() — the ONE shared banner builder all three
+// harnesses' SessionStart injectors call — ever referenced KIT_VERSION at all. Fixing
+// loadKitVersion() alone would have left the banner exactly as silent as before.
 //
-//   1. loadKitVersion()'s fallback chain (package.json -> kit-version.json -> "unknown"),
-//      exercised from a directory that is byte-for-byte what a hook actually runs from.
-//   2. The SessionStart banner text itself (pull-memory.ts, droid-pull-memory.ts) — spawned
-//      from that same real mirror, after a REAL `wire.ts update` wrote it — must carry a kit
-//      identifier that is not "unknown".
+// A THIRD gap — the one that let the first fix (petbox-wire@0.1.0-ci.2242) ship broken and pass
+// review anyway (measured live on the owner's machine, 2026-09-06): `../package.json` ALSO
+// misses on a REAL `npx petbox-wire` invocation, not just later hook runs. bin/petbox-wire.js
+// cannot run wire.ts in place (Node refuses to type-strip `.ts` under node_modules — the npx
+// cache is exactly that), so it copies `src/` into a FLAT scratch dir directly under the OS temp
+// dir and imports wire.ts from there. That scratch dir's parent is plain %TEMP%/tmp, never this
+// package's root — so the very first `KIT_VERSION` resolution of a real run was ALREADY
+// "unknown", and copyKitToStable's own delivery stamp then recorded that "unknown" verbatim.
+// Tests 1-2 below only ever exercised a HAND-BUILT mirror shape; test 3 only ever ran `wire.ts`
+// directly from the checkout (where `../package.json` DOES exist) — neither reproduces bin.js's
+// scratch dir, so the suite passed while the real entry point stayed broken. Test 4 below runs
+// the REAL bin/petbox-wire.js, from a throwaway package with an unmistakable test version, to
+// close that gap.
+//
+// So this file tests every half as REAL child processes, from a REAL mirror shape, the same way
+// copyKitToStable / bin.js actually produce it — never an in-process import (this test file's
+// own directory always has package.json next to it, which would hide all three regressions):
+//
+//   1-2. loadKitVersion()'s fallback chain (package.json -> same-dir stamp -> sibling stamp ->
+//        "unknown"), exercised from a directory that is byte-for-byte what a hook actually runs
+//        from.
+//   3.   The SessionStart banner text itself (pull-memory.ts, droid-pull-memory.ts) — spawned
+//        from a real mirror after a checkout-sourced `wire.ts update` wrote it — must carry a
+//        kit identifier that is not "unknown".
+//   4.   The REAL `npx` entry point (bin/petbox-wire.js, not wire.ts directly): its scratch dir
+//        must resolve a real version end to end, the mirror must inherit that stamp for free,
+//        and a LATER checkout-sourced `update` on the same machine must sweep the now-stale
+//        mirror-internal copy while the sibling stays a correctly-updated fallback.
 //
 // opencode-plugin.ts is not spawned here (it is a Plugin module, not a standalone CLI process —
 // faking the opencode host object is out of scope for this card). It shares the exact same
 // buildProtocol()/KIT_VERSION path as the two hooks tested below (see protocol.ts's own header:
-// "the ONE implementation every SessionStart injector renders from"), so the two spawns here are
-// the behavioral proof for all three harnesses, not just two of them.
+// "the ONE implementation every SessionStart injector renders from"), so the spawns here are the
+// behavioral proof for all three harnesses, not just two of them.
 //
 // Run: node --test src/kit-version-hook-context.test.ts
 
@@ -196,3 +216,109 @@ test("real `wire.ts update` writes the kit-version stamp, and pull-memory.ts / d
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+// ---- part 4: the REAL npx invocation path — bin/petbox-wire.js's flat scratch dir ---------
+//
+// See the file header's "THIRD gap" for why this is required and why nothing above it catches
+// this: it is the ACTUAL `npx petbox-wire` entry point, not `wire.ts` run directly.
+//
+// The checked-in package.json version is "0.0.0" (real semver is CI-stamped only on publish,
+// without a commit) — not itself distinguishable from a broken/never-run install — so this test
+// copies bin/ + src/ into a throwaway package carrying an unmistakable test version rather than
+// relying on the repo's own permanently-0.0.0 value.
+function buildFakeNpxPackage(version: string): { binPath: string } {
+  const pkgDir = freshDir("petbox-kv-fakepkg-");
+  cpSync(SRC_DIR, join(pkgDir, "src"), { recursive: true });
+  cpSync(join(SRC_DIR, "..", "bin"), join(pkgDir, "bin"), { recursive: true });
+  writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: "petbox-wire", version }, null, 2), "utf8");
+  return { binPath: join(pkgDir, "bin", "petbox-wire.js") };
+}
+
+test(
+  "real bin/petbox-wire.js (the actual `npx petbox-wire` entry point): its scratch dir resolves " +
+    'the real version end to end (never "unknown"), the SessionStart banner carries it, and a ' +
+    "later checkout-sourced update correctly sweeps the mirror-internal copy while the sibling " +
+    "stamp stays a live fallback",
+  async () => {
+    const { binPath } = buildFakeNpxPackage("9.9.9-test");
+    const homeDir = freshDir("petbox-kv-npxpath-home-");
+    const { close, port } = await startFastFakeCanonServer();
+    try {
+      const homeEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: homeDir,
+        USERPROFILE: homeDir, // os.homedir() reads USERPROFILE on win32, HOME on POSIX
+        HOMEDRIVE: undefined,
+        HOMEPATH: undefined,
+      };
+
+      // Step 1: the real `npx petbox-wire update` shape — via bin/petbox-wire.js, not wire.ts
+      // directly (this is exactly what test 3 above does NOT reproduce).
+      const update = spawnSync(process.execPath, [binPath, "update"], { env: homeEnv, encoding: "utf8" });
+      assert.equal(update.status, 0, `bin/petbox-wire.js update failed: ${update.stderr}\n${update.stdout}`);
+
+      const siblingStampPath = join(homeDir, ".petbox", "kit-version.json");
+      const mirrorStampPath = join(homeDir, ".petbox", "wire", "kit-version.json");
+
+      // The sibling stamp (loadKitVersion's step 3) must carry the REAL version — this is
+      // exactly what shipped as "unknown" in petbox-wire@0.1.0-ci.2242.
+      const siblingStamp = JSON.parse(readFileSync(siblingStampPath, "utf8"));
+      assert.equal(
+        siblingStamp.version,
+        "9.9.9-test",
+        `sibling stamp must carry the real version, not "unknown" — got ${JSON.stringify(siblingStamp)}`,
+      );
+      assert.ok(typeof siblingStamp.kitHash === "string" && siblingStamp.kitHash.length > 0);
+
+      // The mirror-internal stamp (loadKitVersion's step 2) — written by bin.js into the
+      // scratch dir, then copied verbatim into ~/.petbox/wire/ by copyKitToStable's cpSync. A
+      // "nice side effect" the brief asked to actually verify, not just assume.
+      assert.ok(existsSync(mirrorStampPath), "bin.js's same-directory stamp must ride along into the mirror");
+      const mirrorStamp = JSON.parse(readFileSync(mirrorStampPath, "utf8"));
+      assert.equal(mirrorStamp.version, "9.9.9-test");
+
+      // Step 2: the SessionStart banner, spawned from the real resulting mirror.
+      const projectDir = registerFakeProject(homeDir, `http://127.0.0.1:${port}`);
+      const env: NodeJS.ProcessEnv = { ...homeEnv, FAKE_KIT_VERSION_TEST_KEY: "fake-key-for-test" };
+      const input = JSON.stringify({
+        session_id: "test",
+        cwd: projectDir,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      });
+      const ccHook = runHookSync(join(homeDir, ".petbox", "wire", "pull-memory.ts"), input, env, projectDir);
+      assert.equal(ccHook.status, 0, `pull-memory.ts (mirror) failed: ${ccHook.stderr}`);
+      assert.match(
+        ccHook.stdout,
+        /kit v9\.9\.9-test\b/,
+        `claude-code SessionStart banner must carry the real test version, not "unknown" — got: ${JSON.stringify(ccHook.stdout.slice(0, 400))}`,
+      );
+
+      // Step 3: a LATER checkout-sourced `update` (real wire.ts, real checkout HERE — no
+      // same-directory stamp there at all) must sweep the now-stale mirror-internal copy...
+      const checkoutUpdate = spawnSync(process.execPath, [WIRE_TS, "update"], { env: homeEnv, encoding: "utf8" });
+      assert.equal(
+        checkoutUpdate.status,
+        0,
+        `checkout-sourced wire.ts update failed: ${checkoutUpdate.stderr}\n${checkoutUpdate.stdout}`,
+      );
+      assert.ok(
+        !existsSync(mirrorStampPath),
+        "a checkout-sourced update must sweep the mirror-internal stamp it does not itself ship (pruneStaleMirrorEntries)",
+      );
+
+      // ...while the sibling remains the fallback, now correctly reflecting the CHECKOUT's own
+      // version — never stuck on the previous run's "9.9.9-test", and never "unknown" either.
+      const siblingAfter = JSON.parse(readFileSync(siblingStampPath, "utf8"));
+      assert.notEqual(siblingAfter.version, "unknown");
+      assert.notEqual(
+        `${siblingAfter.version}+${siblingAfter.kitHash}`,
+        `${siblingStamp.version}+${siblingStamp.kitHash}`,
+        "the sibling stamp must actually be rewritten by the second update, not left stale from the first",
+      );
+    } finally {
+      await close();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  },
+);

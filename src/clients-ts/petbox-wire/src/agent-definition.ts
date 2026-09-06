@@ -112,36 +112,70 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = loadDefaultAgentDefinit
  * no `version` field of its own; that concept belonged to the server envelope this kit no longer
  * fetches for user-scope roles — card user-scope-roles-rendered-from-cwd-project-definition).
  *
- * TWO sources, tried in order (card kit-version-unknown-inside-hooks):
+ * FOUR sources, tried in order (card kit-version-unknown-inside-hooks; the first cut of this
+ * fix shipped as petbox-wire@0.1.0-ci.2242 and was WRONG about step 1 below — see the correction
+ * note at the end):
  *
- *   1. `../package.json` (this module's own directory's parent). Present in a real install
- *      (npx cache, or a checkout) and in a running `npx petbox-wire`/`wire.ts` invocation — HERE
- *      always sits next to package.json there. Absent for a HOOK: pull-memory.ts /
- *      droid-pull-memory.ts / opencode-plugin.ts all run from the STABLE mirror
- *      (~/.petbox/wire/), and copyKitToStable (wire.ts) copies only HERE (this src/ dir) into
- *      it, never the sibling package.json — so `../package.json` from a hook's
- *      import.meta.dirname resolves to ~/.petbox/package.json, which does not exist.
- *   2. `../kit-version.json` — a delivery STAMP wire.ts's copyKitToStable writes next to (not
- *      inside) the mirror, specifically so a hook can find it by the exact same `..` resolution
- *      that just missed package.json: from ~/.petbox/wire/, `..` is ~/.petbox either way. Not
- *      inside the mirror because pruneStaleMirrorEntries deletes anything under STABLE that HERE
- *      does not also ship — a stamp living there would be wiped and rewritten every run.
+ *   1. `../package.json` (this module's own directory's parent) — true ONLY for a checkout
+ *      (`node wire.ts ...` run straight from `src/`) and for `npx petbox-wire`'s *installed
+ *      cache* copy, which sits inside `node_modules` next to the real package.json. It is
+ *      FALSE for the actual `npx` invocation path: Node refuses to type-strip `.ts` files under
+ *      `node_modules`, so bin/petbox-wire.js copies `src/` out to a FLAT scratch dir
+ *      (`mkdtempSync(join(tmpdir(), "petbox-wire-"))`) and imports wire.ts from there — that
+ *      scratch dir's parent is plain `%TEMP%`/`/tmp`, which never has a package.json. So this
+ *      step alone leaves the single most common real invocation ("npx petbox-wire ...") on
+ *      "unknown", not just hooks.
+ *   2. `<dir>/kit-version.json` — a stamp living IN THE SAME DIRECTORY as this module. Written by
+ *      bin/petbox-wire.js right after it populates that scratch dir (using ITS OWN
+ *      `../package.json`, which npm always ships in the tarball, independent of `files`) — so
+ *      this resolves correctly from the very first command of an `npx` run, not just later hook
+ *      runs. This same file then rides along for free when wire.ts's copyKitToStable mirrors
+ *      HERE (the scratch dir) into ~/.petbox/wire/ — the hook finds it at this exact step,
+ *      right next to itself, with zero extra plumbing. A checkout's HERE never has this file
+ *      (only bin.js writes it), so a checkout-sourced `update` correctly does NOT propagate a
+ *      stale one: pruneStaleMirrorEntries sweeps it out of the mirror the moment HERE stops
+ *      shipping it.
+ *   3. `../kit-version.json` — a SIBLING stamp wire.ts's copyKitToStable writes next to (not
+ *      inside) the mirror, as a fallback for exactly the case step 2 cannot cover: a
+ *      checkout-sourced `update`, where HERE never carries a same-directory stamp at all. From
+ *      ~/.petbox/wire/, `..` is ~/.petbox either way — same resolver, third source. Not inside
+ *      the mirror because pruneStaleMirrorEntries deletes anything under STABLE that HERE does
+ *      not also ship — a stamp living there would be wiped and rewritten every run.
+ *   4. `"unknown"` — both stamps missing (e.g. `update`/full wire never ran since this fix
+ *      shipped) or corrupt. Same soft degradation as before this card, never a throw.
  *
- * The stamp's `version` is paired with its `kitHash` (`${version}+${kitHash}`, semver
- * build-metadata syntax) whenever both are present, NOT bare version alone: this package's
+ * Either stamp's `version` is paired with its `kitHash` (`${version}+${kitHash}`, semver
+ * build-metadata syntax) whenever both are present, NOT bare version alone: a checkout's
  * checked-in package.json version is permanently "0.0.0" (CI only stamps the real semver on
  * publish, via GitVersion, without committing it — build.cs's TsWirePack), so a checkout-sourced
  * kit's bare version never changes between real code changes and cannot tell one generation of
  * shipped prose from another. The hash (already computed for `update`'s own before/after log)
  * changes on every content change regardless of version, which is what makes the label
- * MEANINGFUL rather than merely non-empty — the actual defect this card reports (a blind
- * provenance line is worse than a merely uninformative one, since nothing then contradicts it).
+ * MEANINGFUL rather than merely non-empty. bin.js's stamp (step 2) has no hash to offer (the
+ * fingerprint is only computed later, inside copyKitToStable) and does not need one: a real
+ * `npx` install's package.json version is CI-stamped per publish already, so it disambiguates
+ * generations on its own.
  *
- * Best-effort at every step: a missing/corrupt package.json falls through to the stamp; a
- * missing/corrupt stamp falls through to "unknown" — same soft degradation as before this card,
- * never a throw. A hook must never fail or noticeably slow down over a label.
+ * Best-effort at every step: a missing/corrupt input at any step falls through to the next,
+ * ending at "unknown" — never a throw. A hook must never fail or noticeably slow down over a
+ * label.
  */
 export const KIT_VERSION: string = loadKitVersion();
+
+/** Reads one `{version, kitHash?}` stamp file; null on any miss/corruption (never throws). */
+function readKitVersionStamp(path: string): string | null {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown; kitHash?: unknown };
+    const version = typeof parsed.version === "string" ? parsed.version.trim() : "";
+    const kitHash = typeof parsed.kitHash === "string" ? parsed.kitHash.trim() : "";
+    if (version && kitHash) return `${version}+${kitHash}`;
+    if (version) return version;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function loadKitVersion(): string {
   try {
@@ -149,20 +183,14 @@ function loadKitVersion(): string {
     const parsed = JSON.parse(raw) as { version?: unknown };
     if (typeof parsed.version === "string" && parsed.version.trim()) return parsed.version.trim();
   } catch {
-    // no package.json next to HERE — expected in hook context (STABLE mirror); fall through.
+    // no package.json next to HERE — the common case now (a real `npx` scratch dir, or a hook
+    // running from the STABLE mirror); fall through to the stamps.
   }
-  try {
-    const raw = readFileSync(join(import.meta.dirname, "..", "kit-version.json"), "utf8");
-    const parsed = JSON.parse(raw) as { version?: unknown; kitHash?: unknown };
-    const version = typeof parsed.version === "string" ? parsed.version.trim() : "";
-    const kitHash = typeof parsed.kitHash === "string" ? parsed.kitHash.trim() : "";
-    if (version && kitHash) return `${version}+${kitHash}`;
-    if (version) return version;
-  } catch {
-    // no stamp either — e.g. this mirror predates the fix, or `update`/full wire never ran
-    // since. Degrade the same way loadKitVersion always has: "unknown", never a throw.
-  }
-  return "unknown";
+  return (
+    readKitVersionStamp(join(import.meta.dirname, "kit-version.json")) ??
+    readKitVersionStamp(join(import.meta.dirname, "..", "kit-version.json")) ??
+    "unknown"
+  );
 }
 
 function loadDefaultAgentDefinition(): AgentDefinition {

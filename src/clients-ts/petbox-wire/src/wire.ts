@@ -2316,15 +2316,20 @@ function kitFingerprint(root: string): string {
 type CopyKitResult = { before: string; after: string; skipped: boolean };
 
 // Delivery stamp for KIT_VERSION's hook-context fallback (agent-definition.ts's loadKitVersion,
-// card kit-version-unknown-inside-hooks). Written NEXT TO the mirror (~/.petbox/kit-version.json,
-// a SIBLING of STABLE), deliberately NOT inside it: pruneStaleMirrorEntries treats STABLE as an
-// EXACT mirror of HERE and deletes anything HERE does not also ship, so a stamp living inside
-// ~/.petbox/wire/ would be wiped and rewritten every single run, spamming the "orphan cleanup"
-// log for a file that was never an orphan. Outside the mirror this problem does not exist at all.
+// card kit-version-unknown-inside-hooks) — the FALLBACK sibling stamp (that doc comment's step
+// 3), for the one case its same-directory stamp (step 2, written by bin/petbox-wire.js into the
+// npx scratch dir) cannot cover: a checkout-sourced `update`, whose HERE never carries a
+// same-directory kit-version.json at all (only bin.js writes one, and a checkout is not run
+// through bin.js). Written NEXT TO the mirror (~/.petbox/kit-version.json, a SIBLING of STABLE),
+// deliberately NOT inside it: pruneStaleMirrorEntries treats STABLE as an EXACT mirror of HERE
+// and deletes anything HERE does not also ship, so a stamp living inside ~/.petbox/wire/ would be
+// wiped and rewritten every single run, spamming the "orphan cleanup" log for a file that was
+// never an orphan. Outside the mirror this problem does not exist at all.
 //
-// `version` is KIT_VERSION as already resolved in THIS run's context (HERE) — package.json sits
-// next to HERE in every real invocation (npx cache or checkout; only the STABLE mirror itself
-// lacks it), so this never needs a second resolver. `kitHash` is the exact `after` fingerprint
+// `version` is KIT_VERSION as already resolved in THIS run's context (HERE) — correct whether
+// that resolution came from a checkout's real `../package.json`, or (for a real `npx` run) from
+// the same-directory stamp bin.js already dropped into HERE before wire.ts was even imported —
+// so this never needs a second resolver of its own. `kitHash` is the exact `after` fingerprint
 // copyKitToStable already computes and logs — never a second hash.
 //
 // Best-effort: a failure to write the stamp must never fail the copy it rides along on. The
