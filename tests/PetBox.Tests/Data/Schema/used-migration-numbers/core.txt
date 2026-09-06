@@ -67,6 +67,7 @@
 52 LIVE M052_BodyRefBlobs
 53 LIVE M053_NodeShares
 54 LIVE M054_DropAgentDefinitions
+55 LIVE M055_RetireAgentScopesFromKeys
 #
 # --- 1000+ : the DISK CACHE set (PetBox.Core.Data.CacheMigrations), not the core.db timeline ---
 # A second migration set shares this assembly, and FluentMigrator numbers are per-SCAN, so the two

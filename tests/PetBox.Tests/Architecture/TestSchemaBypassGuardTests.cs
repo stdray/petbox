@@ -106,6 +106,13 @@ public sealed class TestSchemaBypassGuardTests
 			"migration set, so the table it must drop was never there to drop; the test hand-migrates to " +
 			"M053, seeds rows, and then calls the real bootstrap to prove the drop and the restart-safety " +
 			"(and that the project-delete cascade no longer reaches into the dropped table).",
+		["RetireAgentScopesMigrationTests.cs"] =
+			"its SUBJECT is M055 rewriting ApiKeys.Scopes on a database that already carries the retired " +
+			"agents:read/agents:write tokens — the live-server upgrade path for a DATA migration. " +
+			"TestSchema.Core's template is built from the CURRENT migration set, so its keys never hold " +
+			"a token to strip and the rewrite would have nothing to act on; the test hand-migrates to " +
+			"M054, seeds the real production strings, and calls the real bootstrap to prove which " +
+			"survivors are kept (and that a restart moves nothing).",
 		["SessionsSearchCursorMigrationTests.cs"] =
 			"the whole class exists to pin M007's ADOPTION of a live pre-M007 file (search_cursor/" +
 			"search_deadletter created at runtime by SessionFactsJob, with VersionInfo never told about " +
