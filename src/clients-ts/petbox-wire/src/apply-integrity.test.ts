@@ -29,6 +29,7 @@ import { agentFilesDir } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -105,7 +106,7 @@ function artifactPaths(projectDir: string, base: string): string[] {
 
 test("a layer ADDS a role, then stops declaring it: the artifact appears and is then swept — every harness, marker-gated", async () => {
   const homeDir = freshDir("petbox-integrity-home-");
-  const projectDir = freshDir("petbox-integrity-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-integrity-proj-"));
   try {
     writeHome(homeDir);
 
@@ -154,7 +155,7 @@ test("a layer ADDS a role, then stops declaring it: the artifact appears and is 
 
 test("apply REFUSES when the cascade leaves a rendered escalation target dangling, and writes nothing", async () => {
   const homeDir = freshDir("petbox-integrity-home-");
-  const projectDir = freshDir("petbox-integrity-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-integrity-proj-"));
   try {
     writeHome(homeDir);
     // The baseline's orchestrator escalates to `reserve`. Tombstoning `reserve` in a layer is
@@ -187,7 +188,7 @@ test("the orphan sweep runs UNCONDITIONALLY — there is no 'degraded resolve' l
   // disabled the sweep forever, silently. `--offline` is asserted here on purpose: it no longer
   // has anything to do with the definition, so it must not change what the sweep does either.
   const homeDir = freshDir("petbox-integrity-home-");
-  const projectDir = freshDir("petbox-integrity-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-integrity-proj-"));
   try {
     writeHome(homeDir);
     const dir = join(projectDir, agentFilesDir("claude-code"));
@@ -211,7 +212,7 @@ test("the orphan sweep runs UNCONDITIONALLY — there is no 'degraded resolve' l
 
 test("apply's summary names the LAYERS and, per field, which layer supplied it — the D18 stage-2 evidence", async () => {
   const homeDir = freshDir("petbox-integrity-home-");
-  const projectDir = freshDir("petbox-integrity-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-integrity-proj-"));
   try {
     writeHome(homeDir);
     writeProjectLayer(projectDir, {

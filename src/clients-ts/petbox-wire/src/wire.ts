@@ -113,6 +113,7 @@ import {
   type ApplySummary,
 } from "./apply-ledger.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
+import { userProfileCollision } from "./role-dir-collision.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { upsertGitignoreBlock } from "./gitignore-block.ts";
 import { managedGitignoreEntries } from "./managed-paths.ts";
@@ -820,6 +821,44 @@ async function performApply(opts: {
     else log(rendered.text);
   };
   const { root, via } = resolveApplyRoot(cwd);
+  // SCATTER GUARD (card: wire-apply-guard-registered-dir, second scenario). `via === "cwd"` means
+  // resolveApplyRoot found NO git working tree and fell back to "wherever this process happened to
+  // be started" — it is a fallback, not an answer. Under roleScope=project that fallback is the
+  // instruction to render 5 roles × 3 harness layouts into that directory, so a friend who ran
+  // `petbox-wire apply` from their home directory (or a downloads folder, or a shell that had not
+  // cd'd anywhere) got 15 files scattered where nothing will ever maintain them — and one of the
+  // three trees, `~/.opencode/agent`, is not even a path any harness reads any more.
+  //
+  // The distinction that makes this safe is `via` itself, and it is exactly the right axis:
+  //   - via="git" — a real checkout, including a FRESH CLONE that is not registered yet. That
+  //     case is documented, intentional and unchanged: root = the clone's top, skills are skipped
+  //     with "run `wire` here first", exit 0 (apply-skills-skip.test.ts). Never refused here.
+  //   - via="cwd" — there is no project. Refuse rather than guess one.
+  // NOT keyed on the registry: HOME could be a registered prefix and the scatter would be just as
+  // wrong, so "is this path in ~/.petbox/projects.json" answers a different question entirely.
+  //
+  // roleScope=user is untouched by this: it renders into the harness profiles and needs no project
+  // at all, which is precisely why it is the hint below.
+  if (roleScope === "project" && via === "cwd") {
+    console.error(
+      `${opts.label}: REFUSED — ${root} is not a git working tree, so it is not a project; apply ` +
+        `fell back to the current directory only because it had nothing better. Rendering ` +
+        `roleScope=project here would scatter ${HARNESS_IDS.length} harness layouts of role files ` +
+        `into a directory nothing maintains. Nothing was written by this step (${opts.label}).\n` +
+        `  To install the roles for this MACHINE (they belong in the harness profiles, not in a ` +
+        `directory): petbox-wire apply --roles=user\n` +
+        `  To wire a PROJECT: run this from inside its checkout (any directory under its git ` +
+        `working tree will do).`,
+    );
+    return {
+      code: WIRE_EXIT.hard,
+      summary: summarize(ledger.actions),
+      writtenHarnesses: [],
+      partialHarnesses: [],
+      blockedHarnesses: [],
+      hardError: true,
+    };
+  }
   let definition: AgentDefinition;
   let local: LocalDefinition;
   let rolesData: RolesFile;
@@ -909,6 +948,26 @@ async function performApply(opts: {
   // render at all, only the removal of the copies it still holds. See the option's doc comment.
   if (roleScope === "user") {
     for (const harness of HARNESS_IDS) {
+      // COLLISION GUARD (card: wire-apply-guard-registered-dir). When `root` IS the home
+      // directory — which is exactly what resolveApplyRoot hands back for an `apply` run from
+      // $HOME, since HOME is not a git working tree and the cwd fallback takes over — then
+      // `join(root, agentFilesDir(h))` and `userAgentFilesRoot(h)` are the SAME directory for
+      // claude-code (~/.claude/agents) and droid (~/.factory/droids). The sweep below would then
+      // delete, as "project copies", the very files applyUserRoles rendered moments earlier in
+      // this same command: measured 10 of 15, silently, exit 0. Asked per harness because
+      // opencode does NOT collide (project `.opencode/agent` vs user `.config/opencode/agents`)
+      // and a guard resting on that accident would be no guard at all. See role-dir-collision.ts
+      // for why the comparison is not string equality.
+      const collision = userProfileCollision(root, harness, homedir());
+      if (collision) {
+        log(
+          `${opts.label}: sweep SKIPPED for ${harness} — the project role directory is the user ` +
+            `profile itself (${collision.projectDir}). Nothing here is a project copy: these are ` +
+            `the user-scope roles this run just rendered. Root ${root} was resolved from cwd, not ` +
+            `from a git working tree.`,
+        );
+        continue;
+      }
       // opencode's project directory is the singular `.opencode/agent`, which the target layout
       // drops entirely (the user-scope name is the plural `agents`) — so its now-empty directory
       // goes too. rmdirSync refuses a non-empty directory, so a project keeping its own files

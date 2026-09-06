@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -54,7 +55,7 @@ function agentFileFor(projectDir: string): string {
 
 test("apply --all --offline --dry-run: writes NOTHING, reports every project including a stale (missing) registry entry, never aborts", () => {
   const homeDir = freshDir("petbox-apply-all-home-");
-  const projA = freshDir("petbox-apply-all-projA-");
+  const projA = makeGitWorkingTree(freshDir("petbox-apply-all-projA-"));
   const missingDir = join(freshDir("petbox-apply-all-parent-"), "gone");
   try {
     writeRegistry(homeDir, [
@@ -78,7 +79,12 @@ test("apply --all --offline --dry-run: writes NOTHING, reports every project inc
     // normalize-all-environments-to-default item 4) and is asserted separately below.
     assert.match(out, /written=1/);
     // The preview's own file counts, from the same ledger the "would write" lines came from.
-    assert.match(out, /writes=15 \(roles=15 skills=0\)/);
+    // 15 role files + the project's managed `.gitignore` block = 16. The .gitignore entry appeared
+    // here when the fixture became a real checkout (test-git-tree.ts, card
+    // wire-apply-guard-registered-dir): the managed-path block is written for a git working tree,
+    // which every registered project is and this fixture previously was not. The ROLE count — the
+    // number this test is actually about — is unchanged at 15.
+    assert.match(out, /writes=16 \(roles=15 skills=0\)/);
     assert.match(out, /missing=1/);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
@@ -88,7 +94,7 @@ test("apply --all --offline --dry-run: writes NOTHING, reports every project inc
 
 test("apply --all --offline: actually writes into the registered project directory; a second dry-run then reports 'unchanged'", () => {
   const homeDir = freshDir("petbox-apply-all-home2-");
-  const projA = freshDir("petbox-apply-all-projA2-");
+  const projA = makeGitWorkingTree(freshDir("petbox-apply-all-projA2-"));
   try {
     writeRegistry(homeDir, [{ prefix: projA, project: "proj-a2", envVar: "PETBOX_PROJ_A2_API_KEY" }]);
 
@@ -110,8 +116,8 @@ test("apply --all --offline: actually writes into the registered project directo
 
 test("apply --all --offline: a foreign (non-PetBox) file at an artifact path is refused for THAT project only, without crashing the sweep", () => {
   const homeDir = freshDir("petbox-apply-all-home3-");
-  const projA = freshDir("petbox-apply-all-projA3-");
-  const projB = freshDir("petbox-apply-all-projB3-");
+  const projA = makeGitWorkingTree(freshDir("petbox-apply-all-projA3-"));
+  const projB = makeGitWorkingTree(freshDir("petbox-apply-all-projB3-"));
   try {
     writeRegistry(homeDir, [
       { prefix: projA, project: "proj-a3", envVar: "PETBOX_PROJ_A3_API_KEY" },

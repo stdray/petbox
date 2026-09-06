@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -64,7 +65,7 @@ function runApply(
 
 test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:, droid gets inherit, opencode warns but still writes", () => {
   const homeDir = freshDir("petbox-apply-seed-home-");
-  const projectDir = freshDir("petbox-apply-seed-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-seed-proj-"));
   try {
     const rolesPath = join(homeDir, ".petbox", "roles.json");
     assert.equal(existsSync(rolesPath), false, "precondition: no roles.json yet");
@@ -166,7 +167,7 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
 
 test("apply refuses a declared role with no local model binding — hard block, WIRE_EXIT.truthfulness, no silent file", () => {
   const homeDir = freshDir("petbox-apply-refuse-home-");
-  const projectDir = freshDir("petbox-apply-refuse-proj-");
+  const projectDir = makeGitWorkingTree(freshDir("petbox-apply-refuse-proj-"));
   try {
     const petboxDir = join(homeDir, ".petbox");
     mkdirSync(petboxDir, { recursive: true });

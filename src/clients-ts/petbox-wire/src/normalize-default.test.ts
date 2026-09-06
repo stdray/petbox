@@ -47,6 +47,7 @@ import { managedGitignoreEntries, projectRoleFiles } from "./managed-paths.ts";
 import { PETBOX_MANUAL_LINE, PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import { loadWireConfig, userAgentFilesDir } from "./role-scope.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
+import { makeGitWorkingTree } from "./test-git-tree.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -109,7 +110,7 @@ function userRoleFileCount(homeDir: string): number {
 
 test("apply --roles=user: renders roles ONCE into the three harness profiles and sweeps the project's own copies", () => {
   const homeDir = freshDir("petbox-norm-home-");
-  const proj = freshDir("petbox-norm-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "norm-a", envVar: "PETBOX_NORM_A_API_KEY" }]);
     // The project starts in the OLD shape: role copies in all three per-project layouts.
@@ -142,7 +143,7 @@ test("apply --roles=user: renders roles ONCE into the three harness profiles and
 
 test("apply --roles=user: foreign files in the harness profile and in the project are left byte-for-byte alone", () => {
   const homeDir = freshDir("petbox-norm-foreign-home-");
-  const proj = freshDir("petbox-norm-foreign-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-foreign-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "norm-b", envVar: "PETBOX_NORM_B_API_KEY" }]);
 
@@ -182,7 +183,7 @@ test("apply --roles=user: foreign files in the harness profile and in the projec
 
 test("apply --roles=user: the policy is remembered, so a later PLAIN apply does not re-render project copies", () => {
   const homeDir = freshDir("petbox-norm-policy-home-");
-  const proj = freshDir("petbox-norm-policy-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-policy-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "norm-c", envVar: "PETBOX_NORM_C_API_KEY" }]);
 
@@ -204,7 +205,7 @@ test("apply --roles=user: the policy is remembered, so a later PLAIN apply does 
 
 test("apply --roles=user --dry-run: writes nothing at all, and does NOT persist the policy", () => {
   const homeDir = freshDir("petbox-norm-dry-home-");
-  const proj = freshDir("petbox-norm-dry-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-dry-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "norm-d", envVar: "PETBOX_NORM_D_API_KEY" }]);
     const owned = plantOwnedRole(proj, [".claude", "agents"], "petbox-worker.md");
@@ -227,8 +228,8 @@ test("apply --roles=user --dry-run: writes nothing at all, and does NOT persist 
 
 test("apply --all --roles=user twice: the second run changes nothing, every role line says unchanged, exit 0", () => {
   const homeDir = freshDir("petbox-norm-idem-home-");
-  const projA = freshDir("petbox-norm-idem-a-");
-  const projB = freshDir("petbox-norm-idem-b-");
+  const projA = makeGitWorkingTree(freshDir("petbox-norm-idem-a-"));
+  const projB = makeGitWorkingTree(freshDir("petbox-norm-idem-b-"));
   try {
     writeRegistry(homeDir, [
       { prefix: projA, project: "idem-a", envVar: "PETBOX_IDEM_A_API_KEY" },
@@ -259,7 +260,7 @@ test("apply --all --roles=user twice: the second run changes nothing, every role
 
 test("apply --dry-run: the number of 'would write' LINES equals the summary's own writes count", () => {
   const homeDir = freshDir("petbox-norm-count-home-");
-  const proj = freshDir("petbox-norm-count-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-count-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "count-a", envVar: "PETBOX_COUNT_A_API_KEY" }]);
 
@@ -312,7 +313,7 @@ test("ledger: the summary and the rendered lines cannot disagree — 'would writ
 
 test("--adopt: an unmarked file at the NAMED path is overwritten; a second one is still refused and the run still exits 1", () => {
   const homeDir = freshDir("petbox-norm-adopt-home-");
-  const proj = freshDir("petbox-norm-adopt-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-adopt-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "adopt-a", envVar: "PETBOX_ADOPT_A_API_KEY" }]);
     const named = plantForeign(
@@ -348,7 +349,7 @@ test("--adopt: an unmarked file at the NAMED path is overwritten; a second one i
 
 test("--adopt: a `petbox: manual` declaration outranks it — the project's own path is never adopted", () => {
   const homeDir = freshDir("petbox-norm-manual-home-");
-  const proj = freshDir("petbox-norm-manual-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-manual-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "adopt-b", envVar: "PETBOX_ADOPT_B_API_KEY" }]);
     const declared = plantForeign(
@@ -368,7 +369,7 @@ test("--adopt: a `petbox: manual` declaration outranks it — the project's own 
 
 test("--adopt: a path apply never considered is reported and fails the run, never a silent exit 0", () => {
   const homeDir = freshDir("petbox-norm-adopt-miss-home-");
-  const proj = freshDir("petbox-norm-adopt-miss-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-adopt-miss-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "adopt-c", envVar: "PETBOX_ADOPT_C_API_KEY" }]);
     const bogus = join(proj, ".claude", "agents", "petbox-nope-typo.md");
@@ -385,7 +386,7 @@ test("--adopt: a path apply never considered is reported and fails the run, neve
 
 test("--adopt: a relative path is refused up front (it would resolve against the wrong directory under --all)", () => {
   const homeDir = freshDir("petbox-norm-adopt-rel-home-");
-  const proj = freshDir("petbox-norm-adopt-rel-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-adopt-rel-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "adopt-d", envVar: "PETBOX_ADOPT_D_API_KEY" }]);
     const run = runWire(["apply", "--offline", "--adopt", ".claude/agents/petbox-worker.md"], homeDir, proj);
@@ -456,7 +457,7 @@ test("gitignore block: spliced into an existing file without disturbing any othe
 
 test("gitignore policy: apply writes the managed block into the project's .gitignore, once", () => {
   const homeDir = freshDir("petbox-norm-gi-home-");
-  const proj = freshDir("petbox-norm-gi-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-gi-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "gi-a", envVar: "PETBOX_GI_A_API_KEY" }]);
     // apply only writes a .gitignore where a git worktree actually is (root resolved `via git`).
@@ -496,7 +497,7 @@ test("gitignore policy: apply writes the managed block into the project's .gitig
 
 test("status --all: reports project role copies and the git state of managed paths, and stays read-only", () => {
   const homeDir = freshDir("petbox-norm-status-home-");
-  const proj = freshDir("petbox-norm-status-proj-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-status-proj-"));
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "st-a", envVar: "PETBOX_ST_A_API_KEY" }]);
     mkdirSync(join(homeDir, ".petbox"), { recursive: true });
