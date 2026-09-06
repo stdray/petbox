@@ -456,9 +456,7 @@ public sealed class MemoryStoreModel : PageModel
 	// it needs an as-of snapshot of both containers, out of proportion to the anomaly.
 	static Comparison<string> CursorSortComparison(MemorySortBy axis) => axis switch
 	{
-		MemorySortBy.Created or MemorySortBy.Updated => static (a, b) =>
-			DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-				.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
+		MemorySortBy.Created or MemorySortBy.Updated => SortKeyComparisons.CompareInstant,
 		_ => throw new ArgumentException($"memory-store: sort axis '{axis}' cannot carry a listing cursor"),
 	};
 }

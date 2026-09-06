@@ -143,8 +143,7 @@ public sealed class SessionStore : ISessionStore
 	static Comparison<string> CursorSortComparison(SessionSortField sort) => sort switch
 	{
 		SessionSortField.Length => SortKeyComparisons.CompareLong,
-		_ => static (a, b) => DateTime.Parse(a, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
-			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
+		_ => SortKeyComparisons.CompareInstant,
 	};
 
 	public async Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default)

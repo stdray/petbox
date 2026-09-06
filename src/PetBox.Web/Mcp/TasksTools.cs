@@ -1291,8 +1291,7 @@ public static class TasksTools
 	{
 		TaskSortBy.Priority => SortKeyComparisons.CompareLong,
 		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
-		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) => DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
+		TaskSortBy.Created or TaskSortBy.Updated => SortKeyComparisons.CompareInstant,
 		// RELEVANCE has no sound scalar comparison (see CursorSortValue): exact-identity hits carry no
 		// score and the statusKind tiering reorders across scores, so "after this score" is simply not
 		// where the next page starts. Advance only reaches this delegate when the boundary row is NO
