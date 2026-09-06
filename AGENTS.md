@@ -265,11 +265,13 @@ history now, while the current plan and status are the boards above.
    `src/clients-ts/petbox-wire/src/default-agents.json` is a GENERATED copy
    (`src/clients-ts/petbox-wire/scripts/sync-default-agents.mjs`, run on
    pretest/pretypecheck/prepack) — never edit it by hand. The server `agent_def`
-   store is being retired in stages (work `layer-resolver` →
-   `wire-stops-fetching-definition` → `agent-defs-server-teardown`, all pending):
-   edit the files, not the server — but until stage 2 lands the wire still resolves
-   via the server (see [doc/agent-wiring.md](doc/agent-wiring.md) §2d), so a file
-   edit alone does not yet change live compiled roles. Do not hand-copy role prose
+   store is GONE (work `layer-resolver` → `wire-stops-fetching-definition` →
+   `agent-defs-server-teardown`, all landed): there is no REST surface, no
+   `agent_def_*` MCP tools, no admin editor and no table, so the files are the only
+   place a role can be edited at all. The one server-side remnant is a CI ratchet
+   (`DefaultAgentDefinition` + `DefaultAgentDefinitionTests`) that parses and
+   validates the shipped `default-agents.json` on every build, so a broken basis goes
+   red here rather than at wire time on someone's machine. Do not hand-copy role prose
    here either; it drifts the moment either side changes (this rule used to quote a
    worker preamble that fell out of sync with the definition — see work
    `agents-md-canon-boundary`). What a spawned subagent actually reads at start is
