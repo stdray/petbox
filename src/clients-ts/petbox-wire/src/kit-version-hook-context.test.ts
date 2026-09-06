@@ -165,6 +165,31 @@ function runHookSync(scriptPath: string, input: string, env: NodeJS.ProcessEnv, 
   return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 }
 
+// A spawnSync failure here is easy to misread as "the kit is broken": `status: 1` reads
+// identically whether wire.ts threw, or bin/petbox-wire.js's own version gate rejected the
+// CHILD's runtime before wire.ts ever started. Those need different fixes, so when the child's
+// stderr matches the gate's own message (bin/petbox-wire.js: "petbox-wire needs Node >= X.Y"),
+// name that explicitly and report what actually ran it: `process.execPath` (the binary this
+// test process spawned the child from — on a real Node run that's a node binary, but under `bun
+// test`/`bun run test` it is bun's own executable answering to the name) and
+// `process.versions.node` (the version string that binary REPORTS as Node — bun fabricates one
+// for its shim, so a passing value here does not prove a real Node process ran; see CI run
+// 34059750660 for a case where the fabricated string differed from the runner's, so a check
+// that passed on a dev machine still failed in CI). Never skip on this mismatch — the failure
+// IS the signal that the job invoking this test needs a pinned Node on PATH.
+function describeSpawnFailure(label: string, res: { status: number | null; stdout: string; stderr: string }): string {
+  const gateHit = /needs Node >= [\d.]+/.exec(res.stderr);
+  const runtimeLine =
+    `spawning process: execPath=${process.execPath} versions.node=${process.versions.node}` +
+    (typeof Bun !== "undefined" ? " (running under bun — process.versions.node is bun's OWN reported string, not proof a real Node process was spawned)" : "");
+  const gateLine = gateHit
+    ? `\nchild hit its own Node-version gate: ${gateHit[0]} (child stderr: ${JSON.stringify(res.stderr.trim())}) — this is the gate in bin/petbox-wire.js rejecting the ACTUAL runtime the spawning process handed it, not a bug in the kit under test.`
+    : `\nchild stderr: ${JSON.stringify(res.stderr.trim())}`;
+  return `${label} failed: exit status ${res.status}\n${runtimeLine}${gateLine}\nchild stdout: ${JSON.stringify(res.stdout.trim())}`;
+}
+
+declare const Bun: unknown;
+
 test("real `wire.ts update` writes the kit-version stamp, and pull-memory.ts / droid-pull-memory.ts spawned from that real mirror carry a non-\"unknown\" kit identifier in the SessionStart banner", async () => {
   const homeDir = freshDir("petbox-kv-update-home-");
   const { close, port } = await startFastFakeCanonServer();
@@ -255,7 +280,11 @@ test(
       // Step 1: the real `npx petbox-wire update` shape — via bin/petbox-wire.js, not wire.ts
       // directly (this is exactly what test 3 above does NOT reproduce).
       const update = spawnSync(process.execPath, [binPath, "update"], { env: homeEnv, encoding: "utf8" });
-      assert.equal(update.status, 0, `bin/petbox-wire.js update failed: ${update.stderr}\n${update.stdout}`);
+      assert.equal(
+        update.status,
+        0,
+        describeSpawnFailure("real bin/petbox-wire.js update", { status: update.status, stdout: update.stdout ?? "", stderr: update.stderr ?? "" }),
+      );
 
       const siblingStampPath = join(homeDir, ".petbox", "kit-version.json");
       const mirrorStampPath = join(homeDir, ".petbox", "wire", "kit-version.json");
