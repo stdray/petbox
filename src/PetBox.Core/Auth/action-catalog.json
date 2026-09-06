@@ -950,59 +950,6 @@
 			"note": null
 		},
 		{
-			"id": "agent-defs.read",
-			"source": "08-summary §1 #47",
-			"subdomain": "agent-defs",
-			"action": "читать (list/get)",
-			"target": "project",
-			"targetNote": null,
-			"targetSource": null,
-			"surfaces": [
-				"mcp:agent_def_list",
-				"mcp:agent_def_get",
-				"rest:GET /api/{projectKey}/agent-defs",
-				"rest:GET /api/{projectKey}/agent-defs/{key}",
-				"page:/Admin/ProjectAgentDefs"
-			],
-			"bg": [],
-			"internal": [],
-			"note": null
-		},
-		{
-			"id": "agent-defs.upsert",
-			"source": "08-summary §1 #48",
-			"subdomain": "agent-defs",
-			"action": "сохранить (CAS, full replace)",
-			"target": "project",
-			"targetNote": null,
-			"targetSource": null,
-			"surfaces": [
-				"mcp:agent_def_upsert",
-				"rest:PUT /api/{projectKey}/agent-defs/{key}",
-				"page:/Admin/ProjectAgentDefs"
-			],
-			"bg": [],
-			"internal": [],
-			"note": null
-		},
-		{
-			"id": "agent-defs.delete",
-			"source": "08-summary §1 #49",
-			"subdomain": "agent-defs",
-			"action": "удалить (soft-close)",
-			"target": "project",
-			"targetNote": null,
-			"targetSource": null,
-			"surfaces": [
-				"mcp:agent_def_delete",
-				"rest:DELETE /api/{projectKey}/agent-defs/{key}",
-				"page:/Admin/ProjectAgentDefs"
-			],
-			"bg": [],
-			"internal": [],
-			"note": null
-		},
-		{
 			"id": "logs.list",
 			"source": "08-summary §1 #50",
 			"subdomain": "logs",

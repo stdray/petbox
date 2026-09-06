@@ -57,7 +57,6 @@ static class McpToolScopeFilter
 		: tool.StartsWith("log_", StringComparison.Ordinal) ? "logs"
 		: tool.StartsWith("data_", StringComparison.Ordinal) || tool.StartsWith("db_", StringComparison.Ordinal) ? "data"
 		: tool.StartsWith("deploy_", StringComparison.Ordinal) ? "deploy"
-		: tool.StartsWith("agent_def_", StringComparison.Ordinal) ? "agents"
 		// config_binding_* are ordinary TENANT verbs (config:read / config:write over the workspace named
 		// by `workspaceKey`), so they get a module of their own like every other family. They used to map
 		// to the literal admin:provision, which matched the gate they had then — and hid them from a key

@@ -259,7 +259,7 @@ public sealed record LogDeletedResult(bool Deleted, string Name);
 // `Revoked` is always true on the success path — the failure path is an {error} envelope
 // ("share link not found"), the same indistinguishable answer the REST twin's 404 gives an unknown,
 // an already-revoked and a foreign-tenant token alike. The field is kept rather than returning a bare
-// token so the shape matches the other lifecycle acks (LogDeletedResult, AgentDefDeleteResult) an
+// token so the shape matches the other lifecycle acks (LogDeletedResult, deploy_delete's) an
 // agent already parses. `Token` echoes what was revoked, so a batch of calls is attributable.
 public sealed record ShareRevokedResult(bool Revoked, string Token);
 
@@ -1110,35 +1110,3 @@ public sealed record ToolDescribeResult(
 	string? Description,
 	string InputSchema,
 	string? OutputSchema);
-
-// ---- agent_def_* (portable agent-definition store) -----------------------------------
-
-public sealed record AgentDefListResult(IReadOnlyList<AgentDefListItemView> Definitions);
-public sealed record AgentDefListItemView(string Key, string Name, long Version, DateTime Updated);
-
-// agent_def_get answer. NO `found` field (mcp-surface-naming-cleanup wave 5): this verb used to be
-// the ONE addressed read on the surface that answered a miss with found:false while every other one
-// — tasks_node_get, tasks_methodology_template_get/_rules_get/_utility_get, the instance get —
-// threw. Two dialects for one situation is a thing every caller has to learn twice and one of them
-// gets wrong; the miss is now an error here too, naming the key and the project.
-public sealed record AgentDefGetResult(
-	string? Key = null,
-	string? Name = null,
-	IReadOnlyList<AgentDefRoleView>? Roles = null,
-	long? Version = null,
-	DateTime? Created = null,
-	DateTime? Updated = null);
-
-public sealed record AgentDefRoleView(
-	string Slug,
-	string Tier,
-	IReadOnlyList<string> RequiredCapabilities,
-	AgentDefSpawnView? Spawn = null,
-	AgentDefEscalationView? Escalation = null,
-	string? Notes = null);
-
-public sealed record AgentDefSpawnView(bool Allowed, IReadOnlyList<string>? AllowedRoles = null);
-public sealed record AgentDefEscalationView(bool Available, IReadOnlyList<string>? Targets = null);
-
-public sealed record AgentDefUpsertResult(string Key, long Version, bool Changed);
-public sealed record AgentDefDeleteResult(string Key, bool Deleted, long Version);

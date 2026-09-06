@@ -46,7 +46,7 @@ public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 	const string Scopes =
 		"config:read,config:write,logs:ingest,logs:query,logs:admin,health:read,health:write," +
 		"data:read,data:write,data:schema,tasks:read,tasks:write,memory:read,memory:write," +
-		"llm:invoke,llm:admin,deploy:read,deploy:write,agent:poll,agent:heartbeat,agents:read,agents:write,admin:provision";
+		"llm:invoke,llm:admin,deploy:read,deploy:write,agent:poll,agent:heartbeat,admin:provision";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;
@@ -244,24 +244,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		await Ok(failures, "session_upsert", new { projectKey = ProjectKey, sessionId = "s1", agent = "claude-code", content = "# plan" });
 		await Ok(failures, "log_create", new { projectKey = ProjectKey, logName = "audit" });
 		await Ok(failures, "log_update", new { projectKey = ProjectKey, logName = "audit", retentionDays = 14 });
-		// Portable agent definitions (agent-definition-as-data) — seed + list/get.
-		await Ok(failures, "agent_def_upsert", new
-		{
-			projectKey = ProjectKey,
-			key = "default",
-			version = 0,
-			definition = new
-			{
-				name = "default",
-				roles = new[]
-				{
-					new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() },
-				},
-			},
-		});
-		await Ok(failures, "agent_def_list", new { projectKey = ProjectKey });
-		await Ok(failures, "agent_def_get", new { projectKey = ProjectKey, key = "default" });
-
 		// comments_upsert batch: a create item, then thread its id + currentVersion into a patch,
 		// a get, a search and a delta (uniform-entity-verbs matrix).
 		var created = await Call("comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { node = "a", author = "tester", body = "first" } } });
@@ -364,10 +346,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_delete", new { projectKey = ProjectKey, board = "no-such-board" }),
 			// deleting a template that never existed: conformant {deleted:false} no-op.
 			("tasks_methodology_template_delete", new { projectKey = ProjectKey, key = "no-such-tmpl" }),
-			// agent_def_get miss → isError, same as every other addressed read (wave 5 of
-			// mcp-surface-naming-cleanup retired its found:false dialect); delete miss → deleted:false.
-			("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def" }),
-			("agent_def_delete", new { projectKey = ProjectKey, key = "no-such-def" }),
 			// share_revoke on a token that never existed: the SAME {error} a foreign-tenant token gets
 			// (ShareTools deliberately collapses the two so the verb is not an existence oracle).
 			("share_revoke", new { projectKey = ProjectKey, token = "no-such-share-token" }),
@@ -381,15 +359,13 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	// 4. INPUT-SCHEMA HONESTY — every raw-JSON payload parameter (a `JsonElement` arg: no CLR
 	// shape, so the exporter emits the boolean schema `true`) must DECLARE its JSON type. Without
 	// it a strict client has nothing to bind to and sends the payload double-encoded as a string:
-	// agent_def_upsert was uncallable over MCP for exactly this reason (intake
+	// the now-retired agent_def_upsert was uncallable over MCP for exactly this reason (intake
 	// mcp-agent-def-upsert-definition-param-untyped). [McpJsonShape] + the schema transform in
 	// McpOutputSchema stamp the type; this locks it for every raw-payload param on the surface.
 	//
-	// agent_def_upsert is NO LONGER one of them. [McpJsonShape("object")] was only ever half a
-	// contract — it stamps "type":"object" and leaves the document's real structure in prose — so
-	// work/agent-def-upsert-typed-and-merge-by-role replaced its `definition` blob with a typed
-	// nested record (spec/typed-mcp-inputs: «голый JsonElement запрещён»). Its schema is now pinned,
-	// per field and at every depth, in Mcp/AgentDefUpsertMergeTests.
+	// That verb is gone (work agent-defs-server-teardown), and the lesson it paid for is not: a
+	// typeless payload parameter is a client-visible defect, and every one that remains declares
+	// its shape here.
 	[Theory]
 	[InlineData("llm_config_upsert", "config", "object")]
 	[InlineData("llm_embed", "inputs", "array")]
@@ -411,61 +387,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			? string.Join(",", type.EnumerateArray().Select(t => t.GetString()))
 			: type.GetString();
 		actual.Should().Be(expected);
-	}
-
-	// The tolerant JSON-STRING form of `definition` is GONE, and could not have stayed: the
-	// implementation note on spec/typed-mcp-inputs says tolerant-parse of a JSON string is MUTUALLY
-	// EXCLUSIVE with a typed schema at the SDK binding layer — the SDK deserializes a typed
-	// parameter before the tool body ever runs, so there is no seam left to be tolerant in. Nor is
-	// it wanted: strict clients sent the document as a string precisely BECAUSE the parameter had no
-	// type, so typing removes the cause the tolerance was compensating for. This test pins that the
-	// double-encoded form now fails LOUDLY (an {error} a caller can act on), never silently.
-	[Fact]
-	public async Task AgentDefUpsert_DoubleEncodedDefinition_FailsLoudly_NotSilently()
-	{
-		var asString = await Call("agent_def_upsert", new
-		{
-			projectKey = ProjectKey,
-			key = "stale-client",
-			version = 0,
-			definition = JsonSerializer.Serialize(new
-			{
-				name = "stale-client",
-				roles = new[] { new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() } },
-			}),
-		});
-
-		asString.IsError.Should().BeTrue(
-			"a stale-schema client double-encoding the document must be TOLD, not silently ignored: " + Text(asString));
-
-		// And the write did not half-land: the key stores nothing.
-		var miss = await Call("agent_def_get", new { projectKey = ProjectKey, key = "stale-client" });
-		miss.IsError.Should().BeTrue();
-	}
-
-	// mcp-surface-naming-cleanup wave 5, task 2 — ONE contract for a missed addressed read.
-	//
-	// agent_def_get was the last verb on the surface answering a miss with `found:false` while
-	// tasks_node_get and every methodology get THREW. Two dialects for one situation is a thing
-	// each caller learns twice and half of them get wrong: the found:false answer is a SUCCESS
-	// carrying a document of nulls, so a caller that forgets the check reads the miss as data.
-	// The edge battery above only asserts the weaker "isError OR conforms" property, which passed
-	// under BOTH dialects — this test is the one that pins which of the two is live.
-	[Fact]
-	public async Task AgentDefGet_Miss_IsAnError_NamingTheKeyAndProject_NotAFoundFalseSuccess()
-	{
-		var miss = await Call("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def-at-all" });
-
-		miss.IsError.Should().BeTrue("an addressed read that resolves nothing is an error, not an empty success");
-		var message = JsonDocument.Parse(Text(miss)).RootElement.GetProperty("error").GetProperty("message").GetString();
-		message.Should().Contain("no-such-def-at-all").And.Contain(ProjectKey);
-
-		// And the dead field is gone from the published output schema, so no client can be written
-		// against it: `found` could only ever have been true once the miss branch started throwing.
-		var output = _tools["agent_def_get"].ProtocolTool.OutputSchema;
-		output.Should().NotBeNull();
-		output!.Value.GetProperty("properties").EnumerateObject().Select(p => p.Name)
-			.Should().NotContain("found");
 	}
 
 	// workspace-curation-assertproject-bug (bonus finding). The card suspected store_delete /
@@ -504,7 +425,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"config_binding_get", "log_list", "log_query",
 		"health_search", "deploy_list", "deploy_node_list", "project_list", "relations_list",
 		"llm_config_get", "apikey_list", "db_list", "whoami", "tool_describe",
-		"agent_def_upsert", "agent_def_list", "agent_def_get",
 		"petbox_report_issue_status",
 	};
 
@@ -514,7 +434,6 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"session_delete", "memory_store_delete", "log_delete", "relations_delete", "comments_delete",
 		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete",
 		"tasks_methodology_template_delete",
-		"agent_def_get", "agent_def_delete",
 		"share_revoke",
 	};
 

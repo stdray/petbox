@@ -598,9 +598,9 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 	// ── wave 5, task 2: ONE contract for a missed addressed read ──────────────────────────────
 	//
-	// A key that addresses nothing is an ERROR, never an empty success. (agent_def_get was the one
-	// verb that answered found:false instead; it is pinned in McpOutputSchemaConformanceTests,
-	// whose fixture is the one that hosts the agent_def_* family.)
+	// A key that addresses nothing is an ERROR, never an empty success. (agent_def_get was the last
+	// verb answering found:false instead; wave 5 converted it and work agent-defs-server-teardown
+	// later removed it outright, so the surface has one dialect and no exception to it.)
 	[Theory]
 	[InlineData("tasks_methodology_get")]
 	[InlineData("tasks_methodology_rules_get")]

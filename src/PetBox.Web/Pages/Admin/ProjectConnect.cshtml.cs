@@ -35,17 +35,15 @@ public sealed class ProjectConnectModel : PageModel
 
 	// Scopes pre-checked for an agent that uses Tasks/Memory/Sessions. Sessions
 	// ride on the tasks:* scopes (no dedicated sessions scope) — see SessionTools.
-	// agents:read is REQUIRED, not optional: agent-definition-as-data promises every kit that
-	// fetches its role/tier/spawn/escalation doc from the server (petbox-wire apply, the
-	// SessionStart hook fetch) actually gets the server's version. Without this scope, both
-	// callers 403 and fall back to the built-in DEFAULT_AGENT_DEFINITION SILENTLY (agent-def-fetch.ts
-	// swallows the failure in a bare catch {}) — a new tester would run on the kit's baked-in
-	// default and never know the server-side definition existed (agent-key-scopes-miss-agents-read).
+	//
+	// `agents:read` USED to be here, because the kit fetched its role/tier/spawn/escalation document
+	// from the server and 403'd into a silent fallback without it. It is gone with the scope itself
+	// (work agent-defs-server-teardown): the definition is now built from files on disk, so a key
+	// needs nothing to wire an agent up.
 	public static readonly IReadOnlyList<string> AgentDefaultScopes =
 	[
 		ApiKeyScopes.TasksRead, ApiKeyScopes.TasksWrite,
 		ApiKeyScopes.MemoryRead, ApiKeyScopes.MemoryWrite,
-		ApiKeyScopes.AgentsRead,
 	];
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.

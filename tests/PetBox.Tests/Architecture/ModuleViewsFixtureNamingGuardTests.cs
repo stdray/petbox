@@ -4,13 +4,14 @@ namespace PetBox.Tests.Architecture;
 
 // THE NAMING-CONVENTION GUARD for ModuleViewsFixture — work "test-suite-improvements-2607" pt. 3.
 //
-// ModuleViewsFixture (Web/ModuleViewsTests.cs) is consumed via IClassFixture by FOUR test classes —
-// ModuleViewsTests (70 facts), MethodologyEditorViewsTests (21), AgentDefsAdminPageTests (16),
-// MemoryStoreCostFitViewTests (2): 109 facts total. xUnit gives each class its OWN fixture instance
+// ModuleViewsFixture (Web/ModuleViewsTests.cs) is consumed via IClassFixture by THREE test classes —
+// ModuleViewsTests, MethodologyEditorViewsTests and MemoryStoreCostFitViewTests. (A fourth,
+// AgentDefsAdminPageTests, was deleted with the admin agent-definition editor it covered — work
+// agent-defs-server-teardown.) xUnit gives each class its OWN fixture instance
 // (its own temp SQLite db, its own WebApplicationFactory — see the "Own ModuleViewsFixture instance"
-// comments in the latter three files), so there is no runtime reset to add between classes. What
-// actually holds the 109 facts together is a WRITTEN-DOWN rule, and it lives in exactly ONE of the
-// four files (ModuleViewsTests.cs's fixture header): "the class only ADDS distinctly-named
+// comments in the latter two files), so there is no runtime reset to add between classes. What
+// actually holds those facts together is a WRITTEN-DOWN rule, and it lives in exactly ONE of the
+// three files (ModuleViewsTests.cs's fixture header): "the class only ADDS distinctly-named
 // containers ... every assertion is Contains/NotContain on names no other test touches —
 // accumulated state is invisible across tests." Nothing enforced "distinctly-named" before this
 // guard — a new test that copies a board/store/project/instance/session literal already claimed by
@@ -27,27 +28,26 @@ namespace PetBox.Tests.Architecture;
 // SandboxContainmentCallSiteGuardTests — three humans counted the MCP surface and got three
 // different wrong numbers). A regex sweep does not get tired on test 87.
 //
-// WHY A TEXT SCAN AND NOT A SHARED GENERATOR: rewriting 109 tests' literals to call a generator
+// WHY A TEXT SCAN AND NOT A SHARED GENERATOR: rewriting every consumer's literals to call a generator
 // would touch every assertion that echoes the name back (`html.Should().Contain("data-board-name=
 // ...")`, URL string interpolation, cross-reference literals like "instance:{source}:classic"), to
 // guard against a mistake only the NEXT test can make. A guard that fails a NEW collision costs one
-// new file and zero churn on the 109 that already follow the rule; a generator costs touching all of
-// them for the same guarantee, and the resulting names ("board-3f2a1c") would make failures harder
+// new file and zero churn on the tests that already follow the rule; a generator costs touching all
+// of them for the same guarantee, and the resulting names ("board-3f2a1c") would make failures harder
 // to read, not easier. Naive by design, same tradeoff as the other text-scan guards in this folder —
 // a guardrail against an honest next test, not a lexer defending against someone determined to evade
 // it.
 public sealed class ModuleViewsFixtureNamingGuardTests
 {
-	// The four ModuleViewsFixture consumers, relative to the tests project root.
+	// The ModuleViewsFixture consumers, relative to the tests project root.
 	static readonly string[] ConsumerFiles =
 	[
 		"Web/ModuleViewsTests.cs",
 		"Web/MethodologyEditorViewsTests.cs",
-		"Web/AgentDefsAdminPageTests.cs",
 		"Web/MemoryStoreCostFitViewTests.cs",
 	];
 
-	// Every local identifier NAME under which these four files currently declare an entity-name
+	// Every local identifier NAME under which these files currently declare an entity-name
 	// literal: task board keys (`board`; `spec`/`work` in ModuleViewsTests'
 	// SpecNodeDetail_HidesNonTerminalStatus_... , named after the board KIND rather than the generic
 	// `board`), a methodology-instance key (`instance`), a memory-store key (`store`), a project key
@@ -136,10 +136,10 @@ public sealed class ModuleViewsFixtureNamingGuardTests
 	public void TheSweep_ActuallySeesTheKnownFiles()
 	{
 		var occurrences = Sweep();
-		occurrences.Should().HaveCountGreaterThan(50,
-			"the four ModuleViewsFixture consumers currently declare ~60 entity-name literals between "
-			+ "them — a much lower count means the sweep stopped reading one of the files or the pattern "
-			+ "stopped matching, not that the tree got smaller");
+		occurrences.Should().HaveCountGreaterThan(40,
+			"the ModuleViewsFixture consumers currently declare ~49 entity-name literals between "
+			+ "them, 38 of them in ModuleViewsTests.cs alone — a much lower count means the sweep stopped "
+			+ "reading one of the files or the pattern stopped matching, not that the tree got smaller");
 
 		foreach (var rel in ConsumerFiles)
 			occurrences.Should().Contain(o => o.File == rel,

@@ -192,8 +192,6 @@ public partial class Program
 		// (CaptiveDependencyTests fails the build on one). Stateless, so a per-request instance costs
 		// nothing.
 		builder.Services.AddScoped<ITenantAuthorizer, TenantAuthorizer>();
-		// Portable agent-definition store (Core DB, always on — no feature flag).
-		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
 		// Write door to the append-only HealthReports table, for the push endpoint (POST /api/health):
 		// the handler is pipeline code and does not open core.db itself.
 		// Log dbs live under data/logs/** — the one subtree Backup deliberately skips
@@ -502,9 +500,6 @@ public partial class Program
 		// Deliberately still OPEN: an open `Dictionary<,>` member (tasks_upsert `nodes[].links`, keyed
 		// by relation kind) and a `JsonElement` parameter (llm_config_upsert `config`) — neither has
 		// a closed member set, so neither is affected. Measured, not assumed: Mcp/UnmappedMemberStrictnessTests.
-		// (agent_def_upsert `definition` was the JsonElement witness here until
-		// work/agent-def-upsert-typed-and-merge-by-role typed it; it is now policed like any other
-		// typed payload, which is the point of that card.)
 		// Side effect, wanted: the generated schemas gain `additionalProperties:false` on closed object
 		// nodes, so a strict client catches the same mistake before the call leaves.
 		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
@@ -894,13 +889,7 @@ public partial class Program
 		// branch with an IMemoryService/MemoryDb door in the same file (see
 		// SandboxContainmentCallSiteGuardTests).
 		builder.Services.AddScoped<PetBox.Web.Memory.IProjectCanonSeeder, PetBox.Web.Memory.ProjectCanonSeeder>();
-		// The agent-roster twin of the canon seed (work seed-agent-def-on-project-create):
-		// ProjectDirectory.CreateAsync rents this per project creation to write the `default`
-		// definition, so a new project's AUTHORITATIVE store is populated instead of empty.
-		// Scoped like the IAgentDefinitionService it wraps — never a direct dependency of the
-		// Singleton ProjectDirectory (CaptiveDependencyTests).
-		builder.Services.AddScoped<PetBox.Web.AgentDefs.IProjectAgentDefSeeder, PetBox.Web.AgentDefs.ProjectAgentDefSeeder>();
-		// The observations-board twin of the two seeds above (work observation-kind-and-dedup):
+		// The observations-board twin of the canon seed (work observation-kind-and-dedup):
 		// ProjectDirectory.CreateAsync rents this per project creation so the system `observations`
 		// board exists without a manual tasks_board_create/tasks_methodology_utility_upsert step.
 		// Scoped like the ITasksService it wraps.
@@ -1540,9 +1529,6 @@ public partial class Program
 			// mapped over there and whose behaviour for log tokens is unchanged.
 			PetBox.Web.Tasks.NodeShareApi.MapNodeShareEndpoints(app);
 		}
-
-		// Portable agent-definition store (Core DB; always on — no feature flag).
-		PetBox.Web.AgentDefs.AgentDefsApi.MapAgentDefsEndpoints(app);
 
 		// Agent memory canon read surface (the wiring hooks pull it at session start).
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Memory))

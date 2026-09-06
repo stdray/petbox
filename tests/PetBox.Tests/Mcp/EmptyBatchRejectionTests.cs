@@ -245,12 +245,12 @@ public sealed class EmptyBatchRejectionTests : IClassFixture<EmptyBatchRejection
 		["relations_create"] = "items",
 	};
 
-	// NOT a guarded verb, and deliberately not listed above: agent_def_upsert's batch is
-	// `definition.roles`, one level DOWN inside an object parameter, so the discovery walk below —
-	// which looks for a TOP-LEVEL array-of-objects — never sees it, and the reverse check
-	// ("still matches the heuristic") would fail on a hand-added entry. Its empty-batch refusal is
-	// live-tested in Mcp/AgentDefUpsertMergeTests.EmptyRolesBatch_IsRefused instead. The blind spot
-	// is real but general (any nested batch array), so it is filed rather than patched here.
+	// A KNOWN BLIND SPOT of the discovery walk below: it looks for a TOP-LEVEL array-of-objects, so
+	// a batch nested one level down inside an object parameter is invisible to it and the reverse
+	// check ("still matches the heuristic") would fail on a hand-added entry. agent_def_upsert's
+	// `definition.roles` was the live example until that verb was removed with the agent-definition
+	// store (work agent-defs-server-teardown); the gap itself is general and outlives the example,
+	// so it stays written down rather than being forgotten with the verb that showed it.
 	static readonly IReadOnlyDictionary<string, string> ExemptedVerbs = new Dictionary<string, string>
 	{
 		// The one deliberate exception (documented on the tool itself): a batch filtered down to

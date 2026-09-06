@@ -70,9 +70,6 @@ public static class ApiKeyScopes
 	public const string DeployWrite = "deploy:write";
 	public const string AgentPoll = "agent:poll";
 	public const string AgentHeartbeat = "agent:heartbeat";
-	// Portable agent-definition store (NOT the deploy node-agent poll/heartbeat pair).
-	public const string AgentsRead = "agents:read";
-	public const string AgentsWrite = "agents:write";
 	public const string AdminProvision = "admin:provision";
 
 	public static readonly IReadOnlyList<ApiKeyScope> All =
@@ -109,8 +106,6 @@ public static class ApiKeyScopes
 		// minted by MintNodeKeyAsync (the enroll/rotate path), which never takes caller-chosen scopes.
 		new(AgentPoll,   "Agent: poll desired state", "FLEET-WIDE node-agent scope: GET /agent/poll reads a NODE's assigned deployments (the node comes from the key's own claim, not from a tenant) — including other projects' resolved container env. Issued automatically on node keys; not a tenant scope.", "Deploy", ScopeAuthority.Privileged),
 		new(AgentHeartbeat, "Agent: report state", "FLEET-WIDE node-agent scope: POST /agent/heartbeat reports a NODE's actual container state (the node comes from the key's own claim, not from a tenant). Issued automatically on node keys; not a tenant scope.", "Deploy", ScopeAuthority.Privileged),
-		new(AgentsRead,  "Read agent definitions", "List/get portable agent-definition documents (roles/tier/capabilities/spawn/escalation) via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
-		new(AgentsWrite, "Write agent definitions","Create/update/delete portable agent-definition documents via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
 		// PRIVILEGED — the root-equivalent one. ApiKeyTools and ProjectTools are
 		// [TenantExempt(Provisioning)]: this scope mints keys into ANY project (itself included),
 		// so holding it is holding every other scope in every tenant. ConfigTools was on that list
