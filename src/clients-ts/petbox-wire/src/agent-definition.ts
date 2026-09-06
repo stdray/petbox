@@ -106,14 +106,40 @@ export const DEFAULT_AGENT_DEFINITION_PATH = join(import.meta.dirname, "default-
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = loadDefaultAgentDefinition();
 
 /**
- * This package's own `package.json` version (e.g. "0.1.0-ci.2197") — a LABEL for
- * DEFAULT_AGENT_DEFINITION in apply/status output ("kit baseline v0.1.0-ci.2197"), never a
- * definition version number (the JSON document above carries no `version` field of its own; that
- * concept belonged to the server envelope this kit no longer fetches for user-scope roles — card
- * user-scope-roles-rendered-from-cwd-project-definition). Best-effort: package.json is always
- * present in a real install (npm ships it unconditionally, independent of the `files`
- * allowlist), so this degrading to "unknown" instead of throwing is a belt-and-suspenders
- * fallback, not an expected path.
+ * This package's delivery identifier (e.g. "0.1.0-ci.2197", or "0.0.0+5991098e2824" — see
+ * below) — a LABEL for DEFAULT_AGENT_DEFINITION in apply/status/SessionStart output ("kit
+ * baseline v0.1.0-ci.2197"), never a definition version number (the JSON document above carries
+ * no `version` field of its own; that concept belonged to the server envelope this kit no longer
+ * fetches for user-scope roles — card user-scope-roles-rendered-from-cwd-project-definition).
+ *
+ * TWO sources, tried in order (card kit-version-unknown-inside-hooks):
+ *
+ *   1. `../package.json` (this module's own directory's parent). Present in a real install
+ *      (npx cache, or a checkout) and in a running `npx petbox-wire`/`wire.ts` invocation — HERE
+ *      always sits next to package.json there. Absent for a HOOK: pull-memory.ts /
+ *      droid-pull-memory.ts / opencode-plugin.ts all run from the STABLE mirror
+ *      (~/.petbox/wire/), and copyKitToStable (wire.ts) copies only HERE (this src/ dir) into
+ *      it, never the sibling package.json — so `../package.json` from a hook's
+ *      import.meta.dirname resolves to ~/.petbox/package.json, which does not exist.
+ *   2. `../kit-version.json` — a delivery STAMP wire.ts's copyKitToStable writes next to (not
+ *      inside) the mirror, specifically so a hook can find it by the exact same `..` resolution
+ *      that just missed package.json: from ~/.petbox/wire/, `..` is ~/.petbox either way. Not
+ *      inside the mirror because pruneStaleMirrorEntries deletes anything under STABLE that HERE
+ *      does not also ship — a stamp living there would be wiped and rewritten every run.
+ *
+ * The stamp's `version` is paired with its `kitHash` (`${version}+${kitHash}`, semver
+ * build-metadata syntax) whenever both are present, NOT bare version alone: this package's
+ * checked-in package.json version is permanently "0.0.0" (CI only stamps the real semver on
+ * publish, via GitVersion, without committing it — build.cs's TsWirePack), so a checkout-sourced
+ * kit's bare version never changes between real code changes and cannot tell one generation of
+ * shipped prose from another. The hash (already computed for `update`'s own before/after log)
+ * changes on every content change regardless of version, which is what makes the label
+ * MEANINGFUL rather than merely non-empty — the actual defect this card reports (a blind
+ * provenance line is worse than a merely uninformative one, since nothing then contradicts it).
+ *
+ * Best-effort at every step: a missing/corrupt package.json falls through to the stamp; a
+ * missing/corrupt stamp falls through to "unknown" — same soft degradation as before this card,
+ * never a throw. A hook must never fail or noticeably slow down over a label.
  */
 export const KIT_VERSION: string = loadKitVersion();
 
@@ -121,10 +147,22 @@ function loadKitVersion(): string {
   try {
     const raw = readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8");
     const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : "unknown";
+    if (typeof parsed.version === "string" && parsed.version.trim()) return parsed.version.trim();
   } catch {
-    return "unknown";
+    // no package.json next to HERE — expected in hook context (STABLE mirror); fall through.
   }
+  try {
+    const raw = readFileSync(join(import.meta.dirname, "..", "kit-version.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown; kitHash?: unknown };
+    const version = typeof parsed.version === "string" ? parsed.version.trim() : "";
+    const kitHash = typeof parsed.kitHash === "string" ? parsed.kitHash.trim() : "";
+    if (version && kitHash) return `${version}+${kitHash}`;
+    if (version) return version;
+  } catch {
+    // no stamp either — e.g. this mirror predates the fix, or `update`/full wire never ran
+    // since. Degrade the same way loadKitVersion always has: "unknown", never a throw.
+  }
+  return "unknown";
 }
 
 function loadDefaultAgentDefinition(): AgentDefinition {
