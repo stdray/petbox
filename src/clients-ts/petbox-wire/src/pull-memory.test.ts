@@ -9,8 +9,10 @@
 //
 // This test spawns the REAL pull-memory.ts / droid-pull-memory.ts files as child processes,
 // pointed (via an isolated HOME so the real ~/.petbox/projects.json is never touched) at a
-// throwaway local HTTP server that answers both endpoints the hook calls (agent-defs, canon)
-// as fast as a loopback socket allows. Against a server that is NOT slow, the hook's own
+// throwaway local HTTP server that answers the ONE endpoint the hook still calls (canon)
+// as fast as a loopback socket allows. The definition leg used to be a second fetch here; after
+// card wire-stops-fetching-definition it is a local file cascade with no network at all, which
+// is itself part of what keeps this wall clock small. Against a server that is NOT slow, the hook's own
 // wall-clock overhead must stay small and CONSTANT — if a future change reintroduces an
 // uncleared timer or an unreffed-too-late handle, this is the test that catches it (a real
 // remote server's occasional slowness is a separate, already-covered concern — see this
@@ -60,17 +62,12 @@ function runHook(
   });
 }
 
-// A throwaway local server that answers both hook-called endpoints immediately: 404 for the
-// agent-def (so the hook falls to its built-in DEFAULT — no LKG cache involved, keeps the
-// fixture simple) and 200 with an empty canon (so no canon block is appended). Neither path
-// exercises the LKG cache; that is deliberate — this test is about wall clock, not content.
+// A throwaway local server that answers the one hook-called endpoint immediately: 200 with an
+// empty canon, so no canon block is appended. Content is deliberately uninteresting — this test
+// is about wall clock.
 function startFastFakeServer(): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      if (req.url?.includes("/agent-defs/")) {
-        res.writeHead(404, { "Content-Type": "application/json" }).end("{}");
-        return;
-      }
       if (req.url?.includes("/memory/") && req.url?.includes("/canon")) {
         res
           .writeHead(200, { "Content-Type": "application/json" })
@@ -97,10 +94,6 @@ function startFatCanonFakeServer(): Promise<{ port: number; close: () => Promise
   return new Promise((resolve) => {
     const fatBody = "canon-line ".repeat(5000); // ~55KB — far past any reasonable budget
     const server = http.createServer((req, res) => {
-      if (req.url?.includes("/agent-defs/")) {
-        res.writeHead(404, { "Content-Type": "application/json" }).end("{}");
-        return;
-      }
       if (req.url?.includes("/memory/") && req.url?.includes("/canon")) {
         res
           .writeHead(200, { "Content-Type": "application/json" })

@@ -3,32 +3,28 @@
 // Measured 2026-09-02: the SAME `apply --all --dry-run` reported "using server definition
 // default v20" from $system and "default v1" from pochtar — user-scope role rendering resolved
 // its definition against `process.cwd()`'s registered project, so a run from the wrong directory
-// silently downgraded the whole machine profile to whichever project's server document happened
-// to be current there. The fix: user-scope roles now render from DEFAULT_AGENT_DEFINITION (the
-// kit's own bundled baseline, agent-definition.ts) — never from any project's server document,
-// never from the registry, never from the network — so cwd (and which projects are registered,
-// and what THEIR servers say) cannot affect the result at all.
+// silently downgraded the whole machine profile to whichever project's document happened to be
+// current there. The property that fixed it: the 15 user-scope files are a MACHINE fact and must
+// render from MACHINE-WIDE inputs only.
 //
-// This test reproduces the exact bug shape: two registered projects, each backed by ITS OWN fake
-// PetBox server serving a DIFFERENT agent-definition document at a different version (v20 vs v1,
-// same as the live numbers the card measured) — WITHOUT --offline, so a live fetch is actually
-// attempted for whichever code path still makes one. Before the fix this test would have failed:
-// the two runs would have produced different role files (or at least tried to), and the "v1"
-// project's run would have downgraded a machine profile already rendered from "v20". After the
-// fix, neither server is ever contacted for the roles:user step, and both runs produce
-// byte-identical files.
+// That property survived stage 2 of wire-stops-fetching-definition; only its subject changed.
+// There is no server document to leak in any more — the definition is a file cascade — but there
+// IS still a per-directory layer in it: `<root>/.petbox/agents`. So the cwd-dependence this card
+// closed has a live mechanism again, and this file tests exactly that mechanism instead of the
+// retired one. `apply --roles=user` resolves base < user (definition-source.ts's
+// resolveUserScopeDefinition) and must never let a PROJECT layer reach a profile file.
+//
+// The setup mirrors the original shape one-for-one: two directories, each carrying its OWN
+// definition input that says something recognizable, run WITHOUT --offline, byte-compared.
 //
 // Run: node --test src/roles-user-cwd-independent.test.ts
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { AgentDefinition } from "./agent-definition.ts";
 import { DEFAULT_AGENT_DEFINITION, KIT_VERSION } from "./agent-definition.ts";
 import { planApply } from "./apply-artifacts.ts";
 import { DEFAULT_ROLE_MODEL_SEED } from "./roles.ts";
@@ -41,74 +37,26 @@ function freshDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
-/** A DIFFERENT, richer-looking definition than the kit baseline — just different `notes`, same
- * roster shape — so a byte comparison against DEFAULT_AGENT_DEFINITION's render is meaningful:
- * if either project's server document had leaked into the rendered files, this text would show
- * up in them. */
-function serverDefinitionNamed(label: string): AgentDefinition {
-  return {
-    name: "default",
-    roles: DEFAULT_AGENT_DEFINITION.roles.map((r) => ({
-      ...r,
-      notes: `SERVER-SIDE DOCUMENT (${label}) — must never reach a user-scope role file.`,
-    })),
-  };
+function writeLayer(dir: string, name: string, files: Record<string, string>): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "layer.json"), JSON.stringify({ name, mode: "overlay" }), "utf8");
+  for (const [f, content] of Object.entries(files)) writeFileSync(join(dir, f), content, "utf8");
 }
 
-/** One fake PetBox server answering GET /api/{projectKey}/agent-defs/{key} — routes by the
- * projectKey segment in the URL path (the real contract, agent-def-fetch.ts's header comment),
- * so ONE server can stand in for two DIFFERENT projects' two DIFFERENT documents/versions at
- * once, exactly like the real petbox.3po.su does for $system and pochtar today. */
-function startFakeDefServer(docs: Record<string, { version: number; definition: AgentDefinition }>): Promise<{
-  baseUrl: string;
-  close: () => Promise<void>;
-}> {
-  return new Promise((resolve) => {
-    const server = createServer((req, res) => {
-      const m = /^\/api\/([^/]+)\/agent-defs\/([^/?]+)/.exec(req.url ?? "");
-      const project = m ? decodeURIComponent(m[1]!) : "";
-      const doc = docs[project];
-      if (!doc) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ key: "default", version: doc.version, definition: doc.definition }));
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as AddressInfo;
-      resolve({ baseUrl: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) });
-    });
+/** A project layer whose prose is recognizable, so a leak into a profile file is unmissable. */
+function writeProjectLayer(root: string, label: string): void {
+  writeLayer(join(root, ".petbox", "agents"), `project:${label}`, {
+    "petbox-worker.md": `PROJECT-LAYER DOCUMENT (${label}) — must never reach a user-scope role file.`,
   });
 }
 
-function writeHome(
-  homeDir: string,
-  entries: Array<{ prefix: string; project: string; envVar: string; baseUrl: string }>,
-): void {
-  const petboxDir = join(homeDir, ".petbox");
-  mkdirSync(petboxDir, { recursive: true });
-  writeFileSync(join(petboxDir, "projects.json"), JSON.stringify({ entries }, null, 2), "utf8");
-  const keys: Record<string, string> = {};
-  for (const e of entries) keys[e.envVar] = "fake-key-value";
-  writeFileSync(join(petboxDir, "keys.json"), JSON.stringify(keys, null, 2), "utf8");
-}
-
-/** Async spawn: a live (non-offline) apply run calls back into the fake server on THIS process's
- * event loop, so spawnSync would self-deadlock (same reasoning as apply-integrity.test.ts). */
-function runWire(cwd: string, homeDir: string, args: string[]): Promise<{ out: string; status: number | null }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [WIRE_TS, ...args], {
-      cwd,
-      env: { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined },
-    });
-    let out = "";
-    child.stdout.on("data", (d) => (out += d.toString("utf8")));
-    child.stderr.on("data", (d) => (out += d.toString("utf8")));
-    child.on("error", reject);
-    child.on("close", (status) => resolve({ out, status }));
+function runWire(cwd: string, homeDir: string, args: string[]): { out: string; status: number | null } {
+  const res = spawnSync(process.execPath, [WIRE_TS, ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined },
   });
+  return { out: (res.stdout ?? "") + (res.stderr ?? ""), status: res.status };
 }
 
 const USER_ROLE_DIRS = [".claude/agents", ".config/opencode/agents", ".factory/droids"] as const;
@@ -126,65 +74,52 @@ function snapshotUserRoleFiles(homeDir: string): Record<string, string> {
 }
 
 test(
-  "apply --roles=user (live, not --offline): two registered projects with DIFFERENT server " +
-    "definitions at DIFFERENT versions (v20 vs v1, the card's own numbers) render byte-identical " +
-    "user-scope role files — neither server is ever consulted for this step",
-  async () => {
+  "apply --roles=user: two directories carrying DIFFERENT project layers render byte-identical " +
+    "user-scope role files — the project layer is never consulted for this step",
+  () => {
     const homeDir = freshDir("petbox-cwd-indep-home-");
     const projSystem = freshDir("petbox-cwd-indep-system-");
     const projPochtar = freshDir("petbox-cwd-indep-pochtar-");
-    let server: { baseUrl: string; close: () => Promise<void> } | undefined;
     try {
-      server = await startFakeDefServer({
-        // Mirrors the card's measured numbers exactly: $system resolves v20, pochtar resolves v1.
-        "$system": { version: 20, definition: serverDefinitionNamed("system-v20") },
-        pochtar: { version: 1, definition: serverDefinitionNamed("pochtar-v1") },
+      // The machine-wide layer DOES belong in this render — it is the half of the cascade that is
+      // a machine fact — so its prose must be present in the result, proving the user layer is
+      // read rather than the whole cascade being skipped.
+      writeLayer(join(homeDir, ".petbox", "agents"), "user", {
+        "petbox-worker.md": "USER-LAYER DOCUMENT — machine-wide, belongs in every profile file.",
       });
-      writeHome(homeDir, [
-        { prefix: projSystem, project: "$system", envVar: "PETBOX_SYSTEM_API_KEY", baseUrl: server.baseUrl },
-        { prefix: projPochtar, project: "pochtar", envVar: "PETBOX_POCHTAR_API_KEY", baseUrl: server.baseUrl },
-      ]);
+      writeProjectLayer(projSystem, "system");
+      writeProjectLayer(projPochtar, "pochtar");
 
-      const first = await runWire(projSystem, homeDir, ["apply", "--roles=user"]);
-      // Only WIRE_EXIT.ok or WIRE_EXIT.incomplete are acceptable here: the fake server above only
-      // implements the agent-defs endpoint, so the UNRELATED project-scope skills fetch 404s and
-      // downgrades the overall run to "incomplete" — that is this minimal fake's limitation, not a
-      // property of the fix under test. A hard/truthfulness/usage exit would still be a real bug.
-      assert.ok(
-        first.status === WIRE_EXIT.ok || first.status === WIRE_EXIT.incomplete,
-        `run from $system dir failed harder than the fake server's own limitation explains ` +
-          `(status=${first.status}); output:\n${first.out}`,
-      );
+      const first = runWire(projSystem, homeDir, ["apply", "--roles=user"]);
+      assert.equal(first.status, WIRE_EXIT.ok, `run from the $system-shaped dir failed; output:\n${first.out}`);
       const afterSystem = snapshotUserRoleFiles(homeDir);
       assert.equal(Object.keys(afterSystem).length, 15, `expected 15 files; output:\n${first.out}`);
-      // The server's document must never have reached a role file — proves the fix, not just the
-      // symptom (byte equality alone could pass by coincidence if both fakes served the same text).
-      for (const content of Object.values(afterSystem)) {
-        assert.equal(content.includes("SERVER-SIDE DOCUMENT"), false, `a server document leaked into a role file:\n${content}`);
-      }
-      assert.doesNotMatch(
-        first.out,
-        /roles:user\].*using server definition/,
-        `the roles:user step must never resolve against a server;\n${first.out}`,
-      );
 
-      const second = await runWire(projPochtar, homeDir, ["apply", "--roles=user"]);
-      assert.ok(
-        second.status === WIRE_EXIT.ok || second.status === WIRE_EXIT.incomplete,
-        `run from pochtar dir failed harder than the fake server's own limitation explains ` +
-          `(status=${second.status}); output:\n${second.out}`,
-      );
+      const workerFile = afterSystem[".claude/agents/petbox-worker.md"];
+      assert.ok(workerFile, `no worker profile file was written; output:\n${first.out}`);
+      assert.match(workerFile!, /USER-LAYER DOCUMENT/, "the machine-wide user layer must be applied");
+      for (const content of Object.values(afterSystem)) {
+        assert.equal(
+          content.includes("PROJECT-LAYER DOCUMENT"),
+          false,
+          `a project layer leaked into a machine-wide role file:\n${content}`,
+        );
+      }
+      // The layer line for this step must name base < user and nothing else.
+      assert.match(first.out, /roles:user\]: layers=2: base\[kit v[^\]]*\] .*default-agents\.json {2}< {2}user\[overlay\]/, `output:\n${first.out}`);
+      assert.doesNotMatch(first.out, /roles:user\].*project\[overlay\]/, `output:\n${first.out}`);
+
+      const second = runWire(projPochtar, homeDir, ["apply", "--roles=user"]);
+      assert.equal(second.status, WIRE_EXIT.ok, `run from the pochtar-shaped dir failed; output:\n${second.out}`);
       const afterPochtar = snapshotUserRoleFiles(homeDir);
 
       assert.deepEqual(
         afterPochtar,
         afterSystem,
-        "the two runs, from two directories registered to projects with DIFFERENT server " +
-          "definitions at DIFFERENT versions, must render byte-identical files — this is the " +
-          "card's own acceptance test",
+        "the two runs, from two directories carrying DIFFERENT project layers, must render " +
+          "byte-identical files — this is the card's own acceptance test",
       );
     } finally {
-      if (server) await server.close();
       rmSync(homeDir, { recursive: true, force: true });
       rmSync(projSystem, { recursive: true, force: true });
       rmSync(projPochtar, { recursive: true, force: true });
@@ -192,15 +127,20 @@ test(
   },
 );
 
-test("apply --roles=user --offline: an UNREGISTERED cwd (no project, no network possible anyway) still renders the full 15-file baseline", async () => {
+test("apply --roles=user --offline: an UNREGISTERED cwd with no layers at all still renders the full 15-file baseline", () => {
   const homeDir = freshDir("petbox-cwd-indep-unreg-home-");
   const proj = freshDir("petbox-cwd-indep-unreg-proj-"); // never written to projects.json
   try {
-    const run = await runWire(proj, homeDir, ["apply", "--offline", "--roles=user"]);
+    const run = runWire(proj, homeDir, ["apply", "--offline", "--roles=user"]);
     assert.equal(run.status, WIRE_EXIT.ok, `output:\n${run.out}`);
     const files = snapshotUserRoleFiles(homeDir);
     assert.equal(Object.keys(files).length, 15, `output:\n${run.out}`);
-    assert.match(run.out, /source=kit baseline \(default-agents\.json\), kit v/, `output:\n${run.out}`);
+    assert.match(
+      run.out,
+      /roles:user\]: layers=1: base\[kit v\S+\] .*default-agents\.json/,
+      `output:\n${run.out}`,
+    );
+    assert.match(run.out, /machine-wide, same on every cwd/, `output:\n${run.out}`);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(proj, { recursive: true, force: true });
@@ -220,19 +160,21 @@ test("computeUserRoleReports source: rendering DEFAULT_AGENT_DEFINITION with the
   assert.ok(KIT_VERSION.length > 0, "KIT_VERSION must resolve to a non-empty label");
 });
 
-test("status --all --offline: names the kit baseline (never a project/server) as the user-scope role source", async () => {
+test("status --all --offline: names the MACHINE-WIDE layers (never a project layer) as the user-scope role source", () => {
   const homeDir = freshDir("petbox-cwd-indep-status-home-");
   const proj = freshDir("petbox-cwd-indep-status-proj-");
   try {
     mkdirSync(join(homeDir, ".petbox"), { recursive: true });
     writeFileSync(join(homeDir, ".petbox", "wire.json"), JSON.stringify({ roleScope: "user" }) + "\n", "utf8");
-    const run = await runWire(proj, homeDir, ["status", "--all", "--offline"]);
+    writeProjectLayer(proj, "must-not-appear");
+    const run = runWire(proj, homeDir, ["status", "--all", "--offline"]);
     assert.equal(run.status, WIRE_EXIT.ok, `output:\n${run.out}`);
     assert.match(
       run.out,
-      /user-scope role source: kit baseline \(default-agents\.json\), kit v\S+ — deterministic, independent of cwd/,
+      /user-scope role source: source: layers=1: base\[kit v\S+\][^\n]*, kit v\S+ — machine-wide, independent of cwd/,
       `output:\n${run.out}`,
     );
+    assert.doesNotMatch(run.out, /user-scope role source:.*project/, `output:\n${run.out}`);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(proj, { recursive: true, force: true });

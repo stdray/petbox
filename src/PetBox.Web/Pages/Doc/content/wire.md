@@ -50,9 +50,10 @@ The key is always held in an environment variable named **`PETBOX_<PROJECT>_API_
 | --- | --- |
 | `petbox-wire <dir> <projectKey>` | Full wire (above): key → validate → persist → kit copy → registry → project files → hooks → smoke. |
 | `petbox-wire update` | Mirrors this package's `src/` into the stable kit at `~/.petbox/wire/` (orphan cleanup + content fingerprint). Nothing else: no keys, no registry, no hooks reinstall, no MCP/skills, no sticky flags. It does **not** compile agent files — that's `apply`. |
-| `petbox-wire apply [--definition <key>] [--offline]` | Compiles per-harness agent role files from the agent definition + your local role→model binding. |
-| `petbox-wire status [--offline]` | Prints FACT (never a verdict) about the current roster: per role × harness, the materialized artifact path, its bound model, and **where that model came from** — `roster` (`~/.petbox/roles.json`), `seed` (built-in preview, nothing written yet) or `none` (a problem — nothing to resolve from). Plus a four-pillar summary: definition source, roster completeness, memory canon, skill files. Always exits 0 unless `status` itself crashes. |
-| `petbox-wire doctor [--offline]` | Resolves the agent definition the same way `apply` does (server → LKG cache → built-in default) and runs the truthfulness gate for every known harness against it, printing OK or each violation. Also reports definition drift, skill-file drift, and the session-banner budget margin. `--offline` skips all the network-backed checks up front (falls straight to LKG cache/built-in default; no drift or banner checks) — the truthfulness gate itself still runs. |
+| `petbox-wire apply [--offline]` | Compiles per-harness agent role files from the agent definition (built from files: base < user < project) + your local role→model binding. |
+| `petbox-wire layers [dir...]` | Shows the definition cascade: which layers exist on this machine, what each did to the roster, and which layer supplied every field. Read-only. Exit `0` clean / `1` a cascade error / `2` usage / `3` could not check — never confused with each other. |
+| `petbox-wire status [--offline]` | Prints FACT (never a verdict) about the current roster: per role × harness, the materialized artifact path, its bound model, and **where that model came from** — `roster` (`~/.petbox/roles.json`), `seed` (built-in preview, nothing written yet) or `none` (a problem — nothing to resolve from). Plus a four-pillar summary: definition layers (which are present, and which supplied each field), roster completeness, memory canon, skill files. Always exits 0 unless `status` itself crashes. |
+| `petbox-wire doctor [--offline]` | Resolves the agent definition the same way `apply` does (the file cascade base < user < project) and runs the truthfulness gate for every known harness against it, printing OK or each violation, plus the layers and their per-field provenance. Also reports skill-file drift and the session-banner budget margin. A broken layer is a hard failure (exit 1, the file named). `--offline` skips the network-backed checks up front (no skill-drift or banner check) — the definition resolve and the truthfulness gate still run, because neither touches a network. |
 | `petbox-wire roles` | Prints the active profile and its role→model bindings from `~/.petbox/roles.json`. Offline; an empty store exits 0 with a message — it never invents a model. |
 | `petbox-wire roles export` | Writes a bootstrap copy of `roles.json` to stdout (no secrets). Pipe it to a file on a new machine. |
 | `petbox-wire profile use <name>` | Sets `activeProfile` in `~/.petbox/roles.json` (creating an empty profile shell if new). Re-run `apply` afterwards — this does not compile anything. Offline. |
@@ -65,7 +66,7 @@ The key is always held in an environment variable named **`PETBOX_<PROJECT>_API_
 
 An agent roster is assembled from three independent sources, each with its own owner:
 
-1. **The portable agent definition — server-authoritative.** Roles, tiers, required capabilities, spawn/escalation rules. Fetched with `GET /api/{project}/agent-defs/{key}` (`agents:read`). It is *portable*: it carries **no model ids** — a definition containing `role.model` is rejected.
+1. **The portable agent definition — file-authoritative.** Roles, tiers, required capabilities, spawn/escalation rules. Built by laying ordered layers over each other, lowest first: `base` (the kit's own `default-agents.json`, shipped in the package, always present) < `user` (`~/.petbox/agents/`) < `project` (`<project root>/.petbox/agents/`). Nothing is fetched: the kit does not ask a server what the roles are. It is *portable*: it carries **no model ids** — a definition containing `role.model` is rejected.
 2. **The local role→model binding — machine-authoritative.** `~/.petbox/roles.json`: `activeProfile` + `profiles.<name>.agents.<harness>.roles.<role>.model`. Never uploaded, never invented; if a role is unbound, no `model:` line is emitted (a Factory droid gets `model: inherit`). Edit it with `petbox-wire model set` / `model unset` (see the commands table above) — not by hand; both print `next: petbox-wire apply` because neither compiles artifacts itself. `petbox-wire status` (also above) shows exactly where a role's current model came from (`roster`/`seed`/`none`).
 3. **The harness capability matrix — kit data.** Ships with the npm package and states, per harness, which capabilities exist (`mcp_subagent`, `hooks`, `spawn_subagents`, …). Known harnesses: `claude-code`, `opencode`, `droid`.
 
@@ -74,14 +75,14 @@ The gate between them is **truthfulness**: a role may only require capabilities 
 ## 5. `apply` — compiled agent files
 
 ```
-npx petbox-wire apply                        # server definition, or LKG cache
-npx petbox-wire apply --offline              # never touch the network
-npx petbox-wire apply --definition my-roster # a non-default definition key
+npx petbox-wire apply            # definition from base < user < project, always
+npx petbox-wire apply --offline  # also skip the workspace probe behind the skill refresh
+npx petbox-wire layers           # which layers exist, and which one gave which field
 ```
 
 `apply` finds the artifact target directory by **`git rev-parse --show-toplevel` from cwd** — the git worktree apply is actually running in — falling back to cwd itself only when cwd is not inside a git working tree at all. It deliberately does **not** consult the registry (`~/.petbox/projects.json`) for this: the registry answers project *identity* (which project/key/base-URL), not *where artifacts land*. Running `apply` from inside a worktree therefore writes into that worktree, never into the primary tree it was branched from — an earlier version resolved the target the same way it resolved project identity (registry longest-prefix) and could silently rewrite the primary tree's agent files from a worktree checked out on a different branch; that bug is fixed. `apply` always prints which root it resolved and how (`git`/`cwd`).
 
-It then resolves the definition **server → LKG cache → built-in default** and writes, under that root:
+It then builds the definition from the **file cascade base < user < project** — no network on that leg, so `--offline` does not change it — and writes, under that root:
 
 | Harness | Path |
 | --- | --- |
@@ -91,15 +92,22 @@ It then resolves the definition **server → LKG cache → built-in default** an
 
 Emitted file (and frontmatter `name:`) are namespaced `petbox-<role>` — `role.slug` and `~/.petbox/roles.json` themselves stay unprefixed; only the render is. `model:` frontmatter is written only when the role is bound (an unbound droid gets `model: inherit`) — it never invents a concrete model id.
 
-> **Warning:** every generated file carries a `petbox: managed` origin marker, and `apply` **overwrites** files that carry it. It does the opposite for a file that doesn't — a real, non-PetBox file sitting at that exact path — where it **refuses** (loud, non-zero exit) to touch it at all, rather than clobbering it. Do not hand-edit a `petbox: managed` file; changes belong in the agent definition (server) or in `roles.json` (models), then re-apply. A pre-namespacing leftover (e.g. `.claude/agents/worker.md`) that PetBox itself owns is removed once its `petbox-<role>.md` replacement is written; a same-named file without the marker is left alone either way.
+> **Warning:** every generated file carries a `petbox: managed` origin marker, and `apply` **overwrites** files that carry it. It does the opposite for a file that doesn't — a real, non-PetBox file sitting at that exact path — where it **refuses** (loud, non-zero exit) to touch it at all, rather than clobbering it. Do not hand-edit a `petbox: managed` file; changes belong in a definition layer (`~/.petbox/agents` or `<root>/.petbox/agents`) or in `roles.json` (models), then re-apply. A pre-namespacing leftover (e.g. `.claude/agents/worker.md`) that PetBox itself owns is removed once its `petbox-<role>.md` replacement is written; a same-named file without the marker is left alone either way.
 
-## 6. Offline and the LKG cache
+## 6. Offline, and what a broken layer does
 
-Every successful fetch writes a last-known-good copy to `~/.petbox/cache/<project>.agent-def.json`. When the server is unreachable — or you pass `--offline` — `apply` uses that cache and says so, marking the result **stale**. Only when there is no cache at all (a fresh machine) does it fall back to the small built-in default definition.
+The definition needs no network and has **no cache**: its layers are local files already. A layer directory that does not exist is a layer with **no opinion** — the ordinary case on a fresh machine, and never a warning.
 
-`doctor` is **not** offline by construction — it resolves the definition the same server → LKG cache → built-in way `apply` does, plus a workspace probe for its skill-file and banner-budget checks, so a plain `petbox-wire doctor` does hit the network. Pass `--offline` to skip all of that (straight to LKG cache/built-in default, no drift or banner checks; the truthfulness gate still runs against whatever definition that leaves). `roles`, `roles export`, `profile use`, `model set` and `model unset` are the ones that are offline by construction — no network path exists for them at all.
+A layer that IS there and cannot be read, parsed or validated fails **loudly**, and the shape of that depends on what the command is doing:
 
-The SessionStart memory canon has its own cache alongside it: `~/.petbox/cache/<project>.canon.md`.
+- `apply` and `doctor` BUILD artifacts, so they **refuse**: exit `1`, the absolute path and the parser's own message on stderr, and nothing written or changed.
+- The SessionStart hooks RENDER a banner, so they **degrade**: the process still exits `0` (a hook that crashes a session is worse than one that degrades), but the banner opens with a marker line naming the broken file, the protocol under it comes from the kit base, and `~/.petbox/wire.log` gets a trace.
+
+In neither case is a previously-successful result substituted for the unreadable one. That substitution is exactly what turns a broken source into a silent one — it is why there is no last-known-good copy of a definition anywhere.
+
+`--offline` therefore has nothing to do with the definition. It skips the network calls the kit still makes: the `/api/auth/validate` workspace probe behind the skill refresh (`apply`, `doctor`, `status`), the memory-canon fetch, and `doctor`'s banner-budget check. `roles`, `roles export`, `profile use`, `model set` and `model unset` are offline by construction — no network path exists for them at all.
+
+The SessionStart memory canon still lives on the server and still has a cache: `~/.petbox/cache/<project>.canon.md`.
 
 ## 7. Exit codes
 
@@ -117,12 +125,11 @@ Exit `3` is a *policy* outcome, not a crash: the definition asked for something 
 
 ## 8. Scopes and endpoints
 
-The CLI only ever **reads** definitions, so an `agents:read` key is enough to wire and apply. `agents:write` is needed only to push a definition **back** to the server — `PUT /api/{project}/agent-defs/{key}`, or the `agent_def_upsert` MCP tool — which is an authoring action, not a wiring one.
+The CLI does not read definitions from the server at all any more, so no `agents:*` scope is needed to wire or apply.
 
 | Endpoint | Used by |
 | --- | --- |
 | `GET /api/auth/validate` | Full wire — key validation before anything is persisted; also reports the workspace the key belongs to. Also the workspace probe `apply`, `doctor` and `status` each run (unless `--offline`) to gate their skill-file refresh/checks — a failed probe here is what makes `apply`/full-wire exit `4` (INCOMPLETE). |
-| `GET /api/{project}/agent-defs/{key}` | `apply` and `doctor` — the portable definition (`agents:read`); `doctor` resolves it the same server → LKG cache → built-in way `apply` does. |
 | `GET /api/memory/{project}/canon` | SessionStart hook — the memory canon (cached to `~/.petbox/cache/`). This is the only context the wiring injects; there is no per-prompt injection. Also read by `doctor`'s banner-budget check and `status`'s four-pillar summary. |
 | `POST /api/logs/{project}/logs` | Full wire — ensures the telemetry log exists. |
 | `POST /api/sessions/{project}/wire-smoke` | Full wire — the final self-smoke that proves the key round-trips. |
@@ -136,8 +143,8 @@ The CLI only ever **reads** definitions, so an `agents:read` key is enough to wi
 | `keys.json` | Flat `{ "<ENV_VAR>": "<key>" }` map the kit hooks read directly. Tightened to `0600` on POSIX. |
 | `env.sh` | POSIX only — regenerated from the key store, sourced from your login profiles. |
 | `roles.json` | Local role→model bindings + `activeProfile`. Machine-owned; never uploaded. |
-| `cache/<project>.agent-def.json` | LKG agent definition. |
-| `cache/<project>.canon.md` | LKG memory canon. |
+| `agents/` | Optional machine-wide definition layer (`layer.json` + `petbox-<slug>.{json,md,append.md}`). Absent = no opinion. |
+| `cache/<project>.canon.md` | LKG memory canon. (The definition has no cache — its layers are local files.) |
 | `wire.log` | Trace of silent-failure-shaped events; `doctor` prints its most recent lines (empty/absent is normal, not a failure). |
 
 These are **not** secrets you should commit anywhere, and nothing here is regenerated by `update` except the kit itself.

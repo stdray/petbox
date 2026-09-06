@@ -155,6 +155,62 @@ export class LayerSourceError extends Error {
 const ROLE_FILE_RE = /^petbox-([a-z0-9-]+)\.(json|md|append\.md)$/;
 const MANIFEST_FILE = "layer.json";
 
+/**
+ * Filenames that are NOT anybody's opinion about the roster and must never break a resolve.
+ *
+ * A layer directory is a real directory on a real desktop. Opening it in Finder writes
+ * `.DS_Store`; opening it in Explorer writes `Thumbs.db`/`desktop.ini`; putting it in git wants a
+ * `.gitkeep`; explaining it to the next person wants a `README.md`. Before this list, every one of
+ * those produced an E5 ERROR — which meant a hard `apply`/`doctor` refusal and a "definition
+ * layers are BROKEN" banner on every session start, on all three harnesses, because someone
+ * looked at a folder. That is wildly out of proportion, and it contradicts this module's own
+ * founding rule (see the header: absence = no opinion; only a PRESENT, BROKEN layer is an error).
+ *
+ * Everything hidden (a leading dot) is covered by the prefix rule, `.gitkeep`/`.gitignore`
+ * included. The named entries are the non-hidden ones the two desktop shells and git conventions
+ * actually produce. Matched case-insensitively: Windows writes `Thumbs.db`, and case is not a
+ * meaningful distinction on the filesystems these land on.
+ */
+const IGNORED_FILE_NAMES = new Set(["thumbs.db", "desktop.ini", "readme.md", "readme", "readme.txt"]);
+
+function isIgnorableFile(name: string): boolean {
+  return name.startsWith(".") || IGNORED_FILE_NAMES.has(name.toLowerCase());
+}
+
+/** A file that CLAIMS to be a role document — the namespace E5 polices. */
+function claimsToBeRoleDocument(name: string): boolean {
+  return name.toLowerCase().startsWith("petbox-");
+}
+
+/**
+ * Does this directory DECLARE ITSELF a layer at all?
+ *
+ * True when it holds a `layer.json` or at least one `petbox-*` document. Anything else — a
+ * directory that does not exist, an empty one, or one holding nothing but the service files above
+ * — is NOT a layer and carries NO OPINION, exactly like a directory that was never created. That
+ * matters for the commonest first move a user makes: `mkdir ~/.petbox/agents` to hold a future
+ * override. Before this, that empty directory was "present", failed the manifest check, and broke
+ * every session start until it was deleted again.
+ *
+ * Note the deliberate asymmetry with `readDefinitionLayer`: a directory holding `petbox-worker.json`
+ * and NO `layer.json` IS a layer by this predicate, and readDefinitionLayer then refuses it loudly.
+ * That is right — role documents are an unambiguous statement of intent, and an intent that cannot
+ * be honoured must be loud. Only the absence of any such statement is silent.
+ *
+ * Never throws: an unreadable directory is reported as "not a layer" rather than crashing a
+ * presence probe (the caller's own read will produce the real, specific error if it proceeds).
+ */
+export function isLayerDirectory(dir: string): boolean {
+  try {
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return false;
+    return readdirSync(dir).some(
+      (f) => f === MANIFEST_FILE || (!isIgnorableFile(f) && claimsToBeRoleDocument(f)),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readJson(path: string): unknown {
   let raw: string;
   try {
@@ -232,14 +288,33 @@ export function readDefinitionLayer(dir: string): DefinitionLayer {
     } catch {
       continue;
     }
+    // Three buckets, and the split is the whole of what keeps a desktop artefact from taking a
+    // machine down (see IGNORED_FILE_NAMES above):
+    //   ignorable   — `.DS_Store`, `Thumbs.db`, a README, anything hidden. Silent. Not an opinion.
+    //   petbox-*    — CLAIMS to be a role document. If it does not parse as one, that is E5: a
+    //                 present, malformed layer document, which is exactly what E5 is for.
+    //   anything else — not a layer document and not a known service file. Reported as a WARNING,
+    //                 never an error: it changes nothing (so W3 is literally true of it), but a
+    //                 near-miss like `worker.json` — the prefix forgotten — deserves to be visible
+    //                 rather than silently doing nothing forever.
+    if (isIgnorableFile(file)) continue;
     const m = ROLE_FILE_RE.exec(file);
     if (!m) {
-      diagnostics.push({
-        code: "E5",
-        severity: "error",
-        layer: manifest.name,
-        message: `${abs}: filename does not follow petbox-<slug>.{json,md,append.md}`,
-      });
+      diagnostics.push(
+        claimsToBeRoleDocument(file)
+          ? {
+              code: "E5",
+              severity: "error",
+              layer: manifest.name,
+              message: `${abs}: filename does not follow petbox-<slug>.{json,md,append.md}`,
+            }
+          : {
+              code: "W3",
+              severity: "warning",
+              layer: manifest.name,
+              message: `${abs} is not a layer document (expected petbox-<slug>.{json,md,append.md}) and was ignored`,
+            },
+      );
       continue;
     }
     const slug = m[1] as string;
@@ -320,12 +395,37 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * The BOTTOM layer supplied as an already-parsed document rather than a directory.
+ *
+ * The kit's baseline (`default-agents.json`) is a flat JSON file inside the package, not a layer
+ * directory, and it deliberately stays one: it is READ AT IMPORT and its absence throws there
+ * (agent-definition.ts), which is the property that makes "the floor is always present" true
+ * rather than hopeful. Modelling it as a directory would put the shipped floor behind the same
+ * existsSync branch every optional layer takes, and "absence = no opinion" would then silently
+ * mean "empty roster".
+ *
+ * `dir` is carried for PROVENANCE only — the path a reader is shown when this layer supplied a
+ * field. Nothing reads it.
+ */
+export type BaseLayer = {
+  readonly name: string;
+  readonly dir: string;
+  readonly definition: AgentDefinition;
+};
+
 export type ResolveLayersOptions = {
   /**
    * Name of the resolved document. Default: the layer names joined lowest-first with " < " —
    * self-documenting in apply's own log line ("which layers did this come from").
    */
   readonly name?: string;
+  /**
+   * Bottom layer, applied before the first directory. Present = `dirs` may be empty (the floor
+   * alone IS a resolvable cascade). Its mode is reported as "base": it neither overlays nor
+   * replaces anything, because there is nothing underneath it by construction.
+   */
+  readonly base?: BaseLayer;
 };
 
 /**
@@ -342,7 +442,7 @@ export function resolveDefinitionLayers(
   dirs: ReadonlyArray<string>,
   options: ResolveLayersOptions = {},
 ): CascadeResolution {
-  if (dirs.length === 0) {
+  if (dirs.length === 0 && options.base === undefined) {
     throw new LayerSourceError("", "definition layer: at least one layer directory is required");
   }
 
@@ -350,6 +450,41 @@ export function resolveDefinitionLayers(
   const trace: CascadeTraceEntry[] = [];
   const layers: { name: string; dir: string; mode: string }[] = [];
   let roles = new Map<string, WorkingRole>();
+
+  if (options.base) {
+    const base = options.base;
+    layers.push({ name: base.name, dir: base.dir, mode: "base" });
+    for (const role of base.definition.roles) {
+      const provenance: Partial<Record<ProvenanceField, string>> = {
+        tier: base.name,
+        requiredCapabilities: base.name,
+      };
+      const fields: string[] = ["tier", "requiredCapabilities"];
+      if (role.spawn !== undefined) {
+        provenance.spawn = base.name;
+        fields.push("spawn");
+      }
+      if (role.escalation !== undefined) {
+        provenance.escalation = base.name;
+        fields.push("escalation");
+      }
+      if (role.notes !== undefined && role.notes !== "") {
+        provenance.notes = base.name;
+        fields.push("notes");
+      }
+      roles.set(role.slug, {
+        slug: role.slug,
+        tier: role.tier,
+        requiredCapabilities: role.requiredCapabilities,
+        ...(role.spawn !== undefined ? { spawn: role.spawn } : {}),
+        ...(role.escalation !== undefined ? { escalation: role.escalation } : {}),
+        notes: role.notes ?? "",
+        provenance,
+        addenda: [],
+      });
+      trace.push({ kind: "add", layer: base.name, slug: role.slug, fields });
+    }
+  }
 
   for (const dir of dirs) {
     const layer = readDefinitionLayer(dir);

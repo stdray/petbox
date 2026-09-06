@@ -7,20 +7,21 @@
 // The project is resolved from cwd via the shared registry; if the cwd is not a registered
 // project this prints nothing and exits 0. Best-effort, never blocks — always exit 0.
 //
-// The banner's orchestrator notes resolve server → LKG cache → built-in default, same as
-// `apply` (resolveAgentDefinitionForSession, wrapping agent-def-fetch.ts's
-// resolveAgentDefinitionWithLkg). That fetch and the canon fetch run SEQUENTIALLY under one
-// shared SESSION_FETCH_BUDGET_MS wall-clock budget (not Promise.all'd): the happy path for
-// both requests together is ~100-200ms, so concurrency bought nothing there, and it made the
-// two independent 8s timeouts stack in the worst case anyway if reasoned about naively.
-// The real worst case — PetBox stalling under load from parallel agents — is handled by
-// giving the whole hook one budget: whatever the agent-def fetch doesn't spend, the canon
-// fetch inherits as its own timeout, so the combined worst case stays ~SESSION_FETCH_BUDGET_MS,
-// not 2x it. A fetch that starts with little/no budget left degrades to its own fallback
-// (LKG cache / built-in default / no canon) rather than blocking — see canon.ts's fetchCanon.
+// The banner's orchestrator notes come from the FILE cascade base < user < project
+// (definition-source.ts's resolveDefinitionForSession) — the same resolve `apply` compiles from,
+// and no network at all. It used to be an HTTP fetch, and it was the FIRST thing every session
+// start on every harness did (card wire-stops-fetching-definition). Removing it leaves the canon
+// fetch as the only network call on this path, so it now gets the whole
+// SESSION_FETCH_BUDGET_MS instead of the remainder of it.
+//
+// A BROKEN layer does not stop the session — a SessionStart hook that crashes is worse than one
+// that degrades — but it does not pass silently either: the banner LEADS with the path of the
+// file that broke, ~/.petbox/wire.log gets a Class-B trace, and the protocol underneath is
+// rendered from the kit base. Loudness lives in stdout here, not in the exit code.
 
-import { agentDefinitionBannerNote, resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
+import { resolveApplyRoot } from "./apply-root.ts";
 import { fetchCanonBlock } from "./canon.ts";
+import { resolveDefinitionForSession } from "./definition-source.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
@@ -33,15 +34,14 @@ import {
 } from "./session-budget.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
-// Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
-// module comment above.
+// Wall-clock budget for the one remaining fetch on this path (canon).
 //
 // Deliberately SHORT. Waiting long for the server only pays off when the alternative is
-// nothing — and it isn't: the LKG cache holds the same definition and canon, which change
-// on the order of weeks, not sessions. So a slow server (a redeploy restarting the
-// container is the common case) must cost the session start ~2s, not ~8s. Freshness is
-// only lost in the narrow window where the documents changed AND the server is down right
-// now; staleness there is cheap, an 8s stall on every session start is not.
+// nothing — and it isn't: the canon has an offline cache on disk and changes on the order of
+// weeks, not sessions. So a slow server (a redeploy restarting the container is the common
+// case) must cost the session start ~2s, not ~8s. Freshness is only lost in the narrow window
+// where the canon changed AND the server is down right now; staleness there is cheap, an 8s
+// stall on every session start is not.
 const SESSION_FETCH_BUDGET_MS = 2000;
 
 type HookInput = { cwd?: string; source?: string };
@@ -93,15 +93,12 @@ async function main(): Promise<void> {
     // into that budget or its overage accounting (see worktree-base-guard.ts).
     const stalePromise = buildStaleBaseWarning({ cwd: cwd || process.cwd() });
 
-    // Sequential under one shared budget (not Promise.all): whatever the first fetch doesn't
-    // spend is what the second gets, so the combined worst case is bounded by
-    // SESSION_FETCH_BUDGET_MS instead of stacking two independent timeouts.
-    const budgetStart = Date.now();
-    const defResult = await resolveAgentDefinitionForSession(resolved, {
-      timeoutMs: SESSION_FETCH_BUDGET_MS,
+    // File-only, no timeout to spend: the layers are already on this disk.
+    const defResult = resolveDefinitionForSession({
+      root: resolveApplyRoot(cwd || process.cwd()).root,
+      logSource: `pull-memory[${resolved.project}]`,
     });
-    const remainingMs = SESSION_FETCH_BUDGET_MS - (Date.now() - budgetStart);
-    const canon = await fetchCanonBlock(resolved, { timeoutMs: remainingMs });
+    const canon = await fetchCanonBlock(resolved, { timeoutMs: SESSION_FETCH_BUDGET_MS });
 
     const protocol = buildProtocol(resolved.project, mcpPetboxTool, {
       source,
@@ -128,12 +125,12 @@ async function main(): Promise<void> {
     // and prepend it: highest priority, tiny, so it must survive any tail truncation of the
     // rest of the banner rather than risk being the part that gets cut.
     const staleWarn = await stalePromise;
-    // Definition-degradation note (bug: wire-silent-failures-invisible — "Пометка деградации в
-    // баннере"): before this, a built-in-fallback definition (source "default", server AND LKG
-    // both unavailable/refused) reported stale:false and the banner said nothing at all — it
-    // read exactly like a healthy live fetch. Same treatment as staleWarn: tiny and prepended
-    // outside the byte-budget accounting so it survives any tail truncation.
-    const defNote = agentDefinitionBannerNote(defResult);
+    // Broken-layer marker (spec broken-layer-fails-loudly): "" whenever the cascade resolved
+    // cleanly, which is every healthy session. When it is not empty it names the file that broke,
+    // by absolute path, and says the protocol below it came from the kit base instead. Same
+    // treatment as staleWarn: tiny and prepended OUTSIDE the byte-budget accounting, so the one
+    // line that explains the degradation cannot itself be the part that gets truncated away.
+    const defNote = defResult.note;
     await writeStdout(staleWarn + (defNote ? defNote + "\n" : "") + banner.text);
   } catch {
     // best-effort
@@ -145,7 +142,7 @@ async function main(): Promise<void> {
 // handle teardown (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c`)
 // and could truncate the stdout write above (fire-and-forget on a Windows pipe). Setting
 // exitCode and returning lets Node drain the event loop naturally instead — `Connection:
-// close` (canon.ts / agent-def-fetch.ts) means a request that got a full response never
+// close` (canon.ts) means a request that got a full response never
 // leaves a keep-alive socket behind, and unrefLingeringHandles covers the other case
 // (a request aborted mid-flight against a genuinely stalled server can leave its TLSSocket
 // alive for several MORE seconds even with Connection: close — measured, not assumed; see

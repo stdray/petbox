@@ -61,7 +61,8 @@ auto-flips to `fixed`; a later recurrence of the same problem reopens it to `see
 the task that had fixed it. The session-facts extractor's judge has a fourth verdict,
 `observe`, that routes defect-like findings here instead of into memory. Procedure and tool
 details: the `petbox-methodology` skill (kit-delivered, wired into this project too); role-facing
-prose lives on the server agent-def, not here.
+prose lives in the definition layers on disk (base < user < project — see the git baseline note
+below), not here and not on the server.
 
 Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
 [doc/methodology-engine.md](doc/methodology-engine.md) for the engine). `doc/` is a

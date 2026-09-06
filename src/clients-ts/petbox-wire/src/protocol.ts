@@ -33,8 +33,8 @@ export type ProtocolOpts = {
   harness?: string;
   /**
    * Portable agent definition to render the orchestrator self-intro notes from. Callers
-   * resolve this the same way `apply` does — server fetch, then LKG cache, then the built-in
-   * default (agent-def-fetch.ts's resolveAgentDefinitionWithLkg) — so the main-loop banner no
+   * resolve this the same way `apply` does — the file cascade base < user < project
+   * (definition-source.ts's resolveDefinitionForSession) — so the main-loop banner no
    * longer drifts from the per-role artifacts that already got server-authored notes. Omitted
    * → DEFAULT_AGENT_DEFINITION (never crash, never an empty banner).
    */

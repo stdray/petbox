@@ -5,12 +5,12 @@
 // the question nobody asked before (bug: artifact-integrity-dangling-and-orphans): does this
 // role's rendered prose NAME A ROLE THAT DOES NOT EXIST?
 //
-// `spawn.allowedRoles` and `escalation.targets` were only ever parsed (agent-def-fetch.ts) and
-// rendered (apply-artifacts.ts's buildRoleBody) — never once checked against the roster they
-// name. A dangling target is an artifact that tells an agent to spawn a `subagent_type` which
-// is not on disk, or to escalate to a role that is not there. It was harmless only because the
-// roster never changed; the moment a layer (or a server edit) can SUBTRACT a role, every such
-// reference becomes a live instruction to do something impossible.
+// `spawn.allowedRoles` and `escalation.targets` were only ever parsed and rendered
+// (apply-artifacts.ts's buildRoleBody) — never once checked against the roster they name. A
+// dangling target is an artifact that tells an agent to spawn a `subagent_type` which is not on
+// disk, or to escalate to a role that is not there. It was harmless only because the roster never
+// changed; the moment a layer can SUBTRACT a role — which a tombstone does, routinely — every
+// such reference becomes a live instruction to do something impossible.
 //
 // Scope, deliberately narrow — WHAT IS RENDERED, not what is merely stored:
 //   - spawn targets are checked only when `spawn.allowed` is true;

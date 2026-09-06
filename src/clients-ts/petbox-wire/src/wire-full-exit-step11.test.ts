@@ -80,8 +80,9 @@ function startFakeServer(opts: {
       );
       return;
     }
-    // Everything else (the agent-defs fetch) 404s: resolveApplyDefinition falls back to the
-    // built-in default, which is the fresh-machine path this step is about.
+    // Everything else 404s. Nothing on the definition path calls this fake at all any more (the
+    // cascade is file-only, definition-source.ts) — what still reaches it is the workspace probe
+    // behind the skill refresh, which is exactly the fresh-machine path this step is about.
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not found" }));
   };

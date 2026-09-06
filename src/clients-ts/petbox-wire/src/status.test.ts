@@ -23,7 +23,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
-import type { ResolvedAgentDefinition } from "./agent-def-fetch.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import type { ResolvedProject } from "./registry.ts";
 import { SESSION_BANNER_BUDGET_BYTES } from "./session-budget.ts";
@@ -37,8 +36,9 @@ import {
   computeRosterState,
   formatBannerBudgetLeg,
   formatCanonLeg,
-  formatDefinitionSource,
+  formatDefinitionPillar,
   formatRegistryStatusRow,
+  readDefinitionPillar,
   formatRoleModelSource,
   formatRosterState,
   resolveRoleModelSource,
@@ -209,41 +209,40 @@ test("formatRosterState names every state distinctly", () => {
   );
 });
 
-test("formatDefinitionSource: server / LKG (degraded) / built-in (degraded) / built-in (normal, 404)", () => {
-  const server: ResolvedAgentDefinition = {
-    definition: DEFAULT_AGENT_DEFINITION,
-    source: "server",
-    stale: false,
-    key: "default",
-    version: 3,
-  };
-  assert.match(formatDefinitionSource(server), /^server \(live\)/);
+test("formatDefinitionPillar: names the LAYERS, not a single source label — base alone, base+project, and a broken layer", () => {
+  const home = freshDir("petbox-status-pillar-home-");
+  const root = freshDir("petbox-status-pillar-root-");
+  try {
+    // 1. Nothing but the shipped floor. Absent layers are reported as absent, never as a defect.
+    const bare = formatDefinitionPillar(readDefinitionPillar(root));
+    assert.match(bare, /layers=1: base\[kit v/);
+    assert.match(bare, /clean$/);
+    assert.match(bare, /absent, no opinion/);
 
-  const lkg: ResolvedAgentDefinition = {
-    definition: DEFAULT_AGENT_DEFINITION,
-    source: "lkg",
-    stale: true,
-    key: "default",
-    version: 2,
-    staleMarker: "stale",
-  };
-  assert.match(formatDefinitionSource(lkg), /LKG CACHE — DEGRADED/);
+    // 2. A project layer joins the cascade — the headline must say so, with its mode and path.
+    const layerDir = join(root, ".petbox", "agents");
+    mkdirSync(layerDir, { recursive: true });
+    writeFileSync(join(layerDir, "layer.json"), JSON.stringify({ name: "project", mode: "overlay" }), "utf8");
+    writeFileSync(
+      join(layerDir, "petbox-worker.json"),
+      JSON.stringify({ slug: "worker", tier: "worker-highstakes" }),
+      "utf8",
+    );
+    const layered = formatDefinitionPillar(readDefinitionPillar(root));
+    assert.match(layered, /layers=2: base\[kit v/);
+    assert.match(layered, /project\[overlay\]/);
+    assert.match(layered, /clean$/);
 
-  const builtinDegraded: ResolvedAgentDefinition = {
-    definition: DEFAULT_AGENT_DEFINITION,
-    source: "default",
-    stale: false,
-  };
-  assert.match(formatDefinitionSource(builtinDegraded), /built-in copy — DEGRADED/);
-
-  const builtinNormal: ResolvedAgentDefinition = {
-    definition: DEFAULT_AGENT_DEFINITION,
-    source: "default",
-    stale: false,
-    notFoundOnServer: true,
-  };
-  assert.match(formatDefinitionSource(builtinNormal), /normal for a fresh project/);
-  assert.doesNotMatch(formatDefinitionSource(builtinNormal), /DEGRADED/);
+    // 3. A broken layer: status neither crashes (its contract is exit 0) nor hides it — the
+    //    file is named by absolute path, with the parser's own complaint.
+    writeFileSync(join(layerDir, "petbox-worker.json"), "{ not json", "utf8");
+    const broken = formatDefinitionPillar(readDefinitionPillar(root));
+    assert.match(broken, /BROKEN LAYER/);
+    assert.ok(broken.includes(join(layerDir, "petbox-worker.json")), broken);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("formatCanonLeg: absent / empty (via version, never marker-text comparison) / content with char count", () => {
@@ -563,9 +562,10 @@ test("CLI: unregistered, non-git cwd -> canon/skills report n/a, still exits 0",
   const projectDir = freshDir("petbox-status-unreg-proj-");
   try {
     // Deliberately NOT --offline: an unregistered project directory has no baseUrl/apiKey to
-    // fetch with, so resolveAgentDefinitionWithLkg / the canon+skills probes all short-circuit
-    // on the missing projectKey before any network call — this exercises the "not registered"
-    // branch specifically, distinct from the "--offline" branch covered by every other test here.
+    // fetch with, so the canon+skills probes all short-circuit on the missing projectKey before
+    // any network call — this exercises the "not registered" branch specifically, distinct from
+    // the "--offline" branch covered by every other test here. (The definition pillar has no
+    // network leg at all any more, so it prints identically either way.)
     const res = spawnSync(process.execPath, [WIRE_TS, "status"], {
       cwd: projectDir,
       encoding: "utf8",

@@ -134,6 +134,7 @@ test("layers: exactly one layer present — nothing to diverge from, CANNOT CHEC
     const res = runLayers([only, join(root, "absent")]);
     assert.equal(res.status, 3, res.stderr + res.stdout);
     assert.match(res.stderr, /only one layer is present/);
+    assert.match(res.stderr, /no base is implied in explicit-directory mode/);
     assert.doesNotMatch(res.stdout, /clean —/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -159,18 +160,65 @@ test("layers: a present-but-broken layer source fails LOUD (exit 3) — never si
   }
 });
 
-test("layers: no arguments falls back to this command's own conventional defaults, and names the base-layer gap out loud", () => {
+test("layers: no arguments on a FRESH machine ANSWERS — the base alone is a resolvable cascade, printed in full, exit 0", () => {
   const homeDir = freshDir("petbox-layers-defhome-");
   const cwd = freshDir("petbox-layers-defcwd-");
   try {
     // Neither ~/.petbox/agents (user) nor <cwd>/.petbox/agents (project) exists — a fresh
-    // machine, honestly reported as "nothing to check", never as "no divergence".
+    // machine, i.e. EVERY consumer's state at publication. This used to exit 3 CANNOT CHECK while
+    // `doctor`, resolving the very same cascade, printed the whole table; the agent-factory skill
+    // sends agents here first, so a non-answer here is a dead end for them.
     const res = runLayers([], { cwd, homeDir });
-    assert.equal(res.status, 3, res.stderr + res.stdout);
-    assert.match(res.stdout, /base .*NOT yet a layer directory/);
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /base +PRESENT .*default-agents\.json \(kit v/);
+    assert.doesNotMatch(res.stdout, /NOT yet a layer directory/);
     assert.match(res.stdout, /user .*absent/);
     assert.match(res.stdout, /project .*absent/);
-    assert.match(res.stderr, /CANNOT CHECK/);
+    // The answer itself: the resolved roster, with provenance, not a shrug.
+    assert.match(res.stdout, /provenance: tier=base/);
+    assert.match(res.stdout, /clean — one layer in play \(base\), zero cascade errors/);
+    assert.doesNotMatch(res.stderr, /CANNOT CHECK/);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("layers: no arguments with a directory that exists but declares nothing — still absent, still exit 0, never 'broken'", () => {
+  const homeDir = freshDir("petbox-layers-emptydir-home-");
+  const cwd = freshDir("petbox-layers-emptydir-cwd-");
+  try {
+    // `mkdir ~/.petbox/agents` with nothing in it yet, plus a Finder artefact next door.
+    mkdirSync(join(homeDir, ".petbox", "agents"), { recursive: true });
+    mkdirSync(join(cwd, ".petbox", "agents"), { recursive: true });
+    writeFileSync(join(cwd, ".petbox", "agents", ".DS_Store"), "x", "utf8");
+
+    const res = runLayers([], { cwd, homeDir });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    assert.match(res.stdout, /user .*absent/);
+    assert.match(res.stdout, /project .*absent/);
+    assert.doesNotMatch(res.stderr, /CANNOT CHECK/);
+    assert.doesNotMatch(res.stdout + res.stderr, /has no layer\.json/);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("layers: no arguments with ONE real layer present CAN check — the shipped base is the second layer, so base-vs-user is a real comparison", () => {
+  const homeDir = freshDir("petbox-layers-onelayer-home-");
+  const cwd = freshDir("petbox-layers-onelayer-cwd-");
+  try {
+    writeLayer(join(homeDir, ".petbox", "agents"), { name: "user", mode: "overlay" }, {
+      "petbox-worker.json": JSON.stringify({ slug: "worker", tier: "worker-highstakes" }),
+    });
+    const res = runLayers([], { cwd, homeDir });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    // The override must be nameable BY FIELD against the base, which is the whole point of
+    // making the shipped floor a layer instead of a footnote.
+    assert.match(res.stdout, /user: ~ worker → tier/);
+    assert.match(res.stdout, /provenance: tier=user/);
+    assert.match(res.stdout, /clean — 2 layer\(s\) compared, zero cascade errors/);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

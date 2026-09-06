@@ -83,20 +83,23 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  AGENT_DEF_OFFLINE_STALE_MARKER,
-  DEFAULT_DEFINITION_KEY,
-  resolveAgentDefinitionWithLkg,
-  type ResolvedAgentDefinition,
-} from "./agent-def-fetch.ts";
 import { readWireLogTail, wireLog, wireLogPath } from "./wire-log.ts";
 import {
-  DEFAULT_AGENT_DEFINITION,
+  DEFAULT_AGENT_DEFINITION_PATH,
   KIT_VERSION,
-  diffAgentDefinitions,
   validateAgentDefinition,
   type AgentDefinition,
 } from "./agent-definition.ts";
+import {
+  baseLayer,
+  definitionLayerCandidates,
+  formatDefinitionErrors,
+  formatDefinitionLayersLine,
+  formatDefinitionProvenance,
+  resolveLocalDefinition,
+  resolveUserScopeDefinition,
+  type LocalDefinition,
+} from "./definition-source.ts";
 import { formatApplyBlocked, planApply } from "./apply-artifacts.ts";
 import { sweepOrphanArtifacts, sweepOrphanArtifactsIn, sweepProjectRoleArtifacts } from "./apply-orphans.ts";
 import { createAdoptSet, NO_ADOPT, type AdoptSet } from "./adopt-paths.ts";
@@ -131,9 +134,11 @@ import {
   formatCascadeProvenance,
   formatCascadeReport,
   formatCascadeTrace,
+  isLayerDirectory,
   LayerSourceError,
   resolveDefinitionLayers,
   type CascadeResolution,
+  type ResolveLayersOptions,
 } from "./layer-cascade.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
@@ -260,7 +265,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>]\n" +
     "       npx petbox-wire update\n" +
-    "       npx petbox-wire apply [--definition <key>] [--offline] [--all [--dry-run]]\n" +
+    "       npx petbox-wire apply [--offline] [--all [--dry-run]]\n" +
     "                             [--roles=project|user] [--adopt <abs path>]...\n" +
     "       npx petbox-wire status [--offline] [--all]\n" +
     "       npx petbox-wire doctor [--offline]\n" +
@@ -291,11 +296,14 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             retired prompt-rag hook from the global settings files).\n" +
     "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
     "apply        Compile per-harness startup artifacts from a portable agent definition + local\n" +
-    "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
-    "             when cwd resolves via ~/.petbox/projects.json; on miss uses LKG cache\n" +
-    "             (~/.petbox/cache/<project>.agent-def.json) with a staleness mark, else built-in\n" +
-    "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
-    "             <key> selects the server doc (default: default). Writes under the git worktree\n" +
+    "             role→model binding (~/.petbox/roles.json). The definition is built FROM FILES, by\n" +
+    "             laying layers over each other in a declared order — base (this package's\n" +
+    "             default-agents.json, always present) < user (~/.petbox/agents) < project\n" +
+    "             (<root>/.petbox/agents) — and never fetched from anywhere. A layer directory that\n" +
+    "             does not exist is a layer with no opinion; a layer that IS there and cannot be\n" +
+    "             read/parsed hard-refuses the run, naming the file, having written nothing. Every\n" +
+    "             run prints its layers and, per role and field, WHICH layer supplied it. Writes\n" +
+    "             under the git worktree\n" +
     "             toplevel for cwd (`git rev-parse --show-toplevel`; falls back to cwd when cwd is not\n" +
     "             inside a git working tree) — NEVER the registry's project prefix, so apply run from a\n" +
     "             worktree targets that worktree, not the primary tree it was branched from. Always\n" +
@@ -315,7 +323,10 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             3 truthfulness partial/block (policy — distinct from usage);\n" +
     "             4 INCOMPLETE — a requested step did not run for a reason you did not ask for (the\n" +
     "             workspace probe failed, so skills were not refreshed). An INTENTIONAL skip stays 0:\n" +
-    "             --offline and an unregistered directory are things you asked for. When 1 or 3 also\n" +
+    "             --offline and an unregistered directory are things you asked for. --offline no\n" +
+    "             longer has anything to do with the definition (that resolve is file-only and always\n" +
+    "             runs); it now skips exactly the network this command still does — the workspace\n" +
+    "             probe behind the skill refresh. When 1 or 3 also\n" +
     "             apply they win the code; the skip still shows in the printed summary.\n" +
     "             --all runs apply once per registered project (~/.petbox/projects.json) instead of\n" +
     "             cwd only, with a per-project outcome line (written/unchanged/refused/missing-dir/\n" +
@@ -349,11 +360,11 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             seed = DEFAULT_ROLE_MODEL_SEED preview, roles.json absent, nothing written; none =\n" +
     "             a PROBLEM — no source at all, apply will hard-refuse on a closed-model-space harness\n" +
     "             or warn-and-inherit on an open one), and the command to change it. Plus a four-pillar\n" +
-    "             summary: definition source (server/LKG cache/built-in copy, degradation labelled),\n" +
-    "             roster completeness, memory canon (absent/empty/N of 10k chars), and skill files\n" +
-    "             (materialized? byte-identical to the current template?). Reads the SAME resolvers\n" +
-    "             apply/doctor use; never gates, never writes. --offline skips the definition/canon/\n" +
-    "             skill-template network calls (materialization-only facts still print). Always exits\n" +
+    "             summary: definition layers (which of base/user/project are present, and which layer\n" +
+    "             gave each field), roster completeness, memory canon (absent/empty/N of 10k chars),\n" +
+    "             and skill files (materialized? byte-identical to the current template?). Reads the\n" +
+    "             SAME resolvers apply/doctor use; never gates, never writes. --offline skips the\n" +
+    "             canon/skill-template network calls (the definition never needed one). Always exits\n" +
     "             0 unless status itself crashes — it asserts nothing about correctness. Also prints\n" +
     "             whether npm's published 'latest' kit is behind this checkout's local `main` (best-\n" +
     "             effort — skipped outside a git checkout with a resolvable `main` ref).\n" +
@@ -361,32 +372,35 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             registered project (skill composition vs. the currently installed kit's templates,\n" +
     "             and what's wrong), plus the same npm-wire tag line once at the top. Read-only\n" +
     "             (never writes), safe to run against every project in the registry.\n" +
-    "doctor       Resolve the agent definition the same way apply does (server → LKG cache → built-in\n" +
-    "             default), then run the truthfulness gate for every known harness against THAT\n" +
+    "doctor       Resolve the agent definition the same way apply does (the file cascade base < user <\n" +
+    "             project), then run the truthfulness gate for every known harness against THAT\n" +
     "             definition, with the harness's local binding fed into the gate — so a roles.json id\n" +
     "             the harness cannot resolve fails here rather than at runtime. Prints OK or each\n" +
-    "             violation. Also reports built-in-vs-server definition drift (a built-in that is merely\n" +
-    "             poorer than the server is labelled degradation and is normal; real divergence is\n" +
-    "             called out separately), skill-file drift against the kit templates, the session-banner\n" +
+    "             violation, plus the layers it resolved and their per-field provenance. Also reports\n" +
+    "             skill-file drift against the kit templates, the session-banner\n" +
     "             budget margin, and a tail of ~/.petbox/wire.log. Network checks are skipped with an\n" +
     "             explicit reason when the server is unreachable, never silently. --offline skips them\n" +
-    "             itself up front: no live definition fetch (falls straight to LKG cache, then built-in\n" +
-    "             default), no skill-file drift check, no banner-budget check — the truthfulness gate\n" +
-    "             still runs, against whichever definition that leaves you with.\n" +
-    "             Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
+    "             itself up front: no skill-file drift check, no banner-budget check — the definition\n" +
+    "             resolve and the truthfulness gate still run, because neither one touches a network.\n" +
+    "             A broken definition layer is a HARD failure here, same as in apply: doctor exists to\n" +
+    "             gate the definition apply would compile.\n" +
+    "             Exit 0 all OK; 1 hard fail (invalid/unreadable definition layer); 2 usage; 3 truthfulness\n" +
     "             (same taxonomy as apply — policy block is not a hard crash; doctor never reports 4,\n" +
     "             it skips no step of its own).\n" +
     "layers       Diagnose the definition-layer cascade: which layer directories exist on this\n" +
     "             machine, where they physically live, and — by FIELD, never \"the files differ\" —\n" +
-    "             what they disagree about. Built on layer-cascade.ts's own resolver (base layer\n" +
-    "             excluded: it still ships as a flat JSON inside the package, not a directory, so\n" +
-    "             this command says so instead of silently comparing two of three layers). With no\n" +
-    "             <dir> arguments, checks this command's own conventional defaults: ~/.petbox/agents\n" +
-    "             (user) and <project root>/.petbox/agents (project) — pass explicit directories\n" +
-    "             (lowest priority first) to check anything else. Never writes; never touches apply's\n" +
-    "             own exit code. Exit 0 clean (2+ layers, zero cascade errors); 1 diverged (a cascade\n" +
-    "             ERROR was found — E0-E5/E1); 2 usage; 3 COULD NOT CHECK (fewer than two layers\n" +
-    "             present, or a present layer's source is broken) — never confused with 0 or 1.\n" +
+    "             what they disagree about. Built on layer-cascade.ts's own resolver, the same one\n" +
+    "             apply/doctor/status resolve with. With no <dir> arguments it checks exactly what\n" +
+    "             apply would: the kit base (default-agents.json, always the floor) under\n" +
+    "             ~/.petbox/agents (user) and <project root>/.petbox/agents (project). Pass explicit\n" +
+    "             directories (lowest priority first) to compare an arbitrary set instead — that mode\n" +
+    "             takes your list literally and adds no base. A directory that exists but declares\n" +
+    "             nothing (empty, or only .DS_Store/Thumbs.db/a README) counts as absent, not broken.\n" +
+    "             Never writes; never touches apply's own exit code. Exit 0 clean (the cascade\n" +
+    "             resolved, zero cascade errors — including the ordinary fresh-machine case where the\n" +
+    "             kit base is the only layer); 1 diverged (a cascade ERROR was found — E0-E5/E1);\n" +
+    "             2 usage; 3 COULD NOT CHECK (a present layer's source is broken, or fewer than two\n" +
+    "             explicit directories in explicit mode) — never confused with 0 or 1.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -492,14 +506,20 @@ function isModelCommand(argv: string[]): boolean {
 }
 
 // doctor — truthfulness gate for each known harness vs the SAME definition apply would compile
-// (doctor-gates-wrong-definition): server → LKG cache → built-in DEFAULT, exactly like apply
-// (resolveApplyDefinition, shared with runApply below), not the hard-coded built-in default.
-// Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
-// Also prints a built-in-vs-live definition drift check (bug: builtin-definition-drifts-no-catchup)
-// when this run actually reached the server, and a materialized-skill-vs-template drift check
-// (same bug, item 3, plus skill-files-clobber-and-apply-skips item 3) when this project is
-// registered and its live workspace resolves — both informational only, never changing the exit
-// code.
+// (doctor-gates-wrong-definition): the file cascade base < user < project, resolved through the
+// one shared resolver (definition-source.ts's resolveLocalDefinition), exactly like apply.
+// Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid/unreadable definition layer);
+// 2 usage; 3 truthfulness policy.
+//
+// The built-in-vs-live definition drift check that used to live here is GONE, and not because it
+// was noisy: there is no longer a second document to drift FROM. The kit's baseline stopped being
+// "an offline bootstrap minimum that lags the server" and became the base LAYER every resolve is
+// built on (card wire-stops-fetching-definition). A check comparing it against itself would
+// report "no drift" forever and mean nothing.
+//
+// The materialized-skill-vs-template drift check (bug builtin-definition-drifts-no-catchup item 3,
+// plus skill-files-clobber-and-apply-skips item 3) stays: skills DO still come from the server's
+// workspace identity, so it remains informational and network-gated.
 async function runDoctor(argv: string[]): Promise<void> {
   let offline = false;
   for (let i = 1; i < argv.length; i++) {
@@ -514,15 +534,17 @@ async function runDoctor(argv: string[]): Promise<void> {
   }
 
   let definition: AgentDefinition;
-  let resolved: ResolvedAgentDefinition;
+  let local: LocalDefinition;
   try {
-    resolved = await resolveApplyDefinition({
-      offline,
-      definitionKey: DEFAULT_DEFINITION_KEY,
-      cwd: process.cwd(),
-      label: "doctor",
-    });
-    definition = resolved.definition;
+    local = resolveLocalDefinition({ root: resolveApplyRoot(process.cwd()).root });
+    if (local.errors.length > 0) {
+      throw new Error(
+        `the definition layer cascade reported ${local.errors.length} error(s):\n` +
+          formatDefinitionErrors(local.errors) +
+          `\nNothing was gated. Fix the layer files named above, or remove them.`,
+      );
+    }
+    definition = local.definition;
     validateAgentDefinition(definition);
     // Same referential-integrity gate apply applies, on the same resolution (doctor exists to
     // gate the definition apply would compile — doctor-gates-wrong-definition). A doctor that
@@ -549,76 +571,16 @@ async function runDoctor(argv: string[]): Promise<void> {
     : `local binding: activeProfile=${roles.activeProfile} (model ids are gated against each harness)`;
 
   log(`doctor: definition="${definition.name}" (${definition.roles.length} roles)`);
+  log(`doctor: ${formatDefinitionLayersLine(local)}`);
+  log("doctor: per-field provenance — which layer supplied each field of each resolved role:");
+  log(formatDefinitionProvenance(local));
   log(`doctor: ${bindingNote}`);
-
-  // Drift check (bug: builtin-definition-drifts-no-catchup) — informational only, never gates
-  // the exit code: nothing here blocks a harness from running correctly (apply already prefers
-  // the live server copy over the built-in), it only tells an operator the kit-shipped offline
-  // fallback (DEFAULT_AGENT_DEFINITION) has fallen behind what the project's server holds, so the
-  // next machine to go offline compiles a stale roster. Only meaningful when this run actually
-  // reached the server for the "default" key — an LKG or built-in-default source has nothing
-  // live to compare against, so the check is a clean skip, not a failure (doctor is offline by
-  // design; this is the one call that leaves that design, and its absence is not an error).
-  //
-  // Each skip reason below is named EXPLICITLY (bug: doctor-reports-answering-server-unreachable,
-  // same class as probe-collapses-http-errors-into-network) — an answered server (404/401/403/5xx)
-  // is never folded into "unreachable", and a deliberate `--offline` is never indistinguishable
-  // from a genuine failure. Only a true network/timeout miss (resolved carries none of these
-  // flags) still says "unreachable", and that word is now honest.
-  if (offline) {
-    log("doctor: drift check skipped (--offline).");
-  } else if (resolved.notFoundOnServer) {
-    log(
-      "doctor: drift check skipped (server reachable, but this project has no server-side " +
-        "definition yet — nothing to compare against).",
-    );
-  } else if (resolved.forbidden) {
-    log(
-      "doctor: drift check skipped (server reachable but refused the request — 401/403, check " +
-        "the API key's agents:read scope).",
-    );
-  } else if (resolved.httpError) {
-    log(`doctor: drift check skipped (${describeAgentDefHttpError(resolved.httpError)} — nothing to compare against).`);
-  } else if (resolved.parseError) {
-    log(
-      "doctor: drift check skipped (server answered but its response body did not parse — " +
-        "nothing to compare against).",
-    );
-  } else if (resolved.source !== "server") {
-    log("doctor: drift check skipped (server unreachable).");
-  } else if (definition.name !== DEFAULT_AGENT_DEFINITION.name) {
-    log(
-      `doctor: drift check skipped (live definition is named "${definition.name}", not ` +
-        `"${DEFAULT_AGENT_DEFINITION.name}" — nothing to compare the built-in default against).`,
-    );
-  } else {
-    const { degradations, divergences } = diffAgentDefinitions(DEFAULT_AGENT_DEFINITION, definition);
-    if (degradations.length === 0 && divergences.length === 0) {
-      log("doctor: built-in default definition matches the live server definition — no drift.");
-    } else {
-      if (degradations.length > 0) {
-        // Info-level, never console.error: the built-in is an offline bootstrap minimum, not a
-        // mirror of the live document — a role added server-side is expected to be missing here
-        // until the kit's next release, not a defect to chase.
-        log(
-          `doctor: built-in default is missing ${degradations.length} role(s) present in the live server ` +
-            `definition — normal (offline bootstrap minimum, not a mirror):`,
-        );
-        for (const line of degradations) log(`  - ${line}`);
-      }
-      if (divergences.length > 0) {
-        console.error(
-          `doctor: built-in default definition has drifted from the live server definition (${divergences.length}):`,
-        );
-        for (const line of divergences) console.error(`  - ${line}`);
-      }
-    }
-  }
 
   // Skill-template drift check (bugs: skill-files-clobber-and-apply-skips item 3,
   // builtin-definition-drifts-no-catchup item 3 — the one item both cards' verdicts named as the
-  // last thing left undone) — informational only, same reasoning as the definition drift check
-  // just above: doctor is offline by design, and comparing a materialized skill file against its
+  // last thing left undone) — informational only, never gating the exit code: doctor's own
+  // gate (the truthfulness pass below) is offline by design, and comparing a materialized skill
+  // file against its
   // template needs this project's LIVE workspace for the {{WORKSPACE}} placeholder (the registry
   // never stores it — see skill-files.ts's probeWorkspace), so `--offline`, an unregistered
   // directory, or an unreachable server are all a clean skip, never a failure. Reuses the SAME
@@ -723,7 +685,7 @@ async function runDoctor(argv: string[]): Promise<void> {
   // the exit code, same spirit as the drift check above: doctor is offline by design, and most
   // machines will NEVER trip a Class-Б event, so an absent/empty wire.log is not a failure, just
   // "nothing has silently broken yet". This is the one place an operator can see the corrupt
-  // roles.json / corrupt registry / corrupt LKG cache / scope-refused fetch events that hooks and
+  // roles.json / corrupt registry / broken definition layer / scope-refused fetch events that hooks and
   // best-effort code paths were told to log but not necessarily print loudly.
   const wireLogTail = readWireLogTail(10);
   if (wireLogTail.length === 0) {
@@ -818,7 +780,6 @@ type ApplyRunResult = {
 // status.ts's own (see skill-files.ts's header on that dedup).
 
 async function performApply(opts: {
-  definitionKey: string;
   offline: boolean;
   label: string;
   /** Directory apply resolves/writes against. Defaults to process.cwd() — the single-project
@@ -859,16 +820,24 @@ async function performApply(opts: {
   };
   const { root, via } = resolveApplyRoot(cwd);
   let definition: AgentDefinition;
-  let resolved: ResolvedAgentDefinition;
+  let local: LocalDefinition;
   let rolesData: RolesFile;
   try {
-    resolved = await resolveApplyDefinition({
-      offline: opts.offline,
-      definitionKey: opts.definitionKey,
-      cwd,
-      label: opts.label,
-    });
-    definition = resolved.definition;
+    // The ONE resolve path: base < user < project, from files, no network anywhere on it
+    // (definition-source.ts). A PRESENT-but-unreadable layer throws LayerSourceError here — with
+    // the absolute path and the parser's own position already in its message — and lands in the
+    // catch below BEFORE the first artifact is touched, which is the whole contract of
+    // broken-layer-fails-loudly for a BUILD command. A layer directory that is simply absent is
+    // not an error and is never mentioned as one.
+    local = resolveLocalDefinition({ root });
+    if (local.errors.length > 0) {
+      throw new Error(
+        `the definition layer cascade reported ${local.errors.length} error(s):\n` +
+          formatDefinitionErrors(local.errors) +
+          `\nNothing was written by this step (${opts.label}). Fix the layer files named above, or remove them.`,
+      );
+    }
+    definition = local.definition;
     validateAgentDefinition(definition);
     // Referential integrity of what we are about to RENDER (bug:
     // artifact-integrity-dangling-and-orphans, spec definition-truthfulness). A role whose
@@ -881,7 +850,7 @@ async function performApply(opts: {
       throw new Error(
         `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
           formatDanglingTargets(dangling) +
-          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+          `\nNothing was written by this step (${opts.label}). Fix the definition (add the role, or drop the reference).`,
       );
     }
     // strict: a corrupt roles.json must hard-fail apply, not silently compile as "no bindings"
@@ -900,35 +869,30 @@ async function performApply(opts: {
   }
 
   log(`${opts.label}: root=${root} (via ${via})`);
-  // One grep-able line naming WHICH document this run compiled and WHERE it came from. D18
-  // makes this load-bearing, not cosmetic: stage 2's confirmation is "apply ran on all three
-  // harnesses WITHOUT going to the server for the definition", and that is unprovable unless
-  // apply states its own resolution path in its summary rather than only in the narrative lines
-  // resolveApplyDefinition prints above.
-  const versionSuffix =
-    resolved.key !== undefined && resolved.version !== undefined
-      ? ` key=${resolved.key} v${resolved.version}`
-      : "";
+  // The grep-able lines naming WHICH layers this run compiled and, per role and field, which one
+  // supplied it. D18 makes this load-bearing, not cosmetic: stage 2's confirmation is "apply ran
+  // on all three harnesses WITHOUT going to the server for the definition", and that is
+  // unprovable unless apply states its own resolution path in its own output. A source= label
+  // ("server"/"lkg"/"default") cannot state it — there is no single source any more, only an
+  // ordered set of layers, and the interesting fact is which of them won each field.
   log(
-    `${opts.label}: definition="${definition.name}" source=${resolved.source}${versionSuffix}` +
-      `${resolved.stale ? " (stale)" : ""}, harnesses=${HARNESS_IDS.join(",")}`,
+    `${opts.label}: definition="${definition.name}" ${formatDefinitionLayersLine(local)}, ` +
+      `harnesses=${HARNESS_IDS.join(",")}`,
   );
+  log(`${opts.label}: per-field provenance — which layer supplied each field of each resolved role:`);
+  log(formatDefinitionProvenance(local));
 
-  // Orphan sweep gate (bug: artifact-integrity-dangling-and-orphans). Deleting the artifact of
-  // a role that left the definition is only safe when the definition is the AUTHORITATIVE one.
-  // A degraded resolve — LKG replica, or the kit's offline baseline after a network blip or a
-  // 404 — legitimately holds FEWER roles than the project really has, and sweeping against it
-  // would delete live roles' artifacts because the network hiccuped. Server-sourced only, for
-  // now; when the source of truth moves to file layers (D13/D18 stage 2) that source joins this
-  // gate, and the server one leaves with the rest of the server path.
-  const orphanSweepSource = resolved.source === "server";
-  if (!orphanSweepSource) {
-    log(
-      `${opts.label}: orphan sweep skipped — the definition came from '${resolved.source}', not the ` +
-        `server; a degraded resolve may be missing roles this project really has, and deleting ` +
-        `their artifacts on that basis would be destructive.`,
-    );
-  }
+  // Orphan sweep (bug: artifact-integrity-dangling-and-orphans) — UNCONDITIONAL, matching the
+  // user-scope path (applyUserRoles) that always swept.
+  //
+  // It used to be gated on `source === "server"`, and that gate was right for what it guarded: a
+  // degraded network resolve (an LKG replica, or the kit baseline after a blip or a 404)
+  // legitimately holds FEWER roles than the project really has, and sweeping against it would
+  // delete live roles' artifacts because a socket hiccuped. There is no such resolve left. The
+  // cascade is built from local files that either read or hard-refuse the whole run above, so
+  // "this definition might be an accidental subset" is no longer a state the code can be in —
+  // and leaving the gate would have silently disabled the sweep forever, since its condition
+  // became permanently false the moment the server path went away.
 
   const writtenHarnesses: string[] = [];
   const partialHarnesses: string[] = [];
@@ -1021,24 +985,22 @@ async function performApply(opts: {
       // harness, AFTER its writes, and independently of them: a role skipped by the truthfulness
       // gate is still declared and its file is never a candidate. Removal still requires our
       // origin marker, so a user's own file in the petbox-* namespace is reported and kept.
-      if (orphanSweepSource) {
-        for (const orphan of sweepOrphanArtifacts(root, harness, definition, { dryRun })) {
-          emit(
-            orphan.outcome === "removed"
-              ? {
-                  kind: "remove",
-                  subject: "orphan",
-                  path: orphan.path,
-                  note: `its role is no longer in definition "${definition.name}"`,
-                }
-              : {
-                  kind: "kept",
-                  subject: "orphan",
-                  path: orphan.path,
-                  note: "no role by that name in the definition",
-                },
-          );
-        }
+      for (const orphan of sweepOrphanArtifacts(root, harness, definition, { dryRun })) {
+        emit(
+          orphan.outcome === "removed"
+            ? {
+                kind: "remove",
+                subject: "orphan",
+                path: orphan.path,
+                note: `its role is no longer in definition "${definition.name}"`,
+              }
+            : {
+                kind: "kept",
+                subject: "orphan",
+                path: orphan.path,
+                note: "no role by that name in the definition",
+              },
+        );
       }
 
       for (const w of plan.warnings) {
@@ -1062,9 +1024,9 @@ async function performApply(opts: {
   // wire (this is exactly what the owner observed for petbox-methodology). `apply` now refreshes
   // them too, using the SAME origin-marker write guard as the agent files above; a blocked skill
   // path folds into the same clobber-refusal exit path. Best-effort project identity: this is a
-  // registered project's directory or it is not — `apply` never re-derives one, same as the
-  // per-role definition fetch above (resolveApplyDefinition). `--offline` skips the network probe
-  // for workspace, same spirit as `--offline` skipping the definition fetch.
+  // registered project's directory or it is not — `apply` never re-derives one. `--offline` skips
+  // the network probe for workspace, and after stage 2 that probe is the ONLY network call apply
+  // still makes: the definition resolve above reads files and runs either way.
   // Skip bookkeeping (bug: probe-collapses-http-errors-into-network / apply's silent-partial
   // side): a skipped skill refresh must never fall out of the final message and structured
   // summary. `intentional` covers the two cases the user asked for themselves — `--offline` and
@@ -1209,7 +1171,6 @@ async function performApply(opts: {
 // via usage()). Exit codes: 0 full success; 1 hard failure; 2 usage/args; 3 truthfulness;
 // 4 incomplete (a step was skipped for a reason the user did not ask for).
 async function runApply(argv: string[]): Promise<void> {
-  let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
   let all = false;
   let dryRun = false;
@@ -1253,17 +1214,6 @@ async function runApply(argv: string[]): Promise<void> {
         usage(WIRE_EXIT.usage);
       }
       adoptPaths.push(v);
-    } else if (a === "--definition") {
-      const v = argv[++i];
-      if (!v || v.startsWith("--")) {
-        console.error("apply: --definition requires a non-empty key");
-        usage(WIRE_EXIT.usage);
-      }
-      definitionKey = v.trim();
-      if (!definitionKey) {
-        console.error("apply: --definition requires a non-empty key");
-        usage(WIRE_EXIT.usage);
-      }
     } else if (a.startsWith("--")) {
       console.error(`apply: unexpected argument: ${a}`);
       usage(WIRE_EXIT.usage);
@@ -1314,7 +1264,7 @@ async function runApply(argv: string[]): Promise<void> {
   }
 
   if (all) {
-    const code = await runApplyAll({ definitionKey, offline, dryRun, roleScope, adopt });
+    const code = await runApplyAll({ offline, dryRun, roleScope, adopt });
     exitWith(strongestExitCode(code, reportUnmatchedAdopt(adopt)));
     return;
   }
@@ -1326,24 +1276,55 @@ async function runApply(argv: string[]): Promise<void> {
       label: "apply [roles:user]",
     });
     const result = await performApply({
-      definitionKey,
       offline,
       dryRun,
       roleScope,
       adopt,
       label: "apply",
     });
+    reportSplitRunOutcome("apply", userRoles, result, dryRun);
     exitWith(strongestExitCode(userRoles.code, result.code, reportUnmatchedAdopt(adopt)));
     return;
   }
 
-  const result = await performApply({ definitionKey, offline, dryRun, roleScope, adopt, label: "apply" });
+  const result = await performApply({ offline, dryRun, roleScope, adopt, label: "apply" });
   // Same libuv race doctor/status hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
-  // src\win\async.c): performApply's definition resolve + workspace probe are live network
-  // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
+  // src\win\async.c): performApply's workspace probe is a live network round-trip (the definition
+  // resolve alongside it used to be a second one; it reads files now), and a hard process.exit()
+  // right after races Windows' async-handle teardown for
   // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
   // own message just printed. exitWith (wire-exit.ts) is the one sanctioned spelling of the fix.
   exitWith(strongestExitCode(result.code, reportUnmatchedAdopt(adopt)));
+}
+
+/**
+ * `--roles=user` is TWO write passes in one command: the machine profiles (applyUserRoles) and
+ * then the project tree (performApply). Each one reports honestly about ITSELF, and each one's
+ * refusal says "Nothing was written by this step" — but nothing used to reconcile them, so a run
+ * where the first pass wrote 15 files and the second refused on a broken project layer ended with
+ * "Nothing was written" as its last word and exit 1. That reads as "the machine is untouched",
+ * which is false, and it is false in the direction that matters: the operator stops looking.
+ *
+ * So say it plainly, once, at the point where both outcomes are known. Only when they actually
+ * disagree — a failed pass alongside a pass that already wrote — is there anything to reconcile;
+ * a clean run and a wholly-failed run both speak for themselves already.
+ */
+function reportSplitRunOutcome(
+  label: string,
+  userRoles: ApplyRunResult,
+  project: ApplyRunResult,
+  dryRun: boolean,
+): void {
+  const wrote = userRoles.summary.filesWritten + userRoles.summary.removed;
+  if (project.code === WIRE_EXIT.ok || wrote === 0) return;
+  const verb = dryRun ? "would have changed" : "already changed";
+  console.error(
+    `${label}: PARTIAL RUN — the project-scope step above refused (exit ${project.code}) and ` +
+      `changed nothing, but the user-scope step ${verb} ${wrote} file(s) under the harness ` +
+      `profiles BEFORE it ran. The machine is not in the state it was in before this command. ` +
+      `Fix what the refusal names, then re-run \`petbox-wire apply\` — it is idempotent, and the ` +
+      `already-written profile files will report as unchanged.`,
+  );
 }
 
 /**
@@ -1398,7 +1379,6 @@ export type RegistryApplyRow = {
  * other project's real outcome, but the process exit code still reflects it.
  */
 async function runApplyAll(opts: {
-  readonly definitionKey: string;
   readonly offline: boolean;
   readonly dryRun: boolean;
   readonly roleScope: RoleScope;
@@ -1450,31 +1430,25 @@ async function runApplyAll(opts: {
  * normalize-all-environments-to-default item 1). 15 files instead of 90, and the only copy that
  * exists, so there is nothing left to drift against.
  *
- * The definition is the kit's own bundled baseline (DEFAULT_AGENT_DEFINITION, agent-definition.ts)
- * — NEVER resolved against the caller's cwd or any per-project server document (card:
- * user-scope-roles-rendered-from-cwd-project-definition). Measured 2026-09-02: the old code called
- * resolveApplyDefinition(cwd), so the SAME `apply --all --dry-run` reported "using server
- * definition default v20" from $system and "default v1" from pochtar — a run from the wrong
- * directory silently downgraded the whole machine profile to whichever project's server document
- * happened to be stale, and said nothing alarming. User-scope roles are a MACHINE fact, not a
- * per-project one; asking N registered projects for N possibly-different documents and writing
- * them all to the same 15 paths was always last-write-wins nonsense — the fix is to stop asking
- * any project at all. The kit baseline is:
- *   - deterministic by construction: identical bytes from any cwd, on any machine running the
- *     same kit build — no registry lookup, no network, no server-side drift to inherit;
- *   - never "unavailable": it ships inside the npm package (package.json's `files` allowlist) and
- *     is validated at module import time (agent-definition.ts's loadDefaultAgentDefinition) — a
- *     missing/corrupt copy throws loudly there, before this function ever runs, so there is no
- *     separate "source unreachable" branch to write here;
- *   - never a silent downgrade: there is exactly one baseline per kit build, so "older than what
- *     was already rendered" can only happen by running an OLDER kit binary, which is a kit-version
- *     drift question (npm-wire-drift.ts) orthogonal to this function, not a per-invocation choice;
- *   - already the SAME content the server-sourced definitions were converging on: verified live
- *     2026-09-02 against the owner's real profile — the 15 files already rendered from $system's
- *     server document (v20) are byte-for-byte identical to what this baseline renders today, on
- *     every one of the three harnesses. Confirms this is not a downgrade in substance, only in
- *     mechanism (matches the source-of-truth research in research/wire-source-of-truth: git is
- *     already canonical, server documents are replicas).
+ * The definition is the MACHINE-WIDE half of the cascade — base < user (definition-source.ts's
+ * resolveUserScopeDefinition) — with the PROJECT layer deliberately excluded, and never resolved
+ * against the caller's cwd (card: user-scope-roles-rendered-from-cwd-project-definition).
+ * Measured 2026-09-02: the old code resolved a per-project server document against cwd, so the
+ * SAME `apply --all --dry-run` reported "using server definition default v20" from $system and
+ * "default v1" from pochtar — a run from the wrong directory silently downgraded the whole
+ * machine profile to whichever project's document happened to be stale, and said nothing
+ * alarming. User-scope roles are a MACHINE fact; writing N possibly-different documents to the
+ * same 15 paths was always last-write-wins nonsense. Both layers used here are machine-wide, so:
+ *   - deterministic by construction: identical bytes from any cwd, on any machine with the same
+ *     kit build and the same ~/.petbox/agents — no registry lookup, no network, nothing per-cwd;
+ *   - never "unavailable": the base ships inside the npm package (package.json's `files`
+ *     allowlist) and is validated at module import time (agent-definition.ts's
+ *     loadDefaultAgentDefinition) — a missing/corrupt copy throws loudly there, before this
+ *     function ever runs, so there is no "source unreachable" branch to write here. The user
+ *     layer is optional by design: absent = no opinion, never an error;
+ *   - never a silent downgrade: a BROKEN user layer refuses the run below (loudly, naming the
+ *     file) instead of quietly rendering the floor — the one thing D15 forbids is a resolve that
+ *     keeps working off something other than what the operator wrote.
  *
  * Two things this deliberately does NOT do:
  *  - no pre-namespacing legacy cleanup (`worker.md` next to `petbox-worker.md`). Those unprefixed
@@ -1482,10 +1456,9 @@ async function runApplyAll(opts: {
  *    the only thing such a probe could ever find is somebody else's file, which is exactly what
  *    `~/.factory/droids/worker.md` is on the owner's machine today.
  *  - no `.gitignore` policy. A harness profile is not a project checkout.
- * The orphan sweep always runs now (unconditionally, unlike the project-scope path's server-source
- * gate): the baseline is never a degraded partial replica, so a role dropped from it can never be
- * mistaken for a network hiccup — its user-scope file must go too, or it outlives the roster
- * forever.
+ * The orphan sweep always runs: a file cascade is never a degraded partial replica, so a role
+ * dropped from it can never be mistaken for a network hiccup — its user-scope file must go too,
+ * or it outlives the roster forever. (The project-scope path now agrees; see performApply.)
  */
 async function applyUserRoles(opts: {
   readonly dryRun: boolean;
@@ -1503,16 +1476,33 @@ async function applyUserRoles(opts: {
   let definition: AgentDefinition;
   let rolesData: RolesFile;
   try {
-    // DEFAULT_AGENT_DEFINITION is already validated at module import time (agent-definition.ts) —
-    // re-validating here would be a second copy of that same check, not extra safety.
-    definition = DEFAULT_AGENT_DEFINITION;
-    log(`${opts.label}: source=kit baseline (default-agents.json), kit v${KIT_VERSION} — same on every cwd/machine running this build`);
+    // base < user only — see this function's doc comment on why the project layer is excluded.
+    // A broken user layer throws LayerSourceError straight into the catch below, before a single
+    // profile file is touched.
+    const local = resolveUserScopeDefinition({ homeDir: homedir() });
+    if (local.errors.length > 0) {
+      throw new Error(
+        `the definition layer cascade reported ${local.errors.length} error(s):\n` +
+          formatDefinitionErrors(local.errors) +
+          `\nNothing was written by this step (${opts.label}). Fix the layer files named above, or remove them.`,
+      );
+    }
+    definition = local.definition;
+    // The base is already validated at module import time (agent-definition.ts) and the cascade
+    // guarantees structural completeness of what it adds — re-validating here would be a second
+    // copy of the same check, not extra safety.
+    log(
+      `${opts.label}: ${formatDefinitionLayersLine(local)} — machine-wide, same on every cwd ` +
+        `running this build`,
+    );
+    log(`${opts.label}: per-field provenance — which layer supplied each field of each resolved role:`);
+    log(formatDefinitionProvenance(local));
     const dangling = findDanglingTargets(definition);
     if (dangling.length > 0) {
       throw new Error(
         `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
           formatDanglingTargets(dangling) +
-          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+          `\nNothing was written by this step (${opts.label}). Fix the definition (add the role, or drop the reference).`,
       );
     }
     rolesData = loadRoles(homedir(), { strict: true });
@@ -1532,10 +1522,8 @@ async function applyUserRoles(opts: {
   const partialHarnesses: string[] = [];
   const blockedHarnesses: string[] = [];
   let clobberBlocked = false;
-  // Always authoritative (see the function doc comment): the kit baseline is never a degraded
-  // partial replica the way a server/LKG resolve could be, so the project-scope path's
-  // server-source gate does not apply here.
-  const orphanSweepSource = true;
+  // The sweep is unconditional here and in performApply alike: a file cascade is never a
+  // degraded partial replica the way a network resolve could be (see the function doc comment).
 
   for (const harness of HARNESS_IDS) {
     const dir = userAgentFilesRoot(harness, homedir());
@@ -1578,24 +1566,22 @@ async function applyUserRoles(opts: {
       }
     }
 
-    if (orphanSweepSource) {
-      for (const orphan of sweepOrphanArtifactsIn(dir, harness, definition, { dryRun: opts.dryRun })) {
-        emit(
-          orphan.outcome === "removed"
-            ? {
-                kind: "remove",
-                subject: "orphan",
-                path: orphan.path,
-                note: `its role is no longer in definition "${definition.name}"`,
-              }
-            : {
-                kind: "kept",
-                subject: "orphan",
-                path: orphan.path,
-                note: "no role by that name in the definition",
-              },
-        );
-      }
+    for (const orphan of sweepOrphanArtifactsIn(dir, harness, definition, { dryRun: opts.dryRun })) {
+      emit(
+        orphan.outcome === "removed"
+          ? {
+              kind: "remove",
+              subject: "orphan",
+              path: orphan.path,
+              note: `its role is no longer in definition "${definition.name}"`,
+            }
+          : {
+              kind: "kept",
+              subject: "orphan",
+              path: orphan.path,
+              note: "no role by that name in the definition",
+            },
+      );
     }
 
     for (const w of plan.warnings) console.error(`${opts.label}: warn — ${w}`);
@@ -1631,7 +1617,6 @@ async function applyUserRoles(opts: {
 async function applyToRegistryEntry(
   entry: RegistryEntry,
   opts: {
-    readonly definitionKey: string;
     readonly offline: boolean;
     readonly dryRun: boolean;
     readonly roleScope: RoleScope;
@@ -1654,7 +1639,6 @@ async function applyToRegistryEntry(
   }
   try {
     const result = await performApply({
-      definitionKey: opts.definitionKey,
       offline: opts.offline,
       dryRun: opts.dryRun,
       roleScope: opts.roleScope,
@@ -1709,91 +1693,6 @@ async function applyToRegistryEntry(
       code: WIRE_EXIT.hard,
     };
   }
-}
-
-// Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
-// Server is authoritative; disk is LKG replica. roles.json polarity is separate (not here).
-// `label` prefixes the log lines: apply and doctor share this resolution so that doctor gates
-// the definition apply would actually compile, and each says so under its own name.
-async function resolveApplyDefinition(opts: {
-  offline: boolean;
-  definitionKey: string;
-  cwd: string;
-  label?: string;
-}): Promise<ResolvedAgentDefinition> {
-  const label = opts.label ?? "apply";
-  const resolved = resolveProject(opts.cwd);
-  const got = await resolveAgentDefinitionWithLkg({
-    offline: opts.offline,
-    definitionKey: opts.definitionKey,
-    ...(resolved?.project !== undefined ? { projectKey: resolved.project } : {}),
-    ...(resolved?.baseUrl !== undefined ? { baseUrl: resolved.baseUrl } : {}),
-    ...(resolved?.apiKey !== undefined ? { apiKey: resolved.apiKey } : {}),
-  });
-
-  if (got.source === "server") {
-    log(`${label}: using server definition ${got.key} v${got.version}`);
-  } else if (got.source === "lkg") {
-    if (got.offline) {
-      // A deliberate --offline run never attempted a fetch — checked FIRST, never folded into
-      // the "unreachable" wording below (bug: doctor-reports-answering-server-unreachable, round
-      // 2 — reported live: `doctor --offline` printed this exact line's OLD text, "PetBox
-      // unreachable", against a server it had reached moments earlier in the SAME run without
-      // the flag; only --offline explains the skip, not connectivity).
-      log(`${label}: ${got.staleMarker ?? AGENT_DEF_OFFLINE_STALE_MARKER}`);
-    } else if (got.forbidden) {
-      // Server was reachable and refused the request — a scope problem, not offline
-      // (wire-silent-failures-invisible, evidence 2026-07-26). Say so before the generic stale
-      // marker so the operator does not go debug the network for a permissions issue.
-      log(
-        `${label}: server reachable but refused the request (401/403 — API key likely missing ` +
-          `the agents:read scope); ${got.staleMarker ?? "using LKG agent definition cache"}`,
-      );
-    } else if (got.httpError) {
-      // Server ANSWERED with an error status (500, 503, ...) — never "unreachable" (bug:
-      // doctor-reports-answering-server-unreachable, same class as
-      // probe-collapses-http-errors-into-network).
-      log(`${label}: ${describeAgentDefHttpError(got.httpError)}; ${got.staleMarker ?? "using LKG agent definition cache"}`);
-    } else {
-      log(`${label}: ${got.staleMarker ?? "using LKG agent definition cache"}`);
-    }
-    log(`${label}: using LKG definition ${got.key} v${got.version} (stale)`);
-  } else if (got.offline) {
-    // Deliberate --offline, no cache to fall back to — never "no server"/"unreachable", the
-    // caller simply asked to skip the network (same reasoning as the lkg branch above).
-    log(`${label}: --offline — using kit default baseline (no LKG cache exists)`);
-  } else if (got.notFoundOnServer) {
-    // Server was reachable; it just has no definition of its own for this project yet
-    // (normal for a fresh project) — not an offline/unreachable condition.
-    log(`${label}: no server-side definition for this project yet — using kit default baseline`);
-  } else if (got.forbidden) {
-    // Server was reachable and refused (401/403) AND there is no LKG cache to fall back to —
-    // distinct from a genuine network/timeout/5xx failure, which the final else below still
-    // covers. Do not say "offline": the fix here is scopes, not connectivity.
-    log(
-      `${label}: server reachable but refused the request (401/403 — API key likely missing the ` +
-        `agents:read scope) and no LKG cache exists — using kit default baseline. This is a ` +
-        `permissions problem, not an offline one; check the key's scopes.`,
-    );
-  } else if (got.httpError) {
-    // Server ANSWERED with an error status (500, 503, ...) and there is no LKG cache — distinct
-    // from a genuine network/timeout failure, which the final else below still covers.
-    log(`${label}: ${describeAgentDefHttpError(got.httpError)} and no LKG cache exists — using kit default baseline.`);
-  } else {
-    log(`${label}: offline default definition (no server, no LKG cache)`);
-  }
-  return got;
-}
-
-// Shared wording for an agent-def fetch that reached the server but got an error status (500,
-// 503, ...) — never "unreachable"/"offline" (bug: doctor-reports-answering-server-unreachable).
-// 503 gets its own self-recovering phrasing, same reasoning as skill-files.ts's
-// describeWorkspaceProbeFailure for PetBox's own deploy_in_progress window.
-function describeAgentDefHttpError(httpError: { status: number; retryAfterSeconds?: number }): string {
-  const retryNote =
-    httpError.retryAfterSeconds !== undefined ? ` (retry in ~${httpError.retryAfterSeconds}s)` : "";
-  const selfRecovering = httpError.status === 503 ? ", self-recovering" : "";
-  return `server reachable but answered HTTP ${httpError.status}${selfRecovering}${retryNote}`;
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
@@ -1981,23 +1880,21 @@ function runModelUnset(argv: string[]): void {
 // to answer by hand (card role-definition-cascade-revisit, requirement 1, never covered by the
 // accepted idea's spec_plan): which definition LAYERS exist on this machine, where they
 // physically live, and — by FIELD, not "the files differ" — what they disagree about. Read-only:
-// never writes, never calls resolveApplyDefinition/the server, never gates apply's own exit code.
+// never writes, never gates apply's own exit code.
 //
 // Built entirely on layer-cascade.ts's resolveDefinitionLayers — this file does not re-derive a
-// second comparator. The resolver's own contract (see that module's header) is that the
-// directory list is the CALLER's decision; nothing in the codebase has yet picked a fixed
-// location for the "user"/"project" layers (the client-side merge itself, P5, has not landed —
-// see idea role-definitions-live-in-files), so the defaults below are this command's own,
-// documented choice — `~/.petbox/agents` for user, `<project root>/.petbox/agents` for project —
-// consistent with the architecture sketch (research/wire-source-of-truth/30-architecture.md §3)
-// and with every other `~/.petbox/*` path already in this package. Pass explicit directories on
-// the command line (lowest priority first, same order resolveDefinitionLayers takes) to check
-// anything else, e.g. a one-off scratch layout while proving this command works.
+// second comparator. With NO arguments it now checks EXACTLY what apply/doctor/status resolve:
+// definition-source.ts's canonical layer list (`~/.petbox/agents` for user,
+// `<project root>/.petbox/agents` for project) laid over the kit's shipped base
+// (default-agents.json). That used to be this command's own documented guess, printed with a
+// disclaimer that the base "is not yet a layer directory (client-side merge, P5, has not
+// landed)" — both the guess and the disclaimer are gone, because the merge landed (card
+// wire-stops-fetching-definition) and there is now one list, in one module, that everything uses.
 //
-// The "base" layer is deliberately NOT a candidate here: it still ships as a flat JSON file
-// inside the package (agent-definition.ts's DEFAULT_AGENT_DEFINITION), not a layer directory —
-// that migration step (client-side merge) has not landed. This command says so OUT LOUD instead
-// of quietly comparing only two of three layers and looking complete.
+// Passing explicit directories keeps the OTHER mode: your list, literally, lowest priority
+// first, with NO base underneath it. That is what makes the command usable as a bench for an
+// arbitrary layout (a scratch pair of directories, a candidate layer before it is installed)
+// rather than only for the machine's real one.
 //
 // The trap this must not repeat (observation doctor-drift-check-silent-skip-unregistered-dir):
 // "no divergence" and "could not check" must never look the same. Every early return below prints
@@ -2006,24 +1903,20 @@ function runModelUnset(argv: string[]): void {
 // exit code, not just prose, cannot confuse the three.
 //
 // Exit codes (own small taxonomy, not WIRE_EXIT's — this command never touches apply's roster):
-//   0  clean       — 2+ layers present, resolved, zero cascade ERRORs (E0-E5/E1; warnings do not
-//                    change the exit code — a W3 replica-layer nudge is not a hard problem)
+//   0  clean       — the cascade resolved with zero cascade ERRORs (E0-E5/E1; warnings do not
+//                    change the exit code — a W3 replica-layer nudge is not a hard problem).
+//                    Includes the ordinary fresh-machine case: the kit base alone IS a resolvable
+//                    cascade, and printing its provenance is a real answer, not a non-answer.
 //   1  diverged    — cascade resolved but reported at least one ERROR (dangling target, orphan
 //                    tombstone, incomplete new role, replace+append conflict, bad filename/mode)
 //   2  usage       — bad arguments
-//   3  cannotCheck — fewer than 2 layers present (nothing to diverge from), or a present layer's
-//                    source is broken/unreadable (LayerSourceError) — NEVER folded into 0 or 1
+//   3  cannotCheck — there is genuinely nothing to show: a present layer's source is broken and
+//                    could not be read (LayerSourceError), or explicit-directory mode was given
+//                    fewer than two present directories (no base is implied there, so one
+//                    directory has nothing to be laid over) — NEVER folded into 0 or 1
 const LAYERS_EXIT = { ok: 0, cascadeError: 1, usage: 2, cannotCheck: 3 } as const;
 
 type LayerCandidate = { readonly label: string; readonly dir: string };
-
-function defaultLayerCandidates(cwd: string): LayerCandidate[] {
-  const { root } = resolveApplyRoot(cwd);
-  return [
-    { label: "user", dir: join(homedir(), ".petbox", "agents") },
-    { label: "project", dir: join(root, ".petbox", "agents") },
-  ];
-}
 
 function runLayers(argv: string[]): void {
   const explicitDirs: string[] = [];
@@ -2040,53 +1933,64 @@ function runLayers(argv: string[]): void {
 
   const usingDefaults = explicitDirs.length === 0;
   const candidates: LayerCandidate[] = usingDefaults
-    ? defaultLayerCandidates(process.cwd())
+    ? definitionLayerCandidates(resolveApplyRoot(process.cwd()).root).map((c) => ({
+        label: c.label,
+        dir: c.dir,
+      }))
     : explicitDirs.map((d, i) => ({ label: `arg${i + 1}:${basename(d)}`, dir: d }));
 
   log(
     `layers: checking ${candidates.length} candidate layer location(s), lowest priority first ` +
-      `(${usingDefaults ? "this command's own conventional defaults" : "explicit directories from argv"}):`,
+      `(${usingDefaults ? "the kit's canonical layer locations" : "explicit directories from argv"}):`,
   );
   if (usingDefaults) {
     log(
-      `  base                 N/A       bundled inside the package as default-agents.json — NOT ` +
-        `yet a layer directory (client-side merge, P5, has not landed); excluded here, not silently skipped.`,
+      `  base                 PRESENT   ${DEFAULT_AGENT_DEFINITION_PATH} (kit v${KIT_VERSION}) — ` +
+        `the shipped floor, always in play; a flat document, not a directory, so its absence is a ` +
+        `broken install rather than "no opinion".`,
     );
   }
 
   const present: LayerCandidate[] = [];
   for (const c of candidates) {
-    let exists = false;
-    try {
-      exists = existsSync(c.dir) && statSync(c.dir).isDirectory();
-    } catch {
-      exists = false;
-    }
+    // isLayerDirectory, not existsSync: a directory that exists but DECLARES nothing (empty, or
+    // holding only `.DS_Store`/`Thumbs.db`/a README) has no opinion, and listing it as PRESENT
+    // here would then contradict what apply/doctor actually resolve.
+    const exists = isLayerDirectory(c.dir);
     log(`  ${c.label.padEnd(20)} ${exists ? "PRESENT  " : "absent   "} ${c.dir}`);
     if (exists) present.push(c);
   }
 
-  if (present.length === 0) {
+  // cannotCheck now means EXACTLY "there is nothing to show", and on the default path that can no
+  // longer happen: the kit base is a layer, it is always there, and a full cascade — trace,
+  // per-field provenance, diagnostics — is a real answer even when it has exactly one layer in
+  // it. The old rule ("fewer than two ⇒ CANNOT CHECK") was written while the base was still a
+  // footnote rather than a layer, and it aged into a lie: on a fresh machine — which is EVERY
+  // consumer's state at publication — `layers` exited 3 while `doctor`, resolving the same
+  // cascade, printed the whole table. The skill sends agents here first; it must answer.
+  //
+  // Explicit-directory mode keeps the two-directory minimum, because there is no base under it:
+  // one directory alone genuinely has nothing to be laid over.
+  if (!usingDefaults && present.length < 2) {
     console.error(
-      "layers: CANNOT CHECK — no layer directory exists on this machine at any candidate " +
-        "location above. This is NOT \"no divergence\": nothing was read, nothing was compared.",
-    );
-    exitWith(LAYERS_EXIT.cannotCheck);
-    return;
-  }
-  if (present.length === 1) {
-    console.error(
-      `layers: CANNOT CHECK — only one layer is present (${present[0]!.label} at ` +
-        `${present[0]!.dir}). Nothing to diverge from. This is NOT "no divergence": divergence ` +
-        "needs at least two layers to compare.",
+      present.length === 0
+        ? "layers: CANNOT CHECK — no layer directory exists at any candidate location above. " +
+            'This is NOT "no divergence": nothing was read, nothing was compared.'
+        : `layers: CANNOT CHECK — only one layer is present (${present[0]!.label} at ` +
+            `${present[0]!.dir}) and no base is implied in explicit-directory mode. Nothing to ` +
+            'lay it over. This is NOT "no divergence": divergence needs at least two layers.',
     );
     exitWith(LAYERS_EXIT.cannotCheck);
     return;
   }
 
   let resolution: CascadeResolution;
+  const resolveOptions: ResolveLayersOptions = usingDefaults ? { base: baseLayer() } : {};
   try {
-    resolution = resolveDefinitionLayers(present.map((c) => c.dir));
+    resolution = resolveDefinitionLayers(
+      present.map((c) => c.dir),
+      resolveOptions,
+    );
   } catch (e) {
     if (e instanceof LayerSourceError) {
       console.error(
@@ -2122,15 +2026,19 @@ function runLayers(argv: string[]): void {
   const errors = cascadeErrors(resolution);
   if (errors.length > 0) {
     console.error(
-      `layers: DIVERGED — ${errors.length} cascade ERROR(s) found across ${present.length} ` +
-        `layer(s); see diagnostics above.`,
+      `layers: DIVERGED — ${errors.length} cascade ERROR(s) found across ` +
+        `${resolution.layers.length} layer(s); see diagnostics above.`,
     );
     exitWith(LAYERS_EXIT.cascadeError);
     return;
   }
   log(
-    `layers: clean — ${present.length} layer(s) compared, zero cascade errors ` +
-      `(this IS the "no divergence problem" answer, reached by actually checking).`,
+    resolution.layers.length === 1
+      ? `layers: clean — one layer in play (${resolution.layers[0]!.name}), zero cascade errors. ` +
+          `Nothing overrides it; this IS the "no divergence problem" answer, reached by actually ` +
+          `resolving. Create ${candidates.map((c) => c.dir).join(" or ")} to add one.`
+      : `layers: clean — ${resolution.layers.length} layer(s) compared, zero cascade errors ` +
+          `(this IS the "no divergence problem" answer, reached by actually checking).`,
   );
   exitWith(LAYERS_EXIT.ok);
 }
@@ -3176,8 +3084,8 @@ async function main(): Promise<void> {
   // 11. seed a default role→model binding (fresh machine only) + apply — compile per-harness
   // startup artifacts NOW, so the freshly-wired roster is actually usable. NEVER ABORTS THE RUN:
   // the key is already validated and every other file is already written by this point, so a
-  // compile hiccup here (e.g. a transient agent-defs fetch failure — resolveApplyDefinition
-  // still falls back to LKG/DEFAULT) must not throw away work that already succeeded;
+  // compile hiccup here (e.g. a transient workspace-probe failure, which only downgrades the
+  // skill refresh) must not throw away work that already succeeded;
   // re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
   //
   // "Does not abort" is NOT "does not count" (full-wire-exit-ignores-step-11). Those two were
@@ -3201,11 +3109,13 @@ async function main(): Promise<void> {
         })
       : undefined;
   const applyResult = await performApply({
-    definitionKey: DEFAULT_DEFINITION_KEY,
     offline: false,
     roleScope: step11Scope,
     label: "[11/10]",
   });
+  // Same two-pass reconciliation `apply --roles=user` needs (see reportSplitRunOutcome): under the
+  // user policy this step has already written the harness profiles before the project pass ran.
+  if (userRoleResult) reportSplitRunOutcome("[11/10]", userRoleResult, applyResult, false);
   if (applyResult.code !== WIRE_EXIT.ok) {
     console.error(`[11/10] next: petbox-wire apply`);
   }

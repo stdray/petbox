@@ -258,18 +258,54 @@ test("E4: one layer both replacing and appending the same role's prose — the a
   rmSync(root, { recursive: true, force: true });
 });
 
-test("E5: a filename off the schema, and a slug that disagrees with its filename", () => {
+test("E5 is scoped to the petbox-* NAMESPACE: a malformed role document is an error, a file outside the namespace is only a warning", () => {
+  // The scoping is what keeps a `.DS_Store` (or any other passer-by) from taking a machine down.
+  // Inside the namespace the file CLAIMS to be a role document, so a shape it does not have is a
+  // real, present, broken layer document — E5. Outside it, the file simply is not one: it changes
+  // nothing (W3 says exactly that), and a near-miss like a forgotten prefix stays visible without
+  // being fatal.
   const { root, dirs } = copyFixture();
-  writeFileSync(join(root, "project", "reviewer.json"), "{}", "utf8");
+  writeFileSync(join(root, "project", "petbox-reviewer.txt"), "{}", "utf8"); // in namespace, wrong extension
+  writeFileSync(join(root, "project", "reviewer.json"), "{}", "utf8"); // prefix forgotten
   writeFileSync(
     join(root, "project", "petbox-review.json"),
     JSON.stringify({ slug: "reviewer", tier: "worker", requiredCapabilities: [] }),
     "utf8",
   );
-  const e5 = cascadeErrors(resolveDefinitionLayers(dirs)).filter((e) => e.code === "E5");
-  assert.equal(e5.length, 2);
-  assert.ok(e5.some((e) => /filename does not follow/.test(e.message)));
+  const r = resolveDefinitionLayers(dirs);
+  const e5 = cascadeErrors(r).filter((e) => e.code === "E5");
+  assert.equal(e5.length, 2, JSON.stringify(r.diagnostics, null, 2));
+  assert.ok(e5.some((e) => /petbox-reviewer\.txt: filename does not follow/.test(e.message)));
   assert.ok(e5.some((e) => /"slug" is "reviewer" but the filename says "review"/.test(e.message)));
+
+  const outsideNamespace = cascadeWarnings(r).filter((w) => /reviewer\.json is not a layer document/.test(w.message));
+  assert.equal(outsideNamespace.length, 1, JSON.stringify(r.diagnostics, null, 2));
+  assert.equal(outsideNamespace[0]!.severity, "warning");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("service files change NOTHING — opening the folder in Finder is not an opinion", () => {
+  // Asserted as a DIFF against the untouched fixture rather than against an empty diagnostic
+  // list: this fixture deliberately carries its own diagnostics, and the claim under test is
+  // precisely that dropping desktop/git artefacts into a layer directory adds none of its own.
+  const before = copyFixture();
+  const baseline = resolveDefinitionLayers(before.dirs);
+  rmSync(before.root, { recursive: true, force: true });
+
+  const { root, dirs } = copyFixture();
+  for (const f of [".DS_Store", "Thumbs.db", "desktop.ini", ".gitkeep", "README.md"]) {
+    writeFileSync(join(root, "project", f), "x", "utf8");
+  }
+  const r = resolveDefinitionLayers(dirs);
+
+  assert.deepEqual(
+    r.diagnostics.map((d) => `${d.code} ${d.message}`),
+    baseline.diagnostics.map((d) => `${d.code} ${d.message}`),
+    "a service file added a diagnostic that was not there before",
+  );
+  for (const d of r.diagnostics) {
+    assert.doesNotMatch(d.message, /DS_Store|Thumbs\.db|desktop\.ini|gitkeep|README/, d.message);
+  }
   rmSync(root, { recursive: true, force: true });
 });
 
