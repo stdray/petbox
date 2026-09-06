@@ -13,9 +13,12 @@ The portable agent roster (`agent-definition-as-data`): five roles with `tier`,
   `PetBox.Core.Contract.DefaultAgentDefinition` deserializes + validates it at first use. It is
   seeded into every project the server creates (`ProjectAgentDefSeeder`), so a fresh project's
   AUTHORITATIVE definition exists instead of being empty.
-- **The wiring kit** (`src/clients-ts/petbox-wire`) exports it as `DEFAULT_AGENT_DEFINITION` — its
-  OFFLINE fallback when PetBox is unreachable and no LKG cache exists. The kit must work with no
-  network, so `scripts/sync-default-agents.mjs` COPIES this file into the package's own `src/`
+- **The wiring kit** (`src/clients-ts/petbox-wire`) exports it as `DEFAULT_AGENT_DEFINITION` — the
+  `base` LAYER at the bottom of its definition cascade (base < user < project), which is how the kit
+  resolves a definition for every command and every SessionStart hook. It is not a fallback for a
+  failed fetch: the kit does not fetch definitions at all. It is the floor, always present, and its
+  absence throws at import rather than yielding an empty roster. So the kit must carry it
+  physically: `scripts/sync-default-agents.mjs` COPIES this file into the package's own `src/`
   before test/typecheck/pack; that copy is gitignored precisely so it cannot be hand-edited into a
   divergent third version, and `package.json`'s `files` allowlist puts it in the published tarball.
 

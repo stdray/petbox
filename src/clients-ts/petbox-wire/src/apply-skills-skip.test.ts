@@ -39,36 +39,33 @@ function freshDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
-// Minimal shape-valid single-role definition — no requiredCapabilities, so every harness passes
-// the truthfulness gate trivially and the ONLY thing under test is the skills-skip bookkeeping,
-// never an unrelated policy block.
-const DEF_RECORD = {
-  key: "default",
-  version: 1,
-  definition: {
-    name: "apply-skills-skip-test-def",
-    roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
-  },
-};
+/**
+ * A project layer that makes `worker` require a capability opencode does NOT declare
+ * (dynamic_model_at_spawn — see harness-capabilities.ts), so the truthfulness gate blocks that
+ * harness while claude-code/droid still write. Used by the priority test below.
+ *
+ * This used to be a definition document served by the fake PetBox below; after card
+ * wire-stops-fetching-definition the definition comes from FILES, so a policy block is provoked
+ * the way an operator would really provoke one — by editing a layer.
+ */
+function writeCapabilityBlockingLayer(root: string): void {
+  const dir = join(root, ".petbox", "agents");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "layer.json"), JSON.stringify({ name: "project", mode: "overlay" }), "utf8");
+  writeFileSync(
+    join(dir, "petbox-worker.json"),
+    JSON.stringify({ slug: "worker", requiredCapabilities: ["dynamic_model_at_spawn"] }),
+    "utf8",
+  );
+}
 
-// A definition whose second role requires a capability opencode does NOT declare
-// (dynamic_model_at_spawn — see harness-capabilities.ts), so the truthfulness gate blocks that
-// harness while claude-code/droid still write. Used by the priority test below.
-const DEF_RECORD_TRUTHFULNESS_BLOCK = {
-  key: "default",
-  version: 1,
-  definition: {
-    name: "apply-skills-skip-truthfulness-def",
-    roles: [
-      { slug: "worker", tier: "worker", requiredCapabilities: [] },
-      { slug: "orchestrator", tier: "orchestrator", requiredCapabilities: ["dynamic_model_at_spawn"] },
-    ],
-  },
-};
-
+/**
+ * The fake PetBox for these tests answers exactly ONE endpoint: /api/auth/validate, the workspace
+ * probe behind the skill refresh. That is deliberately all apply still calls — the definition is
+ * resolved from files and never asks a server anything (definition-source.ts).
+ */
 function startFakeServer(
   validateHandler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void,
-  defRecord: unknown = DEF_RECORD,
 ): Promise<{
   baseUrl: string;
   close: () => Promise<void>;
@@ -76,11 +73,6 @@ function startFakeServer(
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       const url = req.url ?? "";
-      if (url.includes("/agent-defs/")) {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(defRecord));
-        return;
-      }
       if (url.includes("/api/auth/validate")) {
         validateHandler(req, res);
         return;
@@ -274,15 +266,13 @@ test("PRIORITY: clobber refusal (1) outranks incomplete (4) — and the skip is 
 test("PRIORITY: truthfulness block (3) outranks incomplete (4) — and the skip is still named in summary", async () => {
   const homeDir = freshDir("petbox-apply-prio-home-");
   const projectDir = freshDir("petbox-apply-prio-proj-");
-  const fake = await startFakeServer(
-    (_req, res) => {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "internal" }));
-    },
-    DEF_RECORD_TRUTHFULNESS_BLOCK,
-  );
+  const fake = await startFakeServer((_req, res) => {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "internal" }));
+  });
   try {
     writeOnlineRegistry(homeDir, projectDir, "apply-prio-truth-proj", fake.baseUrl);
+    writeCapabilityBlockingLayer(projectDir);
 
     const { stdout, stderr, status } = await runApplyOnline(projectDir, homeDir);
     const out = stdout + stderr;

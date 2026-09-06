@@ -320,12 +320,37 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * The BOTTOM layer supplied as an already-parsed document rather than a directory.
+ *
+ * The kit's baseline (`default-agents.json`) is a flat JSON file inside the package, not a layer
+ * directory, and it deliberately stays one: it is READ AT IMPORT and its absence throws there
+ * (agent-definition.ts), which is the property that makes "the floor is always present" true
+ * rather than hopeful. Modelling it as a directory would put the shipped floor behind the same
+ * existsSync branch every optional layer takes, and "absence = no opinion" would then silently
+ * mean "empty roster".
+ *
+ * `dir` is carried for PROVENANCE only — the path a reader is shown when this layer supplied a
+ * field. Nothing reads it.
+ */
+export type BaseLayer = {
+  readonly name: string;
+  readonly dir: string;
+  readonly definition: AgentDefinition;
+};
+
 export type ResolveLayersOptions = {
   /**
    * Name of the resolved document. Default: the layer names joined lowest-first with " < " —
    * self-documenting in apply's own log line ("which layers did this come from").
    */
   readonly name?: string;
+  /**
+   * Bottom layer, applied before the first directory. Present = `dirs` may be empty (the floor
+   * alone IS a resolvable cascade). Its mode is reported as "base": it neither overlays nor
+   * replaces anything, because there is nothing underneath it by construction.
+   */
+  readonly base?: BaseLayer;
 };
 
 /**
@@ -342,7 +367,7 @@ export function resolveDefinitionLayers(
   dirs: ReadonlyArray<string>,
   options: ResolveLayersOptions = {},
 ): CascadeResolution {
-  if (dirs.length === 0) {
+  if (dirs.length === 0 && options.base === undefined) {
     throw new LayerSourceError("", "definition layer: at least one layer directory is required");
   }
 
@@ -350,6 +375,41 @@ export function resolveDefinitionLayers(
   const trace: CascadeTraceEntry[] = [];
   const layers: { name: string; dir: string; mode: string }[] = [];
   let roles = new Map<string, WorkingRole>();
+
+  if (options.base) {
+    const base = options.base;
+    layers.push({ name: base.name, dir: base.dir, mode: "base" });
+    for (const role of base.definition.roles) {
+      const provenance: Partial<Record<ProvenanceField, string>> = {
+        tier: base.name,
+        requiredCapabilities: base.name,
+      };
+      const fields: string[] = ["tier", "requiredCapabilities"];
+      if (role.spawn !== undefined) {
+        provenance.spawn = base.name;
+        fields.push("spawn");
+      }
+      if (role.escalation !== undefined) {
+        provenance.escalation = base.name;
+        fields.push("escalation");
+      }
+      if (role.notes !== undefined && role.notes !== "") {
+        provenance.notes = base.name;
+        fields.push("notes");
+      }
+      roles.set(role.slug, {
+        slug: role.slug,
+        tier: role.tier,
+        requiredCapabilities: role.requiredCapabilities,
+        ...(role.spawn !== undefined ? { spawn: role.spawn } : {}),
+        ...(role.escalation !== undefined ? { escalation: role.escalation } : {}),
+        notes: role.notes ?? "",
+        provenance,
+        addenda: [],
+      });
+      trace.push({ kind: "add", layer: base.name, slug: role.slug, fields });
+    }
+  }
 
   for (const dir of dirs) {
     const layer = readDefinitionLayer(dir);

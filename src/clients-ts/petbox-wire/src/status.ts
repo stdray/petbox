@@ -3,7 +3,7 @@
 // Distinct from `doctor`: doctor answers "is it broken" (a gate, non-zero exit on policy
 // violation). status answers "what do I have right now and how do I change it" for someone who
 // just ran `wire`/`apply` and wants to see what landed. It reads the SAME resolvers doctor/apply
-// already use (resolveAgentDefinitionWithLkg, resolveAgentRoles, allowedModels, …) — never a
+// already use (resolveLocalDefinition, resolveAgentRoles, allowedModels, …) — never a
 // second implementation of any of those checks — and always exits 0 unless it itself throws
 // (an actual bug), because it asserts nothing about correctness.
 //
@@ -18,8 +18,8 @@
 //            writes it, warning that it inherits the session model. Either way status names the
 //            fix.
 //
-// Plus a four-pillar summary: definition source (server / LKG cache / built-in copy — each
-// degradation labelled explicitly), roster (file present? every declared role bound?), canon
+// Plus a four-pillar summary: definition layers (which of base/user/project are in play, and
+// which layer supplied each field), roster (file present? every declared role bound?), canon
 // (absent / empty / N of the 10k-char budget, via canon.ts's version-based classification, never
 // a string compare against the server's marker text), skills (materialized? byte-identical to
 // the current template?).
@@ -36,17 +36,21 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  DEFAULT_DEFINITION_KEY,
-  resolveAgentDefinitionWithLkg,
-  type ResolvedAgentDefinition,
-} from "./agent-def-fetch.ts";
-import {
   DEFAULT_AGENT_DEFINITION,
   KIT_VERSION,
   emittedRoleName,
   type AgentDefinition,
   type AgentRole,
 } from "./agent-definition.ts";
+import {
+  formatDefinitionErrors,
+  formatDefinitionLayersLine,
+  formatDefinitionProvenance,
+  resolveLocalDefinition,
+  resolveUserScopeDefinition,
+  type LocalDefinition,
+} from "./definition-source.ts";
+import { LayerSourceError } from "./layer-cascade.ts";
 import { agentFilesDir, planApply, sanitizeDroidName } from "./apply-artifacts.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { classifyManagedPaths, formatGitState, type GitStateReport } from "./git-state.ts";
@@ -90,55 +94,76 @@ const TEMPLATES_ROOT = join(HERE, "templates");
 const log = (msg: string) => console.log(msg);
 
 // ---- pillar 1: definition --------------------------------------------------
+//
+// `status` is neither a BUILD (apply/doctor, which refuse and write nothing) nor a RENDER
+// (SessionStart, which must never crash a session). It is a FACT printer with a documented
+// always-exit-0 contract, so a broken layer is reported here as the fact it is — named, by
+// absolute path, with the parser's own message — and the rest of the screen still prints from
+// the kit base. Silence, or a crash, would both be worse: the operator ran `status` precisely
+// to find out what is wrong.
 
-export function formatDefinitionSource(resolved: ResolvedAgentDefinition): string {
-  if (resolved.source === "server") {
-    return `server (live) — key=${resolved.key} v${resolved.version}`;
+export type DefinitionPillar =
+  | { readonly kind: "resolved"; readonly local: LocalDefinition }
+  | { readonly kind: "broken"; readonly path: string; readonly message: string };
+
+export function readDefinitionPillar(root: string): DefinitionPillar {
+  try {
+    return { kind: "resolved", local: resolveLocalDefinition({ root }) };
+  } catch (e) {
+    return {
+      kind: "broken",
+      path: e instanceof LayerSourceError ? e.path : "",
+      message: e instanceof Error ? e.message : String(e),
+    };
   }
-  if (resolved.source === "lkg") {
-    // An answered server (401/403, or any other HTTP error) is never "unreachable" (bug:
-    // doctor-reports-answering-server-unreachable, same class as
-    // probe-collapses-http-errors-into-network) — only a genuine network/timeout miss is.
-    // A deliberate --offline run never attempted a fetch at all — checked FIRST, round 2 of the
-    // same bug: this branch used to say "server unreachable" for --offline too.
-    if (resolved.offline) {
-      return (
-        `LKG CACHE — --offline (no live fetch attempted) — key=${resolved.key} v${resolved.version}, ` +
-        `stale`
-      );
-    }
-    if (resolved.forbidden) {
-      return (
-        `LKG CACHE — DEGRADED (server reachable but refused the request, 401/403) — ` +
-        `key=${resolved.key} v${resolved.version}, stale`
-      );
-    }
-    if (resolved.httpError) {
-      return (
-        `LKG CACHE — DEGRADED (server answered HTTP ${resolved.httpError.status}, not unreachable) — ` +
-        `key=${resolved.key} v${resolved.version}, stale`
-      );
-    }
+}
+
+/** The pillar's headline: what the definition is MADE OF, never a single "source" label. */
+export function formatDefinitionPillar(pillar: DefinitionPillar): string {
+  if (pillar.kind === "broken") {
     return (
-      `LKG CACHE — DEGRADED (server unreachable) — key=${resolved.key} v${resolved.version}, ` +
-      `stale`
+      `BROKEN LAYER — ${pillar.message}. Nothing downstream of this can be trusted until that ` +
+      `file is fixed; the roster shown below is the kit base alone.`
     );
   }
-  // source === "default"
-  if (resolved.offline) {
-    return "built-in copy — --offline, no LKG cache on disk (no live fetch attempted)";
-  }
-  if (resolved.notFoundOnServer) {
-    return "built-in copy — server reachable, no definition for this project yet (normal for a fresh project)";
-  }
-  if (resolved.forbidden) {
-    return "built-in copy — DEGRADED (server reachable but refused the request, 401/403 — check API key scopes)";
-  }
-  if (resolved.httpError) {
-    return `built-in copy — DEGRADED (server answered HTTP ${resolved.httpError.status}, not unreachable — no LKG cache on disk)`;
-  }
-  return "built-in copy — DEGRADED (no server reachable, no LKG cache on disk)";
+  const errors = pillar.local.errors;
+  const health =
+    errors.length === 0
+      ? "clean"
+      : `${errors.length} cascade ERROR(s) — \`apply\` would REFUSE to write:\n` +
+        formatDefinitionErrors(errors);
+  return `${formatDefinitionLayersLine(pillar.local)} — ${health}`;
 }
+
+/**
+ * The MACHINE-WIDE cascade (base < user) behind the user-scope role FILES — the same resolve
+ * `apply --roles=user` renders from, so "drifted" here means the same thing apply would act on.
+ * Never includes the project layer: these 15 files are one per machine, not one per checkout.
+ */
+export function readUserScopeDefinition(): DefinitionPillar {
+  try {
+    return { kind: "resolved", local: resolveUserScopeDefinition() };
+  } catch (e) {
+    return {
+      kind: "broken",
+      path: e instanceof LayerSourceError ? e.path : "",
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+export function userScopeDefinition(pillar: DefinitionPillar): AgentDefinition {
+  return pillar.kind === "resolved" ? pillar.local.definition : DEFAULT_AGENT_DEFINITION;
+}
+
+export function describeUserScopeSource(pillar: DefinitionPillar): string {
+  return pillar.kind === "resolved"
+    ? `source: ${formatDefinitionLayersLine(pillar.local)}, kit v${KIT_VERSION} — machine-wide, ` +
+        `independent of cwd`
+    : `source: BROKEN LAYER — ${pillar.message}. Falling back to the kit base for this report only; ` +
+        `\`apply --roles=user\` would REFUSE to write.`;
+}
+
 
 // ---- pillar 2: roster -------------------------------------------------------
 
@@ -556,17 +581,17 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   }
 
   // ---- pillar 1: definition ----
-  const resolvedDef = await resolveAgentDefinitionWithLkg({
-    offline: opts.offline,
-    definitionKey: DEFAULT_DEFINITION_KEY,
-    ...(resolvedProject?.project !== undefined ? { projectKey: resolvedProject.project } : {}),
-    ...(resolvedProject?.baseUrl !== undefined ? { baseUrl: resolvedProject.baseUrl } : {}),
-    ...(resolvedProject?.apiKey !== undefined ? { apiKey: resolvedProject.apiKey } : {}),
-  });
-  const definition = resolvedDef.definition;
+  // File cascade, no network on this leg at all — so `--offline` neither skips it nor changes it.
+  const definitionPillar = readDefinitionPillar(root);
+  const definition =
+    definitionPillar.kind === "resolved" ? definitionPillar.local.definition : DEFAULT_AGENT_DEFINITION;
   log("");
-  log(`status: pillar 1/4 — definition: ${formatDefinitionSource(resolvedDef)}`);
+  log(`status: pillar 1/4 — definition: ${formatDefinitionPillar(definitionPillar)}`);
   log(`status:   name="${definition.name}", roles=${definition.roles.map((r) => r.slug).join(",")}`);
+  if (definitionPillar.kind === "resolved") {
+    log("status:   per-field provenance (which layer supplied each field):");
+    log(formatDefinitionProvenance(definitionPillar.local));
+  }
 
   // ---- pillar 2: roster ----
   const rolesFileExists = existsSync(rolesPath());
@@ -597,19 +622,20 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   // live and are they the same generation", which nothing used to ask at all.
   //
   // [user] is compared against DEFAULT_AGENT_DEFINITION (the kit's own bundled baseline), NEVER
-  // against `definition` (pillar 1's per-project, cwd-resolved document) — that was the exact bug
-  // (card user-scope-roles-rendered-from-cwd-project-definition): comparing machine-wide files
-  // against a per-cwd definition made `status` say "current" or "drifted" depending on which
-  // directory the operator happened to run it from. computeUserRoleReports' own `drifted` count
-  // against the baseline IS the staleness check the card asks for — a file that no longer matches
-  // what THIS kit build would render is stale, whether that is because someone hand-edited it or
-  // because the kit was upgraded since the last apply; there is no separate "version" to compare,
-  // because the baseline has no version axis other than the kit build itself.
+  // against `definition` (pillar 1's cwd-resolved document, which includes the PROJECT layer) —
+  // that was the exact bug (card user-scope-roles-rendered-from-cwd-project-definition): comparing
+  // machine-wide files against a per-cwd definition made `status` say "current" or "drifted"
+  // depending on which directory the operator happened to run it from. computeUserRoleReports' own
+  // `drifted` count against the machine-wide cascade IS the staleness check the card asks for — a
+  // file that no longer matches what THIS kit build plus THIS machine's user layer would render is
+  // stale, whether that is because someone hand-edited it, because the kit was upgraded, or because
+  // the user layer changed; there is no separate "version" to compare.
   const machineScope: RoleScope = loadWireConfig().roleScope;
+  const userScope = readUserScopeDefinition();
   log("");
   log(`status: role FILES by scope (machine policy: roles → ${machineScope}):`);
-  log(`status:   [user] source: kit baseline (default-agents.json), kit v${KIT_VERSION} — deterministic, independent of cwd`);
-  for (const report of computeUserRoleReports(DEFAULT_AGENT_DEFINITION, rolesData)) {
+  log(`status:   [user] ${describeUserScopeSource(userScope)}`);
+  for (const report of computeUserRoleReports(userScopeDefinition(userScope), rolesData)) {
     log(`status:   [user]    ${formatRoleFilesReport(report)}`);
   }
   for (const harness of HARNESS_IDS) {
@@ -872,24 +898,23 @@ export async function runRegistryStatus(opts: { readonly offline: boolean; reado
   // Roles under the "user" policy are a MACHINE fact, identical for every project — printed once,
   // above the table, never repeated per row.
   //
-  // Source is DEFAULT_AGENT_DEFINITION (the kit's own bundled baseline), never a per-project
-  // server resolve (card user-scope-roles-rendered-from-cwd-project-definition — this used to call
-  // resolveAgentDefinitionWithLkg with no projectKey at all, which can never hit a live server or
-  // find any project's LKG cache and so always silently fell back to the SAME baseline anyway,
-  // just via a network-shaped code path with a pointless try/catch around it). Naming the source
-  // explicitly, plus the kit version, is what lets an operator answer "is this stale" without a
-  // second resolve: computeUserRoleReports' own `drifted` count against this SAME baseline below
-  // already says so.
+  // Source is the MACHINE-WIDE half of the cascade — base < user — never a per-project resolve
+  // (card user-scope-roles-rendered-from-cwd-project-definition). Naming the layers explicitly,
+  // plus the kit version, is what lets an operator answer "is this stale" without a second
+  // resolve: computeUserRoleReports' own `drifted` count against those SAME layers below already
+  // says so.
   const roleScope: RoleScope = loadWireConfig().roleScope;
+  const userScope = readUserScopeDefinition();
   log("");
   log(`status --all: role policy: roles → ${roleScope} scope (~/.petbox/wire.json)`);
-  log(`status --all: user-scope role source: kit baseline (default-agents.json), kit v${KIT_VERSION} — deterministic, independent of cwd`);
+  log(`status --all: user-scope role source: ${describeUserScopeSource(userScope)}`);
   {
     const rolesData = loadRoles();
+    const userDefinition = userScopeDefinition(userScope);
     log(
-      `status --all: user-scope role files (machine-wide, ${DEFAULT_AGENT_DEFINITION.roles.length} declared role(s)):`,
+      `status --all: user-scope role files (machine-wide, ${userDefinition.roles.length} declared role(s)):`,
     );
-    for (const report of computeUserRoleReports(DEFAULT_AGENT_DEFINITION, rolesData)) {
+    for (const report of computeUserRoleReports(userDefinition, rolesData)) {
       log(`status --all:   ${formatRoleFilesReport(report)}`);
     }
   }

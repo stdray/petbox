@@ -67,10 +67,10 @@ function runDoctorOnline(cwd: string, homeDir: string): Promise<{ stdout: string
   });
 }
 
-// Fake server answering every endpoint doctor's checks touch: the agent-def fetch (any
-// /api/*/agent-defs/* path), the canon fetch (/api/memory/{project}/canon — `canonBody` null
-// skips it, i.e. a curated-empty leg), and /api/auth/validate (the skill check's workspace
-// probe — answered so that check doesn't itself error and clutter the output).
+// Fake server answering every endpoint doctor's checks touch: the canon fetch
+// (/api/memory/{project}/canon — `canonBody` null skips it, i.e. a curated-empty leg) and
+// /api/auth/validate (the skill check's workspace probe — answered so that check doesn't itself
+// error and clutter the output). The definition is resolved from files and asks nothing here.
 function startFakeServer(canonBody: string | null): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
@@ -89,9 +89,8 @@ function startFakeServer(canonBody: string | null): Promise<{ baseUrl: string; c
         );
         return;
       }
-      // agent-defs
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ key: "default", version: 10, definition: DEFAULT_AGENT_DEFINITION }));
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
     });
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
@@ -103,8 +102,8 @@ function startFakeServer(canonBody: string | null): Promise<{ baseUrl: string; c
   });
 }
 
-// A canon endpoint that always 500s (agent-defs still healthy) — simulates the server being up
-// for one API but the canon route specifically failing/unreachable.
+// A canon endpoint that always 500s (the workspace probe still healthy) — simulates the server
+// being up for one API but the canon route specifically failing/unreachable.
 function startFakeServerWithBrokenCanon(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {

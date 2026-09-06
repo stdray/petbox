@@ -3,12 +3,12 @@
 // Run: node --test src/protocol.test.ts
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { DEFAULT_AGENT_DEFINITION, type AgentDefinition } from "./agent-definition.ts";
+import { resolveDefinitionForSession } from "./definition-source.ts";
 import {
   buildProtocol,
   mcpPetboxTool,
@@ -21,23 +21,13 @@ function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "petbox-protocol-"));
 }
 
-const SERVER_BODY = {
-  key: "default",
-  version: 7,
-  definition: {
-    name: "server-roster",
-    roles: [
-      {
-        slug: "orchestrator",
-        tier: "orchestrator",
-        requiredCapabilities: ["mcp_main_session", "spawn_subagents"],
-        spawn: { allowed: true, allowedRoles: ["worker"] },
-        escalation: { available: true, targets: ["reserve"] },
-        notes: "SERVER-AUTHORED-ORCHESTRATOR-NOTES-xyz789",
-      },
-    ],
-  },
-};
+/** A project layer that REPLACES the orchestrator's prose — the shape a real operator uses. */
+function writeProjectLayer(root: string, notes: string): void {
+  const dir = join(root, ".petbox", "agents");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(dir + "/layer.json", JSON.stringify({ name: "project", mode: "overlay" }), "utf8");
+  writeFileSync(join(dir, "petbox-orchestrator.md"), notes, "utf8");
+}
 
 test("orchestrationPrescriptionsAllowed tracks spawn_subagents for all three harnesses", () => {
   assert.equal(orchestrationPrescriptionsAllowed("claude-code"), true);
@@ -259,49 +249,42 @@ test("buildProtocol falls back to the built-in DEFAULT_AGENT_DEFINITION notes wh
   assert.ok(text.includes(defaultOrchNotes!));
 });
 
-// --- end-to-end: resolveAgentDefinitionForSession (server → LKG → DEFAULT) feeding buildProtocol,
-// the same wiring pull-memory.ts / droid-pull-memory.ts / opencode-plugin.ts now use. ---
+// --- end-to-end: resolveDefinitionForSession (the FILE cascade base < user < project) feeding
+// buildProtocol, the same wiring pull-memory.ts / droid-pull-memory.ts / opencode-plugin.ts use.
+// No fake server anywhere in here, and that is the point: after card
+// wire-stops-fetching-definition there is no server leg on this path to fake. ---
 
-test("SessionStart banner renders server-supplied definition when the server answers", async () => {
+test("SessionStart banner renders the project layer's orchestrator prose over the kit base", () => {
   const home = freshHome();
+  const root = freshHome();
   try {
-    const got = await resolveAgentDefinitionForSession(
-      { project: "proj", baseUrl: "https://petbox.example", apiKey: "k" },
-      {
-        homeDir: home,
-        fetchImpl: async () =>
-          new Response(JSON.stringify(SERVER_BODY), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-      },
-    );
-    assert.equal(got.source, "server");
+    writeProjectLayer(root, "LAYER-AUTHORED-ORCHESTRATOR-NOTES-xyz789");
+    const got = resolveDefinitionForSession({ root, homeDir: home });
+    assert.equal(got.note, "", "a clean cascade must add no marker line");
+    assert.equal(got.degraded, false);
     const text = buildProtocol("proj", mcpPetboxTool, {
       harness: "claude-code",
       definition: got.definition,
     });
-    assert.match(text, /SERVER-AUTHORED-ORCHESTRATOR-NOTES-xyz789/);
+    assert.match(text, /LAYER-AUTHORED-ORCHESTRATOR-NOTES-xyz789/);
     assert.match(text, /PetBox memory active/);
   } finally {
     rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("SessionStart banner falls back to the built-in default when neither server nor LKG cache is available (never crashes, never empty)", async () => {
-  const home = freshHome(); // fresh dir → guaranteed no LKG cache file
+test("SessionStart banner renders the kit base when no layer directory exists (absence is no opinion, never a crash and never empty)", () => {
+  const home = freshHome(); // fresh dirs → guaranteed no user/project layer
+  const root = freshHome();
   try {
-    const got = await resolveAgentDefinitionForSession(
-      { project: "proj", baseUrl: "https://petbox.example", apiKey: "k" },
-      {
-        homeDir: home,
-        fetchImpl: async () => {
-          throw new Error("ECONNREFUSED");
-        },
-      },
+    const got = resolveDefinitionForSession({ root, homeDir: home });
+    assert.equal(got.note, "");
+    assert.equal(got.degraded, false);
+    assert.deepEqual(
+      got.definition.roles.map((r) => r.slug),
+      DEFAULT_AGENT_DEFINITION.roles.map((r) => r.slug),
     );
-    assert.equal(got.source, "default");
-    assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
 
     const text = buildProtocol("proj", mcpPetboxTool, {
       harness: "claude-code",
@@ -312,5 +295,6 @@ test("SessionStart banner falls back to the built-in default when neither server
     assert.match(text, /orchestrator/i);
   } finally {
     rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });

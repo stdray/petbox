@@ -40,28 +40,14 @@ function freshDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
-// Minimal but shape-valid single-role definition (mirrors doctor-definition.test.ts's
-// makeCustomDefRecord) — no requiredCapabilities, so every harness passes the truthfulness gate
-// trivially and the ONLY thing that can drive a non-zero exit here is the clobber refusal under
-// test, not an unrelated policy block.
+// The fake PetBox answers the ONE endpoint apply still calls over the network: the workspace
+// probe behind the skill refresh. The definition comes from the local file cascade
+// (definition-source.ts) and never touches this server — which is why the ONLY thing that can
+// drive a non-zero exit here is the clobber refusal under test.
 function startFakeServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       const url = req.url ?? "";
-      if (url.includes("/agent-defs/")) {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(
-          JSON.stringify({
-            key: "default",
-            version: 1,
-            definition: {
-              name: "apply-exit-race-test-def",
-              roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
-            },
-          }),
-        );
-        return;
-      }
       if (url.includes("/api/auth/validate")) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ workspace: "apply-exit-race-ws" }));

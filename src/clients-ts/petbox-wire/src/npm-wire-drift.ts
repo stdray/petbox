@@ -15,7 +15,7 @@
 // an error).
 //
 // Every failure mode here is best-effort / silent-skip by design (same posture as
-// resolveApplyDefinition's LKG fallback and skill-files.ts's probeWorkspace): no network, no
+// definition-source.ts's file cascade and skill-files.ts's probeWorkspace): no network, no
 // git binary, not inside a git repo, no local `main` ref, npm registry unreachable/malformed —
 // none of these are errors, they are simply "nothing to compare", because the overwhelming
 // majority of callers (any user machine outside this monorepo) hit them on every single run.
@@ -122,7 +122,7 @@ async function fetchNpmLatest(opts: {
 /**
  * Compare npm's published `latest` petbox-wire against this checkout's local `main` branch tip.
  * `cwd` is the directory to probe from (doctor/status pass their own resolved root — same
- * pattern as resolveApplyDefinition's `cwd`). Never throws.
+ * pattern as performApply's `cwd`). Never throws.
  */
 export async function checkNpmWireDrift(
   cwd: string,

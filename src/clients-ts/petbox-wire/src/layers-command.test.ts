@@ -159,18 +159,41 @@ test("layers: a present-but-broken layer source fails LOUD (exit 3) — never si
   }
 });
 
-test("layers: no arguments falls back to this command's own conventional defaults, and names the base-layer gap out loud", () => {
+test("layers: no arguments checks the kit's canonical locations, with the shipped base as the floor — nothing above it, so CANNOT CHECK", () => {
   const homeDir = freshDir("petbox-layers-defhome-");
   const cwd = freshDir("petbox-layers-defcwd-");
   try {
     // Neither ~/.petbox/agents (user) nor <cwd>/.petbox/agents (project) exists — a fresh
-    // machine, honestly reported as "nothing to check", never as "no divergence".
+    // machine. The base is PRESENT (it ships in the package), but a floor on its own has nothing
+    // to diverge from, so this is still honestly "nothing to check", never "no divergence".
     const res = runLayers([], { cwd, homeDir });
     assert.equal(res.status, 3, res.stderr + res.stdout);
-    assert.match(res.stdout, /base .*NOT yet a layer directory/);
+    assert.match(res.stdout, /base +PRESENT .*default-agents\.json \(kit v/);
+    assert.doesNotMatch(res.stdout, /NOT yet a layer directory/);
     assert.match(res.stdout, /user .*absent/);
     assert.match(res.stdout, /project .*absent/);
     assert.match(res.stderr, /CANNOT CHECK/);
+    assert.match(res.stderr, /only the kit's shipped base is in play/);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("layers: no arguments with ONE real layer present CAN check — the shipped base is the second layer, so base-vs-user is a real comparison", () => {
+  const homeDir = freshDir("petbox-layers-onelayer-home-");
+  const cwd = freshDir("petbox-layers-onelayer-cwd-");
+  try {
+    writeLayer(join(homeDir, ".petbox", "agents"), { name: "user", mode: "overlay" }, {
+      "petbox-worker.json": JSON.stringify({ slug: "worker", tier: "worker-highstakes" }),
+    });
+    const res = runLayers([], { cwd, homeDir });
+    assert.equal(res.status, 0, res.stderr + res.stdout);
+    // The override must be nameable BY FIELD against the base, which is the whole point of
+    // making the shipped floor a layer instead of a footnote.
+    assert.match(res.stdout, /user: ~ worker → tier/);
+    assert.match(res.stdout, /provenance: tier=user/);
+    assert.match(res.stdout, /clean — 2 layer\(s\) compared, zero cascade errors/);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

@@ -16,7 +16,7 @@ hooks, protocol, or memory canon.
 
 | What | Where |
 | --- | --- |
-| Portable definition | PetBox (`agent_def_*` / REST agent-defs) — roles/capabilities, **no models** |
+| Portable definition | Files, laid over each other lowest first: `base` (the kit's own `default-agents.json`, always present) < `user` (`~/.petbox/agents/`) < `project` (`<root>/.petbox/agents/`) — roles/capabilities, **no models**. Never fetched from a server. |
 | Local binding | `~/.petbox/roles.json` (owner = `$HOME`) — profile → role → **model** only |
 | Compiled artifacts | Per-harness agent files written by `apply` |
 

@@ -24,10 +24,11 @@
  * `petbox_memory_upsert` (the Claude `mcp__petbox__*` names do not apply here).
  */
 import type { Plugin } from "@opencode-ai/plugin";
-import { agentDefinitionBannerNote, resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { DEFAULT_AGENT_DEFINITION, type AgentDefinition } from "./agent-definition.ts";
+import { resolveApplyRoot } from "./apply-root.ts";
 import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
+import { resolveDefinitionForSession } from "./definition-source.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 import { buildAutoSkillsIndex } from "./skill-files.ts";
@@ -37,21 +38,23 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // Resolve the active project once at load. null → both hooks no-op.
   const resolved = resolveProject(directory ?? "");
 
-  // Resolve the banner's orchestrator notes ONCE at plugin load — server → LKG cache → the
-  // built-in default, same order `apply` uses (resolveAgentDefinitionForSession wraps
-  // agent-def-fetch.ts's resolveAgentDefinitionWithLkg). Bounded by that helper's own ~8s
-  // fetch timeout; the plugin instance is long-lived for the opencode session, so this is a
-  // one-time load-time cost, not a per-prompt one, and never throws/blocks indefinitely.
+  // Resolve the banner's orchestrator notes ONCE at plugin load, from the FILE cascade
+  // base < user < project (definition-source.ts) — the same resolve `apply` compiles from, and
+  // no network at all. This used to be an HTTP fetch bounded by an ~8s timeout; the plugin
+  // instance is long-lived, so it was a one-time load-time cost, but it was also the reason a
+  // cold opencode start depended on PetBox being up (card wire-stops-fetching-definition).
   let agentDefinition: AgentDefinition = DEFAULT_AGENT_DEFINITION;
-  // Degradation note text (bug: wire-silent-failures-invisible) — "" when the load-time fetch
-  // reached the live server; a built-in-fallback/LKG source otherwise gets a one-line marker in
-  // the system prompt, same rationale as pull-memory.ts / droid-pull-memory.ts's identical
-  // addition (source "default" used to report stale:false and stay completely silent).
+  // Broken-layer marker (spec broken-layer-fails-loudly) — "" when the cascade resolved cleanly.
+  // Otherwise a one-line marker naming the file that broke, pushed ahead of the protocol block in
+  // the system prompt, same rationale as pull-memory.ts / droid-pull-memory.ts.
   let defNote = "";
   if (resolved) {
-    const got = await resolveAgentDefinitionForSession(resolved);
+    const got = resolveDefinitionForSession({
+      root: resolveApplyRoot(directory ?? "").root,
+      logSource: `opencode-plugin[${resolved.project}]`,
+    });
     agentDefinition = got.definition;
-    defNote = agentDefinitionBannerNote(got);
+    defNote = got.note;
   }
 
   // The petbox-* skills SALIENCE INDEX is pushed on EVERY request, deliberately — see the
