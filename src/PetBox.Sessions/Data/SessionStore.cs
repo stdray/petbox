@@ -142,8 +142,7 @@ public sealed class SessionStore : ISessionStore
 	// instants (never as text, where "2026-07-02" would sort after "2026-07-10").
 	static Comparison<string> CursorSortComparison(SessionSortField sort) => sort switch
 	{
-		SessionSortField.Length => static (a, b) =>
-			long.Parse(a, CultureInfo.InvariantCulture).CompareTo(long.Parse(b, CultureInfo.InvariantCulture)),
+		SessionSortField.Length => SortKeyComparisons.CompareLong,
 		_ => static (a, b) => DateTime.Parse(a, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
 			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
 	};

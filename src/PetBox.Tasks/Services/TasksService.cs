@@ -2903,9 +2903,9 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
-	// appended when cut (mirrors ModuleMcp.SnippetBody — read returns content by default).
+	// appended when cut (BodySnippets.TruncateWithEllipsis in Core — read returns content by default).
 	static string SnippetBody(string body, int bodyLen) =>
-		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+		bodyLen <= 0 ? body : BodySnippets.TruncateWithEllipsis(body, bodyLen);
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
 	// (null) inherits the prior value; a non-null value sets it ("" clears it).

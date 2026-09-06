@@ -681,9 +681,9 @@ public sealed class MemoryService : IMemoryService
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
-	// appended when cut (mirrors ModuleMcp.SnippetBody — read returns content by default).
+	// appended when cut (BodySnippets.TruncateWithEllipsis in Core — read returns content by default).
 	static string SnippetBody(string body, int bodyLen) =>
-		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+		bodyLen <= 0 ? body : BodySnippets.TruncateWithEllipsis(body, bodyLen);
 
 	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default)
 	{

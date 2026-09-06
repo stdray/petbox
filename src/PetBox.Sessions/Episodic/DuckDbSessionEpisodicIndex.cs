@@ -332,7 +332,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	{
 		var embedder = new LlmClientEmbedder(llm, projectKey);
 		var qb = await embedder.EmbedAsync([query], ct);
-		var queryVec = Truncate(qb.Vectors[0], VectorDim);
+		var queryVec = VectorMath.Truncate(qb.Vectors[0], VectorDim);
 		// Comparability guard = the query's (model, truncated dim) — message vectors must
 		// match BOTH, or cosine compares apples to oranges.
 		await EnsureMessageVectorsAsync(projectKey, entry, qb.Model, queryVec.Length, embedder, ct);
@@ -381,7 +381,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			for (var j = 0; j < batch.Count; j++)
 			{
 				var i = batch[j];
-				var vec = Truncate(res.Vectors[j], VectorDim);
+				var vec = VectorMath.Truncate(res.Vectors[j], VectorDim);
 				vectors[i] = vec;
 				await db.InsertOrReplaceAsync(new MessageVec
 				{
@@ -401,10 +401,6 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 	static string ContentHash(string content) =>
 		Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
-
-	// MRL truncation, same rule as VectorSearchIndex: the leading components of a
-	// Matryoshka embedding are a valid lower-dim embedding; cosine renormalizes.
-	static float[] Truncate(float[] v, int dim) => dim > 0 && dim < v.Length ? v[..dim] : v;
 
 	// Uniform bodyLen contract (spec bodylen-uniform-contract), applied to a session_search
 	// hit: omitted -> the default query-centered preview (SnippetLength, 240, same width as
