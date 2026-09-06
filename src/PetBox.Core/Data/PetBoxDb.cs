@@ -36,7 +36,6 @@ public sealed class PetBoxDb : DataConnection
 	// LEGACY: relations now live in the per-project tasks file (tasks/{project}.db). This table
 	// is kept (not dropped) until the backfill is verified on live data — see LegacyRelation.
 	public ITable<LegacyRelation> LegacyRelations => this.GetTable<LegacyRelation>();
-	public ITable<AgentDefinitionRow> AgentDefinitions => this.GetTable<AgentDefinitionRow>();
 	// The LLM registry's own store (M039): endpoints carry their api key as columns, routes are
 	// bound to their level by a composite FK. Not yet read by the router — the ConfigBindings-backed
 	// LlmRegistryStore still serves production.
