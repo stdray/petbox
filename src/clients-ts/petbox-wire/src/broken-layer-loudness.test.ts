@@ -103,6 +103,68 @@ test("apply: a broken layer discovered on a SECOND run leaves the artifacts from
   }
 });
 
+test("apply --roles=user: when the USER pass already wrote and the PROJECT pass then refuses, the run says PARTIAL instead of leaving 'Nothing was written' as its last word", () => {
+  // `--roles=user` is two write passes in one command. Each refusal is honest about its own step,
+  // but nothing reconciled them: the machine profiles got 15 files, the project pass hit a broken
+  // layer, and the operator's last line was "Nothing was written" + exit 1 — which reads as "the
+  // machine is untouched" and is false in the direction that stops them looking.
+  const homeDir = freshDir("petbox-partial-home-");
+  const projectDir = freshDir("petbox-partial-proj-");
+  try {
+    // A cascade ERROR rather than an unreadable file, deliberately: this is the refusal path that
+    // OWNS the "Nothing was written" sentence, so both halves of the fix are visible in one run.
+    const dir = join(projectDir, ".petbox", "agents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "layer.json"), JSON.stringify({ name: "project", mode: "overlay" }), "utf8");
+    writeFileSync(
+      join(dir, "petbox-reserve.json"),
+      JSON.stringify({ slug: "reserve", removed: true, reason: "test" }),
+      "utf8",
+    );
+    const res = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=user"], {
+      cwd: projectDir,
+      encoding: "utf8",
+      env: { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined },
+    });
+    const stderr = res.stderr ?? "";
+    const out = (res.stdout ?? "") + stderr;
+
+    assert.equal(res.status, WIRE_EXIT.hard, `Full output:\n${out}`);
+    // Setup check: the user pass really did write before the project pass refused.
+    assert.ok(
+      existsSync(join(homeDir, ".claude", "agents", "petbox-worker.md")),
+      `setup: the user-scope pass must have written first. Full output:\n${out}`,
+    );
+    // The refusal no longer claims more than its own step…
+    assert.match(out, /Nothing was written by this step \(apply\)/, `Full output:\n${out}`);
+    assert.doesNotMatch(out, /Nothing was written\. /, `Full output:\n${out}`);
+    // …and the run reconciles the two passes out loud.
+    assert.match(stderr, /PARTIAL RUN/, `Full output:\n${out}`);
+    assert.match(stderr, /user-scope step already changed 15 file\(s\)/, `Full output:\n${out}`);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("apply --roles=user on a CLEAN run says nothing about partiality — the reconciliation fires only when the two passes actually disagree", () => {
+  const homeDir = freshDir("petbox-partial-clean-home-");
+  const projectDir = freshDir("petbox-partial-clean-proj-");
+  try {
+    const res = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=user"], {
+      cwd: projectDir,
+      encoding: "utf8",
+      env: { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined },
+    });
+    const out = (res.stdout ?? "") + (res.stderr ?? "");
+    assert.equal(res.status, WIRE_EXIT.ok, `Full output:\n${out}`);
+    assert.doesNotMatch(out, /PARTIAL RUN/, `Full output:\n${out}`);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
 // ---- SessionStart: loud in stdout, never in the exit code -------------------------------------
 
 function runHook(script: string, cwd: string, homeDir: string): Promise<{ code: number | null; stdout: string; stderr: string }> {

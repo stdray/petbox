@@ -134,6 +134,7 @@ import {
   formatCascadeProvenance,
   formatCascadeReport,
   formatCascadeTrace,
+  isLayerDirectory,
   LayerSourceError,
   resolveDefinitionLayers,
   type CascadeResolution,
@@ -393,11 +394,13 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             apply would: the kit base (default-agents.json, always the floor) under\n" +
     "             ~/.petbox/agents (user) and <project root>/.petbox/agents (project). Pass explicit\n" +
     "             directories (lowest priority first) to compare an arbitrary set instead — that mode\n" +
-    "             takes your list literally and adds no base. Never writes; never touches apply's own\n" +
-    "             exit code. Exit 0 clean (2+ layers, zero cascade errors); 1 diverged (a cascade\n" +
-    "             ERROR was found — E0-E5/E1); 2 usage; 3 COULD NOT CHECK (nothing to compare — no\n" +
-    "             layer beyond the floor, or fewer than two explicit directories — or a present\n" +
-    "             layer's source is broken) — never confused with 0 or 1.\n" +
+    "             takes your list literally and adds no base. A directory that exists but declares\n" +
+    "             nothing (empty, or only .DS_Store/Thumbs.db/a README) counts as absent, not broken.\n" +
+    "             Never writes; never touches apply's own exit code. Exit 0 clean (the cascade\n" +
+    "             resolved, zero cascade errors — including the ordinary fresh-machine case where the\n" +
+    "             kit base is the only layer); 1 diverged (a cascade ERROR was found — E0-E5/E1);\n" +
+    "             2 usage; 3 COULD NOT CHECK (a present layer's source is broken, or fewer than two\n" +
+    "             explicit directories in explicit mode) — never confused with 0 or 1.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -831,7 +834,7 @@ async function performApply(opts: {
       throw new Error(
         `the definition layer cascade reported ${local.errors.length} error(s):\n` +
           formatDefinitionErrors(local.errors) +
-          `\nNothing was written. Fix the layer files named above, or remove them.`,
+          `\nNothing was written by this step (${opts.label}). Fix the layer files named above, or remove them.`,
       );
     }
     definition = local.definition;
@@ -847,7 +850,7 @@ async function performApply(opts: {
       throw new Error(
         `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
           formatDanglingTargets(dangling) +
-          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+          `\nNothing was written by this step (${opts.label}). Fix the definition (add the role, or drop the reference).`,
       );
     }
     // strict: a corrupt roles.json must hard-fail apply, not silently compile as "no bindings"
@@ -1279,17 +1282,49 @@ async function runApply(argv: string[]): Promise<void> {
       adopt,
       label: "apply",
     });
+    reportSplitRunOutcome("apply", userRoles, result, dryRun);
     exitWith(strongestExitCode(userRoles.code, result.code, reportUnmatchedAdopt(adopt)));
     return;
   }
 
   const result = await performApply({ offline, dryRun, roleScope, adopt, label: "apply" });
   // Same libuv race doctor/status hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
-  // src\win\async.c): performApply's definition resolve + workspace probe are live network
-  // round-trips, and a hard process.exit() right after races Windows' async-handle teardown for
+  // src\win\async.c): performApply's workspace probe is a live network round-trip (the definition
+  // resolve alongside it used to be a second one; it reads files now), and a hard process.exit()
+  // right after races Windows' async-handle teardown for
   // whichever socket is still closing — the caller sees exit 127, not the WIRE_EXIT code apply's
   // own message just printed. exitWith (wire-exit.ts) is the one sanctioned spelling of the fix.
   exitWith(strongestExitCode(result.code, reportUnmatchedAdopt(adopt)));
+}
+
+/**
+ * `--roles=user` is TWO write passes in one command: the machine profiles (applyUserRoles) and
+ * then the project tree (performApply). Each one reports honestly about ITSELF, and each one's
+ * refusal says "Nothing was written by this step" — but nothing used to reconcile them, so a run
+ * where the first pass wrote 15 files and the second refused on a broken project layer ended with
+ * "Nothing was written" as its last word and exit 1. That reads as "the machine is untouched",
+ * which is false, and it is false in the direction that matters: the operator stops looking.
+ *
+ * So say it plainly, once, at the point where both outcomes are known. Only when they actually
+ * disagree — a failed pass alongside a pass that already wrote — is there anything to reconcile;
+ * a clean run and a wholly-failed run both speak for themselves already.
+ */
+function reportSplitRunOutcome(
+  label: string,
+  userRoles: ApplyRunResult,
+  project: ApplyRunResult,
+  dryRun: boolean,
+): void {
+  const wrote = userRoles.summary.filesWritten + userRoles.summary.removed;
+  if (project.code === WIRE_EXIT.ok || wrote === 0) return;
+  const verb = dryRun ? "would have changed" : "already changed";
+  console.error(
+    `${label}: PARTIAL RUN — the project-scope step above refused (exit ${project.code}) and ` +
+      `changed nothing, but the user-scope step ${verb} ${wrote} file(s) under the harness ` +
+      `profiles BEFORE it ran. The machine is not in the state it was in before this command. ` +
+      `Fix what the refusal names, then re-run \`petbox-wire apply\` — it is idempotent, and the ` +
+      `already-written profile files will report as unchanged.`,
+  );
 }
 
 /**
@@ -1449,7 +1484,7 @@ async function applyUserRoles(opts: {
       throw new Error(
         `the definition layer cascade reported ${local.errors.length} error(s):\n` +
           formatDefinitionErrors(local.errors) +
-          `\nNothing was written. Fix the layer files named above, or remove them.`,
+          `\nNothing was written by this step (${opts.label}). Fix the layer files named above, or remove them.`,
       );
     }
     definition = local.definition;
@@ -1467,7 +1502,7 @@ async function applyUserRoles(opts: {
       throw new Error(
         `definition "${definition.name}" names ${dangling.length} role(s) it does not define:\n` +
           formatDanglingTargets(dangling) +
-          `\nNothing was written. Fix the definition (add the role, or drop the reference).`,
+          `\nNothing was written by this step (${opts.label}). Fix the definition (add the role, or drop the reference).`,
       );
     }
     rolesData = loadRoles(homedir(), { strict: true });
@@ -1868,14 +1903,17 @@ function runModelUnset(argv: string[]): void {
 // exit code, not just prose, cannot confuse the three.
 //
 // Exit codes (own small taxonomy, not WIRE_EXIT's — this command never touches apply's roster):
-//   0  clean       — 2+ layers resolved, zero cascade ERRORs (E0-E5/E1; warnings do not change
-//                    the exit code — a W3 replica-layer nudge is not a hard problem)
+//   0  clean       — the cascade resolved with zero cascade ERRORs (E0-E5/E1; warnings do not
+//                    change the exit code — a W3 replica-layer nudge is not a hard problem).
+//                    Includes the ordinary fresh-machine case: the kit base alone IS a resolvable
+//                    cascade, and printing its provenance is a real answer, not a non-answer.
 //   1  diverged    — cascade resolved but reported at least one ERROR (dangling target, orphan
 //                    tombstone, incomplete new role, replace+append conflict, bad filename/mode)
 //   2  usage       — bad arguments
-//   3  cannotCheck — nothing to compare (no layer directory beyond the base in default mode;
-//                    fewer than two present directories in explicit mode), or a present layer's
-//                    source is broken/unreadable (LayerSourceError) — NEVER folded into 0 or 1
+//   3  cannotCheck — there is genuinely nothing to show: a present layer's source is broken and
+//                    could not be read (LayerSourceError), or explicit-directory mode was given
+//                    fewer than two present directories (no base is implied there, so one
+//                    directory has nothing to be laid over) — NEVER folded into 0 or 1
 const LAYERS_EXIT = { ok: 0, cascadeError: 1, usage: 2, cannotCheck: 3 } as const;
 
 type LayerCandidate = { readonly label: string; readonly dir: string };
@@ -1915,37 +1953,33 @@ function runLayers(argv: string[]): void {
 
   const present: LayerCandidate[] = [];
   for (const c of candidates) {
-    let exists = false;
-    try {
-      exists = existsSync(c.dir) && statSync(c.dir).isDirectory();
-    } catch {
-      exists = false;
-    }
+    // isLayerDirectory, not existsSync: a directory that exists but DECLARES nothing (empty, or
+    // holding only `.DS_Store`/`Thumbs.db`/a README) has no opinion, and listing it as PRESENT
+    // here would then contradict what apply/doctor actually resolve.
+    const exists = isLayerDirectory(c.dir);
     log(`  ${c.label.padEnd(20)} ${exists ? "PRESENT  " : "absent   "} ${c.dir}`);
     if (exists) present.push(c);
   }
 
-  // How many layers a comparison needs. In default mode the base is one of them, so a single
-  // present directory IS comparable (base vs that layer is a real divergence question). In
-  // explicit mode there is no base, so it still takes two directories.
-  const needDirs = usingDefaults ? 1 : 2;
-  if (present.length < needDirs) {
-    if (present.length === 0) {
-      console.error(
-        usingDefaults
-          ? "layers: CANNOT CHECK — no layer directory exists on this machine at any candidate " +
-              "location above; only the kit's shipped base is in play, and a floor on its own has " +
-              'nothing to diverge from. This is NOT "no divergence": nothing was compared.'
-          : "layers: CANNOT CHECK — no layer directory exists at any candidate location above. " +
-              'This is NOT "no divergence": nothing was read, nothing was compared.',
-      );
-    } else {
-      console.error(
-        `layers: CANNOT CHECK — only one layer is present (${present[0]!.label} at ` +
-          `${present[0]!.dir}). Nothing to diverge from. This is NOT "no divergence": divergence ` +
-          "needs at least two layers to compare.",
-      );
-    }
+  // cannotCheck now means EXACTLY "there is nothing to show", and on the default path that can no
+  // longer happen: the kit base is a layer, it is always there, and a full cascade — trace,
+  // per-field provenance, diagnostics — is a real answer even when it has exactly one layer in
+  // it. The old rule ("fewer than two ⇒ CANNOT CHECK") was written while the base was still a
+  // footnote rather than a layer, and it aged into a lie: on a fresh machine — which is EVERY
+  // consumer's state at publication — `layers` exited 3 while `doctor`, resolving the same
+  // cascade, printed the whole table. The skill sends agents here first; it must answer.
+  //
+  // Explicit-directory mode keeps the two-directory minimum, because there is no base under it:
+  // one directory alone genuinely has nothing to be laid over.
+  if (!usingDefaults && present.length < 2) {
+    console.error(
+      present.length === 0
+        ? "layers: CANNOT CHECK — no layer directory exists at any candidate location above. " +
+            'This is NOT "no divergence": nothing was read, nothing was compared.'
+        : `layers: CANNOT CHECK — only one layer is present (${present[0]!.label} at ` +
+            `${present[0]!.dir}) and no base is implied in explicit-directory mode. Nothing to ` +
+            'lay it over. This is NOT "no divergence": divergence needs at least two layers.',
+    );
     exitWith(LAYERS_EXIT.cannotCheck);
     return;
   }
@@ -1999,8 +2033,12 @@ function runLayers(argv: string[]): void {
     return;
   }
   log(
-    `layers: clean — ${resolution.layers.length} layer(s) compared, zero cascade errors ` +
-      `(this IS the "no divergence problem" answer, reached by actually checking).`,
+    resolution.layers.length === 1
+      ? `layers: clean — one layer in play (${resolution.layers[0]!.name}), zero cascade errors. ` +
+          `Nothing overrides it; this IS the "no divergence problem" answer, reached by actually ` +
+          `resolving. Create ${candidates.map((c) => c.dir).join(" or ")} to add one.`
+      : `layers: clean — ${resolution.layers.length} layer(s) compared, zero cascade errors ` +
+          `(this IS the "no divergence problem" answer, reached by actually checking).`,
   );
   exitWith(LAYERS_EXIT.ok);
 }
@@ -3075,6 +3113,9 @@ async function main(): Promise<void> {
     roleScope: step11Scope,
     label: "[11/10]",
   });
+  // Same two-pass reconciliation `apply --roles=user` needs (see reportSplitRunOutcome): under the
+  // user policy this step has already written the harness profiles before the project pass ran.
+  if (userRoleResult) reportSplitRunOutcome("[11/10]", userRoleResult, applyResult, false);
   if (applyResult.code !== WIRE_EXIT.ok) {
     console.error(`[11/10] next: petbox-wire apply`);
   }

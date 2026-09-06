@@ -717,9 +717,10 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
       : "status: done — every declared role has a model source on every known harness.",
   );
   // Same libuv race doctor hit (Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)):
-  // runStatus does TWO live network requests (definition resolve, then the workspace probe), and
-  // two sequential fetches in one process is exactly what turns this from a latent risk into a
-  // reproducible crash on a hard process.exit(). Set exitCode + return, letting Node drain the
+  // runStatus makes live network requests (the npm-drift check, the canon fetch, the workspace
+  // probe) and sequential fetches in one process are exactly what turn this from a latent risk
+  // into a reproducible crash on a hard process.exit(). (The definition resolve used to be one of
+  // them; it is file-only now — which removes a socket, not the reason for this fix.) Set exitCode + return, letting Node drain the
   // event loop naturally, after unref'ing whatever handle is still mid-close (see wire.ts's
   // doctor exit points / hook-drain.ts for the identical fix).
   process.exitCode = WIRE_EXIT.ok;

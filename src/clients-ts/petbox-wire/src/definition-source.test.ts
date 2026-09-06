@@ -20,7 +20,7 @@ import {
   resolveLocalDefinition,
   resolveUserScopeDefinition,
 } from "./definition-source.ts";
-import { LayerSourceError } from "./layer-cascade.ts";
+import { isLayerDirectory, LayerSourceError } from "./layer-cascade.ts";
 
 function freshDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -206,6 +206,119 @@ test("RENDER path: a cascade ERROR (not just an unreadable file) also degrades l
     assert.equal(got.degraded, true);
     assert.match(got.note, /E1/);
     assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+// ---- service files and empty directories: a folder is not an opinion -------------------------
+//
+// Reproduced live before this fix: `~/.petbox/agents/` holding a valid `layer.json` plus a
+// `.DS_Store` produced an E5 ERROR — which meant `degraded: true`, a "definition layers are
+// BROKEN" marker at the head of the banner on all three harnesses, and a hard exit 1 from
+// `apply`/`doctor`. Opening a folder in Finder must not be able to do that. Neither must
+// `mkdir ~/.petbox/agents` in preparation for writing an override later.
+
+const SERVICE_FILES = [".DS_Store", "Thumbs.db", "desktop.ini", ".gitkeep", ".gitignore", "README.md"];
+
+test("service files in a layer directory are ignored SILENTLY — not E5, not degraded, not a marker", () => {
+  const home = freshDir("petbox-defsrc-home-");
+  const root = freshDir("petbox-defsrc-root-");
+  try {
+    const dir = writeLayer(join(home, ".petbox", "agents"), "user", {
+      "petbox-worker.json": JSON.stringify({ slug: "worker", tier: "worker-highstakes" }),
+    });
+    for (const f of SERVICE_FILES) writeFileSync(join(dir, f), "not a layer document", "utf8");
+
+    const local = resolveLocalDefinition({ root, homeDir: home });
+    assert.deepEqual(
+      local.errors,
+      [],
+      `a desktop/git service file must never be an error:\n${JSON.stringify(local.resolution.diagnostics, null, 2)}`,
+    );
+    // Not even a warning: these are not near-misses, they are known non-layers.
+    for (const d of local.resolution.diagnostics) {
+      for (const f of SERVICE_FILES) {
+        assert.ok(!d.message.includes(f), `${f} was mentioned in a diagnostic: ${d.message}`);
+      }
+    }
+    // The layer itself still works.
+    assert.equal(local.definition.roles.find((r) => r.slug === "worker")?.tier, "worker-highstakes");
+
+    // …and the SessionStart path stays clean, which is where the damage actually showed.
+    const session = resolveDefinitionForSession({ root, homeDir: home });
+    assert.equal(session.degraded, false);
+    assert.equal(session.note, "");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a directory that declares NOTHING (empty, or only service files) is absent — no opinion, not a missing-manifest error", () => {
+  const home = freshDir("petbox-defsrc-home-");
+  const root = freshDir("petbox-defsrc-root-");
+  try {
+    // The commonest first move: make the directory now, put an override in it later.
+    mkdirSync(join(home, ".petbox", "agents"), { recursive: true });
+    mkdirSync(join(root, ".petbox", "agents"), { recursive: true });
+    writeFileSync(join(root, ".petbox", "agents", ".DS_Store"), "\0\0", "utf8");
+
+    assert.deepEqual(
+      definitionLayerCandidates(root, home).map((c) => c.present),
+      [false, false],
+      "a directory declaring nothing must read as absent, exactly like one that was never created",
+    );
+
+    const local = resolveLocalDefinition({ root, homeDir: home });
+    assert.deepEqual(local.errors, []);
+    assert.equal(local.definition.name, "base");
+
+    const session = resolveDefinitionForSession({ root, homeDir: home });
+    assert.equal(session.degraded, false);
+    assert.equal(session.note, "");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a file that CLAIMS to be a role document but is malformed is still E5 — that is the case E5 exists for", () => {
+  const home = freshDir("petbox-defsrc-home-");
+  const root = freshDir("petbox-defsrc-root-");
+  try {
+    const dir = writeLayer(join(root, ".petbox", "agents"), "project", {});
+    // Right namespace, wrong shape: an extension the schema does not define.
+    writeFileSync(join(dir, "petbox-worker.jsonc"), "{}", "utf8");
+    // And a near-miss that is NOT in the namespace: visible as a warning, never fatal.
+    writeFileSync(join(dir, "worker.json"), "{}", "utf8");
+
+    const local = resolveLocalDefinition({ root, homeDir: home });
+    const e5 = local.errors.filter((d) => d.code === "E5");
+    assert.equal(e5.length, 1, JSON.stringify(local.resolution.diagnostics, null, 2));
+    assert.ok(e5[0]!.message.includes("petbox-worker.jsonc"), e5[0]!.message);
+
+    const warned = local.resolution.diagnostics.filter(
+      (d) => d.severity === "warning" && d.message.includes("worker.json") && !d.message.includes("petbox-worker"),
+    );
+    assert.equal(warned.length, 1, "a forgotten petbox- prefix must be VISIBLE, but as a warning");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("isLayerDirectory: role documents without a layer.json still DECLARE a layer, so that stays a loud refusal", () => {
+  const home = freshDir("petbox-defsrc-home-");
+  const root = freshDir("petbox-defsrc-root-");
+  try {
+    const dir = join(root, ".petbox", "agents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "petbox-worker.json"), JSON.stringify({ slug: "worker" }), "utf8");
+    assert.equal(isLayerDirectory(dir), true, "role documents are an unambiguous statement of intent");
+    assert.throws(() => resolveLocalDefinition({ root, homeDir: home }), /has no layer\.json/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });

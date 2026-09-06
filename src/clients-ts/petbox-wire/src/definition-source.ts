@@ -32,13 +32,14 @@
 //                              protocol rendered from the base. The loudness lives in stdout,
 //                              not in the exit code.
 //
-// Absence is not breakage. A layer directory that does not exist is a layer with NO OPINION
-// (layer-cascade.ts's header) — the overwhelmingly common case, and never worth a word of
-// warning. Only a directory that IS there and cannot be read/parsed/validated is an error.
+// Absence is not breakage. A layer directory that does not exist — or exists but DECLARES NOTHING
+// (empty, or holding only `.DS_Store` / `Thumbs.db` / a README) — is a layer with NO OPINION
+// (layer-cascade.ts's isLayerDirectory) and is the overwhelmingly common case, never worth a word
+// of warning. Only a directory that states an intent (a `layer.json`, or a `petbox-*` document)
+// and then cannot be read/parsed/validated is an error.
 //
 // Plain TS for native node type-stripping: zero deps.
 
-import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -50,6 +51,7 @@ import {
 import {
   cascadeErrors,
   formatCascadeProvenance,
+  isLayerDirectory,
   LayerSourceError,
   resolveDefinitionLayers,
   type BaseLayer,
@@ -69,17 +71,15 @@ export type DefinitionLayerLabel = "user" | "project";
 export type DefinitionLayerCandidate = {
   readonly label: DefinitionLayerLabel;
   readonly dir: string;
-  /** Directory exists AND is a directory. Absent = no opinion, never an error. */
+  /**
+   * Does this directory DECLARE a layer (a `layer.json` or a `petbox-*` document)? Not merely
+   * "does a directory exist there": an empty directory, or one holding only desktop/git service
+   * files, states nothing and is treated exactly like one that was never created. See
+   * layer-cascade.ts's isLayerDirectory for why that distinction is load-bearing rather than
+   * lenient.
+   */
   readonly present: boolean;
 };
-
-function isDirectory(path: string): boolean {
-  try {
-    return existsSync(path) && statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
 
 /** The kit's shipped floor, as a cascade layer. */
 export function baseLayer(): BaseLayer {
@@ -111,7 +111,7 @@ export function definitionLayerCandidates(
   return [
     { label: "user" as const, dir: userLayerDir(homeDir) },
     { label: "project" as const, dir: projectLayerDir(root) },
-  ].map((c) => ({ ...c, present: isDirectory(c.dir) }));
+  ].map((c) => ({ ...c, present: isLayerDirectory(c.dir) }));
 }
 
 export type LocalDefinition = {
@@ -154,7 +154,7 @@ export function resolveLocalDefinition(opts: {
 export function resolveUserScopeDefinition(opts: { readonly homeDir?: string } = {}): LocalDefinition {
   const homeDir = opts.homeDir ?? homedir();
   const dir = userLayerDir(homeDir);
-  return resolveFromCandidates([{ label: "user", dir, present: isDirectory(dir) }]);
+  return resolveFromCandidates([{ label: "user", dir, present: isLayerDirectory(dir) }]);
 }
 
 function resolveFromCandidates(candidates: ReadonlyArray<DefinitionLayerCandidate>): LocalDefinition {

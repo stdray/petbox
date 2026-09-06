@@ -92,8 +92,14 @@ project file.
 
 ## `apply` — generated agent files
 
-`apply` resolves the project root by the longest registry prefix covering cwd, builds the portable
-agent definition **from files** — no network, no key, no scope — and compiles one file per role.
+`apply` resolves the root it writes into with **`git rev-parse --show-toplevel` from cwd** — the
+worktree it is actually running in — falling back to cwd only when cwd is not inside a git working
+tree. It deliberately does NOT use the registry for this: the registry answers project *identity*,
+not *where artifacts land* (§5 of `doc/agent-wiring.md` and the Doc site say the same). That root is
+doubly load-bearing now, because the **project** definition layer is looked up under it.
+
+From there `apply` builds the portable agent definition **from files** — no network, no key, no
+scope — and compiles one file per role.
 
 The definition is a CASCADE of layers, laid over each other lowest first:
 
@@ -104,10 +110,12 @@ The definition is a CASCADE of layers, laid over each other lowest first:
 | `project` | `<project root>/.petbox/agents/` | Per worktree. Optional. |
 
 A layer directory that does not exist is a layer with **no opinion** — the normal case, never a
-warning. A layer that IS there and cannot be read, parsed or validated **hard-refuses the run**,
-naming the file and the parser's own position, having written nothing. There is deliberately no
-last-known-good cache anywhere on this path: substituting a previously-successful result is exactly
-what turns a broken source into a silent one.
+warning. So is one that exists but declares nothing: an empty directory you made for a future
+override, or one holding only `.DS_Store` / `Thumbs.db` / a `README.md`. A layer that IS there and
+states an intent (a `layer.json`, or any `petbox-*` document) and then cannot be read, parsed or
+validated **hard-refuses the run**, naming the file and the parser's own position, having written
+nothing. There is deliberately no last-known-good cache anywhere on this path: substituting a
+previously-successful result is exactly what turns a broken source into a silent one.
 
 Each layer holds `layer.json` (its name and `"mode": "overlay" | "replace"`) plus per-role
 documents: `petbox-<slug>.json` to add a role or patch fields, `petbox-<slug>.md` to replace its
@@ -115,6 +123,42 @@ prose, `petbox-<slug>.append.md` to add an attributed section, and `{"slug": "..
 to tombstone one. `petbox-wire layers` prints the whole cascade — which layers exist, what each did
 to the roster, and which layer supplied every field. `apply`, `doctor` and `status` print that
 per-field provenance too, on every run.
+
+### Upgrading from a kit that fetched the definition from the server
+
+**Read this if you ever edited roles through the PetBox admin UI, `agent_def_upsert`, or
+`PUT /api/{project}/agent-defs/{key}`.** Those edits are no longer read by anything. The kit does
+not fetch a definition, and there is no cache of one left on disk either.
+
+The server side still exists and still accepts writes — the endpoints, the MCP tools and the admin
+screens are all live. That is the trap: nothing will tell you your edit did not take. Concretely,
+after upgrading:
+
+- a role you ADDED server-side is gone from the roster, and its generated agent file is deleted by
+  the orphan sweep on the next `apply` (it carries our `petbox: managed` marker, so it is ours to
+  remove);
+- prose you REWROTE server-side reverts to whatever the kit's `base` layer says;
+- a tier or capability you changed server-side reverts likewise.
+
+Move each edit into a layer instead — `~/.petbox/agents/` if it should apply to every project on
+this machine, `<project root>/.petbox/agents/` if it belongs to one checkout. A layer is a directory
+holding a `layer.json` plus one document per role you are changing; you only write the fields you
+are actually changing, and everything else keeps coming from the layer below:
+
+```
+~/.petbox/agents/
+  layer.json                  {"name": "user", "mode": "overlay"}
+  petbox-worker.json          {"slug": "worker", "tier": "worker-highstakes"}
+  petbox-worker.md            replaces that role's prose entirely
+  petbox-worker.append.md     adds a section, attributed to this layer by name
+  petbox-explore.json         {"slug": "explore", "removed": true, "reason": "..."}
+```
+
+Run `petbox-wire layers` afterwards: it prints what each layer did to the roster and which layer
+supplied every field, so you can confirm the move landed before you `apply`. To recover the text you
+had on the server, read it once more through the admin UI or `agent_def_get` and paste it into the
+layer — there is no import command, deliberately: this is a one-time move of a small document, and
+a migration tool would outlive its use by years.
 
 Files compiled, one per role:
 
