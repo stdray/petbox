@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { petboxDir, petboxKeysJsonPath } from "./petbox-dir.ts";
 import { wireLog } from "./wire-log.ts";
 
 // Class A vs Class Б (bug: wire-silent-failures-invisible): a MISSING registry/keys-store file
@@ -45,7 +46,7 @@ export type ResolvedProject = {
 };
 
 export function registryPath(homeDir: string = homedir()): string {
-  return join(homeDir, ".petbox", "projects.json");
+  return join(petboxDir(homeDir), "projects.json");
 }
 
 // Cross-platform key store written by wire.ts: ~/.petbox/keys.json is a flat JSON map
@@ -54,7 +55,7 @@ export function registryPath(homeDir: string = homedir()): string {
 // `homeDir` is injectable (tests only; every real caller uses the default) so the Class A/Б
 // split above is unit-testable without touching the real ~/.petbox.
 function readKeyStore(envVar: string, homeDir: string = homedir()): string {
-  const path = join(homeDir, ".petbox", "keys.json");
+  const path = petboxKeysJsonPath(homeDir);
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");

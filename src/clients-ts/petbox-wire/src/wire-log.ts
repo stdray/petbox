@@ -24,9 +24,10 @@
 import { appendFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { petboxDir } from "./petbox-dir.ts";
 
 export function wireLogPath(homeDir: string = homedir()): string {
-  return join(homeDir, ".petbox", "wire.log");
+  return join(petboxDir(homeDir), "wire.log");
 }
 
 // Doctor only ever tails the last few dozen lines; keep the file from growing without bound on
