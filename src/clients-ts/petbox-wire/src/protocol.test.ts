@@ -85,7 +85,12 @@ test("the trimmed protocol block still carries every load-bearing orchestrator r
   const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
   const required: ReadonlyArray<readonly [string, RegExp]> = [
     ["no model at spawn", /Never pass a model at spawn/],
-    ["escalate by ROLE, not model", /`worker-highstakes` ROLE/],
+    ["escalate by ROLE, not model", /a different ROLE, never a spawn argument/],
+    // The tier criterion carried ONE axis ("expensive") from the role's birth until 2026-09-06,
+    // and a worker was picked for work whose failure mode was the other one: a plausible number
+    // acceptance cannot re-derive. Both axes are pinned so a future trim cannot drop one silently.
+    ["tier criterion names the cost axis", /would be expensive/],
+    ["tier criterion names the unnoticed axis", /would pass unnoticed/],
     ["delegate by default", /Delegate by default/],
     ["no errand role", /no errand role/],
     ["reserve triggers are events", /Reserve triggers on EVENTS/],
