@@ -16,7 +16,7 @@
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, zero deps.
 
-import { DEFAULT_AGENT_DEFINITION, emittedRoleName, type AgentDefinition } from "./agent-definition.ts";
+import { DEFAULT_AGENT_DEFINITION, KIT_VERSION, emittedRoleName, type AgentDefinition } from "./agent-definition.ts";
 import { hasCapability } from "./harness-capabilities.ts";
 
 export type ToolNamer = (verb: string) => string;
@@ -104,9 +104,16 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const definition = opts?.definition ?? DEFAULT_AGENT_DEFINITION;
   const intro = buildSelfIntro(allowSpawn, definition);
 
+  // Provenance tail on the existing "wired to PetBox" line, not a new line of its own: this is
+  // the ONLY place in the mandatory SessionStart banner that names which kit generation rendered
+  // it (card kit-version-unknown-inside-hooks — a hook has no other way to tell). Riding the
+  // existing line keeps it inside `protocol`'s own byte count, so it goes through
+  // session-budget.ts's normal accounting (assembleSessionBanner's `protocolBytes`) instead of
+  // an out-of-band prepend like staleWarn/defNote — a real budget cost, tens of bytes, not a
+  // second unaccounted line that could itself help push canon out.
   let out = `## PetBox memory
 
-This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP.
+This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP — kit v${KIT_VERSION}.
 
 ${intro}
 

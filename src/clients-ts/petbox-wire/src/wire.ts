@@ -142,7 +142,7 @@ import {
   type ResolveLayersOptions,
 } from "./layer-cascade.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
-import { petboxKeysJsonPath, petboxWireMirrorDir } from "./petbox-dir.ts";
+import { petboxDir, petboxKeysJsonPath, petboxWireMirrorDir } from "./petbox-dir.ts";
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import {
   buildSkillReports,
@@ -2315,6 +2315,37 @@ function kitFingerprint(root: string): string {
 
 type CopyKitResult = { before: string; after: string; skipped: boolean };
 
+// Delivery stamp for KIT_VERSION's hook-context fallback (agent-definition.ts's loadKitVersion,
+// card kit-version-unknown-inside-hooks). Written NEXT TO the mirror (~/.petbox/kit-version.json,
+// a SIBLING of STABLE), deliberately NOT inside it: pruneStaleMirrorEntries treats STABLE as an
+// EXACT mirror of HERE and deletes anything HERE does not also ship, so a stamp living inside
+// ~/.petbox/wire/ would be wiped and rewritten every single run, spamming the "orphan cleanup"
+// log for a file that was never an orphan. Outside the mirror this problem does not exist at all.
+//
+// `version` is KIT_VERSION as already resolved in THIS run's context (HERE) — package.json sits
+// next to HERE in every real invocation (npx cache or checkout; only the STABLE mirror itself
+// lacks it), so this never needs a second resolver. `kitHash` is the exact `after` fingerprint
+// copyKitToStable already computes and logs — never a second hash.
+//
+// Best-effort: a failure to write the stamp must never fail the copy it rides along on. The
+// hook-context fallback then simply stays "unknown", the same soft degradation as before this
+// stamp existed.
+function writeKitVersionStamp(kitHash: string, label: string): void {
+  try {
+    writeJson(join(petboxDir(), "kit-version.json"), {
+      version: KIT_VERSION,
+      kitHash,
+      installedAt: new Date().toISOString(),
+      source: HERE,
+    });
+  } catch (err) {
+    log(
+      `${label} stable copy: could not write kit-version stamp at ${join(petboxDir(), "kit-version.json")} ` +
+        `(non-fatal, hook-context KIT_VERSION stays "unknown"): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 // Orphan cleanup — STABLE must be an EXACT MIRROR of HERE at EVERY depth, never a UNION. cpSync
 // overwrites but never DELETES, so an entry the shipped kit dropped would keep standing next to
 // its NEWER peers. This used to compare only the TOP-LEVEL of STABLE against the top level of
@@ -2380,6 +2411,7 @@ function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
   pruneStaleMirrorEntries(HERE, STABLE, label);
   cpSync(HERE, STABLE, { recursive: true, force: true });
   const after = kitFingerprint(STABLE);
+  writeKitVersionStamp(after, label);
   log(`${label} stable copy: kit installed to ${STABLE} (from ${HERE}); hash ${before} → ${after}.`);
   return { before, after, skipped: false };
 }
