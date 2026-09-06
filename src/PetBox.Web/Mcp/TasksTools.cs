@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
@@ -1275,11 +1276,11 @@ public static class TasksTools
 	// description; see CursorSortComparison for what happens if identity ever fails to match.
 	static string CursorSortValue(TaskSearchHit h, TaskSortBy by) => by switch
 	{
-		TaskSortBy.Priority => h.Node.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+		TaskSortBy.Priority => h.Node.Priority.ToString(CultureInfo.InvariantCulture),
 		TaskSortBy.Title => h.Node.Title,
-		TaskSortBy.Created => (h.Node.CreatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-		TaskSortBy.Updated => (h.Node.UpdatedAt ?? default).ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-		TaskSortBy.Relevance => (h.Score ?? 0).ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+		TaskSortBy.Created => (h.Node.CreatedAt ?? default).ToString("O", CultureInfo.InvariantCulture),
+		TaskSortBy.Updated => (h.Node.UpdatedAt ?? default).ToString("O", CultureInfo.InvariantCulture),
+		TaskSortBy.Relevance => (h.Score ?? 0).ToString("R", CultureInfo.InvariantCulture),
 		_ => throw new ArgumentException($"tasks_search: sort axis '{by}' cannot carry a cursor"),
 	};
 
@@ -1288,11 +1289,10 @@ public static class TasksTools
 	// case-insensitively, the timestamps as instants — never as text).
 	static Comparison<string> CursorSortComparison(TaskSortBy by) => by switch
 	{
-		TaskSortBy.Priority => static (a, b) =>
-			long.Parse(a, System.Globalization.CultureInfo.InvariantCulture).CompareTo(long.Parse(b, System.Globalization.CultureInfo.InvariantCulture)),
+		TaskSortBy.Priority => SortKeyComparisons.CompareLong,
 		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
-		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) => DateTime.Parse(a, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)
-			.CompareTo(DateTime.Parse(b, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind)),
+		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) => DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+			.CompareTo(DateTime.Parse(b, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
 		// RELEVANCE has no sound scalar comparison (see CursorSortValue): exact-identity hits carry no
 		// score and the statusKind tiering reorders across scores, so "after this score" is simply not
 		// where the next page starts. Advance only reaches this delegate when the boundary row is NO

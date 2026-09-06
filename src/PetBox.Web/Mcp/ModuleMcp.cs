@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 
@@ -125,7 +126,7 @@ static class ModuleMcp
 		if (string.IsNullOrEmpty(body)) return null;
 		if (len < 0) return body;               // FullBody
 		if (len == 0) return null;              // NoBody
-		return body.Length <= len ? body : string.Concat(body.AsSpan(0, len), "…");
+		return BodySnippets.TruncateWithEllipsis(body, len);
 	}
 
 	// ── write-call escape-inflation guidance (card mcp-write-degrades-silently-fix; number dropped

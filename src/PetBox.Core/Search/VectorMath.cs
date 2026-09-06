@@ -17,6 +17,10 @@ public static class VectorMath
 		return float.IsNaN(cos) ? 0 : cos;
 	}
 
+	// MRL (Matryoshka) truncation: the leading `dim` components of a Matryoshka embedding are a
+	// usable lower-dim embedding on their own. Cosine renormalizes, so no rescale is needed.
+	public static float[] Truncate(float[] v, int dim) => dim > 0 && dim < v.Length ? v[..dim] : v;
+
 	// Top-k by cosine, descending. Candidates whose length differs from the query are
 	// skipped (defensive — callers should already model/dim-guard before TopK).
 	public static IReadOnlyList<(string Key, double Score)> TopK(

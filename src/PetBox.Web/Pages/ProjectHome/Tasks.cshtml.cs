@@ -301,7 +301,7 @@ public sealed class TasksModel : PageModel
 
 	static Comparison<string> CursorSortComparison(TaskSortBy by) => by switch
 	{
-		TaskSortBy.Priority => static (a, b) => long.Parse(a, CultureInfo.InvariantCulture).CompareTo(long.Parse(b, CultureInfo.InvariantCulture)),
+		TaskSortBy.Priority => SortKeyComparisons.CompareLong,
 		TaskSortBy.Title => static (a, b) => StringComparer.OrdinalIgnoreCase.Compare(a, b),
 		TaskSortBy.Created or TaskSortBy.Updated => static (a, b) =>
 			DateTime.Parse(a, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)

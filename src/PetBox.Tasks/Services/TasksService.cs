@@ -687,7 +687,7 @@ public sealed partial class TasksService : ITasksService
 	static string? SliceBody(string? body, int bodyLen)
 	{
 		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
-		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+		return BodySnippets.TruncateWithEllipsis(body, bodyLen);
 	}
 
 	// Map include_boards (quartet kind names) to a BoardKind set; null/empty = all (no filter). A
@@ -2903,9 +2903,9 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
-	// appended when cut (mirrors ModuleMcp.SnippetBody — read returns content by default).
+	// appended when cut (BodySnippets.TruncateWithEllipsis in Core — read returns content by default).
 	static string SnippetBody(string body, int bodyLen) =>
-		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+		bodyLen <= 0 ? body : BodySnippets.TruncateWithEllipsis(body, bodyLen);
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
 	// (null) inherits the prior value; a non-null value sets it ("" clears it).

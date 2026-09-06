@@ -55,7 +55,7 @@ public sealed class VectorSearchIndex : ISearchIndex
 		// template, or the title would silently drop out of the semantic vector. EmbedInput reproduces
 		// the exact Title\nBody string the old spliced `Text` carried, so existing vectors stay valid.
 		var batch = await _embedder.EmbedAsync([doc.EmbedInput], ct);
-		var vec = Truncate(batch.Vectors[0], _dim);
+		var vec = VectorMath.Truncate(batch.Vectors[0], _dim);
 
 		var (db, own) = Open(tx);
 		try
@@ -103,7 +103,7 @@ public sealed class VectorSearchIndex : ISearchIndex
 	public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 	{
 		var qb = await _embedder.EmbedAsync([query], ct);
-		var q = Truncate(qb.Vectors[0], _dim);
+		var q = VectorMath.Truncate(qb.Vectors[0], _dim);
 		var qmodel = qb.Model;
 		var qdim = q.Length;
 
@@ -137,10 +137,6 @@ public sealed class VectorSearchIndex : ISearchIndex
 			return new Hit(t.Key[..sep], t.Key[(sep + 1)..], t.Score, "semantic");
 		}).ToList();
 	}
-
-	// MRL (Matryoshka) truncation: the leading `dim` components of a Matryoshka embedding are a
-	// usable lower-dim embedding on their own. Cosine renormalizes, so no rescale is needed.
-	static float[] Truncate(float[] v, int dim) => dim > 0 && dim < v.Length ? v[..dim] : v;
 
 	(DataConnection Db, bool Own) Open(DataConnection? tx) => tx is null ? (_connect(), true) : (tx, false);
 
