@@ -168,7 +168,47 @@ test("append: 409 gap self-heal is unaffected by the new retry loop (orthogonal 
   });
 });
 
-test("append: server always 503 (both routes) — pushTranscript gives up in bounded time and logs the failure honestly, with an attempt count", async () => {
+// Point 1 (coordinator review of ca1076f0): a retryable status must NOT fall into the legacy
+// full-snapshot fallback just because a small attempt COUNT was reached — it must keep retrying
+// the SAME increment route until the shared deadline itself runs out. This server fails more
+// times than the old hardcoded cap (4) ever allowed, then recovers — proving the fix landed
+// entirely via the correct route, with the legacy endpoint never touched at all.
+test("append: 5 failures then 200 — retry now exceeds the OLD 4-attempt cap; still lands via the append route, legacy never touched", async () => {
+  await withIsolatedHome(async () => {
+    let appendRequests = 0;
+    let legacyRequests = 0;
+    const FAILURES_BEYOND_OLD_CAP = 5; // strictly more than the retired MAX_RETRY_ATTEMPTS (4)
+    const { baseUrl, close } = await startFakeServer((req, res) => {
+      if (req.url?.includes("/append")) {
+        appendRequests++;
+        if (appendRequests <= FAILURES_BEYOND_OLD_CAP) {
+          res.writeHead(503, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "restarting" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ lastOrdinal: MSGS.length }));
+        return;
+      }
+      legacyRequests++;
+      res.writeHead(500).end();
+    });
+    try {
+      const result = await pushTranscript(target(baseUrl), MSGS, null);
+      assert.equal(result, MSGS.length, "must still land the turn — the deadline had plenty of room left for attempt 6");
+      assert.equal(appendRequests, FAILURES_BEYOND_OLD_CAP + 1, "all retries stayed on the increment route");
+      assert.equal(legacyRequests, 0, "the legacy full-snapshot route must NEVER be touched for a retryable status — that was the exact regression under review");
+    } finally {
+      await close();
+    }
+  });
+});
+
+// Point 1 + Point 2 together, end to end: a server that NEVER recovers. The old design gave up
+// on the increment route after 4 attempts (~1-2s) and spent the remaining ~8s of budget sending
+// full snapshots to the same struggling server instead — exactly the "ухудшение, а не деградация"
+// the coordinator called out. The fix must spend the WHOLE shared deadline retrying the CORRECT
+// route, and when that deadline is finally gone, the legacy phase must send NOTHING and say so
+// honestly (not fabricate a "network failure" that never happened — Point 2).
+test("append: server always 503 (both routes) — the increment route retries for the WHOLE deadline, legacy is never actually called, and wire.log names the real diagnosis", async () => {
   await withIsolatedHome(async (home) => {
     let appendRequests = 0;
     let legacyRequests = 0;
@@ -183,16 +223,18 @@ test("append: server always 503 (both routes) — pushTranscript gives up in bou
       const elapsed = Date.now() - start;
 
       assert.equal(result, null, "an always-503 server must still ultimately fail best-effort (null), never throw");
-      assert.ok(elapsed < 9000, `must give up comfortably inside the ~10s retry deadline via the attempt cap, took ${elapsed}ms`);
-      assert.equal(appendRequests, 4, "increment phase must retry up to MAX_RETRY_ATTEMPTS, not once and not forever");
-      assert.equal(legacyRequests, 4, "legacy fallback must ALSO retry up to the attempt cap (card item 4)");
+      assert.ok(elapsed >= 9000, `must actually spend the ~10s deadline retrying the correct route, not give up early via a small count, took only ${elapsed}ms`);
+      assert.ok(elapsed < 11500, `must not overrun the ~10s deadline by more than scheduling slack, took ${elapsed}ms`);
+      assert.ok(appendRequests > 5, `must retry well past the OLD 4-attempt cap while budget remains, got only ${appendRequests} append attempts`);
+      assert.equal(legacyRequests, 0, "Point 1: a retryable status (503) must NEVER fall into the legacy full-snapshot route — no full snapshot may ever be sent to a server that just said it's busy");
 
       const log = wireLogText(home);
-      assert.match(
-        log,
-        /pushTranscript legacy fallback for fake-project\/fake-session \(agent=claude-code\) got HTTP 503 after 4 attempt\(s\) — session NOT persisted this turn/,
-        `wire.log must honestly report that retries WERE attempted and how many, not just that it failed, got:\n${log}`,
+      const match = log.match(
+        /pushTranscript legacy fallback for fake-project\/fake-session \(agent=claude-code\) — retry budget exhausted after the increment phase's (\d+) attempt\(s\); legacy fallback could not attempt any request — session NOT persisted this turn/,
       );
+      assert.ok(match, `Point 2: wire.log must name the REAL diagnosis (budget exhausted, no request attempted), not a fabricated network failure, got:\n${log}`);
+      assert.equal(Number(match![1]), appendRequests, "the logged attempt count must match what the increment phase actually did");
+      assert.ok(!log.includes("network failure"), "Point 2: there was no network failure — every request got a real 503 response — the log must not claim otherwise");
     } finally {
       await close();
     }

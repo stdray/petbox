@@ -55,10 +55,6 @@ const MAX_APPEND_ATTEMPTS = 3;
 // route", and any other 4xx is a request-shape problem retrying won't fix.
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
-// Up to 4 tries (1 + 3 retries) per phase — a cap in COUNT, independent of the deadline below,
-// so a fast-failing server doesn't get hammered indefinitely just because time remains.
-const MAX_RETRY_ATTEMPTS = 4;
-
 // Hard wall-clock ceiling for ALL retry activity in one pushTranscript call — the increment
 // phase and, if it falls through, the legacy phase SHARE this one clock, so a call that retries
 // in both phases still cannot exceed it. This runs inside a Stop hook, which must not noticeably
@@ -75,7 +71,33 @@ const MAX_RETRY_ATTEMPTS = 4;
 // the full per-request t.timeoutMs (12000ms in push-session.ts / droid-push-session.ts), so two
 // stalled attempts alone would already blow past a deadline that was only checked BETWEEN
 // attempts.
+//
+// This is the ONLY bound on ordinary retryable-status/network retries — see
+// MAX_RETRY_ATTEMPTS_SAFETY_CAP below for why a per-phase attempt COUNT is deliberately not one.
 const RETRY_DEADLINE_MS = 10_000;
+
+// Safety net ONLY — real retry sequences are bounded by RETRY_DEADLINE_MS above, never by this
+// count. An earlier version of this retry capped at 4 attempts (1 + 3 retries) and fell through
+// to the legacy full-snapshot fallback once that count was exhausted, REGARDLESS of how much of
+// the 10s deadline was still unused (~8s of it, in the worst case: 4 attempts with this file's
+// backoff finish in ~1.75s on average). That was wrong on the merits, not just stingy: the
+// legacy route exists for exactly ONE diagnosis — "old server, no /append route" (404) — and a
+// retryable status (503 etc.) says something completely different: "the route exists, the
+// server is just busy." Falling into legacy on THAT diagnosis sends the same overloaded/
+// restarting server a FULL snapshot (up to hundreds of KB for a long session) instead of the
+// small increment, repeatedly — worse than doing nothing, and exactly the failure mode the card
+// this retry fixes was written to end.
+//
+// So retryable-status/network retries now spend the WHOLE remaining deadline on the SAME route
+// before giving up — attemptWithRetry only stops early on success, on a non-retryable status
+// (2xx, 409, 404, or an unclassified 4xx/5xx), or once genuinely out of time. The legacy
+// full-snapshot push is reached ONLY via that non-retryable-status path (still 404-or-unknown,
+// exactly as documented above), never as a consolation prize for a route that was merely busy.
+// The count below exists purely to bound a DEGENERATE case — e.g. a future bug that makes
+// backoffDelayMs return ~0 — from spinning indefinitely; with real backoff (floor ~125ms,
+// growing to ~1-3s) and any non-negligible response latency, a real sequence tops out at roughly
+// 10-15 attempts inside the 10s deadline, comfortably under this cap.
+const MAX_RETRY_ATTEMPTS_SAFETY_CAP = 100;
 
 function isRetryableStatus(status: number): boolean {
   return RETRYABLE_STATUSES.has(status);
@@ -87,9 +109,9 @@ function sleep(ms: number): Promise<void> {
 
 // Exponential backoff with equal jitter (0.5x-1.5x of the base) so a batch of parallel sessions
 // hitting the same restarting server don't all retry in lockstep. Base doubles from 250ms and
-// caps at 2000ms: across the 3 backoff gaps between 4 attempts that averages roughly
-// 250+500+1000 = 1750ms, leaving multiple seconds of the 10s deadline free for actual request
-// round trips even in the worst realistic (fast-503) case.
+// caps at 2000ms, so a sequence spending the full RETRY_DEADLINE_MS on one route settles into
+// ~2s-average gaps once the cap is reached — enough headroom for roughly 7-8 attempts against a
+// server answering fast (see MAX_RETRY_ATTEMPTS_SAFETY_CAP's comment for the fuller arithmetic).
 function backoffDelayMs(attempt: number): number {
   const base = Math.min(250 * 2 ** attempt, 2000);
   return base * (0.5 + Math.random());
@@ -168,15 +190,24 @@ async function post(
   }
 }
 
-type PostOutcome = { kind: "response"; resp: Response } | { kind: "network"; error: unknown };
+type PostOutcome =
+  | { kind: "response"; resp: Response }
+  | { kind: "network"; error: unknown }
+  // The retry deadline was ALREADY gone when this phase started — no request was sent at all.
+  // Kept distinct from "network" on purpose: a network failure means a request went out and
+  // failed; this means none did, and claiming otherwise in wire.log would be a fabricated
+  // diagnosis (see RETRY_DEADLINE_MS / pushTranscript's use of this outcome).
+  | { kind: "budget-exhausted" };
 
 // Retries post() against ONE fixed url+body while the outcome is transient (a RETRYABLE_STATUSES
-// status, or a thrown network error), up to MAX_RETRY_ATTEMPTS tries, never running past
-// `deadline` (an absolute Date.now()-scale timestamp shared across every attempt in this
-// pushTranscript call — see RETRY_DEADLINE_MS). Returns whatever the LAST attempt produced —
-// a settled response (2xx, 409, 404, or an exhausted retryable status) or an exhausted network
-// failure — plus how many attempts it actually took (1 when the first try already settled it,
-// so callers can stay silent on the fast/normal path and only log when retries actually fired).
+// status, or a thrown network error), never running past `deadline` (an absolute Date.now()-scale
+// timestamp shared across every attempt in this pushTranscript call — see RETRY_DEADLINE_MS) and
+// capped in COUNT only by MAX_RETRY_ATTEMPTS_SAFETY_CAP (a degenerate-case guard, not a real
+// limit — see its comment). Returns whatever the LAST attempt produced — a settled response
+// (2xx, 409, 404, or a retryable status the deadline ran out on) or an exhausted network failure
+// — or "budget-exhausted" if the deadline was already gone before any attempt — plus how many
+// attempts it actually took (0 for budget-exhausted; 1 when the first try already settled it, so
+// callers can stay silent on the fast/normal path and only log when retries actually fired).
 async function attemptWithRetry(
   url: string,
   apiKey: string,
@@ -185,12 +216,9 @@ async function attemptWithRetry(
   metaHeader: string | null,
   deadline: number,
 ): Promise<{ outcome: PostOutcome; attempts: number }> {
-  let outcome: PostOutcome = {
-    kind: "network",
-    error: new Error("retry deadline exceeded before first attempt"),
-  };
+  let outcome: PostOutcome = { kind: "budget-exhausted" };
   let attempts = 0;
-  for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS_SAFETY_CAP; attempt++) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break; // out of budget — the loop-entry outcome above stands
     attempts++;
@@ -205,7 +233,7 @@ async function attemptWithRetry(
     } catch (e) {
       outcome = { kind: "network", error: e };
     }
-    if (attempt === MAX_RETRY_ATTEMPTS - 1) break;
+    if (attempt === MAX_RETRY_ATTEMPTS_SAFETY_CAP - 1) break;
     const remainingAfter = deadline - Date.now();
     if (remainingAfter <= 0) break;
     await sleep(Math.min(backoffDelayMs(attempt), remainingAfter));
@@ -243,6 +271,12 @@ export async function pushTranscript(
       ? knownLastOrdinal + 1
       : Math.max(1, msgs.length - OVERLAP_WINDOW + 1);
 
+  // Sum of attempts across every outer (gap-self-heal) iteration's retry sequence — carried into
+  // the legacy phase's "budget already gone" message so that message can honestly say WHERE the
+  // 10s went, instead of just "0 attempts" with no context (see attemptWithRetry's comment on
+  // why an increment-phase retry sequence can legitimately consume the whole shared deadline).
+  let appendAttemptsTotal = 0;
+
   for (let attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
     const { outcome, attempts: tries } = await attemptWithRetry(
       `${base}/append?agent=${encodeURIComponent(t.agent)}&fromOrdinal=${from}`,
@@ -252,6 +286,18 @@ export async function pushTranscript(
       metaHeader,
       deadline,
     );
+    appendAttemptsTotal += tries;
+
+    if (outcome.kind === "budget-exhausted") {
+      // Only reachable if the shared deadline was ALREADY gone before the increment phase could
+      // send even one request (e.g. a prior gap-self-heal iteration's retries used it all up) —
+      // distinct from a network failure: no request was attempted, so don't claim one failed.
+      wireLog(
+        "append",
+        `pushTranscript for ${t.project}/${t.sessionId} (agent=${t.agent}) — retry budget exhausted before the increment push could attempt any request — session NOT persisted this turn`,
+      );
+      return null;
+    }
 
     if (outcome.kind === "network") {
       // Network failure, even after retrying it in place — a full-snapshot retry would fail
@@ -305,6 +351,24 @@ export async function pushTranscript(
     metaHeader,
     deadline,
   );
+
+  if (legacyOutcome.kind === "budget-exhausted") {
+    // The realistic way to land here: the increment phase spent the ENTIRE shared deadline
+    // retrying a retryable status (503 etc.) on the correct route and never got a good answer,
+    // so by the time control reaches the legacy fallback there is nothing left to spend — the
+    // legacy full-snapshot POST is never actually sent. That is deliberate (see
+    // MAX_RETRY_ATTEMPTS_SAFETY_CAP's comment: retryable failures must not fall into legacy just
+    // because a small count was hit — only 404/unclassified do, and those don't consume the
+    // deadline). Naming it plainly here — NOT as a fabricated "network failure" — is the honest
+    // trace: no request went out, and here is why.
+    wireLog(
+      "append",
+      `pushTranscript legacy fallback for ${t.project}/${t.sessionId} (agent=${t.agent}) — ` +
+        `retry budget exhausted after the increment phase's ${appendAttemptsTotal} attempt(s); ` +
+        `legacy fallback could not attempt any request — session NOT persisted this turn`,
+    );
+    return null;
+  }
 
   if (legacyOutcome.kind === "network") {
     wireLog(
