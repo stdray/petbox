@@ -192,20 +192,6 @@ TABLE Workspaces
   COL Name TEXT NOT NULL
   INDEX sqlite_autoindex_Workspaces_1 UNIQUE origin=pk (Key)
 
-TABLE agent_definitions
-  COL ActiveFrom INTEGER NOT NULL
-  COL ActiveTo INTEGER NULL
-  COL Created TEXT NOT NULL
-  COL Json TEXT NOT NULL
-  COL Key TEXT NOT NULL PK2
-  COL PrevKey TEXT NULL
-  COL ProjectKey TEXT NOT NULL PK1
-  COL Updated TEXT NOT NULL
-  COL Version INTEGER NOT NULL PK3
-  INDEX ix_agent_definitions_project_active origin=c (ProjectKey, ActiveTo)
-  INDEX sqlite_autoindex_agent_definitions_1 UNIQUE origin=pk (ProjectKey, Key, Version)
-  INDEX ux_agent_definitions_active_project_key UNIQUE origin=c (ProjectKey, Key) WHERE ActiveTo IS NULL
-
 TABLE llm_endpoints
   COL BaseUrl TEXT NOT NULL
   COL CertThumbprint TEXT NULL

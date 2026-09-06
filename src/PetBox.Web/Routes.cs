@@ -99,7 +99,6 @@ public static class Routes
 	public static string ProjectTasksAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/tasks";
 	public static string ProjectMethodologyAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/methodology";
 	public static string ProjectMemoryAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/memory";
-	public static string ProjectAgentDefsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/agent-defs";
 	public static string ProjectConnect(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/connect";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	// API-key management, split off the Info page (admin-routes-and-pages item 3): the Info page was

@@ -38,9 +38,7 @@ public sealed class UnmappedMemberStrictnessFixture : IAsyncLifetime
 	const string ApiKey = "yb_key_unmap_agent";
 	// llm:admin is here for the JsonElement boundary (llm_config_upsert `config`);
 	// methodology:write for the template/rules document verbs, which are the deep-payload case.
-	// agents:read/write stay because agent_def_* used to be the JsonElement witness and the family
-	// is cheap to keep reachable from this host.
-	const string Scopes = "tasks:read,tasks:write,methodology:write,agents:read,agents:write,llm:admin";
+	const string Scopes = "tasks:read,tasks:write,methodology:write,llm:admin";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;
@@ -315,12 +313,11 @@ public sealed class UnmappedMemberStrictnessTests(UnmappedMemberStrictnessFixtur
 	// about the MCP options' strictness may reach into it: the binder hands over the element
 	// untouched because JsonElement has no closed member set to violate.
 	//
-	// This witness USED to be agent_def_upsert `definition`. It stopped being one when
-	// work/agent-def-upsert-typed-and-merge-by-role typed that parameter — deliberately, so it
-	// would be policed like every other typed payload (its depth coverage is in
-	// Mcp/AgentDefUpsertMergeTests). The boundary itself is unchanged and still needs a live
-	// witness, so it moved to the next JsonElement parameter on the surface rather than being
-	// dropped.
+	// This witness USED to be agent_def_upsert `definition`, then that parameter was typed, and
+	// then the whole verb was removed with the agent-definition store (work
+	// agent-defs-server-teardown). The boundary itself is unchanged and still needs a LIVE witness,
+	// so it followed the next JsonElement parameter on the surface rather than being dropped —
+	// which is the point: this test must always name a parameter that actually exists today.
 	[Fact]
 	public async Task JsonElementParameter_StillAcceptsArbitraryContent()
 	{
@@ -338,33 +335,6 @@ public sealed class UnmappedMemberStrictnessTests(UnmappedMemberStrictnessFixtur
 
 		result.IsError.Should().NotBe(true, "a JsonElement parameter carries an OPAQUE document; got: {0}", Text(result));
 		Text(result).Should().NotContain("could not be mapped");
-	}
-
-	// The other half of that boundary, on the verb this card's rework typed: `definition` is NOW a
-	// closed type, so an unknown property inside it is REFUSED rather than stored for forward-compat.
-	// That is a deliberate behaviour change on a live verb (work/agent-def-upsert-typed-and-merge-by-
-	// role) and it is pinned here, next to the boundary it moved, so the trade is visible in one file.
-	[Fact]
-	public async Task TypedAgentDefinition_NoLongerAcceptsUnknownProperties()
-	{
-		var result = await (await Tool("agent_def_upsert")).CallAsync(new Dictionary<string, object?>
-		{
-			["projectKey"] = UnmappedMemberStrictnessFixture.ProjectKey,
-			["key"] = "probe-roster",
-			["version"] = 0,
-			["definition"] = Json("""
-				{
-				  "name": "probe-roster",
-				  "roles": [ { "slug": "worker", "tier": "worker", "requiredCapabilities": [] } ],
-				  "zzz_unknown_root_field": { "anything": ["at", "all"] }
-				}
-				"""),
-		});
-
-		result.IsError.Should().Be(true,
-			"`definition` is a typed document now — an unknown property is refused, not silently kept; got: {0}",
-			Text(result));
-		Text(result).Should().Contain("zzz_unknown_root_field");
 	}
 
 	// ── The round trip the strictness would otherwise break ─────────────────────────────────

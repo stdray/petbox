@@ -323,10 +323,11 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 	[InlineData("/ui/wsa/projb/config")]
 	[InlineData("/ui/wsa/projb/llm")]
 	// The admin route spells the pair differently (/ui/admin/ws/{ws}/projects/{p}/...) but still
-	// carries BOTH route values, so the same filter binds it. This page is the one whose own
-	// per-page bind was deleted (db-access-layer-cleanup) with nothing but the filter behind it —
-	// pinned here so a regression in the filter's route matching cannot pass unnoticed.
-	[InlineData("/ui/admin/ws/wsa/projects/projb/agent-defs")]
+	// carries BOTH route values, so the same filter binds it — pinned here so a regression in the
+	// filter's route MATCHING (as opposed to its decision) cannot pass unnoticed. It used to be
+	// /agent-defs; that page went with the agent-definition store (work agent-defs-server-teardown)
+	// and this moved to another page under the same route shape, which is what the case is about.
+	[InlineData("/ui/admin/ws/wsa/projects/projb/settings")]
 	public async Task Sysadmin_cannot_reach_a_wsb_project_through_a_wsa_url_on_admin_gated_pages(string url)
 	{
 		var auth = await LoginAsync("admin");

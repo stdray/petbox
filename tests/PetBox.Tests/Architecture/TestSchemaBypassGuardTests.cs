@@ -100,6 +100,12 @@ public sealed class TestSchemaBypassGuardTests
 			"a file's schema BACKWARD (drops the search tables, deletes a VersionInfo row) then expects " +
 			"the drain job's next ensure to migrate it forward — the file already exists at that point, " +
 			"so TestSchema.Memory would skip it; only the real Ensure's MigrateUp can heal it.",
+		["DropAgentDefinitionsMigrationTests.cs"] =
+			"its SUBJECT is M054 applying to a database that ALREADY carries agent_definitions with rows " +
+			"in it — the live-server upgrade path. TestSchema.Core's template is built from the CURRENT " +
+			"migration set, so the table it must drop was never there to drop; the test hand-migrates to " +
+			"M053, seeds rows, and then calls the real bootstrap to prove the drop and the restart-safety " +
+			"(and that the project-delete cascade no longer reaches into the dropped table).",
 		["SessionsSearchCursorMigrationTests.cs"] =
 			"the whole class exists to pin M007's ADOPTION of a live pre-M007 file (search_cursor/" +
 			"search_deadletter created at runtime by SessionFactsJob, with VersionInfo never told about " +

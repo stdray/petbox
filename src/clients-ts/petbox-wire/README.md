@@ -130,9 +130,10 @@ per-field provenance too, on every run.
 `PUT /api/{project}/agent-defs/{key}`.** Those edits are no longer read by anything. The kit does
 not fetch a definition, and there is no cache of one left on disk either.
 
-The server side still exists and still accepts writes — the endpoints, the MCP tools and the admin
-screens are all live. That is the trap: nothing will tell you your edit did not take. Concretely,
-after upgrading:
+The server side is GONE too: the endpoints, the MCP `agent_def_*` tools, the admin screens and the
+table behind them were removed once the kit stopped reading them, so those calls now 404 rather than
+accepting a write nothing would honour. Whatever you had stored there is not retrievable — the list
+below is what changed for you when the kit stopped fetching:
 
 - a role you ADDED server-side is gone from the roster, and its generated agent file is deleted by
   the orphan sweep on the next `apply` (it carries our `petbox: managed` marker, so it is ours to
@@ -155,10 +156,9 @@ are actually changing, and everything else keeps coming from the layer below:
 ```
 
 Run `petbox-wire layers` afterwards: it prints what each layer did to the roster and which layer
-supplied every field, so you can confirm the move landed before you `apply`. To recover the text you
-had on the server, read it once more through the admin UI or `agent_def_get` and paste it into the
-layer — there is no import command, deliberately: this is a one-time move of a small document, and
-a migration tool would outlive its use by years.
+supplied every field, so you can confirm the move landed before you `apply`. There is no import
+command and there is nothing left to import from, deliberately: this is a one-time move of a small
+document, and a migration tool would have outlived its use by years.
 
 Files compiled, one per role:
 

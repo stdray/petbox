@@ -28,7 +28,7 @@ Workspace (Key)               e.g. $system, infra, stdray
 petbox.db            ← CENTRAL relational DB (one file). Holds the METADATA/registries:
                        Workspaces, Projects, WorkspaceMembers, ApiKeys, TaskBoards (board meta:
                        kind/wiredBoard/closed/methodologyInstance), MemoryStores (store registry),
-                       Logs (LogMeta), AgentDefinitions, the LLM registry, Users, ShareLinks,
+                       Logs (LogMeta), the LLM registry, Users, ShareLinks,
                        Settings, Health, SavedQueries, SavedConfigFilters, …
 memory/{project}/{store}.db   ← per-project, per-store memory (FTS5 + SCD-2 temporal). e.g.
                                 $system/{dogfooding,notes,ops,stdray}, $workspace/notes, petbox/dogfooding

@@ -3,13 +3,20 @@ using PetBox.Core.Contract;
 
 namespace PetBox.Tests.AgentDefs;
 
-// AgentDefinitionCapabilities.All (the C# checkbox catalog the admin-UI form renders) mirrors
-// src/clients-ts/petbox-wire/src/harness-capabilities.ts's CAPABILITIES — kit data the C# server
-// cannot import at runtime (it ships with the npm package, not the server assembly), so a single
-// hand-synced C# copy is the best available without a codegen pipeline (same tradeoff
-// UiStateTypeSyncTests documents for BrowserState/ui-state.ts). This test is the enforcement: it
-// reads the ACTUAL .ts source and fails loudly the moment the two lists drift, so "no second
-// hardcoded copy" holds as a build-time guarantee, not a comment someone has to remember to honor.
+// AgentDefinitionCapabilities.All mirrors src/clients-ts/petbox-wire/src/harness-capabilities.ts's
+// CAPABILITIES — kit data the C# server cannot import at runtime (it ships with the npm package,
+// not the server assembly), so a single hand-synced C# copy is the best available without a codegen
+// pipeline (same tradeoff UiStateTypeSyncTests documents for BrowserState/ui-state.ts). This test is
+// the enforcement: it reads the ACTUAL .ts source and fails loudly the moment the two lists drift,
+// so "no second hardcoded copy" holds as a build-time guarantee, not a comment someone has to
+// remember to honor.
+//
+// The C# list is not a decorative copy: DefaultAgentDefinition.Validate refuses a
+// requiredCapabilities value on the shipped baseline that is not in it (proven by
+// DefaultAgentDefinitionTests.Validate_RejectsACapabilityNoHarnessDeclares). So this test and that
+// one are two halves of one chain — harness-capabilities.ts ⇄ AgentDefinitionCapabilities ⇄
+// src/common/default-agents.json — and a typo anywhere along it goes red in CI rather than at wire
+// time on a user's machine.
 public sealed partial class AgentDefinitionCapabilitiesSyncTests
 {
 	static string RepoRootTsFile()
@@ -45,7 +52,7 @@ public sealed partial class AgentDefinitionCapabilitiesSyncTests
 		var tsIds = ParseCapabilitiesArray(File.ReadAllText(RepoRootTsFile()));
 
 		AgentDefinitionCapabilities.All.Should().Equal(tsIds,
-			"AgentDefinitionCapabilities.All (the admin-UI checkbox catalog) must list exactly the same " +
+			"AgentDefinitionCapabilities.All (the server-side catalog) must list exactly the same " +
 			"capability ids, in the same order, as harness-capabilities.ts's CAPABILITIES — update both " +
 			"together, this test is the only thing that would otherwise notice a drift");
 	}

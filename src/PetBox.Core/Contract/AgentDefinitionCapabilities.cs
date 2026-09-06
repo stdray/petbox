@@ -8,14 +8,20 @@ namespace PetBox.Core.Contract;
 // runtime), so this is the ONE server-side copy; AgentDefinitionCapabilitiesSyncTests
 // reads the .ts source and fails the build the moment the two drift.
 //
-// This is advisory, not enforced: AgentDefinitionJson.Validate does not reject a
-// requiredCapabilities value outside this list (a role may legitimately name a capability
-// a future/unknown harness declares, or a value written before this catalog existed). The
-// admin-UI form renders this catalog as a checkbox group like ApiKeyScopes.All does for
-// scopes — the same source the checkbox group offers, not a second hardcoded copy — and
-// preserves any pre-existing value outside it rather than silently dropping it.
+// WHERE IT BITES: DefaultAgentDefinition.Validate rejects a requiredCapabilities value on the
+// SHIPPED baseline (src/common/default-agents.json) that is not in this list. That scope is
+// deliberate. A capability id nothing declares is invisible at write time and fails far away —
+// the kit's artifact compiler simply emits no artifact for a role whose requirements no harness
+// meets — so on the one document this repo ships it is a build error. Documents that are NOT
+// this repo's (a user's or a project's own definition layer on disk) stay free to name a
+// capability a future harness declares; the kit validates those, not this.
 //
-// [PublicAPI]: every consumer (ProjectAgentDefs.cshtml.cs, AgentDefinitionCapabilitiesSyncTests)
+// This pairing is also what keeps the two halves honest after the server-side agent-definition
+// store was torn down (work agent-defs-server-teardown): the sync test pins this list to the
+// kit's, and DefaultAgentDefinition.Validate pins the shipped roster to this list. Neither half
+// is decorative — break either and CI goes red.
+//
+// [PublicAPI]: every consumer (DefaultAgentDefinition.Validate, AgentDefinitionCapabilitiesSyncTests)
 // reads through `All`/`Set`, never an individual constant by C# symbol — so ReSharper sees each
 // named constant (RoleFiles, Hooks, …) as reachable only from this file and suggests narrowing
 // them to private (MemberCanBePrivate.Global, confirmed empirically, not assumed). That would

@@ -9,7 +9,7 @@ namespace PetBox.Core.Data;
 //   CASCADED (rows removed here): ApiKeys, HealthEndpoints, DataDbs, DataTables,
 //     SavedQueries, ShareLinks, Logs (LogMeta), TaskBoards (meta), MemoryStores (meta),
 //     LEGACY Relations (the live ones moved into the per-project tasks file and die with it),
-//     AgentDefinitions, project-scoped Settings, and the Project row itself.
+//     project-scoped Settings, and the Project row itself.
 //   NOT cascaded here (per-project *files* on disk): every module reclaims its own files
 //     eventually-consistently via a background orphan-cleanup service once the owning rows/
 //     project are gone — DataDb (PetBox.Data.OrphanCleanupService), Log
@@ -60,7 +60,6 @@ public static class ProjectDeletion
 		// sweeps the LEGACY petbox.db rows, which still exist until their table is dropped in a
 		// later release.
 		await db.LegacyRelations.Where(r => r.ProjectKey == projectKey).DeleteAsync(ct);
-		await db.AgentDefinitions.Where(a => a.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.Settings
 			.Where(s => s.Scope == nameof(Scope.Project) && s.ScopeKey == projectKey)
 			.DeleteAsync(ct);
