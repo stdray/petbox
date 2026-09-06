@@ -81,10 +81,21 @@ your machine actually has.
   prepared task statements to completion in one unattended pass) and **petbox-card-check** (is
   the ask checkable before a card is sent, and does the result cover it — bullet by bullet
   against the real diff) — under the same two roots.
-  Only the first four are in the agent's automatic skill digest (`petbox-digest: auto`);
-  **agent-factory**, **petbox-analysis-workspace**, **petbox-factory-run** and
-  **petbox-card-check** are `petbox-digest: manual`, reachable by an explicit `skill(name)` call
-  and costing no system-prompt room otherwise.
+  Four of the eight — **petbox**, **petbox-methodology**, **petbox-write-economy** and
+  **petbox-node-authoring** — declare `petbox-digest: auto`; **petbox-agent-factory**,
+  **petbox-analysis-workspace**, **petbox-factory-run** and **petbox-card-check** declare
+  `petbox-digest: manual`. That key drives exactly one thing: the one-line-per-skill salience
+  index this kit's **opencode** plugin injects into opencode's system prompt (`auto` in, `manual`
+  out). It is read nowhere else. On Claude Code and Factory Droid it changes nothing and saves
+  nothing — both harnesses already list every discovered skill's name and description in the
+  session, and only the body is fetched lazily on a `skill(name)` call.
+  The lever that does bite on those two harnesses is a different key,
+  `disable-model-invocation: true`, which makes the harness refuse a *model-initiated* call:
+  **petbox-agent-factory**, **petbox-analysis-workspace** and **petbox-factory-run** carry it, so
+  they only ever run when a human asks for them by name. **petbox-card-check** deliberately does
+  not — out of the digest, still callable by an agent that decides the check applies. The two keys
+  are independent axes; `doc/agent-wiring.md` §2f in the repo carries the full contract, including
+  the `petbox: managed` / `petbox: manual` provenance marker on every file listed above.
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a

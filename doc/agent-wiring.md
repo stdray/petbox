@@ -85,9 +85,31 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   for free, the GFM-alert callout convention, the sanitized inline-SVG diagram convention (a
   `<figure>`/`<figcaption>` pair carrying the same claim as the drawing's own `role="img"`/`<title>`
   text alternative), and — the part that matters most — when a diagram is not worth drawing.
-  `skill-files.ts`'s `PROJECT_SKILLS` is the one place a new skill is registered — every directory
-  under `templates/` must appear there and vice versa (enforced by a test in
-  `skill-files.test.ts`).
+- `templates/petbox-analysis-workspace/SKILL.md` — the deliberate `petbox-analysis-workspace`
+  skill (no placeholders): run a voluminous, multi-part investigation as staged files in an
+  external working folder instead of hundreds of tool calls or one sprawling transcript.
+- `templates/petbox-factory-run/SKILL.md` — the deliberate `petbox-factory-run` skill (no
+  placeholders): drive a batch of already-written task statements to completion in one unattended
+  pass — one implementer per task in its own worktree, sequential merges, gates, deploy, cards.
+- `templates/petbox-card-check/SKILL.md` — the deliberate `petbox-card-check` skill (no
+  placeholders): is a card's ask checkable before it is sent, and does a result cover it bullet by
+  bullet against the real diff.
+
+**Registration and what actually pins it.** `skill-files.ts`'s `PROJECT_SKILLS` is the one place a
+new skill is registered. Three separate ratchets keep the pieces from drifting, and they cover
+different things — no one of them covers the prose in this file:
+
+- `templates/` ⇄ `PROJECT_SKILLS`, both directions (`skill-files.test.ts`): a template directory
+  that nothing registers, or a registry entry with no directory, fails the kit's own test suite.
+- `PROJECT_SKILLS` → the kit's `README.md` "What it installs" section (`skill-files.test.ts`):
+  every registered `dir` must be named there. It stops at the npm package boundary — `README.md`
+  ships inside the package, this file and the Doc-site page do not.
+- `templates/` → **this file** and `src/PetBox.Web/Pages/Doc/content/wire.md`
+  (`tests/PetBox.Tests/Core/WireSkillDocsSyncTests.cs`): a .NET test reads the template directory
+  names off disk and requires each one to be mentioned in both documents. It exists because the
+  skill list in these two documents had drifted from the delivered set twice, and a hand-fixed
+  list is exactly what drifted the second time. It is a **name-presence** ratchet only: it proves
+  every delivered name is mentioned, never that what is written about it is true.
 
 Runtime: plain TypeScript executed by **node ≥ 23.6** native type-stripping. Zero dependencies.
 (No `enum`/`namespace`/parameter-properties; type-only imports; relative imports with explicit
@@ -187,6 +209,22 @@ version, then imports `wire.ts`) plus the `src/` kit.
      only): what GFM formatting already gives an author for free, the GFM-alert callout convention,
      the sanitized inline-SVG diagram convention and its caption-states-the-claim discipline, and
      when a diagram is not worth drawing. Written to both surfaces, same as the others.
+   - `.claude/skills/petbox-analysis-workspace/SKILL.md` +
+     `.factory/skills/petbox-analysis-workspace/SKILL.md` — the **analysis-workspace** skill
+     (`templates/petbox-analysis-workspace/SKILL.md`, no placeholders): staging a large,
+     multi-part investigation as files in an external folder. `petbox-digest: manual` +
+     `disable-model-invocation: true` — a human-invoked procedure, never picked up on its own.
+     Sweeps a pre-rename copy at `analysis-workspace/` (`legacyDirs`, see §2f).
+   - `.claude/skills/petbox-factory-run/SKILL.md` + `.factory/skills/petbox-factory-run/SKILL.md`
+     — the **factory-run** skill (`templates/petbox-factory-run/SKILL.md`, no placeholders): a
+     batch of prepared task statements driven to completion in one unattended pass. Same
+     `petbox-digest: manual` + `disable-model-invocation: true` pair; sweeps a pre-rename copy at
+     `factory-run/`.
+   - `.claude/skills/petbox-card-check/SKILL.md` + `.factory/skills/petbox-card-check/SKILL.md`
+     — the **card-check** skill (`templates/petbox-card-check/SKILL.md`, no placeholders): the
+     ask before a card is sent, and the result against it bullet by bullet. `petbox-digest:
+     manual` but **no** `disable-model-invocation` — out of the digest, still callable by an agent
+     that decides it applies (§2f explains why those are two different questions).
    - *7b (opt-in, `--telemetry`)*: ensure the named log exists
      (`POST /api/logs/<project>/logs`; 201 or 409 = ready, anything else aborts), then merge the OTLP
      export env into `.claude/settings.json` (non-secret) and the API-key-bearing
@@ -395,6 +433,120 @@ or refuses, so that state no longer exists.
 | `cache/<project>.canon.md` | LKG copy of the memory canon (§6). The definition has no cache of its own — its layers ARE local files. |
 
 Nothing here is regenerated by `update` except `wire/` itself.
+
+## 2f. The skill delivery contract: provenance, digest mode, invocation lever, rename sweep
+
+Four mechanisms decide what the kit may write over, what an agent is told about unprompted, what
+an agent is allowed to call, and what gets cleaned up when a skill is renamed. They are four
+**independent** axes and conflating any two of them has already cost a bug each. Everything below
+is a statement about code in `src/clients-ts/petbox-wire/src/`; the file and function that decide
+it are named inline, because a doc sentence about a mechanism is exactly the kind of claim that
+rots without anyone noticing.
+
+### Provenance — `petbox: managed` | `petbox: manual` | no marker
+
+Every file the kit renders carries a `petbox:` line in its YAML frontmatter, written *before* any
+write decision is taken, so a file already sitting at that path can be classified instead of
+guessed at. `readPetboxProvenance` (`origin-marker.ts`) maps the value onto three states:
+
+| Frontmatter | Meaning | What the kit does |
+| --- | --- | --- |
+| `petbox: managed` | The kit renders this file and is its only source of truth. | Safe to rewrite: overwritten silently whenever the render differs (an identical render reports `unchanged`). The **only** state `cleanupLegacyArtifact` will ever `unlink`. |
+| `petbox: manual` | The project claims this path as its own. | Never written, never deleted, and **not counted as a conflict** — `writeSkillArtifact` returns `declared-manual` and the run stays clean. |
+| no `petbox:` line | Somebody else's file. | Refused loudly and left byte-for-byte alone (`writeArtifact` → `blocked`). |
+
+`hasPetboxMarker` is `true` for **`managed` only** (`origin-marker.ts`), and that narrowness is
+the safety property, not an accident: it is the single gate on both overwriting and deleting, so
+if it accepted any `petbox: <token>` a path the project had explicitly claimed would be silently
+rewritten — and, once `legacyDirs` below existed, deleted. `petbox: manual` is therefore the
+escape hatch: it is how you take one delivered skill out of the kit's hands **without** taking
+the wire apart, and it is a different thing from `petbox-digest: manual`, which is about
+attention, not ownership. `writeSkillArtifact` checks `isDeclaredManual` *first*, ahead of both
+the pre-marker migration carve-out and `writeArtifact`, because either of those would otherwise
+write.
+
+One carve-out: an unmarked file that is byte-for-byte what the pre-marker template used to render
+is a leftover of the kit's own, not a stranger's file, and is promoted in place (reason
+`migrated`).
+
+### `petbox-digest: auto | manual` — and the boundary that matters
+
+`petbox-digest` answers one narrow question: *should this skill be named to the agent without
+being asked?* Declaring `auto` puts a single trigger line — derived from the skill's own
+`description:` frontmatter, never a copy of its body — into a salience index.
+
+**That index is built for opencode and nothing else.** The whole read path is
+`readAutoDigestSkillTriggers` → `buildAutoSkillsIndex` (`skill-files.ts`), and its sole caller is
+`opencode-plugin.ts`, which pushes the block into opencode's system prompt. Nothing in Claude
+Code's or Droid's path reads the key. Concretely: **`petbox-digest: manual` saves no context on
+Claude Code or Droid.** Both harnesses list every discovered skill's name and description in the
+session regardless — that is the progressive-disclosure shape the index was written *not* to
+duplicate (`skill-files.ts`, the salience-index header comment: only the body is lazy; name and
+description are always listed). What `manual` buys on those two harnesses is exactly nothing; the
+lever there is the next mechanism.
+
+Selection is by **declaration, not by directory name**: a skill enters the digest iff the
+materialized file on disk says `petbox-digest: auto`. So a project can drop a delivered skill out
+of its own opencode digest by editing one frontmatter line, and a repo-native skill that merely
+happens to be named `petbox-something` never sneaks in.
+
+### `disable-model-invocation: true` — the Claude Code / Droid lever
+
+This is the frontmatter key those two harnesses honour to refuse a *model-initiated* call, read
+back by `isModelInvocationDisabled` (`origin-marker.ts`). It is the mechanism that actually keeps
+a procedure skill from firing on its own; `petbox-digest` cannot do that job on those harnesses,
+and an earlier version of this contract assumed it could.
+
+`PROJECT_SKILLS` declares the *intent* per skill as `invocation: "user" | "agent"`; the template's
+frontmatter carries the *lever*. A parity test in `skill-files.test.ts` requires the two to agree
+in **both** directions — every `"user"` template carries the key, and no `"agent"` template does
+(an `"agent"` skill that carried it would be uncallable by the agent it was written for).
+
+The two keys are genuinely independent, and `petbox-card-check` is the case that proves it:
+`petbox-digest: manual` (never surfaced unprompted) with `invocation: "agent"` and no
+`disable-model-invocation` — an agent must be able to run that check on its own initiative before
+handing a card over. Commit `0daca301` set the lever on all four `digestMode: "manual"` templates,
+which silently made card-check unreachable; splitting the axes is what fixed it.
+
+The delivered set as it stands:
+
+| Skill | `petbox-digest` | `disable-model-invocation` |
+| --- | --- | --- |
+| `petbox` | `auto` | — |
+| `petbox-methodology` | `auto` | — |
+| `petbox-write-economy` | `auto` | — |
+| `petbox-node-authoring` | `auto` | — |
+| `petbox-agent-factory` | `manual` | `true` |
+| `petbox-analysis-workspace` | `manual` | `true` |
+| `petbox-factory-run` | `manual` | `true` |
+| `petbox-card-check` | `manual` | — (deliberately) |
+
+That table is prose and drifts like prose. The frontmatter is the source of truth; the parity
+tests in `skill-files.test.ts` are what hold it to `PROJECT_SKILLS`.
+
+### `legacyDirs` — sweeping the name a skill used to have
+
+A `PROJECT_SKILLS` entry may declare `legacyDirs: readonly string[]` — directory names this skill
+was delivered under *before* it was renamed. Each old `<surface>/<legacyDir>/SKILL.md` is swept by
+`cleanupLegacySkillDir` (`skill-files.ts`), because the kit was the only source of truth for what
+it put there: leaving the file behind leaves a standing instruction to read a skill that no longer
+exists.
+
+The sweep is gated on the replacement having **actually landed** — `writeSkillFiles` skips it for
+any outcome that is not `written`, so a `blocked` or `declared-manual` new path never causes the
+old one to be deleted and orphan the skill entirely. `--adopt` does not reach the sweep either: it
+is a write-side lever only, and deletion stays marker-gated with no override anywhere in the
+package. A `--dry-run` previews the sweep without performing it.
+
+Deletion goes through `cleanupLegacyArtifact` unchanged, so the provenance gate above still
+holds — **only a `petbox: managed` file is ever unlinked**. A foreign file, a file the project
+declared `petbox: manual`, or one that could not be read comes back `kept-foreign` and stays
+exactly where it is. The now-empty directory is removed too, via a plain `rmdirSync` that is
+allowed to fail: if anything else lives there (a `references/` folder, the project's own notes)
+it throws `ENOTEMPTY` and the folder survives whole.
+
+Currently declared: `petbox-analysis-workspace` sweeps `analysis-workspace/`, `petbox-factory-run`
+sweeps `factory-run/`. Every other entry has none.
 
 ## 3. Migrating a legacy (per-project copy) repo
 
