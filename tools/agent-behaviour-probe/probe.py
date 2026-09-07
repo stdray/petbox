@@ -60,14 +60,92 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 TEMPLATES = REPO / "src" / "clients-ts" / "petbox-wire" / "src" / "templates"
+SKILL_FILES_TS = REPO / "src" / "clients-ts" / "petbox-wire" / "src" / "skill-files.ts"
 SERVER = "https://petbox.3po.su"
 
 HARNESSES = {
     # model is pinned so a rerun is comparable; both legs run a plain general-purpose agent
     # (no petbox role notes) so the measured variable stays "skills + server guide text".
+    #
+    # `--agent build` on opencode is DELIBERATE and symmetric with the claude leg's plain
+    # general-purpose agent: neither leg is given a petbox role note, because the measured
+    # variable is the kit's text, not the role's. Production runs opencode under
+    # `petbox-orchestrator` instead, so this is a KNOWN deviation from prod, recorded in
+    # provenance.json (`opencode_agent_vs_prod`) rather than left to a reader's memory.
     "claude": {"model": "sonnet"},
     "opencode": {"model": "deepseek/deepseek-v4-pro", "agent": "build"},
 }
+
+
+# ------------------------------------------------------- opencode skills-index shim (probe-local)
+#
+# WHY THIS EXISTS (work: probe-opencode-leg-cannot-receive-salience-index).
+#
+# `opencode-plugin.ts:124` opens its `experimental.chat.system.transform` with
+# `if (!resolved) return;`. The probe workspace is DELIBERATELY not registered in
+# ~/.petbox/projects.json (containment note 1), so `resolveProject` returns null and the handler
+# returns before pushing anything. Six blocks are lost that way. Five of them (stale-base warning,
+# definition note, protocol, canon, owner-only skills) are lost on the CLAUDE leg too -- a
+# symmetric hole in the stand, which biases neither column. The sixth is NOT symmetric:
+# `buildAutoSkillsIndex` has no Claude Code counterpart in production either, so in prod an
+# opencode agent gets the native skill listing PLUS this index, while the probe's opencode agent
+# gets only the native listing. The opencode column was therefore measuring a leg that structurally
+# could not receive the very text that says WHEN to call `skill(name)`.
+#
+# WHY A SHIM AND NOT REGISTRATION. Registering the probe directory would (a) make the run depend on
+# ~/.petbox/agents, i.e. on one machine's unversioned state instead of a git sha
+# (definition-source.ts:11), (b) inject a "canon is empty" line that exists in neither production
+# nor any earlier measurement, and (c) change the CLAUDE leg as well -- destroying the only column
+# that has been valid across M0..M2.
+#
+# WHAT THE SHIM IS. A workspace-local opencode plugin that makes the SAME API call as the shipped
+# plugin -- `experimental.chat.system.transform` -> `output.system.push` -- minus the registry
+# gate, pushing on EVERY request exactly as the shipped plugin does (see the long comment at
+# opencode-plugin.ts:143 for why once-per-session was wrong). Note that
+# `buildAutoSkillsIndex(directory)` takes the DIRECTORY, not `resolved`: the gate binds it to the
+# registry positionally, not by data, which is why the index is deliverable without registration
+# and why the text below is the kit's own output rather than a re-write. Same shape as
+# s4/probe.py's owner-only block shim, which is the working precedent.
+#
+# CONDITION, NOT DEFAULT. Off unless `--opencode-skills-index` is passed, so the M0/M1/M2
+# configuration stays re-runnable byte for byte; the state is written into provenance.json either
+# way, so no reader of a summary has to guess which condition produced it.
+SKILLS_INDEX = {"enabled": False, "opencode": "", "delivery": {}}
+
+
+def render_skills_index(ws: Path) -> str:
+    """Render the salience index by calling the kit's own TypeScript over the SERVED workspace.
+
+    The root handed to `buildAutoSkillsIndex` is the probe workspace -- the skills rendered from
+    the git templates for this run -- and never the machine's materialized `.claude/skills/`,
+    which lags git by days (see collect_provenance). Index and skill bodies therefore come from
+    one and the same text."""
+    p = subprocess.run(["node", str(HERE / "emit-skills-index.mjs"), str(ws), str(SKILL_FILES_TS)],
+                       capture_output=True, timeout=120, shell=False)
+    txt = p.stdout.decode("utf-8", "replace")
+    if p.returncode != 0 or not txt or txt == "<<NULL>>":
+        raise RuntimeError(f"skills index render failed: rc={p.returncode} "
+                           f"{p.stderr.decode('utf-8', 'replace')[:300]}")
+    return txt
+
+
+def write_opencode_index_shim(ws: Path, block: str) -> None:
+    """Write the probe-local opencode plugin that pushes `block` onto the system prompt."""
+    plug = ws / ".opencode" / "plugin"
+    plug.mkdir(parents=True, exist_ok=True)
+    (plug / "probe-skills-index.js").write_text(
+        "// Probe-only shim. Reproduces opencode-plugin.ts's injection site for a workspace that\n"
+        "// is deliberately NOT registered in ~/.petbox/projects.json (the shipped plugin no-ops\n"
+        "// on an unregistered directory: `if (!resolved) return;`). Pushed on EVERY request,\n"
+        "// like the shipped plugin -- opencode rebuilds the system prompt per request. The TEXT\n"
+        "// is buildAutoSkillsIndex's own output over this workspace, not a re-write.\n"
+        "const BLOCK = " + json.dumps(block, ensure_ascii=False) + ";\n"
+        "export const ProbeSkillsIndex = async () => ({\n"
+        "  \"experimental.chat.system.transform\": async (_input, output) => {\n"
+        "    output.system.push(BLOCK);\n"
+        "  },\n"
+        "});\n"
+        "export default ProbeSkillsIndex;\n", encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- spec freeze
@@ -132,6 +210,20 @@ def build_workspace(dest: Path, project: str, workspace: str, key_env: str) -> l
         "mcp": {"petbox": {"type": "remote", "url": f"{SERVER}/mcp", "enabled": True,
                            "headers": {"X-Api-Key": "{env:" + key_env + "}"}}}
     }, indent=2), encoding="utf-8")
+    if SKILLS_INDEX["enabled"]:
+        # ONLY the opencode leg. Claude Code has no salience-index injection in production
+        # either, so giving it one here would change the one column that is valid across
+        # M0..M2 -- and `.opencode/` is invisible to Claude Code, so nothing crosses over.
+        block = render_skills_index(dest)
+        SKILLS_INDEX["opencode"] = block
+        write_opencode_index_shim(dest, block)
+        SKILLS_INDEX["delivery"] = {
+            "claude": "not delivered -- production has no salience index on Claude Code either",
+            "opencode": ".opencode/plugin/probe-skills-index.js -> "
+                        "experimental.chat.system.transform -> output.system.push, every "
+                        "request (same API call as opencode-plugin.ts:167, minus the registry "
+                        "gate at opencode-plugin.ts:124)",
+        }
     return skills
 
 
@@ -196,12 +288,27 @@ def collect_provenance(ws: Path, project: str) -> dict:
         "captured": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "project": project,
         "templates_git_sha": _run(["git", "rev-parse", "HEAD"]),
+        # The CONTENT identity of the served templates, independent of which commit is checked
+        # out. `templates_git_sha` moves whenever anything in the repo moves -- including a
+        # commit that only adds this probe's own artifacts -- so it cannot answer "were these
+        # the same templates as the previous measurement". This tree hash can, and it is what a
+        # M(n)->M(n+1) comparison must match for the delta to be an effect rather than an edit.
+        "templates_tree_sha": _run(["git", "rev-parse",
+                                    "HEAD:src/clients-ts/petbox-wire/src/templates"]),
         "templates_git_status_dirty": bool(_run(["git", "status", "--porcelain",
                                                  "src/clients-ts/petbox-wire/src/templates"])),
         "kit_version_file": kitv,
         "server_version": srv,
         "harness_versions": {"claude": _run([exe("claude"), "--version"]),
                              "opencode": _run([exe("opencode"), "--version"])},
+        # Known, deliberate deviation from production, recorded so it is never rediscovered by
+        # reading the source: production drives opencode as `petbox-orchestrator`; the probe
+        # drives it as `build`, to stay symmetric with the claude leg's plain general-purpose
+        # agent. Both legs are therefore role-free, and the measured variable stays the text.
+        "opencode_agent_vs_prod": {"probe": HARNESSES["opencode"]["agent"],
+                                   "production": "petbox-orchestrator",
+                                   "why": "symmetry with the claude leg (no role note on either "
+                                          "side); changing it would change what is measured"},
         "skills_served_to_agent_sha256": served,
         "skills_materialized_on_machine_sha256": deployed,
         # REAL staleness only. A naive served-vs-machine digest compare is worthless here: the
@@ -719,14 +826,28 @@ def cmd_run(args):
     out = Path(args.out).resolve()
     (out / "runs").mkdir(parents=True, exist_ok=True)
     ws = Path(args.ws).resolve()
+    SKILLS_INDEX["enabled"] = bool(args.opencode_skills_index)
     skills = build_workspace(ws, args.project, args.workspace, args.key_env)
     env = child_env(args.key_env, key)
     prov = collect_provenance(ws, args.project)
     prov["spec_hash"] = spec_hash(spec)
+    # The condition is recorded in BOTH states -- "off" is a measurement too, and a summary whose
+    # provenance is silent about it cannot be compared with one that isn't.
+    prov["opencode_skills_index_condition"] = (
+        "on (probe-local shim)" if SKILLS_INDEX["enabled"]
+        else "off (control -- matches M0/M1/M2: the shipped plugin's registry gate drops it)")
+    prov["opencode_skills_index_delivery"] = SKILLS_INDEX["delivery"]
+    prov["opencode_skills_index_text"] = SKILLS_INDEX["opencode"]
+    prov["opencode_skills_index_sha256"] = (sha(SKILLS_INDEX["opencode"])
+                                            if SKILLS_INDEX["opencode"] else "")
     (out / "provenance.json").write_text(json.dumps(prov, ensure_ascii=False, indent=1),
                                          encoding="utf-8")
     print(f"workspace {ws} ({len(skills)} skills) "
-          f"templates@{prov['templates_git_sha'][:8]} spec@{prov['spec_hash']}")
+          f"templates@{prov['templates_git_sha'][:8]} tree@{prov['templates_tree_sha'][:8]} "
+          f"spec@{prov['spec_hash']}")
+    print(f"  opencode skills index: {prov['opencode_skills_index_condition']}"
+          + (f" sha={prov['opencode_skills_index_sha256']}"
+             if prov["opencode_skills_index_sha256"] else ""))
     if prov["skills_stale_on_machine_vs_templates"]:
         print(f"  NOTE: this machine's materialized skills are STALE vs the git templates for "
               f"{prov['skills_stale_on_machine_vs_templates']}. The probe serves the TEMPLATES; "
@@ -849,6 +970,10 @@ def main():
     ap.add_argument("--harnesses", default="claude,opencode")
     ap.add_argument("--only", default="")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--opencode-skills-index", action="store_true",
+                    help="deliver the kit's salience index to the OPENCODE leg through a "
+                         "probe-local .opencode/plugin shim (the shipped plugin's registry gate "
+                         "drops it in an unregistered workspace). Off = the M0/M1/M2 control.")
     ap.add_argument("--rescore", action="store_true")
     ap.add_argument("--ws", default=str(Path(os.environ.get("TEMP", "/tmp")) / "petbox-probe-ws"))
     ap.add_argument("--out", default=str(HERE / "baseline" / "latest"))

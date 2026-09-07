@@ -1,0 +1,36 @@
+{
+ "generated": "2026-09-07T19:25:57",
+ "spec_hash": "340290f50bc34b28",
+ "cells": [
+  {
+   "scenario": "s1-bodyref-cyrillic",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 20,
+   "runs_exit0": 20,
+   "signal_rates": {
+    "used_bodyref": "17/20",
+    "used_inline_body": "3/20",
+    "uploaded_blob": "17/20",
+    "read_write_economy_skill": "18/20"
+   },
+   "axis_rates": {
+    "tokens": "0/20",
+    "reliability": "1/20"
+   },
+   "reads_before_decision_union": [
+    "bash",
+    "glob",
+    "grep",
+    "read",
+    "skill",
+    "tasks_board_list",
+    "tasks_methodology_guide",
+    "tasks_workflow",
+    "whoami",
+    "write"
+   ],
+   "skills_read_rate": "19/20"
+  }
+ ]
+}

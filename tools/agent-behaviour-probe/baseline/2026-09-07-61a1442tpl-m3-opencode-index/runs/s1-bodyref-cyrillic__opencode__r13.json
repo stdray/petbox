@@ -1,0 +1,92 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 13,
+ "run_id": "op137379",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 144.9,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-op137379.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "skill",
+  "skill",
+  "tasks_methodology_guide",
+  "whoami",
+  "tasks_board_list",
+  "tasks_workflow",
+  "bash",
+  "skill",
+  "bash",
+  "read",
+  "bash",
+  "bash",
+  "write",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "read",
+  "bash",
+  "read",
+  "read",
+  "bash",
+  "bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-methodology",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "skill",
+  "skill",
+  "tasks_methodology_guide",
+  "whoami",
+  "tasks_board_list",
+  "tasks_workflow",
+  "bash",
+  "skill",
+  "bash",
+  "read",
+  "bash",
+  "bash",
+  "write",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "read",
+  "bash",
+  "read",
+  "read",
+  "bash",
+  "bash",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "type": "<str 5 chars>",
+    "title": "<str 26 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка создана на доске `s1-work`:\n\n- **key:** `otchet-op137379`\n- **title:** «Отчёт о процессе код-ревью»\n- **type:** chore, **status:** Todo\n- **body:** 7725 символов, русский, с подзаголовками (`##`), загружен через blob (`bodyRef`) — описывает зачем нужно ревью, этапы изменения, кто/что проверяет, типичные проблемы и их исправление, метрики качества.",
+ "n_tool_calls": 25
+}
