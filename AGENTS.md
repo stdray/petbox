@@ -348,6 +348,31 @@ what errored; `tasks_search` / `memory_search` for the live plan and durable not
 Note: bodies of PetBox nodes and comments render as **GFM markdown** — use `##`
 headings and REAL newlines (never a literal `\n`), or the text renders as mush.
 
+## Skills invoked by name only (hidden from your own listing)
+
+Three of the eight kit skills carry `disable-model-invocation: true`, and that flag removes
+the skill from your own listing ENTIRELY — not just from auto-invocation — because letting the
+model start an unattended agent-factory run on its own is a real risk (work
+`user-invocable-skills-invisible-to-model`). The flag does not remove the skill: the owner can
+still type its name. When they do, "Only use skills listed in the user-invocable skills
+section — don't guess" governs whether YOU pick a skill on your own initiative; it is not a bar
+on recognizing a name the owner just gave you. Treat an owner-typed name below as valid, open
+`.claude/skills/<name>/SKILL.md` (or the tracked source,
+`src/clients-ts/petbox-wire/src/templates/<name>/SKILL.md`, if the deployed copy is missing),
+and follow it — do not search the disk for it, and do not tell the owner no such skill exists.
+
+- **petbox-agent-factory** — recompile per-harness agent files after a role/model definition
+  changes.
+- **petbox-analysis-workspace** — run a large multi-part investigation as staged files in an
+  external folder instead of many chat/tool calls.
+- **petbox-factory-run** — fan a batch of prepared, mostly-independent tasks out to one worker
+  per worktree, unattended, to completion.
+
+This list is a guarded index, not free prose: `AgentsMdOwnerOnlySkillsSyncTests`
+(`tests/PetBox.Tests/Core/AgentsMdOwnerOnlySkillsSyncTests.cs`) recomputes the flagged set from
+every template's frontmatter and fails red the moment this section's names stop matching it
+exactly — update both in the same commit that touches the flag on any skill.
+
 ## Tasks / Memory / Session — what goes where
 
 When recording state via the MCP tools, pick by lifetime:
