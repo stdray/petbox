@@ -98,7 +98,11 @@ Not "when it is large" and not "when the text already exists on disk" — ALWAYS
 Token cost is not the reason; reliability is. A `body` argument is the one path where the prose
 must survive the model's own JSON encoding, and that path fails silently: the call is truncated
 mid-generation and arrives as a parse error naming no size. Writing the text to a file with a
-shell heredoc and uploading it costs one extra call and removes that failure mode completely.
+shell heredoc and uploading it costs one extra call and removes that failure mode completely —
+**only if the delimiter is quoted** (`<<'EOF'`, never bare `<<EOF`). An unquoted delimiter puts
+the heredoc BODY through shell substitution, and Cyrillic/CJK markdown is exactly the content
+most likely to carry `$`, backticks or backslashes that trigger it — reintroducing the same
+class of silent corruption this technique exists to remove.
 Judging this on token cost alone is the known trap — it reads as "the upload buys nothing here"
 and walks straight back into the truncation.
 
