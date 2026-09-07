@@ -198,9 +198,12 @@ static class ModuleMcp
 		"bytes to /api/blobs/{projectKey}, and pass the returned ref in THIS verb's ref parameter — " +
 		"named after the field it replaces, so `bodyRef` where the text field is `body`, `textRef` " +
 		"where it is `text`, `contentRef` (per message) where it is `content`; this tool's own " +
-		"parameter list names it. Where this verb also offers `fragment`, an EDIT goes through that " +
-		"instead, sending only the changed slice. This is unconditional for non-ASCII prose whatever " +
-		"its size: it removes the failure mode rather than staying under it.";
+		"parameter list names it — and a verb that has none (`session_upsert`) has no by-reference " +
+		"path at all: push incrementally with `session_append` and its `contentRef` instead. Where " +
+		"this verb also offers `fragment`, a LOCALIZED edit goes through that, sending only the " +
+		"changed slice; an edit that rewrites most of the text goes back through the ref parameter, " +
+		"which a patch accepts alongside its `version` baseline. This is unconditional for non-ASCII " +
+		"prose whatever its size: it removes the failure mode rather than staying under it.";
 
 	// Point 4 of the card mcp-write-degrades-silently-fix: a write the server DID accept and apply
 	// can still have paid the \uXXXX-escaping tax silently — it only fails once a slightly bigger

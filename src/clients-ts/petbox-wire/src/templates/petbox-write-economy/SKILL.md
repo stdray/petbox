@@ -4,9 +4,8 @@ description: >-
   Pay for the CHANGE you are making, not for the whole text. Use before any tasks_upsert /
   comments_upsert / memory_remember / memory_upsert / session_append call whose body is more
   than a few lines, and before any read that only needs headers or a couple of known keys.
-  The actual mechanism — which technique applies, the exact call shape, and when none of
-  this is worth the extra call — lives in the skill body; open it before writing the call,
-  don't answer from this description alone.
+  The actual mechanism — which technique applies and the exact call shape — lives in the
+  skill body; open it before writing the call, don't answer from this description alone.
 petbox: managed
 petbox-digest: auto
 ---
@@ -15,8 +14,8 @@ petbox-digest: auto
 
 A write call's cost to you is the tokens it takes to PRODUCE the arguments, not the bytes PetBox
 stores. The four techniques below each remove one way that cost gets inflated past the size of
-the actual change. Read the last section first if you are unsure whether any of this applies —
-half of the value here is knowing when NOT to reach for it.
+the actual change. Section (c) carries the one rule that is unconditional — read it first if you
+are writing anything that is not plain ASCII.
 
 ## (a) `bodyRef` — a body that already exists, by reference
 
@@ -90,8 +89,12 @@ warning has lived in tool descriptions and project canon for a long time and kee
 anyway.
 
 **Default rule — non-ASCII prose does not go in the call.** A body or comment carrying Cyrillic,
-CJK or any other non-ASCII text goes through `bodyRef` (a) when it is new, or `fragment` (b) when
-it is an edit. Not "when it is large" and not "when the text already exists on disk" — ALWAYS.
+CJK or any other non-ASCII text goes through `bodyRef` (a) when it is new, `fragment` (b) for a
+LOCALIZED edit, and `bodyRef` again for an edit that rewrites most of the body — `bodyRef` is
+accepted on a PATCH (pass it with the `version` baseline), and on a rewrite `fragment` is the
+worse path: every `old` slice is non-ASCII text retyped into the call, so the escape hazard lands
+on `old` as well as `new`, and each slice must still match exactly once.
+Not "when it is large" and not "when the text already exists on disk" — ALWAYS.
 Token cost is not the reason; reliability is. A `body` argument is the one path where the prose
 must survive the model's own JSON encoding, and that path fails silently: the call is truncated
 mid-generation and arrives as a parse error naming no size. Writing the text to a file with a
