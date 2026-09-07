@@ -87,8 +87,17 @@ happened upstream.
 
 This is exactly why (a) and (b) exist as mechanisms rather than as a rule to remember: the same
 warning has lived in tool descriptions and project canon for a long time and keeps recurring
-anyway. Prefer moving text out of the call entirely (bodyRef) or shrinking it to just the change
-(fragment) over trying to type a large body correctly under this constraint.
+anyway.
+
+**Default rule — non-ASCII prose does not go in the call.** A body or comment carrying Cyrillic,
+CJK or any other non-ASCII text goes through `bodyRef` (a) when it is new, or `fragment` (b) when
+it is an edit. Not "when it is large" and not "when the text already exists on disk" — ALWAYS.
+Token cost is not the reason; reliability is. A `body` argument is the one path where the prose
+must survive the model's own JSON encoding, and that path fails silently: the call is truncated
+mid-generation and arrives as a parse error naming no size. Writing the text to a file with a
+shell heredoc and uploading it costs one extra call and removes that failure mode completely.
+Judging this on token cost alone is the known trap — it reads as "the upload buys nothing here"
+and walks straight back into the truncation.
 
 ## (d) Reading cheaply — the `bodyLen` contract
 
@@ -101,26 +110,6 @@ Cheap path: search/list with `bodyLen:0`, look at the row identities, then fetch
 actually need in full (`tasks_node_get` / `memory_get` / `comments_get`). Reserve `bodyLen:-1` for
 when you already know the few keys you want — pulling full bodies across a wide result set "just
 in case" routinely spends a large share of the response budget on text nobody reads.
-
-## (e) When none of this pays off
-
-This is a real constraint, not a footnote: apply the techniques above only where they actually
-save something.
-
-- **Text that is born in the call itself does not get cheaper.** A short note, a plan you are
-  composing right now, a status update you are writing as you go — the model pays for that text
-  once, in output tokens, no matter where it ends up. Writing it to a file and then uploading it
-  as a `bodyRef` costs the SAME output tokens as `body` would, plus a second call. There is no
-  version of "upload it instead" that is cheaper for text that only exists because this call
-  produced it.
-- **The mechanism earns its keep where the text already exists outside the model's own output**:
-  a log tail, a git diff, a command's stdout, a subagent's report, a file already in the repo.
-  There the saving is not "twice down to once" — it is "once down to **zero**": the text moves
-  without the model ever retyping it into an argument at all.
-- **`fragment` does not pay off on an edit that rewrites most of the body.** A list of ten
-  `{old, new}` pairs covering nearly the whole text costs more — in call size and in the risk of
-  a stale slice failing to match — than one `body` replacement. Reach for `fragment` for a
-  handful of localized edits; reach for `body` for anything that reads like a rewrite.
 
 **Tool naming:** base verbs are underscore-delimited (`tasks_upsert`); opencode prefixes
 `petbox_`, Claude Code prefixes `mcp__petbox__`.

@@ -193,7 +193,11 @@ static class ModuleMcp
 		"Send Cyrillic as raw UTF-8, not \\uXXXX escapes: each escape prints six characters, so a long call " +
 		"can exhaust the model's output budget and cut off mid-generation, arriving as a parse error — not " +
 		"a wire-byte issue. A body can also be truncated client-side; PetBox cannot prevent or name a " +
-		"number for it. Split large batches into multiple calls.";
+		"number for it. Split large batches into multiple calls. THE FIX IS NOT CAREFUL TYPING: for a " +
+		"non-ASCII body, keep the prose out of this call entirely. New text -> write it to a file, POST " +
+		"the raw bytes to /api/blobs/{projectKey}, pass the returned ref as `bodyRef`. An edit -> " +
+		"`fragment`, which sends only the changed slice. Both are unconditional for non-ASCII prose, " +
+		"whatever its size: they remove the failure mode rather than staying under it.";
 
 	// Point 4 of the card mcp-write-degrades-silently-fix: a write the server DID accept and apply
 	// can still have paid the \uXXXX-escaping tax silently — it only fails once a slightly bigger
