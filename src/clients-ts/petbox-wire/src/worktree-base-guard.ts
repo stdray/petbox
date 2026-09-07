@@ -41,7 +41,7 @@ export type GitRunner = (
 ) => Promise<{ code: number; stdout: string }>;
 
 const DEFAULT_FETCH_TIMEOUT_MS = 3500;
-const DEFAULT_THRESHOLD = 10;
+const DEFAULT_THRESHOLD = 1;
 const FALLBACK_BRANCH = "origin/main";
 const DEFAULT_FETCH_MIN_INTERVAL_MS = 60_000;
 

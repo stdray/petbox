@@ -65,8 +65,28 @@ test("ahead=3, behind=100 (real feature branch): stays silent — the key false-
   assert.equal(text, "");
 });
 
-test("ahead=0, behind=2, below default threshold (10): stays silent", async () => {
+test("ahead=0, behind=1, default threshold (1): warns — any lag from the remote default branch is enough", async () => {
+  const { runGit } = makeStubGit({ aheadBehind: [0, 1], branch: "origin/main" });
+  const text = await buildStaleBaseWarning({ cwd: "/fake/repo", runGit });
+  assert.match(text, /BASE STALE/);
+  assert.match(text, /\b1\b/);
+});
+
+test("ahead=0, behind=2, explicit PETBOX_STALE_BASE_THRESHOLD=3 (quieter than the new default): stays silent", async () => {
+  // The default dropped to 1 (any lag warns), but "silence below threshold" remains a real,
+  // testable property of the mechanism — it now has to be reached via an explicit override
+  // instead of the out-of-the-box behavior. Whoever wants quieter raises their own threshold.
   const { runGit } = makeStubGit({ aheadBehind: [0, 2], branch: "origin/main" });
+  const text = await buildStaleBaseWarning({
+    cwd: "/fake/repo",
+    runGit,
+    env: { PETBOX_STALE_BASE_THRESHOLD: "3" },
+  });
+  assert.equal(text, "");
+});
+
+test("ahead=1, behind=1 (feature branch exactly at the new threshold): stays silent — the false-alarm guard survives the threshold change", async () => {
+  const { runGit } = makeStubGit({ aheadBehind: [1, 1], branch: "origin/main" });
   const text = await buildStaleBaseWarning({ cwd: "/fake/repo", runGit });
   assert.equal(text, "");
 });
