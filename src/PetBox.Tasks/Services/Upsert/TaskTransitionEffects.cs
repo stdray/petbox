@@ -96,14 +96,29 @@ public sealed class TaskTransitionEffects
 		}
 	}
 
-	// UNIVERSAL terminal-blocker rule (work blocks-edge-closes-on-terminal-blocker), the
-	// symmetry RunDeleteEffectsAsync just below has always had and entering-a-terminal-status
-	// never did: a node that ENTERS a terminal status by its OWN board's FSM soft-closes every
-	// active OUTGOING `blocks` edge, on ANY kind — whether or not that kind declares an Effects
-	// entry, a BlocksGate, or a methodology document at all. Before this, only a kind carrying
-	// the declared `On: Done, Link: blocks` effect (i.e. `work`, and only on Done) ever released
-	// its dependents; on `simple`/`classic`/a project-declared kind, `blockedBy` kept naming a
-	// finished blocker forever (observation blocks-edge-never-closes-on-kind-without-blocksgate).
+	// Terminal-blocker rule (work blocks-edge-closes-on-terminal-blocker), the symmetry
+	// RunDeleteEffectsAsync just below has always had and entering-a-terminal-status never did: a
+	// node that ENTERS a terminal status by its OWN board's FSM soft-closes every active OUTGOING
+	// `blocks` edge. Before this, only a kind carrying the declared `On: Done, Link: blocks` effect
+	// (i.e. `work`, and only on Done) ever released its dependents; on `simple`/`classic`/a
+	// project-declared kind, `blockedBy` kept naming a finished blocker forever (observation
+	// blocks-edge-never-closes-on-kind-without-blocksgate).
+	//
+	// TWO AXES, and this rule is universal on only ONE of them. Say both, because a reader who
+	// takes "any kind" for "any way in" will trust it where it does not hold:
+	//  - KIND: universal. Any kind, declared or preset, with or without an Effects entry, a
+	//    BlocksGate, or a methodology document at all.
+	//  - HOW THE NODE GOT THERE: NOT universal. This hangs off UpsertAsync
+	//    (TasksService.cs, after RunTransitionEffectsAsync), so it sees a status written by an
+	//    upsert and nothing else. A node driven into a terminal status by the CASCADE of a
+	//    declared effect — SetActiveNodeStatusAsync, e.g. work Done -> `issue_task` -> the intake
+	//    issue to `done`, or SyncObservationOnObligationTerminalAsync moving an observation to
+	//    `fixed` — writes straight to TemporalStore and calls nobody, so its own outgoing `blocks`
+	//    edges stay active. That gap is KNOWN and deliberately left open here: closing it means
+	//    calling this from SetActiveNodeStatusAsync, which is the hot path of every work Done, and
+	//    doing that without a test aimed at it is the more dangerous of the two options. It has its
+	//    own card. Until then the backfill below is what sweeps up after the cascade — which is why
+	//    that pass is worth leaving armed rather than running once.
 	//
 	// Ordering: TasksService calls this AFTER RunTransitionEffectsAsync on purpose. A kind that
 	// DOES declare a blocks effect gets to run its own — with its own Set/OnlyFrom semantics —
@@ -168,22 +183,50 @@ public sealed class TaskTransitionEffects
 		// CAPTURES, so re-resolving deeper down would have fixed `wf`/`isTerminal` and left the
 		// gate lookup still reading the blocker's document — the exact half-fix this rule exists
 		// to avoid.
-		var runtime = await RuntimeForNodeAsync(projectKey, dependentNodeId, fallback, ct);
+		var (runtime, dependent) = await DependentContextAsync(projectKey, dependentNodeId, fallback, ct);
+
+		// The status move is recorded HERE, from what actually happened, rather than predicted by
+		// the caller. That is not a style preference — it is the rollback register's correctness.
+		// The backfill migrator used to predict this from its own start-of-pass snapshot ("this
+		// dependent has exactly one edge"), which is wrong the moment a dependent has TWO terminal
+		// blockers: both closure lines would print `release=none` because the snapshot saw two
+		// edges, while the SECOND close really does release the node. An operator replaying the
+		// log would then restore the edges and silently leave the status moved. `relations` has no
+		// "closed by" column, so the log is the only register there is; a register that omits a
+		// write it performed is worse than no register, because it reads as complete.
+		string? movedFrom = null;
+		string? movedTo = null;
 		await SetActiveNodeStatusAsync(projectKey, dependentNodeId, runtime,
-			(_, node, _, targetKindSlug) => runtime.BlocksGate(targetKindSlug) is { } gate
-				&& string.Equals(node.Status, gate.Status, StringComparison.OrdinalIgnoreCase)
-				? gate.ReleaseTo : null, ct);
+			(_, node, _, targetKindSlug) =>
+			{
+				if (runtime.BlocksGate(targetKindSlug) is not { } gate) return null;
+				if (!string.Equals(node.Status, gate.Status, StringComparison.OrdinalIgnoreCase)) return null;
+				// SetActiveNodeStatusAsync no-ops when the target equals the current status, so
+				// this guard keeps the record in step with the WRITE, not with the intent.
+				if (string.Equals(gate.ReleaseTo, node.Status, StringComparison.OrdinalIgnoreCase)) return null;
+				movedFrom = node.Status;
+				movedTo = gate.ReleaseTo;
+				return gate.ReleaseTo;
+			}, ct);
+
+		if (movedFrom is null) return;
+		_log?.LogInformation(
+			"Tasks blocks-edge-closes-on-terminal-blocker: RELEASED node={NodeId} ({Board}/{Key}) in project {Project} "
+			+ "from={From} to={To} — its last active `blocks` edge is gone",
+			dependentNodeId, dependent?.Board ?? "?", dependent?.Key ?? "?", projectKey, movedFrom, movedTo);
 	}
 
-	// The methodology runtime of the board a node ACTUALLY lives on — which is not necessarily
-	// the board whose upsert/delete triggered the effect. Falls back to `fallback` when no
-	// resolver is bound (direct construction outside TasksService) or the node has no active row.
-	async Task<MethodologyRuntime> RuntimeForNodeAsync(string projectKey, string nodeId, MethodologyRuntime fallback, CancellationToken ct)
+	// The dependent's active row plus the methodology runtime of the board it ACTUALLY lives on —
+	// which is not necessarily the board whose upsert/delete triggered the effect. The row is read
+	// either way (it names the node in the release log); the runtime falls back to `fallback` when
+	// no resolver is bound (direct construction outside TasksService) or there is no active row.
+	async Task<(MethodologyRuntime Runtime, TaskNode? Node)> DependentContextAsync(
+		string projectKey, string nodeId, MethodologyRuntime fallback, CancellationToken ct)
 	{
-		if (_boardRuntime is null) return fallback;
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var board = ctx.TaskNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault()?.Board;
-		return board is null ? fallback : await _boardRuntime(projectKey, board, ct);
+		var node = ctx.TaskNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
+		if (node is null || _boardRuntime is null) return (fallback, node);
+		return (await _boardRuntime(projectKey, node.Board, ct), node);
 	}
 
 	// Delete effect: a temporal-closed node must not leave dangling structure behind — close

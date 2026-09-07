@@ -16,6 +16,11 @@ namespace PetBox.Tests.Tasks;
 // terminal, Cancelled included. The dependent's release (if its kind declares a gate) is judged on
 // the DEPENDENT's board, not the blocker's.
 //
+// Universal on KIND, not on HOW THE NODE GOT THERE: the rule hangs off UpsertAsync, so a node
+// driven into a terminal status by a declared effect's CASCADE (SetActiveNodeStatusAsync, which
+// writes straight to TemporalStore) keeps its outgoing edges. Known gap, its own card, and NOT
+// covered by anything below — no test here should be read as claiming otherwise.
+//
 // Before this rule, only the `work` kind's declared `On: Done, Link: blocks` effect ever closed
 // such an edge, so on `simple`/`classic`/a project-declared kind `blockedBy` named a finished
 // blocker forever (observation blocks-edge-never-closes-on-kind-without-blocksgate). Each test
@@ -362,12 +367,104 @@ public sealed class TerminalBlockerBlocksEdgeTests : IDisposable
 		line.Should().Contain($"edge={edgeId}", "the relation primary key IS the undo handle");
 		line.Should().Contain($"from={blockerId}").And.Contain($"to={depId}", "both endpoints, so the edge is reconstructible even if the row were hard-deleted");
 		line.Should().Contain("project=proj").And.Contain("sboard/blocker").And.Contain("sboard/dep");
-		line.Should().Contain("release=none", "and what the status side of the undo would be, if anything");
+		line.Should().Contain("predictedRelease=none", "and what the status side of the undo would be, if anything");
 		log.Lines.Should().Contain(l => l.Contains("UPDATE relations SET ClosedAt = NULL"),
 			"the undo procedure is printed next to the ids it applies to, not left in a commit message");
+		log.Lines.Should().Contain(l => l.Contains("RELEASED line"),
+			"the hint must send an operator to the RELEASED lines for the status half, not to the forecast field");
 
 		// Emitted so a reviewer can read the actual rehearsal output rather than trust a summary.
 		foreach (var l in log.Lines) Console.WriteLine(l);
+	}
+
+	// THE TWO-BLOCKER HOLE IN THE REGISTER. A dependent with TWO terminal blockers: the backfill
+	// closes both edges, and the SECOND close really does free the node. The forecast used to be
+	// computed per-edge from the start-of-pass snapshot ("this dependent has exactly one edge"),
+	// so BOTH lines said no release while the status moved anyway — and the printed undo procedure
+	// said to restore statuses only where a line reported one. An operator replaying that log
+	// restores the edges and silently leaves the node released.
+	//
+	// RED before the fix on BOTH assertions: no RELEASED line was ever written (the live rule
+	// logged closures only), and the forecast on the last line read `predictedRelease=none`.
+	[Fact]
+	public async Task Backfill_TwoTerminalBlockers_RecordsTheReleaseThatActuallyHappened()
+	{
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("b1", status: "Pending", type: "chore"), Node("b2", status: "Pending", type: "chore") });
+		var b1 = NodeId("wboard", "b1");
+		var b2 = NodeId("wboard", "b2");
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("dep", blockedBy: b1, status: "Blocked", type: "chore") });
+		var depId = NodeId("wboard", "dep");
+		await _relations.CreateAsync(Proj, "blocks", b2, depId);
+		// Both blockers reach a terminal status WITHOUT an upsert — the stranded fleet state.
+		ForceStatus(b1, "Done");
+		ForceStatus(b2, "Cancelled");
+		(await ActiveBlocksInto(depId)).Should().HaveCount(2, "control: two live edges from two terminal blockers");
+		var log = new CapturingLogger();
+
+		new TerminalBlockerEdgeBackfillMigrator(_db.Factory(), _factory, apply: true, log).Migrate();
+
+		StatusOf(depId).Should().Be("InProgress", "control: the pass really did move the status");
+		var released = log.Lines.Where(l => l.Contains("RELEASED node=")).ToList();
+		released.Should().ContainSingle("the status move happened exactly once and must be recorded exactly once");
+		released[0].Should().Contain($"node={depId}").And.Contain("wboard/dep")
+			.And.Contain("from=Blocked").And.Contain("to=InProgress",
+				"the register must carry what to restore and on which node — this line IS the undo");
+
+		// And the forecast on the closure lines must not contradict it: exactly one of the two
+		// says a release is coming, and it is the last one.
+		log.Lines.Count(l => l.Contains("closing edge=") && !l.Contains("predictedRelease=none"))
+			.Should().Be(1, "the forecast is per-pass, not per-snapshot-edge");
+	}
+
+	// The same shape in DRY RUN: two terminal blockers, nothing written, and the forecast still
+	// tells the truth about the status move the apply run would make. Red before the fix — the
+	// snapshot form printed `none` on both lines.
+	[Fact]
+	public async Task Backfill_DryRun_TwoTerminalBlockers_ForecastsTheReleaseOnTheLastEdge()
+	{
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("b1", status: "Pending", type: "chore"), Node("b2", status: "Pending", type: "chore") });
+		var b1 = NodeId("wboard", "b1");
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("dep", blockedBy: b1, status: "Blocked", type: "chore") });
+		var depId = NodeId("wboard", "dep");
+		await _relations.CreateAsync(Proj, "blocks", NodeId("wboard", "b2"), depId);
+		ForceStatus(b1, "Done");
+		ForceStatus(NodeId("wboard", "b2"), "Done");
+		var log = new CapturingLogger();
+
+		new TerminalBlockerEdgeBackfillMigrator(_db.Factory(), _factory, apply: false, log).Migrate();
+
+		(await ActiveBlocksInto(depId)).Should().HaveCount(2, "dry run writes NOTHING");
+		StatusOf(depId).Should().Be("Blocked");
+		log.Lines.Count(l => l.Contains("closing edge=") && l.Contains("predictedRelease=Blocked->InProgress"))
+			.Should().Be(1, "the plan must show the status move it is going to make");
+		log.Lines.Should().NotContain(l => l.Contains("RELEASED node="), "nothing was released — nothing happened");
+	}
+
+	// A dependent whose OTHER blocker is still open is not freed, and the forecast must say so.
+	// This is the control side of the two tests above: the fix must not turn "all my blockers are
+	// terminal" into "any of my blockers is terminal".
+	[Fact]
+	public async Task Backfill_OneTerminalOneOpenBlocker_ClosesOnlyOne_AndForecastsNoRelease()
+	{
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("b1", status: "Pending", type: "chore"), Node("b2", status: "Pending", type: "chore") });
+		var b1 = NodeId("wboard", "b1");
+		var b2 = NodeId("wboard", "b2");
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("dep", blockedBy: b1, status: "Blocked", type: "chore") });
+		var depId = NodeId("wboard", "dep");
+		await _relations.CreateAsync(Proj, "blocks", b2, depId);
+		ForceStatus(b1, "Done"); // b2 stays open
+		var log = new CapturingLogger();
+
+		var found = new TerminalBlockerEdgeBackfillMigrator(_db.Factory(), _factory, apply: true, log).Migrate();
+
+		found.Should().Be(1, "only the terminal blocker's edge qualifies");
+		(await ActiveBlocksInto(depId)).Should().ContainSingle().Which.FromNodeId.Should().Be(b2);
+		StatusOf(depId).Should().Be("Blocked", "a live blocker remains");
+		log.Lines.Should().NotContain(l => l.Contains("RELEASED node="));
+		log.Lines.Single(l => l.Contains("closing edge=")).Should().Contain("predictedRelease=none");
 	}
 
 	sealed class CapturingLogger : ILogger

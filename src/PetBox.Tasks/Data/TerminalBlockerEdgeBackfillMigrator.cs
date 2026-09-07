@@ -15,6 +15,14 @@ namespace PetBox.Tasks.Data;
 // naming a finished blocker. This walks every project's stored edges once and closes exactly
 // those.
 //
+// NOT PURELY A ONE-TIME CATCH-UP, and that is why it is worth leaving armed. The engine rule hangs
+// off UpsertAsync, so it never sees a node driven into a terminal status by the CASCADE of a
+// declared effect (SetActiveNodeStatusAsync — work Done -> `issue_task` -> intake issue `done`,
+// SyncObservationOnObligationTerminalAsync -> observation `fixed`), which writes straight to
+// TemporalStore and calls nobody. Those edges keep accruing. Until that gap is closed at its own
+// source (its own card), THIS pass is what sweeps them up — and being idempotent, it costs a
+// no-op scan on every restart where there is nothing to do.
+//
 // PRECONDITION IS ON THE EDGE, NOT ON A DOCUMENT — deliberately, and this is the difference from
 // WorkDeferredStatusMigrator's "only an untouched copy of our preset" posture. There is nothing
 // here that could be a project's own deliberate decision: an active `blocks` edge out of a node
@@ -47,9 +55,11 @@ public sealed class TerminalBlockerEdgeBackfillMigrator
 	// data stay greppable apart (an operator filtering the deploy log must not pick this up as one
 	// of the edges it describes).
 	const string RollbackHint =
-		"Tasks terminal-blocker-edge-backfill: ROLLBACK for this pass = for every closure line below, take its "
-		+ "relation id and run in tasks/<project>.db: UPDATE relations SET ClosedAt = NULL WHERE Id = '<relation id>'; "
-		+ "and where the line reports a release of <from>-><to>, restore the dependent node's status to <from>. "
+		"Tasks terminal-blocker-edge-backfill: ROLLBACK for this pass has TWO halves. (1) EDGES: for every closure "
+		+ "line below, take its relation id and run in tasks/<project>.db: UPDATE relations SET ClosedAt = NULL "
+		+ "WHERE Id = '<relation id>'. (2) STATUSES: for every RELEASED line, restore that node's status to the "
+		+ "line's from= value. Use the RELEASED lines, NOT the predictedRelease= field on the closure lines — that "
+		+ "field is a dry-run forecast, while a RELEASED line is written from the write that actually happened. "
 		+ "There is no `closed by` column on relations — these log lines are the only record of what this pass touched.";
 
 	readonly ICoreDbFactory _dbf;
@@ -121,7 +131,9 @@ public sealed class TerminalBlockerEdgeBackfillMigrator
 			.ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
 		var runtimes = new Dictionary<string, MethodologyRuntime>(StringComparer.OrdinalIgnoreCase);
-		var closed = 0;
+
+		// PASS 1 — which edges qualify: the blocker is terminal by its OWN board's FSM.
+		var candidates = new List<(Relation Edge, TaskNode Blocker, TaskNode Dependent)>();
 		foreach (var edge in edges)
 		{
 			// A dangling endpoint should be impossible (relations carry an ON DELETE CASCADE FK to
@@ -133,31 +145,50 @@ public sealed class TerminalBlockerEdgeBackfillMigrator
 					projectKey, edge.Id, edge.FromNodeId, edge.ToNodeId);
 				continue;
 			}
-
 			var blockerRuntime = await RuntimeAsync(projectKey, blocker.Board, runtimes);
-			var blockerKind = await KindAsync(projectKey, blocker.Board);
-			if (!blockerRuntime.IsTerminalStatus(blockerKind, blocker.Status)) continue;
+			if (!blockerRuntime.IsTerminalStatus(await KindAsync(projectKey, blocker.Board), blocker.Status)) continue;
+			candidates.Add((edge, blocker, dependent));
+		}
+		if (candidates.Count == 0) return 0;
 
-			// What the release WOULD do, computed for the log line (and only for it — the actual
-			// release below runs through the live rule's own code). "Would release" needs both the
-			// dependent's gate, resolved on the DEPENDENT's board, and this being its LAST active
-			// blocker.
-			var dependentKind = await KindAsync(projectKey, dependent.Board);
+		// A dependent is freed by this pass only when EVERY one of its active `blocks` edges is a
+		// candidate, and only on the LAST of them to be closed. The earlier form of this asked
+		// "does this dependent have exactly one edge in the snapshot?", which is wrong precisely
+		// when a dependent has TWO terminal blockers: both lines would forecast no release while
+		// the second close really does free the node. Predicting per-edge from a start-of-pass
+		// snapshot is what made that possible, so the count is now taken over the edges this pass
+		// will LEAVE BEHIND.
+		var candidateIds = candidates.Select(c => c.Edge.Id).ToHashSet(StringComparer.Ordinal);
+		var surviving = edges.Where(e => !candidateIds.Contains(e.Id))
+			.Select(e => e.ToNodeId).ToHashSet(StringComparer.Ordinal);
+		var lastCandidateFor = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var c in candidates) lastCandidateFor[c.Edge.ToNodeId] = c.Edge.Id;
+
+		// PASS 2 — log, then (in apply mode) close and release.
+		var closed = 0;
+		foreach (var (edge, blocker, dependent) in candidates)
+		{
 			var dependentRuntime = await RuntimeAsync(projectKey, dependent.Board, runtimes);
-			var lastBlocker = edges.Count(e => e.ToNodeId == edge.ToNodeId) == 1;
-			var release = lastBlocker
+			var dependentKind = await KindAsync(projectKey, dependent.Board);
+			var frees = !surviving.Contains(edge.ToNodeId)
+				&& string.Equals(lastCandidateFor[edge.ToNodeId], edge.Id, StringComparison.Ordinal);
+			// A FORECAST, and named one: in apply mode the authoritative record of a status move is
+			// the `RELEASED` line TaskTransitionEffects writes from what actually happened. This
+			// field exists so the DRY RUN can show the status side of the plan at all.
+			var forecast = frees
 				&& dependentRuntime.BlocksGate(dependentKind) is { } gate
 				&& string.Equals(dependent.Status, gate.Status, StringComparison.OrdinalIgnoreCase)
+				&& !string.Equals(gate.ReleaseTo, dependent.Status, StringComparison.OrdinalIgnoreCase)
 					? $"{dependent.Status}->{gate.ReleaseTo}"
 					: "none";
 
 			_log?.LogInformation(
 				"Tasks terminal-blocker-edge-backfill: {Mode} closing edge={EdgeId} kind={Kind} from={From} to={To} "
 				+ "project={Project} blocker={BlockerBoard}/{BlockerKey} blockerStatus={BlockerStatus} "
-				+ "dependent={DependentBoard}/{DependentKey} dependentStatus={DependentStatus} release={Release}",
+				+ "dependent={DependentBoard}/{DependentKey} dependentStatus={DependentStatus} predictedRelease={Release}",
 				_apply ? "APPLY" : "DRY-RUN", edge.Id, edge.Kind, edge.FromNodeId, edge.ToNodeId,
 				projectKey, blocker.Board, blocker.Key, blocker.Status,
-				dependent.Board, dependent.Key, dependent.Status, release);
+				dependent.Board, dependent.Key, dependent.Status, forecast);
 
 			closed++;
 			if (!_apply) continue;
