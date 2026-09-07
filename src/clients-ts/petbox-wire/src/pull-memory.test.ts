@@ -112,6 +112,36 @@ function startFatCanonFakeServer(): Promise<{ port: number; close: () => Promise
   });
 }
 
+// A fake server whose canon response is sized to REPRODUCE the real `$system` measurements
+// (bug: owner-only-skills-block-silently-dropped-in-real-project), not a round number: whole
+// canon 4058B, project-leg-only 2773B (a ~1285B workspace leg) — the exact bytes measured against
+// the live server and its offline cache. Combined with a real materialized owner-only skill
+// (~1281B unshrunk) and the real compact-mode protocol, this is the scenario that broke: the
+// block appended unconditionally after an already-budget-fitting protocol+canon banner exceeded
+// the harness's 10 000B hard limit on every session start.
+function startRealSystemScaleCanonFakeServer(): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const projectBody = "X".repeat(2598);
+    const workspaceBody = "Y".repeat(1268);
+    const server = http.createServer((req, res) => {
+      if (req.url?.includes("/memory/") && req.url?.includes("/canon")) {
+        res.writeHead(200, { "Content-Type": "application/json" }).end(
+          JSON.stringify({
+            project: { body: projectBody, updatedAt: null, version: 1 },
+            workspace: { body: workspaceBody, updatedAt: null, version: 1 },
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as { port: number }).port;
+      resolve({ port, close: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
 function setUpIsolatedRegistry(baseUrl: string): { home: string; projectDir: string } {
   const home = mkdtempSync(join(tmpdir(), "petbox-hook-proc-"));
   const projectDir = join(home, "fake-project");
@@ -295,6 +325,45 @@ test("pull-memory.ts as a real process: a materialized owner-only skill reaches 
       "Claude Code must get the hidden-entirely fact",
     );
     assert.ok(!result.stdout.includes("does not recognize the key"), "must not carry opencode's fact");
+  } finally {
+    await close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// THE regression this hook exists to close (bug: owner-only-skills-block-silently-dropped-in-
+// real-project): the block's own unit tests were green against a small canon fixture, and the
+// feature never reached the agent in the one real project it was for. This drives the REAL hook
+// process, against a REAL-SCALE canon (measured $system bytes, not round numbers — see
+// startRealSystemScaleCanonFakeServer's comment), in "compact" source mode (the longer protocol
+// variant) — the same class of end-to-end check opencode-plugin-system-transform.test.ts's header
+// describes for the sibling salience index, applied here to the ladder fix in session-budget.ts.
+test("pull-memory.ts as a real process: at REAL $system scale (4KB canon, compact mode), the owner-only-skills block still reaches stdout — the workspace canon leg sheds instead", async () => {
+  const { close, port } = await startRealSystemScaleCanonFakeServer();
+  const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
+  materializeOwnerOnlySkill(projectDir);
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      FAKE_HOOK_TEST_KEY: "fake-key-for-test",
+    };
+    const input = JSON.stringify({ session_id: "test", cwd: projectDir, hook_event_name: "SessionStart", source: "compact" });
+
+    const result = await runHook(join(HERE, "pull-memory.ts"), input, env, projectDir);
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
+    assert.ok(
+      result.stdout.includes("`petbox-factory-run`"),
+      `THE regression: the owner-only-skills block must survive at real $system scale:\n${result.stdout.length} bytes`,
+    );
+    assert.ok(result.stdout.includes("### Project ("), "the canon project leg must still be present");
+    assert.ok(!result.stdout.includes("### Workspace"), "the canon WORKSPACE leg — not the block — must be what paid for the room");
+    assert.ok(
+      Buffer.byteLength(result.stdout, "utf8") <= HARNESS_INLINE_HARD_LIMIT_BYTES,
+      `stdout is ${Buffer.byteLength(result.stdout, "utf8")}B — at/over the harness's own ${HARNESS_INLINE_HARD_LIMIT_BYTES}B hard limit`,
+    );
   } finally {
     await close();
     rmSync(home, { recursive: true, force: true });
