@@ -253,8 +253,37 @@ public static class MethodologyGuide
 		// (kek-devices-classic-status-freeze, recurrence 2, an open client report). Print the
 		// obligation axis right next to the prohibition it qualifies, not in a different
 		// section the agent must remember to consult.
-		if (gated.Any(t => t.RequiresApproval))
-			md.AppendLine($"  - Every OTHER transition in this workflow is the agent's own to make — waiting is not caution, it is a defect. A node left in {block.Initial} (or any other non-terminal status) after the work behind it has actually moved on is exactly that defect.");
+		//
+		// Two review findings this line must not reintroduce, both fixed in THIS same phrase
+		// (a separate qualifying bullet below would repeat the umbrella's own failure mode —
+		// text elsewhere is text the agent never reads):
+		// 1. "any other non-terminal status" swept up a gate's OWN `From` (e.g. Review, whose
+		//    only forward exit is the NEVER line above it) — that turned "stop and wait for the
+		//    owner" into "you have a defect", pressure with no legitimate release valve. Named
+		//    here explicitly, and the "stuck = defect" claim narrows to the workflow's Initial
+		//    (the L2 role-notes phrasing, role-notes-name-the-obligation-axis, says the same
+		//    thing as "starting status" — this is that same one rule, not a second one).
+		// 2. "every OTHER transition ... is yours" was a blanket grant that, read literally,
+		//    included closing without delivery (Cancelled/Duplicate/rejected/wontfix) and
+		//    reopening a closed node — a decision about the work's FATE, not progress on it,
+		//    and not the agent's call any more than Done/accepted is. Narrowed to movement
+		//    between OPEN statuses; fate transitions are named OUT, not silently re-granted.
+		var neverFrom = gated.Where(t => t.RequiresApproval)
+			.Select(t => t.From)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
+		if (neverFrom.Count > 0)
+		{
+			var exceptions = string.Join("/", neverFrom);
+			var waitingThere = neverFrom.Count == 1 ? "waiting there" : "waiting at any of those";
+			// Degenerate guard: if the workflow's OWN Initial status is itself a gate's `From`
+			// (no known preset does this today), asserting "stuck in Initial is a defect" would
+			// directly contradict "waiting at Initial is the rule" one clause earlier — omit the
+			// stuck-claim rather than print a self-contradiction.
+			var initialIsGateFrom = neverFrom.Any(s => string.Equals(s, block.Initial, StringComparison.OrdinalIgnoreCase));
+			var stuckClause = initialIsGateFrom ? "" : $" A card left sitting in {block.Initial} after the work behind it has already moved on is a defect.";
+			md.AppendLine($"  - Every OTHER transition that moves work between two OPEN statuses is the agent's own to make: move the card forward through each intermediate status as work moves, then stop at {exceptions} and hand over — {waitingThere} is exactly the rule, not neglect. Closing without delivery or reopening a closed node is a separate decision this line does not grant.{stuckClause}");
+		}
 	}
 
 	static void AppendLinkConstraints(StringBuilder md, string kind, IReadOnlyList<MethodologyLinkConstraintDef> constraints, List<MethodologyInvariant> invariants)
