@@ -348,33 +348,16 @@ what errored; `tasks_search` / `memory_search` for the live plan and durable not
 Note: bodies of PetBox nodes and comments render as **GFM markdown** — use `##`
 headings and REAL newlines (never a literal `\n`), or the text renders as mush.
 
-## Skills invoked by name only (hidden from your own listing)
+## Owner-only skills (`disable-model-invocation: true`)
 
-Three of the eight kit skills carry `disable-model-invocation: true`, and that flag removes
-the skill from your own listing ENTIRELY — not just from auto-invocation — because letting the
-model start an unattended agent-factory run on its own is a real risk (work
-`user-invocable-skills-invisible-to-model`). The flag does not remove the skill: the owner can
-still type its name, and the Skill tool's own description already carves out exactly this
-case — quote it rather than re-explain it: "Only names from the listing (or that the user
-typed explicitly) are valid... Users may also ask for one by name (`/<name>`); that's a
-request to invoke it." Treat an owner-typed name below as valid, open
-`.claude/skills/<name>/SKILL.md` (or the tracked source,
-`src/clients-ts/petbox-wire/src/templates/<name>/SKILL.md`, if the deployed copy is missing),
-and follow it — do not search the disk for it, and do not tell the owner no such skill exists.
-A name that is neither in your own listing nor in the three below is a DIFFERENT case:
-"don't guess" still applies there, unsoftened — say so rather than searching the disk for it.
-
-- **petbox-agent-factory** — recompile per-harness agent files after a role/model definition
-  changes.
-- **petbox-analysis-workspace** — run a large multi-part investigation as staged files in an
-  external folder instead of many chat/tool calls.
-- **petbox-factory-run** — fan a batch of prepared, mostly-independent tasks out to one worker
-  per worktree, unattended, to completion.
-
-This list is a guarded index, not free prose: `AgentsMdOwnerOnlySkillsSyncTests`
-(`tests/PetBox.Tests/Core/AgentsMdOwnerOnlySkillsSyncTests.cs`) recomputes the flagged set from
-every template's frontmatter and fails red the moment this section's names stop matching it
-exactly — update both in the same commit that touches the flag on any skill.
+Not documented here on purpose: a static name list in this file would cover only agents working
+*on* $system, not the agents in every OTHER project the kit wires — and it would drift from the
+flag the moment one side changed without the other (this used to be exactly that kind of list;
+work `user-invocable-skills-invisible-to-model`). The fix lives where kit-delivered text already
+reaches an agent in any wired project — `skill-files.ts`'s `buildOwnerOnlySkillsBlock`, computed
+live from each skill's own frontmatter and injected by all three SessionStart paths
+(`pull-memory.ts`, `droid-pull-memory.ts`, `opencode-plugin.ts`) — so it can never go stale and
+never needs a second, hand-maintained copy here.
 
 ## Tasks / Memory / Session — what goes where
 

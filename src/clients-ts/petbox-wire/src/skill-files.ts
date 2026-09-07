@@ -37,6 +37,7 @@ import { cleanupLegacyArtifact, writeArtifact, type LegacyCleanupOutcome } from 
 import {
   hasPetboxMarker,
   isDeclaredManual,
+  isModelInvocationDisabled,
   PETBOX_DIGEST_KEY,
   PETBOX_MARKER_LINE,
   readArtifactState,
@@ -591,15 +592,13 @@ export function extractSkillTrigger(description: string): string {
 export type PetboxSkillTrigger = { readonly name: string; readonly trigger: string };
 
 /**
- * One trigger line per skill materialized under `<root>/.claude/skills/` whose frontmatter
- * DECLARES `petbox-digest: auto`, sorted by directory name for a stable order. Every other
- * skill on disk — declared `manual`, or carrying no declaration at all (a project's own skill,
- * whatever it is named) — is out. A skill whose description can't be parsed is skipped too
- * (never injects a blank line). `[]` when the skills directory is absent (wire apply not run
- * yet) or empty — never throws (best-effort, same contract as every other opencode-plugin.ts
- * injector).
+ * Shared walk of `<root>/.claude/skills/*​/SKILL.md`, keeping only the ones `include` accepts —
+ * the ONE directory scan both trigger readers below build on, so they can never diverge on how a
+ * missing directory, an unreadable file, or a description-less skill degrades. `[]` when the
+ * skills directory is absent (wire apply not run yet) or empty — never throws (best-effort, same
+ * contract as every other opencode-plugin.ts injector).
  */
-export function readAutoDigestSkillTriggers(root: string): PetboxSkillTrigger[] {
+function scanMaterializedSkillTriggers(root: string, include: (raw: string) => boolean): PetboxSkillTrigger[] {
   const dir = join(root, ".claude", "skills");
   let dirNames: string[];
   try {
@@ -614,7 +613,7 @@ export function readAutoDigestSkillTriggers(root: string): PetboxSkillTrigger[] 
   for (const name of dirNames) {
     try {
       const raw = readFileSync(join(dir, name, "SKILL.md"), "utf8");
-      if (readDigestMode(raw) !== "auto") continue; // declaration, never the directory name
+      if (!include(raw)) continue;
       const description = extractSkillDescription(raw);
       if (!description) continue;
       out.push({ name, trigger: extractSkillTrigger(description) });
@@ -623,6 +622,29 @@ export function readAutoDigestSkillTriggers(root: string): PetboxSkillTrigger[] 
     }
   }
   return out;
+}
+
+/**
+ * One trigger line per skill materialized under `<root>/.claude/skills/` whose frontmatter
+ * DECLARES `petbox-digest: auto`, sorted by directory name for a stable order. Every other
+ * skill on disk — declared `manual`, or carrying no declaration at all (a project's own skill,
+ * whatever it is named) — is out. A skill whose description can't be parsed is skipped too
+ * (never injects a blank line).
+ */
+export function readAutoDigestSkillTriggers(root: string): PetboxSkillTrigger[] {
+  return scanMaterializedSkillTriggers(root, (raw) => readDigestMode(raw) === "auto"); // declaration, never the directory name
+}
+
+/**
+ * One trigger line per skill materialized under `<root>/.claude/skills/` whose frontmatter
+ * carries `disable-model-invocation: true` (spec: user-invocable-skills-invisible-to-model) — the
+ * three skills the OWNER invokes by name (`petbox-agent-factory`, `petbox-analysis-workspace`,
+ * `petbox-factory-run` today, never hardcoded here: this reads the live declaration off disk, so
+ * the set can never drift from what is actually flagged). Independent axis from digest mode —
+ * see origin-marker.ts's `SkillInvocationMode` comment.
+ */
+export function readOwnerOnlySkillTriggers(root: string): PetboxSkillTrigger[] {
+  return scanMaterializedSkillTriggers(root, (raw) => isModelInvocationDisabled(raw));
 }
 
 /**
@@ -637,6 +659,68 @@ export function buildAutoSkillsIndex(root: string): string | null {
   if (triggers.length === 0) return null;
   const lines = triggers.map((t) => `- ${t.trigger} → \`${t.name}\``);
   return ["## PetBox skills — call `skill(name)` on match, don't browse first", "", ...lines].join("\n");
+}
+
+// ---- owner-only skills block (work: user-invocable-skills-invisible-to-model) -----------------
+//
+// `disable-model-invocation: true` removes a skill from the model's own listing ENTIRELY on
+// Claude Code and Droid — not just from auto-invocation (origin-marker.ts's
+// DISABLE_MODEL_INVOCATION_KEY comment) — because letting the model start an unattended
+// agent-factory run on its own is a real risk. Found live 2026-09-07: the owner typed
+// `/petbox-factory-run`, the agent had no such name in ITS OWN listing, and had to `find` the
+// file on disk instead — the exact move its own "don't guess" instruction forbids.
+//
+// This text used to live in THIS repo's AGENTS.md — wrong place: AGENTS.md never ships with the
+// kit, so the fix covered $system and nothing else, which is not what the card is for. It belongs
+// where the kit already puts harness-facing text that reaches every wired project — same
+// precedent as buildAutoSkillsIndex above.
+//
+// HARNESS-SPECIFIC on purpose (R1: name both axes, or ship a fact false for one harness — the
+// mistake the first draft of this fix made). opencode does NOT recognize
+// `disable-model-invocation` at all (its skill-loader schema has no such field): these three ARE
+// in opencode's own listing there and callable the native way, `skill(name)` / `/name`. Telling
+// opencode it can't see something it can see would ship a false fact into every opencode project
+// the kit wires — worse than the silence it would replace.
+
+/**
+ * Render the owner-only-skills block for one harness, or `null` when the project has no such
+ * skill materialized (same degrade-to-nothing shape as buildAutoSkillsIndex). `harness` selects
+ * the wording: only Claude Code and Droid actually hide these skills from their own listing;
+ * opencode does not, and is told so instead of the Claude-Code fact.
+ */
+export function buildOwnerOnlySkillsBlock(root: string, harness: string | undefined): string | null {
+  const triggers = readOwnerOnlySkillTriggers(root);
+  if (triggers.length === 0) return null;
+  const lines = triggers.map((t) => `- \`${t.name}\` — ${t.trigger}`);
+
+  if (harness === "opencode") {
+    return [
+      "## Skills you already list but rarely call unprompted",
+      "",
+      "`disable-model-invocation: true` on these means nothing here — your skill loader does " +
+        "not recognize the key. They ARE in your own listing and callable the native way: " +
+        "`skill(name)` or `/name`. No file-open workaround needed.",
+      "",
+      ...lines,
+    ].join("\n");
+  }
+
+  // Claude Code and Droid: the flag removes these from the model's own listing entirely. The
+  // owner can still type the name — quote the Skill tool's own exception rather than reinterpret
+  // it, and name the non-trigger too (a name in neither listing stays "don't guess", unsoftened).
+  return [
+    "## Skills hidden from your own listing — owner-invocable only",
+    "",
+    "`disable-model-invocation: true` removes these from your own listing entirely, not just " +
+      "auto-invocation. Quote, don't reinterpret: \"Only names from the listing (or that the " +
+      "user typed explicitly) are valid... Users may also ask for one by name (`/<name>`); " +
+      "that's a request to invoke it.\" Treat an owner-typed name below as valid, open " +
+      "`.claude/skills/<name>/SKILL.md` and follow it — do not search the disk for it, and do " +
+      "not tell the owner no such skill exists. A name that is neither in your own listing nor " +
+      "below is a DIFFERENT case: \"don't guess\" still applies there, unsoftened.",
+    "",
+    ...lines,
+  ].join("\n");
 }
 
 // NOTE: a `shouldInjectOnce` per-session gate used to live here, used by opencode-plugin.ts to

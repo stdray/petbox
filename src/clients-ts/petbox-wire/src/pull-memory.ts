@@ -32,6 +32,7 @@ import {
   logBudgetOverage,
   SESSION_BANNER_BUDGET_BYTES,
 } from "./session-budget.ts";
+import { buildOwnerOnlySkillsBlock } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 // Wall-clock budget for the one remaining fetch on this path (canon).
@@ -94,8 +95,9 @@ async function main(): Promise<void> {
     const stalePromise = buildStaleBaseWarning({ cwd: cwd || process.cwd() });
 
     // File-only, no timeout to spend: the layers are already on this disk.
+    const applyRoot = resolveApplyRoot(cwd || process.cwd()).root;
     const defResult = resolveDefinitionForSession({
-      root: resolveApplyRoot(cwd || process.cwd()).root,
+      root: applyRoot,
       logSource: `pull-memory[${resolved.project}]`,
     });
     const canon = await fetchCanonBlock(resolved, { timeoutMs: SESSION_FETCH_BUDGET_MS });
@@ -131,7 +133,24 @@ async function main(): Promise<void> {
     // treatment as staleWarn: tiny and prepended OUTSIDE the byte-budget accounting, so the one
     // line that explains the degradation cannot itself be the part that gets truncated away.
     const defNote = defResult.note;
-    await writeStdout(staleWarn + (defNote ? defNote + "\n" : "") + banner.text);
+    let tail = staleWarn + (defNote ? defNote + "\n" : "") + banner.text;
+    // Owner-only skills (work: user-invocable-skills-invisible-to-model) — lowest priority of
+    // everything in this banner, so it is the one thing dropped (not the mandatory protocol or
+    // an already-fitted canon) when there is no room left under the harness's own hard limit.
+    // Best-effort: `null` when the project has none materialized, same contract as canon.
+    const ownerOnlySkills = buildOwnerOnlySkillsBlock(applyRoot, "claude-code");
+    if (ownerOnlySkills) {
+      const withBlock = `${tail}\n\n${ownerOnlySkills}`;
+      if (Buffer.byteLength(withBlock, "utf8") <= HARNESS_INLINE_HARD_LIMIT_BYTES) {
+        tail = withBlock;
+      } else {
+        await logBudgetOverage(
+          `pull-memory[${resolved.project}]: owner-only-skills block dropped — banner would ` +
+            `exceed the ${HARNESS_INLINE_HARD_LIMIT_BYTES}B harness hard limit.`,
+        );
+      }
+    }
+    await writeStdout(tail);
   } catch {
     // best-effort
   }

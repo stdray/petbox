@@ -28,6 +28,7 @@ import { resolveDefinitionForSession } from "./definition-source.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
+import { buildOwnerOnlySkillsBlock } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 // Wall-clock budget for the one remaining fetch on this path (canon) — see the module comment
@@ -84,8 +85,9 @@ async function main(): Promise<void> {
     const stalePromise = buildStaleBaseWarning({ cwd: cwd || process.cwd() });
 
     // File-only, no timeout to spend: the layers are already on this disk.
+    const applyRoot = resolveApplyRoot(cwd || process.cwd()).root;
     const defResult = resolveDefinitionForSession({
-      root: resolveApplyRoot(cwd || process.cwd()).root,
+      root: applyRoot,
       logSource: `droid-pull-memory[${resolved.project}]`,
     });
     const canon = await fetchCanonBlock(resolved, { timeoutMs: SESSION_FETCH_BUDGET_MS });
@@ -97,6 +99,11 @@ async function main(): Promise<void> {
     });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     if (canon) context += `\n\n${canon}`;
+    // Owner-only skills (work: user-invocable-skills-invisible-to-model) — best-effort, degrades
+    // to nothing when the project has none materialized. Droid reads the same SKILL.md shape as
+    // Claude Code, so it gets the Claude-Code wording (skill-files.ts's buildOwnerOnlySkillsBlock).
+    const ownerOnlySkills = buildOwnerOnlySkillsBlock(applyRoot, "droid");
+    if (ownerOnlySkills) context += `\n\n${ownerOnlySkills}`;
     // Broken-layer marker (spec broken-layer-fails-loudly) — same rationale, and same POSITION,
     // as pull-memory.ts's: PREPENDED, not appended. The one line that explains why the protocol
     // below it is the kit base rather than this machine's layers must not be the part a tail
