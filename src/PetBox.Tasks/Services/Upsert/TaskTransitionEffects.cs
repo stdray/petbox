@@ -104,21 +104,20 @@ public sealed class TaskTransitionEffects
 	// project-declared kind, `blockedBy` kept naming a finished blocker forever (observation
 	// blocks-edge-never-closes-on-kind-without-blocksgate).
 	//
-	// TWO AXES, and this rule is universal on only ONE of them. Say both, because a reader who
-	// takes "any kind" for "any way in" will trust it where it does not hold:
+	// TWO AXES, and THIS METHOD alone is universal on only ONE of them. Say both, because a reader
+	// who takes "any kind" for "any way in" will trust it where it does not hold:
 	//  - KIND: universal. Any kind, declared or preset, with or without an Effects entry, a
 	//    BlocksGate, or a methodology document at all.
-	//  - HOW THE NODE GOT THERE: NOT universal. This hangs off UpsertAsync
-	//    (TasksService.cs, after RunTransitionEffectsAsync), so it sees a status written by an
-	//    upsert and nothing else. A node driven into a terminal status by the CASCADE of a
-	//    declared effect — SetActiveNodeStatusAsync, e.g. work Done -> `issue_task` -> the intake
-	//    issue to `done`, or SyncObservationOnObligationTerminalAsync moving an observation to
-	//    `fixed` — writes straight to TemporalStore and calls nobody, so its own outgoing `blocks`
-	//    edges stay active. That gap is KNOWN and deliberately left open here: closing it means
-	//    calling this from SetActiveNodeStatusAsync, which is the hot path of every work Done, and
-	//    doing that without a test aimed at it is the more dangerous of the two options. It has its
-	//    own card. Until then the backfill below is what sweeps up after the cascade — which is why
-	//    that pass is worth leaving armed rather than running once.
+	//  - HOW THE NODE GOT THERE: this method itself only hangs off UpsertAsync (TasksService.cs,
+	//    after RunTransitionEffectsAsync), so IT sees a status written by an upsert and nothing
+	//    else. work terminal-blocks-release-not-called-from-cascade: a node driven into a terminal
+	//    status by the CASCADE of a declared effect (SetActiveNodeStatusAsync — issue_task,
+	//    SyncObservationOnObligationTerminalAsync, SetSupersedesAsync) used to write straight to
+	//    TemporalStore and call nobody, leaving its own outgoing `blocks` edges active. That gap is
+	//    now closed at the SOURCE: SetActiveNodeStatusAsync below calls
+	//    CloseOutgoingBlocksEdgesOnTerminalEntryAsync itself on entering terminal, so every cascade
+	//    door gets the same edge-closing behavior this method provides for the direct-upsert door.
+	//    The backfill below still stays armed for fleet rows written before this fix shipped.
 	//
 	// Ordering: TasksService calls this AFTER RunTransitionEffectsAsync on purpose. A kind that
 	// DOES declare a blocks effect gets to run its own — with its own Set/OnlyFrom semantics —
@@ -152,17 +151,33 @@ public sealed class TaskTransitionEffects
 			// next touch of an untouched node.
 			if (!runtime.IsTerminalStatus(kindSlug, n.Status)) continue;
 			if (cur is not null && string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase)) continue;
-			foreach (var edge in (await _relations.ListAsync(projectKey, n.NodeId, "from", ct: ct))
-				.Where(e => string.Equals(e.Kind, "blocks", StringComparison.OrdinalIgnoreCase)))
-			{
-				await _relations.CloseAsync(projectKey, "blocks", edge.FromNodeId, edge.ToNodeId, ct);
-				// Relation has no "closed by" column — this line is the ONLY record of who closed
-				// this edge and why, and therefore the only register a manual restore can read.
-				_log?.LogInformation(
-					"Tasks blocks-edge-closes-on-terminal-blocker: closed `blocks` edge {EdgeId} ({From} -> {To}) in project {Project} — blocker '{Key}' on board {Board} entered terminal status '{Status}'",
-					edge.Id, edge.FromNodeId, edge.ToNodeId, projectKey, n.Key, n.Board, n.Status);
-				await ReleaseIfFullyUnblockedAsync(projectKey, edge.ToNodeId, runtime, ct);
-			}
+			await CloseOutgoingBlocksEdgesOnTerminalEntryAsync(projectKey, n.NodeId, n.Key, n.Board, n.Status, runtime, ct);
+		}
+	}
+
+	// Shared by RunTerminalBlocksReleaseAsync (the UpsertAsync door) AND SetActiveNodeStatusAsync (the
+	// CASCADE door — work terminal-blocks-release-not-called-from-cascade): a node ENTERING a terminal
+	// status closes its own outgoing `blocks` edges and releases each dependent, whichever door drove
+	// it there. Before this, only a node that entered its terminal status through UpsertAsync's OWN
+	// patch list ever triggered this; a node driven there by a declared effect's cascade (issue_task,
+	// SyncObservationOnObligationTerminalAsync) or by SetSupersedesAsync wrote straight to TemporalStore
+	// and never called this, so its outgoing edges stayed active forever — the reason
+	// TerminalBlockerEdgeBackfillMigrator's apply flag had to stay armed as a live compensation rather
+	// than a one-time cleanup.
+	async Task CloseOutgoingBlocksEdgesOnTerminalEntryAsync(
+		string projectKey, string nodeId, string key, string board, string status,
+		MethodologyRuntime runtime, CancellationToken ct)
+	{
+		foreach (var edge in (await _relations.ListAsync(projectKey, nodeId, "from", ct: ct))
+			.Where(e => string.Equals(e.Kind, "blocks", StringComparison.OrdinalIgnoreCase)))
+		{
+			await _relations.CloseAsync(projectKey, "blocks", edge.FromNodeId, edge.ToNodeId, ct);
+			// Relation has no "closed by" column — this line is the ONLY record of who closed
+			// this edge and why, and therefore the only register a manual restore can read.
+			_log?.LogInformation(
+				"Tasks blocks-edge-closes-on-terminal-blocker: closed `blocks` edge {EdgeId} ({From} -> {To}) in project {Project} — blocker '{Key}' on board {Board} entered terminal status '{Status}'",
+				edge.Id, edge.FromNodeId, edge.ToNodeId, projectKey, key, board, status);
+			await ReleaseIfFullyUnblockedAsync(projectKey, edge.ToNodeId, runtime, ct);
 		}
 	}
 
@@ -278,8 +293,17 @@ public sealed class TaskTransitionEffects
 		var node = ctx.TaskNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
 		if (node is null) return;
 		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
-		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
-		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status), meta?.Kind);
+		// declared-effects-use-source-board-runtime: resolve THIS node's OWN board runtime rather than
+		// trusting `runtime` as passed — a caller driving a CASCADE (RunTransitionEffectsAsync's declared
+		// effects, SetSupersedesAsync, SyncObservationOnObligationTerminalAsync) hands its OWN board's
+		// runtime, which need not be the same methodology instance (or any instance) as the node actually
+		// being written here. `_boardRuntime` resolves the TARGET board's own document, exactly like
+		// DependentContextAsync above; `runtime` is only the fallback for an unbound resolver (direct
+		// construction outside TasksService, e.g. tests).
+		var targetRuntime = _boardRuntime is null ? runtime : await _boardRuntime(projectKey, node.Board, ct);
+		var wf = targetRuntime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
+		var wasTerminal = targetRuntime.IsTerminalStatus(meta?.Kind, node.Status);
+		var target = pick(wf, node, wasTerminal, meta?.Kind);
 		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
 		// The CASCADE half of decision-pending-survives-closure: this door closes nodes too — the
 		// work preset's `On: Done, Link: issue_task` effect drives the reported intake node to
@@ -288,9 +312,18 @@ public sealed class TaskTransitionEffects
 		// waiting" true whichever door did the closing. Terminality comes from the TARGET board's
 		// FSM through the very predicate this method already asks about the CURRENT status one
 		// line above — both terminal kinds, never a status spelling.
-		var pending = node.DecisionPending && !runtime.IsTerminalStatus(meta?.Kind, target);
+		var entersTerminal = targetRuntime.IsTerminalStatus(meta?.Kind, target);
+		var pending = node.DecisionPending && !entersTerminal;
 		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target, DecisionPending = pending } }, partition: n => n.Board == node.Board, ct: ct);
 		await _boards.TouchAsync(projectKey, node.Board, ct);
+		// terminal-blocks-release-not-called-from-cascade: this method writes straight to TemporalStore,
+		// bypassing UpsertAsync's own RunTerminalBlocksReleaseAsync (which only sees a node's OWN patch
+		// list) — so a CASCADE into a terminal status must close its own outgoing `blocks` edges here,
+		// the same way a direct upsert already does. Only on ENTERING terminal (wasTerminal false, entersTerminal
+		// true), matching RunTerminalBlocksReleaseAsync's own guard — an already-terminal node touched again
+		// must not re-close an edge a human deliberately reinstated.
+		if (entersTerminal && !wasTerminal)
+			await CloseOutgoingBlocksEdgesOnTerminalEntryAsync(projectKey, nodeId, node.Key, node.Board, target, targetRuntime, ct);
 	}
 
 	// Stamp decisionPending:true on a node addressed by NodeId, without touching status — the
