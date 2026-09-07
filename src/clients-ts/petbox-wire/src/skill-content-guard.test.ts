@@ -74,3 +74,35 @@ test("petbox-methodology's intake-skip rule is checkable and names the non-trigg
     "the non-trigger branch (weighing alternatives -> use intake) must be named explicitly",
   );
 });
+
+// petbox-node-authoring is opened 10/10 in the agent-behaviour probe while its neighbor
+// petbox-write-economy — written specifically for delivering a long/non-ASCII body via bodyRef
+// instead of inlining — is opened 0/10 on the same task. node-authoring's body never named
+// write-economy or bodyRef/non-ASCII at all, so an agent reading only node-authoring got no
+// handoff to the skill that actually covers the failure mode. The fix must land the handoff AT
+// the point node-authoring discusses how to write the body (section (a)) — not as a trailing
+// section, which is the exact ordering mistake that already cost an incident in write-economy's
+// own section (e) — and must name both axes: format lives here, delivery of a long/non-ASCII
+// composed body lives in the neighbor, open before the write call.
+test("petbox-node-authoring hands off to petbox-write-economy at the point it discusses writing the body, naming both axes", () => {
+  const text = readTemplate("petbox-node-authoring");
+
+  const sectionA = text.split(/^## \(b\)/m)[0] ?? "";
+  assert.ok(
+    /petbox-write-economy/.test(sectionA) && /bodyRef/.test(sectionA),
+    "the handoff to petbox-write-economy (naming bodyRef) must live in section (a), where the " +
+      "skill discusses HOW to write the body — not merely somewhere else in the document:\n" +
+      sectionA,
+  );
+  assert.match(
+    sectionA,
+    /non-ASCII/,
+    "the trigger for the neighbor (long or non-ASCII composed text) must be named explicitly",
+  );
+  assert.match(
+    sectionA,
+    /FORMAT only/,
+    "the non-trigger axis (this skill covers FORMAT, not delivery) must be named explicitly too, " +
+      "so the handoff reads as a scope split rather than an unconditional redirect",
+  );
+});

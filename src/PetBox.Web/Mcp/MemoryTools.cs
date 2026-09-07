@@ -305,7 +305,7 @@ public static class MemoryTools
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, [LogArg] string store,
-		[Description("Array of entry objects: { key, type, description, body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this entry's body; mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
+		[Description("Array of entry objects: { key, type, description, body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this entry's body; for a body already on disk as a file, OR for body text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above); mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
@@ -556,7 +556,7 @@ public static class MemoryTools
 		// convention is "<the field it replaces> + Ref", which is what makes the pairing readable at
 		// the call site on every surface — `bodyRef` where the field is `body`, `contentRef` where it
 		// is a message's `content`.
-		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact that already exists as a file. Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
+		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact already on disk as a file, OR for fact text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above). Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);

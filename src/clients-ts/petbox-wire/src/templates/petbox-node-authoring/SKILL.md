@@ -20,7 +20,10 @@ a literal `\n`, not `==heading==`), bullet and numbered lists, tables, fenced co
 Typography, light/dark theming, line-length measure, and telling prose apart from identifiers are
 all the renderer's job — you do not pay for any of it and should not invent your own ASCII
 substitute (box-drawing dividers, hand-aligned columns, `**bold**` used as a heading). Write plain
-GFM; the renderer does the rest.
+GFM; the renderer does the rest. This skill is FORMAT only — if the body is long or non-ASCII text
+you are composing right now, its DELIVERY (write it to a file, then pass `bodyRef` instead of
+inlining) is `petbox-write-economy`: open that skill before the write call in that case, not this
+checklist alone.
 
 ## (b) Callout: GFM alerts, not a fake blockquote
 
