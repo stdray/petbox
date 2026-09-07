@@ -95,7 +95,12 @@ public sealed partial class TasksService : ITasksService
 		_settings = settings;
 		_observationSignals = observationSignals;
 		_nodeRefs = new NodeRefResolver(boards);
-		_effects = new TaskTransitionEffects(boards, relations, tags);
+		_effects = new TaskTransitionEffects(boards, relations, tags, log);
+		// Per-board methodology resolution for effects that reach a node on ANOTHER board (the
+		// terminal-blocker rule and the delete unblock both judge the DEPENDENT by the
+		// dependent's own document). Bound after construction — circular-safe via delegate, the
+		// same shape as BindInstanceRules below.
+		_effects.BindBoardRuntime(GetRuntimeForBoardAsync);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
 		_methodologyDefs = new MethodologyDefinitionService(boards);
 		_methodologyTemplates = new MethodologyTemplateService(boards, _methodologyDefs, instanceRules: null);
@@ -2064,6 +2069,11 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, landed, resolvedLinks, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, landed, prior, ct);
+				// AFTER the declared effects, never before (work blocks-edge-closes-on-terminal-blocker):
+				// a kind that declares its own `blocks` effect runs it with its own Set/OnlyFrom
+				// first, and this universal sweep then finds no active edge left to close. Order
+				// reversed, the generic rule would pre-empt a kind's declared semantics.
+				await _effects.RunTerminalBlocksReleaseAsync(projectKey, kindSlug, runtime, landed, prior, ct);
 				await SyncObservationOnObligationTerminalAsync(projectKey, runtime, kindSlug, landed, prior, ct);
 				await _effects.RunDeleteEffectsAsync(projectKey, board, landedDeletes, prior, runtime, ct);
 			}

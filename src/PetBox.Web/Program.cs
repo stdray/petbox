@@ -1101,6 +1101,21 @@ public partial class Program
 			new PetBox.Tasks.Data.AutoWireFieldRenamedMigrator(coreDbFactory, tasksFactory, autoWireLog).Migrate();
 		}
 
+		// One-time, idempotent (work blocks-edge-closes-on-terminal-blocker): the engine now closes
+		// a `blocks` edge when its blocker enters a terminal status, but only from now on, on an
+		// upsert. An edge whose blocker went terminal BEFORE the rule shipped stays active forever
+		// and `blockedBy` keeps naming a finished blocker — this closes exactly those.
+		//
+		// DRY RUN unless `Tasks:TerminalBlockerEdgeBackfill:Apply` is true. It writes to live
+		// project databases and `relations` has no "closed by" column, so the deploy that ships the
+		// rule runs it read-only first: the log then lists every edge it WOULD close, by primary
+		// key, and that list is what the maintainer flips the flag against (and what an undo reads).
+		{
+			var backfillApply = app.Configuration.GetValue("Tasks:TerminalBlockerEdgeBackfill:Apply", false);
+			var backfillLog2 = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.TerminalBlockerEdgeBackfillMigrator");
+			new PetBox.Tasks.Data.TerminalBlockerEdgeBackfillMigrator(coreDbFactory, tasksFactory, backfillApply, backfillLog2).Migrate();
+		}
+
 		// Idempotent per-restart catch-up (work observation-kind-and-dedup): ProjectDirectory.
 		// CreateAsync seeds the system `observations` board only for a project created FROM NOW ON
 		// (SeedObservationsBoardAsync) — a project that already existed before this card (starting
