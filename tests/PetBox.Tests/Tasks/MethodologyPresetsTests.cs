@@ -246,7 +246,7 @@ public sealed class MethodologyPresetsTests
 	{
 		// Every type resolves the SAME status vocabulary and edge set — type is a label
 		// over one FSM, not a branch.
-		foreach (var type in new[] { "task", "feature", "bug" })
+		foreach (var type in new[] { "task", "feature", "bug", "chore" })
 		{
 			var wf = Runtime.For("classic", type)!;
 			wf.Statuses.Should().Equal(ClassicStatuses, $"classic/{type} statuses are the snapshot");
@@ -264,7 +264,7 @@ public sealed class MethodologyPresetsTests
 			wf.Transitions.Where(t => t.RequiresApproval).Should().OnlyContain(t => t.From == "Review" && t.To == "Done");
 			wf.Transitions.Should().OnlyContain(t => !t.EnforceApproval && t.PreconditionArtifact == null);
 		}
-		Runtime.ValidTypes("classic").Should().Be("task|feature|bug");
+		Runtime.ValidTypes("classic").Should().Be("task|feature|bug|chore");
 	}
 
 	[Fact]
@@ -273,7 +273,7 @@ public sealed class MethodologyPresetsTests
 		// Owner review, part A: Backlog/Todo/InProgress must NOT carry a direct edge to
 		// Done — the agent ceiling for classic is Review, exactly as the protocol teaches
 		// (an agent that stalls at Review can't route around it via a sibling open status).
-		foreach (var type in new[] { "task", "feature", "bug" })
+		foreach (var type in new[] { "task", "feature", "bug", "chore" })
 		{
 			var wf = Runtime.For("classic", type)!;
 			foreach (var from in new[] { "Backlog", "Todo", "InProgress" })
@@ -293,10 +293,10 @@ public sealed class MethodologyPresetsTests
 		// classic is strict like work (the engine names the valid types), even though the
 		// single block would fit any label.
 		Runtime.For("classic", "banana").Should().BeNull();
-		// ONE block: task|feature|bug are labels over the same FSM (owner review: identical
-		// per-type state machines are one state machine).
+		// ONE block: task|feature|bug|chore are labels over the same FSM (owner review:
+		// identical per-type state machines are one state machine).
 		var block = Runtime.Blocks("classic").Should().ContainSingle().Subject;
-		block.Types.Should().Equal("task", "feature", "bug");
+		block.Types.Should().Equal("task", "feature", "bug", "chore");
 		MethodologyPresets.ParseKind("classic").Should().Be(BoardKind.Classic);
 	}
 
@@ -319,7 +319,7 @@ public sealed class MethodologyPresetsTests
 	{
 		// Rework guarantee: the status vocabulary is unchanged, so a live node parked in
 		// ANY status — from either former block — stays valid under the single block.
-		foreach (var type in new[] { "task", "feature", "bug" })
+		foreach (var type in new[] { "task", "feature", "bug", "chore" })
 		{
 			var wf = Runtime.For("classic", type)!;
 			foreach (var slug in new[] { "Backlog", "Todo", "InProgress", "Review", "Done", "Cancelled", "Duplicate" })
@@ -659,11 +659,43 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		await Upsert("backlog", new NodePatch { Key = "b", Type = "bug", Title = "B", Body = "x" });
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "b").Status.Should().Be("Backlog");
 		var badType = () => Upsert("backlog", new NodePatch { Key = "z", Type = "banana", Title = "Z", Body = "x" });
-		(await badType.Should().ThrowAsync<ArgumentException>()).WithMessage("*task|feature|bug*");
+		(await badType.Should().ThrowAsync<ArgumentException>()).WithMessage("*task|feature|bug|chore*");
 
 		// Free-form tags, like simple (classic declares no axes).
 		await Upsert("backlog", new NodePatch { Key = "t", Title = "T", Body = "x", Tags = ["severity:high", "urgent"] });
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "t").Tags.Should().Equal("severity:high", "tag:urgent");
+	}
+
+	// chore-type-in-classic-preset: `chore` is the fourth label over the SAME classic FSM
+	// (no linkConstraint targets it, same as task/feature/bug) — below-spec engineering
+	// hygiene (tests, flakes, refactoring) gets a name distinct from "type not specified".
+	// Before the fix this is refused: banana-shaped door names only task|feature|bug.
+	[Fact]
+	public async Task Classic_Board_AcceptsChoreType_AsFourthLabelOverSameFsm()
+	{
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		await Upsert("backlog", new NodePatch { Key = "c", Type = "chore", Title = "C", Body = "x" });
+		var node = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "c");
+		node.Type.Should().Be("chore");
+		node.Status.Should().Be("Backlog", "chore is born on the SAME single block as task/feature/bug");
+
+		// chore moves through the identical FSM: free open-to-open, capped at Review before Done.
+		await Upsert("backlog", new NodePatch { Key = "c", Status = "Review", Version = node.Version });
+		var v1 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
+		await Upsert("backlog", new NodePatch { Key = "c", Status = "Done", Version = v1 });
+		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Done");
+	}
+
+	// Half the task is easy to break silently: adding chore must NOT move it ahead of task
+	// in declaration order — task stays Types[0], the quick-add/untyped default.
+	[Fact]
+	public async Task Classic_Board_UntypedNode_StillDefaultsToTask_AfterChoreAdded()
+	{
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		// A plain Upsert with NO Type field — not QuickAddAsync — to exercise the same
+		// DefaultType resolution path a create-time write falls back to.
+		await Upsert("backlog", new NodePatch { Key = "u", Title = "U", Body = "x" });
+		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "u").Type.Should().Be("task");
 	}
 
 	// Owner review, part A, exercised end-to-end through the service: Done is reachable

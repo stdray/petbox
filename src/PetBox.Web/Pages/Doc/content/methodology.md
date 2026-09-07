@@ -11,7 +11,7 @@ Set `kind` on `tasks_board_create` (it can't be changed later). The kind drives 
 - **`ideas`** — deliberation, type `idea`. Status `raw→exploring→{rejected|deferred|accepted}`.
 - **`intake`** — raw issues, type `issue`. Status `reported→triage→{confirmed|duplicate|wontfix}→done`.
 - **`simple`** — a lightweight preset for ad-hoc/scratch work: type `task|bug|feature|chore|issue`, status `Todo→InProgress→Done` (+ `Blocked|Cancelled`) with FREE transitions (any valid status → any, no gates), and free-form tags. No spec/idea governance.
-- **`classic`** — a single self-contained board at the level of the GitHub/Jira/Linear defaults: type `task` (default) `|feature|bug`, quick-add allowed, free-form tags. The open statuses `Backlog→Todo→InProgress→Review` move freely among each other; **`Done` is reachable only from `Review`**; `Cancelled` closes from any open status with no reason; `Duplicate` closes from any open status but **requires a reason**. Any terminal reopens to `Todo`. No spec/idea governance — like `simple`, but modeling the Review-gated `Done` convention (see "Approve gate" below).
+- **`classic`** — a single self-contained board at the level of the GitHub/Jira/Linear defaults: type `task` (default) `|feature|bug|chore`, quick-add allowed, free-form tags. The open statuses `Backlog→Todo→InProgress→Review` move freely among each other; **`Done` is reachable only from `Review`**; `Cancelled` closes from any open status with no reason; `Duplicate` closes from any open status but **requires a reason**. Any terminal reopens to `Todo`. No spec/idea governance — like `simple`, but modeling the Review-gated `Done` convention (see "Approve gate" below).
 
 **Standard boards.** A project uses one board of each kind, named for its kind: `ideas`, `spec`, `work`, `intake` (+ `simple` scratch). Use those names so every agent and session finds the same boards.
 
@@ -73,7 +73,7 @@ A tier scales *how deep* the idea and how thick the spec are — not whether you
 The **Enable methodology** panel offers two ready-made presets:
 
 - **`quartet`** — the four singleton boards above (`ideas`/`spec`/`work`/`intake`), spec-linked, a full requirement tree. Pick it for an ongoing, multi-session/multi-agent project where the spec is a durable asset.
-- **`classic`** — one flat `classic`-kind board (`task|feature|bug`, quick-add, free-form tags), no spec/idea linkage — see the kind description above for its statuses and the Review-gated `Done`. Pick it for single-board tracking at the GitHub/Jira/Linear level, without provisioning the other three boards.
+- **`classic`** — one flat `classic`-kind board (`task|feature|bug|chore`, quick-add, free-form tags), no spec/idea linkage — see the kind description above for its statuses and the Review-gated `Done`. Pick it for single-board tracking at the GitHub/Jira/Linear level, without provisioning the other three boards.
 
 ## Tools
 

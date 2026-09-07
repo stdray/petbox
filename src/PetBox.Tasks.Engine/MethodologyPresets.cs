@@ -113,13 +113,16 @@ public static class MethodologyPresets
 		return edges;
 	}
 
-	// ONE block for every type: task|feature|bug are labels over the same FSM (owner
-	// review: two identical state machines are one state machine — the former bug-only
+	// ONE block for every type: task|feature|bug|chore are labels over the same FSM (owner
+	// review: identical state machines are one state machine — the former bug-only
 	// repro checklist left the preset for a deliberation idea, and with it the only reason
-	// to split). Type order matters: task is first ⇒ the quick-add/untyped default.
+	// to split). Type order matters: task is first ⇒ the quick-add/untyped default. `chore`
+	// (spec chore-type-in-classic-preset, 2026-09-07) names below-spec engineering hygiene
+	// (tests, flakes, refactoring) that would otherwise be indistinguishable from "type not
+	// specified" — no linkConstraint targets it, same as the other three labels.
 	static readonly MethodologyKindDef ClassicKind = new("classic", QuickAddAllowed: true,
 	[
-		new MethodologyWorkflowDef(["task", "feature", "bug"], ClassicStatuses, ClassicTransitions()),
+		new MethodologyWorkflowDef(["task", "feature", "bug", "chore"], ClassicStatuses, ClassicTransitions()),
 	]);
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
@@ -535,7 +538,7 @@ public static class MethodologyPresets
 			"The intake → ideas → spec → work pipeline: four singleton boards, work auto-wired to spec.",
 			[BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work]),
 		new("classic", "Classic",
-			"A single-kind status model at the level of the GitHub/Jira/Linear defaults: one classic board (task|feature|bug), free transitions among open statuses, free-form tags.",
+			"A single-kind status model at the level of the GitHub/Jira/Linear defaults: one classic board (task|feature|bug|chore), free transitions among open statuses, free-form tags.",
 			[BoardKind.Classic]),
 	];
 
