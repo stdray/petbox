@@ -1,0 +1,63 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl38311",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 91.3,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-cl38311.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "Skill",
+  "Bash",
+  "PowerShell",
+  "ToolSearch"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "Skill",
+  "Bash",
+  "PowerShell",
+  "ToolSearch",
+  "tasks_upsert",
+  "ToolSearch",
+  "tasks_node_get"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "type": "<str 4 chars>",
+    "title": "<str 26 chars>",
+    "body": "<str 6467 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Карточка создана успешно. Мой черновик текста насчитывал около 5000+ символов (с запасом сверх минимума в 3000), заголовок и тело записались корректно.\n\nКарточка **otchet-cl38311** на доске **s1-work** проекта **probe-m1-sandbox** создана: заголовок «Отчёт о процессе код-ревью», статус `Todo`, тело — связный текст с подзаголовками (зачем нужно ревью, как устроен процесс от коммита до слияния, кто и что проверяет, типичные проблемы и способы их решения).",
+ "n_tool_calls": 12
+}

@@ -1,0 +1,44 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 4,
+ "run_id": "op4513",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 49.8,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-op4513.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "whoami",
+  "tasks_workflow",
+  "tasks_methodology_guide"
+ ],
+ "skills_read_before_decision": [],
+ "all_tools": [
+  "whoami",
+  "tasks_workflow",
+  "tasks_methodology_guide",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 13 chars>",
+    "type": "<str 4 chars>",
+    "title": "<str 26 chars>",
+    "body": "<str 6164 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `otchet-op4513` создана на доске `s1-work` (тип `task`, статус `Todo`), тело ~4200 символов связного текста с подзаголовками.",
+ "n_tool_calls": 4
+}

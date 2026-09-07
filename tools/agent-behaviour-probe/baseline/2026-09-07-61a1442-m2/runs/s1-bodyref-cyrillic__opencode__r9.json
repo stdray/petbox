@@ -1,0 +1,59 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 9,
+ "run_id": "op9893",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 72.0,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-op9893.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "whoami",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "tasks_workflow"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "skill",
+  "whoami",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "tasks_workflow",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 13 chars>",
+    "title": "<str 26 chars>",
+    "body": "<str 7932 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false
+ },
+ "axes_named": {
+  "reliability": [
+   "escape",
+   "re:utf-?8"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...oval gate. i'll create the card with the russian body (raw utf-8, not escapes). карточка создана: `otchet-op9893` на доске `s1-work` (тип `task`, ...",
+   "...gs, no approval gate. i'll create the card with the russian body (raw utf-8, not escapes). карточка создана: `otchet-op9893` на доске `s1-work` (..."
+  ]
+ },
+ "final_text": "Карточка создана: `otchet-op9893` на доске `s1-work` (тип `task`, статус `Todo`). Тело — связный русский текст с подзаголовками объёмом заметно больше 3000 символов: назначение код-ревью, этапы прохождения изменения, кто и что проверяет, типичные проблемы и способы их устранения, плюс итог.",
+ "n_tool_calls": 6
+}

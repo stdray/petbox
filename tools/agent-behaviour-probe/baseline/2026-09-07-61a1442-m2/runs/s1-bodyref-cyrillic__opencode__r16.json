@@ -1,0 +1,69 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 16,
+ "run_id": "op161395",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 105.8,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-op161395.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "whoami",
+  "tasks_workflow",
+  "tasks_methodology_guide",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "skill",
+  "whoami",
+  "tasks_workflow",
+  "tasks_methodology_guide",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "tasks_upsert",
+  "tasks_node_get",
+  "tasks_node_get"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "title": "<str 26 chars>",
+    "body": "<str 5649 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false
+ },
+ "axes_named": {
+  "reliability": [
+   "обрез"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "... требование «не меньше 3000» выполнено.  тело записано полностью, без обрезки (проверено полным чтением)...."
+  ]
+ },
+ "final_text": "Готово. Карточка `otchet-op161395` создана на доске `s1-work` (kind `simple`, статус `Todo`).\n\n- Заголовок: «Отчёт о процессе код-ревью»\n- Тело: связный русский текст с подзаголовками (`## Зачем…`, `## Как изменение проходит…`, `## Кто и что проверяет`, `## Типичные проблемы…`, `## Итог`), объём ~4500 символов — требование «не меньше 3000» выполнено.\n\nТело записано полностью, без обрезки (проверено полным чтением).",
+ "n_tool_calls": 13
+}

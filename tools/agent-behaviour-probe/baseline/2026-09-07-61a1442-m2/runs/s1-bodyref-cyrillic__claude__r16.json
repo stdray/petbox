@@ -1,0 +1,67 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "claude",
+ "run": 16,
+ "run_id": "cl169767",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 102.4,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-cl169767.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "Skill",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-methodology",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "tasks_board_list",
+  "Skill",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "version": 0,
+    "title": "<str 26 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ],
+  "bodyLen": 0
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Карточка создана: `otchet-cl169767` на доске `s1-work` проекта `probe-m1-sandbox`, статус `Todo`, заголовок «Отчёт о процессе код-ревью», тело — связный текст на русском (~8800 символов) с подзаголовками о целях ревью, жизненном цикле изменения, автоматических проверках, зонах ответственности проверяющих, типичных проблемах и их решениях, а также об итоговом слиянии.",
+ "n_tool_calls": 12
+}

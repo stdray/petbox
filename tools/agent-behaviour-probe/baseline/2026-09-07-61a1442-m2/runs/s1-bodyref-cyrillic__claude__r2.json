@@ -1,0 +1,80 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "claude",
+ "run": 2,
+ "run_id": "cl28195",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 115.3,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-cl28195.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_board_list",
+  "Bash",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_board_list",
+  "Bash",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "title": "<str 26 chars>",
+    "bodyRef": "<str 37 chars>",
+    "version": 0
+   }
+  ],
+  "bodyLen": 0
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...еперь напишу текст отчёта и загружу его как blob, чтобы не передавать кириллицу напрямую в вызов. the variable is actually named `petbox_probe_api..."
+  ]
+ },
+ "final_text": "Карточка `otchet-cl28195` создана на доске `s1-work` проекта `probe-m1-sandbox` — заголовок «Отчёт о процессе код-ревью», статус Todo, тело (~9900 символов, с подзаголовками) загружено через blob-ref.",
+ "n_tool_calls": 15
+}
