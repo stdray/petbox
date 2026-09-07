@@ -51,6 +51,20 @@ public sealed class MethodologyGuideObligationScopeAbsenceTests
 		[new MethodologyTransitionDef("draft", "published")]),
 	]);
 
+	// A workflow whose very FIRST (Initial) status is ITSELF a gate's `From` — no shipped
+	// preset does this today, but the guide must not assert a self-contradiction if one ever
+	// does: "stuck in Initial is a defect" directly next to "waiting at Initial is the rule"
+	// would be exactly the pressure-with-no-release-valve defect this card exists to remove.
+	static readonly MethodologyKindDef InitialIsGateFromKind = new("approval-at-birth", QuickAddAllowed: true,
+	[
+		new MethodologyWorkflowDef(["item"],
+		[
+			new WorkflowStatus("draft", "Draft", StatusKind.Open),
+			new WorkflowStatus("published", "Published", StatusKind.TerminalOk),
+		],
+		[new MethodologyTransitionDef("draft", "published", RequiresApproval: true)]),
+	]);
+
 	// ---- (a) obligation axis ----
 
 	[Fact]
@@ -59,11 +73,59 @@ public sealed class MethodologyGuideObligationScopeAbsenceTests
 		var guide = Guide(Classic());
 
 		// The prohibition half (pre-existing) and the obligation half (this card) must both be
-		// present, and the obligation line must name the concrete defect shape, not just
-		// "everything else is fine" — a vague reassurance is exactly as unfalsifiable as silence.
+		// present, scoped to open-to-open movement, and naming the workflow's Initial status
+		// (not a blanket "any non-terminal status") as the concrete "stuck" shape.
 		guide.Markdown.Should().Contain("The agent NEVER performs Review -> Done");
-		guide.Markdown.Should().Contain("Every OTHER transition in this workflow is the agent's own to make");
-		guide.Markdown.Should().Contain("is exactly that defect");
+		guide.Markdown.Should().Contain("Every OTHER transition that moves work between two OPEN statuses is the agent's own to make");
+		guide.Markdown.Should().Contain("A card left sitting in Backlog after the work behind it has already moved on is a defect.");
+	}
+
+	// review finding, defect 1: the ORIGINAL wording ("any other non-terminal status") swept up
+	// Review itself — the status whose only forward exit is forbidden to the agent one line
+	// above. That turned "stop here and hand over" into "you have a defect", pressure with no
+	// legitimate release valve (the textbook shape for an agent to resolve by self-approving).
+	// The fix must, in the SAME sentence, both narrow the "stuck" claim to Initial (Backlog,
+	// not Review) AND say outright that waiting at the gate's own `From` (Review) is the rule.
+	[Fact]
+	public void GatedStatus_IsExemptFromTheStuckDefectClaim_NotSweptIntoIt()
+	{
+		var guide = Guide(Classic());
+
+		guide.Markdown.Should().Contain(
+			"stop at Review and hand over — waiting there is exactly the rule, not neglect.",
+			"the gate's own From status must be named as the legitimate wait point, not left to be inferred");
+		guide.Markdown.Should().NotContain("(or any other non-terminal status)",
+			"the old blanket phrasing swept up Review — the very status the NEVER line just told the agent to stop at");
+	}
+
+	// The degenerate case: when Initial itself IS the gate's From, asserting "stuck in Initial
+	// is a defect" would contradict "waiting at Initial is the rule" one clause earlier. The
+	// stuck-claim must be omitted rather than printed self-contradictory.
+	[Fact]
+	public void WorkflowWhoseInitialIsItselfTheGateFrom_OmitsTheStuckClaim()
+	{
+		var guide = Guide(Classic() with { Kinds = [InitialIsGateFromKind] });
+
+		guide.Markdown.Should().Contain("stop at draft and hand over — waiting there is exactly the rule, not neglect.");
+		guide.Markdown.Should().NotContain("card left sitting in draft",
+			"draft is both Initial AND the gate's From here — claiming it's a defect to sit there would contradict the same line's 'waiting there is the rule'");
+	}
+
+	// review finding, defect 2: "every OTHER transition ... is yours", read literally, granted
+	// the agent transitions that decide the work's FATE (closing without delivery, reopening a
+	// closed node) — not movement the work makes toward delivery. Cancel/duplicate/reopen are
+	// not the agent's call any more than Done/accepted is; the grant must name them OUT.
+	[Fact]
+	public void ObligationGrant_ExcludesClosingAndReopeningTransitions()
+	{
+		var guide = Guide(Classic());
+
+		guide.Markdown.Should().Contain("between two OPEN statuses is the agent's own to make",
+			"the grant is scoped to open-to-open movement, not every transition the FSM happens to allow");
+		guide.Markdown.Should().Contain(
+			"Closing without delivery or reopening a closed node is a separate decision this line does not grant.");
+		guide.Markdown.Should().NotContain("Every OTHER transition in this workflow is the agent's own to make",
+			"the unscoped grant would literally include -> Cancelled and -> Duplicate, decisions about the work's fate");
 	}
 
 	[Fact]
@@ -72,7 +134,7 @@ public sealed class MethodologyGuideObligationScopeAbsenceTests
 		var guide = Guide(Classic() with { Kinds = [GateFreeKind] });
 
 		guide.Markdown.Should().Contain("## Kind: wiki");
-		guide.Markdown.Should().NotContain("Every OTHER transition in this workflow is the agent's own to make",
+		guide.Markdown.Should().NotContain("is the agent's own to make",
 			"a workflow with no approval gate has no prohibition for this line to qualify");
 	}
 
