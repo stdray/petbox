@@ -1,0 +1,49 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 5,
+ "run_id": "cl599",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 54.1,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl599.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_search"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_search",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 11 chars>",
+    "author": "<str 6 chars>",
+    "body": "<str 6396 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий добавлен к карточке `obzor-cl599` на доске `s5-work` (проект `probe-m1-sandbox`). Текст на русском, с подзаголовками («Зачем нужен код-ревью», «Как устроен процесс по этапам», «Кто и что проверяет», «Типичные проблемы и как их чинят»), объём — около 6800 символов.",
+ "n_tool_calls": 4
+}

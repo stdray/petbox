@@ -1,0 +1,77 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 14,
+ "run_id": "cl142521",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 139.2,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl142521.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "tasks_search",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "ToolSearch",
+  "Read"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "tasks_search",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "ToolSearch",
+  "Read",
+  "comments_upsert",
+  "ToolSearch",
+  "comments_get"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 14 chars>",
+    "author": "<str 6 chars>",
+    "body": "<str 6531 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...omments_get` подтвердила, что текст сохранился целиком, без искажений кириллицы — 4 подраздела («зачем нужен код-ревью», «как устроен процесс», «к..."
+  ]
+ },
+ "final_text": "Комментарий успешно добавлен к карточке `obzor-cl142521` на доске `s5-work` в проекте `probe-m1-sandbox`. Проверка через `comments_get` подтвердила, что текст сохранился целиком, без искажений кириллицы — 4 подраздела («Зачем нужен код-ревью», «Как устроен процесс», «Кто и что проверяет», «Типичные проблемы и способы их решения»), объём заметно больше 3000 символов.",
+ "n_tool_calls": 14
+}

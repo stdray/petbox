@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "S5 ONLY -- the TRANSFER TEST. Lives in a SEPARATE tool directory on purpose, exactly as s4",
+    "does: appending a scenario to tools/agent-behaviour-probe/scenarios.json would move that",
+    "file's spec_hash (340290f50bc34b28) and make M0/M1/M2/M3 mutually incomparable. The scoring",
+    "contract of S1-S3 is therefore left byte-identical and S5 carries its own hash.",
+    "",
+    "WHAT IT IS FOR. The day's result is that the agent stopped inlining a long Cyrillic body into",
+    "tasks_upsert and started going through bodyRef (claude 0/10 -> 16/20, opencode 9/20 -> 17/20).",
+    "The traced mechanism was a CHAIN: open petbox-node-authoring -> its hand-off sentence -> open",
+    "petbox-write-economy -> bodyRef. The reserve's objection is that the effect may hang on that",
+    "one chain rather than on the axis, and would therefore NOT transfer to a write path whose",
+    "starting link is absent. S5 is S1's task moved onto such a path: the same long Russian body,",
+    "written as a COMMENT to an existing node via comments_upsert instead of as the node's body.",
+    "",
+    "The counter-fact that makes the test discriminating: the bodyRef parameter prose was fixed in",
+    "FIVE places, comments_upsert (CommentTools.cs:88) among them. So on the comment path the",
+    "POINT OF ACT carries the repair even where the skill chain may not fire. S5 separates the two",
+    "carriers: bodyRef used WITHOUT node-authoring having been opened => the point of act carries",
+    "it; no bodyRef and no chain => the fix is narrow and the umbrella stays open.",
+    "",
+    "PROMPT IS NEUTRAL about the axis under test, exactly as S1's is. It names the payload (long",
+    "Russian prose, >= 3000 chars) and the write PATH (a comment), because the path is the",
+    "MANIPULATED variable and must be pinned; it says nothing about Cyrillic, size limits,",
+    "truncation, escaping, token budget or bodyRef -- naming any of those would destroy the",
+    "measurement. The axis word lists are COPIED VERBATIM from S1 so the two are read under one",
+    "dictionary; a reworded list would make 'the behaviour transferred' indistinguishable from",
+    "'the markers were retuned'.",
+    "",
+    "decisive_tools is comments_upsert ALONE (S1 also lists tasks_upsert). The cut only bounds",
+    "reads_before_decision; every signal below scans the whole tool list, so the comparable numbers",
+    "are unaffected -- but the fixture card already exists here, so an incidental tasks_upsert must",
+    "not be allowed to cut the read history before the real decision.",
+    "{RUN} is substituted with a per-run unique suffix; each run gets its OWN target card, so no",
+    "run can see another run's comments."
+  ],
+
+  "scenarios": [
+    {
+      "id": "s5-bodyref-cyrillic-comment",
+      "title": "bodyRef на кириллице — путь комментария (перенос-тест S1)",
+      "umbrella_ref": "Перенос: держится ли исправленное поведение на пути записи, для которого правку не строили",
+      "fixture": "board_card",
+      "board": "s5-work",
+      "board_kind": "simple",
+      "card": "obzor-{RUN}",
+      "card_title": "Обзор процесса код-ревью",
+      "card_body": "Карточка для сбора материалов по процессу код-ревью в команде разработки.",
+      "prompt": "В проекте {PROJECT} на доске {BOARD} лежит карточка {CARD}.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+      "decisive_tools": ["comments_upsert"],
+      "signals": {
+        "used_bodyref": {"kind": "tool_arg_key", "tools": ["comments_upsert"], "key": "bodyRef"},
+        "used_inline_body": {"kind": "tool_arg_key", "tools": ["comments_upsert"], "key": "body"},
+        "uploaded_blob": {"kind": "any_arg_contains", "needle": "/api/blobs/"},
+        "read_write_economy_skill": {"kind": "read_skill", "skill": "petbox-write-economy"},
+        "read_node_authoring_skill": {"kind": "read_skill", "skill": "petbox-node-authoring"},
+        "called_tool_describe": {"kind": "tool_called", "tools": ["tool_describe"]},
+        "wrote_into_node_body_instead": {"kind": "tool_arg_key", "tools": ["tasks_upsert"], "key": "body"}
+      },
+      "axes": {
+        "tokens": ["токен", "экономи", "бюджет", "budget", "дешевл", "дорог"],
+        "reliability": ["обрез", "усечен", "truncat", "escape", "эскейп", "re:\\\\u[0-9a-f]{4}", "re:utf-?8", "юникод", "кирилл", "не доедет", "развалит"]
+      }
+    }
+  ]
+}

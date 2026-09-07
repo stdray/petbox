@@ -1,0 +1,62 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "opencode",
+ "run": 5,
+ "run_id": "op51420",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 76.1,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-op51420.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "skill",
+  "skill",
+  "tasks_search",
+  "bash",
+  "write",
+  "bash",
+  "whoami",
+  "comments_search"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "skill",
+  "skill",
+  "tasks_search",
+  "bash",
+  "write",
+  "bash",
+  "whoami",
+  "comments_search",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 13 chars>",
+    "author": "<str 8 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий добавлен к карточке `obzor-op51420` на доске `s5-work` (id `faf053a582f44659af7eeecab02b3bb1`, ~7200 символов, текст с подзаголовками: зачем нужно ревью, этапы изменения, кто и что проверяет, типичные проблемы и как их чинят).",
+ "n_tool_calls": 10
+}

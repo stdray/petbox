@@ -1,0 +1,73 @@
+{
+ "generated": "2026-09-07T20:48:56",
+ "spec_hash": "e457157438717d77",
+ "cells": [
+  {
+   "scenario": "s5-bodyref-cyrillic-comment",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 20,
+   "runs_exit0": 20,
+   "signal_rates": {
+    "used_bodyref": "15/20",
+    "used_inline_body": "5/20",
+    "uploaded_blob": "17/20",
+    "read_write_economy_skill": "18/20",
+    "read_node_authoring_skill": "17/20",
+    "called_tool_describe": "0/20",
+    "wrote_into_node_body_instead": "0/20"
+   },
+   "axis_rates": {
+    "tokens": "0/20",
+    "reliability": "5/20"
+   },
+   "reads_before_decision_union": [
+    "Bash",
+    "Edit",
+    "Glob",
+    "Grep",
+    "PowerShell",
+    "Read",
+    "Skill",
+    "ToolSearch",
+    "Write",
+    "tasks_node_get",
+    "tasks_search",
+    "whoami"
+   ],
+   "skills_read_rate": "20/20"
+  },
+  {
+   "scenario": "s5-bodyref-cyrillic-comment",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 10,
+   "runs_exit0": 10,
+   "signal_rates": {
+    "used_bodyref": "10/10",
+    "used_inline_body": "0/10",
+    "uploaded_blob": "10/10",
+    "read_write_economy_skill": "10/10",
+    "read_node_authoring_skill": "10/10",
+    "called_tool_describe": "0/10",
+    "wrote_into_node_body_instead": "0/10"
+   },
+   "axis_rates": {
+    "tokens": "0/10",
+    "reliability": "0/10"
+   },
+   "reads_before_decision_union": [
+    "bash",
+    "comments_search",
+    "grep",
+    "read",
+    "skill",
+    "tasks_node_get",
+    "tasks_search",
+    "whoami",
+    "write"
+   ],
+   "skills_read_rate": "10/10"
+  }
+ ]
+}

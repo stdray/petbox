@@ -1,0 +1,61 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 12,
+ "run_id": "cl122344",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 84.0,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl122344.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "tasks_search",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "tasks_search",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 14 chars>",
+    "author": "<str 16 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий добавлен к карточке `obzor-cl122344` на доске s5-work в проекте probe-m1-sandbox — текст объёмом ~7700 символов о том, как устроен код-ревью в команде: зачем нужен, этапы прохождения изменения, зоны ответственности ревьюеров и типичные проблемы с их решениями.",
+ "n_tool_calls": 10
+}

@@ -1,0 +1,91 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 20,
+ "run_id": "cl203134",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 194.1,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl203134.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "tasks_search",
+  "PowerShell",
+  "Bash",
+  "Grep",
+  "Bash",
+  "Grep",
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "PowerShell",
+  "Read",
+  "Bash",
+  "PowerShell",
+  "ToolSearch",
+  "whoami",
+  "tasks_node_get"
+ ],
+ "skills_read_before_decision": [
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "tasks_search",
+  "PowerShell",
+  "Bash",
+  "Grep",
+  "Bash",
+  "Grep",
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "PowerShell",
+  "Read",
+  "Bash",
+  "PowerShell",
+  "ToolSearch",
+  "whoami",
+  "tasks_node_get",
+  "comments_upsert",
+  "comments_get"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 14 chars>",
+    "author": "<str 6 chars>",
+    "body": "<str 6380 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "re:utf-?8",
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...now, using the same text i already wrote to the file, directly as raw utf-8 body. комментарий (≈6300 символов, кириллица без искажений) успешно д...",
+   "...to the file, directly as raw utf-8 body. комментарий (≈6300 символов, кириллица без искажений) успешно добавлен к карточке `obzor-cl203134` на дос..."
+  ]
+ },
+ "final_text": "Комментарий (≈6300 символов, кириллица без искажений) успешно добавлен к карточке `obzor-cl203134` на доске `s5-work` в проекте `probe-m1-sandbox`. Текст разбит на подзаголовки: зачем нужен код-ревью, через какие этапы проходит изменение, кто и на что смотрит, типичные проблемы и как их лечат.",
+ "n_tool_calls": 21
+}

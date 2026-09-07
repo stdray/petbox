@@ -1,0 +1,65 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl39888",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 84.1,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl39888.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "tasks_node_get",
+  "Bash",
+  "Bash",
+  "Write",
+  "Edit",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "tasks_node_get",
+  "Bash",
+  "Bash",
+  "Write",
+  "Edit",
+  "Bash",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 13 chars>",
+    "author": "<str 16 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ],
+  "bodyLen": 0
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий добавлен к карточке `obzor-cl39888` на доске `s5-work` (проект `probe-m1-sandbox`). Текст на русском объёмом ~7000 символов, с подзаголовками: зачем нужен код-ревью, этапы прохождения изменения, роли и зоны ответственности проверяющих, типичные проблемы и способы их решения.",
+ "n_tool_calls": 11
+}

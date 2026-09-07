@@ -1,0 +1,78 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "opencode",
+ "run": 4,
+ "run_id": "op41320",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 99.4,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-op41320.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "skill",
+  "tasks_node_get",
+  "whoami",
+  "comments_search",
+  "bash",
+  "bash",
+  "grep",
+  "bash",
+  "bash",
+  "bash",
+  "read",
+  "read",
+  "write",
+  "bash",
+  "bash",
+  "comments_search"
+ ],
+ "skills_read_before_decision": [
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "skill",
+  "tasks_node_get",
+  "whoami",
+  "comments_search",
+  "bash",
+  "bash",
+  "grep",
+  "bash",
+  "bash",
+  "bash",
+  "read",
+  "read",
+  "write",
+  "bash",
+  "bash",
+  "comments_search",
+  "comments_upsert",
+  "comments_get"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 13 chars>",
+    "author": "<str 16 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Комментарий создан на карточке `obzor-op41320` (доска `s5-work`), id `72116ebde3df4de1abd9c39eec87a627`.\n\n- Текст на русском, ~6264 символа, связный, с подзаголовками (`##`): зачем ревью, жизненный цикл изменения, кто и что проверяет, типичные проблемы, как чинят замечания.\n- Доставлен через `bodyRef` (blob-upload), тело распознано корректно.",
+ "n_tool_calls": 19
+}

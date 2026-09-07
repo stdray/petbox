@@ -1,0 +1,76 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 9,
+ "run_id": "cl9650",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 105.0,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl9650.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "tasks_node_get",
+  "Bash",
+  "Write",
+  "Edit",
+  "PowerShell",
+  "PowerShell",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "Skill",
+  "tasks_node_get",
+  "Bash",
+  "Write",
+  "Edit",
+  "PowerShell",
+  "PowerShell",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "projectKey": "<str 16 chars>",
+  "items": [
+   {
+    "node": "<str 12 chars>",
+    "author": "<str 16 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ],
+  "bodyLen": 0
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий успешно добавлен к карточке «Обзор процесса код-ревью» (obzor-cl9650) на доске s5-work проекта probe-m1-sandbox. Текст на ~7900 символов раскрывает: зачем нужен код-ревью, из каких этапов состоит путь изменения от постановки задачи до мержа, кто и что именно проверяет (автор, ревьюеры по областям, тимлид), и типичные проблемы процесса (слишком большие PR, затянутое ревью, споры о стиле, формальные аппрувы, конфликты по существу, потеря найденного техдолга) с описанием, как их решают.",
+ "n_tool_calls": 16
+}

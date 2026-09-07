@@ -1,0 +1,72 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "opencode",
+ "run": 10,
+ "run_id": "op101845",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 87.2,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-op101845.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "skill",
+  "skill",
+  "whoami",
+  "tasks_node_get",
+  "bash",
+  "bash",
+  "bash",
+  "grep",
+  "write",
+  "bash",
+  "bash",
+  "comments_search",
+  "comments_search"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "skill",
+  "skill",
+  "whoami",
+  "tasks_node_get",
+  "bash",
+  "bash",
+  "bash",
+  "grep",
+  "write",
+  "bash",
+  "bash",
+  "comments_search",
+  "comments_search",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 14 chars>",
+    "author": "<str 6 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий добавлен к карточке `obzor-op101845` на доске `s5-work` — 7067 символов, подзаголовки: зачем нужно, этапы, кто что проверяет, типичные проблемы, как чинят.",
+ "n_tool_calls": 15
+}

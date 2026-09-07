@@ -1,0 +1,66 @@
+{
+ "scenario": "s5-bodyref-cyrillic-comment",
+ "harness": "claude",
+ "run": 16,
+ "run_id": "cl162758",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 78.3,
+ "spec_hash": "e457157438717d77",
+ "prompt": "В проекте probe-m1-sandbox на доске s5-work лежит карточка obzor-cl162758.\nОставь к ней комментарий — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_search",
+  "whoami",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_search",
+  "whoami",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "comments_upsert"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "board": "<str 7 chars>",
+  "items": [
+   {
+    "node": "<str 14 chars>",
+    "author": "<str 16 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": true,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Комментарий успешно добавлен к карточке `obzor-cl162758` на доске s5-work (проект probe-m1-sandbox) — подробный текст (6925 символов) с подзаголовками о процессе код-ревью: зачем он нужен, этапы от ветки до мержа, роли и уровни проверки ревьюера, типичные проблемы (гигантские PR, расхождение в конвенциях, затягивание, флаки, \"ревью для галочки\") и способы их решения, а также что происходит после замечаний.",
+ "n_tool_calls": 12
+}
