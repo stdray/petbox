@@ -152,4 +152,36 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 
 		full.Should().Contain("case-insensit", "MethodologySetDescription.Apply lowercases before matching (line 35)");
 	}
+
+	// ── umbrella-agent-text-names-both-axes (server leg): `bodyRef` must name BOTH axes ────────
+	// The agent-behaviour probe (tools/agent-behaviour-probe) found the cause of a 14/20 inline-
+	// write miss on a long-Cyrillic-body task: ModuleMcp.SizeGuidanceText (folded into each of
+	// these three tools' own top-level description, one screen above the `nodes`/`items`/`entries`
+	// parameter) tells the agent to write composed non-ASCII/long text to a file and upload it via
+	// `bodyRef` — but the PARAMETER description described `bodyRef` as ONLY "for a body that
+	// already exists as a file", which contradicts that instruction and reads as a ready-made
+	// excuse to inline instead (transcript quote: "using bodyRef would require uploading a blob,
+	// but simpler to just pass body inline"). The parameter text must name BOTH cases — a file
+	// that already exists, and text the agent is composing right now that it must stage to a file
+	// first — or it keeps reading as inapplicable to the exact case that matters.
+	[Theory]
+	[InlineData("tasks_upsert", "nodes")]
+	[InlineData("comments_upsert", "items")]
+	[InlineData("memory_upsert", "entries")]
+	public void BodyRefParamDescription_NamesBothAxes_ExistingFileAndComposedTextToWriteFirst(string tool, string paramName)
+	{
+		var full = Flat(RegisteredParamDescription(tool, paramName));
+
+		full.Should().Contain("bodyRef", $"{tool}.{paramName}'s description must mention bodyRef at all");
+		full.Should().Contain("already on disk as a file",
+			$"{tool}.{paramName}'s bodyRef description must still name the existing-file case");
+		full.Should().Contain("composing right now",
+			$"{tool}.{paramName}'s bodyRef description must ALSO name the second axis — text the agent is " +
+			"composing right now, not only text already on disk — or an agent reading only this parameter's " +
+			"description concludes bodyRef does not apply to the exact case (long/non-ASCII prose) " +
+			"SizeGuidanceText routes through it");
+		full.Should().Contain("write it to a file first",
+			$"{tool}.{paramName}'s bodyRef description must give the actionable step for composed text, " +
+			"matching what SizeGuidanceText already tells the agent to do");
+	}
 }
