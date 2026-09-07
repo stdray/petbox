@@ -103,8 +103,10 @@ project's own intake/triage path, or to its maintainer — rather than working a
 ## Triaging intake (if this project has an `intake` board)
 
 Intake holds raw, unrouted findings — bugs, questions, wishes — not yet placed on the pipeline.
-Skip it when the destination is already obvious (the report names it, or the diagnosis is clear)
-and create the node at the destination directly instead of parking it:
+Skip it and create the node at the destination directly only when the report already names the
+target, or the fact pattern maps onto exactly ONE of the three destinations below without
+weighing alternatives. If you find yourself weighing which of the three fits, that itself means
+it is not obvious — file it into intake instead and let triage happen later, rather than guessing:
 - Spec-less hygiene → a work `chore` (no spec link needed).
 - A bug against an EXISTING spec requirement → a work `bug`, with whatever spec link this
   project's `link_constraint` invariants require.
