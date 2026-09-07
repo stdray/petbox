@@ -31,7 +31,7 @@ import { fetchCanonBlock } from "./canon.ts";
 import { resolveDefinitionForSession } from "./definition-source.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
-import { buildAutoSkillsIndex } from "./skill-files.ts";
+import { buildAutoSkillsIndex, buildOwnerOnlySkillsBlock } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
@@ -166,6 +166,13 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
       // (AGENTS.md §10).
       const skillsIndex = buildAutoSkillsIndex(directory ?? "");
       if (skillsIndex) output.system.push(skillsIndex);
+      // Owner-only skills (work: user-invocable-skills-invisible-to-model) — same every-request
+      // treatment as the salience index above, and the SAME degrade-to-nothing contract. Unlike
+      // Claude Code / Droid, opencode does not recognize `disable-model-invocation` at all, so
+      // this renders the opencode-specific truth (already in your listing, call natively) rather
+      // than the Claude-Code one (see skill-files.ts's buildOwnerOnlySkillsBlock).
+      const ownerOnlySkills = buildOwnerOnlySkillsBlock(directory ?? "", "opencode");
+      if (ownerOnlySkills) output.system.push(ownerOnlySkills);
     },
 
     // Port of push-session — mirror the finished turn into PetBox's Session module.

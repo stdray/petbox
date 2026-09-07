@@ -250,6 +250,83 @@ test("pull-memory.ts as a real process: an oversized canon is dropped, logged lo
   }
 });
 
+// The owner-only-skills block (work: user-invocable-skills-invisible-to-model) is wired through
+// this same real-process path, not just exercised in-process against the pure function — the
+// exact gap opencode-plugin-system-transform.test.ts's header describes for the sibling index
+// ("shipped green tests and a feature that never reached the model").
+function materializeOwnerOnlySkill(projectDir: string): void {
+  const skillDir = join(projectDir, ".claude", "skills", "petbox-factory-run");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: petbox-factory-run",
+      "description: Fan tasks out to workers. Use for an unattended multi-task pass.",
+      "disable-model-invocation: true",
+      "---",
+      "",
+      "# Factory run",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+test("pull-memory.ts as a real process: a materialized owner-only skill reaches stdout, with the Claude-Code fact", async () => {
+  const { close, port } = await startFastFakeServer();
+  const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
+  materializeOwnerOnlySkill(projectDir);
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      FAKE_HOOK_TEST_KEY: "fake-key-for-test",
+    };
+    const input = JSON.stringify({ session_id: "test", cwd: projectDir, hook_event_name: "SessionStart", source: "startup" });
+
+    const result = await runHook(join(HERE, "pull-memory.ts"), input, env, projectDir);
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
+    assert.ok(result.stdout.includes("`petbox-factory-run`"), `owner-only block must reach stdout:\n${result.stdout}`);
+    assert.ok(
+      result.stdout.includes("removes these from your own listing entirely"),
+      "Claude Code must get the hidden-entirely fact",
+    );
+    assert.ok(!result.stdout.includes("does not recognize the key"), "must not carry opencode's fact");
+  } finally {
+    await close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("droid-pull-memory.ts as a real process: a materialized owner-only skill reaches the context, with the Claude-Code/Droid fact", async () => {
+  const { close, port } = await startFastFakeServer();
+  const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
+  materializeOwnerOnlySkill(projectDir);
+  try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      FAKE_HOOK_TEST_KEY: "fake-key-for-test",
+    };
+    const input = JSON.stringify({ session_id: "test", cwd: projectDir, hook_event_name: "SessionStart", source: "startup" });
+
+    const result = await runHook(join(HERE, "droid-pull-memory.ts"), input, env, projectDir);
+
+    assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
+    const out = JSON.parse(result.stdout);
+    const context: string = out.hookSpecificOutput.additionalContext;
+    assert.ok(context.includes("`petbox-factory-run`"), `owner-only block must reach the context:\n${context}`);
+    assert.ok(context.includes("removes these from your own listing entirely"), "Droid must get the hidden-entirely fact");
+  } finally {
+    await close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("droid-pull-memory.ts as a real process: wall clock stays well under budget against a fast server", async () => {
   const { close, port } = await startFastFakeServer();
   const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);

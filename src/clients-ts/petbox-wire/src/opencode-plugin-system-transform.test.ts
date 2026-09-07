@@ -113,6 +113,58 @@ test("opencode system.transform: the skills index reaches EVERY request of a ses
   }
 });
 
+// This module exists because the FIRST fix for the auto-digest index shipped green unit tests
+// and a feature that never reached the model (see the file header). The owner-only block (work:
+// user-invocable-skills-invisible-to-model) is wired through the exact same hook the same way —
+// this is the same class of check, over the same real hook, for the new block, so it cannot
+// repeat that history a second time under a different name.
+test("opencode system.transform: the owner-only-skills block reaches the real request, with opencode's OWN fact (not Claude Code's)", async () => {
+  const { home, projectDir, envVar } = setupProject();
+  const skillDir = join(projectDir, ".claude", "skills", "petbox-factory-run");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: petbox-factory-run",
+      "description: Fan tasks out to workers. Use for an unattended multi-task pass.",
+      "disable-model-invocation: true",
+      "---",
+      "",
+      "# Factory run",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const prevHome = process.env["HOME"];
+  const prevUserProfile = process.env["USERPROFILE"];
+  process.env["HOME"] = home;
+  process.env["USERPROFILE"] = home;
+  process.env[envVar] = "test-key";
+  try {
+    const hooks: any = await PetboxPlugin({ client: {} as any, directory: projectDir } as any);
+    const sessionID = "ses_owner_only_test";
+    await systemPromptForOneRequest(hooks, sessionID); // title request — same double-call shape as the index test above
+    const chatRequest = await systemPromptForOneRequest(hooks, sessionID);
+
+    assert.ok(chatRequest.includes("`petbox-factory-run`"), "the owner-only block must name the skill in the real chat request");
+    assert.ok(
+      chatRequest.includes("does not recognize the key"),
+      "opencode must get its OWN fact (the flag does nothing here), not the Claude-Code one",
+    );
+    assert.ok(
+      !chatRequest.includes("removes these from your own listing entirely"),
+      "opencode must NEVER receive the Claude-Code/Droid 'hidden entirely' claim — false for this harness",
+    );
+  } finally {
+    if (prevHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = prevHome;
+    if (prevUserProfile === undefined) delete process.env["USERPROFILE"];
+    else process.env["USERPROFILE"] = prevUserProfile;
+    delete process.env[envVar];
+  }
+});
+
 test("opencode system.transform: the index stays an index — skill BODIES are never inlined", async () => {
   const { home, projectDir, envVar } = setupProject();
   const prevHome = process.env["HOME"];

@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   buildAutoSkillsIndex,
+  buildOwnerOnlySkillsBlock,
   buildSkillReports,
   checkSkillFile,
   describeWorkspaceProbeFailure,
@@ -24,6 +25,7 @@ import {
   PROJECT_SKILLS,
   probeWorkspace,
   readAutoDigestSkillTriggers,
+  readOwnerOnlySkillTriggers,
   SKILL_SURFACES,
   renderSkillTemplate,
   writeSkillFiles,
@@ -32,6 +34,7 @@ import {
   type WorkspaceProbeResult,
 } from "./skill-files.ts";
 import {
+  DISABLE_MODEL_INVOCATION_LINE,
   hasPetboxMarker,
   isDeclaredManual,
   isModelInvocationDisabled,
@@ -1308,6 +1311,131 @@ test("extractSkillTrigger against every REAL current petbox-* skill description 
     assert.ok(description, `${dir}: description must be parseable from frontmatter`);
     const trigger = extractSkillTrigger(description!);
     assert.match(trigger, /^Use\b/, `${dir}: expected a "Use ..." trigger sentence, got: "${trigger}"`);
+  }
+});
+
+// ---- owner-only skills block (work: user-invocable-skills-invisible-to-model) -----------------
+//
+// Found live 2026-09-07: the owner typed `/petbox-factory-run`, the agent had no such name in its
+// OWN listing, and had to `find` the file on disk instead. First draft of this fix lived in
+// AGENTS.md — wrong place, since AGENTS.md never ships with the kit and the fix then covered
+// $system and nothing else. It moved here because this is the ONE place skill-frontmatter facts
+// already ride into every wired project's agent context (same precedent as
+// readAutoDigestSkillTriggers/buildAutoSkillsIndex just above).
+//
+// Second draft claimed `disable-model-invocation` "removes the skill from your own listing
+// ENTIRELY" as if that were true of every harness. Caught before merge: opencode does not
+// recognize the key at all, so for opencode that sentence is a FALSE fact the kit would have
+// shipped into every opencode project it wires. The tests below pin BOTH halves — the
+// Claude-Code/Droid fact and the opencode fact — so a future edit cannot silently collapse back
+// to a harness-blind version.
+
+test("readOwnerOnlySkillTriggers: no .claude/skills directory at all — [] (wire apply never ran)", () => {
+  const root = freshDir();
+  try {
+    assert.deepEqual(readOwnerOnlySkillTriggers(root), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Selection is by the `disable-model-invocation: true` DECLARATION, never by directory name or
+// by `petbox-digest` — the two are independent axes (origin-marker.ts's SkillInvocationMode
+// comment). A skill declaring BOTH `petbox-digest: auto` and the invocation flag would be a
+// contradiction no current template makes, but the reader must still pick the invocation flag
+// alone, not conflate it with digest mode.
+test("readOwnerOnlySkillTriggers: selects by the `disable-model-invocation: true` DECLARATION, ignores petbox-digest entirely", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    // Owner-only, not petbox-digest-declared at all — must be IN.
+    writeSkillMd(
+      skillsDir,
+      "petbox-factory-run",
+      `---\nname: petbox-factory-run\ndescription: >-\n  Fan a batch of prepared tasks out to workers. Use for an unattended multi-task pass.\n${DISABLE_MODEL_INVOCATION_LINE}\n---\n\n# Factory run\n`,
+    );
+    // Auto-digest, NOT owner-only — must be OUT (this is the exact opposite selection from
+    // readAutoDigestSkillTriggers, over the same fixture shape).
+    writeSkillMd(
+      skillsDir,
+      "petbox-write-economy",
+      `---\nname: petbox-write-economy\ndescription: Use before any long write.\n${PETBOX_DIGEST_KEY}: auto\n---\n\n# Write economy\n`,
+    );
+    // Neither declaration at all — must be OUT.
+    writeSkillMd(skillsDir, "petbox-card-check", "---\nname: petbox-card-check\ndescription: Use before sending a card.\n---\n\n# Card check\n");
+
+    const triggers = readOwnerOnlySkillTriggers(root);
+    assert.deepEqual(triggers.map((t) => t.name), ["petbox-factory-run"]);
+    assert.equal(triggers[0]!.trigger, "Use for an unattended multi-task pass.");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildOwnerOnlySkillsBlock: null when no skill is materialized owner-only, for every harness", () => {
+  const root = freshDir();
+  try {
+    for (const harness of ["claude-code", "droid", "opencode", undefined] as const) {
+      assert.equal(buildOwnerOnlySkillsBlock(root, harness), null);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// THE Claude-Code/Droid fact: the flag hides the skill from the model's own listing entirely, an
+// owner-typed name is still valid (quoting the Skill tool's own by-name exception, not
+// reinterpreting it), and a name in NEITHER listing stays "don't guess" — both axes named, per R1.
+test("buildOwnerOnlySkillsBlock for claude-code and droid: names the hidden-entirely fact, quotes the by-name exception, and names the non-trigger", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    writeSkillMd(
+      skillsDir,
+      "petbox-agent-factory",
+      `---\nname: petbox-agent-factory\ndescription: >-\n  Recompile agent files. Use after a role or model definition changes.\n${DISABLE_MODEL_INVOCATION_LINE}\n---\n\n# Agent factory\n`,
+    );
+    for (const harness of ["claude-code", "droid"] as const) {
+      const block = buildOwnerOnlySkillsBlock(root, harness)!;
+      assert.ok(block, `${harness}: expected a block`);
+      assert.match(block, /removes these from your own listing entirely/i, `${harness}: must name the hides-entirely fact`);
+      assert.match(block, /Only names from the listing/, `${harness}: must quote the Skill tool's own exception`);
+      assert.match(block, /don't guess.*unsoftened/is, `${harness}: must name the non-trigger explicitly`);
+      assert.match(block, /`petbox-agent-factory` — Use after a role or model definition changes\./);
+      // Must NOT ship the opencode fact.
+      assert.doesNotMatch(block, /does not recognize the key/i, `${harness}: must not carry the opencode-specific claim`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// THE opencode fact — and the exact regression caught before merge: opencode does NOT recognize
+// `disable-model-invocation` at all, so it must never be told the Claude-Code "hidden entirely"
+// claim. It IS in opencode's own listing, callable the native way.
+test("buildOwnerOnlySkillsBlock for opencode: does NOT claim the skill is hidden, names the native call instead", () => {
+  const root = freshDir();
+  try {
+    const skillsDir = join(root, ".claude", "skills");
+    writeSkillMd(
+      skillsDir,
+      "petbox-analysis-workspace",
+      `---\nname: petbox-analysis-workspace\ndescription: >-\n  Stage a big investigation as files. Use for a large multi-part investigation.\n${DISABLE_MODEL_INVOCATION_LINE}\n---\n\n# Analysis workspace\n`,
+    );
+    const block = buildOwnerOnlySkillsBlock(root, "opencode")!;
+    assert.ok(block);
+    assert.match(block, /does not recognize the key/i, "must name opencode's actual behavior");
+    assert.match(block, /`skill\(name\)` or `\/name`/, "must point at the native call");
+    assert.match(block, /`petbox-analysis-workspace` — Use for a large multi-part investigation\./);
+    // The false-for-opencode claim from the first draft must never appear here.
+    assert.doesNotMatch(
+      block,
+      /removes these from your own listing entirely/i,
+      "must not ship the Claude-Code-only fact into opencode's context — this is the exact false claim the review caught",
+    );
+    assert.doesNotMatch(block, /Only names from the listing/, "the by-name-exception quote is Claude-Code/Droid-specific framing, not needed here");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
