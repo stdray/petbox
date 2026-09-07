@@ -71,7 +71,7 @@ public static class MethodologyGuide
 		// server presets).
 		AppendKindExtensibility(md);
 
-		AppendRelationKinds(md, runtime);
+		AppendRelationKinds(md, runtime, rendered);
 		AppendBodyConventions(md);
 		// A kind whose workflow is split into several blocks (types sharing one FSM each) can
 		// carry the SAME status pair on two different blocks (e.g. a `ticket`/`incident` split
@@ -245,6 +245,16 @@ public static class MethodologyGuide
 				invariants.Add(new(kind, "checklist", $"{t.From} -> {t.To}: {string.Join(" | ", checklist)}"));
 			}
 		}
+
+		// guide-states-obligation-scope-and-absence (a): the NEVER lines above name a
+		// PROHIBITION axis only — an agent that reads a single owner-only gate at the end of a
+		// chain has no line here telling it the OTHER axis exists at all, and reads the ban
+		// expansively: it freezes every status move, including the ones nothing forbids
+		// (kek-devices-classic-status-freeze, recurrence 2, an open client report). Print the
+		// obligation axis right next to the prohibition it qualifies, not in a different
+		// section the agent must remember to consult.
+		if (gated.Any(t => t.RequiresApproval))
+			md.AppendLine($"  - Every OTHER transition in this workflow is the agent's own to make — waiting is not caution, it is a defect. A node left in {block.Initial} (or any other non-terminal status) after the work behind it has actually moved on is exactly that defect.");
 	}
 
 	static void AppendLinkConstraints(StringBuilder md, string kind, IReadOnlyList<MethodologyLinkConstraintDef> constraints, List<MethodologyInvariant> invariants)
@@ -375,9 +385,31 @@ public static class MethodologyGuide
 		md.AppendLine("## Declaring your own kind");
 		md.AppendLine();
 		md.AppendLine("The kinds above are not the full catalog — a project can author its own: declare one with `tasks_methodology_utility_upsert` (project-homed, survives a methodology switch) or `tasks_methodology_rules_upsert` (instance-homed, goes with this instance).");
+		// guide-states-obligation-scope-and-absence (c): the guide is a MIRROR of what a kind
+		// declares, never a MENU of what it could declare — an undeclared knob has no line
+		// anywhere the agent looks (guide-mirrors-declared-never-lists-available-knobs: an
+		// agent added a type by copying the pattern it saw, then missed blocksGate/effects
+		// entirely because their existence had no representation to find). Name the knobs once,
+		// here, so "nothing renders" reads as "nothing declared", not "nothing available".
+		md.AppendLine();
+		md.AppendLine("Knobs available on this instance via `tasks_methodology_rules_upsert` (per kind unless noted):");
+		md.AppendLine("- `blocksGate` — a status where a node must name a blocker, released to another status when the blocker closes.");
+		md.AppendLine("- `effects` — cross-node automation the server runs when a node enters/leaves a status (e.g. auto-close an incoming link).");
+		md.AppendLine("- `linkConstraints` — a link a type must carry, at creation or on every write, optionally pinned to a target kind/status.");
+		md.AppendLine("- `tagAxes` — enforced tag namespaces for the whole instance (declared once, not per kind); omitted = free-form tags.");
+		md.AppendLine("- `singleton` — at most one open board of this kind per instance.");
 	}
 
-	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime)
+	// guide-states-obligation-scope-and-absence (b): MethodologyRuntime.EffectiveLinkKinds()
+	// unconditionally concatenates the quartet trio + observation-promotion fallback — correct
+	// for RESOLUTION (an edge made on a foreign board must still resolve), wrong for the GUIDE,
+	// which mirrors this project's OWN rules (see the guide-declared-kinds comment on
+	// MethodologyGuide.Render above, same principle applied here to link kinds instead of
+	// kinds). A classic-only instance was printing idea_spec/task_spec/issue_task — all three
+	// naming ends (ideas/spec/work/intake) it has no board of
+	// (guide-leaks-quartet-link-kinds-into-projects-without-them). Filter HERE, never in
+	// MethodologyRuntime.
+	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime, IReadOnlyList<MethodologyKindDef> rendered)
 	{
 		md.AppendLine();
 		md.AppendLine("## Relation kinds");
@@ -386,10 +418,36 @@ public static class MethodologyGuide
 		md.AppendLine($"- Neutral (free semantic edges, no process meaning): {string.Join(", ", MethodologyRuntime.NeutralRelationKinds)}");
 		// The directed link kinds (the quartet's declared process trio + any project-declared kind),
 		// each with its category and stored-edge orientation — addressed via links:{kind:ref}.
-		var declared = runtime.EffectiveLinkKinds();
+		// A kind this project declared ITSELF (runtime.DeclaredLinkKinds) always renders — the
+		// project chose it explicitly, the guide does not second-guess that. A BUILTIN fallback
+		// entry (not overridden by a declared slug) renders only when its declared ends are
+		// kinds this project's guide actually has (LinkKindApplies).
+		var ownKinds = rendered.Select(k => k.Kind).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var ownSlugs = runtime.DeclaredLinkKinds.Select(k => k.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var declared = runtime.EffectiveLinkKinds()
+			.Where(k => ownSlugs.Contains(k.Slug) || LinkKindApplies(k, ownKinds))
+			.ToList();
 		md.AppendLine(declared.Count > 0
 			? $"- Declared (address via links:{{kind:ref}}): {string.Join(", ", declared.Select(RenderDeclaredLinkKind))}"
-			: "- Declared: none.");
+			: "- Declared: none — this instance has no structural link kinds of its own.");
+	}
+
+	// A builtin fallback link kind belongs in THIS project's guide only when the board kinds
+	// its direction names are kinds this project's guide renders — a direction-less kind (no
+	// Direction at all) has no ends to check, so it always passes. observation_obligation's
+	// ToKind is stored null not as "any kind" (a true wildcard) but as "work OR ideas"
+	// (MethodologyPresets.ObservationLinkKinds's own doc comment) — MethodologyLinkDirectionDef
+	// has no room for a set of acceptable kinds, so that one slug is special-cased rather than
+	// letting a null end silently mean "always passes" the way it correctly does for every
+	// other direction-less or single-ended kind.
+	static bool LinkKindApplies(MethodologyLinkKindDef k, HashSet<string> ownKinds)
+	{
+		if (string.Equals(k.Slug, MethodologyPresets.ObservationObligationLinkKind, StringComparison.OrdinalIgnoreCase))
+			return ownKinds.Contains("work") || ownKinds.Contains("ideas");
+		var dir = k.Direction;
+		if (dir is null) return true;
+		return (dir.FromKind is null || ownKinds.Contains(dir.FromKind))
+			&& (dir.ToKind is null || ownKinds.Contains(dir.ToKind));
 	}
 
 	// One declared relation kind as human-readable text. A direction-less NEUTRAL kind keeps the
