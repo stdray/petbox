@@ -354,12 +354,15 @@ Three of the eight kit skills carry `disable-model-invocation: true`, and that f
 the skill from your own listing ENTIRELY — not just from auto-invocation — because letting the
 model start an unattended agent-factory run on its own is a real risk (work
 `user-invocable-skills-invisible-to-model`). The flag does not remove the skill: the owner can
-still type its name. When they do, "Only use skills listed in the user-invocable skills
-section — don't guess" governs whether YOU pick a skill on your own initiative; it is not a bar
-on recognizing a name the owner just gave you. Treat an owner-typed name below as valid, open
+still type its name, and the Skill tool's own description already carves out exactly this
+case — quote it rather than re-explain it: "Only names from the listing (or that the user
+typed explicitly) are valid... Users may also ask for one by name (`/<name>`); that's a
+request to invoke it." Treat an owner-typed name below as valid, open
 `.claude/skills/<name>/SKILL.md` (or the tracked source,
 `src/clients-ts/petbox-wire/src/templates/<name>/SKILL.md`, if the deployed copy is missing),
 and follow it — do not search the disk for it, and do not tell the owner no such skill exists.
+A name that is neither in your own listing nor in the three below is a DIFFERENT case:
+"don't guess" still applies there, unsoftened — say so rather than searching the disk for it.
 
 - **petbox-agent-factory** — recompile per-harness agent files after a role/model definition
   changes.
