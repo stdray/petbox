@@ -140,16 +140,17 @@ jobs:
 
       # SdkChecks runs the agent-wiring kit's tests (TsWireTest: `bun run test` -> `node --test
       # src/*.ts`, needs Node >= 23.6 for native TS type-stripping — see npm-wire-publish's own
-      # setup-node below for that half). The half THIS comment adds: without a pinned Node on
-      # PATH, the bare command `node` inside that npm script resolves to bun's own `node` shim,
-      # not real Node — bun answers to the name but reports ITS OWN version through
-      # `process.versions.node`/`process.execPath`, so the version gate silently runs on the
-      # wrong runtime. That is exactly what happened here: this job had no setup-node, ran the
-      # new kit-version-hook-context.test.ts under the bun shim, and passed locally (bun reports
-      # 26.3.0, clears the >= 23.6 gate) while the ubuntu runner's bun shim reports 22.23.2 and
-      # the gate rejects it — CI run 34059750660, 467/468 green, one failure:
+      # setup-node below for that half). `bun run <script>` does NOT substitute its own runtime
+      # for the bare `node` a script invokes — that only happens for `bun --bun run` or `bun
+      # file.ts` directly, neither of which this job uses — so the `node` this job's npm script
+      # runs is whatever real Node happens to be on PATH. The actual gap this step closes: the
+      # ubuntu-24.04 runner image ships Node 22.23.2 on PATH, below the package's own >= 23.6
+      # gate, so without a pin `node --test` ran the kit's own version check against Node
+      # 22.23.2 and it correctly failed — CI run 34059750660, 467/468 green, one failure:
       # "petbox-wire needs Node >= 23.6 (native TypeScript type-stripping); you have 22.23.2".
-      # `engines.node >= 23.6` was never actually exercised on real Node by this job until now.
+      # Pinning Node here (this step) fixed it — CI run 34060570523, fully green. Whether >= 23.6
+      # is the right threshold for the package is a separate, still-open decision; not this
+      # comment's call.
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
