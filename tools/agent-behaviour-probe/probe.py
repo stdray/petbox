@@ -107,10 +107,25 @@ HARNESSES = {
 # and why the text below is the kit's own output rather than a re-write. Same shape as
 # s4/probe.py's owner-only block shim, which is the working precedent.
 #
-# CONDITION, NOT DEFAULT. Off unless `--opencode-skills-index` is passed, so the M0/M1/M2
-# configuration stays re-runnable byte for byte; the state is written into provenance.json either
-# way, so no reader of a summary has to guess which condition produced it.
-SKILLS_INDEX = {"enabled": False, "opencode": "", "delivery": {}}
+# ON BY DEFAULT, and the two states are NOT symmetric in what they cost a careless reader.
+#
+# ON (the default) is what this probe is for: the opencode leg is shown the same salience index a
+# production opencode agent is shown, so the column measures the kit's text rather than the
+# stand's isolation. OFF (`--no-opencode-skills-index`) reproduces the pre-M3 condition, in which
+# the shipped plugin's registry gate silently dropped the index -- the ONLY reason to want it is
+# deliberately re-running M0/M1/M2, and whoever is doing that knows it.
+#
+# The default was briefly the other way round, on the honest-looking argument that the historical
+# configuration should be re-runnable without a flag. That argument loses: with OFF as the default
+# the next person to run this probe gets a flat opencode column and NO indication that the stand,
+# not the text, produced it. They either re-derive this whole analysis, or -- worse -- conclude "the
+# fix did not work on opencode", which is exactly the false conclusion three earlier measurements
+# had to be re-read to remove. The mechanism existed and did not reach the point of action; absence
+# had no representation. With ON as the default the failure mode inverts and shrinks: reproducing
+# history takes knowing about a flag, and that knowledge is needed only by someone who came here on
+# purpose -- and provenance.json names the condition in BOTH states, so no summary is ever mute
+# about which one produced it.
+SKILLS_INDEX = {"enabled": True, "opencode": "", "delivery": {}}
 
 
 def render_skills_index(ws: Path) -> str:
@@ -970,10 +985,17 @@ def main():
     ap.add_argument("--harnesses", default="claude,opencode")
     ap.add_argument("--only", default="")
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--opencode-skills-index", action="store_true",
-                    help="deliver the kit's salience index to the OPENCODE leg through a "
-                         "probe-local .opencode/plugin shim (the shipped plugin's registry gate "
-                         "drops it in an unregistered workspace). Off = the M0/M1/M2 control.")
+    # Both axes, or the next reader cannot tell what the flag is FOR. ON (default): the opencode
+    # leg receives the kit's salience index through a probe-local .opencode/plugin shim, i.e. the
+    # same text a production opencode agent gets -- what the leg is supposed to measure. OFF:
+    # reproduces the pre-M3 condition, where the shipped plugin's registry gate silently dropped
+    # the index in an unregistered workspace -- for re-running M0/M1/M2 and nothing else.
+    ap.add_argument("--no-opencode-skills-index", dest="opencode_skills_index",
+                    action="store_false", default=True,
+                    help="do NOT deliver the kit's salience index to the opencode leg. Default is "
+                         "to deliver it (the opencode leg then sees what production sees). Pass "
+                         "this only to reproduce the pre-M3 measurements M0/M1/M2, whose opencode "
+                         "column was taken with the index silently dropped by the registry gate.")
     ap.add_argument("--rescore", action="store_true")
     ap.add_argument("--ws", default=str(Path(os.environ.get("TEMP", "/tmp")) / "petbox-probe-ws"))
     ap.add_argument("--out", default=str(HERE / "baseline" / "latest"))
