@@ -100,10 +100,146 @@ test("the trimmed protocol block still carries every load-bearing orchestrator r
     ["never self-set Done", /Never self-set Done\/accepted/],
     ["lane axis is conditional", /tasks_methodology_rules_get/],
     ["stale InProgress circuit breaker", /Circuit breaker for stale `InProgress`/],
+    // NOT the tier criterion's two axes ("would be expensive" / "would pass unnoticed") — a flat
+    // presence check on the WHOLE banner cannot tell "both axes in the same rule" apart from
+    // "each axis somewhere in the document", which is the exact gap rule-agent-facing-text-
+    // names-both-axes exists to close. That pair now has its own COMPOSITION test below.
   ];
   for (const [name, re] of required) {
     assert.match(text, re, `load-bearing rule missing from the banner: ${name}`);
   }
+});
+
+// --- rule-agent-facing-text-names-both-axes (R1, root of umbrella-agent-text-names-both-axes) ---
+//
+// CRITERION. A rule delivered to an agent is broken if it states only ONE half of a governing
+// pair — a trigger without its non-trigger, a prohibition without the obligation that survives
+// it, a benefit without the invariant that overrides it — even when the OTHER half is written
+// down SOMEWHERE ELSE in the very same document. An agent acts on the text in front of it at the
+// moment of the act; an axis it cannot see in THAT text does not exist for that act, no matter
+// where else it is named. (Scope note, not a trailing override — attach it here, to the clause it
+// qualifies, not at the end where it would read as walking the whole rule back: a rule stating one
+// plain fact, not a trigger/prohibition/tradeoff, has no second axis to name and is simply out of
+// scope for this pairing; forcing one in would be theater, not compliance.)
+//
+// `assertRuleNamesBothAxes` is the checkable form of that criterion: it locates the rule's OWN
+// block (see `extractRuleBlock`) and requires BOTH axis patterns to occur INSIDE that one block —
+// never merely inside the surrounding document. Two independent `assert.match(wholeText, axisA)` /
+// `assert.match(wholeText, axisB)` calls do NOT satisfy this: they pass just as happily when axis B
+// sits in a wholly different, unrelated rule. That is precisely the failure mode that let the tier
+// criterion below run one-axis ("expensive" only) from the worker-highstakes role's birth until
+// 2026-09-06 (memory m-7961c8269e5840c79643b0c2600693a2) — three misses before anyone noticed,
+// because the ratchet of the day pinned the rule's PRESENCE, never its COMPOSITION. The red-proof
+// test further down constructs exactly that shape of mutant: a presence-only check lets it through,
+// this one does not.
+//
+// Ratchet scope, stated honestly: this file only reaches text that flows through `buildProtocol`
+// (role `notes` in default-agents.json, the banner it renders into). It says nothing about SKILL.md
+// prose, which never passes through here — that surface needs its own composition ratchet
+// (tracked separately: skills-audit-against-both-axes-criterion). Do not read a green run of THIS
+// file as proof that skills satisfy the criterion.
+
+/** Absence has its OWN representation: "the rule itself is gone" must never read as "one axis of
+ * a present rule is missing" — those are different defects with different fixes. */
+function extractRuleBlock(text: string, anchor: RegExp): string {
+  const lines = text.split("\n");
+  const line = lines.find((l) => anchor.test(l));
+  assert.ok(line !== undefined, `rule anchor ${anchor} not found at all in text (the whole rule is missing, not just one axis):\n${text}`);
+  return line!;
+}
+
+function assertRuleNamesBothAxes(
+  text: string,
+  anchor: RegExp,
+  axisA: RegExp,
+  axisB: RegExp,
+  label: string,
+): void {
+  const block = extractRuleBlock(text, anchor);
+  assert.match(block, axisA, `${label}: axis A (${axisA}) missing from the rule's OWN block: "${block}"`);
+  assert.match(
+    block,
+    axisB,
+    `${label}: axis B (${axisB}) missing from the rule's OWN block (rule-agent-facing-text-names-both-axes: ` +
+      `both axes must live in the SAME rule, not merely somewhere in the same document) — rule text: "${block}"`,
+  );
+}
+
+test("orchestrator tier criterion names BOTH axes in its OWN rule block, not merely somewhere in the banner", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
+  assertRuleNamesBothAxes(
+    text,
+    /Never pass a model at spawn/,
+    /would be expensive/,
+    /would pass unnoticed/,
+    "tier criterion",
+  );
+});
+
+test("RED-PROOF: assertRuleNamesBothAxes rejects a mutant whose second axis was moved to an unrelated rule, which a presence-only ratchet cannot tell apart from a correctly-composed one", () => {
+  const mutant: AgentDefinition = {
+    name: "mutant-one-axis",
+    roles: [
+      {
+        slug: "orchestrator",
+        tier: "orchestrator",
+        requiredCapabilities: [],
+        notes:
+          "1. Never pass a model at spawn: escalate to worker-highstakes when a wrong result would be expensive.\n" +
+          "2. Unrelated rule: a different mistake, in a different place, would pass unnoticed if nobody checked the logs.",
+      },
+    ],
+  };
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code", definition: mutant });
+
+  // CONTROL — proves the fixture actually models the bug this test exists to catch: a
+  // presence-only ratchet (the OLD shape, two independent assert.match calls over the WHOLE
+  // banner) sees both phrases and reports success. If either of these two lines ever fails, the
+  // fixture stopped modeling the one-axis mutant and the "rejects" assertion below would be
+  // proving nothing.
+  assert.match(text, /would be expensive/, "control: presence-only check would find axis A anywhere");
+  assert.match(text, /would pass unnoticed/, "control: presence-only check would find axis B anywhere");
+
+  // The COMPOSITION ratchet must still catch it: axis B lives in rule 2, not rule 1.
+  assert.throws(
+    () =>
+      assertRuleNamesBothAxes(
+        text,
+        /Never pass a model at spawn/,
+        /would be expensive/,
+        /would pass unnoticed/,
+        "mutant tier criterion",
+      ),
+    /axis B .* missing from the rule's OWN block/,
+    "composition ratchet must reject an axis named in a DIFFERENT rule, not just anywhere in the banner",
+  );
+});
+
+test("RED-PROOF: assertRuleNamesBothAxes rejects a mutant where the whole rule is gone, and says so distinctly from a missing-axis failure", () => {
+  const mutant: AgentDefinition = {
+    name: "mutant-rule-deleted",
+    roles: [
+      {
+        slug: "orchestrator",
+        tier: "orchestrator",
+        requiredCapabilities: [],
+        notes: "1. A totally different rule, nothing about model tiers at all.",
+      },
+    ],
+  };
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code", definition: mutant });
+  assert.throws(
+    () =>
+      assertRuleNamesBothAxes(
+        text,
+        /Never pass a model at spawn/,
+        /would be expensive/,
+        /would pass unnoticed/,
+        "deleted tier criterion",
+      ),
+    /not found at all in text \(the whole rule is missing, not just one axis\)/,
+    "absence of the whole rule must get its OWN message, distinct from a missing-axis message",
+  );
 });
 
 // The self-intro block points at the delegate-by-default rule BY NUMBER ("Orchestrator notes,
