@@ -50,6 +50,15 @@ services:
       Seq__SelfLog__Enabled: "true"
       OpenTelemetry__Enabled: ${OTEL_ENABLED}
       OpenTelemetry__OtlpEndpoint: ${OTEL_ENDPOINT}
+      # Left ON deliberately, not because the 2026-09-07 backfill is unfinished — it isn't.
+      # The edge-close rule (TerminalBlockerEdgeBackfillMigrator, src/PetBox.Tasks/Data) does not
+      # cover a node entering terminal via the cascade's SetActiveNodeStatusAsync, which bypasses
+      # the rule (card `terminal-blocks-release-not-called-from-cascade`). Until that card is
+      # closed, every work-Done cascade can leave a fresh `blocks` edge with a terminal blocker,
+      # so this flag runs as a standing compensation on each start, not a one-shot cleanup. Safe
+      # to leave on: the migrator's precondition is per-edge (ClosedAt IS NULL), so a pass with
+      # nothing to do is a cheap SELECT and a no-op. Remove this line only once that card is closed.
+      Tasks__TerminalBlockerEdgeBackfill__Apply: "true"
 
   # Offsite backup. Reads the data volume read-only; pushes restic repos to two
   # S3 backends (compact->R2, full->FirstVDS) — same data-only contents in both,
