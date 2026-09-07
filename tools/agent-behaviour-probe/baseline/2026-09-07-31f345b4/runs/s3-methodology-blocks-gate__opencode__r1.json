@@ -1,0 +1,149 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "opencode",
+ "run": 1,
+ "run_id": "op1321",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 264.2,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox есть методология с ключом s3-op1321. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "tasks_methodology_list",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "tasks_search",
+  "grep",
+  "tasks_board_list",
+  "tasks_search",
+  "tasks_search",
+  "memory_search",
+  "tasks_methodology_rules_get",
+  "tasks_node_get",
+  "skill"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "tasks_methodology_list",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "tasks_search",
+  "grep",
+  "tasks_board_list",
+  "tasks_search",
+  "tasks_search",
+  "memory_search",
+  "tasks_methodology_rules_get",
+  "tasks_node_get",
+  "skill",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 9 chars>",
+  "version": 13,
+  "definition": {
+   "name": "<str 7 chars>",
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ],
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ]
+    }
+   ],
+   "strictMode": false
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "... добавлено: - статус **blocked** (open) и переходы к нему/от него; - `blocksgate: {status: blocked, releaseto: inprogress}`; - effect: при входе блоки...",
+   "...** (open) и переходы к нему/от него; - `blocksgate: {status: blocked, releaseto: inprogress}`; - effect: при входе блокирующей карточки в **done** её..."
+  ]
+ },
+ "final_text": "Готово. Методология `s3-op1321` настроена (версия 13 → 14).\n\nЧто сделано — в kind `classic` добавлено:\n- статус **Blocked** (open) и переходы к нему/от него;\n- `blocksGate: {status: Blocked, releaseTo: InProgress}`;\n- effect: при входе блокирующей карточки в **Done** её заблокированные карточки (в статусе `Blocked`) автоматически переводятся в **InProgress** (в работу).\n\nПроверено по `tasks_methodology_guide`: `transition_effect` — «Done: outgoing blocks from Blocked → InProgress».\n\nКак это работает:\n1. Карточку блокируют другой карточкой — на заблокированной ставят `blockedBy: <блокер>` и переводят её в `Blocked`.\n2. Когда блокер закрывают (владелец ставит `Done`), сервер сам двигает заблокированную карточку в `InProgress`.\n\nЗамечание: автоосвобождение срабатывает только если заблокированная карточка стоит в `Blocked` (это штатное поведение, как в пресете `quartet`). Отмена блокера (`Cancelled`) карточку не освобождает — освобождение идёт только по «закрытию» (Done).",
+ "n_tool_calls": 17
+}

@@ -1,0 +1,54 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "claude",
+ "run": 1,
+ "run_id": "cl19038",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 39.9,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox на доске s2-classic лежит карточка zadacha-cl19038. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "projectKey": "<str 16 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "status": "<str 4 chars>",
+    "version": 1
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": false,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-cl19038` доведена до статуса Done: посчитал дежурства (Ким — 2, Орлов — 2, Савельев — 1) и записал результат комментарием к карточке.",
+ "n_tool_calls": 9
+}

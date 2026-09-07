@@ -1,0 +1,65 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "claude",
+ "run": 2,
+ "run_id": "cl29079",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 24.2,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox на доске s2-classic лежит карточка zadacha-cl29079. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "Skill",
+  "petbox-methodology",
+  "ToolSearch",
+  "Skill",
+  "tasks_methodology_guide",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "petbox-methodology",
+  "ToolSearch",
+  "Skill",
+  "tasks_methodology_guide",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "status": "<str 6 chars>",
+    "version": 5
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": false,
+  "read_guide": true,
+  "left_comment": true
+ },
+ "axes_named": {
+  "prohibition": [
+   "владел"
+  ]
+ },
+ "axis_evidence": {
+  "prohibition": [
+   "...ментарий с результатом и переведу карточку в review (done — только за владельцем по правилам методологии). комментарий добавлен. теперь переведу к..."
+  ]
+ },
+ "final_text": "Готово: карточка `zadacha-cl29079` — результат подсчёта дежурств добавлен комментарием (Ким — 2, Орлов — 2, Савельев — 1), статус переведён в Review. По правилам этой методологии перевод в Done — только решение владельца, поэтому дальше карточка ждёт вас.",
+ "n_tool_calls": 9
+}

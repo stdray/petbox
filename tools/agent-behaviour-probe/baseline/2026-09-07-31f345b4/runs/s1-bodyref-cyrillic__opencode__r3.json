@@ -1,0 +1,82 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 3,
+ "run_id": "op38412",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 157.8,
+ "prompt": "В проекте probe-m0-sandbox на доске s1-work заведи карточку с ключом otchet-op38412.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "tasks_methodology_guide",
+  "tasks_workflow",
+  "skill",
+  "skill",
+  "whoami",
+  "bash",
+  "bash",
+  "grep",
+  "read",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "write",
+  "bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology",
+  "petbox-node-authoring",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "tasks_methodology_guide",
+  "tasks_workflow",
+  "skill",
+  "skill",
+  "whoami",
+  "bash",
+  "bash",
+  "grep",
+  "read",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "write",
+  "bash",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "projectKey": "<str 16 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "title": "<str 26 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Карточка создана на доске `s1-work`: ключ `otchet-op38412`, заголовок «Отчёт о процессе код-ревью», статус `Todo`, тип `task`. Тело — 6500 символов русского текста с подзаголовками (зачем ревью, этапы, кто/что проверяет, типичные проблемы и их исправление).",
+ "n_tool_calls": 21,
+ "spec_hash": "340290f50bc34b28"
+}

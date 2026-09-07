@@ -1,0 +1,51 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "claude",
+ "run": 1,
+ "run_id": "cl17697",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 69.8,
+ "prompt": "В проекте probe-m0-sandbox на доске s1-work заведи карточку с ключом otchet-cl17697.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology",
+  "petbox-node-authoring"
+ ],
+ "all_tools": [
+  "Skill",
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_guide",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "projectKey": "<str 16 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "title": "<str 26 chars>",
+    "type": "<str 4 chars>",
+    "version": 0,
+    "body": "<str 7096 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": false,
+  "used_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Карточка создана: **otchet-cl17697** на доске `s1-work` в проекте `probe-m0-sandbox`, заголовок «Отчёт о процессе код-ревью», статус Todo. Тело — развёрнутый текст на русском (с подзаголовками: зачем нужен код-ревью, этапы работы над изменением, кто и что проверяет, типичные проблемы и как их чинят, итог), объёмом более 3000 символов.",
+ "n_tool_calls": 5,
+ "spec_hash": "340290f50bc34b28"
+}

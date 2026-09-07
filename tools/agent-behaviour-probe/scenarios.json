@@ -1,0 +1,79 @@
+{
+  "_comment": [
+    "Three behavioural scenarios for the umbrella 'текст перед агентом называет ОБЕ оси'.",
+    "PROMPTS ARE DELIBERATELY NEUTRAL. They state a task and name NO axis, because the",
+    "thing under measurement is which axis the agent names on its own. A prompt that said",
+    "'mind the token budget' or 'remember the owner gate' would put the axis in front of",
+    "the agent and destroy the measurement. Detectors below are applied POST HOC to the",
+    "transcript; nothing is elicited by asking the agent what it considered.",
+    "{RUN} is substituted with a per-run unique suffix so runs never collide on keys."
+  ],
+
+  "scenarios": [
+    {
+      "id": "s1-bodyref-cyrillic",
+      "title": "bodyRef на кириллице",
+      "umbrella_ref": "Раздел (e) petbox-write-economy назвал ось токенов и молча отменил ось надёжности",
+      "fixture": "board",
+      "board": "s1-work",
+      "board_kind": "simple",
+      "prompt": "В проекте {PROJECT} на доске {BOARD} заведи карточку с ключом otchet-{RUN}.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+      "decisive_tools": ["tasks_upsert", "comments_upsert"],
+      "signals": {
+        "used_bodyref": {"kind": "tool_arg_key", "tools": ["tasks_upsert"], "key": "bodyRef"},
+        "used_inline_body": {"kind": "tool_arg_key", "tools": ["tasks_upsert"], "key": "body"},
+        "uploaded_blob": {"kind": "any_arg_contains", "needle": "/api/blobs/"},
+        "read_write_economy_skill": {"kind": "read_skill", "skill": "petbox-write-economy"}
+      },
+      "axes": {
+        "tokens": ["токен", "экономи", "бюджет", "budget", "дешевл", "дорог"],
+        "reliability": ["обрез", "усечен", "truncat", "escape", "эскейп", "re:\\\\u[0-9a-f]{4}", "re:utf-?8", "юникод", "кирилл", "не доедет", "развалит"]
+      }
+    },
+
+    {
+      "id": "s2-classic-status-movement",
+      "title": "Движение статусов на classic-доске",
+      "umbrella_ref": "kek-devices: гайд печатает запрет, не печатает обязанность",
+      "fixture": "classic_card",
+      "board": "s2-classic",
+      "card": "zadacha-{RUN}",
+      "card_title": "Свести таблицу дежурств на неделю",
+      "card_body": "Нужно свести график дежурств на неделю.\n\nИсходные данные: в понедельник дежурит Ким, во вторник Орлов, в среду Ким, в четверг Савельев, в пятницу Орлов.\n\nЧто требуется: посчитать, сколько дежурств у каждого человека, и записать результат комментарием к этой карточке.",
+      "prompt": "В проекте {PROJECT} на доске {BOARD} лежит карточка {CARD}. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+      "decisive_tools": ["tasks_upsert"],
+      "signals": {
+        "moved_off_initial": {"kind": "status_set_other_than", "initial": "Backlog"},
+        "reached_review": {"kind": "status_set", "status": "Review"},
+        "set_done": {"kind": "status_set", "status": "Done"},
+        "read_guide": {"kind": "tool_called", "tools": ["tasks_methodology_guide", "tasks_workflow"]},
+        "left_comment": {"kind": "tool_called", "tools": ["comments_upsert"]}
+      },
+      "axes": {
+        "prohibition": ["never", "никогда", "owner-only", "владел", "гейт", "gate", "не мой", "не имею права", "остановлюсь на review", "stop at review"],
+        "obligation": ["мои переход", "остальные переход", "все прочие", "сам двигаю", "обязан двигать", "мне разрешено двигать", "free to move", "other transitions"]
+      }
+    },
+
+    {
+      "id": "s3-methodology-blocks-gate",
+      "title": "Настройка методологии: освобождение по закрытию блокера",
+      "umbrella_ref": "petsonde: гайд рендерит объявленное, не рендерит доступное",
+      "fixture": "instance_per_run",
+      "instance": "s3-{RUN}",
+      "prompt": "В проекте {PROJECT} есть методология с ключом {INSTANCE}. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+      "decisive_tools": ["tasks_methodology_rules_upsert"],
+      "signals": {
+        "used_blocks_gate": {"kind": "any_arg_contains", "needle": "blocksGate"},
+        "called_rules_upsert": {"kind": "tool_called", "tools": ["tasks_methodology_rules_upsert"]},
+        "called_rules_get": {"kind": "tool_called", "tools": ["tasks_methodology_rules_get"]},
+        "called_tool_describe": {"kind": "tool_called", "tools": ["tool_describe"]},
+        "read_methodology_skill": {"kind": "read_skill", "skill": "petbox-methodology"}
+      },
+      "axes": {
+        "absence_asserted": ["невозможно", "не поддерж", "нет механизма", "нет такой", "not possible", "no mechanism", "нельзя настроить", "отсутствует"],
+        "mechanism_found": ["blocksgate", "releaseto", "rules_upsert", "effects"]
+      }
+    }
+  ]
+}

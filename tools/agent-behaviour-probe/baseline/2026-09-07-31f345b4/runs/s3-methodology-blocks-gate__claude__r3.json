@@ -1,0 +1,159 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl39817",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 197.1,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox есть методология с ключом s3-cl39817. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "ToolSearch",
+  "tool_describe",
+  "tool_describe",
+  "ToolSearch",
+  "tasks_methodology_template_get"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "ToolSearch",
+  "tool_describe",
+  "tool_describe",
+  "ToolSearch",
+  "tasks_methodology_template_get",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 7,
+  "definition": {
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      },
+      {
+       "on": "<str 9 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      },
+      {
+       "on": "<str 9 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ],
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...нашёл нужный механизм — платформа поддерживает связку `blocksgate` + `effects` для авто-разблокировки именно так, как в builtin-пресете...",
+   "... → cancelled/duplicate`. 2. добавлен `blocksgate: {status: \"blocked\", releaseto: \"inprogress\"}`. 3. добавлены три transition-эффекта: когда блокирующ...",
+   "...нашёл нужный механизм — платформа поддерживает связку `blocksgate` + `effects` для авто-разблокировки именно так, как в builtin-пресете `quartet` (..."
+  ]
+ },
+ "final_text": "Настроено и подтверждено сервером. Методология `s3-cl39817` (пресет `classic`) теперь работает так:\n\n**Что сделано:**\n1. Добавлен статус `Blocked` (open) в workflow, с переходами в него из `Backlog/Todo/InProgress/Review` и обратно, плюс `Blocked → Cancelled/Duplicate`.\n2. Добавлен `blocksGate: {status: \"Blocked\", releaseTo: \"InProgress\"}`.\n3. Добавлены три transition-эффекта: когда блокирующая карточка входит в `Done`, `Cancelled` или `Duplicate` (т.е. любым способом закрывается), все карточки, которые она блокирует (связь `blocks`, исходящая) и которые сейчас в статусе `Blocked`, автоматически переводятся в `InProgress`.\n\n**Как этим пользоваться:** блокировку между карточками ставите через `blockedBy` (в `tasks_upsert`) или `relations_create` с `kind:\"blocks\"`, и переводите заблокированную карточку в статус `Blocked`. Как только блокирующая карточка закрывается (любым терминальным статусом), сервер сам переставит заблокированную в `InProgress` — руками это делать не нужно.\n\n**Важный нюанс (ограничение механизма), а не мой домысел — так эффект работает по конструкции**: эффект триггерится на переходе конкретной блокирующей карточки и не проверяет, есть ли у заблокированной карточк",
+ "n_tool_calls": 14
+}

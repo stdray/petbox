@@ -1,0 +1,133 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "opencode",
+ "run": 3,
+ "run_id": "op3798",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 177.5,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox есть методология с ключом s3-op3798. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "tasks_methodology_rules_get",
+  "tasks_methodology_list",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search"
+ ],
+ "skills_read_before_decision": [],
+ "all_tools": [
+  "tasks_methodology_rules_get",
+  "tasks_methodology_list",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 9 chars>",
+  "version": 17,
+  "definition": {
+   "name": "<str 7 chars>",
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ],
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ]
+    }
+   ],
+   "strictMode": false
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": false
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...lease mechanism (the same pattern the builtin `quartet` preset uses: `blocksgate` + a `blocks` transition effect). готово. методология `s3-op3798` обн...",
+   "...ed** (open) и переходы в/из него. - `blocksgate: { status: \"blocked\", releaseto: \"inprogress\" }`. - transition effect: `on: \"done\", link: \"blocks\", d...",
+   "...ancelled**/**duplicate** (terminal-cancel), скажи — добавлю отдельные effects для этих статусов...."
+  ]
+ },
+ "final_text": "Готово. Методология `s3-op3798` обновлена (version 17 → 18).\n\nЧто сделано:\n- Добавлен статус **Blocked** (open) и переходы в/из него.\n- `blocksGate: { status: \"Blocked\", releaseTo: \"InProgress\" }`.\n- Transition effect: `on: \"Done\", link: \"blocks\", direction: \"outgoing\", set: \"InProgress\", onlyFrom: \"Blocked\"`.\n\nИтог: когда карточка-блокер достигает **Done**, все заблокированные ею карточки (со статусом Blocked) автоматически переходят в **InProgress** — сервер выполняет это сам, руками двигать не надо.\n\nОдин нюанс: авто-освобождение срабатывает только при закрытии блокера как **Done** (terminal-ok). Если нужно, чтобы освобождение происходило и при **Cancelled**/**Duplicate** (terminal-cancel), скажи — добавлю отдельные effects для этих статусов.",
+ "n_tool_calls": 9
+}

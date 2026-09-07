@@ -1,0 +1,183 @@
+{
+ "generated": "2026-09-07T12:10:16",
+ "spec_hash": "340290f50bc34b28",
+ "cells": [
+  {
+   "scenario": "s1-bodyref-cyrillic",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "used_bodyref": "0/5",
+    "used_inline_body": "5/5",
+    "uploaded_blob": "0/5",
+    "read_write_economy_skill": "0/5"
+   },
+   "axis_rates": {
+    "tokens": "0/5",
+    "reliability": "0/5"
+   },
+   "reads_before_decision_union": [
+    "Bash",
+    "Read",
+    "Skill",
+    "ToolSearch",
+    "Write",
+    "tasks_board_list",
+    "tasks_methodology_guide",
+    "tasks_methodology_template_get"
+   ],
+   "skills_read_rate": "5/5"
+  },
+  {
+   "scenario": "s1-bodyref-cyrillic",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "used_bodyref": "3/5",
+    "used_inline_body": "2/5",
+    "uploaded_blob": "3/5",
+    "read_write_economy_skill": "3/5"
+   },
+   "axis_rates": {
+    "tokens": "0/5",
+    "reliability": "0/5"
+   },
+   "reads_before_decision_union": [
+    "bash",
+    "glob",
+    "grep",
+    "read",
+    "skill",
+    "tasks_board_list",
+    "tasks_methodology_guide",
+    "tasks_workflow",
+    "whoami",
+    "write"
+   ],
+   "skills_read_rate": "4/5"
+  },
+  {
+   "scenario": "s2-classic-status-movement",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "moved_off_initial": "5/5",
+    "reached_review": "5/5",
+    "set_done": "3/5",
+    "read_guide": "3/5",
+    "left_comment": "5/5"
+   },
+   "axis_rates": {
+    "prohibition": "2/5",
+    "obligation": "0/5"
+   },
+   "reads_before_decision_union": [
+    "Skill",
+    "ToolSearch",
+    "comments_upsert",
+    "petbox-methodology",
+    "tasks_methodology_guide",
+    "tasks_node_get",
+    "tasks_workflow"
+   ],
+   "skills_read_rate": "5/5"
+  },
+  {
+   "scenario": "s2-classic-status-movement",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "moved_off_initial": "5/5",
+    "reached_review": "5/5",
+    "set_done": "1/5",
+    "read_guide": "5/5",
+    "left_comment": "5/5"
+   },
+   "axis_rates": {
+    "prohibition": "4/5",
+    "obligation": "0/5"
+   },
+   "reads_before_decision_union": [
+    "comments_upsert",
+    "skill",
+    "tasks_methodology_guide",
+    "tasks_node_get",
+    "tasks_workflow",
+    "whoami"
+   ],
+   "skills_read_rate": "1/5"
+  },
+  {
+   "scenario": "s3-methodology-blocks-gate",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 5,
+   "runs_exit0": 4,
+   "signal_rates": {
+    "used_blocks_gate": "5/5",
+    "called_rules_upsert": "5/5",
+    "called_rules_get": "5/5",
+    "called_tool_describe": "5/5",
+    "read_methodology_skill": "5/5"
+   },
+   "axis_rates": {
+    "absence_asserted": "0/5",
+    "mechanism_found": "5/5"
+   },
+   "reads_before_decision_union": [
+    "Skill",
+    "ToolSearch",
+    "tasks_methodology_get",
+    "tasks_methodology_guide",
+    "tasks_methodology_rules_get",
+    "tasks_methodology_template_get",
+    "tool_describe"
+   ],
+   "skills_read_rate": "5/5"
+  },
+  {
+   "scenario": "s3-methodology-blocks-gate",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "used_blocks_gate": "5/5",
+    "called_rules_upsert": "5/5",
+    "called_rules_get": "5/5",
+    "called_tool_describe": "5/5",
+    "read_methodology_skill": "3/5"
+   },
+   "axis_rates": {
+    "absence_asserted": "0/5",
+    "mechanism_found": "5/5"
+   },
+   "reads_before_decision_union": [
+    "bash",
+    "grep",
+    "memory_search",
+    "read",
+    "skill",
+    "tasks_board_list",
+    "tasks_methodology_guide",
+    "tasks_methodology_list",
+    "tasks_methodology_rules_get",
+    "tasks_methodology_template_get",
+    "tasks_node_get",
+    "tasks_search",
+    "tasks_workflow",
+    "tool_describe",
+    "whoami"
+   ],
+   "skills_read_rate": "3/5"
+  }
+ ]
+}

@@ -1,0 +1,45 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "opencode",
+ "run": 1,
+ "run_id": "op19233",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 43.0,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox на доске s2-classic лежит карточка zadacha-op19233. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "tasks_node_get",
+  "tasks_workflow",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [],
+ "all_tools": [
+  "tasks_node_get",
+  "tasks_workflow",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "status": "<str 6 chars>",
+    "version": 16
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": true,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-op19233` доведена до статуса `Done`.\n\nРезультат подсчёта дежурств (записан комментарием):\n\n| Человек | Дежурств |\n|---|---|\n| Ким | 2 |\n| Орлов | 2 |\n| Савельев | 1 |",
+ "n_tool_calls": 5
+}

@@ -1,0 +1,52 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "claude",
+ "run": 5,
+ "run_id": "cl59203",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 23.1,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox на доске s2-classic лежит карточка zadacha-cl59203. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "projectKey": "<str 16 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "status": "<str 4 chars>",
+    "version": 12
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": false,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-cl59203` («Свести таблицу дежурств на неделю») выполнена и переведена в статус **Done**.\n\nИтог подсчёта (добавлен комментарием к карточке):\n- Ким — 2 (понедельник, среда)\n- Орлов — 2 (вторник, пятница)\n- Савельев — 1 (четверг)",
+ "n_tool_calls": 8
+}

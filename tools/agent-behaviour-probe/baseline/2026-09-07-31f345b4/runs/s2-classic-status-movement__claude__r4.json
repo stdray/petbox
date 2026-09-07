@@ -1,0 +1,54 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "claude",
+ "run": 4,
+ "run_id": "cl49166",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 35.5,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox на доске s2-classic лежит карточка zadacha-cl49166. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "tasks_workflow",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "tasks_workflow",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "projectKey": "<str 16 chars>",
+  "nodes": [
+   {
+    "key": "<str 15 chars>",
+    "status": "<str 6 chars>",
+    "version": 9
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": true,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-cl49166` на доске s2-classic:\n\n- Добавлен комментарий с итогом: Ким — 2 дежурства (пн, ср), Орлов — 2 (вт, пт), Савельев — 1 (чт).\n- Статус переведён Backlog → Review → **Done**.",
+ "n_tool_calls": 8
+}
