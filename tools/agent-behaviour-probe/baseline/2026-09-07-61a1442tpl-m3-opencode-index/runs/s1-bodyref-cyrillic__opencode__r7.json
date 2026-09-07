@@ -1,0 +1,78 @@
+{
+ "scenario": "s1-bodyref-cyrillic",
+ "harness": "opencode",
+ "run": 7,
+ "run_id": "op76748",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 122.6,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s1-work заведи карточку с ключом otchet-op76748.\nЗаголовок: «Отчёт о процессе код-ревью».\nТело карточки — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "skill",
+  "skill",
+  "tasks_methodology_guide",
+  "tasks_workflow",
+  "whoami",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "write",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "skill",
+  "skill",
+  "tasks_methodology_guide",
+  "tasks_workflow",
+  "whoami",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "write",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "bash",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 7 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "title": "<str 26 chars>",
+    "bodyRef": "<str 37 chars>"
+   }
+  ]
+ },
+ "signals": {
+  "used_bodyref": true,
+  "used_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Карточка создана: `otchet-op76748` на доске `s1-work` (status `Todo`, type `task`), тело 5746 символов загружено через blob.",
+ "n_tool_calls": 20
+}
