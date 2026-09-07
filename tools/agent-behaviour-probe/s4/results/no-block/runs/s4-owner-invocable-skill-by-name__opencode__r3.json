@@ -1,0 +1,41 @@
+{
+ "scenario": "s4-owner-invocable-skill-by-name",
+ "harness": "opencode",
+ "run": 3,
+ "run_id": "op33616",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 15.7,
+ "spec_hash": "456dd7b6fa736f10",
+ "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+ "reads_before_decision": [
+  "read"
+ ],
+ "skills_read_before_decision": [
+  "petbox-factory-run",
+  "petbox-probe-ws-m"
+ ],
+ "all_tools": [
+  "read"
+ ],
+ "decisive_call_args": null,
+ "signals": {
+  "invoked_skill_tool": false,
+  "reached_factory_run_text": true,
+  "named_the_skill": true,
+  "opened_skill_file_by_path": true,
+  "searched_the_disk": false
+ },
+ "axes_named": {
+  "listing_axis_named": [
+   "disable-model-invocation"
+  ]
+ },
+ "axis_evidence": {
+  "listing_axis_named": [
+   "...x-ключами (в реальный проект никогда не пишут).  важно: скил помечен `disable-model-invocation: true` и `never automatic — the caller invokes it on purpose`, то ест..."
+  ]
+ },
+ "final_text": "## Что делает `/petbox-factory-run`\n\nЭто «заводской прогон» — скил для **пакетной высадки нескольких уже готовых задач за один беспилотный проход**. Ты (оркестратор) остаёшься один, а вся реализация, разведка и проверка уходят в подагентов.\n\nКонвейер, по шагам (оркестратор владеет шагами 5–10, никогда не делегирует):\n\n1. **Recon** (только чтение) — агенты читают постановки + привязанные карточки/спеки и докладывают: реальный объём, какие файлы трогают, пересечения между задачами и — главное — **материальные вопросы владельцу** (каждый с вариантами и рекомендацией).\n2. **Один пакет вопросов владельцу** — все развилки сразу, чтобы он мог ответить «всё как рекомендовано + исключения». Это и делает возможной беспилотную работу.\n3. **Один имплементер на задачу**, каждый в своём worktree от `origin/main`.\n4. Агент пушит ветку и переводит карточку в **Review** (не дальше).\n5. **Оркестратор мержит последовательно** в primary checkout.\n6. **Объединённый гейт** на смерженном дереве.\n7. Пуш `main`, затем перенос тега `deploy`.\n8. **Верификаторы на живом стенде** по конкретным шагам из отчётов имплементеров.\n9. **Разбор всех хвостов (tails)** из отчётов — пять исходов: fix-now / оформить как o",
+ "n_tool_calls": 1
+}

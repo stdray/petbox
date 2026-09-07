@@ -1,0 +1,142 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "opencode",
+ "run": 3,
+ "run_id": "op32185",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 222.9,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-op32185. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "skill",
+  "tasks_methodology_get",
+  "tasks_methodology_rules_get",
+  "tasks_workflow",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "tasks_search"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "skill",
+  "tasks_methodology_get",
+  "tasks_methodology_rules_get",
+  "tasks_workflow",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "tasks_search",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_rules_get"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 16,
+  "definition": {
+   "name": "<str 7 chars>",
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ],
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false,
+       "description": "<str 81 chars>"
+      }
+     ]
+    }
+   ],
+   "strictMode": false
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...→ inprogress`, а также выходы `blocked → backlog/todo/cancelled`. 3. `blocksgate: { status: \"blocked\", releaseto: \"inprogress\" }` — карточка в `blocke...",
+   "...ocked → backlog/todo/cancelled`. 3. `blocksgate: { status: \"blocked\", releaseto: \"inprogress\" }` — карточка в `blocked` обязана именовать блокирующую...",
+   "...карточка в `blocked` обязана именовать блокирующую (`blockedby`). 4. `effects: [{ on: \"done\", link: \"blocks\", direction: \"outgoing\", set: \"inprogre..."
+  ]
+ },
+ "final_text": "Готово. Изменения в методологии `s3-op32185` (версия 16 → 17):\n\n1. Добавлен статус `Blocked` (open) в workflow.\n2. Переходы: `InProgress → Blocked`, `Blocked → InProgress`, а также выходы `Blocked → Backlog/Todo/Cancelled`.\n3. `blocksGate: { status: \"Blocked\", releaseTo: \"InProgress\" }` — карточка в `Blocked` обязана именовать блокирующую (`blockedBy`).\n4. `effects: [{ on: \"Done\", link: \"blocks\", direction: \"outgoing\", set: \"InProgress\", onlyFrom: \"Blocked\" }]` — когда блокирующая карточка уходит в `Done`, заблокированные карточки автоматически переводятся в `InProgress`.\n\nМеханика (та же, что в пресете `quartet`): карточка A блокируется карточкой B через `blockedBy`/`blocks`, ставится в `Blocked`. При закрытии B в `Done` сервер сам переводит A в `InProgress`.\n\nОдин нюанс: авто-освобождение срабатывает на терминальном **`Done`**, а не на `Cancelled`/`Duplicate`. Если блокирующая карточка отменяется, зависимая останется в `Blocked` (её можно вывести вручную). Скажи, если нужно также освобождать по `Cancelled`/`Duplicate` — добавлю отдельные effect-записи.",
+ "n_tool_calls": 12
+}

@@ -1,0 +1,67 @@
+{
+ "captured": "2026-09-07T15:16:14",
+ "project": "probe-m1-sandbox",
+ "templates_git_sha": "c74e8003a329aaab8983229d86d7718cf232f362",
+ "templates_git_status_dirty": false,
+ "kit_version_file": "{\"version\": \"0.1.0-ci.2282\", \"kitHash\": \"512a7ad22ba4\", \"installedAt\": \"2026-09-07T11:13:34.382Z\", \"source\": \"C:\\\\Users\\\\stdray\\\\AppData\\\\Local\\\\Temp\\\\petbox-wire-qK4bPu\"}",
+ "server_version": "{\"semVer\":\"0.1.0-ci.2280\",\"shortSha\":\"c734fe6\",\"commitDate\":\"2026-09-07\"}",
+ "harness_versions": {
+  "claude": "2.1.263 (Claude Code)",
+  "opencode": "1.18.29"
+ },
+ "skills_served_to_agent_sha256": {
+  "petbox": "20c019d0c290fce9",
+  "petbox-agent-factory": "2dc43dd8c65ca034",
+  "petbox-analysis-workspace": "571327500f6f02ad",
+  "petbox-card-check": "24952cb0fb0908cb",
+  "petbox-factory-run": "e0551b26c465ea27",
+  "petbox-methodology": "c06c329d3344b09c",
+  "petbox-node-authoring": "6bf83bb0a208cba4",
+  "petbox-write-economy": "7b596e8910b1f603"
+ },
+ "skills_materialized_on_machine_sha256": {
+  "petbox": "a85c64bb26a368f7",
+  "petbox-agent-factory": "2dc43dd8c65ca034",
+  "petbox-analysis-workspace": "571327500f6f02ad",
+  "petbox-card-check": "24952cb0fb0908cb",
+  "petbox-factory-run": "e0551b26c465ea27",
+  "petbox-methodology": "589607e875e16ee3",
+  "petbox-node-authoring": "82fb5f60518ab04a",
+  "petbox-write-economy": "f2f40244b13b360e",
+  "droid-handoff": "7f76e03e69137942",
+  "opencode-handoff": "90386443805ac659",
+  "pi-handoff": "41bbb0ebb2cd4dff",
+  "playwright-cli": "3fec7ab2334bd5f4"
+ },
+ "skills_stale_on_machine_vs_templates": [],
+ "workspace_inventory": [
+  ".claude/skills/petbox-agent-factory/SKILL.md",
+  ".claude/skills/petbox-analysis-workspace/SKILL.md",
+  ".claude/skills/petbox-card-check/SKILL.md",
+  ".claude/skills/petbox-factory-run/SKILL.md",
+  ".claude/skills/petbox-methodology/SKILL.md",
+  ".claude/skills/petbox-node-authoring/SKILL.md",
+  ".claude/skills/petbox-write-economy/SKILL.md",
+  ".claude/skills/petbox/SKILL.md",
+  ".mcp.json",
+  ".opencode/opencode.json",
+  ".opencode/plugin/probe-owner-only.js"
+ ],
+ "workspace_inventory_excluded_node_modules": 0,
+ "workspace_is_git_repo": false,
+ "workspace_registered_in_projects_json": false,
+ "spec_hash": "456dd7b6fa736f10",
+ "owner_only_block_condition": "on",
+ "owner_only_block_delivery": {
+  "claude": "--append-system-prompt (real channel is pull-memory.ts SessionStart additionalContext, which no-ops on an unregistered workspace)",
+  "opencode": ".opencode/plugin/probe-owner-only.js -> experimental.chat.system.transform -> output.system.push (same API call as opencode-plugin.ts, minus the registry gate)"
+ },
+ "owner_only_block_text": {
+  "claude": "## Skills hidden from your own listing — owner-invocable only\n\n`disable-model-invocation: true` removes these from your own listing entirely, not just auto-invocation. Quote, don't reinterpret: \"Only names from the listing (or that the user typed explicitly) are valid... Users may also ask for one by name (`/<name>`); that's a request to invoke it.\" Treat an owner-typed name below as valid, open `.claude/skills/<name>/SKILL.md` and follow it — do not search the disk for it, and do not tell the owner no such skill exists. A name that is neither in your own listing nor below is a DIFFERENT case: \"don't guess\" still applies there, unsoftened.\n\n- `petbox-agent-factory` — Use after role/profile changes — not every session; never invent models; never put this procedure into canon.\n- `petbox-analysis-workspace` — Use when the task has multiple independent areas to cover, needs a fan-out of several subagents, or would otherwise blow the context budget re-deriving the same ground truth repeatedly.\n- `petbox-factory-run` — Use when several prepared, mostly independent tasks must all land (a folder of session briefs, a set of accepted work cards, \"прогони всё это\"), especially when the owner will be away and the orchestrator must keep going alone.",
+  "opencode": "## Skills you already list but rarely call unprompted\n\n`disable-model-invocation: true` on these means nothing here — your skill loader does not recognize the key. They ARE in your own listing and callable the native way: `skill(name)` or `/name`. No file-open workaround needed.\n\n- `petbox-agent-factory` — Use after role/profile changes — not every session; never invent models; never put this procedure into canon.\n- `petbox-analysis-workspace` — Use when the task has multiple independent areas to cover, needs a fan-out of several subagents, or would otherwise blow the context budget re-deriving the same ground truth repeatedly.\n- `petbox-factory-run` — Use when several prepared, mostly independent tasks must all land (a folder of session briefs, a set of accepted work cards, \"прогони всё это\"), especially when the owner will be away and the orchestrator must keep going alone."
+ },
+ "owner_only_block_sha256": {
+  "claude": "133786a5bf64c58f",
+  "opencode": "307c0cc5a57e8af1"
+ }
+}

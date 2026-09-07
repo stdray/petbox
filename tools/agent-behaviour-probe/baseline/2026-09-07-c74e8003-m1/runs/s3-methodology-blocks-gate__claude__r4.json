@@ -1,0 +1,126 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 4,
+ "run_id": "cl41650",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 146.8,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-cl41650. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide",
+  "tasks_methodology_rules_get",
+  "tasks_upsert",
+  "tasks_methodology_get",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 8,
+  "definition": {
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": false,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...нашёл нужный инструмент: параметр `blocksgate` у kind в методологии — это встроенный механизм именно под такой сцен...",
+   "...ит правило освобождения. blocksgate сохранился: `{\"status\":\"blocked\",\"releaseto\":\"inprogress\"}`. правда, гайд его пока не отображает как отдельный \"g..."
+  ]
+ },
+ "final_text": "Готово. Настроил и подтвердил тестом.\n\n**Что сделано** в методологии `s3-cl41650` (доска `s3-cl41650`, kind `classic`):\n- Добавлен статус `Blocked` (открытый).\n- Добавлены переходы: в `Blocked` из `Backlog`/`Todo`/`InProgress`/`Review`, и обратно из `Blocked` в любой из этих статусов (плюс `Cancelled`/`Duplicate` — на случай, если заблокированную задачу нужно закрыть, не дожидаясь).\n- Включён `blocksGate: { status: \"Blocked\", releaseTo: \"InProgress\" }`.\n\n**Как это работает:**\n1. При создании/обновлении карточки указываете блокера полем `blockedBy` (в `tasks_upsert`) — это создаёт связь `blocks` между карточками.\n2. Переводите заблокированную карточку в статус `Blocked`.\n3. Как только карточка-блокер закрывается (любой терминальный статус — `Done`, `Cancelled` или `Duplicate`), сервер **автоматически** переводит заблокированную карточку из `Blocked` в `InProgress` — то есть сразу «в работу», без ручного вмешательства.\n\nПроверил на паре тестовых карточек (создал, заблокировал, закрыл блокера через `Cancelled`) — освобождение сработало мгновенно, тестовые карточки удалены.\n\nОдин нюанс, который стоит знать: гайд-рендер (`tasks_methodology_guide`) пока не показывает `blocksGate` явно в ",
+ "n_tool_calls": 15
+}

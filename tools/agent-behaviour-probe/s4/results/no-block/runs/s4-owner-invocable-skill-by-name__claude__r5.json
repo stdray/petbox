@@ -1,0 +1,36 @@
+{
+ "scenario": "s4-owner-invocable-skill-by-name",
+ "harness": "claude",
+ "run": 5,
+ "run_id": "cl53556",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 19.3,
+ "spec_hash": "456dd7b6fa736f10",
+ "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+ "reads_before_decision": [
+  "Glob",
+  "Glob",
+  "Glob",
+  "Glob"
+ ],
+ "skills_read_before_decision": [],
+ "all_tools": [
+  "Glob",
+  "Glob",
+  "Glob",
+  "Glob"
+ ],
+ "decisive_call_args": null,
+ "signals": {
+  "invoked_skill_tool": false,
+  "reached_factory_run_text": false,
+  "named_the_skill": true,
+  "opened_skill_file_by_path": false,
+  "searched_the_disk": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Такого скила нет — ни в списке доступных мне skills, ни в файлах проекта или в `~/.claude` (я поискал по `*factory-run*` и `*factory*` — совпадений нет).\n\nДоступные в этой сессии skills — это: `droid-handoff`, `opencode-handoff`, `pi-handoff`, `playwright-cli`, `petbox`, `petbox-card-check`, `petbox-methodology`, `petbox-node-authoring`, `petbox-write-economy`, `dataviz`, `update-config`, `keybindings-help`, `code-review`, `simplify`, `fewer-permission-prompts`, `loop`, `schedule`, `claude-api`, `workflow-authoring`, `run`, `init`, `security-review` (плюс `claude-code-setup:claude-automation-recommender`).\n\n`petbox-factory-run` среди них нет — вероятно, это опечатка, устаревшее название, или скил/workflow, определённый где-то ещё (не в этой рабочей директории и не подключённый как плагин здесь).\n\nЕсли хотите, уточните — может, вы имели в виду что-то из списка выше (например, `workflow-authoring` для запуска Workflow-скрипта, или `petbox` для работы с досками задач)? Или назовите точный путь/источник, откуда должен подтягиваться `petbox-factory-run`, и я проверю там.",
+ "n_tool_calls": 4
+}

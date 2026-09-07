@@ -1,0 +1,107 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl31590",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 58.9,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-cl31590. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 6,
+  "definition": {
+   "name": "<str 7 chars>",
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>"
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>"
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": false,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...схема методологии уже содержит нужный примитив — `blocksgate` с полями `status`/`releaseto`. смотрю текущие правила инстанса s3-cl...",
+   "...ологии уже содержит нужный примитив — `blocksgate` с полями `status`/`releaseto`. смотрю текущие правила инстанса s3-cl31590. нашёл нужный примитив —..."
+  ]
+ },
+ "final_text": "Готово. Настроил методологию `s3-cl31590` (инстанс `classic`):\n\n1. Добавил открытый статус **Blocked** и переходы в/из него (из любого open-статуса в Blocked и обратно, включая Cancelled/Duplicate).\n2. Включил на кайнде `classic` авто-механизм **`blocksGate: {status: \"Blocked\", releaseTo: \"InProgress\"}`** — это ровно тот примитив, который делает то, что нужно: карточка, стоящая в статусе Blocked (с указанным блокером через связь `blocks`), автоматически переводится в **InProgress**, когда блокирующая карточка закрывается (переходит в терминальный статус, например Done/Cancelled).\n\nКак это работает на практике:\n- Чтобы поставить карточку \"на паузу\" из-за блокера, переводите её в статус `Blocked` — сервер потребует указать блокирующую карточку через связь типа `blocks` (структурная связь, уже встроена в проект).\n- Когда блокирующая карточка закрывается, сервер сам переводит заблокированную карточку из `Blocked` в `InProgress` — без ручного вмешательства.\n\nВерсия правил обновилась с 6 до 7, миграций живых карточек не потребовалось (0 migrated).",
+ "n_tool_calls": 6
+}

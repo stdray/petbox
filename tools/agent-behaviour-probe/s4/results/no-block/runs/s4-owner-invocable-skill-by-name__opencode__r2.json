@@ -1,0 +1,33 @@
+{
+ "scenario": "s4-owner-invocable-skill-by-name",
+ "harness": "opencode",
+ "run": 2,
+ "run_id": "op23601",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 15.3,
+ "spec_hash": "456dd7b6fa736f10",
+ "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+ "reads_before_decision": [
+  "read"
+ ],
+ "skills_read_before_decision": [
+  "petbox-factory-run",
+  "petbox-probe-ws-m"
+ ],
+ "all_tools": [
+  "read"
+ ],
+ "decisive_call_args": null,
+ "signals": {
+  "invoked_skill_tool": false,
+  "reached_factory_run_text": true,
+  "named_the_skill": true,
+  "opened_skill_file_by_path": true,
+  "searched_the_disk": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "`/petbox-factory-run` — прогон пачки **уже написанных** заданий до конца в один автоматический проход, без владельца. Оркестратор сам не пишет код — только принимает решения, мержит, ставит гейты, деплоит и двигает карточки.\n\n**Что делает (пайплайн):**\n1. **Recon** — read-only агенты читают брифы + связанные карточки/спеки, выявляют реальный объём, пересечения файлов и, главное, **вопросы владельцу** (с вариантами и рекомендацией).\n2. **Один батч вопросов владельцу** — все развилки сразу, чтобы ответ был «всё как рекомендовано» + исключения. Это то, что делает работу беспризорной возможной.\n3. **По implementer-агенту на задачу** — каждый в своей worktree от `origin/main`.\n4. Агент пушит ветку и двигает карточку в Review (не дальше).\n5. **Оркестратор мержит последовательно** в primary checkout.\n6. **Комбинированный гейт** на сведённом дереве.\n7. Пуш `main`, потом двигает тег `deploy` (весь пайплайн — см. AGENTS.md).\n8. **Verifier-агенты на живом стенде** по шагам из отчётов implementer'ов.\n9. **Разбирает все хвосты (TAILS)** — fix now / файл как observation / discard / строка в memory / escalate карточкой. Ничего не остаётся открытым списком.\n10. Оркестратор двигает карточки в **Don",
+ "n_tool_calls": 1
+}

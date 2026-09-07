@@ -1,0 +1,26 @@
+{
+ "scenario": "s4-owner-invocable-skill-by-name",
+ "harness": "claude",
+ "run": 1,
+ "run_id": "cl13468",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 18.3,
+ "spec_hash": "456dd7b6fa736f10",
+ "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+ "reads_before_decision": [],
+ "skills_read_before_decision": [],
+ "all_tools": [],
+ "decisive_call_args": null,
+ "signals": {
+  "invoked_skill_tool": false,
+  "reached_factory_run_text": false,
+  "named_the_skill": false,
+  "opened_skill_file_by_path": false,
+  "searched_the_disk": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "У меня нет скила с именем `petbox-factory-run` в списке доступных в этой сессии. Точный список скилов, которые я вижу сейчас, не включает его — есть только эти petbox-скилы:\n\n- **petbox** — работа с общими досками задач/памятью/сессионными планами через PetBox MCP-сервер.\n- **petbox-methodology** — изучить методологию проекта перед созданием/переносом узлов на досках idea/spec/work/intake.\n- **petbox-card-check** — проверка карточки задачи перед отправкой воркеру или при приёмке результата.\n- **petbox-node-authoring** — как оформлять тело узла/комментария на досках.\n- **petbox-write-economy** — экономные вызовы записи в PetBox MCP.\n\nНи один из них не называется `petbox-factory-run`, так что я не могу достоверно объяснить, что делает именно этот скилл и какой у него вход — я не хочу выдумывать.\n\nВозможные причины:\n- скилл существует, но привязан к другой директории/проекту (directory-scoped skill), а текущая рабочая директория (`...\\petbox-probe-ws-m1-s4-ctl`, не git-репозиторий) его не подхватывает;\n- опечатка в имени;\n- скилл ещё не установлен/не подключён в этой сессии.\n\nМожешь уточнить, где он должен быть определён (например, `.claude/skills/petbox-factory-run` в каком-то репози",
+ "n_tool_calls": 0
+}

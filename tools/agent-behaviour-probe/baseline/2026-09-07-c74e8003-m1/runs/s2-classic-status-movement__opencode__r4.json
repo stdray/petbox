@@ -1,0 +1,45 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "opencode",
+ "run": 4,
+ "run_id": "op4416",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 32.8,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s2-classic лежит карточка zadacha-op4416. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "tasks_node_get",
+  "tasks_workflow",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [],
+ "all_tools": [
+  "tasks_node_get",
+  "tasks_workflow",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "status": "<str 6 chars>",
+    "version": 26
+   }
+  ]
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": true,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-op4416` доведена до `Done`.\n\n- Ким — 2 (пн, ср)\n- Орлов — 2 (вт, пт)\n- Савельев — 1 (чт)\n\nРезультат записан комментарием к карточке.",
+ "n_tool_calls": 5
+}

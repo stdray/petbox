@@ -1,0 +1,51 @@
+{
+ "generated": "2026-09-07T15:33:42",
+ "spec_hash": "456dd7b6fa736f10",
+ "cells": [
+  {
+   "scenario": "s4-owner-invocable-skill-by-name",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "invoked_skill_tool": "0/5",
+    "reached_factory_run_text": "5/5",
+    "named_the_skill": "5/5",
+    "opened_skill_file_by_path": "5/5",
+    "searched_the_disk": "5/5"
+   },
+   "axis_rates": {
+    "absence_asserted": "0/5",
+    "listing_axis_named": "0/5"
+   },
+   "reads_before_decision_union": [
+    "Glob",
+    "Read"
+   ],
+   "skills_read_rate": "5/5"
+  },
+  {
+   "scenario": "s4-owner-invocable-skill-by-name",
+   "harness": "opencode",
+   "model": "deepseek/deepseek-v4-pro",
+   "runs": 5,
+   "runs_exit0": 5,
+   "signal_rates": {
+    "invoked_skill_tool": "0/5",
+    "reached_factory_run_text": "5/5",
+    "named_the_skill": "5/5",
+    "opened_skill_file_by_path": "5/5",
+    "searched_the_disk": "0/5"
+   },
+   "axis_rates": {
+    "absence_asserted": "1/5",
+    "listing_axis_named": "3/5"
+   },
+   "reads_before_decision_union": [
+    "read"
+   ],
+   "skills_read_rate": "5/5"
+  }
+ ]
+}

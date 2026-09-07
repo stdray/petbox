@@ -1,0 +1,137 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "opencode",
+ "run": 5,
+ "run_id": "op52593",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 128.4,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-op52593. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "skill",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "whoami",
+  "tasks_methodology_list",
+  "grep"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "skill",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "whoami",
+  "tasks_methodology_list",
+  "grep",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_rules_get"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 20,
+  "definition": {
+   "name": "<str 7 chars>",
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ],
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ],
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     }
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": false,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...понятно, механизм есть — в пресете `quartet` это делается через `blocksgate` + `effects` с линком `blocks`. применю тот же паттерн к `s3-op52593`...",
+   "...open) и переходы в/из него. - добавил `blocksgate: {status:\"blocked\", releaseto:\"inprogress\"}`. - добавил эффект перехода `{on:\"done\", link:\"blocks\",...",
+   "...еханизм есть — в пресете `quartet` это делается через `blocksgate` + `effects` с линком `blocks`. применю тот же паттерн к `s3-op52593` (classic): ..."
+  ]
+ },
+ "final_text": "Готово. Настроил `s3-op52593` (был version 20 → стал 21):\n\n- Добавил статус **Blocked** (open) и переходы в/из него.\n- Добавил `blocksGate: {status:\"Blocked\", releaseTo:\"InProgress\"}`.\n- Добавил эффект перехода `{on:\"Done\", link:\"blocks\", direction:\"outgoing\", set:\"InProgress\", onlyFrom:\"Blocked\"}`.\n\nКак это работает: когда у карточки есть входящая связь `blocks` (через `blockedBy`) и она сидит в `Blocked`, при переводе блокирующей карточки в `Done` заблокированная автоматически освобождается в `InProgress` (уходит в работу). Это ровно тот же механизм, что встроен в пресет `quartet`.\n\nЗамечание: авто-освобождение срабатывает только на `Done` (успешное закрытие). Если хочешь, чтобы блокировка снималась и при `Cancelled`/`Duplicate` — добавлю соответствующие эффекты.",
+ "n_tool_calls": 10
+}

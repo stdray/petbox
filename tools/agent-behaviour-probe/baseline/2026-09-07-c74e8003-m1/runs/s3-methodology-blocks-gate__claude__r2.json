@@ -1,0 +1,130 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 2,
+ "run_id": "cl21474",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 109.7,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-cl21474. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 4,
+  "definition": {
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ],
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "strictMode": false
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": false,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...троенным шаблоном `quartet`, где ровно такой паттерн уже реализован (`blocksgate` + `effects` на связи `blocks`), и переношу его в `classic`. план: до...",
+   "...ом `quartet`, где ровно такой паттерн уже реализован (`blocksgate` + `effects` на связи `blocks`), и переношу его в `classic`. план: добавляю стату..."
+  ]
+ },
+ "final_text": "Готово. Методология `s3-cl21474` (classic, версия 5) теперь настроена:\n\n- Добавлен статус `Blocked` и переходы в/из него (из Backlog/Todo/InProgress/Review вручную помечать заблокированной, и обратно).\n- Добавлен эффект: при переходе блокирующей карточки в `Done` все карточки, связанные с ней исходящей связью `blocks` и находящиеся в статусе `Blocked`, автоматически переводятся в `InProgress` — то есть освобождаются и уходят в работу.\n\n**Как этим пользоваться:** чтобы карточка B была заблокирована карточкой A, нужно (1) создать связь `relations_create` типа `blocks` из A в B, и (2) перевести B в статус `Blocked`. Когда A дойдёт до `Done`, B сама перескочит в `InProgress`.\n\nНюанс: автосвобождение срабатывает именно при переходе блокера в `Done` (успешное завершение), а не при `Cancelled`/`Duplicate` — так же устроен встроенный шаблон `quartet`, на который я ориентировался. Если хотите, чтобы карточка освобождалась и при отмене/дубликате блокера, могу добавить такие же эффекты для этих статусов — просто скажите.",
+ "n_tool_calls": 10
+}

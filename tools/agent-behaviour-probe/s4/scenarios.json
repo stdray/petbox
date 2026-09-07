@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "S4 ONLY. Lives in a SEPARATE tool directory on purpose: adding a fourth scenario to",
+    "tools/agent-behaviour-probe/scenarios.json would move that file's spec_hash and make the",
+    "M1 rerun of S1-S3 incomparable with the M0 baseline (340290f50bc34b28). The scoring",
+    "contract of the three original scenarios is therefore left untouched, and S4 carries its",
+    "own hash. S4 has no M0 baseline anyway -- it is a new scenario, added after M0 by the card",
+    "user-invocable-skills-invisible-to-model.",
+    "",
+    "PROMPT IS NEUTRAL about the axis under test: it names the skill the way the OWNER named it",
+    "live (a slash name) and asks what it does. It does NOT say 'it may be missing from your",
+    "listing' or 'do not search the disk' -- that is the variable being measured. The 'do not",
+    "run anything' clause is CONTAINMENT, not a steer: petbox-factory-run fans work out to real",
+    "subagents.",
+    "{RUN} is substituted with a per-run unique suffix; S4 needs no server fixture."
+  ],
+
+  "scenarios": [
+    {
+      "id": "s4-owner-invocable-skill-by-name",
+      "title": "Скил, названный владельцем по имени (disable-model-invocation)",
+      "umbrella_ref": "user-invocable-skills-invisible-to-model: флаг прячет скил из листинга модели целиком",
+      "fixture": "none",
+      "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+      "decisive_tools": ["Skill", "skill"],
+      "signals": {
+        "invoked_skill_tool": {"kind": "tool_called", "tools": ["Skill", "skill", "skills"]},
+        "reached_factory_run_text": {"kind": "read_skill", "skill": "petbox-factory-run"},
+        "named_the_skill": {"kind": "any_arg_contains", "needle": "petbox-factory-run"},
+        "opened_skill_file_by_path": {"kind": "any_arg_contains", "needle": "skill.md"},
+        "searched_the_disk": {"kind": "tool_called", "tools": ["Glob", "glob", "Grep", "grep", "Bash", "bash", "PowerShell", "list", "ls"]}
+      },
+      "axes": {
+        "absence_asserted": ["нет такого", "не существует", "no such skill", "не найден", "not found", "отсутствует", "не вижу такого", "нет в списке", "не могу найти", "нет в моём списке"],
+        "listing_axis_named": ["листинг", "listing", "disable-model-invocation", "owner-invocable", "скрыт", "hidden", "don't guess", "не угадыв", "только по вызову", "user-invocable", "по имени от владельца", "вы назвали его явно"]
+      }
+    }
+  ]
+}

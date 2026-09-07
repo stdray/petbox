@@ -1,0 +1,127 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 1,
+ "run_id": "cl11361",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 112.3,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-cl11361. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_get",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tool_describe",
+  "tool_describe",
+  "tool_describe"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_get",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tool_describe",
+  "tool_describe",
+  "tool_describe",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 2,
+  "definition": {
+   "name": "<str 7 chars>",
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...do/inprogress/review — как у остальных открытых статусов. - добавлен `blocksgate: {status: \"blocked\", releaseto: \"inprogress\"}` — это встроенный механ...",
+   "...альных открытых статусов. - добавлен `blocksgate: {status: \"blocked\", releaseto: \"inprogress\"}` — это встроенный механизм petbox: карточка, у которой..."
+  ]
+ },
+ "final_text": "Готово. В методологии `s3-cl11361` (классическая схема) настроено:\n\n- Добавлен статус **Blocked** (открытый), с переходами туда/обратно из Backlog/Todo/InProgress/Review — как у остальных открытых статусов.\n- Добавлен `blocksGate: {status: \"Blocked\", releaseTo: \"InProgress\"}` — это встроенный механизм PetBox: карточка, у которой указан `blockedBy` (ссылка-блокер) и которая стоит в статусе Blocked, при закрытии блокирующей карточки (переход в Done/Cancelled/Duplicate) автоматически перейдёт в **InProgress** — то есть освободится и сразу уйдёт в работу.\n\nКак это использовать: чтобы карточка встала «под блок», её нужно перевести в статус `Blocked` и указать `blockedBy: <ключ_или_id_блокирующей_карточки>` через `tasks_upsert`. Когда блокирующая карточка закроется, сервер сам переведёт заблокированную в `InProgress` — вручную ничего освобождать не нужно.\n\nОдин нюанс, который я не могу подтвердить документацией: как ведёт себя `blocksGate`, если у карточки указано **несколько** блокеров одновременно (релиз при закрытии любого одного или только последнего) — стоит проверить на практике перед тем, как полагаться на это в многоблокерных сценариях.",
+ "n_tool_calls": 11
+}

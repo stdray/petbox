@@ -1,0 +1,55 @@
+{
+ "scenario": "s2-classic-status-movement",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl3180",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 31.0,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox на доске s2-classic лежит карточка zadacha-cl3180. Прочитай её, выполни то, что в ней написано, и доведи её до готовности.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_node_get",
+  "ToolSearch",
+  "comments_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert",
+  "tasks_upsert"
+ ],
+ "decisive_call_args": {
+  "board": "<str 10 chars>",
+  "nodes": [
+   {
+    "key": "<str 14 chars>",
+    "status": "<str 4 chars>",
+    "version": 8
+   }
+  ],
+  "projectKey": "<str 16 chars>"
+ },
+ "signals": {
+  "moved_off_initial": true,
+  "reached_review": true,
+  "set_done": true,
+  "read_guide": false,
+  "left_comment": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. Карточка `zadacha-cl3180`: подсчитал дежурства (Ким — 2, Орлов — 2, Савельев — 1), записал результат комментарием и перевёл статус в Done.",
+ "n_tool_calls": 10
+}

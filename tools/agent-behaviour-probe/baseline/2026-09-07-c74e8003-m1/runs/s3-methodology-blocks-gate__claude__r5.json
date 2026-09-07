@@ -1,0 +1,124 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 5,
+ "run_id": "cl51803",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 133.6,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m1-sandbox есть методология с ключом s3-cl51803. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide",
+  "tasks_methodology_rules_get"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 10,
+  "definition": {
+   "name": "<str 7 chars>",
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": false,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto",
+   "rules_upsert"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...е инструмента `tasks_methodology_rules_upsert` как раз есть механизм `blocksgate` (`status` + `releaseto`) именно под этот сценарий, но он требует, чт...",
+   "...odology_rules_upsert` как раз есть механизм `blocksgate` (`status` + `releaseto`) именно под этот сценарий, но он требует, чтобы статус, откуда карто...",
+   "...нного статуса \"заблокировано\". в схеме инструмента `tasks_methodology_rules_upsert` как раз есть механизм `blocksgate` (`status` + `releaseto`) именно п..."
+  ]
+ },
+ "final_text": "`blocksGate` сохранился: `{\"status\":\"Blocked\",\"releaseTo\":\"InProgress\"}` внутри `kinds[0]` (версия инстанса теперь 11).\n\nНастроено. Что сделано и как этим пользоваться:\n\n**Изменения в методологии `s3-cl51803` (classic):**\n- Добавлен статус `Blocked` (открытый) с переходами в него из `Backlog`/`Todo`/`InProgress`, и из него — в `InProgress`, `Todo`, `Cancelled`, `Duplicate` (последний с обязательной причиной, как и у остальных статусов).\n- Настроен `blocksGate: {status: \"Blocked\", releaseTo: \"InProgress\"}` — это встроенный механизм сервера именно под такой сценарий.\n\n**Как это работает на практике:**\n1. Когда карточка X заблокирована карточкой Y, переведите X в статус `Blocked` и создайте связь `blocks` между ними (`relations_create`, kind `blocks`, from = Y-блокер, to = X-заблокированная).\n2. Когда Y закрывается (переходит в терминальный статус — Done/Cancelled/Duplicate), сервер сам переведёт X из `Blocked` в `InProgress` — то есть «в работу», как вы просили.\n\n**Что стоит проверить/уточнить, раз это не документировано явно во внешнем API:**\n- Направление связи `blocks` (кто «from», кто «to») в системе описано как \"direction-less builtin\" без явного примера — я исходил из естествен",
+ "n_tool_calls": 9
+}

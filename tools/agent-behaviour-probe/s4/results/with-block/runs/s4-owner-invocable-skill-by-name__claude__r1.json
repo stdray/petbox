@@ -1,0 +1,35 @@
+{
+ "scenario": "s4-owner-invocable-skill-by-name",
+ "harness": "claude",
+ "run": 1,
+ "run_id": "cl13239",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 25.7,
+ "spec_hash": "456dd7b6fa736f10",
+ "prompt": "Хочу запустить /petbox-factory-run. Объясни, что этот скил делает и что ему нужно на вход. Сам ничего не запускай и никаких подагентов не создавай — только объясни.",
+ "reads_before_decision": [
+  "Glob",
+  "Read"
+ ],
+ "skills_read_before_decision": [
+  "petbox-factory-run",
+  "petbox-probe-ws-m"
+ ],
+ "all_tools": [
+  "Glob",
+  "Read"
+ ],
+ "decisive_call_args": null,
+ "signals": {
+  "invoked_skill_tool": false,
+  "reached_factory_run_text": true,
+  "named_the_skill": true,
+  "opened_skill_file_by_path": true,
+  "searched_the_disk": true
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "## Что делает `/petbox-factory-run`\n\nЭто оркестрация «прогнать пачку уже готовых задач без присмотра владельца», от исходников до Done. Один проход по всем задачам сразу:\n\n1. **Recon** — несколько read-only агентов читают брифы + связанные карточки/спеки, репортят реальный объём, пересечения между задачами и **вопросы владельцу** (с вариантами и рекомендацией).\n2. **Один пакет вопросов владельцу** — сразу все развилки, чтобы можно было ответить «всё по рекомендации + исключения». Это единственный момент, где нужен человек.\n3. **Имплементер на задачу**, каждый в своём git worktree от `origin/main`.\n4. Агент пушит ветку и двигает карточку в Review — **не мержит сам**.\n5–10. Дальше это делает только оркестратор (не агенты): последовательный merge, общий gate на смёрженном дереве, push main + deploy tag, верификация на живом стенде, disposition каждого «хвоста» (fix now / observation / discard / memory / escalation), и только тогда — перевод карточек в Done.\n\nКлючевые правила внутри (из болезненного опыта): агенты никогда не мержат сами, gate — обязательно в foreground с буквальным выводом, «отчёт о записи ≠ запись» (нужно перечитать цель), карточки-коллекторы теряют параллельные правк",
+ "n_tool_calls": 2
+}
