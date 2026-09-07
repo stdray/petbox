@@ -1,0 +1,137 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "opencode",
+ "run": 5,
+ "run_id": "op51235",
+ "model": "deepseek/deepseek-v4-pro",
+ "exit_code": 0,
+ "duration_s": 192.1,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox есть методология с ключом s3-op51235. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "skill",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "whoami"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "skill",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_guide",
+  "tool_describe",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_template_get",
+  "memory_search",
+  "whoami",
+  "tasks_methodology_rules_upsert",
+  "tasks_methodology_guide"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 21,
+  "definition": {
+   "name": "<str 7 chars>",
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ],
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false
+      }
+     ]
+    }
+   ],
+   "strictMode": false
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...и реализованы эталонно): нужны статус `blocked`, переходы в/из него, `blocksgate` и эффект на `done` по связи `blocks`. мой ключ имеет scopes `tasks:w...",
+   "..., `todo→blocked`, `blocked→todo`; - `blocksgate: { status: \"blocked\", releaseto: \"inprogress\" }` — куда падает карточка при блокировке и куда выпуска..."
+  ]
+ },
+ "final_text": "Готово. Методология `s3-op51235` настроена (version 22). Теперь при закрытии блокирующей карточки заблокированная автоматически освобождается и уходит в работу.\n\nЧто добавлено в kind `classic`:\n- статус **Blocked** (open) + переходы `InProgress→Blocked`, `Blocked→InProgress`, `Todo→Blocked`, `Blocked→Todo`;\n- `blocksGate: { status: \"Blocked\", releaseTo: \"InProgress\" }` — куда падает карточка при блокировке и куда выпускается при освобождении;\n- эффект `Done → outgoing blocks → set InProgress (onlyFrom: Blocked)` — серверный FSM-эффект: когда блокирующая карточка переходит в `Done`, все её заблокированные (`Blocked`) карточки автоматически переводятся в `InProgress`.\n\nGuide это подтверждает: *\"On entering Done, outgoing blocks nodes currently in Blocked are set to InProgress.\"*\n\nНюанс: освобождение срабатывает именно на `Done` (терминально-успешное закрытие). Если блокирующая карточка уходит в `Cancelled`/`Duplicate`, автоосвобождение не сработает — блок остаётся (по каноническому поведению `quartet`). Если нужно выпускать и при отмене блокировщика — скажи, добавлю эффекты на `Cancelled`/`Duplicate`.",
+ "n_tool_calls": 11
+}

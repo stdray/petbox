@@ -33,12 +33,15 @@ TestResults/
 # BenchmarkDotNet artifacts
 BenchmarkDotNet.Artifacts/
 
-# Cake (tool restore) — but keep the tracked KqlBench research harness and the
-# session-usage token-reporting tool
+# Cake (tool restore) — but keep the tracked KqlBench research harness, the
+# session-usage token-reporting tool and the agent-behaviour probe
 tools/*
 !tools/KqlBench/
 tools/KqlBench/bench-results.jsonl
 !tools/session-usage/
+# The probe's baseline/ IS tracked, unlike KqlBench's bench-results above: the raw transcripts
+# are the artifact M1 re-scores against, not incidental output of a local run.
+!tools/agent-behaviour-probe/
 .cake/
 
 # Python (agent/ deploy tool)

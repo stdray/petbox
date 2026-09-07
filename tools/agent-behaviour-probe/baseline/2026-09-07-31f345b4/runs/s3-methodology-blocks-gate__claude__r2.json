@@ -1,0 +1,137 @@
+{
+ "scenario": "s3-methodology-blocks-gate",
+ "harness": "claude",
+ "run": 2,
+ "run_id": "cl29705",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 110.5,
+ "spec_hash": "340290f50bc34b28",
+ "prompt": "В проекте probe-m0-sandbox есть методология с ключом s3-cl29705. Настрой её так, чтобы карточка, которая заблокирована другой карточкой, автоматически освобождалась и уходила в работу, когда блокирующая карточка закрывается. Если это невозможно — скажи почему.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tool_describe",
+  "tasks_methodology_template_get"
+ ],
+ "skills_read_before_decision": [
+  "petbox-methodology"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "tasks_methodology_rules_get",
+  "tasks_methodology_get",
+  "tasks_methodology_guide",
+  "ToolSearch",
+  "tool_describe",
+  "tasks_methodology_template_get",
+  "tasks_methodology_rules_upsert"
+ ],
+ "decisive_call_args": {
+  "key": "<str 10 chars>",
+  "version": 5,
+  "definition": {
+   "name": "<str 7 chars>",
+   "strictMode": false,
+   "kinds": [
+    {
+     "kind": "<str 7 chars>",
+     "quickAddAllowed": true,
+     "blocksGate": {
+      "status": "<str 7 chars>",
+      "releaseTo": "<str 10 chars>"
+     },
+     "effects": [
+      {
+       "on": "<str 4 chars>",
+       "link": "<str 6 chars>",
+       "direction": "<str 8 chars>",
+       "set": "<str 10 chars>",
+       "onlyFrom": "<str 7 chars>",
+       "onLeave": false,
+       "description": "<str 117 chars>"
+      }
+     ],
+     "workflows": [
+      {
+       "types": [
+        "<str 4 chars>",
+        "<str 7 chars>",
+        "<str 3 chars>"
+       ],
+       "initial": "<str 7 chars>",
+       "statuses": [
+        {
+         "slug": "<str 7 chars>",
+         "name": "<str 7 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 4 chars>",
+         "name": "<str 4 chars>",
+         "kind": "<str 4 chars>"
+        },
+        {
+         "slug": "<str 10 chars>",
+         "name": "<str 11 chars>",
+         "kind": "<str 4 chars>"
+        }
+       ],
+       "transitions": [
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 4 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 10 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        },
+        {
+         "from": "<str 7 chars>",
+         "to": "<str 6 chars>",
+         "requiresApproval": false,
+         "requiresReason": false,
+         "enforceApproval": false
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "signals": {
+  "used_blocks_gate": true,
+  "called_rules_upsert": true,
+  "called_rules_get": true,
+  "called_tool_describe": true,
+  "read_methodology_skill": true
+ },
+ "axes_named": {
+  "mechanism_found": [
+   "blocksgate",
+   "effects",
+   "releaseto"
+  ]
+ },
+ "axis_evidence": {
+  "mechanism_found": [
+   "...и они сейчас в статусе `blocked` — переводит их в `inprogress`. плюс `blocksgate`, помечающий `blocked` как статус блокировки с `releaseto: inprogress...",
+   "...ss`. плюс `blocksgate`, помечающий `blocked` как статус блокировки с `releaseto: inprogress`.  в текущем `classic` статуса `blocked` нет, поэтому его...",
+   "...blocked` в `inprogress`.  это тот же встроенный механизм (`blocks` + `effects` + `blocksgate`), что использует пресет `quartet` для своей доски `wo..."
+  ]
+ },
+ "final_text": "Готово. Методология `s3-cl29705` (версия 6) обновлена:\n\n**Что добавлено**\n- Новый статус `Blocked` (open) в workflow kind `classic`, с переходами в него из `Backlog`/`Todo`/`InProgress`/`Review` и обратно (`InProgress`/`Todo`/`Backlog`/`Cancelled`/`Duplicate`) для ручного управления.\n- `blocksGate: {status: \"Blocked\", releaseTo: \"InProgress\"}` — декларирует `Blocked` как статус блокировки, а `InProgress` как статус освобождения.\n- `effect`: при переходе карточки в `Done` система проходит по её исходящим связям `blocks` и для каждой связанной карточки, если та сейчас в `Blocked`, автоматически переводит её в `InProgress`.\n\n**Как использовать**\nЧтобы карточка B считалась заблокированной карточкой A: поставить B в статус `Blocked` и создать связь `blocks` от A к B (`relations_create`, link kind `blocks`, from=A, to=B — «A блокирует B»). Когда A закроется переходом в `Done`, B автоматически перейдёт из `Blocked` в `InProgress`.\n\nЭто тот же встроенный механизм (`blocks` + `effects` + `blocksGate`), что использует пресет `quartet` для своей доски `work` — платформа поддерживает это нативно, доработка не потребовалась, только конфигурация рулесов.",
+ "n_tool_calls": 9
+}
