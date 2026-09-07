@@ -153,17 +153,28 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 		full.Should().Contain("case-insensit", "MethodologySetDescription.Apply lowercases before matching (line 35)");
 	}
 
-	// ── umbrella-agent-text-names-both-axes (server leg): `bodyRef` must name BOTH axes ────────
+	// ── umbrella-agent-text-names-both-axes (server leg): the by-reference param must name BOTH
+	// axes ──────────────────────────────────────────────────────────────────────────────────────
 	// The agent-behaviour probe (tools/agent-behaviour-probe) found the cause of a 14/20 inline-
 	// write miss on a long-Cyrillic-body task: ModuleMcp.SizeGuidanceText (folded into each of
-	// these three tools' own top-level description, one screen above the `nodes`/`items`/`entries`
-	// parameter) tells the agent to write composed non-ASCII/long text to a file and upload it via
-	// `bodyRef` — but the PARAMETER description described `bodyRef` as ONLY "for a body that
-	// already exists as a file", which contradicts that instruction and reads as a ready-made
-	// excuse to inline instead (transcript quote: "using bodyRef would require uploading a blob,
-	// but simpler to just pass body inline"). The parameter text must name BOTH cases — a file
-	// that already exists, and text the agent is composing right now that it must stage to a file
-	// first — or it keeps reading as inapplicable to the exact case that matters.
+	// these tools' own top-level description, one screen above the by-reference parameter) tells
+	// the agent to write composed non-ASCII/long text to a file and upload it by reference — but
+	// the PARAMETER description described that reference as ONLY "for a body/fact/transcript that
+	// already exists as a file" (or, on session_append, "that already exists as a file"), which
+	// contradicts that instruction and reads as a ready-made excuse to inline instead (transcript
+	// quote: "using bodyRef would require uploading a blob, but simpler to just pass body
+	// inline"). The parameter text must name BOTH cases — a file that already exists, and text the
+	// agent is composing right now that it must stage to a file first — or it keeps reading as
+	// inapplicable to the exact case that matters.
+	//
+	// Card point-of-act-text-contradicts-itself-bodyref: the first pass fixed three of these
+	// (tasks_upsert/comments_upsert/memory_upsert, all named `bodyRef`) and left two more of the
+	// SAME defect standing, found only after a coordinator-requested re-grep across every MCP
+	// param description for "already exists as a file" / "that already exists": memory_remember's
+	// `textRef` and session_append's `messages` (whose by-reference field is `contentRef`). FIVE
+	// instances total on the surface, all fixed, all pinned below — this theory covers the three
+	// literally named `bodyRef`; the second theory below covers the two named differently
+	// (textRef / contentRef), which cannot share the literal "bodyRef" assertion.
 	[Theory]
 	[InlineData("tasks_upsert", "nodes")]
 	[InlineData("comments_upsert", "items")]
@@ -183,5 +194,32 @@ public sealed class McpSurfaceDescriptionAccuracyTests
 		full.Should().Contain("write it to a file first",
 			$"{tool}.{paramName}'s bodyRef description must give the actionable step for composed text, " +
 			"matching what SizeGuidanceText already tells the agent to do");
+	}
+
+	// The two surfaces whose by-reference field is NOT named `bodyRef` (memory_remember's field is
+	// `text`, so its ref is `textRef`; session_append's is a per-message `content`, so its ref is
+	// `contentRef`) — same defect, same fix, but the literal-"bodyRef" assertion above would be
+	// checking for the wrong word, hence a separate theory rather than folding these into it.
+	[Theory]
+	[InlineData("memory_remember", "textRef", "textRef")]
+	[InlineData("session_append", "messages", "contentRef")]
+	public void ByReferenceParamDescription_NamesBothAxes_ExistingFileAndComposedTextToWriteFirst(
+		string tool, string paramName, string refFieldName)
+	{
+		// Unlike the literally-named `bodyRef` cases above, these two parameters' own descriptions
+		// never need to spell out their field's name (the JSON schema already carries it) — so
+		// there is no "must mention {refFieldName}" assertion here, only the two-axis content check.
+		var full = Flat(RegisteredParamDescription(tool, paramName));
+
+		full.Should().Contain("already on disk as a file",
+			$"{tool}.{paramName}'s {refFieldName} description must still name the existing-file case");
+		full.Should().Contain("composing right now",
+			$"{tool}.{paramName}'s {refFieldName} description must ALSO name the second axis — text the agent " +
+			"is composing right now, not only text already on disk — or an agent reading only this " +
+			"parameter's description concludes the ref field does not apply to the exact case " +
+			"(long/non-ASCII prose) SizeGuidanceText routes through it");
+		full.Should().Contain("write it to a file first",
+			$"{tool}.{paramName}'s {refFieldName} description must give the actionable step for composed " +
+			"text, matching what SizeGuidanceText already tells the agent to do");
 	}
 }

@@ -556,7 +556,7 @@ public static class MemoryTools
 		// convention is "<the field it replaces> + Ref", which is what makes the pairing readable at
 		// the call site on every surface — `bodyRef` where the field is `body`, `contentRef` where it
 		// is a message's `content`.
-		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact that already exists as a file. Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
+		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact already on disk as a file, OR for fact text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above). Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
