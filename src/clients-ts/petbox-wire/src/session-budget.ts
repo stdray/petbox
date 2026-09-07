@@ -63,52 +63,96 @@ export type SessionBannerResult = {
   /** Byte length of the canon text actually SHIPPED in `text` (0 when none survived). */
   canonIncludedBytes: number;
   /**
-   * True iff assembling protocol+canon together would have exceeded `budgetBytes` — i.e. this
-   * session's banner is a degraded case (canon dropped, or — the rarer, worse case — the
-   * protocol block alone is already over budget and had nowhere left to cut). Callers should
-   * log this loudly: a silent 14KB-into-a-2KB-window truncation is exactly the bug this module
-   * exists to prevent from recurring.
+   * Byte length of the `extra` block CONSIDERED (spec: user-invocable-skills-invisible-to-model
+   * — the owner-only-skills block is the current caller), 0 when none was offered.
+   */
+  extraBytes: number;
+  /** True iff `extra` made it into `text`. */
+  extraIncluded: boolean;
+  /**
+   * True iff assembling protocol+canon(+extra) together would have exceeded `budgetBytes` — i.e.
+   * this session's banner is a degraded case (canon and/or extra dropped, or — the rarer, worse
+   * case — the protocol block alone is already over budget and had nowhere left to cut). Callers
+   * should log this loudly: a silent 14KB-into-a-2KB-window truncation is exactly the bug this
+   * module exists to prevent from recurring.
    */
   overBudget: boolean;
 };
 
 // Assemble the final SessionStart banner from the MANDATORY protocol block (gates, self-intro,
-// search-before-rework — must always survive) and the OPTIONAL canon block (best-effort; can be
-// large, can grow independently of this kit). If both together fit the budget, ship both. If
-// not, drop the canon rather than ship a byte-stream the harness itself will guillotine at an
-// arbitrary offset — that arbitrary cut does not respect section boundaries, so an oversized
-// canon appended after the protocol block risks slicing INTO the protocol block's own tail
-// (this is exactly how rules 4-7 went missing in the original bug: the harness's cut lands
-// wherever the cumulative byte count crosses its own line, not at a markdown heading). Protocol
-// always wins the budget; canon is what degrades.
+// search-before-rework — must always survive), the OPTIONAL canon block (best-effort; can be
+// large, can grow independently of this kit), and an OPTIONAL fourth `extra` block (currently:
+// skill-files.ts's owner-only-skills block). If everything fits the budget, ship it all. If not,
+// drop content rather than ship a byte-stream the harness itself will guillotine at an arbitrary
+// offset — that arbitrary cut does not respect section boundaries, so oversized content appended
+// after the protocol block risks slicing INTO the protocol block's own tail (this is exactly how
+// rules 4-7 went missing in the original bug: the harness's cut lands wherever the cumulative
+// byte count crosses its own line, not at a markdown heading). Protocol always wins the budget;
+// everything else degrades.
 //
 // Canon degrades LEG BY LEG, not all-or-nothing (work canon-degrade-by-legs-not-all-or-nothing).
 // The block carries two independent legs — the project canon and the workspace canon — and the
 // project one is the more specific, more expensive-to-re-derive of the two, so a single byte of
-// overage used to cost the agent BOTH. The ladder is now: whole block → project leg only →
-// nothing, re-checking the budget at each rung and stopping at the first that fits. This is
-// insurance against any future drift (protocol, canon or wrapper), not a fix for one incident.
+// overage used to cost the agent BOTH.
+//
+// `extra` is woven into that SAME ladder rather than appended unconditionally after it (bug:
+// owner-only-skills-block-silently-dropped-in-real-project — a real project's canon plus a
+// fixed-size trailing block blew the 10 000 B hard limit on EVERY session, in the one project the
+// card that added `extra` was about, and the drop-silently-log-to-wire.log path meant nobody at
+// the session start ever saw it: the exact "text claims a fix that never reaches the agent"
+// failure the surrounding umbrella card exists to catch). The full ladder, most inclusive first:
+//   1. protocol + canon (both legs) + extra
+//   2. protocol + canon (project leg only) + extra      — canon sheds its WORKSPACE leg
+//   3. protocol + canon (project leg only), no extra    — extra is dropped next
+//   4. protocol + extra, no canon at all                — canon's project leg goes too, but a
+//      small `extra` gets one more chance alone with protocol before it is dropped as well
+//   5. protocol alone
+// This ranks `extra` ABOVE the canon workspace leg and BELOW the canon project leg: `extra`
+// (today: the owner-only-skills block) fixes a demonstrated, reproducible failure to discover a
+// skill the owner just named — a correctness gap — while the workspace leg is cross-project notes
+// already established as the first thing this ladder sheds under pressure. The project leg (this
+// project's own curated rules, read every session) still outranks `extra`. Re-checks the budget
+// at each rung and stops at the first that fits — insurance against any future drift (protocol,
+// canon, extra, or the wrapper itself), not a fix for one incident.
 export function assembleSessionBanner(
   protocol: string,
   canon: string | null,
   budgetBytes: number = SESSION_BANNER_BUDGET_BYTES,
+  extra: string | null = null,
 ): SessionBannerResult {
   const protocolBytes = Buffer.byteLength(protocol, "utf8");
-  const bare = (canonBytes: number): SessionBannerResult => ({
-    text: protocol,
-    totalBytes: protocolBytes,
-    protocolBytes,
-    canonBytes,
-    canonIncluded: false,
-    canonLegs: "none",
-    canonIncludedBytes: 0,
-    overBudget: canonBytes > 0 || protocolBytes > budgetBytes,
-  });
-  if (!canon) return bare(0);
+  const extraBytes = extra ? Buffer.byteLength(extra, "utf8") : 0;
+
+  const bare = (canonBytes: number, includeExtra: boolean): SessionBannerResult => {
+    const text = includeExtra && extra ? `${protocol}\n\n${extra}` : protocol;
+    return {
+      text,
+      totalBytes: Buffer.byteLength(text, "utf8"),
+      protocolBytes,
+      canonBytes,
+      canonIncluded: false,
+      canonLegs: "none",
+      canonIncludedBytes: 0,
+      extraBytes,
+      extraIncluded: includeExtra && !!extra,
+      overBudget: canonBytes > 0 || protocolBytes > budgetBytes || (extraBytes > 0 && !includeExtra),
+    };
+  };
+  if (!canon) {
+    // No canon at all — extra is the only optional content left to try.
+    const withExtra = bare(0, true);
+    if (withExtra.totalBytes <= budgetBytes) return withExtra;
+    return bare(0, false);
+  }
 
   const canonBytes = Buffer.byteLength(canon, "utf8");
-  const withCanon = (kept: string, legs: Exclude<CanonLegsIncluded, "none">): SessionBannerResult => {
-    const text = `${protocol}\n\n${kept}`;
+  const withCanon = (
+    kept: string,
+    legs: Exclude<CanonLegsIncluded, "none">,
+    includeExtra: boolean,
+  ): SessionBannerResult => {
+    let text = `${protocol}\n\n${kept}`;
+    if (includeExtra && extra) text += `\n\n${extra}`;
     return {
       text,
       totalBytes: Buffer.byteLength(text, "utf8"),
@@ -117,22 +161,34 @@ export function assembleSessionBanner(
       canonIncluded: true,
       canonLegs: legs,
       canonIncludedBytes: Buffer.byteLength(kept, "utf8"),
-      overBudget: legs !== "both",
+      extraBytes,
+      extraIncluded: includeExtra && !!extra,
+      overBudget: legs !== "both" || (extraBytes > 0 && !includeExtra),
     };
   };
 
-  const whole = withCanon(canon, "both");
+  // Rung 1: canon WHOLE + extra — nothing dropped.
+  const whole = withCanon(canon, "both", true);
   if (whole.totalBytes <= budgetBytes) return whole;
 
-  // Rung two: shed the workspace leg. `null` when there is no workspace leg to shed, or when
-  // shedding it would leave nothing but the block's own heading — in either case there is no
-  // intermediate rung and the ladder goes straight to the bottom.
+  // Rung 2: shed the canon WORKSPACE leg, keep extra. `null` when there is no workspace leg to
+  // shed, or when shedding it would leave nothing but the block's own heading — in either case
+  // there is no intermediate rung for canon and the ladder goes straight past it.
   const projectOnly = dropWorkspaceLeg(canon);
   if (projectOnly !== null) {
-    const degraded = withCanon(projectOnly, "project-only");
+    const degraded = withCanon(projectOnly, "project-only", true);
     if (degraded.totalBytes <= budgetBytes) return degraded;
+
+    // Rung 3: still over — drop extra too, keep the project leg.
+    const noExtra = withCanon(projectOnly, "project-only", false);
+    if (noExtra.totalBytes <= budgetBytes) return noExtra;
   }
-  return bare(canonBytes);
+
+  // Rung 4: drop canon entirely; extra gets one more chance alone with protocol first.
+  const bareWithExtra = bare(canonBytes, true);
+  if (bareWithExtra.totalBytes <= budgetBytes) return bareWithExtra;
+  // Rung 5 (bottom): protocol alone.
+  return bare(canonBytes, false);
 }
 
 /**

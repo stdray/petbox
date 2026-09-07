@@ -107,17 +107,28 @@ async function main(): Promise<void> {
       harness: "claude-code",
       definition: defResult.definition,
     });
-    // Append the curated memory canon only if protocol+canon together still fit the measured
-    // harness inline budget (session-budget.ts) — the mandatory protocol block (gates,
-    // self-intro, search-before-rework) must never be put at risk of the harness's own
-    // byte-offset truncation by an oversized canon riding along after it.
-    const banner = assembleSessionBanner(protocol, canon);
+    // Owner-only skills (work: user-invocable-skills-invisible-to-model) — best-effort, `null`
+    // when the project has none materialized. Woven into the SAME ladder as canon below, not
+    // appended afterward unconditionally: a fixed-size trailing block on top of an
+    // already-budget-fitting protocol+canon blew the harness's 10 000 B hard limit on EVERY
+    // session in the one real project this fix was for ($system: protocol ~5.2KB + canon ~4KB
+    // already used the whole 9 400 B budget before this block's ~1.3KB was even considered) —
+    // exactly the "text claims a fix that never reaches the agent" failure this card exists to
+    // close. assembleSessionBanner's ladder now ranks it between the canon legs (see that
+    // function's own comment for the reasoning) instead.
+    const ownerOnlySkills = buildOwnerOnlySkillsBlock(applyRoot, "claude-code");
+    // Append the curated memory canon and the owner-only-skills block only as far as the ladder
+    // (session-budget.ts) can fit them — the mandatory protocol block (gates, self-intro,
+    // search-before-rework) must never be put at risk of the harness's own byte-offset
+    // truncation by oversized content riding along after it.
+    const banner = assembleSessionBanner(protocol, canon, SESSION_BANNER_BUDGET_BYTES, ownerOnlySkills);
     if (banner.overBudget) {
       // A breakage, not an expected absence (wire-silent-failures-invisible taxonomy) — log
       // loudly rather than silently ship a banner the harness will itself guillotine.
       await logBudgetOverage(
         `pull-memory[${resolved.project}]: session banner exceeded budget — ` +
           `protocol=${banner.protocolBytes}B canon=${banner.canonBytes}B ` +
+          `ownerOnlySkills=${banner.extraBytes}B (${banner.extraIncluded ? "kept" : "DROPPED"}) ` +
           `budget=${SESSION_BANNER_BUDGET_BYTES}B hard-limit=${HARNESS_INLINE_HARD_LIMIT_BYTES}B — ` +
           `canon ${describeCanonDegradation(banner)}. ` +
           `Shrink the canon (memory_upsert store canon key index) or raise the budget deliberately.`,
@@ -133,24 +144,7 @@ async function main(): Promise<void> {
     // treatment as staleWarn: tiny and prepended OUTSIDE the byte-budget accounting, so the one
     // line that explains the degradation cannot itself be the part that gets truncated away.
     const defNote = defResult.note;
-    let tail = staleWarn + (defNote ? defNote + "\n" : "") + banner.text;
-    // Owner-only skills (work: user-invocable-skills-invisible-to-model) — lowest priority of
-    // everything in this banner, so it is the one thing dropped (not the mandatory protocol or
-    // an already-fitted canon) when there is no room left under the harness's own hard limit.
-    // Best-effort: `null` when the project has none materialized, same contract as canon.
-    const ownerOnlySkills = buildOwnerOnlySkillsBlock(applyRoot, "claude-code");
-    if (ownerOnlySkills) {
-      const withBlock = `${tail}\n\n${ownerOnlySkills}`;
-      if (Buffer.byteLength(withBlock, "utf8") <= HARNESS_INLINE_HARD_LIMIT_BYTES) {
-        tail = withBlock;
-      } else {
-        await logBudgetOverage(
-          `pull-memory[${resolved.project}]: owner-only-skills block dropped — banner would ` +
-            `exceed the ${HARNESS_INLINE_HARD_LIMIT_BYTES}B harness hard limit.`,
-        );
-      }
-    }
-    await writeStdout(tail);
+    await writeStdout(staleWarn + (defNote ? defNote + "\n" : "") + banner.text);
   } catch {
     // best-effort
   }

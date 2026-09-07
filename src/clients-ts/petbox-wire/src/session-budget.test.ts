@@ -129,6 +129,91 @@ test("assembleSessionBanner: a fitting two-leg canon is untouched — the ladder
   assert.equal(result.canonIncludedBytes, Buffer.byteLength(whole, "utf8"));
 });
 
+// --- owner-only-skills block woven into the ladder (bug:
+// owner-only-skills-block-silently-dropped-in-real-project) ---
+//
+// Found by measuring the FINAL tree against the one real project the fix was for: in `$system`
+// (Claude Code), protocol(compact) = 5207B, canon (real cache file) = 4058B whole / 2773B
+// project-leg-only, the owner-only-skills block (3 real skills, unshrunk) = 1281B, and the
+// stale-base warning (pull-memory.ts prepends it OUTSIDE this ladder's own budget accounting) =
+// 317B on a parked branch. Appending the block unconditionally after an already-budget-fitting
+// protocol+canon banner (9267B, ≤ the 9400B budget) pushed the shipped stdout to 10550B — over
+// the harness's 10000B hard limit — on EVERY session in that project, silently (the drop was
+// logged to ~/.petbox/wire.log, which nothing reads at session start). All the numbers below are
+// those measured values, not round numbers, so a regression that changes the ladder's shape
+// re-triggers this exact failure rather than a smaller one a round-number fixture would miss.
+const REAL_PROTOCOL_COMPACT_BYTES = 5207;
+const REAL_CANON_WHOLE_BYTES = 4058;
+const REAL_CANON_PROJECT_ONLY_BYTES = 2773; // whole minus the ~1285B workspace leg
+const REAL_OWNER_ONLY_SKILLS_BLOCK_BYTES = 1281; // 3 real skills, unshrunk (skill-files.test.ts pins the text)
+const REAL_STALE_BASE_WARNING_BYTES = 317; // prepended by pull-memory.ts, OUTSIDE this ladder's budget
+
+/** A canon fixture whose WHOLE and PROJECT-ONLY byte counts hit the two constants above exactly
+ * (computed once by construction, not asserted after the fact) — `canonBlock` is the same helper
+ * every other test in this file uses, so this fixture exercises the exact code path
+ * `dropWorkspaceLeg` runs in production. */
+function realScaleCanon(): string {
+  const overheadNoWorkspace = Buffer.byteLength(canonBlock("", null), "utf8");
+  const projectBody = "X".repeat(REAL_CANON_PROJECT_ONLY_BYTES - overheadNoWorkspace);
+  const overheadWithEmptyWorkspace = Buffer.byteLength(canonBlock(projectBody, ""), "utf8");
+  const workspaceBody = "Y".repeat(REAL_CANON_WHOLE_BYTES - overheadWithEmptyWorkspace);
+  const whole = canonBlock(projectBody, workspaceBody);
+  // Self-check: if a future edit to canonBlock's fixed prose changes its overhead, fail here
+  // with a clear message rather than silently testing a different scale than intended.
+  assert.equal(Buffer.byteLength(whole, "utf8"), REAL_CANON_WHOLE_BYTES);
+  assert.equal(Buffer.byteLength(canonBlock(projectBody, null), "utf8"), REAL_CANON_PROJECT_ONLY_BYTES);
+  return whole;
+}
+
+test("assembleSessionBanner: real $system scale — protocol(compact) + canon(4KB) + owner-only-skills block ALL survive, workspace leg sheds instead", () => {
+  const protocol = "P".repeat(REAL_PROTOCOL_COMPACT_BYTES);
+  const canon = realScaleCanon();
+  const extra = "E".repeat(REAL_OWNER_ONLY_SKILLS_BLOCK_BYTES);
+
+  // Rung 1 (whole canon + extra) does NOT fit — this is the failure as measured, reproduced here.
+  const wholePlusExtraBytes = REAL_PROTOCOL_COMPACT_BYTES + 2 + REAL_CANON_WHOLE_BYTES + 2 + REAL_OWNER_ONLY_SKILLS_BLOCK_BYTES;
+  assert.ok(wholePlusExtraBytes > SESSION_BANNER_BUDGET_BYTES, "precondition: this is the scale that broke in $system");
+
+  const result = assembleSessionBanner(protocol, canon, SESSION_BANNER_BUDGET_BYTES, extra);
+
+  // THE acceptance criterion: the block must still reach the agent, not be the casualty.
+  assert.equal(result.extraIncluded, true, "the owner-only-skills block must survive at real $system scale");
+  assert.ok(result.text.includes(extra), "the block's bytes must actually be IN the shipped text, not just flagged included");
+  // It survives by the canon WORKSPACE leg shedding, not by the block being cut down or the
+  // project leg (this project's own curated rules) being sacrificed instead.
+  assert.equal(result.canonLegs, "project-only", "the workspace leg — not the block — is what pays for the room");
+  assert.ok(result.text.includes("### Project ("), "the project leg's content must still be present");
+  assert.ok(!result.text.includes("### Workspace"), "the workspace leg is what was shed");
+  assert.ok(result.totalBytes <= SESSION_BANNER_BUDGET_BYTES, `${result.totalBytes}B must fit the ${SESSION_BANNER_BUDGET_BYTES}B budget`);
+
+  // THE worst case named in the card: compact + a present stale-base warning. staleWarn is
+  // prepended by pull-memory.ts OUTSIDE this ladder's own accounting (same treatment as defNote),
+  // so the real acceptance test is on the FINAL shipped stdout, against the harness's hard limit.
+  const finalStdoutBytes = REAL_STALE_BASE_WARNING_BYTES + result.totalBytes;
+  assert.ok(
+    finalStdoutBytes <= HARNESS_INLINE_HARD_LIMIT_BYTES,
+    `worst case (compact + stale-base + real canon + owner-only-skills block) is ${finalStdoutBytes}B, ` +
+      `over the harness's ${HARNESS_INLINE_HARD_LIMIT_BYTES}B hard limit — the exact scenario M1's probe 4 measures`,
+  );
+});
+
+test("assembleSessionBanner: real $system scale — WITHOUT the ladder fix, the old unconditional-append behavior would have dropped the block (regression pin)", () => {
+  // Reproduces the pre-fix arithmetic exactly, so a future refactor that reintroduces
+  // "append extra after an already-assembled protocol+canon banner" fails HERE, in a unit test,
+  // rather than silently in a real project's session start again.
+  const protocol = "P".repeat(REAL_PROTOCOL_COMPACT_BYTES);
+  const canon = realScaleCanon();
+  const extra = "E".repeat(REAL_OWNER_ONLY_SKILLS_BLOCK_BYTES);
+
+  const oldStyleBanner = assembleSessionBanner(protocol, canon, SESSION_BANNER_BUDGET_BYTES); // no `extra` arg — old call shape
+  assert.equal(oldStyleBanner.canonLegs, "both", "old shape: canon fits fine on its own at this scale");
+  const oldStyleWithUnconditionalAppend = `${oldStyleBanner.text}\n\n${extra}`;
+  assert.ok(
+    Buffer.byteLength(oldStyleWithUnconditionalAppend, "utf8") > HARNESS_INLINE_HARD_LIMIT_BYTES,
+    "sanity: the old unconditional-append shape really did exceed the hard limit at this scale — proves the fix is load-bearing, not decorative",
+  );
+});
+
 test("describeCanonDegradation NAMES the leg that was shed — the log line the old all-or-nothing path could not write", () => {
   const protocol = "P".repeat(4000);
   const projectOnly = canonBlock("J".repeat(1000), null);
