@@ -242,6 +242,112 @@ test("RED-PROOF: assertRuleNamesBothAxes rejects a mutant where the whole rule i
   );
 });
 
+// --- role-notes-name-the-obligation-axis (L2, under umbrella-agent-text-names-both-axes) ---
+//
+// Two more rules carried exactly the one-axis shape R1 exists to catch. Both got a COMPOSITION
+// test here rather than a second flat presence string in the `required` list above — a presence
+// check cannot tell "both axes in the same rule" from "each axis somewhere in the document",
+// which is the gap that let the tier criterion run one-axis for a month.
+
+test("orchestrator's Done/accepted-freeze rule names BOTH axes in its OWN rule block: the prohibition AND the obligation that survives it", () => {
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code" });
+  assertRuleNamesBothAxes(
+    text,
+    /Never self-set Done\/accepted/,
+    /stop one status short of Done\/accepted/,
+    /left sitting in its starting status.*is a defect/,
+    "Done/accepted freeze rule",
+  );
+});
+
+test("RED-PROOF: the Done/accepted-freeze composition check rejects a mutant where the obligation half moved to an unrelated rule", () => {
+  const mutant: AgentDefinition = {
+    name: "mutant-status-freeze",
+    roles: [
+      {
+        slug: "orchestrator",
+        tier: "orchestrator",
+        requiredCapabilities: [],
+        notes:
+          "6. Never self-set Done/accepted: stop one status short of Done/accepted and hand over.\n" +
+          "9. Unrelated bookkeeping rule: a card left sitting in its starting status after the work already moved is a defect, filed on the observations board.",
+      },
+    ],
+  };
+  const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code", definition: mutant });
+
+  // CONTROL — proves the fixture models the bug: a presence-only check finds both phrases.
+  assert.match(text, /stop one status short of Done\/accepted/, "control: axis A found anywhere");
+  assert.match(text, /left sitting in its starting status.*is a defect/, "control: axis B found anywhere");
+
+  assert.throws(
+    () =>
+      assertRuleNamesBothAxes(
+        text,
+        /Never self-set Done\/accepted/,
+        /stop one status short of Done\/accepted/,
+        /left sitting in its starting status.*is a defect/,
+        "mutant status-freeze rule",
+      ),
+    /axis B .* missing from the rule's OWN block/,
+    "composition ratchet must reject an obligation phrase living in a different rule",
+  );
+});
+
+// Worker/worker-highstakes notes never flow through buildProtocol (protocol.ts only reads the
+// orchestrator role's notes into the banner — the worker role is looked up only for its emitted
+// NAME, never its prose). So this checks the raw role notes from the definition directly, the
+// same way the by-number cross-reference test above reads DEFAULT_AGENT_DEFINITION.roles rather
+// than buildProtocol's output. Both worker roles are checked: worker-highstakes point 9 asserts
+// "you are the same worker... no execution rule changes" — leaving its point 3 one-axis while
+// fixing only `worker`'s would make that claim false the moment this file's edit landed.
+for (const workerSlug of ["worker", "worker-highstakes"] as const) {
+  test(`${workerSlug} notes' ambiguous-brief rule names BOTH axes in its OWN rule block: unclear-brief proceeds, wrong-brief stops`, () => {
+    const notes = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === workerSlug)?.notes ?? "";
+    assertRuleNamesBothAxes(
+      notes,
+      /Ambiguous brief/,
+      /minimal reasonable assumption, state it, proceed/,
+      /you believe is WRONG.*is a stop/,
+      `${workerSlug} ambiguous/wrong-brief rule`,
+    );
+  });
+}
+
+test("RED-PROOF: the ambiguous/wrong-brief composition check rejects a mutant where the wrong-brief obligation moved to an unrelated rule", () => {
+  const mutant: AgentDefinition = {
+    name: "mutant-brief-axis",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: [],
+        notes:
+          "3. Do ONLY the delegated task. Ambiguous brief -> minimal reasonable assumption, state it, proceed.\n" +
+          "7. Unrelated rule: a brief you believe is WRONG is a stop, filed separately from this one.",
+      },
+    ],
+  };
+  const notes = mutant.roles.find((r) => r.slug === "worker")?.notes ?? "";
+
+  // CONTROL — proves the fixture models the bug: a presence-only check finds both phrases.
+  assert.match(notes, /minimal reasonable assumption, state it, proceed/, "control: axis A found anywhere");
+  assert.match(notes, /you believe is WRONG.*is a stop/, "control: axis B found anywhere");
+
+  assert.throws(
+    () =>
+      assertRuleNamesBothAxes(
+        notes,
+        /Ambiguous brief/,
+        /minimal reasonable assumption, state it, proceed/,
+        /you believe is WRONG.*is a stop/,
+        "mutant ambiguous/wrong-brief rule",
+      ),
+    /axis B .* missing from the rule's OWN block/,
+    "composition ratchet must reject a wrong-brief obligation living in a different rule",
+  );
+});
+
 // The self-intro block points at the delegate-by-default rule BY NUMBER ("Orchestrator notes,
 // point N") — the one numbered cross-reference in the kit. Renumbering the notes without
 // updating it silently aims the pointer at a different rule.
