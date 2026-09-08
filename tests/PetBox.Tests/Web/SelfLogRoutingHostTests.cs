@@ -96,6 +96,38 @@ public sealed class SelfLogRoutingHostTests : IAsyncLifetime
 		petboxCount.Should().Be(0, "the access-routed event must not ALSO appear in the default self-log");
 	}
 
+	// card auth-401-invisible-in-access-log: before the fix, RequestLoggingMiddleware sat
+	// BELOW UseAuthorization, so a 401 challenge short-circuited the pipeline before ever
+	// reaching it — the access log carried zero 401 rows despite ~15k/day real auth
+	// failures in prod. `/api/logs/{projectKey}/{logName}/query` is `.RequireAuthorization
+	// ("ApiKey")`; hitting it with NO key must still produce an access-log line (Warning
+	// level, the EventId 501 template) instead of vanishing, and it must NOT also land in
+	// `petbox` (same access/self-log split as the 404 case above).
+	[Fact]
+	public async Task AccessLineEvent_401_LandsInAccess_WithWarningLevel()
+	{
+		var marker = Guid.NewGuid().ToString("N");
+		// logName is a free route segment — embedding the marker there gives the access-log
+		// line (which logs Path, not the query string) a unique needle to search for.
+		using (var resp = await _client.GetAsync($"/api/logs/$system/{marker}/query?q=events"))
+			resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+		await WaitForMessageAsync(LogNames.AccessLog, marker);
+
+		var req = new HttpRequestMessage(HttpMethod.Get,
+			$"/api/logs/$system/{LogNames.AccessLog}/query?q={Uri.EscapeDataString($"events | where Message contains \"{marker}\" | take 1")}");
+		req.Headers.Add("X-Api-Key", ApiKey);
+		using var qresp = await _client.SendAsync(req);
+		qresp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var doc = JsonDocument.Parse(await qresp.Content.ReadAsStringAsync());
+		var evt = doc.RootElement.GetProperty("events")[0];
+		evt.GetProperty("Level").GetString().Should().Be("Warning");
+		evt.GetProperty("Message").GetString().Should().Contain("401");
+
+		var petboxCount = await CountAsync(LogNames.SelfLog, $"events | where Message contains \"{marker}\" | take 1");
+		petboxCount.Should().Be(0, "the access-routed 401 event must not ALSO appear in the default self-log");
+	}
+
 	[Fact]
 	public async Task OrdinaryEvent_LandsInPetbox_NotInAccess()
 	{

@@ -10,6 +10,16 @@ namespace PetBox.Web.Logging;
 // visible via log_query, instead of scattering logging through controllers/tools.
 // Health/version probes are skipped as noise.
 //
+// Registered in Program.cs ABOVE UseAuthentication/UseAuthorization (card
+// auth-401-invisible-in-access-log) precisely so a 401 (UseAuthorization short-circuits
+// the pipeline on auth failure, never reaching anything registered after it) still comes
+// back through here and gets logged — before that fix, every 401 was invisible to
+// log_query with zero trace. `project` is still read below, AFTER `await next(ctx)`
+// returns: that call recurses through the rest of the pipeline including
+// UseAuthentication, and ctx.User lives on HttpContext rather than this frame's own
+// state, so 2xx/3xx responses keep carrying the claim despite the middleware sitting
+// above auth in registration order.
+//
 // 2xx/3xx used to be downgraded to Debug (task self-log-request-noise, commit df867885)
 // because this line was 82% of the self-log's volume with zero diagnostic value once a
 // request succeeded — but that threw the data away, which spec self-telemetry-log-routing

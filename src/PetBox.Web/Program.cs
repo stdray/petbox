@@ -1313,6 +1313,18 @@ public partial class Program
 			await next();
 		});
 
+		// App-wide request logging into the self-log. ABOVE UseAuthentication/UseAuthorization
+		// (card auth-401-invisible-in-access-log) so a 401 challenge — which UseAuthorization
+		// short-circuits on, never calling anything registered after it — still runs back
+		// through this middleware's `await next(ctx)` and gets logged like any other response.
+		// Reading ctx.User for the `project` claim AFTER `await next(ctx)` (see
+		// RequestLoggingMiddleware.InvokeAsync) still works from here: that call recurses into
+		// the full downstream pipeline, including UseAuthentication, before returning, and
+		// ctx.User lives on HttpContext rather than on this middleware's own stack frame — so a
+		// 2xx/3xx still carries `project` even though this registration now sits above auth.
+		// Below UseExceptionHandler (line ~1196) so it still logs+rethrows unhandled exceptions.
+		app.UseMiddleware<PetBox.Web.Logging.RequestLoggingMiddleware>();
+
 		app.UseAuthentication();
 
 		// spec apikey-last-used: record the key's use IN MEMORY (KeyStatService), never in SQLite —
@@ -1322,10 +1334,6 @@ public partial class Program
 		app.UseMiddleware<PetBox.Core.Auth.KeyUsageStampMiddleware>();
 
 		app.UseAuthorization();
-
-		// App-wide request logging into the self-log (after auth so the project claim is
-		// available; below UseExceptionHandler so it logs+rethrows unhandled exceptions).
-		app.UseMiddleware<PetBox.Web.Logging.RequestLoggingMiddleware>();
 
 		// \uXXXX-escape inflation, measured on the wire body of POST /mcp (card
 		// escape-inflation-warning). MUST be middleware, not an MCP filter: an MCP filter sees only
