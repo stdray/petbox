@@ -79,6 +79,7 @@ import {
 } from "./session-budget.ts";
 import {
   buildSkillReports,
+  checkSkillAssetFile,
   checkSkillFile,
   formatSkillFile,
   PROJECT_SKILLS,
@@ -552,6 +553,12 @@ function printSkillsMaterializationOnly(root: string): void {
     for (const surface of SKILL_SURFACES) {
       const absPath = join(root, ...surface, spec.dir, "SKILL.md");
       log(`status:   ${formatSkillFile(checkSkillFile(absPath, undefined))}`);
+      // Sibling assets (spec.extraFiles) get the same materialization-only line, through the
+      // comment-marker classifier — parity fix for skill-extra-files-drift-not-checked.
+      for (const assetName of spec.extraFiles ?? []) {
+        const assetPath = join(root, ...surface, spec.dir, assetName);
+        log(`status:   ${formatSkillFile(checkSkillAssetFile(assetPath, undefined))}`);
+      }
     }
   }
 }

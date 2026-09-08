@@ -227,3 +227,38 @@ test("doctor (online) names a foreign (BLOCKED) skill file distinctly from one t
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
+
+test("doctor (online) catches drift in an extraFiles sibling asset (validate-body.mjs), same as it does for SKILL.md (bug: skill-extra-files-drift-not-checked)", async () => {
+  const homeDir = freshDir("petbox-doctor-skill-home-");
+  const projectDir = freshDir("petbox-doctor-skill-proj-");
+  const project = "doctor-skill-asset-drift-proj";
+  const workspace = "doctor-skill-ws";
+  const fake = await startFakeServer(DEFAULT_AGENT_DEFINITION, workspace);
+  try {
+    writeOnlineRegistry(homeDir, projectDir, project, fake.baseUrl);
+    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace);
+
+    // Before the fix, checkSkillFile/buildSkillReports only ever looked at SKILL.md — a
+    // hand-edited validate-body.mjs sitting right next to a clean SKILL.md was invisible to
+    // doctor. The marker is a leading COMMENT here (`// petbox: managed`), not YAML frontmatter.
+    const assetPath = join(projectDir, ".claude", "skills", "petbox-node-authoring", "validate-body.mjs");
+    const original = readFileSync(assetPath, "utf8");
+    writeFileSync(assetPath, `${original}\n// hand-edited in place, marker still says managed\n`, "utf8");
+
+    const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
+    const out = stdout + stderr;
+
+    assert.match(
+      out,
+      /skill files — 1 file\(s\) drifted from the current template \(run `petbox-wire apply` to refresh\):/,
+      `Full output:\n${out}`,
+    );
+    assert.ok(out.includes(assetPath), `expected the drifted asset path (${assetPath}) named. Full output:\n${out}`);
+    assert.doesNotMatch(out, /BLOCKED/, "a marker-preserving hand-edit is drift, never a foreign/BLOCKED file");
+    assert.equal(status, 0);
+  } finally {
+    await fake.close();
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});

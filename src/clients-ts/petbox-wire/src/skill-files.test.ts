@@ -17,6 +17,7 @@ import {
   buildAutoSkillsIndex,
   buildOwnerOnlySkillsBlock,
   buildSkillReports,
+  checkSkillAssetFile,
   checkSkillFile,
   describeWorkspaceProbeFailure,
   extractSkillDescription,
@@ -39,7 +40,9 @@ import {
   isDeclaredManual,
   isModelInvocationDisabled,
   PETBOX_DIGEST_KEY,
+  PETBOX_MANUAL_COMMENT_LINE,
   PETBOX_MANUAL_LINE,
+  PETBOX_MARKER_COMMENT_LINE,
   PETBOX_MARKER_LINE,
   readArtifactState,
   readDigestMode,
@@ -1024,15 +1027,168 @@ test("formatSkillFile: a foreign (BLOCKED) file reads distinctly from an owned f
   }
 });
 
-test("buildSkillReports: one report per (PROJECT_SKILLS x SKILL_SURFACES); matches a freshly written tree", () => {
+// ---- checkSkillAssetFile (bug: skill-extra-files-drift-not-checked) --------------------------
+//
+// Comment-marker counterpart to checkSkillFile's own test above — same three real-world outcomes
+// the card asks for parity on: untouched (ours + matches), modified by the user (either the
+// marker survived and content drifted, still "ours", OR the marker is gone entirely and the file
+// reads as foreign — both are "user touched it" in practice), and declared manual.
+
+test("checkSkillAssetFile: absent -> false; foreign (no marker) -> false; ours+rendered unknown -> 'unknown'; ours+match/mismatch; manual -> 'unknown'", () => {
+  const dir = freshDir();
+  try {
+    const absent = join(dir, "a.mjs");
+    assert.deepEqual(checkSkillAssetFile(absent, "anything"), {
+      path: absent,
+      state: "absent",
+      matchesTemplate: false,
+    });
+
+    // "modified by the user" flavor 1: the marker comment is gone entirely (a full replacement,
+    // or an edit that dropped the leading line) — reads as foreign/BLOCKED, never as drift.
+    const foreign = join(dir, "f.mjs");
+    writeFileSync(foreign, "// not a petbox file at all\nconsole.log('mine');\n", "utf8");
+    const foreignReport = checkSkillAssetFile(foreign, "anything");
+    assert.equal(foreignReport.state, "foreign");
+    assert.equal(foreignReport.matchesTemplate, false);
+
+    // Untouched: marker present, content byte-identical to what the template renders.
+    const ours = join(dir, "o.mjs");
+    const rendered = `${PETBOX_MARKER_COMMENT_LINE}\nconsole.log('validator body');\n`;
+    writeFileSync(ours, rendered, "utf8");
+    assert.deepEqual(checkSkillAssetFile(ours, undefined), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: "unknown",
+    });
+    assert.deepEqual(checkSkillAssetFile(ours, rendered), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: true,
+    });
+
+    // "modified by the user" flavor 2: marker line survives (still "ours"), but the body was
+    // hand-edited and no longer matches the current template — DRIFTED, not foreign.
+    assert.deepEqual(checkSkillAssetFile(ours, rendered + "// hand-edited extra line\n"), {
+      path: ours,
+      state: "ours",
+      matchesTemplate: false,
+    });
+
+    // Declared manual: the project took the asset under its own control — never a drift report.
+    const manual = join(dir, "m.mjs");
+    writeFileSync(manual, `${PETBOX_MANUAL_COMMENT_LINE}\nconsole.log('project-owned');\n`, "utf8");
+    assert.deepEqual(checkSkillAssetFile(manual, "whatever the template would render"), {
+      path: manual,
+      state: "manual",
+      matchesTemplate: "unknown",
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkSkillAssetFile does NOT reuse frontmatter parsing: a YAML-frontmatter marker is not enough, a comment marker is", () => {
+  const dir = freshDir();
+  try {
+    // A file that carries the SKILL.md-style frontmatter marker (no leading comment) must NOT be
+    // classified "ours" by checkSkillAssetFile — that would be reusing checkSkillFile's parser,
+    // exactly what the card says is illegal for this file shape.
+    const frontmatterOnly = join(dir, "frontmatter-only.mjs");
+    writeFileSync(frontmatterOnly, "---\npetbox: managed\n---\nconsole.log('x');\n", "utf8");
+    assert.equal(checkSkillAssetFile(frontmatterOnly, "anything").state, "foreign");
+
+    // And the inverse: checkSkillFile (frontmatter-based) must not honor a leading comment marker.
+    const commentOnly = join(dir, "comment-only.md");
+    writeFileSync(commentOnly, `${PETBOX_MARKER_COMMENT_LINE}\nbody\n`, "utf8");
+    assert.equal(checkSkillFile(commentOnly, "anything").state, "foreign");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: a hand-edited extraFiles asset (marker kept) reports DRIFTED, same as a hand-edited SKILL.md", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+    const original = readFileSync(assetPath, "utf8");
+    writeFileSync(assetPath, `${original}\n// hand-edited by someone, marker still says managed\n`, "utf8");
+
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const report = reports.find((r) => r.path === assetPath);
+    assert.ok(report, `expected a report for ${assetPath}`);
+    assert.equal(report!.state, "ours");
+    assert.equal(report!.matchesTemplate, false, "a hand-edited asset must report as drifted, not silently clean");
+
+    // Every OTHER report — including the untouched sibling copy on the other surface, and
+    // SKILL.md itself — must still read clean: this fix must not turn every asset into drift.
+    for (const other of reports) {
+      if (other.path === assetPath) continue;
+      assert.equal(other.state, "ours", `expected ${other.path} to still be ours`);
+      assert.equal(other.matchesTemplate, true, `expected ${other.path} to still match its template`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: a foreign (marker-stripped) extraFiles asset reports BLOCKED, not drifted", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+    writeFileSync(assetPath, "// someone else's file entirely, no petbox marker\nconsole.log(1);\n", "utf8");
+
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const report = reports.find((r) => r.path === assetPath);
+    assert.ok(report, `expected a report for ${assetPath}`);
+    assert.equal(report!.state, "foreign");
+    assert.equal(report!.matchesTemplate, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: a declared-manual extraFiles asset reports 'manual', never as drift or foreign", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+    writeFileSync(assetPath, `${PETBOX_MANUAL_COMMENT_LINE}\nconsole.log('project owns this now');\n`, "utf8");
+
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const report = reports.find((r) => r.path === assetPath);
+    assert.ok(report, `expected a report for ${assetPath}`);
+    assert.equal(report!.state, "manual");
+    assert.equal(report!.matchesTemplate, "unknown");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildSkillReports: one report per (PROJECT_SKILLS x SKILL_SURFACES), PLUS one per extraFiles asset; matches a freshly written tree (clean stays clean)", () => {
   const dir = freshDir();
   try {
     writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
     const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    assert.equal(reports.length, PROJECT_SKILLS.length * SKILL_SURFACES.length);
+    // expectedWriteCount is the SAME (spec x surface x [1 SKILL.md + extraFiles]) formula
+    // writeSkillFiles' own outcome count uses — buildSkillReports must report on every path
+    // writeSkillFiles can write, extraFiles siblings included (bug: skill-extra-files-drift-not-checked).
+    assert.equal(reports.length, expectedWriteCount(PROJECT_SKILLS));
     for (const report of reports) {
-      assert.equal(report.state, "ours");
+      assert.equal(report.state, "ours", `expected ${report.path} to be ours`);
       assert.equal(report.matchesTemplate, true, `expected ${report.path} to match its freshly written template`);
+    }
+    // Explicitly confirm the extraFiles asset itself is among the reports, not merely counted.
+    const nodeAuthoringAssetPaths = SKILL_SURFACES.map((surface) =>
+      join(dir, ...surface, "petbox-node-authoring", "validate-body.mjs"),
+    );
+    for (const assetPath of nodeAuthoringAssetPaths) {
+      const report = reports.find((r) => r.path === assetPath);
+      assert.ok(report, `expected a report for ${assetPath}`);
+      assert.equal(report!.state, "ours");
+      assert.equal(report!.matchesTemplate, true);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

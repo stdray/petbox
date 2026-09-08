@@ -200,3 +200,23 @@ export function hasPetboxMarkerComment(content: string): boolean {
 export function isDeclaredManualComment(content: string): boolean {
   return readPetboxProvenanceFromComment(content) === "manual";
 }
+
+/** Comment-marker counterpart to readArtifactState, for an `extraFiles` sibling asset (e.g.
+ * `validate-body.mjs`) that carries its provenance in a leading `// petbox: managed|manual`
+ * comment rather than YAML frontmatter (spec: wire-skill-provenance-states — same three
+ * outcomes, absent/ours/manual/foreign, read through hasPetboxMarkerComment/
+ * isDeclaredManualComment instead of the frontmatter pair). Built on those two helpers rather
+ * than a third parse of readPetboxProvenanceFromComment, same as readArtifactState reuses the
+ * frontmatter helpers' shape. */
+export function readArtifactStateFromComment(absPath: string): ArtifactState {
+  if (!existsSync(absPath)) return "absent";
+  let content: string;
+  try {
+    content = readFileSync(absPath, "utf8");
+  } catch {
+    return "foreign"; // unreadable — same refusal as readArtifactState
+  }
+  if (hasPetboxMarkerComment(content)) return "ours";
+  if (isDeclaredManualComment(content)) return "manual";
+  return "foreign";
+}
