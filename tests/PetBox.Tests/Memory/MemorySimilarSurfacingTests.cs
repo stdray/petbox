@@ -8,7 +8,6 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
-using PetBox.Tests.Mcp;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
