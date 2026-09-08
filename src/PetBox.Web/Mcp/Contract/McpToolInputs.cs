@@ -474,6 +474,9 @@ public sealed record CommentItemInput
 	// nodes may share a slug), shaped `[a-z][a-z0-9_-]{0,99}`, and WRITE-ONCE — see CommentItem.Slug
 	// for why a set slug is never re-pointed.
 	public string? Slug { get; init; }
+	// card write-verbs-retry-safety-gap: optional retry token for a CREATE (id absent) — see
+	// CommentItem.IdempotencyKey for the full contract. Ignored on a PATCH (id present).
+	public string? IdempotencyKey { get; init; }
 }
 
 // One item of a relations_create batch. `from`/`to` are each a node REFERENCE — a slug key or a

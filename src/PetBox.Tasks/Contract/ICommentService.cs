@@ -141,7 +141,17 @@ public sealed record CommentItem(
 	// class this feature was opened to remove. A node's rename survives because a node's Key IS its
 	// slug and the temporal engine carries the old identity in PrevKey lineage; a comment's identity
 	// is its GUID and its slug is payload, so there is no lineage edge here to reuse.
-	string? Slug = null);
+	string? Slug = null,
+	// card write-verbs-retry-safety-gap: OPTIONAL caller-supplied retry token for a CREATE (id
+	// absent). A create normally mints a random Key server-side, so a caller retrying a lost
+	// response has nothing of its own to CAS against — unlike a PATCH, whose `id` + `Version`
+	// already make a retry safe. When present on a CREATE, the comment's Key is DERIVED from
+	// (board, nodeId, idempotencyKey) instead of a random guid, so a retry with the same
+	// idempotencyKey addresses the SAME row and rides the ordinary temporal classifier: an
+	// identical retry (same node/author/parentId/body/slug) is a silent no-op, a retry that
+	// reuses the key with DIFFERENT content is a Stale conflict in `conflicts[]`. Ignored on a
+	// PATCH (id present) — there `id` + `version` already give this guarantee.
+	string? IdempotencyKey = null);
 
 // Outcome of a comments_upsert batch, mirroring the tasks_upsert ack: `Applied` is the single
 // source of truth (false ⇒ nothing written, `Conflicts` explains every rejected id); on success

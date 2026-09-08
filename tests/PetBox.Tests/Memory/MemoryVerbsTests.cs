@@ -621,6 +621,78 @@ public sealed class MemoryVerbsTests : IDisposable
 				MemoryTools.WorkspaceContainer, "curated"));
 	}
 
+	// card write-verbs-retry-safety-gap: memory_remember mints its own key, so a caller retrying
+	// a call whose response was lost (network drop, a schema-validation mismatch on the client —
+	// the actual 2026-09-08 trigger — an agent crash between write and ack) had NO way to avoid a
+	// duplicate. `idempotencyKey` closes that gap by DERIVING the entry key from (store,
+	// idempotencyKey) instead of minting a random one, so the retry rides the same temporal CAS
+	// classifier tasks_upsert/memory_upsert already lean on.
+	[Fact]
+	public async Task Remember_WithIdempotencyKey_LostResponseRetry_DoesNotDuplicate()
+	{
+		var http = Http("memory:read,memory:write");
+		var idem = "retry-token-" + Guid.NewGuid().ToString("N");
+
+		// First call: the "server wrote, client never saw the ack" half of the scenario.
+		var first = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"pandas eat roughly 12kg of bamboo a day", idempotencyKey: idem, description: "panda diet fact");
+
+		// Retry: same call, verbatim — the client resending because it believes the first
+		// attempt failed. Must NOT create a second entry.
+		var retry = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"pandas eat roughly 12kg of bamboo a day", idempotencyKey: idem, description: "panda diet fact");
+
+		retry.Key.Should().Be(first.Key);
+		retry.Scope.Should().Be(first.Scope);
+		retry.Store.Should().Be(first.Store);
+
+		// The actual duplicate-detection assertion: exactly ONE active entry exists, not two.
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new PetBox.Tests.Memory.NoopUsageRecorder(), "bamboo");
+		rec.Items.Should().ContainSingle();
+	}
+
+	[Fact]
+	public async Task Remember_WithIdempotencyKey_ReusedWithDifferentContent_IsRefused()
+	{
+		var http = Http("memory:read,memory:write");
+		var idem = "retry-token-" + Guid.NewGuid().ToString("N");
+
+		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"the first fact under this key", idempotencyKey: idem);
+
+		// A genuinely DIFFERENT fact must never be silently merged into, or silently overwrite,
+		// the first one just because the caller (mis)reused the same idempotencyKey — that would
+		// trade one data-loss bug for another. It is refused instead, exactly like a stale CAS
+		// baseline on tasks_upsert/memory_upsert.
+		var act = () => MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a completely different fact", idempotencyKey: idem);
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage($"*{idem}*");
+
+		// Still exactly one entry — the refused retry wrote nothing.
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new PetBox.Tests.Memory.NoopUsageRecorder(), "fact");
+		rec.Items.Should().ContainSingle();
+		rec.Items[0].Body.Should().Contain("first fact");
+	}
+
+	[Fact]
+	public async Task Remember_WithoutIdempotencyKey_EachCallStillCreatesANewEntry()
+	{
+		// Regression control: omitting idempotencyKey must reproduce the OLD unconditional-create
+		// behavior exactly — two calls with byte-identical text are two distinct entries.
+		var http = Http("memory:read,memory:write");
+		var first = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a fact repeated verbatim on purpose");
+		var second = await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			"a fact repeated verbatim on purpose");
+
+		second.Key.Should().NotBe(first.Key);
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new PetBox.Tests.Memory.NoopUsageRecorder(), "verbatim");
+		rec.Items.Should().HaveCount(2);
+	}
+
 	IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");

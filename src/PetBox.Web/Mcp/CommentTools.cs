@@ -78,6 +78,12 @@ public static class CommentTools
 		uniform bodyLen knob (omitted here = NO body, a compact ack). `currentVersion` is the board's
 		comment cursor — pass it to comments_delta as `sinceVersion` for the full delta. To delete a
 		comment use comments_delete (delete is not folded into upsert).
+		`idempotencyKey` (optional, CREATE only, card write-verbs-retry-safety-gap): a caller-chosen
+		retry token. A create normally mints a random id, so a caller retrying a lost response has
+		nothing to CAS against; with idempotencyKey the id is DERIVED from (board, node,
+		idempotencyKey), so retrying the SAME create with the SAME idempotencyKey and IDENTICAL
+		content is a safe no-op (no duplicate comment); reusing it with DIFFERENT content is
+		refused via conflicts[]. Omit it and every create is unconditional, exactly as before.
 		`warning` (optional) is set when an APPLIED call's request payload was large enough to
 		risk the client-side truncation described above — informational, never a refusal (the
 		write already landed); omitted the rest of the time. Requires tasks:write.
@@ -85,7 +91,7 @@ public static class CommentTools
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; for a body already on disk as a file, OR for body text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above); mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new), slug? (the comment's human-readable address within its owning node — unique there, shaped [a-z][a-z0-9_-]{0,99}, WRITE-ONCE once set; omit to leave a create without one and a patch as it is) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
+		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; for a body already on disk as a file, OR for body text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above); mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new), slug? (the comment's human-readable address within its owning node — unique there, shaped [a-z][a-z0-9_-]{0,99}, WRITE-ONCE once set; omit to leave a create without one and a patch as it is) , idempotencyKey? (CREATE only — a caller-chosen retry token; see the full description) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
@@ -120,7 +126,7 @@ public static class CommentTools
 				node = await tasks.ResolveNodeRefAsync(projectKey, i.Node!, board, ct);
 			}
 			parsed.Add(new CommentItem(i.Id, node, i.ParentId, i.Author, i.Body, i.Tags, i.Version,
-				FragmentEditDto.ToCore(i.Fragment), bodyRefs.For(i.BodyRef), i.Slug));
+				FragmentEditDto.ToCore(i.Fragment), bodyRefs.For(i.BodyRef), i.Slug, i.IdempotencyKey));
 		}
 
 		var r = await comments.UpsertAsync(projectKey, board, parsed, atomic, ct);

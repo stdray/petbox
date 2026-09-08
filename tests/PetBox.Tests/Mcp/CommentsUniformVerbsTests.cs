@@ -219,6 +219,73 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		delta.CurrentVersion.Should().BeGreaterThan(cursor);
 	}
 
+	// card write-verbs-retry-safety-gap: a comments_upsert CREATE mints its own id server-side
+	// (like memory_remember, unlike a PATCH's caller-supplied id+version), so a lost-response
+	// retry had no key of its own to avoid a duplicate comment. `idempotencyKey` closes the gap
+	// the same way as memory_remember: the id is DERIVED from (board, node, idempotencyKey), so
+	// a retry lands on the same row and rides the ordinary temporal classifier.
+	[Fact]
+	public async Task Upsert_CreateWithIdempotencyKey_LostResponseRetry_DoesNotDuplicate()
+	{
+		var http = Http();
+		var node = NewNode();
+		var idem = "retry-" + Guid.NewGuid().ToString("N");
+		var item = new CommentItemInput { Node = node, Author = "alice", Body = "a real comment", IdempotencyKey = idem };
+
+		var first = await Upsert(http, item);
+		first.Applied.Should().BeTrue();
+		first.Added.Should().ContainSingle();
+		var id = first.Added[0].Id;
+
+		// Retry: the exact same call, verbatim — the client resending because it believes the
+		// first attempt failed. Must NOT create a second comment.
+		var retry = await Upsert(http, item);
+		retry.Applied.Should().BeTrue();
+		retry.Added.Should().BeEmpty();
+		retry.Updated.Should().ContainSingle(c => c.Id == id);
+
+		var thread = await _comments.ListForNodeAsync(Proj, Board, node);
+		thread.Should().ContainSingle();
+	}
+
+	[Fact]
+	public async Task Upsert_CreateWithIdempotencyKey_ReusedWithDifferentContent_IsRefused()
+	{
+		var http = Http();
+		var node = NewNode();
+		var idem = "retry-" + Guid.NewGuid().ToString("N");
+
+		var first = await Upsert(http,
+			new CommentItemInput { Node = node, Author = "alice", Body = "the first comment", IdempotencyKey = idem });
+		first.Applied.Should().BeTrue();
+
+		// A genuinely DIFFERENT comment reusing the SAME idempotencyKey must be refused, not
+		// silently merged or overwritten — the same posture memory_remember takes.
+		var second = await Upsert(http,
+			new CommentItemInput { Node = node, Author = "alice", Body = "a totally different comment", IdempotencyKey = idem });
+		second.Applied.Should().BeFalse();
+		second.Conflicts.Should().ContainSingle();
+		second.Conflicts[0].Kind.Should().Be("Stale");
+
+		var thread = await _comments.ListForNodeAsync(Proj, Board, node);
+		thread.Should().ContainSingle();
+		thread[0].Body.Should().Be("the first comment");
+	}
+
+	[Fact]
+	public async Task Upsert_CreateWithoutIdempotencyKey_EachCallStillCreatesANewComment()
+	{
+		// Regression control: omitting idempotencyKey must reproduce the OLD unconditional-create
+		// behavior exactly — two calls with byte-identical content are two distinct comments.
+		var http = Http();
+		var node = NewNode();
+		await Upsert(http, Create(node, "alice", "repeated verbatim on purpose"));
+		await Upsert(http, Create(node, "alice", "repeated verbatim on purpose"));
+
+		var thread = await _comments.ListForNodeAsync(Proj, Board, node);
+		thread.Should().HaveCount(2);
+	}
+
 	[Fact]
 	public async Task Get_MissingId_IsError()
 	{

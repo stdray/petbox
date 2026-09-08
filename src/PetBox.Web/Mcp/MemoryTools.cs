@@ -459,6 +459,24 @@ public static class MemoryTools
 	const string EmptyDescriptionWarningCore =
 		"description is empty — memory_search ranks and displays entries by description, so this fact will surface poorly.";
 
+	// card write-verbs-retry-safety-gap: memory_remember's entry key is normally server-minted
+	// (a random guid), so a caller retrying a lost response has no key of its own to CAS against
+	// — unlike tasks_upsert/memory_upsert, whose caller-supplied key + version already make a
+	// retry safe. An `idempotencyKey` gives memory_remember the same property WITHOUT a new
+	// storage mechanism: the entry's Key is DERIVED (deterministic hash of store+idempotencyKey)
+	// instead of random, so a retry with the same idempotencyKey always addresses the SAME entry
+	// and rides the temporal engine's existing SamePayload-no-op / Stale-conflict classification
+	// (TemporalStore.Classify) — exactly the CAS guarantee the other two verbs already have.
+	// SHA-256 (not a weaker hash) because collisions here would silently merge two callers'
+	// unrelated facts under one entry; 32 hex chars keep the key a manageable length while still
+	// being effectively collision-free for this volume.
+	static string DeriveIdempotentKey(string store, string idempotencyKey)
+	{
+		var bytes = System.Security.Cryptography.SHA256.HashData(
+			System.Text.Encoding.UTF8.GetBytes(store + "\u001f" + idempotencyKey));
+		return "m-idem-" + Convert.ToHexStringLower(bytes)[..32];
+	}
+
 	// Authorize a KEY-ADDRESSED memory projectKey. Workspace containers ($workspace / $ws-*)
 	// feed every project's memory cascade within their OWN workspace, so key-addressed
 	// curation (memory_upsert/get/delta, memory_store_*, remember) may address them directly
@@ -583,6 +601,20 @@ public static class MemoryTools
 		({ key, description, score }), null when `store` is sensitive (never sent to the
 		embedder). `similarityUnavailable:true` means the check could not run (embedder
 		unreachable/degraded) — treat as "unknown", never as "no duplicates".
+
+		`idempotencyKey` (optional, card write-verbs-retry-safety-gap): this verb mints its own
+		entry key server-side, so — unlike tasks_upsert/memory_upsert, where the caller's own
+		key + version already give this guarantee — a caller has no key of its own to retry a
+		lost response against. Pass any caller-chosen string (a GUID, a request id — YOURS to
+		generate and reuse only when retrying the SAME call) to get the same protection: the
+		entry key is then DERIVED from (store, idempotencyKey) instead of randomly minted, so a
+		retry with the same idempotencyKey resolves to the same entry. An identical retry (same
+		text/description/type/tags) lands on a silent no-op — the original entry stands, no
+		duplicate is created, and the response still reports its key/scope/store as a normal
+		success. Reusing the SAME idempotencyKey with DIFFERENT content is refused outright (an
+		ArgumentException naming the reused key) rather than silently overwriting or duplicating
+		— pick a new idempotencyKey per distinct fact. Omit it and every call is an unconditional
+		new entry, exactly as before.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -594,6 +626,12 @@ public static class MemoryTools
 		// the call site on every surface — `bodyRef` where the field is `body`, `contentRef` where it
 		// is a message's `content`.
 		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact already on disk as a file, OR for fact text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above). Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
+		// card write-verbs-retry-safety-gap: an OPTIONAL caller-supplied retry token. See the
+		// tool description above for the full contract; the mechanism is a DERIVED entry key
+		// (store, idempotencyKey) that rides the existing temporal CAS classifier — no new
+		// storage, no new lookup, the same no-duplicate guarantee tasks_upsert/memory_upsert
+		// already give their callers via key+version.
+		[Description("Caller-chosen retry token (any string — you generate and keep it, e.g. a GUID). Reusing the SAME idempotencyKey for a retried call with IDENTICAL content is a safe no-op (no duplicate entry); reusing it with DIFFERENT content is refused. Omit for the old unconditional-create behavior.")] string? idempotencyKey = null,
 		// Optional + LAST among non-CancellationToken params — same reasoning as UpsertAsync's
 		// `client`: keeps every existing positional call site compiling unchanged.
 		ILlmClient? client = null,
@@ -620,7 +658,10 @@ public static class MemoryTools
 		await AssertMemoryProjectAsync(http, wsmem, container.Key, ct);
 		var st = NormalizeStore(store);
 		await AssertStoreCreatableOrKnownAsync(memory, container.Key, st, ct);
-		var key = "m-" + Guid.NewGuid().ToString("N");
+		var usingIdempotencyKey = !string.IsNullOrWhiteSpace(idempotencyKey);
+		var key = usingIdempotencyKey
+			? DeriveIdempotentKey(st, idempotencyKey!)
+			: "m-" + Guid.NewGuid().ToString("N");
 		var input = new MemoryEntryInput
 		{
 			Key = key,
@@ -630,9 +671,34 @@ public static class MemoryTools
 			Body = text,
 			Tags = tags,
 		};
-		await memory.UpsertAsync(container.Key, st, [input], [], ct: ct);
-		// The write landed (this verb throws rather than returning a refusal), so the blob is spent.
+		var outcome = await memory.UpsertAsync(container.Key, st, [input], [], ct: ct);
+		// card write-verbs-retry-safety-gap: with an idempotencyKey, the derived key rides the
+		// SAME temporal CAS classifier tasks_upsert/memory_upsert already lean on (TemporalStore.
+		// Classify) — a baseline of 0 against an existing active row is a silent no-op when the
+		// payload is byte-identical (a lost-response retry), and a Stale conflict (applied:false,
+		// nothing written) when it differs (the idempotencyKey was reused for a DIFFERENT fact).
+		// Surface the second case as an explicit refusal — this verb has no conflicts[] channel of
+		// its own (see the bodyRef mutual-exclusion comment above), so every refusal here throws.
+		if (usingIdempotencyKey && !outcome.Result.Applied)
+		{
+			var reason = outcome.Result.Conflicts.FirstOrDefault(c => c.Key == key)?.Reason;
+			throw new ArgumentException(
+				$"idempotencyKey '{idempotencyKey}' was already used to remember a DIFFERENT fact " +
+				$"(this call's text/description/type/tags do not match the entry stored under it" +
+				(reason is null ? ")." : $": {reason})") +
+				" Reuse an idempotencyKey only to retry the exact same call — pick a new one for different content.");
+		}
+		// The write landed (or the idempotent retry found its own prior write already in place), so
+		// the blob is spent either way — a lost-response retry must not re-consume a fresh blob.
 		await bodyRefs.ConsumeAsync([textRef], ct);
+
+		// usingIdempotencyKey && Inserted == 0 ⇒ an entry already existed under this derived key with
+		// an IDENTICAL payload (SamePayload no-op) — the ORIGINAL call already landed; this retry
+		// captured nothing new. Return the existing entry's identity without re-running the
+		// description/size warnings or the similarity search below, both of which only make sense
+		// for a write that actually happened just now.
+		if (usingIdempotencyKey && outcome.Result.Inserted == 0)
+			return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 
 		// Point 1 (card mcp-write-degrades-silently-fix): an empty description is a WARNING, not a
 		// refusal — memory_remember is often the last thing called at the end of a session, exactly

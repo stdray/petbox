@@ -37,10 +37,21 @@ public sealed class CommentService : ICommentService
 		// Load the active rows the EDIT items address (identity/parent/author/nodeId are carried
 		// forward; only body changes, exactly like EditAsync). A missing id is a clear error.
 		var editIds = items.Where(i => !string.IsNullOrEmpty(i.Id)).Select(i => i.Id!).Distinct().ToList();
-		var currentById = editIds.Count == 0
+
+		// card write-verbs-retry-safety-gap: a CREATE item (no id) carrying an `IdempotencyKey`
+		// addresses a DERIVED key instead of a fresh guid — precompute those derived keys so the
+		// active-row lookup below (currentById) already knows whether a PRIOR call under the same
+		// idempotencyKey landed, exactly as it already does for an ordinary PATCH's `id`.
+		var idemDerivedIds = items
+			.Where(i => string.IsNullOrEmpty(i.Id) && !string.IsNullOrWhiteSpace(i.IdempotencyKey) && !string.IsNullOrWhiteSpace(i.NodeId))
+			.Select(i => DeriveIdempotentCommentId(board, i.NodeId!, i.IdempotencyKey!))
+			.Distinct()
+			.ToList();
+		var lookupIds = idemDerivedIds.Count == 0 ? editIds : editIds.Concat(idemDerivedIds).Distinct().ToList();
+		var currentById = lookupIds.Count == 0
 			? new Dictionary<string, CommentRow>(StringComparer.Ordinal)
 			: (await ctx.GetTable<CommentRow>()
-					.Where(c => editIds.Contains(c.Key) && c.Board == board && c.ActiveTo == null).ToListAsync(ct))
+					.Where(c => lookupIds.Contains(c.Key) && c.Board == board && c.ActiveTo == null).ToListAsync(ct))
 				.ToDictionary(c => c.Key, StringComparer.Ordinal);
 
 		// comment-slug-and-refs: the slugs already CLAIMED under each node this batch touches, as
@@ -223,7 +234,17 @@ public sealed class CommentService : ICommentService
 						if (parent is null || parent.Board != board || parent.NodeId != it.NodeId)
 							throw new ArgumentException($"parentId '{it.ParentId}' is not an active comment under this node");
 					}
-					var id = Guid.NewGuid().ToString("N");
+					// card write-verbs-retry-safety-gap: an IdempotencyKey derives the id instead of
+					// minting a fresh guid, so a retry of this exact create (lost response, network
+					// blip, ...) addresses the SAME row and rides the ordinary temporal classifier
+					// below: identical content is a silent no-op (no duplicate comment), different
+					// content under the SAME key is a Stale conflict in conflicts[] — the same CAS
+					// guarantee an ordinary PATCH already gets from id+version.
+					var usingIdempotencyKey = !string.IsNullOrWhiteSpace(it.IdempotencyKey);
+					var id = usingIdempotencyKey
+						? DeriveIdempotentCommentId(board, it.NodeId!, it.IdempotencyKey!)
+						: Guid.NewGuid().ToString("N");
+					currentById.TryGetValue(id, out var existingForIdem);
 					desired.Add(new CommentRow
 					{
 						Key = id,
@@ -233,12 +254,19 @@ public sealed class CommentService : ICommentService
 						ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
 						Author = it.Author ?? string.Empty,
 						Body = it.Body!,
-						// The id is minted first so a slug claimed here is claimed BY this comment —
-						// which is what makes a SECOND item in the same batch asking for the same slug
-						// under the same node a refusal, rather than a silent second holder.
-						Slug = ResolveSlug(it.Slug, null, it.NodeId!, id),
+						// The id is minted (or derived) first so a slug claimed here is claimed BY this
+						// comment — which is what makes a SECOND item in the same batch asking for the
+						// same slug under the same node a refusal, rather than a silent second holder.
+						// `existingForIdem?.Slug` (not a hardcoded null) so an idempotent replay that
+						// OMITS `slug` correctly inherits the slug already set on the prior landing,
+						// instead of reading as a spurious slug-clear and tripping a Stale conflict.
+						Slug = ResolveSlug(it.Slug, existingForIdem?.Slug, it.NodeId!, id),
 					});
 					itemByKey[id] = it;
+					// A row already existed under this derived key (a prior call landed) — force the
+					// Added/Updated echo split the same way a genuine PATCH does (patchedKeys below):
+					// an idempotent replay must not misreport as "added" when nothing new landed.
+					if (existingForIdem is not null) patchedKeys.Add(id);
 				}
 				else
 				{
@@ -523,6 +551,22 @@ public sealed class CommentService : ICommentService
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────
+
+	// card write-verbs-retry-safety-gap: a comments_upsert CREATE normally mints a random guid,
+	// so a caller retrying a lost response has no key of its own to CAS against. When the item
+	// carries an IdempotencyKey, the comment's identity is DERIVED (a deterministic hash of
+	// board+nodeId+idempotencyKey) instead of random, so a retry with the same idempotencyKey
+	// always addresses the SAME row and rides TemporalStore's existing SamePayload-no-op /
+	// Stale-conflict classification — the same CAS guarantee tasks_upsert/memory_upsert already
+	// give via key+version, and the same mechanism MemoryTools.DeriveIdempotentKey uses for
+	// memory_remember. SHA-256 to keep two unrelated callers' keys from ever colliding onto the
+	// same comment identity.
+	static string DeriveIdempotentCommentId(string board, string nodeId, string idempotencyKey)
+	{
+		var bytes = System.Security.Cryptography.SHA256.HashData(
+			System.Text.Encoding.UTF8.GetBytes(board + "\u001f" + nodeId + "\u001f" + idempotencyKey));
+		return "c-idem-" + Convert.ToHexStringLower(bytes)[..32];
+	}
 
 	// Active tags of every comment on a board (or the whole project when `board` is null, for a
 	// project-wide comments_search listing), as commentId -> tags — mirrors TagStore.BoardTagsAsync.
