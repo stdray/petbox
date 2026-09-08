@@ -78,12 +78,12 @@ your machine actually has.
   instead of assuming another project's), plus three **procedure** skills —
   **petbox-analysis-workspace** (run a voluminous multi-part investigation as staged files in an
   external folder instead of hundreds of tool calls), **petbox-factory-run** (drive a batch of
-  prepared task statements to completion in one unattended pass) and **petbox-card-check** (is
-  the ask checkable before a card is sent, and does the result cover it — bullet by bullet
-  against the real diff) — under the same two roots.
+  prepared task statements to completion in one unattended pass) and **petbox-second-reading** (a
+  blind second reading of an ask, before any plan or diff exists, for work that is expensive or
+  hard to reverse) — under the same two roots.
   Four of the eight — **petbox**, **petbox-methodology**, **petbox-write-economy** and
   **petbox-node-authoring** — declare `petbox-digest: auto`; **petbox-agent-factory**,
-  **petbox-analysis-workspace**, **petbox-factory-run** and **petbox-card-check** declare
+  **petbox-analysis-workspace**, **petbox-factory-run** and **petbox-second-reading** declare
   `petbox-digest: manual`. That key drives exactly one thing: the one-line-per-skill salience
   index this kit's **opencode** plugin injects into opencode's system prompt (`auto` in, `manual`
   out). It is read nowhere else. On Claude Code and Factory Droid it changes nothing and saves
@@ -92,10 +92,10 @@ your machine actually has.
   The lever that does bite on those two harnesses is a different key,
   `disable-model-invocation: true`, which makes the harness refuse a *model-initiated* call:
   **petbox-agent-factory**, **petbox-analysis-workspace** and **petbox-factory-run** carry it, so
-  they only ever run when a human asks for them by name. **petbox-card-check** deliberately does
-  not — out of the digest, still callable by an agent that decides the check applies. The two keys
-  are independent axes; `doc/agent-wiring.md` §2f in the repo carries the full contract, including
-  the `petbox: managed` / `petbox: manual` provenance marker on every file listed above.
+  they only ever run when a human asks for them by name. **petbox-second-reading** deliberately
+  does not — out of the digest, still callable by an agent that decides the check applies. The two
+  keys are independent axes; `doc/agent-wiring.md` §2f in the repo carries the full contract,
+  including the `petbox: managed` / `petbox: manual` provenance marker on every file listed above.
 - **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a

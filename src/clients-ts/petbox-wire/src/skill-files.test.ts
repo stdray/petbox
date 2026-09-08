@@ -610,6 +610,7 @@ test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (p
       legacyPaths.push(
         seedLegacy(dir, surface, "analysis-workspace", `---\nname: analysis-workspace\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
         seedLegacy(dir, surface, "factory-run", `---\nname: factory-run\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
+        seedLegacy(dir, surface, "petbox-card-check", `---\nname: petbox-card-check\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
       );
     }
 
@@ -627,6 +628,10 @@ test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (p
     assert.ok(
       removed.some((c) => c.path.includes("factory-run")),
       "cleanup must name the factory-run legacy dir it deleted",
+    );
+    assert.ok(
+      removed.some((c) => c.path.includes("petbox-card-check")),
+      "cleanup must name the petbox-card-check legacy dir it deleted (replaced by petbox-second-reading)",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -840,7 +845,7 @@ test("digest: the automatic index carries exactly the four auto skills — agent
     const auto = PROJECT_SKILLS.filter((s) => s.digestMode === "auto").map((s) => s.dir);
     assert.deepEqual(auto.sort(), ["petbox", "petbox-methodology", "petbox-node-authoring", "petbox-write-economy"]);
     for (const name of auto) assert.match(index, new RegExp(`\`${name}\``), `${name} must be in the digest`);
-    for (const name of ["petbox-agent-factory", "petbox-analysis-workspace", "petbox-factory-run", "petbox-card-check"]) {
+    for (const name of ["petbox-agent-factory", "petbox-analysis-workspace", "petbox-factory-run", "petbox-second-reading"]) {
       assert.doesNotMatch(
         index,
         new RegExp(`\`${name}\``),

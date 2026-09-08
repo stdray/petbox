@@ -74,8 +74,8 @@ export type SkillTemplateSpec = {
   // This is DELIBERATELY a separate axis from `invocation` below (task:
   // card-check-must-stay-agent-invocable, which split the two after they were conflated by
   // commit 0daca301): a skill can be out of the salience digest yet still callable by the agent
-  // on its own initiative once it decides the task fits — `petbox-card-check` is exactly that
-  // case, `digestMode: "manual"` + `invocation: "agent"`.
+  // on its own initiative once it decides the task fits — `petbox-second-reading` is exactly
+  // that case, `digestMode: "manual"` + `invocation: "agent"`.
   digestMode: SkillDigestMode;
   // Who is allowed to invoke this skill at all (spec: card-check-must-stay-agent-invocable).
   // "agent" = the model may call it itself (via the Skill tool / `skill(name)`), same as any
@@ -85,7 +85,7 @@ export type SkillTemplateSpec = {
   // (`isModelInvocationDisabled` in origin-marker.ts) — pinned together by a parity test
   // (skill-files.test.ts). Independent of `digestMode`: an "agent" skill can still be
   // `digestMode: "manual"` (not surfaced unprompted, but callable once the agent decides it
-  // applies) — `petbox-card-check` is that combination.
+  // applies) — `petbox-second-reading` is that combination.
   invocation: SkillInvocationMode;
   // Directory names this skill was delivered under BEFORE (bug: wire-skill-cleanup-on-replace).
   // After the current path is successfully written, each of these is swept: the kit was the only
@@ -118,10 +118,19 @@ export const PROJECT_SKILLS: SkillTemplateSpec[] = [
     legacyDirs: ["factory-run"],
   },
   // digestMode "manual" (not surfaced unprompted) but invocation "agent" — the whole point of
-  // this task: the agent must be able to call this validation on its own initiative before
-  // handing a card to a worker or moving one to Review, even though it never shows up in the
-  // salience digest.
-  { dir: "petbox-card-check", needsWorkspace: false, digestMode: "manual", invocation: "agent" },
+  // this task: the agent must be able to call this check on its own initiative before spawning a
+  // worker on an ask that admits more than one reading, even though it never shows up in the
+  // salience digest. `legacyDirs`: replaces `petbox-card-check` (task:
+  // replace-card-check-with-second-reading-skill) — the old skill scored a result against the
+  // executor's own plan instead of the ask, which certified a narrowed scope as complete; this
+  // one checks the ask itself, blind, before any plan or diff exists.
+  {
+    dir: "petbox-second-reading",
+    needsWorkspace: false,
+    digestMode: "manual",
+    invocation: "agent",
+    legacyDirs: ["petbox-card-check"],
+  },
 ];
 
 // Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has
@@ -541,7 +550,7 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
 // kit-undelivered skill a `petbox-` prefixed name (this repo's own `petbox-methodology-system`
 // was exactly that case, before it was folded into the kit template and removed), yet the
 // directory-name rule would still put it in every opencode session's system prompt; a skill that
-// exists to be called deliberately (`petbox-card-check`, `petbox-factory-run`) is
+// exists to be called deliberately (`petbox-second-reading`, `petbox-factory-run`) is
 // `petbox-`/deliberate and would have joined it too. Reads the
 // MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}` substitution, post any user edits),
 // never re-renders a template — so a project can take a delivered skill out of its own digest

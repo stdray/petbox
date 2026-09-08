@@ -91,9 +91,9 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `templates/petbox-factory-run/SKILL.md` — the deliberate `petbox-factory-run` skill (no
   placeholders): drive a batch of already-written task statements to completion in one unattended
   pass — one implementer per task in its own worktree, sequential merges, gates, deploy, cards.
-- `templates/petbox-card-check/SKILL.md` — the deliberate `petbox-card-check` skill (no
-  placeholders): is a card's ask checkable before it is sent, and does a result cover it bullet by
-  bullet against the real diff.
+- `templates/petbox-second-reading/SKILL.md` — the deliberate `petbox-second-reading` skill (no
+  placeholders): a blind second reading of an ask, compared against the caller's own sealed
+  reading before either becomes work, plus a short acceptance tail scored against the ask itself.
 
 **Registration and what actually pins it.** `skill-files.ts`'s `PROJECT_SKILLS` is the one place a
 new skill is registered. Three separate ratchets keep the pieces from drifting, and they cover
@@ -220,11 +220,15 @@ version, then imports `wire.ts`) plus the `src/` kit.
      batch of prepared task statements driven to completion in one unattended pass. Same
      `petbox-digest: manual` + `disable-model-invocation: true` pair; sweeps a pre-rename copy at
      `factory-run/`.
-   - `.claude/skills/petbox-card-check/SKILL.md` + `.factory/skills/petbox-card-check/SKILL.md`
-     — the **card-check** skill (`templates/petbox-card-check/SKILL.md`, no placeholders): the
-     ask before a card is sent, and the result against it bullet by bullet. `petbox-digest:
-     manual` but **no** `disable-model-invocation` — out of the digest, still callable by an agent
-     that decides it applies (§2f explains why those are two different questions).
+   - `.claude/skills/petbox-second-reading/SKILL.md` +
+     `.factory/skills/petbox-second-reading/SKILL.md` — the **second-reading** skill
+     (`templates/petbox-second-reading/SKILL.md`, no placeholders): a blind second reading of an
+     ask, compared against the caller's own sealed reading, before any plan or diff exists — for
+     work that is expensive or hard to reverse. `petbox-digest: manual` but **no**
+     `disable-model-invocation` — out of the digest, still callable by an agent that decides it
+     applies (§2f explains why those are two different questions). Sweeps a pre-rename copy at
+     `petbox-card-check/` (`legacyDirs`, see §2f) — the skill it replaces scored a result against
+     the executor's own plan instead of the ask itself.
    - *7b (opt-in, `--telemetry`)*: ensure the named log exists
      (`POST /api/logs/<project>/logs`; 201 or 409 = ready, anything else aborts), then merge the OTLP
      export env into `.claude/settings.json` (non-secret) and the API-key-bearing
@@ -502,11 +506,12 @@ frontmatter carries the *lever*. A parity test in `skill-files.test.ts` requires
 in **both** directions — every `"user"` template carries the key, and no `"agent"` template does
 (an `"agent"` skill that carried it would be uncallable by the agent it was written for).
 
-The two keys are genuinely independent, and `petbox-card-check` is the case that proves it:
+The two keys are genuinely independent, and `petbox-second-reading` is the case that proves it:
 `petbox-digest: manual` (never surfaced unprompted) with `invocation: "agent"` and no
 `disable-model-invocation` — an agent must be able to run that check on its own initiative before
-handing a card over. Commit `0daca301` set the lever on all four `digestMode: "manual"` templates,
-which silently made card-check unreachable; splitting the axes is what fixed it.
+spawning a worker. Commit `0daca301` set the lever on all four `digestMode: "manual"` templates,
+which silently made its predecessor (`petbox-card-check`) unreachable; splitting the axes is what
+fixed it.
 
 The delivered set as it stands:
 
@@ -519,7 +524,7 @@ The delivered set as it stands:
 | `petbox-agent-factory` | `manual` | `true` |
 | `petbox-analysis-workspace` | `manual` | `true` |
 | `petbox-factory-run` | `manual` | `true` |
-| `petbox-card-check` | `manual` | — (deliberately) |
+| `petbox-second-reading` | `manual` | — (deliberately) |
 
 That table is prose and drifts like prose. The frontmatter is the source of truth; the parity
 tests in `skill-files.test.ts` are what hold it to `PROJECT_SKILLS`.
@@ -546,7 +551,8 @@ allowed to fail: if anything else lives there (a `references/` folder, the proje
 it throws `ENOTEMPTY` and the folder survives whole.
 
 Currently declared: `petbox-analysis-workspace` sweeps `analysis-workspace/`, `petbox-factory-run`
-sweeps `factory-run/`. Every other entry has none.
+sweeps `factory-run/`, `petbox-second-reading` sweeps `petbox-card-check/` (the skill it
+replaces). Every other entry has none.
 
 ## 3. Migrating a legacy (per-project copy) repo
 
