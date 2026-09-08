@@ -550,7 +550,7 @@ export function describeWorkspaceProbeFailure(probe: Extract<WorkspaceProbeResul
 // kit-undelivered skill a `petbox-` prefixed name (this repo's own `petbox-methodology-system`
 // was exactly that case, before it was folded into the kit template and removed), yet the
 // directory-name rule would still put it in every opencode session's system prompt; a skill that
-// exists to be called deliberately (`petbox-card-check`, `petbox-factory-run`) is
+// exists to be called deliberately (`petbox-second-reading`, `petbox-factory-run`) is
 // `petbox-`/deliberate and would have joined it too. Reads the
 // MATERIALIZED file (post `{{PROJECT}}`/`{{WORKSPACE}}` substitution, post any user edits),
 // never re-renders a template — so a project can take a delivered skill out of its own digest
