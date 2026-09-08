@@ -477,19 +477,29 @@ public sealed class UnmappedMemberStrictnessTests(UnmappedMemberStrictnessFixtur
 		Closed(Unwrap(links)).Should().BeFalse("`links` is Dictionary<string, LinkRefs>, keyed by relation kind — closing it would reject every project-declared kind");
 	}
 
-	// The same options generate the OUTPUT schema (McpServerTool.Create takes one
-	// SerializerOptions for both), so results are declared closed too. Recorded because it is the
-	// client-visible half: a strict client validates structuredContent against this schema, and
-	// `additionalProperties:false` means a result carrying a field the schema omits is now its
-	// error, not its shrug. Every tool's structuredContent is validated against its own declared
-	// outputSchema by McpOutputSchemaConformanceTests, which is what says the results conform.
+	// The same options generate the OUTPUT schema (McpServerTool.Create takes one SerializerOptions
+	// for both), so it would inherit `additionalProperties:false` too — but McpOutputSchema.
+	// WithOpenOutputSchema strips it back off, recursively, at tool-registration time. This is the
+	// REVERSE pin of the input test above: card mcp-output-schema-drop-additional-properties-false,
+	// mechanics in observations/mcp-response-field-addition-breaks-live-sessions comment
+	// f51bdd6b7c3c42b69c91b27cd184291e. An MCP client caches a tool's output-schema validator
+	// across `listTools()` calls and only refreshes it on the next explicit re-list; a deploy that
+	// ADDS a field to a tool's response then makes every session holding the OLD closed schema
+	// reject the new (correct) response with "must NOT have additional properties" — even though
+	// the write it responded to went through (hit twice in prod: 2026-08-30, 2026-09-08).
+	// Strictness is not lost, only moved: McpOutputSchemaConformanceTests validates
+	// structuredContent against a LOCALLY re-closed copy of this schema, so the declared-vs-
+	// returned-type contract this test used to guard is still CI-enforced.
 	[Fact]
-	public async Task OutputSchema_IsAlsoClosed()
+	public async Task OutputSchema_IsOpen()
 	{
 		var schema = (await Tool("tasks_search")).ProtocolTool.OutputSchema;
 
 		schema.Should().NotBeNull();
-		Closed(schema!.Value).Should().BeTrue("a strict client validates the result against this schema");
+		Closed(schema!.Value).Should().BeFalse(
+			"the wire-visible output schema must stay OPEN so a session holding an older (still-valid) " +
+			"cached copy keeps accepting a response after a field is added — see " +
+			"McpOutputSchemaConformanceTests for where the declared-vs-returned-type check now lives");
 	}
 
 	// `additionalProperties: false` on this node.

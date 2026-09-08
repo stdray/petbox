@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Json.Schema;
 using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
@@ -462,8 +463,43 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		var t = _tools[tool];
 		if (t.ProtocolTool.OutputSchema is null) { failures.Add($"{tool}: no outputSchema declared"); return; }
 		if (res.StructuredContent is null) { failures.Add($"{tool}: no structuredContent to validate"); return; }
-		foreach (var err in Validate(t.ProtocolTool.OutputSchema.Value, res.StructuredContent.Value))
+		// Card mcp-output-schema-drop-additional-properties-false: OutputSchema is deliberately
+		// wire-open now (McpOutputSchema.WithOpenOutputSchema), so a live client's cached copy
+		// survives a field being ADDED to a response. That must not blind CI to the opposite
+		// defect — the declared OutputSchemaType diverging from what the tool actually returns
+		// (a field the type promises but the value omits, or a type mismatch) — so validate
+		// against a LOCALLY re-closed copy instead of the live open schema.
+		foreach (var err in Validate(LocallyClosedCopy(t.ProtocolTool.OutputSchema.Value), res.StructuredContent.Value))
 			failures.Add($"{tool}: {err}");
+	}
+
+	// Recreate the pre-B closed schema for validation purposes only: every object node that
+	// declares `properties` (a closed CLR shape) gets `additionalProperties:false` back unless it
+	// already has one (an open Dictionary node carries its own `additionalProperties: <subschema>`
+	// and must NOT be closed here — that is exactly the `links` boundary
+	// InputSchema_ClosesTheObjectNodes_AndLeavesTheOpenDictionaryOpen pins on the input side).
+	static JsonElement LocallyClosedCopy(JsonElement schemaElement)
+	{
+		var copy = JsonNode.Parse(schemaElement.GetRawText())!;
+		CloseDeclaredObjectNodes(copy);
+		return JsonSerializer.SerializeToElement(copy);
+	}
+
+	static void CloseDeclaredObjectNodes(JsonNode? node)
+	{
+		switch (node)
+		{
+			case JsonObject obj:
+				if (obj.ContainsKey("properties") && !obj.ContainsKey("additionalProperties"))
+					obj["additionalProperties"] = false;
+				foreach (var property in obj.ToList())
+					CloseDeclaredObjectNodes(property.Value);
+				break;
+			case JsonArray arr:
+				foreach (var item in arr)
+					CloseDeclaredObjectNodes(item);
+				break;
+		}
 	}
 
 	static IEnumerable<string> Validate(JsonElement schemaElement, JsonElement instance)
