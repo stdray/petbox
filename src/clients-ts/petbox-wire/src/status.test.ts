@@ -598,6 +598,16 @@ function writeFixtureSkill(root: string, dir: string, content: string): void {
   writeFileSync(join(skillDir, "SKILL.md"), content, "utf8");
 }
 
+// Sibling-asset counterpart of writeFixtureSkill, for a spec.extraFiles entry (e.g.
+// petbox-node-authoring's validate-body.mjs) — same skill directory, different filename, no
+// frontmatter (marker lives in the file's own leading `// petbox: managed` comment line, already
+// baked into the template content by renderSkillTemplate, same as writeFixtureSkill's SKILL.md).
+function writeFixtureAsset(root: string, dir: string, assetName: string, content: string): void {
+  const skillDir = join(root, ".claude", "skills", dir);
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, assetName), content, "utf8");
+}
+
 test("computeRegistryStatusRow: missing directory -> verdict 'missing-dir', every skill counted missing", () => {
   const dir = freshDir("petbox-registry-status-missing-");
   rmSync(dir, { recursive: true, force: true }); // the whole point: it must NOT exist
@@ -619,12 +629,46 @@ test("computeRegistryStatusRow: every skill materialized and byte-identical to i
       // honest either way.
       const rendered = renderSkillTemplate(tpl, project, "");
       writeFixtureSkill(dir, spec.dir, rendered);
+      // extraFiles siblings (e.g. petbox-node-authoring's validate-body.mjs) materialized
+      // untouched too — regression guard for registry-status-row-skips-extra-files: adding the
+      // asset check must not make an already-clean row "stale".
+      for (const assetName of spec.extraFiles ?? []) {
+        const assetTpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, assetName), "utf8");
+        writeFixtureAsset(dir, spec.dir, assetName, renderSkillTemplate(assetTpl, project, ""));
+      }
     }
     const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
     assert.equal(row.verdict, "ok", JSON.stringify(row));
     assert.equal(row.presentSkills, PROJECT_SKILLS.length);
     assert.deepEqual(row.missingSkills, []);
     assert.deepEqual(row.driftedSkills, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeRegistryStatusRow: an extraFiles asset drifted from its template -> verdict 'stale', named in driftedSkills (bug: registry-status-row-skips-extra-files)", () => {
+  const dir = freshDir("petbox-registry-status-asset-drift-");
+  try {
+    const project = "registry-status-asset-drift-project";
+    const specWithAsset = PROJECT_SKILLS.find((s) => (s.extraFiles?.length ?? 0) > 0);
+    assert.ok(specWithAsset, "expected at least one PROJECT_SKILLS entry with extraFiles to exercise this");
+    for (const spec of PROJECT_SKILLS) {
+      const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+      for (const assetName of spec.extraFiles ?? []) {
+        const assetTpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, assetName), "utf8");
+        const assetRendered = renderSkillTemplate(assetTpl, project, "");
+        // Only THIS spec's asset gets hand-edited; the marker comment line stays untouched, so
+        // classification is "ours" (managed) but content no longer matches the template —
+        // exactly the "hand-edited or replaced asset" case the bug report named.
+        const content = spec === specWithAsset ? `${assetRendered}\n// tampered\n` : assetRendered;
+        writeFixtureAsset(dir, spec.dir, assetName, content);
+      }
+    }
+    const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
+    assert.equal(row.verdict, "stale", JSON.stringify(row));
+    assert.ok(row.driftedSkills.includes(specWithAsset!.dir), JSON.stringify(row));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
