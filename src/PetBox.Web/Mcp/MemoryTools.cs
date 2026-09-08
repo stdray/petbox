@@ -5,9 +5,11 @@ using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Search;
+using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Web.Mcp.Contract;
+using PetBox.Web.Search;
 
 namespace PetBox.Web.Mcp;
 
@@ -301,6 +303,13 @@ public static class MemoryTools
 		empty description, and/or when the request payload was large enough to risk the
 		client-side truncation described above (both join into one string when both fire) —
 		informational, never a refusal (the write already landed); omitted the rest of the time.
+		`similar[]` (one row per key THIS call CREATED — never for updates/deletes): { key,
+		entries, unavailable }. This is SHOWN, not enforced — dedup never blocks or silently
+		absorbs a write; you decide whether a listed entry is actually a duplicate.
+		`entries` is up to the 3 nearest EXISTING entries by cosine similarity ({ key,
+		description, score }), or null when the store is sensitive and was never sent to the
+		embedder. `unavailable:true` means the similarity check could not run this time (the
+		embedder was unreachable/degraded) — treat that as "unknown", never as "no duplicates".
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -309,6 +318,12 @@ public static class MemoryTools
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
+		// Optional + LAST among non-CancellationToken params (not next to the other DI params
+		// above) so the ~100 existing positional call sites across the test suite keep compiling
+		// unchanged. Nullable: FindSimilarAsync/AutocaptureDedup.TryEmbedAsync already degrade a
+		// null/unavailable client to the honest "similarity unavailable" answer — same discipline
+		// as the chat-down no-op elsewhere in this codebase.
+		ILlmClient? client = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -359,7 +374,23 @@ public static class MemoryTools
 		}
 		var sizeWarning = outcome.Result.Applied ? ModuleMcp.SizeWarningOrNull(http) : null;
 		var warning = descWarning is null ? sizeWarning : sizeWarning is null ? descWarning : $"{descWarning} {sizeWarning}";
-		return Serialize(outcome, bodyLen, warning);
+
+		// card canon-promises-dedup-mechanism-does-not-give: SHOW near-neighbors of every entry
+		// this call actually CREATED, never absorb/skip on their behalf — only Added (never
+		// Updated/Removed) carries the "might be a fresh duplicate" risk this surfaces.
+		IReadOnlyList<SimilarEntriesView>? similar = null;
+		if (outcome.Result.Applied && outcome.Result.Added.Count > 0)
+		{
+			var rows = new List<SimilarEntriesView>(outcome.Result.Added.Count);
+			foreach (var e in outcome.Result.Added)
+			{
+				var (nearby, unavailable) = await FindSimilarAsync(projectKey, store, e.Key,
+					DedupText(e.Description, e.Body), client, memory, ct);
+				rows.Add(new SimilarEntriesView(e.Key, nearby, unavailable));
+			}
+			similar = rows;
+		}
+		return Serialize(outcome, bodyLen, warning, similar);
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
@@ -543,9 +574,15 @@ public static class MemoryTools
 		so the ack carries a `warning` when it is empty. A unique key is generated. Store
 		durable facts not derivable from code/git/config; actionable work goes to a task
 		board. Requires memory:write.
-		Returns { id, scope, store, key, warning? } — `warning` is set when `description` was
-		empty (recall will find this fact poorly) or when this call's payload was large enough
-		to risk the client-side truncation described above; omitted when neither applies.
+		Returns { id, scope, store, key, warning?, similar?, similarityUnavailable } — `warning` is
+		set when `description` was empty (recall will find this fact poorly) or when this call's
+		payload was large enough to risk the client-side truncation described above; omitted when
+		neither applies. `similar`/`similarityUnavailable` (card
+		canon-promises-dedup-mechanism-does-not-give): SHOWN, not enforced — the fact is always
+		created regardless. `similar` is up to the 3 nearest EXISTING entries by cosine similarity
+		({ key, description, score }), null when `store` is sensitive (never sent to the
+		embedder). `similarityUnavailable:true` means the check could not run (embedder
+		unreachable/degraded) — treat as "unknown", never as "no duplicates".
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -557,6 +594,9 @@ public static class MemoryTools
 		// the call site on every surface — `bodyRef` where the field is `body`, `contentRef` where it
 		// is a message's `content`.
 		[Description("A blob reference from POST /api/blobs/{projectKey} whose text BECOMES this fact — for a fact already on disk as a file, OR for fact text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above). Mutually exclusive with `text`: sending both is a refusal, sending neither is a refusal. ONE-SHOT (consumed by this write) and expiring 24h after upload.")] string? textRef = null,
+		// Optional + LAST among non-CancellationToken params — same reasoning as UpsertAsync's
+		// `client`: keeps every existing positional call site compiling unchanged.
+		ILlmClient? client = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -606,7 +646,13 @@ public static class MemoryTools
 		// masks the other.
 		var sizeWarning = ModuleMcp.SizeWarningOrNull(http);
 		var warning = descWarning is null ? sizeWarning : sizeWarning is null ? descWarning : $"{descWarning} {sizeWarning}";
-		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key, warning);
+
+		// card canon-promises-dedup-mechanism-does-not-give: same show-don't-absorb surfacing as
+		// memory_upsert, for the ONE entry this verb always creates.
+		var (similarEntries, similarUnavailable) = await FindSimilarAsync(container.Key, st, key,
+			DedupText(description, text), client, memory, ct);
+		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key, warning,
+			similarEntries, similarUnavailable);
 	}
 
 	[McpServerTool(Name = "memory_search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
@@ -1322,7 +1368,8 @@ public static class MemoryTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int? bodyLen = null, string? warning = null)
+	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int? bodyLen = null, string? warning = null,
+		IReadOnlyList<SimilarEntriesView>? similar = null)
 	{
 		var r = o.Result;
 		return new MemoryUpsertResultView(
@@ -1335,7 +1382,63 @@ public static class MemoryTools
 			Updated: r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Removed: r.Removed.ToList(),
 			AutoResolved: r.AutoResolved.ToList(),
-			Warning: warning);
+			Warning: warning,
+			Similar: similar);
+	}
+
+	// Concatenates description+body the SAME way ObservationDedupService.DedupText does for
+	// task nodes (title+body there) — the identity text a dedup/similarity check compares.
+	static string DedupText(string? description, string? body)
+	{
+		var parts = new List<string>(2);
+		if (!string.IsNullOrWhiteSpace(description)) parts.Add(description!.Trim());
+		if (!string.IsNullOrWhiteSpace(body)) parts.Add(body!.Trim());
+		return string.Join("\n\n", parts);
+	}
+
+	// SHOW, never absorb (card canon-promises-dedup-mechanism-does-not-give): the deterministic
+	// dedup guards (AutocaptureDedup / ObservationDedupService) match on title+body IDENTITY
+	// plus a cosine cutoff computed over the WHOLE concatenated text — by design, so genuinely
+	// different facts are never silently merged. That same design lets a close-but-differently-
+	// worded entry pass the gate as "new" while a longer, more-detailed one risks scoring high
+	// enough to be folded away. Rather than widen that gate (out of scope here — the coverage of
+	// the deterministic dedup itself is intentionally NOT touched), this returns the top-3
+	// nearest EXISTING entries so the human/agent calling memory_upsert/memory_remember can
+	// decide for themselves whether a fresh write duplicates something.
+	//
+	// Returns (Entries, Unavailable):
+	//   (null, false)  — not attempted: `store` is sensitive (MemoryStores.IsSensitive) and its
+	//                    text must never reach the outbound embedder (llm_embed), full stop.
+	//   ([], false)    — attempted: nothing else in the store to compare against, or the
+	//                    embedder answered and nothing scored close.
+	//   ([], true)     — attempted, but the embedder was unreachable/degraded for this call — an
+	//                    explicit "don't know", never a false "no duplicates" from a silent skip.
+	//   (entries, false) — up to 3 nearest existing entries by cosine, richest-scoring first.
+	static async Task<(IReadOnlyList<SimilarEntryView>? Entries, bool Unavailable)> FindSimilarAsync(
+		string projectKey, string store, string candidateKey, string candidateText,
+		ILlmClient? client, IMemoryService memory, CancellationToken ct)
+	{
+		if (MemoryStores.IsSensitive(store)) return (null, false);
+		if (string.IsNullOrWhiteSpace(candidateText)) return ([], false);
+
+		var pool = (await memory.ListAsync(projectKey, store, type: null, ct))
+			.Where(e => !string.Equals(e.Key, candidateKey, StringComparison.Ordinal))
+			.ToList();
+		if (pool.Count == 0) return ([], false);
+
+		var texts = new List<string>(pool.Count + 1) { candidateText };
+		texts.AddRange(pool.Select(e => DedupText(e.Description, e.Body)));
+		var vectors = await AutocaptureDedup.TryEmbedAsync(projectKey, texts, client, ct);
+		if (vectors is null) return ([], true); // embedder down/degraded — honest "don't know"
+
+		var query = vectors[0];
+		var top = pool
+			.Select((e, i) => (e, score: VectorMath.Cosine(query, vectors[i + 1])))
+			.OrderByDescending(x => x.score)
+			.Take(3)
+			.Select(x => new SimilarEntryView(x.e.Key, x.e.Description, Math.Round(x.score, 4)))
+			.ToList();
+		return (top, false);
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo

@@ -394,12 +394,34 @@ public sealed record MemoryConflictView(
 	string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null,
 	IReadOnlyList<string>? ChangedFields = null);
 
+// One nearby EXISTING entry surfaced next to a fresh write (card
+// canon-promises-dedup-mechanism-does-not-give). `Score` is raw cosine similarity in [-1,1]
+// (not clamped/normalized) so the caller can judge how close "close" actually was.
+public sealed record SimilarEntryView(string Key, string? Description, double Score);
+
+// Similarity surfacing for ONE newly-created key — SHOWN, never auto-absorbed; the write
+// already landed regardless of what this carries, and the caller decides whether a listed
+// entry is actually a duplicate. Three honest states, not two:
+//   Entries == null        → not attempted at all: the store is sensitive (MemoryStores.
+//                            IsSensitive) and its text must never be sent to the outbound
+//                            embedder, full stop.
+//   Entries == [] && !Unavailable → attempted, embedder answered, nothing close enough to list
+//                            (or the store had no other entries to compare against).
+//   Entries == [] && Unavailable  → attempted, but the embedder (llm_embed) was unreachable or
+//                            degraded for this call — an explicit "don't know", never a false
+//                            "no duplicates" reached by silently skipping the check.
+//   Entries.Count > 0      → up to the 3 nearest existing entries by cosine, richest first.
+public sealed record SimilarEntriesView(string Key, IReadOnlyList<SimilarEntryView>? Entries, bool Unavailable);
+
 // AutoResolved: keys whose stale baseline was accepted because the entry's payload had not
 // semantically moved since the author's read (bookkeeping bumps only) — applied + reported.
 // `Warning` (card mcp-write-degrades-silently-fix, point 4): set only when the call APPLIED
 // and its request body's \uXXXX-escape inflation crossed the threshold ModuleMcp.SizeWarningOrNull
 // measures (see ModuleMcp.SizeGuidanceText) — independent of size — never on a refused/conflicted
 // call, where conflicts[] is already the signal to act on. Null/omitted the rest of the time.
+// `Similar` (card canon-promises-dedup-mechanism-does-not-give): one row per key THIS call
+// actually created (Added) — never for updates/deletes, and never when the call did not apply.
+// Empty when nothing was created. See SimilarEntriesView for what each row's shape means.
 public sealed record MemoryUpsertResultView(
 	bool Applied,
 	long CurrentVersion,
@@ -410,7 +432,8 @@ public sealed record MemoryUpsertResultView(
 	IReadOnlyList<MemoryEntryRow> Updated,
 	IReadOnlyList<string> Removed,
 	IReadOnlyList<string> AutoResolved,
-	string? Warning = null);
+	string? Warning = null,
+	IReadOnlyList<SimilarEntriesView>? Similar = null);
 
 // `Warning` (card mcp-write-degrades-silently-fix) is non-null when the write landed
 // DEGRADED in a way the caller could not see otherwise: an empty `description` (the primary
@@ -418,7 +441,12 @@ public sealed record MemoryUpsertResultView(
 // again) or the request body's \uXXXX-escape inflation crossing the threshold
 // ModuleMcp.SizeWarningOrNull measures (see ModuleMcp.SizeGuidanceText). Never a refusal — the
 // entry is always written when this result is returned; null/omitted when neither applies.
-public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key, string? Warning = null);
+// `Similar`/`SimilarityUnavailable` (card canon-promises-dedup-mechanism-does-not-give): the
+// SAME show-don't-absorb surfacing as memory_upsert's `Similar`, flattened for this verb's
+// single-entry shape — see SimilarEntriesView for what null vs [] vs populated means; here
+// `SimilarityUnavailable` plays the role of that record's `Unavailable` field directly.
+public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key, string? Warning = null,
+	IReadOnlyList<SimilarEntryView>? Similar = null, bool SimilarityUnavailable = false);
 
 // One memory_search row, labelled by scope (project|workspace) and store. Carries Version so
 // a search → upsert edit has its per-key CAS baseline without an extra get (or a
