@@ -41,6 +41,7 @@ import {
   PETBOX_DIGEST_KEY,
   PETBOX_MARKER_LINE,
   readArtifactState,
+  readArtifactStateFromComment,
   readDigestMode,
   readPetboxProvenanceFromComment,
   type ArtifactState,
@@ -401,10 +402,12 @@ export type SkillFileReport = {
   readonly matchesTemplate: boolean | "unknown";
 };
 
-/** Compare one materialized path against `rendered` (undefined when the expected render is
- * unavailable — offline, or a workspace-needing template with no probed workspace). */
-export function checkSkillFile(absPath: string, rendered: string | undefined): SkillFileReport {
-  const state = readArtifactState(absPath);
+// Shared compare step behind checkSkillFile/checkSkillAssetFile: given a path and an ALREADY
+// CLASSIFIED state (frontmatter-derived for SKILL.md, comment-derived for an extraFiles asset —
+// the two classifiers differ, this comparison never needs to know which one ran), decide the
+// match verdict. One implementation so the absent/manual/unknown/foreign/compare branching can
+// never drift between the two marker shapes.
+function compareArtifactToRendered(absPath: string, state: ArtifactState, rendered: string | undefined): SkillFileReport {
   if (state === "absent") return { path: absPath, state, matchesTemplate: false };
   // Declared manual: the kit does not render this path, so "does it match the template" is not a
   // question that has an answer — never a drift report, never a foreign report.
@@ -418,6 +421,24 @@ export function checkSkillFile(absPath: string, rendered: string | undefined): S
     return { path: absPath, state, matchesTemplate: "unknown" };
   }
   return { path: absPath, state, matchesTemplate: content === rendered };
+}
+
+/** Compare one materialized SKILL.md against `rendered` (undefined when the expected render is
+ * unavailable — offline, or a workspace-needing template with no probed workspace). Provenance
+ * read from YAML frontmatter (origin-marker.ts's readArtifactState) — for an extraFiles sibling
+ * asset (no frontmatter possible) use checkSkillAssetFile instead. */
+export function checkSkillFile(absPath: string, rendered: string | undefined): SkillFileReport {
+  return compareArtifactToRendered(absPath, readArtifactState(absPath), rendered);
+}
+
+/** Compare one materialized `extraFiles` sibling asset (e.g. `validate-body.mjs`) against
+ * `rendered` — same three-outcome drift contract as checkSkillFile (untouched / matches;
+ * user-modified or replaced / foreign or drifted; declared manual / left alone), but provenance
+ * is read from the asset's leading `// petbox: managed|manual` COMMENT line
+ * (origin-marker.ts's readArtifactStateFromComment), never the frontmatter parser — an asset is
+ * typically source code that cannot open with a bare `---` line. */
+export function checkSkillAssetFile(absPath: string, rendered: string | undefined): SkillFileReport {
+  return compareArtifactToRendered(absPath, readArtifactStateFromComment(absPath), rendered);
 }
 
 /** Human-readable line for one report — distinguishes a foreign (BLOCKED) file, whose remedy is
@@ -460,8 +481,9 @@ export function buildSkillReports(
 ): SkillFileReport[] {
   const reports: SkillFileReport[] = [];
   for (const spec of PROJECT_SKILLS) {
+    const canRender = workspace !== undefined || !spec.needsWorkspace;
     let rendered: string | undefined;
-    if (workspace !== undefined || !spec.needsWorkspace) {
+    if (canRender) {
       try {
         const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
         rendered = renderSkillTemplate(tpl, project, workspace ?? "");
@@ -472,6 +494,25 @@ export function buildSkillReports(
     for (const surface of SKILL_SURFACES) {
       const absPath = join(root, ...surface, spec.dir, "SKILL.md");
       reports.push(checkSkillFile(absPath, rendered));
+
+      // Sibling assets (spec.extraFiles) get the SAME drift comparison as SKILL.md, just through
+      // the comment-marker classifier (checkSkillAssetFile) — this is the parity fix this
+      // function exists for (bug: skill-extra-files-drift-not-checked): before it, a hand-edited
+      // or replaced validate-body.mjs was invisible to both `doctor` and `status` even though
+      // SKILL.md right next to it was fully checked.
+      for (const assetName of spec.extraFiles ?? []) {
+        let assetRendered: string | undefined;
+        if (canRender) {
+          try {
+            const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
+            assetRendered = renderSkillTemplate(assetTpl, project, workspace ?? "");
+          } catch {
+            assetRendered = undefined;
+          }
+        }
+        const assetPath = join(root, ...surface, spec.dir, assetName);
+        reports.push(checkSkillAssetFile(assetPath, assetRendered));
+      }
     }
   }
   return reports;
