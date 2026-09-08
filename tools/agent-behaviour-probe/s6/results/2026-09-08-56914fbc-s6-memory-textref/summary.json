@@ -1,0 +1,43 @@
+{
+ "generated": "2026-09-08T07:46:06",
+ "spec_hash": "d83872cf6acd6d58",
+ "cells": [
+  {
+   "scenario": "s6-textref-cyrillic-memory",
+   "harness": "claude",
+   "model": "sonnet",
+   "runs": 32,
+   "runs_exit0": 30,
+   "signal_rates": {
+    "used_textref": "24/32",
+    "used_inline_text": "3/32",
+    "used_upsert_bodyref": "2/32",
+    "used_upsert_inline_body": "1/32",
+    "uploaded_blob": "27/32",
+    "read_write_economy_skill": "24/32",
+    "read_node_authoring_skill": "0/32",
+    "called_tool_describe": "0/32",
+    "wrote_into_node_body_instead": "0/32"
+   },
+   "axis_rates": {
+    "tokens": "0/32",
+    "reliability": "12/32"
+   },
+   "reads_before_decision_union": [
+    "Bash",
+    "Glob",
+    "Grep",
+    "PowerShell",
+    "Read",
+    "Skill",
+    "ToolSearch",
+    "Write",
+    "apikey_list",
+    "memory_store_create",
+    "memory_store_list",
+    "whoami"
+   ],
+   "skills_read_rate": "32/32"
+  }
+ ]
+}

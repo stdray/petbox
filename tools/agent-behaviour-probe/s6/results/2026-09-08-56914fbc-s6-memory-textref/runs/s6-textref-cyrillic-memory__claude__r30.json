@@ -1,0 +1,73 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 30,
+ "run_id": "cl302485",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 90.8,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl302485.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Skill",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Skill",
+  "Bash",
+  "Bash",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 11 chars>",
+  "type": "<str 7 chars>",
+  "description": "<str 149 chars>",
+  "textRef": "<str 37 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 14 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...их решают. текст загружался через blob-референс, чтобы избежать порчи кириллицы при передаче в вызов. факт записан в хранилище `s6-cl302485` проек..."
+  ]
+ },
+ "final_text": "Факт записан в хранилище `s6-cl302485` проекта probe-m1-sandbox (ключ `m-494dfa520c5e44b6a9618fcd2308a4d4`, тип Project). Текст — связное описание процесса код-ревью (~7700 символов) с подзаголовками: зачем нужен ревью, жизненный цикл изменения от PR до мержа, кто и что проверяет, типичные проблемы и как их решают. Текст загружался через blob-референс, чтобы избежать порчи кириллицы при передаче в вызов.",
+ "n_tool_calls": 10
+}

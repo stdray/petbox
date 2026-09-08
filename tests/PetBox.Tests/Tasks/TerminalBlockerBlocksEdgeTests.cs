@@ -16,10 +16,13 @@ namespace PetBox.Tests.Tasks;
 // terminal, Cancelled included. The dependent's release (if its kind declares a gate) is judged on
 // the DEPENDENT's board, not the blocker's.
 //
-// Universal on KIND, not on HOW THE NODE GOT THERE: the rule hangs off UpsertAsync, so a node
-// driven into a terminal status by a declared effect's CASCADE (SetActiveNodeStatusAsync, which
-// writes straight to TemporalStore) keeps its outgoing edges. Known gap, its own card, and NOT
-// covered by anything below — no test here should be read as claiming otherwise.
+// Universal on KIND, not on HOW THE NODE GOT THERE — or rather, it WASN'T: the rule used to hang
+// off UpsertAsync alone, so a node driven into a terminal status by a declared effect's CASCADE
+// (SetActiveNodeStatusAsync, which writes straight to TemporalStore) kept its outgoing edges.
+// work terminal-blocks-release-not-called-from-cascade closed that gap by moving the edge-closing
+// call INTO SetActiveNodeStatusAsync itself — see the "cascade door" tests near the bottom of this
+// file for the three paths that go through it (issue_task effect, SetSupersedesAsync,
+// SyncObservationOnObligationTerminalAsync) and the chain/recursion-safety test.
 //
 // Before this rule, only the `work` kind's declared `On: Done, Link: blocks` effect ever closed
 // such an edge, so on `simple`/`classic`/a project-declared kind `blockedBy` named a finished
@@ -499,4 +502,177 @@ public sealed class TerminalBlockerBlocksEdgeTests : IDisposable
 			BlocksGate = new MethodologyBlocksGateDef("Waiting", "Running"),
 		},
 	]);
+
+	// A declared kind whose terminal-cancel status is named "Scrapped" — chosen to be nothing a
+	// builtin preset would ever answer, so a lookup that fell through to presets (the pre-fix
+	// declared-effects-use-source-board-runtime behaviour) would surface as a WRONG status actually
+	// written to the node, not merely a missing one.
+	static MethodologyDefinition CustomCancelNameDef(string name, string kindSlug) => new(name,
+	[
+		new MethodologyKindDef(kindSlug, QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(
+				["task"],
+				[
+					new WorkflowStatus("Waiting", "Waiting", StatusKind.Open),
+					new WorkflowStatus("Scrapped", "Scrapped", StatusKind.TerminalCancel),
+				],
+				[
+					new MethodologyTransitionDef("Waiting", "Scrapped"),
+				]),
+		]),
+	]);
+
+	// A declared kind whose BlocksGate.ReleaseTo IS its own TerminalCancel status — an unusual
+	// shape, deliberately, so that releasing a dependent immediately drives IT into terminal too,
+	// letting one call chain recursively down a whole `blocks` chain through the code this card
+	// added to SetActiveNodeStatusAsync, not just RunTerminalBlocksReleaseAsync's single-level loop.
+	// "Idle" is the unGATED starting status the chain HEAD is born in (GuardEngine.RequireBlockers
+	// would reject a "Waiting" node with no blockedBy, and the head has no blocker by design).
+	static MethodologyDefinition ChainDef(string name, string kindSlug) => new(name,
+	[
+		new MethodologyKindDef(kindSlug, QuickAddAllowed: true,
+		[
+			new MethodologyWorkflowDef(
+				["task"],
+				[
+					new WorkflowStatus("Idle", "Idle", StatusKind.Open),
+					new WorkflowStatus("Waiting", "Waiting", StatusKind.Open),
+					new WorkflowStatus("Freed", "Freed", StatusKind.TerminalCancel),
+				],
+				[
+					new MethodologyTransitionDef("Idle", "Waiting"),
+					new MethodologyTransitionDef("Waiting", "Freed"),
+					new MethodologyTransitionDef("Idle", "Freed"),
+				]),
+		])
+		{
+			BlocksGate = new MethodologyBlocksGateDef("Waiting", "Freed"),
+		},
+	]);
+
+	// ---------------------------------------------------------------------------------------
+	// THE CASCADE DOOR — work terminal-blocks-release-not-called-from-cascade.
+	// A node driven into a terminal status by SetActiveNodeStatusAsync (a declared effect's
+	// cascade, SetSupersedesAsync, or the observation-sync effect) used to write straight to
+	// TemporalStore and call nobody, leaving its own outgoing `blocks` edges active forever —
+	// UpsertAsync's RunTerminalBlocksReleaseAsync only ever saw its OWN patch list. Fixed by moving
+	// the edge-closing call into SetActiveNodeStatusAsync itself, so every cascade door gets it too.
+	// ---------------------------------------------------------------------------------------
+
+	// RED before the fix: the issue enters `done` via the `work` preset's `issue_task` effect — a
+	// cascade write, never a patch UpsertAsync itself sees — so the edge stayed active.
+	[Fact]
+	public async Task IssueTaskCascade_ClosesTheIntakeIssuesOwnOutgoingBlocksEdge_OnEnteringDone()
+	{
+		await _tasks.CreateBoardAsync(Proj, "iboard", "intake", null, null);
+		await _tasks.CreateBoardAsync(Proj, "wboard", "work", null, null);
+		await _tasks.UpsertAsync(Proj, "iboard", new[] { Node("issue", type: "issue") });
+		var issueId = NodeId("iboard", "issue");
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("task", type: "chore") });
+		var taskId = NodeId("wboard", "task");
+		await _relations.CreateAsync(Proj, "issue_task", issueId, taskId);
+
+		// The issue itself blocks an unrelated node — the edge this test watches.
+		await _tasks.UpsertAsync(Proj, "iboard", new[] { Node("dep", blockedBy: issueId, type: "issue") });
+		var depId = NodeId("iboard", "dep");
+		(await ActiveBlocksInto(depId)).Should().ContainSingle("control: dep really is blocked by the issue");
+
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("task", status: "InProgress", version: 1, type: "chore") });
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("task", status: "Review", version: 2, type: "chore") });
+		await _tasks.UpsertAsync(Proj, "wboard", new[] { Node("task", status: "Done", version: 3, type: "chore") });
+
+		StatusOf(issueId).Should().Be("done", "control: the issue_task effect really did close the issue via the cascade");
+		(await ActiveBlocksInto(depId)).Should().BeEmpty(
+			"a cascade into a terminal status must close the node's own outgoing `blocks` edges too, not just the direct-upsert door");
+	}
+
+	// RED before the fix: SetSupersedesAsync moves the superseded node to terminal-cancel via
+	// SetActiveNodeStatusAsync, which never called the edge-closing rule.
+	[Fact]
+	public async Task Supersede_ClosesTheSupersededNodesOwnOutgoingBlocksEdge()
+	{
+		await _tasks.CreateBoardAsync(Proj, "sboard", "simple", null, null);
+		await _tasks.UpsertAsync(Proj, "sboard", new[] { Node("old"), Node("dep") });
+		var oldId = NodeId("sboard", "old");
+		await _relations.CreateAsync(Proj, "blocks", oldId, NodeId("sboard", "dep"));
+		var depId = NodeId("sboard", "dep");
+		(await ActiveBlocksInto(depId)).Should().ContainSingle("control: dep really is blocked by `old`");
+
+		await _tasks.UpsertAsync(Proj, "sboard",
+			new[] { new NodePatch { Key = "new", Title = "new", Body = "b", Supersedes = oldId } });
+
+		StatusOf(oldId).Should().Be("Cancelled", "control: supersede really did obsolete `old`");
+		(await ActiveBlocksInto(depId)).Should().BeEmpty(
+			"the superseded node entering terminal-cancel must close its own outgoing `blocks` edges too");
+	}
+
+	// THE RUNTIME HALF, work declared-effects-use-source-board-runtime: `new` and `old` live under
+	// DIFFERENT methodology documents, `old`'s naming its terminal-cancel status "Scrapped" — a name
+	// no builtin preset would ever answer. RED before the runtime fix: SetSupersedesAsync used to
+	// hand SetActiveNodeStatusAsync the SUPERSEDING node's own board runtime, which doesn't declare
+	// `scrapkind` at all — the lookup fell through to MethodologyPresets, resolved the slug as
+	// `simple` (ParseKind's unknown-slug fallback), and would have written "Cancelled" onto `old` —
+	// a status that does not exist in `old`'s OWN document at all.
+	[Fact]
+	public async Task Supersede_CrossInstance_UsesTheSupersededNodesOwnRuntime_ForACustomTerminalCancelName()
+	{
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "tmpl-scrap", CustomCancelNameDef("tmpl-scrap", "scrapkind"), 0);
+		var instance = await _tasks.CreateMethodologyInstanceAsync(Proj, "instscrap", "template", "tmpl-scrap");
+		var scrapBoard = instance.Boards.Single().Name;
+		await _tasks.CreateBoardAsync(Proj, "plainboard", "simple", null, null, methodologyInstance: "$utility");
+
+		await _tasks.UpsertAsync(Proj, scrapBoard, new[] { Node("old", status: "Waiting", type: "task") });
+		var oldId = NodeId(scrapBoard, "old");
+		await _tasks.UpsertAsync(Proj, "plainboard", new[] { Node("new") });
+
+		// Control: the two boards really do resolve DIFFERENT documents.
+		(await _tasks.GetRuntimeForBoardAsync(Proj, scrapBoard)).IsDefinedKind("scrapkind").Should().BeTrue();
+		(await _tasks.GetRuntimeForBoardAsync(Proj, "plainboard")).IsDefinedKind("scrapkind").Should().BeFalse();
+
+		await _tasks.UpsertAsync(Proj, "plainboard",
+			new[] { new NodePatch { Key = "new", Title = "new", Body = "b", Version = 1, Supersedes = oldId } });
+
+		StatusOf(oldId).Should().Be("Scrapped",
+			"`old`'s OWN document names its terminal-cancel status 'Scrapped' — the superseding node's board runtime doesn't declare `scrapkind` at all");
+	}
+
+	// THE RECURSION/CHAIN SAFETY TEST: a linear chain of 10 nodes, each blocked by the previous one,
+	// on a kind whose BlocksGate.ReleaseTo IS its own terminal-cancel status. Superseding the head
+	// drives it into terminal via SetSupersedesAsync -> SetActiveNodeStatusAsync, which closes its
+	// edge and releases node 1 -> which is ALSO now entering terminal -> which closes ITS edge and
+	// releases node 2 -> and so on down the whole chain, entirely through the new recursive call
+	// this card added. A run that hangs or stack-overflows fails the test by timing out / crashing;
+	// a run that completes and shows every edge closed and every node Freed is the recursion-safety
+	// proof the card's acceptance criterion asks for.
+	[Fact]
+	public async Task CascadeChain_ReleasesEveryLinkDownTheWholeChain_WithoutHangingOrOverflowing()
+	{
+		const int chainLength = 10;
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "tmpl-chain", ChainDef("tmpl-chain", "chainkind"), 0);
+		var instance = await _tasks.CreateMethodologyInstanceAsync(Proj, "instchain", "template", "tmpl-chain");
+		var chainBoard = instance.Boards.Single().Name;
+		await _tasks.CreateBoardAsync(Proj, "triggerboard", "simple", null, null, methodologyInstance: "$utility");
+
+		var ids = new List<string>();
+		for (var i = 0; i < chainLength; i++)
+		{
+			// The head (i==0) has no blocker, so it is born "Idle"; every other link is born
+			// "Waiting" AND names its blocker in the SAME create call (GuardEngine.RequireBlockers).
+			var status = i == 0 ? "Idle" : "Waiting";
+			var blockedBy = i == 0 ? null : ids[i - 1];
+			await _tasks.UpsertAsync(Proj, chainBoard, new[] { Node($"n{i}", blockedBy: blockedBy, status: status, type: "task") });
+			ids.Add(NodeId(chainBoard, $"n{i}"));
+		}
+		await _tasks.UpsertAsync(Proj, "triggerboard", new[] { Node("head") });
+
+		await _tasks.UpsertAsync(Proj, "triggerboard",
+			new[] { new NodePatch { Key = "head", Title = "head", Body = "b", Version = 1, Supersedes = ids[0] } });
+
+		foreach (var id in ids)
+		{
+			StatusOf(id).Should().Be("Freed", $"the chain must release all the way down to node {ids.IndexOf(id)}");
+			(await ActiveBlocksInto(id)).Should().BeEmpty();
+		}
+	}
 }

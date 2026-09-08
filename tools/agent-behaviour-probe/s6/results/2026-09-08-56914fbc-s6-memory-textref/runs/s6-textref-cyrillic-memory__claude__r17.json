@@ -1,0 +1,61 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 17,
+ "run_id": "cl171316",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 86.3,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl171316.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 11 chars>",
+  "scope": "<str 7 chars>",
+  "type": "<str 9 chars>",
+  "description": "<str 88 chars>",
+  "textRef": "<str 37 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 11 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Факт записан в хранилище `s6-cl171316` проекта `probe-m1-sandbox` (id `m-020c1b032a084f7c95344705f12f6b30`). Текст на русском (~6500 символов) описывает процесс код-ревью: зачем он нужен, жизненный цикл изменения от идеи до слияния, разделение ответственности между автоматикой и ревьюером-человеком, а также типичные проблемы (слишком большие PR, споры об архитектуре на позднем этапе, долгое ожидание ревью, недостаточное тестовое покрытие) и способы их решения.",
+ "n_tool_calls": 8
+}

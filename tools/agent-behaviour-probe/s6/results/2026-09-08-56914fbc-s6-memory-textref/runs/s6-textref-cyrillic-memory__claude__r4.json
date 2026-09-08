@@ -1,0 +1,57 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 4,
+ "run_id": "cl4184",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 70.6,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl4184.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "memory_store_list"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "memory_store_list",
+  "memory_upsert"
+ ],
+ "decisive_call_args": {
+  "store": "<str 9 chars>",
+  "projectKey": "<str 16 chars>",
+  "entries": [
+   {
+    "key": "<str 19 chars>",
+    "type": "<str 7 chars>",
+    "description": "<str 105 chars>",
+    "body": "<str 5680 chars>",
+    "tags": [
+     "<str 9 chars>",
+     "<str 19 chars>",
+     "<str 7 chars>"
+    ]
+   }
+  ]
+ },
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": true,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Готово. В хранилище `s6-cl4184` проекта `probe-m1-sandbox` записана память-факт с ключом `code-review-process` (тип Project) — подробный текст на русском (~4 подраздела: зачем нужно ревью, жизненный цикл изменения, роли участников, типичные проблемы и их решения).",
+ "n_tool_calls": 4
+}

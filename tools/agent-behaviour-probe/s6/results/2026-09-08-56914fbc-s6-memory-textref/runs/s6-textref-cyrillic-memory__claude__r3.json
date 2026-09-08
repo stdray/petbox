@@ -1,0 +1,73 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 3,
+ "run_id": "cl342",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 134.0,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl342.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "ToolSearch",
+  "Glob",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "ToolSearch",
+  "Glob",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash",
+  "memory_remember",
+  "Bash"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 8 chars>",
+  "type": "<str 9 chars>",
+  "textRef": "<str 37 chars>",
+  "description": "<str 135 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 11 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл",
+   "обрез"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...текст был загружен как blob и передан через `textref`, чтобы избежать обрезания кириллицы при прямой передаче в вызов. готово. в хранилище `s6-cl...",
+   "...загружен как blob и передан через `textref`, чтобы избежать обрезания кириллицы при прямой передаче в вызов. готово. в хранилище `s6-cl342` проект..."
+  ]
+ },
+ "final_text": "Готово. В хранилище `s6-cl342` проекта `probe-m1-sandbox` записан факт (тип Reference, ключ `m-1cff9b3605f74f1db90aa93a6cbb19dd`) — подробный текст (~8000 символов) о том, как устроено код-ревью: зачем оно нужно, какие этапы проходит изменение (от обсуждения задачи и CI до постмерж-мониторинга), кто и что проверяет (роли автора/ревьюера/code owner и уровни проверки — корректность, безопасность, производительность, читаемость, тесты, архитектура), и разбор типичных проблем (слишком большие PR, споры о стиле, ревью «для галочки», задержки цикла, конфликты, пропущенные после merge дефекты) со способами их устранения.\n\nТекст был загружен как blob и передан через `textRef`, чтобы избежать обрезания кириллицы при прямой передаче в вызов.",
+ "n_tool_calls": 10
+}

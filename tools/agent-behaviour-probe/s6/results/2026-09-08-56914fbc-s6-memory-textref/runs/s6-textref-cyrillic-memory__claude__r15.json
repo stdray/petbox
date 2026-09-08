@@ -1,0 +1,62 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 15,
+ "run_id": "cl151143",
+ "model": "sonnet",
+ "exit_code": 1,
+ "duration_s": 98.2,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl151143.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "memory_store_list",
+  "memory_store_list",
+  "ToolSearch",
+  "ToolSearch",
+  "Bash",
+  "Write",
+  "memory_store_create",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "memory_store_list",
+  "memory_store_list",
+  "ToolSearch",
+  "ToolSearch",
+  "Bash",
+  "Write",
+  "memory_store_create",
+  "Bash"
+ ],
+ "decisive_call_args": null,
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...лище `s6-cl151143` и загружу текст как blob, чтобы избежать проблем с кириллицей при прямой передаче. api error: sonnet 5's safeguards flagged thi..."
+  ]
+ },
+ "final_text": "API Error: Sonnet 5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work. Apply to the Cyber Verification Program to reduce these interruptions. Learn more: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude\n\nDetails: `[cyber]`\n\nRequest ID: req_011CeqL9uKVLApuoToTBMz5x",
+ "n_tool_calls": 10
+}

@@ -1,0 +1,68 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 7,
+ "run_id": "cl7424",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 76.0,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl7424.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "ToolSearch",
+  "Skill",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "ToolSearch",
+  "Skill",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 9 chars>",
+  "type": "<str 9 chars>",
+  "description": "<str 95 chars>",
+  "textRef": "<str 37 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 4 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...ь в память через blob-ссылку (так рекомендует инструмент для длинного кириллического текста). теперь загружу текст как blob и запишу факт в память..."
+  ]
+ },
+ "final_text": "Факт записан в хранилище `s6-cl7424` проекта `probe-m1-sandbox` (id `m-a8098f73f7a149edb4a45a5cd5643a6f`) — подробный текст (~7170 символов) о процессе код-ревью: зачем нужен, жизненный цикл изменения, роли ревьюеров, ход обсуждения и типичные проблемы с решениями.",
+ "n_tool_calls": 8
+}
