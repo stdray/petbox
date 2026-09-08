@@ -9,7 +9,7 @@ petbox: managed
 petbox-digest: manual
 ---
 
-# Second reading — a blind check on the ask, before the work exists
+# Second reading — a blind check on the ask before the work, walked again at acceptance
 
 ## The disease
 
@@ -77,6 +77,11 @@ Four outcomes, each a finding, none a dispute:
 
 Disagreement here is the procedure working, not a failure of it.
 
+Once step 3 is settled, post the union — the reader's deliverables plus yours, with every
+discrepancy and how it resolved — to the card as the acceptance checklist. There is nothing left
+to seal: both readings are already compared. Step 5 then walks the card, not memory. No card
+exists → post it wherever the ask itself lives, as long as it's outside this session's context.
+
 ## Step 4 — reserve, on event only
 
 Only on: a substantive mismatch on an expensive or hard-to-reverse fork, or you and the reader
@@ -95,8 +100,9 @@ DISPOSITION: go | ask owner | rewrite the ask
 ## Step 5 — acceptance tail (a later, separate moment)
 
 Steps 1-4 run before any code exists; this runs after — a different moment, not a continuation.
-Walk the UNION of the reader's list and your sealed one; every discrepancy step 3 surfaced must
-appear here, however it resolved — never your own plan alone. One word per bullet: COVERED / NOT
+Walk the union posted at the end of step 3 — the reader's list and your sealed one, with every
+discrepancy and how it resolved — never your own plan alone, and never from memory even if the
+session never compacted. One word per bullet: COVERED / NOT
 COVERED (partial counts as NOT COVERED) / EXTRA. `git diff --numstat <base>...HEAD -- <paths>`,
 three-dot from the merge-base — `--numstat`, never `--stat` (abbreviates paths; commit
 `0080c198`). Live exit code, never a claim in chat. A diff command that errors is a finding, not
