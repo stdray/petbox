@@ -69,11 +69,18 @@ function pathFor(dir: string, surface: string[], specDir: string): string {
   return join(dir, ...surface, specDir, "SKILL.md");
 }
 
+// Total write outcomes: one SKILL.md per (spec x surface), plus one more per (spec x surface x
+// each of that spec's extraFiles) — the formula every count-based assertion below must match now
+// that a spec can ship sibling assets (petbox-node-authoring's validate-body.mjs).
+function expectedWriteCount(specs: readonly SkillTemplateSpec[]): number {
+  return specs.reduce((n, spec) => n + SKILL_SURFACES.length * (1 + (spec.extraFiles?.length ?? 0)), 0);
+}
+
 test("writeSkillFiles writes every PROJECT_SKILLS entry into every SKILL_SURFACES root", () => {
   const dir = freshDir();
   try {
     const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    assert.equal(outcomes.length, PROJECT_SKILLS.length * SKILL_SURFACES.length);
+    assert.equal(outcomes.length, expectedWriteCount(PROJECT_SKILLS));
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
         const p = pathFor(dir, surface, spec.dir);
@@ -408,11 +415,22 @@ test("writeSkillFiles: an unmarked file byte-identical to the pre-marker render 
     }
 
     // The very first wire/apply after this fix must NOT block on the owner's own already-
-    // materialized skills — it must recognize them as ours and promote them.
+    // materialized skills — it must recognize them as ours and promote them. Only SKILL.md has
+    // pre-fix history to migrate FROM; a spec's extraFiles (petbox-node-authoring's
+    // validate-body.mjs) never existed under the old delivery, so those land as ordinary "new"
+    // writes on this same first run, not migrations.
     const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
+    const [skillOutcomes, assetOutcomes] = [
+      outcomes.filter((o) => o.path.endsWith("SKILL.md")),
+      outcomes.filter((o) => !o.path.endsWith("SKILL.md")),
+    ];
     assert.ok(
-      outcomes.every((o) => o.kind === "written" && o.reason === "migrated"),
-      `expected every outcome to be a migration: ${JSON.stringify(outcomes)}`,
+      skillOutcomes.every((o) => o.kind === "written" && o.reason === "migrated"),
+      `expected every SKILL.md outcome to be a migration: ${JSON.stringify(skillOutcomes)}`,
+    );
+    assert.ok(
+      assetOutcomes.every((o) => o.kind === "written" && o.reason === "new"),
+      `expected every extraFiles outcome (no pre-fix history) to be a fresh write: ${JSON.stringify(assetOutcomes)}`,
     );
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
@@ -525,6 +543,84 @@ test("writeSkillFiles: a FOREIGN file at the pre-rename path survives the sweep,
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(templatesRoot, { recursive: true, force: true });
+  }
+});
+
+// ---- sibling assets (spec.extraFiles; spec: bash-quoting-collapses-backslashes-not-just-echo)
+//
+// petbox-node-authoring's validate-body.mjs used to be a fenced code block in SKILL.md the reader
+// had to retype onto disk — exactly the step a backslash-collapsing write pipeline corrupts. It
+// now ships as a real file, delivered by writeSkillFiles like any other managed artifact, with a
+// leading-COMMENT marker (not YAML frontmatter — it is JS) for the same clobber contract.
+
+test("writeSkillFiles: petbox-node-authoring's validate-body.mjs materializes next to SKILL.md on every surface, carrying the comment marker", () => {
+  const dir = freshDir();
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    for (const surface of SKILL_SURFACES) {
+      const assetPath = join(dir, ...surface, "petbox-node-authoring", "validate-body.mjs");
+      assert.equal(existsSync(assetPath), true, `expected ${assetPath} to exist`);
+      const content = readFileSync(assetPath, "utf8");
+      assert.match(content, /^\/\/ petbox: managed\r?\n/, "asset must carry the leading comment marker");
+      // The exact regex a backslash-collapsing write pipeline would corrupt — pin it byte-exact.
+      assert.ok(content.includes("text.matchAll(/\\\\n/g)"), "the literal-backslash-n check must survive intact");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a foreign validate-body.mjs (no marker) is blocked, byte-for-byte untouched", () => {
+  const dir = freshDir();
+  const target = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+  try {
+    const foreign = "// my own local validator, not from the kit\nconsole.log('mine');\n";
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, foreign, "utf8");
+
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(outcome.kind, "blocked");
+    assert.equal(readFileSync(target, "utf8"), foreign, "foreign asset must be left byte-for-byte untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a `// petbox: manual` validate-body.mjs survives apply untouched and is not a conflict", () => {
+  const dir = freshDir();
+  const target = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+  try {
+    const mine = "// petbox: manual\n// my own hand-maintained validator\nconsole.log('mine');\n";
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, mine, "utf8");
+
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(outcome.kind, "declared-manual");
+    assert.equal(readFileSync(target, "utf8"), mine, "a manual asset must be left byte-for-byte untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeSkillFiles: a materialized validate-body.mjs re-run is 'unchanged'; an edited-in-place one is refreshed ('own')", () => {
+  const dir = freshDir();
+  const target = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
+  try {
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: rerun } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const rerunOutcome = rerun.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(rerunOutcome.kind, "written");
+    assert.equal(rerunOutcome.kind === "written" ? rerunOutcome.reason : "", "unchanged");
+
+    writeFileSync(target, "// petbox: managed\nconsole.log('stale');\n", "utf8");
+    const { writes: refreshed } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const refreshedOutcome = refreshed.find((o) => o.path === target) as SkillWriteOutcome;
+    assert.equal(refreshedOutcome.kind, "written");
+    assert.equal(refreshedOutcome.kind === "written" ? refreshedOutcome.reason : "", "own");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -677,8 +773,9 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
     // The owner's personal integrations: no frontmatter marker at all — foreign, hands off.
     const droidHandoff = "# droid-handoff\n\nMY integration. Not part of any delivery.\n";
     const playwright = `---\nname: playwright-cli\ndescription: Automate browser interactions. Use for browser work.\n---\n\n# not ours\n`;
-    // A multi-file skill the kit does NOT ship (see the SKILL.md-only limitation): its auxiliary
-    // files are the ones with no legal place to carry a marker, so they must simply be left alone.
+    // A multi-file skill the kit does NOT ship (not a PROJECT_SKILLS entry, so none of its files
+    // are declared `extraFiles` anywhere): its auxiliary files have no legal place to carry a
+    // marker, so they must simply be left alone.
     const script = "#!/usr/bin/env bash\nset -euo pipefail\necho helper\n";
     const fixture = "// Intentionally incomplete fixture.\nexport const add = (a, b) => a + b;\n";
 
@@ -744,7 +841,12 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
       "the second apply finds nothing left to sweep — the first apply already deleted it",
     );
     const managedPaths = new Set(
-      PROJECT_SKILLS.flatMap((spec) => SKILL_SURFACES.map((surface) => pathFor(dir, surface, spec.dir))),
+      PROJECT_SKILLS.flatMap((spec) =>
+        SKILL_SURFACES.flatMap((surface) => [
+          pathFor(dir, surface, spec.dir),
+          ...(spec.extraFiles ?? []).map((name) => join(dir, ...surface, spec.dir, name)),
+        ]),
+      ),
     );
     for (const outcome of writes) {
       assert.ok(managedPaths.has(outcome.path), `apply wrote outside PROJECT_SKILLS: ${outcome.path}`);
