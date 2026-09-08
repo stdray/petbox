@@ -38,10 +38,11 @@ hindsight, not a seal.
 ## Step 2 — the blind reader
 
 Input is the OWNER's words, verbatim: the message or comment where they asked, plus every reply
-since, in full. A card or list YOU wrote is your own reading, not the ask — if the only card is
-yours, hand over the owner's original words instead, never the card; a card the owner wrote
-themselves can stand as the ask. Cut only your own comments from the thread, and say so ("N of my
-comments removed"). No card needed at all.
+**by the owner** since, in full. A card or list YOU wrote is your own reading, not the ask — if
+the only card is yours, hand over the owner's original words instead, never the card; a card the
+owner wrote themselves can stand as the ask. Cut everything that isn't the owner's — your own
+comments, a worker's report, a prior acceptance checklist — and say so ("N non-owner comments
+removed"). No card needed at all.
 
 Anchoring runs through the channel too, not just content: an opener, which thread slice you
 attach, a stray file path, bold on your favorite option, a leading third question — each anchors
@@ -58,7 +59,6 @@ Do not propose an implementation, do not rank options.
 <pasted whole, unformatted>
 ```
 
-Question 3 exists so step 4's "disagree about what it's for" trigger has something to fire on.
 The cheap tier (`explore`; opencode's cheap role) only catches choices the text marks; an
 unmarked one is step 4's job, not this reader's.
 
@@ -78,9 +78,11 @@ Four outcomes, each a finding, none a dispute:
 Disagreement here is the procedure working, not a failure of it.
 
 Once step 3 is settled, post the union — the reader's deliverables plus yours, with every
-discrepancy and how it resolved — to the card as the acceptance checklist. There is nothing left
-to seal: both readings are already compared. Step 5 then walks the card, not memory. No card
-exists → post it wherever the ask itself lives, as long as it's outside this session's context.
+discrepancy and how it resolved — as a comment on the card, under the fixed heading `Second
+reading — acceptance checklist`, never folded into the ask's own body, so a later pass can cut it
+by that heading. There is nothing left to seal: both readings are already compared. Step 5 then
+walks that comment, not memory. No card exists → `session_append` under the same heading; a chat
+message holding the ask cannot hold the checklist too.
 
 ## Step 4 — reserve, on event only
 
@@ -100,10 +102,10 @@ DISPOSITION: go | ask owner | rewrite the ask
 ## Step 5 — acceptance tail (a later, separate moment)
 
 Steps 1-4 run before any code exists; this runs after — a different moment, not a continuation.
-Walk the union posted at the end of step 3 — the reader's list and your sealed one, with every
-discrepancy and how it resolved — never your own plan alone, and never from memory even if the
-session never compacted. One word per bullet: COVERED / NOT
-COVERED (partial counts as NOT COVERED) / EXTRA. `git diff --numstat <base>...HEAD -- <paths>`,
+Walk the union posted under `Second reading — acceptance checklist` — the reader's list and your
+sealed one, with every discrepancy and how it resolved — never your own plan alone, and never
+from memory even if the session never compacted. One word per bullet: COVERED / NOT COVERED
+(partial counts as NOT COVERED) / EXTRA. `git diff --numstat <base>...HEAD -- <paths>`,
 three-dot from the merge-base — `--numstat`, never `--stat` (abbreviates paths; commit
 `0080c198`). Live exit code, never a claim in chat. A diff command that errors is a finding, not
 "no diff."
@@ -120,4 +122,5 @@ take is the caller's call, not this skill's.
 STEP 3: reader has a deliverable you don't — "README update" is in the owner's words, absent
 from your sealed reading.
 ACTION: folded the README bullet into the card before spawning.
+POSTED: acceptance checklist on the card.
 ```
