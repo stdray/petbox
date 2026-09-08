@@ -330,7 +330,7 @@ public sealed class CommentService : ICommentService
 			r.Applied, r.CurrentVersion,
 			mineAdded.Select(x => ToView(x, tagLookup)).ToList(),
 			mineUpdated.Select(x => ToView(x, tagLookup)).ToList(),
-			r.Conflicts.Select(c => new CommentConflict(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList());
+			r.Conflicts.Select(c => new CommentConflict(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason, c.ChangedFields)).ToList());
 	}
 
 	public async Task<CommentSearchResult> SearchAsync(
@@ -585,7 +585,7 @@ public sealed class CommentService : ICommentService
 	static CommentUpsertResult Map(TemporalUpsertResult<CommentRow> r, string id) =>
 		new(r.Applied, r.CurrentVersion, r.Applied ? id : null,
 			// .Kind.ToString() is fine here — in memory, not a SQL projection.
-			r.Conflicts.Select(c => new CommentConflict(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList());
+			r.Conflicts.Select(c => new CommentConflict(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason, c.ChangedFields)).ToList());
 
 	// Replace a comment's active tag set: soft-close removed, insert added. OPEN — any
 	// non-empty "tag" (lowercased/trimmed/deduped), no namespace allowlist (unlike TagStore).

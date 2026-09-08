@@ -106,7 +106,11 @@ public sealed record CommentUpsertResult(
 	string? Id,
 	IReadOnlyList<CommentConflict> Conflicts);
 
-public sealed record CommentConflict(string Id, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
+// ChangedFields (Stale only): mirrors UpsertConflictView/MemoryConflictView — the payload
+// fields CommentRow.ChangedPayloadFields found different from the caller's baseline. The
+// TemporalStore conflict already computes this; comments_upsert was the one adapter that
+// dropped it before this field existed (card comments-upsert-conflict-drops-changedfields).
+public sealed record CommentConflict(string Id, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null, IReadOnlyList<string>? ChangedFields = null);
 
 // One item of a comments_upsert batch. Id null/empty ⇒ CREATE (NodeId is the RESOLVED 32-hex
 // owner, Author required, ParentId optional = reply); Id present ⇒ PATCH body/tags of that

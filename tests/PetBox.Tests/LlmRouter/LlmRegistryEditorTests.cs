@@ -202,6 +202,31 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-b");
 	}
 
+	// card llm-config-upsert-cas-has-no-blind-retry-protection: llm_config_upsert is the one hand
+	// rolled CAS in the codebase (a conditional SQL UPDATE, not TemporalStore) — every OTHER write
+	// verb (tasks_upsert/memory_upsert/comments_upsert) auto-resolves a blind retry of an
+	// already-applied, content-identical write as a silent no-op instead of throwing. This pins the
+	// point-fix: the SAME call replayed at the SAME stale baseline it originally used (a caller
+	// that lost the response and retries blind, exactly like the STALE test above except the
+	// content this time is byte-identical) must return the CURRENT version quietly, not conflict.
+	[Fact]
+	public async Task A_blind_retry_of_an_ALREADY_APPLIED_identical_write_is_a_silent_noop()
+	{
+		var config = Config(new LlmEndpoint("home", "https://home:1234"), new LlmRoute(LlmCapability.Chat, "home", "model-a", 50));
+
+		var created = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj, config);
+
+		// Same call, same content, same (now-stale) baseline of 0 — the lost-response retry.
+		var replay = await LlmRouterTools.ConfigUpsertAsync(Http("llm:admin", Proj), Flags(), _editor, Proj, config);
+
+		replay.Ok.Should().BeTrue();
+		replay.Version.Should().Be(created.Version, "nothing new happened — the retry lands on the version already there");
+
+		// And it did not silently re-apply/duplicate anything underneath.
+		var resolved = await _resolver.ResolveAsync(Proj);
+		resolved.Registry.Routes.Should().ContainSingle().Which.Model.Should().Be("model-a");
+	}
+
 	// version 0 means "this level declares nothing yet". Against a level that already serves the
 	// router it is not a create, it is a blind overwrite — which is exactly what the tool used to do
 	// on EVERY call, because it had no version parameter at all.

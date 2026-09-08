@@ -128,19 +128,24 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		// either way, but keeping reads out of the write transaction is the rule that stops a core-db
 		// transaction from ever waiting on another connection (SQLITE_BUSY/SQLITE_LOCKED — core.db
 		// runs Cache=Shared, and the busy handler does not retry LOCKED).
-		var existing = (await db.LlmEndpoints
-				.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey)
-				.ToListAsync(ct))
-			.ToDictionary(e => e.Name, StringComparer.Ordinal);
+		var existingEndpointRows = await db.LlmEndpoints
+			.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey)
+			.ToListAsync(ct);
+		var existing = existingEndpointRows.ToDictionary(e => e.Name, StringComparer.Ordinal);
+
+		// Read alongside the endpoints above, same connection/same reason — needed only to decide
+		// the blind-retry no-op below, never held across the transaction.
+		var existingRouteRows = await db.LlmRoutes
+			.Where(r => r.Scope == name && r.ScopeKey == level.ScopeKey)
+			.ToListAsync(ct);
 
 		// THE CAS BASELINE, read on the same connection and BEFORE the transaction (same reason as
 		// the key read above). It is checked twice on purpose: here, so a mismatch is a clear,
 		// well-worded refusal that never opens a transaction; and again inside the transaction as a
 		// conditional UPDATE, which is what actually makes it atomic against a writer that commits
-		// between this read and the replace.
+		// between this read and the replace. The mismatch check itself is BELOW, after endpointRows/
+		// routeRows are built — see the blind-retry comment there.
 		var current = await VersionAsync(db, name, level.ScopeKey, ct);
-		if (expectedVersion is { } expected && expected != current)
-			throw Conflict(level, expected, current);
 
 		var endpointRows = new List<LlmEndpointRow>(registry.Endpoints.Count);
 		foreach (var ep in registry.Endpoints)
@@ -195,6 +200,27 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 			UpdatedBy = updatedBy,
 		}).ToList();
 
+		// card llm-config-upsert-cas-has-no-blind-retry-protection: a stale baseline is not
+		// automatically a real conflict. Every TemporalStore-backed write verb (tasks_upsert/
+		// memory_upsert/comments_upsert) auto-resolves a blind retry of an already-applied,
+		// content-identical write into a silent no-op instead of throwing; this hand-rolled CAS
+		// had no such check, so a caller that lost the response to its own successful write and
+		// retried unchanged got an exception. Point-fixed here rather than migrated onto
+		// TemporalStore itself — see the card comment for why that migration is the expensive
+		// option (two child tables + a version row, not one TemporalRow payload; secrets compared
+		// as ciphertext can't prove plaintext equality). "Same content" is endpoint/route equality
+		// on their comparable fields (never ids/timestamps/cipher bytes) AND no new api key
+		// material in THIS call — a resupplied secret can't be proven identical without decrypting
+		// stored ciphertext, so that case still falls through to the ordinary conflict below.
+		if (expectedVersion is { } expected && expected != current)
+		{
+			if (apiKeys.Count == 0
+				&& SameEndpointContent(endpointRows, existingEndpointRows)
+				&& SameRouteContent(routeRows, existingRouteRows))
+				return current;
+			throw Conflict(level, expected, current);
+		}
+
 		// Routes first: they are the FK children, and the FK is ON DELETE CASCADE — deleting the
 		// endpoints would take them anyway, but doing it explicitly keeps the order legible.
 		await using var tx = await db.BeginTransactionAsync(ct);
@@ -241,6 +267,31 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		await tx.CommitAsync(ct);
 		return next;
 	}
+
+	// Content equality for the blind-retry check above — ignores identity/bookkeeping columns
+	// (Name is part of content here, Id/UpdatedAt/UpdatedBy are not) and secret ciphertext (a
+	// random IV makes two independent encryptions of the same plaintext compare unequal, so
+	// cipher bytes are never part of "same content"). Order-insensitive: the caller's array
+	// order carries no meaning.
+	static bool SameEndpointContent(List<LlmEndpointRow> a, List<LlmEndpointRow> b)
+	{
+		if (a.Count != b.Count) return false;
+		return a.Select(EndpointContentKey).OrderBy(k => k, StringComparer.Ordinal)
+			.SequenceEqual(b.Select(EndpointContentKey).OrderBy(k => k, StringComparer.Ordinal), StringComparer.Ordinal);
+	}
+
+	static string EndpointContentKey(LlmEndpointRow e) =>
+		string.Join('', e.Name, e.BaseUrl, e.CertThumbprint ?? "", e.ConnectTimeoutMs, e.RequestTimeoutMs);
+
+	static bool SameRouteContent(List<LlmRouteRow> a, List<LlmRouteRow> b)
+	{
+		if (a.Count != b.Count) return false;
+		return a.Select(RouteContentKey).OrderBy(k => k, StringComparer.Ordinal)
+			.SequenceEqual(b.Select(RouteContentKey).OrderBy(k => k, StringComparer.Ordinal), StringComparer.Ordinal);
+	}
+
+	static string RouteContentKey(LlmRouteRow r) =>
+		string.Join('', r.Capability, r.Endpoint, r.Model, r.Priority, r.Tier ?? "", r.Thinking ?? "", r.EmbedSpaceId ?? "");
 
 	// 0 = this level has never been written (it "declares nothing yet").
 	static async Task<long> VersionAsync(PetBoxDb db, string scope, string scopeKey, CancellationToken ct) =>

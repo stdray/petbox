@@ -155,6 +155,35 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		(await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1)).Body.Should().Be("v2");
 	}
 
+	// card comments-upsert-conflict-drops-changedfields: the engine (TemporalStore.Classify, via
+	// CommentRow.ChangedPayloadFields) always computed this; the DTO used to drop it on the floor
+	// before it reached the caller (unlike tasks_upsert/memory_upsert's UpsertConflictView/
+	// MemoryConflictView, which already carried it). A baseline of 0 never exercises this path
+	// (the row that would be diffed against does not exist at version 0 — see
+	// Upsert_StaleVersion_Conflicts_NothingWritten above), so this needs a genuine mid-air race on
+	// a real read cursor: author reads at v1, someone else edits body to v2, author's own stale
+	// resubmit at v1 must come back naming "body" in Conflicts[0].ChangedFields.
+	[Fact]
+	public async Task Upsert_GenuineRace_Conflict_CarriesChangedFields()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "v1"));
+		var id = created.Added.Single().Id;
+		var readCursor = created.Added.Single().Version;
+
+		// Someone else moves the comment's body past the author's read.
+		var other = await Upsert(http, new CommentItemInput { Id = id, Body = "v2", Version = readCursor });
+		other.Applied.Should().BeTrue();
+
+		// The author's own resubmit on the old watermark is a genuine race, not a blind retry.
+		var race = await Upsert(http, new CommentItemInput { Id = id, Body = "clobber", Version = readCursor });
+		race.Applied.Should().BeFalse();
+		var c = race.Conflicts.Should().ContainSingle().Subject;
+		c.Kind.Should().Be("Stale");
+		c.ChangedFields.Should().BeEquivalentTo(["body"]);
+	}
+
 	[Fact]
 	public async Task Search_List_WithoutQuery_IsChronological()
 	{
