@@ -1,0 +1,67 @@
+{
+ "captured": "2026-09-08T07:44:58",
+ "project": "probe-m1-sandbox",
+ "templates_git_sha": "56914fbc2405aec6ed3dd98384b622e603407199",
+ "templates_tree_sha": "99ac8a4b808bea100fbd181a67f3a8ece40be8ec",
+ "templates_git_status_dirty": false,
+ "kit_version_file": "{\"version\": \"0.1.0-ci.2287\", \"kitHash\": \"2ba6478f49f1\", \"installedAt\": \"2026-09-07T14:48:09.547Z\", \"source\": \"C:\\\\Users\\\\stdray\\\\AppData\\\\Local\\\\Temp\\\\petbox-wire-t5EByX\"}",
+ "server_version": "{\"semVer\":\"0.1.0-ci.2286\",\"shortSha\":\"61a1442\",\"commitDate\":\"2026-09-07\"}",
+ "harness_versions": {
+  "claude": "2.1.263 (Claude Code)",
+  "opencode": "1.18.29"
+ },
+ "opencode_agent_vs_prod": {
+  "probe": "build",
+  "production": "petbox-orchestrator",
+  "why": "symmetry with the claude leg (no role note on either side); changing it would change what is measured"
+ },
+ "skills_served_to_agent_sha256": {
+  "petbox": "20c019d0c290fce9",
+  "petbox-agent-factory": "2dc43dd8c65ca034",
+  "petbox-analysis-workspace": "571327500f6f02ad",
+  "petbox-card-check": "24952cb0fb0908cb",
+  "petbox-factory-run": "e0551b26c465ea27",
+  "petbox-methodology": "c06c329d3344b09c",
+  "petbox-node-authoring": "9ba8b3732688798b",
+  "petbox-write-economy": "7b596e8910b1f603"
+ },
+ "skills_materialized_on_machine_sha256": {
+  "petbox": "a85c64bb26a368f7",
+  "petbox-agent-factory": "2dc43dd8c65ca034",
+  "petbox-analysis-workspace": "571327500f6f02ad",
+  "petbox-card-check": "24952cb0fb0908cb",
+  "petbox-factory-run": "e0551b26c465ea27",
+  "petbox-methodology": "589607e875e16ee3",
+  "petbox-node-authoring": "453f3fc8dc11d635",
+  "petbox-write-economy": "f2f40244b13b360e",
+  "droid-handoff": "7f76e03e69137942",
+  "opencode-handoff": "90386443805ac659",
+  "pi-handoff": "41bbb0ebb2cd4dff",
+  "playwright-cli": "3fec7ab2334bd5f4"
+ },
+ "skills_stale_on_machine_vs_templates": [],
+ "workspace_inventory": [
+  ".claude/skills/petbox-agent-factory/SKILL.md",
+  ".claude/skills/petbox-analysis-workspace/SKILL.md",
+  ".claude/skills/petbox-card-check/SKILL.md",
+  ".claude/skills/petbox-factory-run/SKILL.md",
+  ".claude/skills/petbox-methodology/SKILL.md",
+  ".claude/skills/petbox-node-authoring/SKILL.md",
+  ".claude/skills/petbox-write-economy/SKILL.md",
+  ".claude/skills/petbox/SKILL.md",
+  ".mcp.json",
+  ".opencode/opencode.json",
+  ".opencode/plugin/probe-skills-index.js"
+ ],
+ "workspace_inventory_excluded_node_modules": 0,
+ "workspace_is_git_repo": false,
+ "workspace_registered_in_projects_json": false,
+ "spec_hash": "d83872cf6acd6d58",
+ "opencode_skills_index_condition": "on (probe-local shim)",
+ "opencode_skills_index_delivery": {
+  "claude": "not delivered -- production has no salience index on Claude Code either",
+  "opencode": ".opencode/plugin/probe-skills-index.js -> experimental.chat.system.transform -> output.system.push, every request (same API call as opencode-plugin.ts:167, minus the registry gate at opencode-plugin.ts:124)"
+ },
+ "opencode_skills_index_text": "## PetBox skills — call `skill(name)` on match, don't browse first\n\n- Use to record/read plans, durable notes and working-session state for probe-m1-sandbox development. → `petbox`\n- Use before writing an idea, defining a spec node, opening a work task, or triaging intake. → `petbox-methodology`\n- Use before writing any node/comment body longer than a couple of lines, and before reaching for a diagram. → `petbox-node-authoring`\n- Use before any tasks_upsert / comments_upsert / memory_remember / memory_upsert / session_append call whose body is more than a few lines, and before any read that only needs headers or a couple of known keys. → `petbox-write-economy`",
+ "opencode_skills_index_sha256": "1bf7cde88a1a4e67"
+}

@@ -1,0 +1,58 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 2,
+ "run_id": "cl29965",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 76.9,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl29965.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "Skill",
+  "ToolSearch",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "Skill",
+  "ToolSearch",
+  "Bash",
+  "Bash",
+  "Write",
+  "Bash",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 10 chars>",
+  "type": "<str 9 chars>",
+  "description": "<str 89 chars>",
+  "textRef": "<str 37 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 11 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Факт записан в хранилище `s6-cl29965` проекта `probe-m1-sandbox` (ключ `m-a351eb2e39df4c0b9aa1cb3dcbb0cf08`). Текст — 7458 символов о процессе код-ревью: зачем он нужен, этапы жизненного цикла изменения, роли и зоны ответственности участников, а также типичные проблемы (слишком большие PR, споры о стиле, «rubber stamp» ревью, конфликты, устаревшие треды, недостаточная проверка тестов) и способы их решения.",
+ "n_tool_calls": 7
+}

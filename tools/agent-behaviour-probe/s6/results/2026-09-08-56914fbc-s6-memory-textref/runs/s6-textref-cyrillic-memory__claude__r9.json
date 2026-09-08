@@ -1,0 +1,62 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 9,
+ "run_id": "cl9650",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 91.5,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl9650.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "memory_store_list",
+  "Bash",
+  "PowerShell",
+  "Glob",
+  "Read"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-probe-ws",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "memory_store_list",
+  "Bash",
+  "PowerShell",
+  "Glob",
+  "Read",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 9 chars>",
+  "type": "<str 7 chars>",
+  "description": "<str 89 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 7 chars>",
+   "<str 11 chars>"
+  ],
+  "text": "<str 6002 chars>"
+ },
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": true,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": false,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Факт записан в хранилище `s6-cl9650` проекта probe-m1-sandbox (ключ `m-2512aa2c5bed405cb0a972638d36f02f`, тип Project). Текст на русском (~5000+ символов) со связной прозой и подзаголовками: зачем нужен код-ревью, этапы прохождения изменения, кто и что проверяет, типичные проблемы и способы их устранения.",
+ "n_tool_calls": 8
+}

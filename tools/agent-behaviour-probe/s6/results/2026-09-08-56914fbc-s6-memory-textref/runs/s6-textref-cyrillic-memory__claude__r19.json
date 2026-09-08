@@ -1,0 +1,69 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 19,
+ "run_id": "cl191517",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 88.3,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl191517.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "Write",
+  "Bash",
+  "Bash",
+  "Bash",
+  "Bash",
+  "memory_remember",
+  "Bash"
+ ],
+ "decisive_call_args": {
+  "store": "<str 11 chars>",
+  "projectKey": "<str 16 chars>",
+  "type": "<str 9 chars>",
+  "description": "<str 95 chars>",
+  "textRef": "<str 37 chars>",
+  "tags": [
+   "<str 9 chars>",
+   "<str 7 chars>",
+   "<str 10 chars>"
+  ]
+ },
+ "signals": {
+  "used_textref": true,
+  "used_inline_text": false,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...lob и создам запись в памяти через `textref`, как требует правило для кириллического текста. нашёлся ключ в `petbox_probe_api_key`. blob загружен ..."
+  ]
+ },
+ "final_text": "Готово: локальный черновик удалён, факт сохранён в памяти PetBox.",
+ "n_tool_calls": 9
+}

@@ -1,0 +1,73 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 5,
+ "run_id": "cl5255",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 86.8,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl5255.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "Bash",
+  "memory_store_list",
+  "ToolSearch",
+  "whoami",
+  "apikey_list",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox",
+  "petbox-write-economy"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "Skill",
+  "Skill",
+  "Bash",
+  "memory_store_list",
+  "ToolSearch",
+  "whoami",
+  "apikey_list",
+  "Bash",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 9 chars>",
+  "type": "<str 7 chars>",
+  "description": "<str 123 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 18 chars>",
+   "<str 13 chars>"
+  ],
+  "text": "<str 5844 chars>"
+ },
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": true,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": false,
+  "read_write_economy_skill": true,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "re:utf-?8"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...недоступна — записываю текст обычным вызовом `memory_remember`, раз в utf-8 напрямую, без ручного экранирования. факт записан в хранилище `s6-cl5..."
+  ]
+ },
+ "final_text": "Факт записан в хранилище `s6-cl5255` проекта probe-m1-sandbox (id: `m-5d8821e8c50f423a97d63debc98b9f46`, тип Project). Текст на русском (~5000+ символов) с подзаголовками описывает: зачем нужен код-ревью, какие этапы проходит изменение, кто и что именно проверяет, и типичные проблемы процесса с их решениями.",
+ "n_tool_calls": 10
+}

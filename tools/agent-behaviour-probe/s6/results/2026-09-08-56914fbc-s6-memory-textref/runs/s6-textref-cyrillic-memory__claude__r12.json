@@ -1,0 +1,54 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 12,
+ "run_id": "cl12911",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 52.1,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl12911.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "whoami",
+  "memory_store_list",
+  "Skill"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "whoami",
+  "memory_store_list",
+  "Skill",
+  "memory_remember"
+ ],
+ "decisive_call_args": {
+  "projectKey": "<str 16 chars>",
+  "store": "<str 10 chars>",
+  "type": "<str 7 chars>",
+  "description": "<str 89 chars>",
+  "tags": [
+   "<str 11 chars>",
+   "<str 18 chars>",
+   "<str 13 chars>"
+  ],
+  "text": "<str 5590 chars>"
+ },
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": true,
+  "used_upsert_bodyref": false,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": false,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {},
+ "axis_evidence": {},
+ "final_text": "Факт записан в хранилище `s6-cl12911` проекта probe-m1-sandbox (id `m-58a996c7d76a43cfbdcfbc1d6ac4995d`, тип Project) — подробное описание процесса код-ревью с подзаголовками: зачем нужен, этапы изменения, роли участников, типичные проблемы и их решения.",
+ "n_tool_calls": 5
+}

@@ -1,0 +1,74 @@
+{
+ "scenario": "s6-textref-cyrillic-memory",
+ "harness": "claude",
+ "run": 16,
+ "run_id": "cl161242",
+ "model": "sonnet",
+ "exit_code": 0,
+ "duration_s": 73.6,
+ "spec_hash": "d83872cf6acd6d58",
+ "prompt": "В проекте probe-m1-sandbox есть хранилище памяти s6-cl161242.\nЗапиши в него один факт — подробный текст на русском языке, не меньше 3000 символов: опиши, как устроен процесс код-ревью в команде разработки — зачем он нужен, какие этапы проходит изменение, кто и что проверяет, какие типичные проблемы всплывают и как их чинят. Пиши связным текстом с подзаголовками, а не списком из трёх пунктов.",
+ "reads_before_decision": [
+  "ToolSearch",
+  "ToolSearch",
+  "whoami",
+  "Skill",
+  "Bash",
+  "Write",
+  "Bash"
+ ],
+ "skills_read_before_decision": [
+  "petbox"
+ ],
+ "all_tools": [
+  "ToolSearch",
+  "ToolSearch",
+  "whoami",
+  "Skill",
+  "Bash",
+  "Write",
+  "Bash",
+  "memory_upsert"
+ ],
+ "decisive_call_args": {
+  "store": "<str 11 chars>",
+  "projectKey": "<str 16 chars>",
+  "entries": [
+   {
+    "key": "<str 19 chars>",
+    "type": "<str 9 chars>",
+    "description": "<str 89 chars>",
+    "bodyRef": "<str 37 chars>",
+    "tags": [
+     "<str 11 chars>",
+     "<str 7 chars>",
+     "<str 11 chars>"
+    ],
+    "version": 0
+   }
+  ]
+ },
+ "signals": {
+  "used_textref": false,
+  "used_inline_text": false,
+  "used_upsert_bodyref": true,
+  "used_upsert_inline_body": false,
+  "uploaded_blob": true,
+  "read_write_economy_skill": false,
+  "read_node_authoring_skill": false,
+  "called_tool_describe": false,
+  "wrote_into_node_body_instead": false
+ },
+ "axes_named": {
+  "reliability": [
+   "кирилл"
+  ]
+ },
+ "axis_evidence": {
+  "reliability": [
+   "...ишу текст и загружу его через blob-эндпойнт, чтобы избежать проблем с кириллицей в вызове. теперь загружу файл как blob и создам запись в памяти ч..."
+  ]
+ },
+ "final_text": "Факт записан: хранилище `s6-cl161242` в проекте `probe-m1-sandbox`, ключ `code-review-process` (версия 1). Тело — связный текст ~7800 символов с подзаголовками (зачем нужен код-ревью, этапы, роли и зоны ответственности, типичные проблемы и их решения, итог).",
+ "n_tool_calls": 8
+}
