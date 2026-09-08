@@ -60,7 +60,13 @@ public sealed class TerminalBlockerEdgeBackfillMigrator
 		+ "WHERE Id = '<relation id>'. (2) STATUSES: for every RELEASED line, restore that node's status to the "
 		+ "line's from= value. Use the RELEASED lines, NOT the predictedRelease= field on the closure lines — that "
 		+ "field is a dry-run forecast, while a RELEASED line is written from the write that actually happened. "
-		+ "There is no `closed by` column on relations — these log lines are the only record of what this pass touched.";
+		+ "There is no `closed by` column on relations — these log lines are the only record of what this pass touched. "
+		+ "THIS DOES NOT STICK while apply mode stays on and the blocker is still terminal: the precondition above "
+		+ "(active edge, terminal blocker) is re-evaluated fresh on every restart with no memory of a prior manual "
+		+ "undo, so the very next pass re-closes the same edge and re-releases the same dependent. To make a "
+		+ "rollback actually hold, set the deploy flag (Tasks__TerminalBlockerEdgeBackfill__Apply, deploy/compose.yaml) "
+		+ "to false BEFORE the next restart, do the two-halves procedure above, and keep it off until the blocker "
+		+ "is no longer terminal.";
 
 	readonly ICoreDbFactory _dbf;
 	readonly IScopedDbFactory<TasksDb> _factory;

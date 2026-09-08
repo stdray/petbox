@@ -58,6 +58,13 @@ services:
       # so this flag runs as a standing compensation on each start, not a one-shot cleanup. Safe
       # to leave on: the migrator's precondition is per-edge (ClosedAt IS NULL), so a pass with
       # nothing to do is a cheap SELECT and a no-op. Remove this line only once that card is closed.
+      # WHILE THIS STAYS true, the migrator's own ROLLBACK instructions (its RollbackHint log line,
+      # see TerminalBlockerEdgeBackfillMigrator.cs) are a dead letter for a still-terminal blocker:
+      # the precondition above is re-evaluated fresh on every restart, so a manually reopened edge
+      # (or a manually restored status) gets re-closed on the very next one. To make a rollback
+      # actually stick, flip this to "false" BEFORE restarting, run the rollback, and leave it off
+      # until the blocker is no longer terminal or card `terminal-blocks-release-not-called-from-cascade`
+      # is closed.
       Tasks__TerminalBlockerEdgeBackfill__Apply: "true"
 
   # Offsite backup. Reads the data volume read-only; pushes restic repos to two
