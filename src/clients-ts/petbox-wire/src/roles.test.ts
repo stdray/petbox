@@ -8,14 +8,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  CODEX_ROLE_MODEL_SEED,
   exportRolesBootstrap,
   formatResolvedBinding,
+  HARNESS_ROLE_MODEL_SEEDS,
   isEmptyRoles,
   loadRoles,
+  QWEN_ROLE_MODEL_SEED,
   resolveAgentRoles,
   resolveObservedBinding,
   rolesPath,
   saveRoles,
+  seedMissingRoleBindings,
   setRoleModel,
   unsetRoleModel,
   useProfile,
@@ -431,4 +435,105 @@ test("light validation drops junk role entries without model", () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// seedMissingRoleBindings — regression coverage for bug
+// harness-seed-skipped-when-roles-json-exists (task wire-support-codex-qwen): a machine whose
+// roles.json predates codex/qwen being added to HARNESS_IDS got NO bindings for either, forever,
+// because the old seeder (wire.ts's seedDefaultRoleBindingsIfMissing) only ever ran on a totally
+// ABSENT file.
+
+test("seedMissingRoleBindings: pre-existing profile with only the three old harnesses gains codex+qwen with the right models, in every profile, and a user's own binding is untouched", () => {
+  const before: RolesFile = {
+    activeProfile: "opencode-main",
+    profiles: {
+      "opencode-main": {
+        agents: {
+          "claude-code": { roles: { orchestrator: { model: "MY-CUSTOM-MODEL" } } },
+          opencode: { roles: { orchestrator: { model: "deepseek-chat" } } },
+          droid: { roles: { orchestrator: { model: "inherit" } } },
+        },
+      },
+      // A second profile — seeding must reach every profile in the file, not just active.
+      "opencode-go-max": {
+        agents: {
+          droid: { roles: { worker: { model: "inherit" } } },
+        },
+      },
+    },
+  };
+
+  const { data: after, changed } = seedMissingRoleBindings(before);
+  assert.equal(changed, true);
+
+  for (const profileName of ["opencode-main", "opencode-go-max"] as const) {
+    const agents = after.profiles[profileName]!.agents;
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(agents["codex"]!.roles).map(([r, b]) => [r, b.model])),
+      CODEX_ROLE_MODEL_SEED,
+      `${profileName}: codex seeded with CODEX_ROLE_MODEL_SEED`,
+    );
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(agents["qwen"]!.roles).map(([r, b]) => [r, b.model])),
+      QWEN_ROLE_MODEL_SEED,
+      `${profileName}: qwen seeded with QWEN_ROLE_MODEL_SEED`,
+    );
+  }
+
+  // Pre-existing bindings, byte-identical: the user's own claude-code/opencode/droid values,
+  // and opencode itself (not in HARNESS_ROLE_MODEL_SEEDS — intentionally never auto-bound).
+  assert.equal(
+    after.profiles["opencode-main"]!.agents["claude-code"]!.roles["orchestrator"]!.model,
+    "MY-CUSTOM-MODEL",
+  );
+  assert.deepEqual(
+    after.profiles["opencode-main"]!.agents["opencode"],
+    before.profiles["opencode-main"]!.agents["opencode"],
+  );
+  assert.deepEqual(
+    after.profiles["opencode-main"]!.agents["droid"],
+    before.profiles["opencode-main"]!.agents["droid"],
+  );
+  assert.deepEqual(
+    after.profiles["opencode-go-max"]!.agents["droid"],
+    before.profiles["opencode-go-max"]!.agents["droid"],
+  );
+
+  // Idempotent: seeding an already-fully-seeded file is a true no-op (same reference back).
+  const second = seedMissingRoleBindings(after);
+  assert.equal(second.changed, false);
+  assert.equal(second.data, after);
+});
+
+test("seedMissingRoleBindings: a harness already present but bound for only SOME roles is left completely alone (roles too) — that gap is apply's unbound-role refusal to catch, not this seeder's to paper over", () => {
+  const before: RolesFile = {
+    activeProfile: "default",
+    profiles: {
+      default: {
+        agents: {
+          // codex present, but only "orchestrator" bound — deliberately partial.
+          codex: { roles: { orchestrator: { model: "operator-chosen" } } },
+        },
+      },
+    },
+  };
+  const { data: after, changed } = seedMissingRoleBindings(before);
+  // qwen was fully absent, so it gets seeded — that IS a change...
+  assert.equal(changed, true);
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(after.profiles["default"]!.agents["qwen"]!.roles).map(([r, b]) => [r, b.model]),
+    ),
+    QWEN_ROLE_MODEL_SEED,
+  );
+  // ...but codex, already present, is untouched byte-for-byte — no "worker"/"explore"/etc
+  // backfilled even though HARNESS_ROLE_MODEL_SEEDS.codex has them.
+  assert.deepEqual(after.profiles["default"]!.agents["codex"], before.profiles["default"]!.agents["codex"]);
+});
+
+test("seedMissingRoleBindings: HARNESS_ROLE_MODEL_SEEDS excludes opencode (its model space is open/unknowable) — a file with no harnesses at all never gets an opencode entry invented", () => {
+  const before: RolesFile = { activeProfile: "default", profiles: { default: { agents: {} } } };
+  const { data: after } = seedMissingRoleBindings(before);
+  assert.equal("opencode" in after.profiles["default"]!.agents, false);
+  assert.equal(Object.keys(HARNESS_ROLE_MODEL_SEEDS).includes("opencode"), false);
 });

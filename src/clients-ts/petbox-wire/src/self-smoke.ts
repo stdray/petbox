@@ -135,7 +135,9 @@ export function finishWireRun(opts: {
       `done. NOTE: start a NEW terminal${opts.platform === "win32" ? "" : " (login shell)"} before ` +
         `launching agents — their MCP configs read ${opts.envVar} from the environment. The kit ` +
         `hooks work immediately (keys.json). The project-scoped MCP server also needs a one-time ` +
-        `approval on first launch.`,
+        `approval on first launch — Qwen specifically: its petbox entry sits at WORKSPACE scope ` +
+        `(.qwen/settings.json), which is gated for an interactive run, so \`qwen\` prompts for ` +
+        `approval on first launch (or pass --approval-mode yolo, already used by headless runs).`,
     ],
   };
 }

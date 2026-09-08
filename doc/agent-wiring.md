@@ -429,18 +429,55 @@ overridable by `QWEN_HOME`), all written by the same `installGlobalHooks` step: 
 (Stop **and** StopFailure both point at `qwen-push-session.ts` — Qwen's `SessionStart`/`Stop`
 have the SAME `{matcher?, hooks:[...]}` shape Claude Code uses, no separate hooks file and no
 trust-hash mechanism the way codex needs one, because qwen's folder-trust default is disabled and
-a user-scope hook is always honored regardless — qwen-spec.md §1/§3), `mcpServers.petbox`
-(**user** scope only — qwen's *project*-scope MCP admission is silently gated on an unapproved
-server, qwen-spec.md §2, so the kit never writes a project-scope `.qwen/settings.json` at all),
-`security.auth.selectedType = "openai"`, a wholesale-replaced `modelProviders.openai` (three
-`ModelConfig` entries through the same opencode-go gateway codex uses, reusing codex's OWN
-just-minted `x-opencode-session` UUID rather than minting a second — qwen-spec.md §11/§12), and
-`agents.modelGrades` (self-keyed to those same three `openai:<id>` pairs — without this, every
-spawn-time `model` parameter on the Agent tool is rejected outright, qwen-spec.md §6). Because the
-petbox MCP entry is user-scope and therefore machine-global, it can only reference ONE project's
-`${ENV_VAR}` at a time — the last project a `wire` ran for; other projects need `qwen
---approval-mode yolo` (which bypasses the project-scope gate entirely) to use their own
-`.qwen/settings.json` correctly (installGlobalHooks's own header comment in wire.ts).
+a user-scope hook is always honored regardless — qwen-spec.md §1/§3), a `mcpServers.petbox` entry
+for the owner's interactive use OUTSIDE any wired directory, `security.auth.selectedType =
+"openai"`, a wholesale-replaced `modelProviders.openai` (three `ModelConfig` entries through the
+same opencode-go gateway codex uses, reusing codex's OWN just-minted `x-opencode-session` UUID
+rather than minting a second — qwen-spec.md §11/§12), and `agents.modelGrades` (self-keyed to
+those same three `openai:<id>` pairs — without this, every spawn-time `model` parameter on the
+Agent tool is rejected outright, qwen-spec.md §6).
+
+**Inside a wired project**, that user-scope `mcpServers.petbox` entry is NOT what governs — a
+second, WORKSPACE-scope entry is (defect qwen-mcp-json-shadows-workspace-entry, live smoke
+wire-support-codex-qwen, root-caused against the qwen-code source under
+`packages/cli/src/config/`): the project's own `.mcp.json` (written for claude-code, above) has
+no `${ENV_VAR}` resolution at all (`mcpJson.ts`'s loader never calls `resolveEnvVarsInObject`) and
+would send the API-key header out **literally**, so PetBox 401s — and `.mcp.json` OUTRANKS the
+user-scope entry by name (`assembleMcpServers`'s precedence: user/default < project `.mcp.json` <
+workspace/system < `--mcp-config`), so on a wired project the correct user-scope entry never even
+gets a chance to run. `writeProjectFiles` (wire.ts) therefore merges a THIRD `mcpServers.petbox`
+entry into the project's own `<root>/.qwen/settings.json` (`SettingScope.Workspace` — the file
+`Storage.getWorkspaceSettingsPath()` resolves to), which both outranks `.mcp.json` and IS
+env-var-resolved. Workspace scope is held behind qwen's pending-approval gate for an interactive
+run exactly like project scope (`isGatedMcpScope`) — deliberately left unapproved by the kit (the
+approval hash bakes in the *resolved*, i.e. literal-key, config, so a later key rotation would
+silently invalidate a baked-in approval): headless callers pass `qwen --approval-mode yolo`
+(bypasses the gate outright, already the default for this kit's own headless wrappers) and an
+interactive user gets a one-time approval prompt on first launch (the closing NOTE `wire` prints
+names this explicitly). Because the USER-scope entry is machine-global, it can only reference ONE
+project's `${ENV_VAR}` at a time — the last project a `wire` ran for — but that only matters for a
+`qwen` session run OUTSIDE any wired project directory; inside one, the project's own
+workspace-scope entry always resolves its own correct `${ENV_VAR}` regardless of what the
+user-scope entry currently points at.
+
+Both the user- and workspace-scope `mcpServers.petbox` entries set `alwaysLoadTools: true`: qwen
+defers MCP tools to `tool_search` by default, declaring them to the model eagerly only when the
+active model's id matches `/deepseek-(v3|v4|chat)/i` (`cli/src/config/config.ts`) — this kit's own
+`reserve` role binds `openai:qwen3.8-max`, which does not match, so without the flag `reserve`
+(and any other non-DeepSeek-routed role) would see none of the `mcp__petbox__*` verbs directly,
+only `tool_search` plus a names-only reminder.
+
+Two qwen behaviors worth knowing when debugging either of the above, verified against the
+qwen-code source rather than its own docs (which are wrong on the first one):
+- `QWEN_CODE_DEBUG=1` — the variable qwen's own runtime warning tells you to set — **is read
+  nowhere in the source**. The real switches are `--debug`, `DEBUG=1`, or `DEBUG_MODE=1`
+  (`cli/src/config/config.ts`), and the resulting log goes only to a file, never stderr:
+  `$QWEN_HOME/debug/<session-id>.txt` — pair with `--session-id` to know the filename in advance.
+- MCP tools are deferred by default (`core/src/tools/mcp-tool.ts`) and reach the model through
+  `tool_search` plus a names-only startup reminder, **except** for a model whose id matches
+  `/deepseek-(v3|v4|chat)/i`, where `tool_search` is disabled and every MCP tool is declared
+  eagerly up front (`cli/src/config/config.ts`) — see `alwaysLoadTools` above for how this kit
+  works around that for every other model this kit routes to.
 
 A layer directory that is absent is a layer with no opinion. A layer that is PRESENT and cannot be
 read, parsed or validated **refuses the whole run**: exit 1, the absolute path and the parser's own

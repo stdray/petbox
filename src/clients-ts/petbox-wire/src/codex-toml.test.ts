@@ -8,15 +8,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  applyCodexProjectTrust,
   buildDeepseekProviderBlock,
   buildMcpServerBlock,
   buildOpencodeGoProviderBlock,
   extractOpencodeSessionUuid,
   findBlock,
+  getBlockScalar,
   getRootScalar,
   parseTomlBlocks,
   serializeTomlBlocks,
+  setBlockScalar,
   setRootScalar,
+  tomlLiteralString,
   tomlString,
   upsertBlock,
 } from "./codex-toml.ts";
@@ -140,6 +144,102 @@ test("re-running upsertBlock with a freshly-read UUID preserves it (the install-
 test("tomlString: escapes backslashes and double-quotes (Windows paths, command strings)", () => {
   assert.equal(tomlString('C:\\Users\\me\\hooks.json'), '"C:\\\\Users\\\\me\\\\hooks.json"');
   assert.equal(tomlString('say "hi"'), '"say \\"hi\\""');
+});
+
+// ---- tomlLiteralString / project-trust writer (defect codex-mcp-inert-untrusted-project) --------------
+
+test("tomlLiteralString: a Windows path round-trips with backslashes UNCHANGED, single-quoted", () => {
+  const path = "C:\\Users\\stdray\\AppData\\Local\\Temp\\scratchpad\\smoke";
+  assert.equal(tomlLiteralString(path), `'${path}'`);
+  // Round-trip through the actual block/header machinery: parsing the written header back out
+  // must find the SAME block, and the backslashes must not have been consumed as escapes (they
+  // would be, in a basic/double-quoted string — the exact failure this function exists to avoid;
+  // codex's own parser aborts loading the WHOLE config.toml on the first invalid one).
+  const header = `projects.${tomlLiteralString(path)}`;
+  const blocks = setBlockScalar(parseTomlBlocks(""), header, "trust_level", tomlString("trusted"));
+  const text = serializeTomlBlocks(blocks);
+  assert.match(text, /^\[projects\.'C:\\Users\\stdray\\AppData\\Local\\Temp\\scratchpad\\smoke'\]$/m);
+  assert.equal(getBlockScalar(parseTomlBlocks(text), header, "trust_level"), '"trusted"');
+});
+
+test("tomlLiteralString: refuses a value containing a single quote or a control character (no representation exists)", () => {
+  assert.throws(() => tomlLiteralString("C:\\it's\\a\\path"));
+  assert.throws(() => tomlLiteralString("line1\nline2"));
+});
+
+test("getBlockScalar/setBlockScalar: set on an absent block creates it with a blank separator, like upsertBlock", () => {
+  const blocks = setBlockScalar(parseTomlBlocks('a = "1"\n'), "projects.'C:\\proj'", "trust_level", tomlString("trusted"));
+  const text = serializeTomlBlocks(blocks);
+  assert.match(text, /a = "1"\n\n\[projects\.'C:\\proj'\]\ntrust_level = "trusted"\n/);
+  assert.equal(getBlockScalar(blocks, "projects.'C:\\proj'", "trust_level"), '"trusted"');
+});
+
+test("setBlockScalar: replaces the key in place within its OWN block, preserving every OTHER line in that block and every OTHER block untouched", () => {
+  const text = [
+    "[projects.'C:\\a']",
+    'trust_level = "untrusted"',
+    "some_future_field = 1",
+    "",
+    "[projects.'C:\\b']",
+    'trust_level = "trusted"',
+    "",
+  ].join("\n");
+  const blocks = setBlockScalar(parseTomlBlocks(text), "projects.'C:\\a'", "trust_level", tomlString("trusted"));
+  const out = serializeTomlBlocks(blocks);
+  assert.match(out, /\[projects\.'C:\\a'\]\ntrust_level = "trusted"\nsome_future_field = 1/, "own block: key replaced in place, sibling field preserved");
+  assert.match(out, /\[projects\.'C:\\b'\]\ntrust_level = "trusted"/, "other project's block untouched");
+});
+
+// ---- applyCodexProjectTrust (the actual trust-entry writer wire.ts calls) -----------------------------
+
+test("applyCodexProjectTrust: absent -> 'set', writes trust_level = \"trusted\" under a literal-quoted Windows-path header, nothing else in the file disturbed", () => {
+  const projectDir = "C:\\Users\\stdray\\AppData\\Local\\Temp\\scratchpad\\smoke";
+  const before = parseTomlBlocks('instructions = "be nice"\n\n[sandbox]\nmode = "workspace-write"\n');
+  const result = applyCodexProjectTrust(before, projectDir);
+  assert.equal(result.outcome, "set");
+  const text = serializeTomlBlocks(result.blocks);
+  // literal (single-quoted) header, backslashes untouched — the exact shape that must NOT be a
+  // basic double-quoted string, or codex's parser aborts loading the whole file.
+  assert.match(text, /^\[projects\.'C:\\Users\\stdray\\AppData\\Local\\Temp\\scratchpad\\smoke'\]$/m);
+  assert.match(text, /trust_level = "trusted"/);
+  // pre-existing content untouched
+  assert.match(text, /instructions = "be nice"/);
+  assert.match(text, /\[sandbox\]\nmode = "workspace-write"/);
+});
+
+test("applyCodexProjectTrust: re-run on an already-'trusted' entry -> 'already-trusted', blocks returned UNCHANGED (same reference)", () => {
+  const projectDir = "C:\\proj";
+  const first = applyCodexProjectTrust(parseTomlBlocks(""), projectDir);
+  assert.equal(first.outcome, "set");
+  const second = applyCodexProjectTrust(first.blocks, projectDir);
+  assert.equal(second.outcome, "already-trusted");
+  assert.equal(second.blocks, first.blocks, "no-op must not even re-serialize the blocks");
+});
+
+test("applyCodexProjectTrust: an operator's own trust_level = \"untrusted\" is NEVER flipped -> 'left-existing', existingValue carries the raw scalar, blocks unchanged", () => {
+  const projectDir = "C:\\proj";
+  const header = `projects.${tomlLiteralString(projectDir)}`;
+  const before = setBlockScalar(parseTomlBlocks(""), header, "trust_level", tomlString("untrusted"));
+  const result = applyCodexProjectTrust(before, projectDir);
+  assert.equal(result.outcome, "left-existing");
+  if (result.outcome === "left-existing") assert.equal(result.existingValue, '"untrusted"');
+  assert.equal(getBlockScalar(result.blocks, header, "trust_level"), '"untrusted"', "never flipped to trusted");
+});
+
+test("applyCodexProjectTrust: trusting one project directory never touches another project's own trust_level entry", () => {
+  const headerA = `projects.${tomlLiteralString("C:\\a")}`;
+  const headerB = `projects.${tomlLiteralString("C:\\b")}`;
+  const before = setBlockScalar(parseTomlBlocks(""), headerB, "trust_level", tomlString("untrusted"));
+  const result = applyCodexProjectTrust(before, "C:\\a");
+  assert.equal(result.outcome, "set");
+  assert.equal(getBlockScalar(result.blocks, headerA, "trust_level"), '"trusted"');
+  assert.equal(getBlockScalar(result.blocks, headerB, "trust_level"), '"untrusted"', "sibling project's own choice untouched");
+});
+
+test("getBlockScalar: undefined for an absent block or an absent key within an existing block", () => {
+  const blocks = parseTomlBlocks("[projects.'C:\\a']\ntrust_level = \"trusted\"\n");
+  assert.equal(getBlockScalar(blocks, "projects.'C:\\missing'", "trust_level"), undefined);
+  assert.equal(getBlockScalar(blocks, "projects.'C:\\a'", "no_such_key"), undefined);
 });
 
 // ---- buildMcpServerBlock shape (codex-spec.md §2's VERIFIED round-trip) -----------------------------

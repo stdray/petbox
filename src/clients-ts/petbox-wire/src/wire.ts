@@ -174,28 +174,29 @@ import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
 import { readRegistry, registryPath, resolveProject, type RegistryEntry } from "./registry.ts";
 import {
+  agentLookupKeys,
   canonicalAgentId,
-  CODEX_ROLE_MODEL_SEED,
-  DEFAULT_ROLE_MODEL_SEED,
   exportRolesBootstrap,
   formatResolvedBinding,
+  HARNESS_ROLE_MODEL_SEEDS,
   isEmptyRoles,
   loadRoles,
-  QWEN_ROLE_MODEL_SEED,
   resolveAgentRoles,
   rolesPath,
   saveRoles,
+  seedMissingRoleBindings,
   setRoleModel,
   unsetRoleModel,
   useProfile,
-  type RoleBinding,
   type RolesFile,
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
+import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
 import {
+  applyCodexProjectTrust,
   buildDeepseekProviderBlock,
   buildHookStateBlock,
   buildMcpServerBlock,
@@ -206,6 +207,7 @@ import {
   serializeTomlBlocks,
   setRootScalar,
   tomlString,
+  type TomlBlock,
   upsertBlock,
 } from "./codex-toml.ts";
 import { codexHookStateKey, computeCodexHookTrustHash } from "./codex-hook-trust.ts";
@@ -2677,6 +2679,43 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   writeText(codexProjectConfigPath, serializeTomlBlocks(codexProjectBlocks));
   log(`[7/10] merged petbox MCP server into ${codexProjectConfigPath}`);
 
+  // .qwen/settings.json mcpServers.petbox (Qwen Code) — WORKSPACE scope, not project .mcp.json,
+  // and NOT the user-scope entry installGlobalHooks also writes (defect
+  // qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen; verified against
+  // the qwen-code source, packages/cli/src/config):
+  //   - `.mcp.json` (written above, for claude-code) has NO env-var resolution
+  //     (mcpJson.ts's loadProjectMcpServers never calls resolveEnvVarsInObject) — its `petbox`
+  //     entry, read by qwen too (assembleMcpServers reads every settings source, .mcp.json
+  //     included), would send the header literally as `${envVar}` text, and PetBox 401s.
+  //   - `.mcp.json` also OUTRANKS the user-scope entry by name (mcpServers.ts:27-55's precedence:
+  //     user/default < project .mcp.json < workspace/system < --mcp-config) — so on a wired
+  //     project the user-scope entry never even gets a chance to run; the broken .mcp.json one
+  //     wins and the model gets zero mcp__petbox__* tools ("MCP server(s) failed to start").
+  //   - A `.qwen/settings.json` (`SettingScope.Workspace`) entry OUTRANKS `.mcp.json`
+  //     (mcpServers.ts, same precedence list) AND is env-var-resolved (settings.ts's
+  //     workspaceSettings = resolveEnvVarsInObject(...)) — this is the one file that both wins
+  //     the precedence fight and actually expands `${envVar}`.
+  //   - Workspace scope IS held behind qwen's pending-approval gate for an interactive run
+  //     (mcp-server-config.ts's isGatedMcpScope: 'project' | 'workspace' both gated) — this kit
+  //     does NOT pre-approve it (an approval hash is computed over the RESOLVED config, i.e. the
+  //     literal key, so a later key rotation would silently invalidate a baked-in approval and
+  //     the server would go back to being silently dropped). Headless callers already pass
+  //     `--approval-mode yolo` (bypasses the gate outright); an interactive user gets a one-time
+  //     approval prompt on first launch — see finishWireRun's closing NOTE (self-smoke.ts).
+  // Only `mcpServers` belongs in this file: `modelProviders` has `mergeStrategy: REPLACE` at
+  // USER scope (installGlobalHooks), so a partial copy here would silently wipe that map — hooks/
+  // security.auth/agents.modelGrades stay user-scope-only too, unchanged by this block. Merge via
+  // mergeMcpServer (same primitive as droid's `.factory/mcp.json` above): touches ONLY
+  // mcpServers.petbox, never a project's own pre-existing `.qwen/settings.json` content.
+  // `alwaysLoadTools: true` (also set on the user-scope entry, installGlobalHooks): qwen defers
+  // MCP tools to `tool_search` by default UNLESS the active model's id matches
+  // `/deepseek-(v3|v4|chat)/i` (config.ts) — this kit's own `reserve` role binds
+  // `openai:qwen3.8-max`, which does not match, so without this flag `reserve` would see none of
+  // the `mcp__petbox__*` verbs directly.
+  const qwenWorkspaceSettingsPath = join(dir, ".qwen", "settings.json");
+  mergeMcpServer(qwenWorkspaceSettingsPath, "petbox", buildQwenMcpServerEntry(DEFAULT_BASE_URL, envVar));
+  log(`[7/10] merged petbox MCP server into ${qwenWorkspaceSettingsPath} (workspace scope)`);
+
   // Skill bodies: `petbox` (project-scoped), `petbox-agent-factory` (on-demand, no
   // placeholders), `petbox-methodology` (thin, project-agnostic pointer at the LIVE
   // methodology this project runs — never this repo's own rules; see skill-files.ts),
@@ -2852,17 +2891,20 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
 // PreToolUse model-pin gate — see modelGateCmd below) and, on the way through, run the
 // retired-prompt-RAG migration on each settings object before it is written back — one read, one
 // write per file, so the prune costs nothing extra and cannot be skipped.
-// `envVar` is THIS wire run's project env-var name (deriveEnvVar/registryEnvVar) — needed only
-// for qwen's user-scope `mcpServers.petbox` entry (qwen-spec.md §2: project-scope MCP is
-// SILENTLY GATED for qwen, so the kit writes user scope instead — see the qwen block below).
-// KNOWN LIMITATION, stated plainly (qwen-spec.md §2, mechanism #3's own "not per-project"
-// caveat): unlike every other harness's per-PROJECT MCP config, qwen's user-scope settings.json
-// is machine-global, so it can only ever reference ONE project's env var at a time — re-running
-// `wire` for a second project overwrites it to that project's var, and the first project's qwen
-// sessions then need `--approval-mode yolo` (which bypasses the project-scope gate entirely,
-// letting a project's own `.qwen/settings.json` — not written by this kit today — resolve its
-// own correct envVar) documented in doc/agent-wiring.md.
-function installGlobalHooks(envVar: string): void {
+// `envVar` is THIS wire run's project env-var name (deriveEnvVar/registryEnvVar) — needed for
+// qwen's user-scope `mcpServers.petbox` entry, written here for the owner's interactive use
+// OUTSIDE any wired directory (a bare `qwen` run with no project-scope entry to outrank it).
+// Inside a wired project, writeProjectFiles's WORKSPACE-scope `.qwen/settings.json` entry is the
+// one that actually governs (defect qwen-mcp-json-shadows-workspace-entry, live smoke
+// wire-support-codex-qwen — see that function's own comment): it outranks BOTH this user-scope
+// entry AND the project's `.mcp.json` (whose petbox entry, unlike this one, is never env-var
+// resolved and would silently 401). This user-scope entry is machine-global, so — unlike every
+// per-project MCP config — it can reference only ONE project's env var at a time; re-running
+// `wire` for a second project overwrites it. That no longer strands the first project's qwen
+// sessions the way it once did: their own `.qwen/settings.json` (written by writeProjectFiles)
+// resolves their own correct envVar regardless of what this user-scope entry currently points
+// at. See doc/agent-wiring.md.
+function installGlobalHooks(envVar: string, dir: string): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
@@ -3067,7 +3109,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // `x-opencode-session` UUID across re-installs — codex-spec.md §6: the gateway 400s without
   // it, and codex itself never sends one), the default provider/model, the model-catalog
   // pointer, and pre-trusted [hooks.state] entries for the three hooks just written above.
-  let codexBlocks = parseTomlBlocks(readText(codexConfigPath));
+  let codexBlocks: readonly TomlBlock[] = parseTomlBlocks(readText(codexConfigPath));
 
   const existingOpencodeGoBlock = findBlock(codexBlocks, "model_providers.opencode-go");
   const existingSessionUuid = existingOpencodeGoBlock
@@ -3121,6 +3163,27 @@ export { PetboxPlugin, default } from "${pluginUrl}";
     codexBlocks = upsertBlock(codexBlocks, `hooks.state.${tomlString(entry.key)}`, buildHookStateBlock(entry.hash));
   }
 
+  // Trust the wired project directory (defect codex-mcp-inert-untrusted-project, live smoke
+  // wire-support-codex-qwen) — see applyCodexProjectTrust's own header comment (codex-toml.ts)
+  // for why this is required at all and what it never touches.
+  const codexTrust = applyCodexProjectTrust(codexBlocks, dir);
+  codexBlocks = codexTrust.blocks;
+  if (codexTrust.outcome === "already-trusted") {
+    log(`[8/10] codex project trust: ${dir} already trusted in ${codexConfigPath} — skipped.`);
+  } else if (codexTrust.outcome === "left-existing") {
+    log(
+      `[8/10] codex project trust: ${codexConfigPath} already sets trust_level = ` +
+        `${codexTrust.existingValue} for ${dir} — an operator's own choice, left as-is. ` +
+        `mcp_servers.petbox for this project stays inert until you trust it yourself ` +
+        `(codex's own trust prompt, or set trust_level = "trusted" by hand).`,
+    );
+  } else {
+    log(
+      `[8/10] codex project trust: marked ${dir} trusted in ${codexConfigPath} ` +
+        `(required for mcp_servers.petbox to load — codex config/src/loader/mod.rs).`,
+    );
+  }
+
   writeText(codexConfigPath, serializeTomlBlocks(codexBlocks));
   log(
     `[8/10] merged codex config into ${codexConfigPath} (providers deepseek+opencode-go, ` +
@@ -3143,10 +3206,17 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // honored regardless of trust (qwen-spec.md §1) — so there is no codex-style "untrusted hook is
   // silently skipped" trap to defend against here.
   //
-  // mcpServers.petbox goes here (USER scope) rather than project scope, because qwen's
-  // project-scope MCP admission is GATED and a gated-but-unapproved server is SILENTLY DROPPED,
-  // not prompted for (qwen-spec.md §2) — user scope is never gated (scope unset). See
-  // installGlobalHooks's own header comment for the "not per-project" limitation this implies.
+  // mcpServers.petbox ALSO goes here (USER scope) — for the owner's interactive use OUTSIDE any
+  // wired directory. Inside a wired project, writeProjectFiles's WORKSPACE-scope
+  // `.qwen/settings.json` entry is the one that actually governs (defect
+  // qwen-mcp-json-shadows-workspace-entry — see that entry's own comment): it outranks both this
+  // user-scope entry and the project's `.mcp.json` in qwen's own precedence order, and unlike
+  // `.mcp.json` it is env-var-resolved. Workspace scope IS gated for an interactive run
+  // (mcp-server-config.ts's isGatedMcpScope), same as project scope; this kit deliberately does
+  // NOT pre-approve it (an approval hash bakes in the RESOLVED — i.e. literal-key — config, so a
+  // later key rotation would silently invalidate it) — headless callers pass
+  // `--approval-mode yolo` instead, and an interactive user gets a one-time prompt (finishWireRun
+  // in self-smoke.ts).
   //
   // security.auth.selectedType/modelProviders/agents.modelGrades are also written here (qwen-spec.md
   // §7/§11/§12): `modelProviders` has `mergeStrategy: REPLACE`, so the whole map is regenerated
@@ -3213,12 +3283,10 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   if (!qwenSettings.mcpServers || typeof qwenSettings.mcpServers !== "object") {
     qwenSettings.mcpServers = {};
   }
-  qwenSettings.mcpServers.petbox = {
-    httpUrl: `${DEFAULT_BASE_URL}/mcp`,
-    headers: { "X-Api-Key": `\${${envVar}}` },
-    timeout: 30000,
-    trust: true,
-  };
+  // Same shape as writeProjectFiles's workspace-scope `.qwen/settings.json` entry (single source
+  // of truth: buildQwenMcpServerEntry, qwen-mcp-entry.ts) — including `alwaysLoadTools: true`,
+  // see that module's own header comment for why.
+  qwenSettings.mcpServers.petbox = buildQwenMcpServerEntry(DEFAULT_BASE_URL, envVar);
 
   // security.auth.selectedType — the owner's live ~/.qwen/settings.json was found with
   // `selectedType: "qwen-oauth"` alongside an unrelated apiKey/baseUrl pair (qwen-spec.md §7's
@@ -3258,6 +3326,38 @@ export { PetboxPlugin, default } from "${pluginUrl}";
     })),
   };
 
+  // model.name — defect qwen-dead-default-model (live smoke, wire-support-codex-qwen): the
+  // owner's live ~/.qwen/settings.json had this left at a stale value ("coder-model") that
+  // matches no `modelProviders.openai[].id` above, paired with `security.auth.apiKey`/`baseUrl`
+  // pointing at a local llama endpoint that was not running. A bare `qwen` run (no `-m` flag)
+  // resolves the model from `settings.model.name` (packages/cli's resolveCliGenerationConfig:
+  // `argv.model || settings.model.name`), then matches it against `modelProviders.<id>` — a
+  // miss falls through to `security.auth`'s own apiKey/baseUrl instead of the opencode-go
+  // gateway this kit just wired, silently hitting the dead endpoint.
+  // Set to the orchestrator tier's bare id (matches QWEN_ROLE_MODEL_SEED.orchestrator, roles.ts
+  // — "openai:deepseek-v4-pro" stripped of its `authType:` prefix, since `model.name` is matched
+  // against the BARE `modelProviders.openai[].id`, not the `authType:id` form a role file's own
+  // `model:` frontmatter uses) so a plain `qwen` invocation resolves through modelProviders like
+  // every role file this kit renders.
+  // NEVER touches security.auth.apiKey/baseUrl: they are the owner's own values, read only as a
+  // FALLBACK once model.name fails to resolve through modelProviders (qwen's own
+  // modelConfigResolver) — discarding a credential silently would be worse than leaving a stale
+  // one, so this only ever replaces `model.name`.
+  if (!qwenSettings.model || typeof qwenSettings.model !== "object") qwenSettings.model = {};
+  const qwenDefaultModelName = "deepseek-v4-pro";
+  const previousQwenModelName = qwenSettings.model.name;
+  if (previousQwenModelName !== qwenDefaultModelName) {
+    qwenSettings.model.name = qwenDefaultModelName;
+    log(
+      previousQwenModelName === undefined
+        ? `[8/10] qwen model.name: set to '${qwenDefaultModelName}' (was unset).`
+        : `[8/10] qwen model.name: replaced '${previousQwenModelName}' with ` +
+            `'${qwenDefaultModelName}' (the old value matched no modelProviders entry, so a bare ` +
+            `'qwen' run fell through to security.auth's own apiKey/baseUrl instead of the ` +
+            `opencode-go gateway; security.auth itself is left untouched).`,
+    );
+  }
+
   // agents.modelGrades (qwen-spec.md §6) — gates the Agent tool's spawn-time `model` PARAMETER
   // (a DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated).
   // There is no built-in default: an unseeded machine rejects EVERY explicit spawn-time `model`
@@ -3274,7 +3374,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   log(
     `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
       `security.auth.selectedType=openai, modelProviders.openai x${qwenOpencodeGoModels.length}, ` +
-      `agents.modelGrades x${qwenOpencodeGoModels.length}).`,
+      `model.name=${qwenDefaultModelName}, agents.modelGrades x${qwenOpencodeGoModels.length}).`,
   );
 }
 
@@ -3361,19 +3461,29 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 
 // ---- step 11: seed a default role binding + apply --------------------------
 
-// DEFAULT_ROLE_MODEL_SEED now lives in roles.ts (single source of truth shared with status.ts's
-// per-role model-source enumeration — see that file's comment on the constant).
+// HARNESS_ROLE_MODEL_SEEDS / seedMissingRoleBindings now live in roles.ts (single source of
+// truth shared with status.ts's per-role model-source enumeration — see that file's comment).
 
-// Seed ~/.petbox/roles.json with a default profile ONLY when the file does not exist yet —
-// never touches an operator's own bindings. Without this, a brand-new machine's roles.json is
-// empty, and apply now REFUSES to write a declared role with no local model binding on any
-// CLOSED-model-space harness (reserve-unbound-inherits-session-model; apply-artifacts.ts's
-// planApply) — so an unseeded roster on a fresh machine would leave claude-code fully blocked
-// (exit WIRE_EXIT.truthfulness), not merely silently tier-drifting the way the 2026-07-26
-// incident (and, structurally, the 2026-07-12 one before it) grew from.
+// Seed ~/.petbox/roles.json's role->model bindings — for a brand-new file (nothing exists yet)
+// AND for a pre-existing one that predates a harness this kit now knows how to seed. Without
+// this, a brand-new machine's roles.json is empty, and apply now REFUSES to write a declared
+// role with no local model binding on any CLOSED-model-space harness
+// (reserve-unbound-inherits-session-model; apply-artifacts.ts's planApply) — so an unseeded
+// roster on a fresh machine would leave claude-code fully blocked (exit WIRE_EXIT.truthfulness),
+// not merely silently tier-drifting the way the 2026-07-26 incident (and, structurally, the
+// 2026-07-12 one before it) grew from.
 // Called from BOTH the full `wire` run (step 11, below) and the standalone `apply` subcommand
 // (runApply) — previously only the former, so running a bare `apply` on a fresh machine (no
 // roles.json yet) hit the unbound-role refusal with nothing to fix it.
+//
+// bug harness-seed-skipped-when-roles-json-exists (live smoke, wire-support-codex-qwen): the
+// OLD version of this function only ever seeded on a totally ABSENT file — `if (existsSync(...))
+// return`. Adding codex/qwen to HARNESS_IDS did nothing for any machine that already had a
+// roles.json from before those harnesses existed (three profiles, each already carrying
+// opencode/droid/claude-code): the new harnesses got zero bindings, forever, and every codex/qwen
+// role silently inherited the session model. Fixed by running seedMissingRoleBindings — which
+// fills in only what is ABSENT, per harness, per role, across EVERY profile in the file — on
+// every call, not only the file-doesn't-exist branch.
 //
 // Also seeds `droid` — every role bound to the literal `inherit` — even though droid's model
 // space is OPEN (apply would only warn, never block, an unbound droid role). `inherit` is not
@@ -3385,52 +3495,40 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 // inherit" keyword in its `provider/model` id space) — it stays genuinely unbound and apply
 // warns about it instead of failing (newcomer-equivalent-experience's happy path: exit 0).
 function seedDefaultRoleBindingsIfMissing(label: string): void {
-  if (existsSync(rolesPath())) {
+  const fresh = !existsSync(rolesPath());
+  const before: RolesFile = fresh
+    ? { activeProfile: "default", profiles: { default: { agents: {} } } }
+    : loadRoles();
+  const { data: after, changed } = seedMissingRoleBindings(before);
+  if (!changed) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
     return;
   }
-  const ccRoles: Record<string, RoleBinding> = {};
-  for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) ccRoles[role] = { model };
-  const droidRoles: Record<string, RoleBinding> = {};
-  for (const role of Object.keys(DEFAULT_ROLE_MODEL_SEED)) droidRoles[role] = { model: "inherit" };
-  // codex, unlike droid, has no universal "just inherit" keyword (its model policy is OPEN —
-  // harness-models.ts — and codex has no documented frontmatter default the way Factory's
-  // `inherit` is): CODEX_ROLE_MODEL_SEED (roles.ts) instead seeds real, live-probe-verified
-  // provider slugs (codex-spec.md §6), the same way this seed step gives claude-code real
-  // aliases rather than leaving it unbound.
-  const codexRoles: Record<string, RoleBinding> = {};
-  for (const [role, model] of Object.entries(CODEX_ROLE_MODEL_SEED)) codexRoles[role] = { model };
-  // qwen, same reasoning as codex directly above: no universal inherit keyword (open model
-  // space — harness-models.ts), so QWEN_ROLE_MODEL_SEED (roles.ts) seeds real, live-probe-
-  // verified `authType:model-id` pairs (qwen-spec.md §12) rather than leaving it unbound.
-  const qwenRoles: Record<string, RoleBinding> = {};
-  for (const [role, model] of Object.entries(QWEN_ROLE_MODEL_SEED)) qwenRoles[role] = { model };
-  const data: RolesFile = {
-    activeProfile: "default",
-    profiles: {
-      default: {
-        agents: {
-          "claude-code": { roles: ccRoles },
-          droid: { roles: droidRoles },
-          codex: { roles: codexRoles },
-          qwen: { roles: qwenRoles },
-        },
-      },
-    },
-  };
-  saveRoles(data);
+  saveRoles(after);
+  const seededHarnesses = Object.keys(HARNESS_ROLE_MODEL_SEEDS).filter((harness) =>
+    Object.entries(after.profiles).some(([profileName, afterProfile]) => {
+      const beforeProfile = before.profiles[profileName];
+      const key = agentLookupKeys(harness).find((k) => k in afterProfile.agents) ?? harness;
+      const afterCount = Object.keys(afterProfile.agents[key]?.roles ?? {}).length;
+      const beforeKey = beforeProfile
+        ? agentLookupKeys(harness).find((k) => k in beforeProfile.agents)
+        : undefined;
+      const beforeCount = beforeKey
+        ? Object.keys(beforeProfile?.agents[beforeKey]?.roles ?? {}).length
+        : 0;
+      return afterCount > beforeCount;
+    }),
+  );
   log(
-    `${label} roles: seeded ${rolesPath()} — profile "default": claude-code aliases ` +
-      `(orchestrator=opus, worker=sonnet, worker-highstakes=opus, explore=haiku, ` +
-      `reserve=fable), droid=inherit for every role, codex provider slugs ` +
-      `(orchestrator=deepseek-v4-pro, worker=deepseek-v4-flash, worker-highstakes=deepseek-v4-pro, ` +
-      `explore=deepseek-v4-flash, reserve=grok-4.6), qwen authType:model-id pairs ` +
-      `(orchestrator=openai:deepseek-v4-pro, worker=openai:glm-5.3-flash, ` +
-      `worker-highstakes=openai:deepseek-v4-pro, explore=openai:glm-5.3-flash, ` +
-      `reserve=openai:qwen3.8-max). opencode is intentionally left unbound (its ` +
-      `model space is open/unknowable from the kit) — apply will warn about it, not fail; bind it ` +
-      `yourself with \`petbox-wire model set <role> <model> --agent opencode\` when you know what ` +
-      `to bind it to.`,
+    fresh
+      ? `${label} roles: seeded ${rolesPath()} — profile "default": ${seededHarnesses.join(", ")} ` +
+          `bound from this kit's default seeds. opencode is intentionally left unbound (its model ` +
+          `space is open/unknowable from the kit) — apply will warn about it, not fail; bind it ` +
+          `yourself with \`petbox-wire model set <role> <model> --agent opencode\` when you know what ` +
+          `to bind it to.`
+      : `${label} roles: ${rolesPath()} already existed — filled in missing default seed ` +
+          `bindings for: ${seededHarnesses.join(", ")} (every existing binding, any harness, ` +
+          `left byte-for-byte as the operator set it).`,
   );
 }
 
@@ -3592,7 +3690,7 @@ async function main(): Promise<void> {
 
   // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
   // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
-  installGlobalHooks(envVar);
+  installGlobalHooks(envVar, dir);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);

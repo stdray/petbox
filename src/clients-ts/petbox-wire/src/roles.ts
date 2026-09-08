@@ -64,7 +64,7 @@ export function canonicalAgentId(agent: string): string {
 }
 
 /** Keys to try when reading agents{} from roles.json for a requested agent id. */
-function agentLookupKeys(agent: string): readonly string[] {
+export function agentLookupKeys(agent: string): readonly string[] {
   const canon = canonicalAgentId(agent);
   const keys = new Set<string>([agent, canon]);
   for (const [alias, c] of Object.entries(AGENT_ALIASES)) {
@@ -435,6 +435,67 @@ export const QWEN_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   explore: "openai:glm-5.3-flash",
   reserve: "openai:qwen3.8-max",
 };
+
+// Per-harness role->model seed, one map per harness this kit knows how to seed automatically.
+// `opencode` is DELIBERATELY absent — its model space is open/unknowable from the kit (see
+// DEFAULT_ROLE_MODEL_SEED's doc comment above): it stays unbound and `apply` warns instead of
+// seeding a made-up value. Single source of truth for BOTH seedMissingRoleBindings below (the
+// existing-file case: bug harness-seed-skipped-when-roles-json-exists, a newly added HARNESS_IDS
+// entry — codex/qwen — silently got zero bindings on any machine whose roles.json already held
+// other profiles, because the old seeder only ever ran on a totally absent file) and wire.ts's
+// seedDefaultRoleBindingsIfMissing (the totally-fresh-file case, which now also just reads this
+// map instead of hand-building each harness's role set separately).
+export const HARNESS_ROLE_MODEL_SEEDS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "claude-code": DEFAULT_ROLE_MODEL_SEED,
+  // droid's model space is open too, but Factory documents a real `inherit` frontmatter default
+  // (https://docs.factory.ai/cli/configuration/custom-droids) — every role DEFAULT_ROLE_MODEL_SEED
+  // knows gets that literal value, turning the implicit fallback into a visible binding.
+  droid: Object.fromEntries(Object.keys(DEFAULT_ROLE_MODEL_SEED).map((role) => [role, "inherit"])),
+  codex: CODEX_ROLE_MODEL_SEED,
+  qwen: QWEN_ROLE_MODEL_SEED,
+};
+
+/**
+ * Add the full seed role set for any harness that is COMPLETELY ABSENT from a profile's
+ * `agents`, across EVERY profile in `data` — from HARNESS_ROLE_MODEL_SEEDS. Purely additive
+ * (bug harness-seed-skipped-when-roles-json-exists — codex/qwen added to HARNESS_IDS after most
+ * machines already had a roles.json, so the OLD seeder, which only ever ran on a totally absent
+ * file, never gave them a single binding):
+ *   - never overwrites a binding that is already present,
+ *   - never touches a harness the seed map does not know about (opencode stays exactly as the
+ *     user left it, present or not),
+ *   - a harness that IS already present in a profile — even bound for only SOME of its roles —
+ *     is left completely alone, roles included: a partial binding is the operator's own,
+ *     deliberate or not, and `apply`'s unbound-role hard-refusal (planApply,
+ *     reserve-unbound-inherits-session-model) is what is SUPPOSED to catch that gap and say so
+ *     loudly, not have this seeder quietly paper over it. Seeding only ever fills in a harness
+ *     that has NO entry at all.
+ *   - alias-aware on the harness key: a profile already keyed by an alias (e.g. `factory-droid`)
+ *     counts as "present" under that key, so no duplicate canonical-id entry appears.
+ * Returns `changed: false` (and `data` back untouched, same reference) when every profile already
+ * has an entry for every seeded harness — callers should skip the write entirely in that case, so
+ * an already-fully-seeded roles.json is never even re-serialized.
+ */
+export function seedMissingRoleBindings(data: RolesFile): { data: RolesFile; changed: boolean } {
+  let fileChanged = false;
+  const profiles: Record<string, Profile> = {};
+  for (const [profileName, profile] of Object.entries(data.profiles)) {
+    const agents: Record<string, AgentRoles> = { ...profile.agents };
+    let profileChanged = false;
+    for (const [harness, seed] of Object.entries(HARNESS_ROLE_MODEL_SEEDS)) {
+      const alreadyPresent = agentLookupKeys(harness).some((k) => k in agents);
+      if (alreadyPresent) continue;
+      const roles: Record<string, RoleBinding> = {};
+      for (const [role, model] of Object.entries(seed)) roles[role] = { model };
+      agents[harness] = { roles };
+      profileChanged = true;
+    }
+    profiles[profileName] = profileChanged ? { agents } : profile;
+    if (profileChanged) fileChanged = true;
+  }
+  if (!fileChanged) return { data, changed: false };
+  return { data: { activeProfile: data.activeProfile, profiles }, changed: true };
+}
 
 /** Human-readable dump of the active profile's agent/role/model tree. */
 export function formatResolvedBinding(data: RolesFile): string {
