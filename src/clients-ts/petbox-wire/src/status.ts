@@ -809,6 +809,22 @@ export function computeRegistryStatusRow(
         rendered = undefined; // this kit build no longer ships this template — treat as unknown
       }
     }
+    // Sibling assets (spec.extraFiles, e.g. petbox-node-authoring's validate-body.mjs) rendered
+    // once per spec, same as SKILL.md above — parity fix for registry-status-row-skips-extra-files:
+    // this row used to call checkSkillFile directly and never looked at extraFiles at all, so a
+    // hand-edited or replaced asset was invisible here even though `doctor`/`status` (buildSkillReports)
+    // already caught it.
+    const assetRendered = new Map<string, string | undefined>();
+    if (!spec.needsWorkspace) {
+      for (const assetName of spec.extraFiles ?? []) {
+        try {
+          const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
+          assetRendered.set(assetName, renderSkillTemplate(assetTpl, entry.project, ""));
+        } catch {
+          assetRendered.set(assetName, undefined);
+        }
+      }
+    }
     for (const surface of SKILL_SURFACES) {
       const absPath = join(dir, ...surface, spec.dir, "SKILL.md");
       const report = checkSkillFile(absPath, rendered);
@@ -818,6 +834,16 @@ export function computeRegistryStatusRow(
         anyPresent = true; // materialized, just not something we can vouch for
       }
       if (report.state === "ours" && report.matchesTemplate === false) anyDrift = true;
+      for (const assetName of spec.extraFiles ?? []) {
+        const assetPath = join(dir, ...surface, spec.dir, assetName);
+        const assetReport = checkSkillAssetFile(assetPath, assetRendered.get(assetName));
+        if (assetReport.state === "ours" || assetReport.state === "manual") anyPresent = true;
+        if (assetReport.state === "foreign") {
+          foreignPaths.push(assetPath);
+          anyPresent = true;
+        }
+        if (assetReport.state === "ours" && assetReport.matchesTemplate === false) anyDrift = true;
+      }
       for (const legacyDir of spec.legacyDirs ?? []) {
         if (existsSync(join(dir, ...surface, legacyDir, "SKILL.md"))) {
           legacyLeftovers.push(join(dir, ...surface, legacyDir, "SKILL.md"));
