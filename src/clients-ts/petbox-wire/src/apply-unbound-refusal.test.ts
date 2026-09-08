@@ -128,7 +128,7 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
       worker: "deepseek-v4-flash",
       "worker-highstakes": "deepseek-v4-pro",
       explore: "deepseek-v4-flash",
-      reserve: "grok-4.6",
+      reserve: "deepseek-v4-pro",
     };
     for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       const p = join(projectDir, ".codex", "agents", `petbox-${role}.toml`);
@@ -143,11 +143,11 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
     // qwen roles are written too, with the seeded authType:model-id pairs (QWEN_ROLE_MODEL_SEED)
     // — a real, explicit binding, same shape as codex's provider slugs above.
     const qwenSeed: Record<string, string> = {
-      orchestrator: "openai:deepseek-v4-pro",
-      worker: "openai:glm-5.3-flash",
-      "worker-highstakes": "openai:deepseek-v4-pro",
-      explore: "openai:glm-5.3-flash",
-      reserve: "openai:qwen3.8-max",
+      orchestrator: "openai:ds-deepseek-v4-pro",
+      worker: "openai:ds-deepseek-v4-flash",
+      "worker-highstakes": "openai:ds-deepseek-v4-pro",
+      explore: "openai:ds-deepseek-v4-flash",
+      reserve: "openai:ds-deepseek-v4-pro",
     };
     for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
       const p = join(projectDir, ".qwen", "agents", `petbox-${role}.md`);

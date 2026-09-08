@@ -15,11 +15,14 @@
 //   trust            — skips qwen's per-tool-call confirmation prompt for this server.
 //   alwaysLoadTools  — qwen defers MCP tools to `tool_search` by default, declaring them to the
 //                      model eagerly only when the ACTIVE model's id matches
-//                      `/deepseek-(v3|v4|chat)/i` (core/src/config/config.ts). This kit's own
-//                      `reserve` role binds `openai:qwen3.8-max`, which does not match — without
-//                      this flag `reserve` (and any other non-DeepSeek-routed role) would see
-//                      none of the `mcp__petbox__*` verbs directly, only `tool_search` plus a
-//                      names-only startup reminder.
+//                      `/deepseek-(v3|v4|chat)/i` (core/src/config/config.ts). Every role binds a
+//                      DeepSeek model today (QWEN_ROLE_MODEL_SEED, roles.ts — owner decision
+//                      2026-09-08: both harnesses collapse onto the direct DeepSeek subscription
+//                      until a routing proxy exists), so this regex would in fact match — but the
+//                      flag is set unconditionally anyway: it is cheap, harness-portable, and
+//                      keeps working unchanged the moment a role is rebound off DeepSeek (e.g.
+//                      back onto the opencode-go gateway once the proxy lands), which the regex
+//                      match alone would not.
 //
 // Plain TS for native node type-stripping: zero deps.
 

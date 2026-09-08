@@ -6,8 +6,8 @@
 //     carry an UNRESOLVED `${VAR}` placeholder (never a literal key), because a literal key here
 //     is exactly what the project's OWN `.mcp.json` gets wrong (that file's loader never resolves
 //     env vars at all — see wire.ts's writeProjectFiles comment on the workspace-scope write).
-//   - the `reserve` role binds a non-DeepSeek model (`openai:qwen3.8-max`), so `alwaysLoadTools`
-//     must be true or qwen defers every mcp__petbox__* tool to tool_search for that role.
+//   - `alwaysLoadTools` is set unconditionally (see qwen-mcp-entry.ts's own header) so it keeps
+//     working the moment a role is rebound off the current all-DeepSeek binding set.
 //
 // Run: node --test src/qwen-mcp-entry.test.ts
 

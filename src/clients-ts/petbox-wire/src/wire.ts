@@ -193,6 +193,9 @@ import {
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
+import { buildCodexModelCatalog } from "./codex-model-catalog.ts";
+import { QWEN_DEEPSEEK_MODELS, QWEN_OPENCODE_GO_MODELS } from "./qwen-model-catalog.ts";
+import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
 import {
@@ -2709,9 +2712,8 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // mcpServers.petbox, never a project's own pre-existing `.qwen/settings.json` content.
   // `alwaysLoadTools: true` (also set on the user-scope entry, installGlobalHooks): qwen defers
   // MCP tools to `tool_search` by default UNLESS the active model's id matches
-  // `/deepseek-(v3|v4|chat)/i` (config.ts) — this kit's own `reserve` role binds
-  // `openai:qwen3.8-max`, which does not match, so without this flag `reserve` would see none of
-  // the `mcp__petbox__*` verbs directly.
+  // `/deepseek-(v3|v4|chat)/i` (config.ts) — see qwen-mcp-entry.ts's own header for why this is
+  // set unconditionally regardless of which model a role currently binds.
   const qwenWorkspaceSettingsPath = join(dir, ".qwen", "settings.json");
   mergeMcpServer(qwenWorkspaceSettingsPath, "petbox", buildQwenMcpServerEntry(DEFAULT_BASE_URL, envVar));
   log(`[7/10] merged petbox MCP server into ${qwenWorkspaceSettingsPath} (workspace scope)`);
@@ -2825,46 +2827,6 @@ const KIT_HOOK_SUFFIXES = [
   'qwen-push-session.ts"',
   'qwen-pull-memory.ts"',
 ];
-
-// codex-spec.md §6: `model_catalog_json` points at a FILE, `{ models: ModelInfo[] }`, applied
-// at codex startup only. One entry per role-bound slug this kit seeds (roles.ts's
-// CODEX_ROLE_MODEL_SEED) — the owner explicitly asked that `apply_patch` be enabled for ALL of
-// them, hence `apply_patch_tool_type: "freeform"` on every entry, not just one. Fields/values
-// follow the VERIFIED-LOADING template in codex-spec.md §6 verbatim (shell_type/visibility/
-// truncation_policy/etc.) — only slug, display_name and context_window vary per model, and
-// `context_window` is a kit-chosen default (128000 — not verified per-model; codex's own
-// runtime does not reject a merely-generous context_window).
-function buildCodexCatalogModel(slug: string, displayName: string): Record<string, unknown> {
-  return {
-    slug,
-    display_name: displayName,
-    description: null,
-    supported_reasoning_levels: [],
-    shell_type: "unified_exec",
-    visibility: "list",
-    supported_in_api: true,
-    priority: 1,
-    availability_nux: null,
-    upgrade: null,
-    support_verbosity: false,
-    default_verbosity: null,
-    apply_patch_tool_type: "freeform",
-    truncation_policy: { mode: "tokens", limit: 65536 },
-    experimental_supported_tools: [],
-    context_window: 128000,
-    base_instructions: "You are a coding agent running in the Codex CLI.",
-  };
-}
-
-function buildCodexModelCatalog(): { models: Record<string, unknown>[] } {
-  return {
-    models: [
-      buildCodexCatalogModel("deepseek-v4-pro", "DeepSeek V4 Pro"),
-      buildCodexCatalogModel("deepseek-v4-flash", "DeepSeek V4 Flash"),
-      buildCodexCatalogModel("grok-4.6", "Grok 4.6"),
-    ],
-  };
-}
 
 // Remove kit hook entries whose command is NOT one of the current stable commands (validCmds),
 // then drop any now-empty groups. Mutates hooksObj in place; returns the count pruned.
@@ -3123,10 +3085,17 @@ export { PetboxPlugin, default } from "${pluginUrl}";
     buildOpencodeGoProviderBlock(opencodeSessionUuid),
   );
   // Default provider/model for a bare `codex`/`codex exec` invocation with no role file in play.
+  // `model_provider` = "deepseek" (owner decision 2026-09-08: both new harnesses run entirely on
+  // the DIRECT DeepSeek subscription until a routing proxy exists — codex pins one
+  // `model_provider` per process, measured: a role file's `model_provider` field is accepted and
+  // silently DROPPED, so a per-role split across two subscriptions is impossible here today).
   // `model` is not dictated by the brief beyond "default model" — deepseek-v4-pro is chosen to
   // match the orchestrator role's own binding (roles.ts's CODEX_ROLE_MODEL_SEED), the strongest
-  // of the three catalog models a plain top-level session would reasonably want.
-  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString("opencode-go"));
+  // model direct DeepSeek serves that a plain top-level session would reasonably want.
+  // `[model_providers.opencode-go]` stays registered above (unused by this default and by every
+  // role) — it documents the owner's second subscription so a future switch is a single
+  // rebinding, not a config rewrite.
+  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString("deepseek"));
   codexBlocks = setRootScalar(codexBlocks, "model", tomlString("deepseek-v4-pro"));
   codexBlocks = setRootScalar(codexBlocks, "model_catalog_json", tomlString(codexCatalogPath));
 
@@ -3187,13 +3156,26 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   writeText(codexConfigPath, serializeTomlBlocks(codexBlocks));
   log(
     `[8/10] merged codex config into ${codexConfigPath} (providers deepseek+opencode-go, ` +
-      `model_provider=opencode-go, model=deepseek-v4-pro, model_catalog_json, ` +
+      `model_provider=deepseek, model=deepseek-v4-pro, model_catalog_json, ` +
       `${codexTrustEntries.length} hook trust entries).`,
   );
 
-  // petbox-model-catalog.json — fully kit-owned, regenerated whole each run (like `.mcp.json`).
-  writeJson(codexCatalogPath, buildCodexModelCatalog());
-  log(`[8/10] wrote ${codexCatalogPath}`);
+  // petbox-model-catalog.json — fully kit-owned, regenerated whole each run this step runs
+  // (like `.mcp.json`), derived from the UNION of every codex role→model binding across every
+  // roles.json profile (codex-model-catalog.ts) — never the three hardcoded literals alone. A
+  // `model set ... --agent codex` rebinding lands in the catalog on the next FULL `wire` run
+  // (this step, [8/10]) — NOT on a bare `apply`, which never calls installGlobalHooks and so
+  // never touches this file; re-run `wire` (or `wire`'s step 8 equivalent) to refresh it.
+  const codexCatalogResult = buildCodexModelCatalog(homedir());
+  writeJson(codexCatalogPath, codexCatalogResult.catalog);
+  log(
+    codexCatalogResult.source === "roles"
+      ? `[8/10] wrote ${codexCatalogPath} (${codexCatalogResult.slugs.length} model(s) from ` +
+          `roles.json: ${codexCatalogResult.slugs.join(", ")}).`
+      : `[8/10] wrote ${codexCatalogPath} (no codex role→model bindings found in any ` +
+          `roles.json profile — fell back to the kit's default 3-model catalog: ` +
+          `${codexCatalogResult.slugs.join(", ")}).`,
+  );
 
   // ---- Qwen Code: everything in ONE user-scope settings.json ----------------------------------
   //
@@ -3298,53 +3280,110 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   }
   qwenSettings.security.auth.selectedType = "openai";
 
-  // modelProviders — mergeStrategy REPLACE (qwen-spec.md §7), so the whole map is written each
-  // run, never merged piecemeal. One provider key, "openai" (an AUTH TYPE, not a provider slug —
-  // qwen-spec.md §5: a role file's `model:` takes the `authType:model-id` form, and role files
-  // this kit renders use `openai:<id>`, so the modelProviders KEY these ids resolve against must
-  // be exactly "openai"). Three ModelConfig entries, one per distinct model QWEN_ROLE_MODEL_SEED
-  // (roles.ts) binds a role to, all through the same opencode-go gateway. `customHeaders` is
-  // RESOLVED (qwen-spec.md §11): `modelProviders.<id>[].generationConfig.customHeaders`, verified
-  // via OpenAIContentGeneratorProvider.buildHeaders() in the installed clone.
+  // modelProviders / providerProtocol — TWO DISTINGUISHABLE PROVIDERS, not one gateway for
+  // everything (task wire-support-codex-qwen, REVISED after live smoke on 0.23.0 with two local
+  // listeners falsified the original single-gateway design). The owner runs two subscriptions
+  // and deliberately splits roles between them (mirrors their own `opencode` bindings:
+  // orchestrator/worker-highstakes on DIRECT deepseek, worker/explore/reserve on the
+  // opencode-go gateway).
   //
-  // The `x-opencode-session` UUID is the SAME one codex's own opencode-go provider block just
-  // computed above in this function (opencodeSessionUuid) — reused, not re-minted, per this
-  // task's brief ("reuse the same one rather than minting a second"). The gateway 400s without
-  // this header on every request, and it must survive re-installs.
-  const qwenOpencodeGoModels = [
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro (opencode-go)" },
-    { id: "glm-5.3-flash", name: "GLM 5.3 Flash (opencode-go)" },
-    { id: "qwen3.8-max", name: "Qwen3.8 Max (opencode-go)" },
-  ];
+  // Measured, load-bearing facts (do not re-derive):
+  //   - A provider name can NEVER appear in the `model:` selector. qwen matches the pre-colon
+  //     segment against a STATIC auth-type enum (packages/core/src/utils/modelId.ts:42,
+  //     auth-type.ts:8-14 — exactly openai | qwen-oauth | gemini | vertex-ai | anthropic); an
+  //     unknown prefix does NOT error, the whole string just becomes a bare model id
+  //     (modelId.ts:101-103). Measured: `opencode-go:glm-5.3-flash` silently hit the DIRECT
+  //     provider with a garbage wire model name — exit 0, no warning. So every role file's
+  //     `model:` stays `openai:<id>`, same auth type as before; the actual provider routing
+  //     lives entirely in `providerProtocol` + the `modelProviders` KEY below.
+  //   - Two providers ARE separately routable via `providerProtocol` (provider-key →
+  //     "openai"-shaped wire protocol) paired with a provider-keyed `modelProviders` entry: the
+  //     provider becomes visible through a decorated, GLOBALLY-UNIQUE id (`ds-*` direct,
+  //     `go-*` gateway), with the TRUE wire model name in
+  //     `generationConfig.extra_body.model` — never in the id, which is qwen's own bookkeeping
+  //     key, not a wire value. Measured: id `go-glm-5.3-flash` reached the gateway listener and
+  //     sent wire `model=glm-5.3-flash`.
+  //   - `providerProtocol` is MANDATORY for a non-auth-type key: omit it and the whole key's
+  //     models are silently dropped, exit 1 (packages/cli/src/utils/modelConfigUtils.ts:107-127).
+  //   - Both `modelProviders` and `providerProtocol` merge as REPLACE (settingsSchema.ts:369,
+  //     :382) — the complete set is written every run, never a partial patch. `providerProtocol`
+  //     is `requiresRestart: true`; `modelProviders` hot-reloads — an operator changing nothing
+  //     but role bindings still needs a qwen restart to pick up a NEW provider key (not just a
+  //     new model under an existing one).
+  //   - Duplicate ids resolve by JSON key declaration order, silently (modelRegistry.ts:204 logs
+  //     at debug only) — ids are kept globally unique across both provider keys, and the two
+  //     keys are always written in the SAME order (deepseek, then opencode-go) so this object's
+  //     shape never depends on iteration order of anything upstream.
+  //
+  // `customHeaders` (RESOLVED — qwen-spec.md §11, verified via
+  // OpenAIContentGeneratorProvider.buildHeaders() in the installed clone) is set ONLY on the
+  // opencode-go entries: the gateway 400s without `x-opencode-session` on every request; the
+  // direct DeepSeek provider needs no such header. The UUID is the SAME one codex's own
+  // opencode-go provider block just computed above in this function (opencodeSessionUuid) —
+  // reused, not re-minted — and must survive re-installs.
+  qwenSettings.providerProtocol = {
+    deepseek: "openai",
+    "opencode-go": "openai",
+  };
+  // Owner decision 2026-09-08: both codex and qwen run entirely on the DIRECT DeepSeek
+  // subscription until a routing proxy exists (see roles.ts's CODEX_ROLE_MODEL_SEED comment for
+  // the full "why" — codex pins one provider per process, so a per-role split across two
+  // subscriptions is impossible on that harness today; the owner would rather have both
+  // harnesses consistently direct than have codex silently bill everything to the gateway). Two
+  // entries here, mirroring CODEX_ROLE_MODEL_SEED's pro/flash split.
+  //
+  // Both arrays live in qwen-model-catalog.ts, not as literals here — that module is the single
+  // source of truth for "which qwen model ids does the kit register", shared with
+  // model-registration-check.ts's stale-binding warning (see that file's header: a second,
+  // hand-maintained copy of this exact list is the class of bug this whole task closes).
+  const qwenDeepseekModels = QWEN_DEEPSEEK_MODELS;
+  // opencode-go stays registered — same "second subscription, single future rebinding" reasoning
+  // as codex's `[model_providers.opencode-go]` block above — but no role binds through it today
+  // (QWEN_ROLE_MODEL_SEED, roles.ts), so its ids are deliberately excluded from
+  // agents.modelGrades below.
+  const qwenOpencodeGoModels = QWEN_OPENCODE_GO_MODELS;
   qwenSettings.modelProviders = {
-    openai: qwenOpencodeGoModels.map((m) => ({
+    deepseek: qwenDeepseekModels.map((m) => ({
+      id: m.id,
+      name: m.name,
+      baseUrl: "https://api.deepseek.com/v1",
+      envKey: "DEEPSEEK_API_KEY",
+      generationConfig: { extra_body: { model: m.wireModel } },
+    })),
+    "opencode-go": qwenOpencodeGoModels.map((m) => ({
       id: m.id,
       name: m.name,
       baseUrl: "https://opencode.ai/zen/go/v1",
       envKey: "OPENCODE_GO_API_KEY",
-      generationConfig: { customHeaders: { "x-opencode-session": opencodeSessionUuid } },
+      generationConfig: {
+        extra_body: { model: m.wireModel },
+        customHeaders: { "x-opencode-session": opencodeSessionUuid },
+      },
     })),
   };
 
   // model.name — defect qwen-dead-default-model (live smoke, wire-support-codex-qwen): the
   // owner's live ~/.qwen/settings.json had this left at a stale value ("coder-model") that
-  // matches no `modelProviders.openai[].id` above, paired with `security.auth.apiKey`/`baseUrl`
+  // matches no `modelProviders.<key>[].id` above, paired with `security.auth.apiKey`/`baseUrl`
   // pointing at a local llama endpoint that was not running. A bare `qwen` run (no `-m` flag)
   // resolves the model from `settings.model.name` (packages/cli's resolveCliGenerationConfig:
   // `argv.model || settings.model.name`), then matches it against `modelProviders.<id>` — a
-  // miss falls through to `security.auth`'s own apiKey/baseUrl instead of the opencode-go
-  // gateway this kit just wired, silently hitting the dead endpoint.
+  // miss falls through to `security.auth`'s own apiKey/baseUrl instead of the routing this kit
+  // just wired, silently hitting the dead endpoint.
   // Set to the orchestrator tier's bare id (matches QWEN_ROLE_MODEL_SEED.orchestrator, roles.ts
-  // — "openai:deepseek-v4-pro" stripped of its `authType:` prefix, since `model.name` is matched
-  // against the BARE `modelProviders.openai[].id`, not the `authType:id` form a role file's own
-  // `model:` frontmatter uses) so a plain `qwen` invocation resolves through modelProviders like
-  // every role file this kit renders.
+  // — "openai:ds-deepseek-v4-pro" stripped of its `authType:` prefix, since `model.name` is
+  // matched against the BARE `modelProviders.<key>[].id`, not the `authType:id` form a role
+  // file's own `model:` frontmatter uses) so a plain `qwen` invocation resolves through
+  // modelProviders like every role file this kit renders. NOTE: `-m`/`--model` does NOT accept
+  // this `authType:model` grammar (it silently falls back to the first registered model) — never
+  // tell anyone to pass `-m openai:...`; the bare id form here, or `model.name`, is the only
+  // supported default-model surface.
   // NEVER touches security.auth.apiKey/baseUrl: they are the owner's own values, read only as a
   // FALLBACK once model.name fails to resolve through modelProviders (qwen's own
   // modelConfigResolver) — discarding a credential silently would be worse than leaving a stale
   // one, so this only ever replaces `model.name`.
   if (!qwenSettings.model || typeof qwenSettings.model !== "object") qwenSettings.model = {};
-  const qwenDefaultModelName = "deepseek-v4-pro";
+  const qwenDefaultModelName = "ds-deepseek-v4-pro";
   const previousQwenModelName = qwenSettings.model.name;
   if (previousQwenModelName !== qwenDefaultModelName) {
     qwenSettings.model.name = qwenDefaultModelName;
@@ -3354,7 +3393,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
         : `[8/10] qwen model.name: replaced '${previousQwenModelName}' with ` +
             `'${qwenDefaultModelName}' (the old value matched no modelProviders entry, so a bare ` +
             `'qwen' run fell through to security.auth's own apiKey/baseUrl instead of the ` +
-            `opencode-go gateway; security.auth itself is left untouched).`,
+            `wired providers; security.auth itself is left untouched).`,
     );
   }
 
@@ -3362,19 +3401,24 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // (a DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated).
   // There is no built-in default: an unseeded machine rejects EVERY explicit spawn-time `model`
   // with an empty `Available:` list. Self-keyed (grade name == the value it resolves to) so a
-  // caller passing exactly one of the three `openai:<id>` pairs this kit binds roles to at spawn
-  // time resolves, without inventing a second naming scheme (e.g. "fast"/"deep" grade labels)
-  // nothing else in this kit's role/model machinery references.
+  // caller passing exactly one of the `openai:<id>` pairs this kit binds roles to at spawn time
+  // resolves, without inventing a second naming scheme (e.g. "fast"/"deep" grade labels) nothing
+  // else in this kit's role/model machinery references. Lists EXACTLY the ids QWEN_ROLE_MODEL_SEED
+  // uses today — the deepseek pair — never the opencode-go ids: those stay registered in
+  // modelProviders (future rebinding) but no role spawns through them, so grading them would
+  // silently accept a spawn-time `model` value nothing in this kit's own bindings ever produces.
   if (!qwenSettings.agents || typeof qwenSettings.agents !== "object") qwenSettings.agents = {};
   const qwenModelGrades: Record<string, string> = {};
-  for (const m of qwenOpencodeGoModels) qwenModelGrades[`openai:${m.id}`] = `openai:${m.id}`;
+  for (const m of qwenDeepseekModels) qwenModelGrades[`openai:${m.id}`] = `openai:${m.id}`;
   qwenSettings.agents.modelGrades = qwenModelGrades;
 
   writeJson(qwenSettingsPath, qwenSettings);
   log(
     `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
-      `security.auth.selectedType=openai, modelProviders.openai x${qwenOpencodeGoModels.length}, ` +
-      `model.name=${qwenDefaultModelName}, agents.modelGrades x${qwenOpencodeGoModels.length}).`,
+      `security.auth.selectedType=openai, providerProtocol.{deepseek,opencode-go}=openai, ` +
+      `modelProviders.deepseek x${qwenDeepseekModels.length} + modelProviders.opencode-go ` +
+      `x${qwenOpencodeGoModels.length}, model.name=${qwenDefaultModelName}, ` +
+      `agents.modelGrades x${qwenDeepseekModels.length}).`,
   );
 }
 
@@ -3502,6 +3546,7 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
   const { data: after, changed } = seedMissingRoleBindings(before);
   if (!changed) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
+    logUnregisteredModelWarnings(label, after);
     return;
   }
   saveRoles(after);
@@ -3530,6 +3575,28 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
           `bindings for: ${seededHarnesses.join(", ")} (every existing binding, any harness, ` +
           `left byte-for-byte as the operator set it).`,
   );
+  logUnregisteredModelWarnings(label, after);
+}
+
+// Runs on EVERY seedDefaultRoleBindingsIfMissing call — both the freshly-seeded/newly-changed
+// path and the no-op "already exists, left as-is" path — because the gap this closes
+// (task wire-support-codex-qwen, silent-misroute follow-up) is specifically about bindings
+// seedMissingRoleBindings deliberately never touches: a profile that already had a codex/qwen
+// entry before the kit's own seed values changed keeps its OLD id forever, invisibly, exactly
+// because the seeder is purely additive. Warn-only (findUnregisteredRoleBindings never mutates
+// roles.json or blocks the run) — see model-registration-check.ts's header for the full
+// consequence-by-harness reasoning. Runs for BOTH `wire`'s step 11 and the standalone `apply`
+// subcommand, since both call seedDefaultRoleBindingsIfMissing (this file's own comment on that
+// function) — a single hook point instead of two call sites that could drift.
+function logUnregisteredModelWarnings(label: string, data: RolesFile): void {
+  const warnings = findUnregisteredRoleBindings(data);
+  if (warnings.length === 0) return;
+  console.error(
+    `${label} roles: ${warnings.length} role binding(s) name a model id the kit does not ` +
+      `currently register — see roles.ts's CODEX_ROLE_MODEL_SEED/QWEN_ROLE_MODEL_SEED for what ` +
+      `changed. Warning only: nothing was rewritten or blocked.`,
+  );
+  for (const w of warnings) console.error(`  - ${w}`);
 }
 
 // ---- main ------------------------------------------------------------------

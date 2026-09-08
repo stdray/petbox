@@ -400,40 +400,53 @@ export const DEFAULT_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   reserve: "fable",
 };
 
-// Default codex role->model seed for a brand-new machine (task wire-support-codex-qwen). Unlike
+// Default codex role->model seed for a brand-new machine (task wire-support-codex-qwen; REVISED
+// 2026-09-08, owner decision: both codex and qwen run entirely on the DIRECT DeepSeek
+// subscription until a routing proxy exists — Codex pins one `model_provider` per process,
+// measured: a role file's `model_provider` field is accepted and silently DROPPED, so a per-role
+// split across two subscriptions is impossible on this harness today). Unlike
 // DEFAULT_ROLE_MODEL_SEED above, these are NOT aliases — codex's model policy is OPEN
 // (harness-models.ts), so the kit cannot write a portable tier name; it writes the concrete
-// provider slugs the owner live-probed against opencode-go's `/responses` endpoint (codex-spec.md
-// §6, "LIVE PROBE RESULTS", run 2026-09-08): deepseek-v4-pro/-flash and grok-4.6 all returned 200.
-// worker-highstakes/orchestrator get the "pro" tier, worker/explore get "flash" (cost-appropriate,
-// mirroring the claude-code seed's opus/sonnet split), and reserve — same "strongest tier on
-// purpose" reasoning as DEFAULT_ROLE_MODEL_SEED's own comment — gets grok-4.6, the strongest model
-// this machine's live probe confirmed working that is NOT already the default orchestrator model
-// (so a reserve escalation is never a no-op swap to the same provider slug).
+// provider slugs direct DeepSeek serves (live `GET https://api.deepseek.com/models`, 2026-09-08):
+// exactly `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`. There is no
+// third family on this subscription, so `reserve` deliberately COLLAPSES onto `deepseek-v4-pro`
+// — a known, accepted cost, not a bug to fix by inventing a substitute model.
 export const CODEX_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
   orchestrator: "deepseek-v4-pro",
   worker: "deepseek-v4-flash",
   "worker-highstakes": "deepseek-v4-pro",
   explore: "deepseek-v4-flash",
-  reserve: "grok-4.6",
+  reserve: "deepseek-v4-pro",
 };
 
-// Default qwen role->model seed for a brand-new machine (task wire-support-codex-qwen).
-// Qwen's model policy is OPEN too (harness-models.ts), and the kit writes a real modelProviders
-// entry for these exact ids at user scope (wire.ts's installGlobalHooks — qwen-spec.md §11/§12).
-// DECIDED bindings (qwen-spec.md §12; all live-probed 200 on the opencode-go gateway
-// 2026-09-08, the same probe run codex's own seed cites — see that constant's comment):
-// orchestrator/worker-highstakes get the "pro" tier (deepseek-v4-pro), worker/explore get the
-// "flash" tier (glm-5.3-flash), and reserve gets qwen3.8-max — the strongest of the three
-// models this machine's probe confirmed working, mirroring the "reserve is never the role to
-// economize on" reasoning in DEFAULT_ROLE_MODEL_SEED's own comment. Values are the `authType:
-// model-id` form a role .md file's `model:` key requires (qwen-spec.md §5) — never a bare id.
+// Default qwen role->model seed for a brand-new machine (task wire-support-codex-qwen; REVISED
+// 2026-09-08, owner decision — see CODEX_ROLE_MODEL_SEED's comment for the "why both harnesses
+// collapse onto the direct subscription" reasoning: identical bindings on both harnesses until a
+// routing proxy exists). Qwen's model policy is OPEN (harness-models.ts), and the kit writes
+// real modelProviders entries for these exact ids at user scope.
+//
+// A provider name can never appear in the `model:` selector itself — qwen matches the pre-colon
+// segment against a closed auth-type enum and silently treats any unknown prefix as a bare model
+// id (measured: `opencode-go:glm-5.3-flash` silently hit the wrong provider, exit 0, no warning)
+// — so routing goes through the `deepseek` provider key under `providerProtocol`, exposed as an
+// `openai`-keyed `modelProviders.deepseek` entry with a globally-unique decorated id (`ds-*`) and
+// the true wire model name in `generationConfig.extra_body.model`. The `opencode-go` provider key
+// stays registered (wire.ts's installGlobalHooks) — it documents the owner's second subscription
+// and makes a future rebinding a config edit, not a rewrite — but no role binds through it today.
+//
+// orchestrator/worker-highstakes/reserve → `ds-deepseek-v4-pro`, worker/explore →
+// `ds-deepseek-v4-flash` (mirrors CODEX_ROLE_MODEL_SEED's own pro/flash split; `reserve`
+// collapses onto `ds-deepseek-v4-pro` for the same "no third family on this subscription" reason
+// as codex's seed). Values are the `authType:model-id` form a role .md file's `model:` key
+// requires (qwen-spec.md §5) — never a bare id, and `authType` here is always the literal
+// `openai` (an auth TYPE, not a provider slug — see wire.ts's installGlobalHooks for why a
+// custom prefix can never appear here).
 export const QWEN_ROLE_MODEL_SEED: Readonly<Record<string, string>> = {
-  orchestrator: "openai:deepseek-v4-pro",
-  worker: "openai:glm-5.3-flash",
-  "worker-highstakes": "openai:deepseek-v4-pro",
-  explore: "openai:glm-5.3-flash",
-  reserve: "openai:qwen3.8-max",
+  orchestrator: "openai:ds-deepseek-v4-pro",
+  worker: "openai:ds-deepseek-v4-flash",
+  "worker-highstakes": "openai:ds-deepseek-v4-pro",
+  explore: "openai:ds-deepseek-v4-flash",
+  reserve: "openai:ds-deepseek-v4-pro",
 };
 
 // Per-harness role->model seed, one map per harness this kit knows how to seed automatically.

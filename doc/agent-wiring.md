@@ -421,8 +421,26 @@ codex additionally needs USER-scope config (`model_providers`/`model_provider`/`
 merges `model_providers.deepseek` + `model_providers.opencode-go` (regenerated each run,
 preserving the `opencode-go` session UUID across re-installs) plus `[hooks.state."<key>"]` trust
 entries into `$CODEX_HOME/config.toml` (codex-hook-trust.ts reproduces codex's own SHA-256 trust
-hash — see that file's header), and writes `$CODEX_HOME/petbox-model-catalog.json`. The project
-layer only ever carries `[mcp_servers.petbox]` (not denylisted).
+hash — see that file's header), and sets the root `model_provider = "deepseek"` / `model =
+"deepseek-v4-pro"` scalars that govern a bare `codex`/`codex exec` invocation with no role file in
+play (`model` matches the orchestrator role's own binding, the strongest model the direct
+subscription serves). Codex pins **one** `model_provider` per process — a role `.toml`'s own
+`model_provider` field is accepted and then silently DROPPED (measured: the child session hit the
+parent's endpoint while the role's `model` was applied, a redirected local listener received
+nothing), so a per-role split across two subscriptions is not possible on codex today; both roles
+therefore stay on the same `deepseek` provider, and `[model_providers.opencode-go]` stays
+registered but unused (owner decision 2026-09-08, until a routing proxy exists — idea
+`model-prefix-routing-proxy`). `wire` also writes `$CODEX_HOME/petbox-model-catalog.json`
+(codex-model-catalog.ts — the UNION of every codex role→model binding across every profile in
+`roles.json`, sorted/de-duplicated, `inherit`/empty skipped; falls back to a 3-slug default,
+logged, only when that union is empty — never the 3 slugs alone, so a `model set ... --agent
+codex` rebinding lands in the catalog on the next full `wire` run). With the current bindings the
+catalog holds exactly `deepseek-v4-flash` and `deepseek-v4-pro`. The catalog exists because a
+model bound to a role but ABSENT from it silently loses the `apply_patch` tool and gets a 272000
+context window instead of the kit's chosen 128000 — exit 0, no warning either way. Honest
+limitation: **`apply` does not refresh this file** — only a full `wire` run does, so `model set
+... --agent codex` needs a `wire` re-run, not just `apply`, to take full effect. The project layer
+only ever carries `[mcp_servers.petbox]` (not denylisted).
 
 qwen additionally needs USER-scope `$QWEN_HOME/settings.json` (qwen-paths.ts; default `~/.qwen`,
 overridable by `QWEN_HOME`), all written by the same `installGlobalHooks` step: `hooks.<Event>`
@@ -431,11 +449,40 @@ have the SAME `{matcher?, hooks:[...]}` shape Claude Code uses, no separate hook
 trust-hash mechanism the way codex needs one, because qwen's folder-trust default is disabled and
 a user-scope hook is always honored regardless — qwen-spec.md §1/§3), a `mcpServers.petbox` entry
 for the owner's interactive use OUTSIDE any wired directory, `security.auth.selectedType =
-"openai"`, a wholesale-replaced `modelProviders.openai` (three `ModelConfig` entries through the
-same opencode-go gateway codex uses, reusing codex's OWN just-minted `x-opencode-session` UUID
-rather than minting a second — qwen-spec.md §11/§12), and `agents.modelGrades` (self-keyed to
-those same three `openai:<id>` pairs — without this, every spawn-time `model` parameter on the
-Agent tool is rejected outright, qwen-spec.md §6).
+"openai"`, and `agents.modelGrades`.
+
+Model routing goes through a provider-keyed mechanism built for TWO distinguishable providers
+(task wire-support-codex-qwen, live smoke on 0.23.0 with two local listeners), but as of the
+owner's 2026-09-08 decision only one of them is actually bound to a role: **both** codex and qwen
+run entirely on the DIRECT DeepSeek subscription until a routing proxy exists (idea
+`model-prefix-routing-proxy`) — codex pins one `model_provider` per process (a role's own
+`model_provider` field is silently dropped, measured), so a per-role split across two
+subscriptions is not possible there today, and the owner preferred both harnesses consistently
+direct over codex silently billing everything to the gateway. A provider name can never appear in
+the `model:` selector itself — qwen matches the pre-colon segment against a closed auth-type enum
+and silently treats any unknown prefix as a bare model id (measured: `opencode-go:glm-5.3-flash`
+silently hit the wrong provider, exit 0, no warning) — so routing goes through a
+wholesale-replaced `providerProtocol` (`deepseek` → `openai`, `opencode-go` → `openai`) paired
+with a wholesale-replaced, provider-keyed `modelProviders` (`modelProviders.deepseek` — two
+entries, `ds-deepseek-v4-pro` and `ds-deepseek-v4-flash`, direct to `https://api.deepseek.com/v1`,
+no `x-opencode-session` header; `modelProviders.opencode-go` — two entries, `go-glm-5.3-flash` and
+`go-qwen3.8-max`, still registered and still carrying `x-opencode-session` — reusing codex's OWN
+just-minted UUID rather than minting a second — but unused by every role, kept only so a future
+rebinding is a single `model set` away — qwen-spec.md §11/§12). Every id is globally unique across
+both provider keys; the wire model name lives in `generationConfig.extra_body.model`, never in the
+id. `agents.modelGrades` lists exactly the two `ds-*` ids `QWEN_ROLE_MODEL_SEED` actually binds
+today — without an id listed there, a spawn-time `model` parameter on the Agent tool naming it is
+rejected outright, qwen-spec.md §6; the `go-*` ids stay out of it for the same reason. `model.name`
+is `ds-deepseek-v4-pro`. Note: `-m`/`--model` does NOT accept the `authType:model` grammar (it
+silently falls back to the first registered model) — never pass `-m openai:...`; the bare id form
+(`model.name`, or a role file's own `model:` frontmatter) is the only supported surface for these
+ids.
+
+`reserve` deliberately collapses onto `deepseek-v4-pro` (`openai:ds-deepseek-v4-pro` on qwen,
+same as `orchestrator`/`worker-highstakes`) rather than getting a distinct model family: the direct
+subscription serves only `deepseek-v4-pro`, `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`,
+so there is no third family available for it. This is a known, accepted cost until the routing
+proxy lands.
 
 **Inside a wired project**, that user-scope `mcpServers.petbox` entry is NOT what governs — a
 second, WORKSPACE-scope entry is (defect qwen-mcp-json-shadows-workspace-entry, live smoke
@@ -462,10 +509,11 @@ user-scope entry currently points at.
 
 Both the user- and workspace-scope `mcpServers.petbox` entries set `alwaysLoadTools: true`: qwen
 defers MCP tools to `tool_search` by default, declaring them to the model eagerly only when the
-active model's id matches `/deepseek-(v3|v4|chat)/i` (`cli/src/config/config.ts`) — this kit's own
-`reserve` role binds `openai:qwen3.8-max`, which does not match, so without the flag `reserve`
-(and any other non-DeepSeek-routed role) would see none of the `mcp__petbox__*` verbs directly,
-only `tool_search` plus a names-only reminder.
+active model's id matches `/deepseek-(v3|v4|chat)/i` (`cli/src/config/config.ts`). Every role binds
+a `ds-deepseek-v4-*` id today, which in fact matches that regex — but the flag is set
+unconditionally regardless: it is cheap, harness-portable, and keeps working unchanged the moment
+a role is rebound off DeepSeek (e.g. onto the `opencode-go` gateway once the routing proxy lands),
+which the regex match alone would not survive.
 
 Two qwen behaviors worth knowing when debugging either of the above, verified against the
 qwen-code source rather than its own docs (which are wrong on the first one):
