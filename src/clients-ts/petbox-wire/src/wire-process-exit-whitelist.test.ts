@@ -135,6 +135,18 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
       "truncation is already excluded: writeStdout awaits the write callback before main() " +
       "resolves. Decided explicitly during the package-wide sweep, not overlooked.",
   },
+  {
+    file: "codex-subagent-model-gate.ts",
+    anchor: "main()\n    .then(() => process.exit(0))",
+    verdict: "safe",
+    reason:
+      "codex PreToolUse hook entrypoint, BOTH arms (.then and .catch) — the codex port of " +
+      "subagent-model-gate.ts, same reasoning: no `fetch` anywhere in this file (it reads " +
+      "stdin, translates codex's agent_type field, defers the whole decision to " +
+      "evaluateModelGate, writes stdout), so there is no socket teardown to race; a lingering " +
+      "process on the hot path of every gated tool call is the real risk instead. Truncation is " +
+      "already excluded: writeStdout awaits the write callback before main() resolves.",
+  },
 ];
 
 // Tight on purpose: two DIFFERENT call sites can sit close enough together that a wider window

@@ -82,6 +82,22 @@ const MODEL_POLICIES: Readonly<Record<HarnessId, HarnessModelPolicy>> = {
     kind: "open",
     reason: "droid resolves ids against the workspace model registry (incl. custom:* BYOK)",
   },
+  // Codex model ids are provider slugs resolved against whatever `model_providers` +
+  // `model_catalog_json` this machine's $CODEX_HOME/config.toml declares (codex-spec.md §6) —
+  // the kit writes petbox-model-catalog.json itself, but a user can add/replace providers and
+  // catalog entries the kit knows nothing about, so the id space is not enumerable from here.
+  codex: {
+    kind: "open",
+    reason: "codex resolves ids against this machine's model_providers + model_catalog_json",
+  },
+  // Qwen model ids are `authType:model-id` pairs resolved against whatever `modelProviders`
+  // this machine's $QWEN_HOME/settings.json declares at user scope (qwen-spec.md §7/§11-12) —
+  // the kit writes the opencode-go provider entries itself, but a user can add/replace
+  // providers this kit knows nothing about, so the id space is not enumerable from here.
+  qwen: {
+    kind: "open",
+    reason: "qwen resolves authType:model-id pairs against this machine's user-scope modelProviders",
+  },
 };
 
 /**

@@ -107,6 +107,13 @@ export function agentFilesDir(harness: HarnessId): string {
       // Factory custom droids — project level only (org-locked settings are out of scope).
       // https://docs.factory.ai/cli/configuration/custom-droids
       return ".factory/droids";
+    case "codex":
+      // Auto-discovered recursively from `<config folder>/agents/**/*.toml` (codex-spec.md §4).
+      return ".codex/agents";
+    case "qwen":
+      // Project-scope role dir (qwen-spec.md §5, subagent-manager.ts:1411-1412/1449-1450) —
+      // skipped by Qwen itself when projectRoot == homedir, same caveat as its user-scope sibling.
+      return ".qwen/agents";
   }
 }
 
@@ -123,7 +130,9 @@ export function agentFilesDir(harness: HarnessId): string {
  */
 export function artifactBasename(harness: HarnessId, roleOrSlug: { readonly slug: string } | string): string {
   const name = emittedRoleName(roleOrSlug);
-  return harness === "droid" ? `${sanitizeDroidName(name)}.md` : `${name}.md`;
+  if (harness === "droid") return `${sanitizeDroidName(name)}.md`;
+  if (harness === "codex") return `${name}.toml`;
+  return `${name}.md`;
 }
 
 /**
@@ -283,12 +292,58 @@ export function renderOpencodeAgentMarkdown(role: AgentRole, model?: string): st
   return renderAgentMarkdown(role, model);
 }
 
+// Minimal TOML basic-string escaping — backslash, double-quote, and control chars. Sufficient
+// for the short, plain-ASCII values (names, descriptions, model ids) this renderer ever quotes;
+// see codex-toml.ts for the shared implementation config.toml merging also uses.
+function tomlQuote(s: string): string {
+  let out = '"';
+  for (const ch of s) {
+    if (ch === '"') out += '\\"';
+    else if (ch === "\\") out += "\\\\";
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (ch.codePointAt(0)! < 0x20) out += "\\u" + ch.codePointAt(0)!.toString(16).padStart(4, "0");
+    else out += ch;
+  }
+  return out + '"';
+}
+
+/**
+ * Codex agent role file — a whole TOML document (NOT frontmatter over a body), auto-discovered
+ * from `<config folder>/agents/**\/*.toml` (codex-spec.md §4: `RawAgentRoleFileToml` — `name`,
+ * `developer_instructions` (required, non-blank: the role's body), and `model` via
+ * `#[serde(flatten)] ConfigToml`).
+ *
+ * The origin marker can't live in YAML frontmatter here — a leading `---` line is not valid
+ * TOML and would break codex's own parser — so it is written as leading `# key: value` comment
+ * lines instead; origin-marker.ts's frontmatterOf reads either container the same way.
+ *
+ * developer_instructions uses a TOML literal multi-line string (`'''...'''`, no escape
+ * processing) rather than a basic string: buildRoleBody's markdown is full of backslash-free but
+ * quote- and backtick-heavy prose, and a literal string sidesteps escaping it entirely. The one
+ * thing it cannot contain is the literal sequence `'''`, which generated role prose never does.
+ */
+export function renderCodexAgentToml(role: AgentRole, model?: string): string {
+  const name = emittedRoleName(role);
+  const lines: string[] = [`# ${PETBOX_MARKER_LINE}`, `name = ${tomlQuote(name)}`];
+  const description = role.notes?.trim() || `PetBox ${role.tier} role (${name})`;
+  lines.push(`description = ${tomlQuote(description)}`);
+  if (model && model.trim()) {
+    lines.push(`model = ${tomlQuote(model.trim())}`);
+  }
+  const body = buildRoleBody(role);
+  lines.push(`developer_instructions = '''\n${body.endsWith("\n") ? body : body + "\n"}'''`);
+  return lines.join("\n") + "\n";
+}
+
 function renderForHarness(
   harness: HarnessId,
   role: AgentRole,
   model: string | undefined,
 ): string {
   if (harness === "droid") return renderDroidMarkdown(role, model);
+  if (harness === "codex") return renderCodexAgentToml(role, model);
   return renderAgentMarkdown(role, model);
 }
 
@@ -367,7 +422,12 @@ export function planApply(
     const fileName = artifactBasename(harness, role);
     // Pre-namespacing name — same file this role used to emit before petbox-namespaced-agent-names.
     // The writer uses this to find + remove an owned leftover (never a foreign file at that path).
-    const legacyFileName = harness === "droid" ? `${sanitizeDroidName(role.slug)}.md` : `${role.slug}.md`;
+    const legacyFileName =
+      harness === "droid"
+        ? `${sanitizeDroidName(role.slug)}.md`
+        : harness === "codex"
+          ? `${role.slug}.toml`
+          : `${role.slug}.md`;
     files.push({
       relativePath: join(dir, fileName).replace(/\\/g, "/"),
       legacyRelativePath: join(dir, legacyFileName).replace(/\\/g, "/"),

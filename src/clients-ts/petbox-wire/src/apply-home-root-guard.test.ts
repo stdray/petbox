@@ -45,13 +45,15 @@ import { WIRE_EXIT } from "./wire-exit.ts";
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
-const ROLE_BASENAMES = [
-  "petbox-orchestrator.md",
-  "petbox-worker.md",
-  "petbox-worker-highstakes.md",
-  "petbox-reserve.md",
-  "petbox-explore.md",
-];
+const ROLE_SLUGS = ["orchestrator", "worker", "worker-highstakes", "reserve", "explore"];
+
+const ROLE_BASENAMES = ROLE_SLUGS.map((s) => `petbox-${s}.md`);
+
+// codex role files are `.toml`, not `.md` — see apply-artifacts.ts's renderCodexAgentToml.
+function roleBasenamesFor(harness: (typeof HARNESS_IDS)[number]): string[] {
+  const ext = harness === "codex" ? "toml" : "md";
+  return ROLE_SLUGS.map((s) => `petbox-${s}.${ext}`);
+}
 
 function freshDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -75,7 +77,7 @@ function runWire(args: string[], homeDir: string, cwd: string): { out: string; s
 /** Every role file this harness's USER profile should hold after a `--roles=user` run. */
 function profileFiles(homeDir: string, harness: (typeof HARNESS_IDS)[number]): string[] {
   const dir = join(homeDir, userAgentFilesDir(harness));
-  return ROLE_BASENAMES.map((b) => join(dir, b));
+  return roleBasenamesFor(harness).map((b) => join(dir, b));
 }
 
 function assertProfileIntact(homeDir: string, out: string): void {
@@ -131,12 +133,29 @@ test("apply --roles=user from HOME: removals=0, the profile survives, and the ou
       /sweep SKIPPED for droid — the project role directory is the user profile itself/,
       `Full output:\n${out}`,
     );
+    // codex's project layout (`.codex/agents`) and default user layout (also `.codex/agents` —
+    // role-scope.ts's userAgentFilesDir) are the SAME string, so it collides at root=HOME just
+    // like claude-code/droid — see that function's own "codex" case comment.
+    assert.match(
+      out,
+      /sweep SKIPPED for codex — the project role directory is the user profile itself/,
+      `Full output:\n${out}`,
+    );
+    // qwen's project layout (`.qwen/agents`) and default user layout (also `.qwen/agents` —
+    // role-scope.ts's userAgentFilesDir "qwen" case) are the SAME string too — exactly the
+    // collision shape this guard exists for, verified deliberately for qwen (task
+    // wire-support-codex-qwen), not assumed from codex's identical shape.
+    assert.match(
+      out,
+      /sweep SKIPPED for qwen — the project role directory is the user profile itself/,
+      `Full output:\n${out}`,
+    );
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
 
-test("PER HARNESS: claude-code and droid are skipped, opencode is NOT — and opencode's real project leftovers are still swept", () => {
+test("PER HARNESS: claude-code, droid, codex and qwen are skipped, opencode is NOT — and opencode's real project leftovers are still swept", () => {
   // The guard must be derived from the two directory functions, per harness, not from "does root
   // look like HOME". opencode survived the live incident only because `.opencode/agent` (project)
   // and `.config/opencode/agents` (user) differ by one character. If the guard were a blanket
@@ -156,6 +175,8 @@ test("PER HARNESS: claude-code and droid are skipped, opencode is NOT — and op
 
     assert.match(out, /sweep SKIPPED for claude-code/, `Full output:\n${out}`);
     assert.match(out, /sweep SKIPPED for droid/, `Full output:\n${out}`);
+    assert.match(out, /sweep SKIPPED for codex/, `Full output:\n${out}`);
+    assert.match(out, /sweep SKIPPED for qwen/, `Full output:\n${out}`);
     assert.doesNotMatch(
       out,
       /sweep SKIPPED for opencode/,
@@ -215,6 +236,8 @@ test("CASE: HOME and root spelled in DIFFERENT cases name one directory — the 
 
     assert.match(out, /sweep SKIPPED for claude-code/, `Full output:\n${out}`);
     assert.match(out, /sweep SKIPPED for droid/, `Full output:\n${out}`);
+    assert.match(out, /sweep SKIPPED for codex/, `Full output:\n${out}`);
+    assert.match(out, /sweep SKIPPED for qwen/, `Full output:\n${out}`);
     assert.match(out, /apply: summary[^\n]*removals=0/, `Full output:\n${out}`);
     assertProfileIntact(mangled, out);
   } finally {

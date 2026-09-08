@@ -72,12 +72,34 @@ export type PetboxProvenance = "managed" | "manual";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 
-/** The raw YAML frontmatter block, or null when `content` has none. */
+// A leading `#`-comment block (contiguous from byte 0) — the TOML analogue of YAML frontmatter.
+// codex role files (apply-artifacts.ts's renderCodexAgentToml) are whole TOML documents: a
+// leading `---` line would not be a comment, it would be invalid TOML and break `codex`'s own
+// parser, so they cannot use the YAML delimiter form above. They instead carry the SAME
+// `key: value` marker lines as plain `# key: value` comments at the very top of the file.
+// Declared-before-any-content, same as the YAML block: a `# petbox: managed` typed later in the
+// file body (inside a real TOML comment elsewhere) is not contiguous with line 1 and so is never
+// picked up here.
+const TOML_LEADING_COMMENT_RE = /^(?:#[^\n]*\n?)+/;
+
+/**
+ * The raw provenance-marker block, or null when `content` has neither container. Tries YAML
+ * frontmatter first (markdown role/skill files); a content string that does not start with `---`
+ * falls back to a leading TOML comment block, stripped of its `#` prefixes so the same
+ * `key: value` line format (frontmatterValue below) reads either container identically.
+ */
 function frontmatterOf(content: string): string | null {
   const m = content.match(FRONTMATTER_RE);
   // The capture group is mandatory in the pattern above (no `?`), so a successful match
   // always populates it — but a stray content string could still fail to match at all.
-  return m?.[1] ?? null;
+  if (m) return m[1] ?? null;
+  const c = content.match(TOML_LEADING_COMMENT_RE);
+  if (!c) return null;
+  return c[0]
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/^#[ \t]?/, ""))
+    .join("\n");
 }
 
 /** The single-token value of frontmatter key `key`, or null. `petbox:` never matches

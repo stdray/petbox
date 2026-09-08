@@ -65,8 +65,10 @@ import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { readRegistry, resolveProject, type RegistryEntry, type ResolvedProject } from "./registry.ts";
 import {
+  CODEX_ROLE_MODEL_SEED,
   DEFAULT_ROLE_MODEL_SEED,
   loadRoles,
+  QWEN_ROLE_MODEL_SEED,
   resolveAgentRoles,
   rolesPath,
   type RolesFile,
@@ -222,7 +224,11 @@ export function formatRosterState(state: RosterState): string {
 export function roleRelativePath(harness: HarnessId, role: AgentRole): string {
   const dir = agentFilesDir(harness);
   const fileName =
-    harness === "droid" ? `${sanitizeDroidName(emittedRoleName(role))}.md` : `${emittedRoleName(role)}.md`;
+    harness === "droid"
+      ? `${sanitizeDroidName(emittedRoleName(role))}.md`
+      : harness === "codex"
+        ? `${emittedRoleName(role)}.toml`
+        : `${emittedRoleName(role)}.md`;
   return join(dir, fileName).replace(/\\/g, "/");
 }
 
@@ -271,6 +277,18 @@ export function resolveRoleModelSource(
       // (wire.ts's seedDefaultRoleBindingsIfMissing) — a real, documented Factory default, not
       // an invented id.
       if (DEFAULT_ROLE_MODEL_SEED[role]) return { kind: "seed", model: "inherit" };
+    } else if (harness === "codex") {
+      // codex has no universal inherit keyword (open model space, no documented frontmatter
+      // default) — CODEX_ROLE_MODEL_SEED (roles.ts) instead seeds real provider slugs; mirror
+      // wire.ts's seedDefaultRoleBindingsIfMissing so this preview never drifts from it.
+      const seeded = CODEX_ROLE_MODEL_SEED[role];
+      if (seeded) return { kind: "seed", model: seeded };
+    } else if (harness === "qwen") {
+      // Same reasoning as codex: qwen's model space is open too, no universal inherit keyword —
+      // QWEN_ROLE_MODEL_SEED (roles.ts) seeds real authType:model-id pairs; mirror wire.ts's
+      // seedDefaultRoleBindingsIfMissing so this preview never drifts from it.
+      const seeded = QWEN_ROLE_MODEL_SEED[role];
+      if (seeded) return { kind: "seed", model: seeded };
     }
     // opencode is never seeded (open, unknowable id space from the kit) — falls through to
     // "none" below even on a totally fresh machine, same as wire.ts's own seeding decision.

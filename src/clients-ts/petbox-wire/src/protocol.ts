@@ -146,3 +146,16 @@ export const opencodePetboxTool: ToolNamer = (verb) => `petbox_${verb}`;
 // live in exec mode (session 7be9f6c2: `mcp__petbox__*` answers "not permitted in exec
 // mode"); the docs' `mcp__<server>__<tool>` form did not match the shipped CLI.
 export const droidPetboxTool: ToolNamer = (verb) => `petbox___${verb}`;
+
+// Codex CLI: SAME naming as Claude Code / Droid's `mcp__<server>__<tool>` — codex-spec.md §9,
+// source-anchored (core/src/tools/handlers/mcp.rs:46-47's prefix/delimiter consts;
+// codex-mcp/src/mcp/mod.rs:546-561's sanitizer maps every char outside `[A-Za-z0-9_]` to `_`,
+// so the server key `petbox` maps to itself). A plain alias, not a new namer, so this can never
+// silently drift from mcpPetboxTool if that naming ever changes.
+export const codexPetboxTool: ToolNamer = mcpPetboxTool;
+
+// Qwen Code: SAME naming as Claude Code / Droid / Codex's `mcp__<server>__<tool>` (qwen-spec.md
+// §10, source-anchored: core/src/tools/mcp-tool.ts:980-981's `mcp__${serverName}__${serverToolName}`
+// builder — a plain alias, not a new namer, so this can never silently drift from mcpPetboxTool
+// if that naming ever changes).
+export const qwenPetboxTool: ToolNamer = mcpPetboxTool;

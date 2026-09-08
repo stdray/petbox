@@ -36,7 +36,9 @@ import type { HarnessId } from "./harness-capabilities.ts";
  * (cleanupLegacyArtifact), which runs only after a successful replacement write. Conflating
  * the two would let a definition-resolution hiccup delete a user's freshly renamed file.
  */
-const OURS_RE = /^petbox-[a-z0-9_-]+\.md$/;
+// `.toml` covers codex role files (apply-artifacts.ts's renderCodexAgentToml); every other
+// harness still emits `.md`.
+const OURS_RE = /^petbox-[a-z0-9_-]+\.(?:md|toml)$/;
 
 export type OrphanOutcome = {
   readonly path: string;

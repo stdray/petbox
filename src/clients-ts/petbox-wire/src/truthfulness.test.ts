@@ -509,12 +509,19 @@ test("emitted agent names are namespaced petbox-<slug> across the whole default 
     for (const role of DEFAULT_AGENT_DEFINITION.roles) {
       const file = plan.files.find((f) => f.relativePath.includes(`petbox-${role.slug}`));
       assert.ok(file, `${harness}: expected a petbox-${role.slug} file`);
-      assert.match(file!.content, new RegExp(`name: petbox-${role.slug}\\b`));
+      // codex role files are whole TOML documents (`name = "petbox-<slug>"`), not YAML
+      // frontmatter (`name: petbox-<slug>`) — see apply-artifacts.ts's renderCodexAgentToml.
+      const nameLineRe =
+        harness === "codex"
+          ? new RegExp(`name = "petbox-${role.slug}"`)
+          : new RegExp(`name: petbox-${role.slug}\\b`);
+      assert.match(file!.content, nameLineRe);
       assert.ok(hasPetboxMarker(file!.content));
       // Never emit the bare, unprefixed name as the CURRENT (non-legacy) path.
+      const legacyExt = harness === "codex" ? "toml" : "md";
       assert.ok(
-        !plan.files.some((f) => f.relativePath.endsWith(`/${role.slug}.md`)),
-        `${harness}: must not also emit an unprefixed ${role.slug}.md as a current artifact`,
+        !plan.files.some((f) => f.relativePath.endsWith(`/${role.slug}.${legacyExt}`)),
+        `${harness}: must not also emit an unprefixed ${role.slug}.${legacyExt} as a current artifact`,
       );
     }
   }

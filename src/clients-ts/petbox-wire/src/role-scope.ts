@@ -55,6 +55,25 @@ export function userAgentFilesDir(harness: HarnessId): string {
       return ".claude/agents";
     case "droid":
       return ".factory/droids";
+    case "codex":
+      // Default `$CODEX_HOME` is `~/.codex` (codex-spec.md §1) — matches this relative path.
+      // KNOWN GAP: unlike claude-code/opencode/droid, codex's real user-scope root can be
+      // overridden by the `CODEX_HOME` env var. This function (and every caller that resolves a
+      // user-scope dir from `homeDir` alone — apply's `--roles=user`, role-dir-collision.ts,
+      // status.ts) does NOT read that env var; it always assumes the default. wire.ts's global
+      // install step (installGlobalHooks) DOES honor `CODEX_HOME` for config.toml/hooks.json/the
+      // model catalog (see codex-paths.ts), so a machine with `CODEX_HOME` set ends up with role
+      // files under `~/.codex/agents` but config/hooks under `$CODEX_HOME` — a real inconsistency
+      // this task left unresolved (out of scope: plumbing `CODEX_HOME` through the whole
+      // homeDir-based role-scope architecture is a bigger structural change than this task).
+      return ".codex/agents";
+    case "qwen":
+      // Default `$QWEN_HOME` is `~/.qwen` (qwen-spec.md §1/§4, Storage.getGlobalQwenDir()) —
+      // matches this relative path. SAME KNOWN GAP as codex above: qwen's real user-scope root
+      // can be overridden by the `QWEN_HOME` env var (qwen-paths.ts's qwenHomeDir DOES honor it
+      // for wire.ts's global install step), but this function — and every homeDir-only caller —
+      // does not read it, always assuming the default.
+      return ".qwen/agents";
   }
 }
 

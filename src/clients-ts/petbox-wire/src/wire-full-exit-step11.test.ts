@@ -341,7 +341,7 @@ test("a FAILING step 11 still does not abort the run: apply keeps writing past t
     // this test's business.
     assert.match(
       w.out,
-      /\[11\/10\]: result roleScope=project ok=\[opencode,droid\] partial=\[claude-code\]/,
+      /\[11\/10\]: result roleScope=project ok=\[opencode,droid,codex,qwen\] partial=\[claude-code\]/,
       `apply must report the partial write it actually performed. Full output:\n${w.out}`,
     );
     assertRunWasNotInterrupted(w);

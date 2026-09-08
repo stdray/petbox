@@ -245,7 +245,7 @@ test("apply --all --roles=user twice: the second run changes nothing, every role
     // Nothing written, nothing removed, anywhere — the roles pass and both project passes.
     const writeLines = second.out.split("\n").filter((l) => / would write | would remove |: wrote |: removed /.test(l));
     assert.deepEqual(writeLines, [], `second run was not a no-op:\n${writeLines.join("\n")}`);
-    assert.match(second.out, /\[roles:user\]: summary \(applied\) — writes=0 \(roles=0 skills=0\) unchanged=15/);
+    assert.match(second.out, /\[roles:user\]: summary \(applied\) — writes=0 \(roles=0 skills=0\) unchanged=25/);
     assert.equal(userRoleFileCount(homeDir), 15);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });

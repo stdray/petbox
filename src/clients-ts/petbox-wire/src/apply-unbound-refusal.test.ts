@@ -121,6 +121,44 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
       assert.match(readFileSync(p, "utf8"), /^model: inherit$/m, `droid ${role} must carry model: inherit`);
     }
 
+    // codex roles are written too, with the seeded provider slugs (CODEX_ROLE_MODEL_SEED) — a
+    // real, explicit binding, same shape as droid's `inherit` above but with codex's own values.
+    const codexSeed: Record<string, string> = {
+      orchestrator: "deepseek-v4-pro",
+      worker: "deepseek-v4-flash",
+      "worker-highstakes": "deepseek-v4-pro",
+      explore: "deepseek-v4-flash",
+      reserve: "grok-4.6",
+    };
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
+      const p = join(projectDir, ".codex", "agents", `petbox-${role}.toml`);
+      assert.equal(existsSync(p), true, `expected ${p} to be written. Output:\n${out}`);
+      assert.match(
+        readFileSync(p, "utf8"),
+        new RegExp(`^model = "${codexSeed[role]}"$`, "m"),
+        `codex ${role} must carry its seeded model`,
+      );
+    }
+
+    // qwen roles are written too, with the seeded authType:model-id pairs (QWEN_ROLE_MODEL_SEED)
+    // — a real, explicit binding, same shape as codex's provider slugs above.
+    const qwenSeed: Record<string, string> = {
+      orchestrator: "openai:deepseek-v4-pro",
+      worker: "openai:glm-5.3-flash",
+      "worker-highstakes": "openai:deepseek-v4-pro",
+      explore: "openai:glm-5.3-flash",
+      reserve: "openai:qwen3.8-max",
+    };
+    for (const role of ["orchestrator", "worker", "worker-highstakes", "explore", "reserve"]) {
+      const p = join(projectDir, ".qwen", "agents", `petbox-${role}.md`);
+      assert.equal(existsSync(p), true, `expected ${p} to be written. Output:\n${out}`);
+      assert.match(
+        readFileSync(p, "utf8"),
+        new RegExp(`^model: ${qwenSeed[role]}$`, "m"),
+        `qwen ${role} must carry its seeded model`,
+      );
+    }
+
     // opencode is genuinely unbound (no safe placeholder exists for its open id space) — apply
     // must still WRITE its role files (inheriting the session model, exactly the pre-card
     // behavior) and warn loudly, rather than block. This is the crux of the happy path: a first
@@ -133,12 +171,14 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
     }
     // The `utility` role was deleted from the roster: a fresh apply must not render it on
     // ANY harness (leaf-tools-mechanical-and-drop-utility).
-    for (const [dir, sub] of [
-      [".claude", "agents"],
-      [".opencode", "agent"],
-      [".factory", "droids"],
+    for (const [dir, sub, ext] of [
+      [".claude", "agents", "md"],
+      [".opencode", "agent", "md"],
+      [".factory", "droids", "md"],
+      [".codex", "agents", "toml"],
+      [".qwen", "agents", "md"],
     ] as const) {
-      for (const name of ["petbox-utility.md", "utility.md"]) {
+      for (const name of [`petbox-utility.${ext}`, `utility.${ext}`]) {
         assert.equal(
           existsSync(join(projectDir, dir, sub, name)),
           false,
@@ -156,7 +196,7 @@ test("HAPPY PATH: apply on a clean HOME exits 0 — claude-code roles get model:
       WIRE_EXIT.ok,
       `expected exit 0 (opencode warns but still writes; claude-code/droid are fully bound). Output:\n${out}`,
     );
-    assert.match(out, /ok=\[claude-code,opencode,droid\]/);
+    assert.match(out, /ok=\[claude-code,opencode,droid,codex,qwen\]/);
     assert.match(out, /blocked=\[\]/, "nothing blocked");
     assert.match(out, /partial=\[\]/, "nothing partial");
   } finally {

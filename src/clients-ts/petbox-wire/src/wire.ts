@@ -68,7 +68,7 @@
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -175,11 +175,13 @@ import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
 import { readRegistry, registryPath, resolveProject, type RegistryEntry } from "./registry.ts";
 import {
   canonicalAgentId,
+  CODEX_ROLE_MODEL_SEED,
   DEFAULT_ROLE_MODEL_SEED,
   exportRolesBootstrap,
   formatResolvedBinding,
   isEmptyRoles,
   loadRoles,
+  QWEN_ROLE_MODEL_SEED,
   resolveAgentRoles,
   rolesPath,
   saveRoles,
@@ -191,6 +193,22 @@ import {
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
+import { codexHomeDir } from "./codex-paths.ts";
+import { qwenHomeDir } from "./qwen-paths.ts";
+import {
+  buildDeepseekProviderBlock,
+  buildHookStateBlock,
+  buildMcpServerBlock,
+  buildOpencodeGoProviderBlock,
+  extractOpencodeSessionUuid,
+  findBlock,
+  parseTomlBlocks,
+  serializeTomlBlocks,
+  setRootScalar,
+  tomlString,
+  upsertBlock,
+} from "./codex-toml.ts";
+import { codexHookStateKey, computeCodexHookTrustHash } from "./codex-hook-trust.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 
@@ -2195,6 +2213,21 @@ function writeJson(path: string, obj: unknown): void {
   writeFileSync(path, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
+// Raw-text counterparts to readJson/writeJson, for codex's config.toml (codex-toml.ts's
+// section-preserving merge operates on the whole file's text, not a parsed object).
+function readText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function writeText(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text, "utf8");
+}
+
 function toFileUrl(absPath: string): string {
   // Build a file:/// URL the way Node does (handles Windows drive letters / backslashes).
   return new URL("file://" + (process.platform === "win32" ? "/" : "") + absPath.replace(/\\/g, "/")).href;
@@ -2629,6 +2662,21 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   });
   log(`[7/10] merged petbox MCP server into ${droidMcpPath}`);
 
+  // .codex/config.toml (Codex CLI) — ONLY `[mcp_servers.petbox]`. `model_providers` /
+  // `model_provider` are on codex's PROJECT-scope denylist (codex-spec.md §1) and must live in
+  // USER scope instead (see installGlobalHooks below); `mcp_servers` is not denylisted, so this
+  // is the one codex config key legitimately written per-project. Section-preserving merge
+  // (codex-toml.ts), never a whole-file regenerate — a project's own config.toml (sandbox
+  // policy, `instructions`, etc.) must survive untouched.
+  const codexProjectConfigPath = join(dir, ".codex", "config.toml");
+  const codexProjectBlocks = upsertBlock(
+    parseTomlBlocks(readText(codexProjectConfigPath)),
+    "mcp_servers.petbox",
+    buildMcpServerBlock(DEFAULT_BASE_URL, envVar),
+  );
+  writeText(codexProjectConfigPath, serializeTomlBlocks(codexProjectBlocks));
+  log(`[7/10] merged petbox MCP server into ${codexProjectConfigPath}`);
+
   // Skill bodies: `petbox` (project-scoped), `petbox-agent-factory` (on-demand, no
   // placeholders), `petbox-methodology` (thin, project-agnostic pointer at the LIVE
   // methodology this project runs — never this repo's own rules; see skill-files.ts),
@@ -2732,7 +2780,52 @@ const KIT_HOOK_SUFFIXES = [
   'droid-push-session.ts"',
   'droid-pull-memory.ts"',
   'subagent-model-gate.ts"',
+  'codex-push-session.ts"',
+  'codex-pull-memory.ts"',
+  'codex-subagent-model-gate.ts"',
+  'qwen-push-session.ts"',
+  'qwen-pull-memory.ts"',
 ];
+
+// codex-spec.md §6: `model_catalog_json` points at a FILE, `{ models: ModelInfo[] }`, applied
+// at codex startup only. One entry per role-bound slug this kit seeds (roles.ts's
+// CODEX_ROLE_MODEL_SEED) — the owner explicitly asked that `apply_patch` be enabled for ALL of
+// them, hence `apply_patch_tool_type: "freeform"` on every entry, not just one. Fields/values
+// follow the VERIFIED-LOADING template in codex-spec.md §6 verbatim (shell_type/visibility/
+// truncation_policy/etc.) — only slug, display_name and context_window vary per model, and
+// `context_window` is a kit-chosen default (128000 — not verified per-model; codex's own
+// runtime does not reject a merely-generous context_window).
+function buildCodexCatalogModel(slug: string, displayName: string): Record<string, unknown> {
+  return {
+    slug,
+    display_name: displayName,
+    description: null,
+    supported_reasoning_levels: [],
+    shell_type: "unified_exec",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 1,
+    availability_nux: null,
+    upgrade: null,
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: "freeform",
+    truncation_policy: { mode: "tokens", limit: 65536 },
+    experimental_supported_tools: [],
+    context_window: 128000,
+    base_instructions: "You are a coding agent running in the Codex CLI.",
+  };
+}
+
+function buildCodexModelCatalog(): { models: Record<string, unknown>[] } {
+  return {
+    models: [
+      buildCodexCatalogModel("deepseek-v4-pro", "DeepSeek V4 Pro"),
+      buildCodexCatalogModel("deepseek-v4-flash", "DeepSeek V4 Flash"),
+      buildCodexCatalogModel("grok-4.6", "Grok 4.6"),
+    ],
+  };
+}
 
 // Remove kit hook entries whose command is NOT one of the current stable commands (validCmds),
 // then drop any now-empty groups. Mutates hooksObj in place; returns the count pruned.
@@ -2759,7 +2852,17 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
 // PreToolUse model-pin gate — see modelGateCmd below) and, on the way through, run the
 // retired-prompt-RAG migration on each settings object before it is written back — one read, one
 // write per file, so the prune costs nothing extra and cannot be skipped.
-function installGlobalHooks(): void {
+// `envVar` is THIS wire run's project env-var name (deriveEnvVar/registryEnvVar) — needed only
+// for qwen's user-scope `mcpServers.petbox` entry (qwen-spec.md §2: project-scope MCP is
+// SILENTLY GATED for qwen, so the kit writes user scope instead — see the qwen block below).
+// KNOWN LIMITATION, stated plainly (qwen-spec.md §2, mechanism #3's own "not per-project"
+// caveat): unlike every other harness's per-PROJECT MCP config, qwen's user-scope settings.json
+// is machine-global, so it can only ever reference ONE project's env var at a time — re-running
+// `wire` for a second project overwrites it to that project's var, and the first project's qwen
+// sessions then need `--approval-mode yolo` (which bypasses the project-scope gate entirely,
+// letting a project's own `.qwen/settings.json` — not written by this kit today — resolve its
+// own correct envVar) documented in doc/agent-wiring.md.
+function installGlobalHooks(envVar: string): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
@@ -2877,6 +2980,302 @@ export { PetboxPlugin, default } from "${pluginUrl}";
 `;
   writeFileSync(shimPath, shim, "utf8");
   log(`[8/10] wrote global opencode plugin shim ${shimPath} → ${pluginUrl}`);
+
+  // ---- Codex CLI: hooks.json + config.toml (providers, hook trust, model catalog) -----------
+  //
+  // codex-spec.md §3: an UNTRUSTED hook is skipped SILENTLY in headless codex runs — no error,
+  // no warning. Route (a): the kit computes each hook's `trusted_hash` (codex-hook-trust.ts,
+  // source-anchored) and writes it into `[hooks.state."<key>"]` in $CODEX_HOME/config.toml
+  // ALONGSIDE the hooks.json entry it describes, in the SAME run, so a hook is never live
+  // without also being pre-trusted.
+  //
+  // Providers/model_provider/model/model_catalog_json are USER-scope ONLY (codex-spec.md §1:
+  // `model_provider`/`model_providers` are on codex's PROJECT-scope denylist) — this is the
+  // only place they are written; writeProjectFiles's `.codex/config.toml` carries just
+  // `[mcp_servers.petbox]`.
+  const codexHome = codexHomeDir();
+  const codexHooksJsonPath = join(codexHome, "hooks.json");
+  const codexConfigPath = join(codexHome, "config.toml");
+  const codexCatalogPath = join(codexHome, "petbox-model-catalog.json");
+
+  const codexPullCmd = `node "${join(STABLE, "codex-pull-memory.ts")}"`;
+  const codexPushCmd = `node "${join(STABLE, "codex-push-session.ts")}"`;
+  const codexGateCmd = `node "${join(STABLE, "codex-subagent-model-gate.ts")}"`;
+
+  // hooks.json: the SAME `{event: [{matcher?, hooks:[{...}]}]}` shape Claude Code/Droid
+  // settings.json hooks use (codex-spec.md §3's validated shape), so pruneStaleKitHooks is
+  // reused unchanged; only the handler object's own fields differ (camelCase timeout/
+  // commandWindows). `command` AND `commandWindows` are always written IDENTICAL: codex uses
+  // `commandWindows` INSTEAD of `command` on Windows (discovery.rs:513-517) for BOTH execution
+  // and the trust hash's normalized `command` field (codex-hook-trust.ts's header) — writing the
+  // same value to both means "which one wins" never matters, on any platform.
+  const codexHooksDoc = readJson(codexHooksJsonPath) ?? {};
+  if (typeof codexHooksDoc.description !== "string") codexHooksDoc.description = "petbox-wire";
+  if (!codexHooksDoc.hooks || typeof codexHooksDoc.hooks !== "object") codexHooksDoc.hooks = {};
+  const codexValidCmds = new Set([codexPullCmd, codexPushCmd, codexGateCmd]);
+  const prunedCodex = pruneStaleKitHooks(codexHooksDoc.hooks, codexValidCmds);
+  if (prunedCodex > 0) {
+    log(`[8/10] pruned ${prunedCodex} stale codex kit hook(s) not pointing at ${STABLE}.`);
+  }
+
+  const ensureCodexHook = (
+    event: string,
+    command: string,
+    opts: { matcher?: string; timeoutSec?: number } = {},
+  ): { groupIndex: number; handlerIndex: number } => {
+    const groups: any[] = Array.isArray(codexHooksDoc.hooks[event]) ? codexHooksDoc.hooks[event] : [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      if (!g || !Array.isArray(g.hooks)) continue;
+      for (let hi = 0; hi < g.hooks.length; hi++) {
+        if (g.hooks[hi]?.command === command) {
+          log(`[8/10] codex hook ${event} already present — skipped.`);
+          return { groupIndex: gi, handlerIndex: hi };
+        }
+      }
+    }
+    const handler: any = { type: "command", command, commandWindows: command };
+    if (opts.timeoutSec !== undefined) handler.timeout = opts.timeoutSec;
+    const group: any = { hooks: [handler] };
+    if (opts.matcher !== undefined) group.matcher = opts.matcher;
+    groups.push(group);
+    codexHooksDoc.hooks[event] = groups;
+    log(`[8/10] codex hook ${event} added.`);
+    return { groupIndex: groups.length - 1, handlerIndex: 0 };
+  };
+
+  // Timeouts: SessionStart/PreToolUse use codex-spec.md §3's own validated example values (30,
+  // 15) — the general branch of normalize_command_hook has no upper clamp, so these apply
+  // as-is. SessionEnd is DIFFERENT from that same spec example: codex clamps SessionEnd (and
+  // Interrupt) to a HARD [1,3]-second ceiling regardless of configured value
+  // (discovery.rs:742-763) — writing 30 here (as the spec's own example TOML does) would still
+  // only ever run for 3s and, worse, would make the pre-computed trust hash WRONG (the hash
+  // must hash the CLAMPED value, not the configured one) — see codex-push-session.ts's own
+  // header for the operational consequence. So this writes 3, matching what codex actually
+  // enforces, not what the spec's illustrative example happened to show.
+  const codexStartPos = ensureCodexHook("SessionStart", codexPullCmd, { timeoutSec: 30 });
+  const codexEndPos = ensureCodexHook("SessionEnd", codexPushCmd, { timeoutSec: 3 });
+  const codexGatePos = ensureCodexHook("PreToolUse", codexGateCmd, {
+    matcher: "spawn_agent",
+    timeoutSec: 15,
+  });
+
+  writeJson(codexHooksJsonPath, codexHooksDoc);
+  log(`[8/10] merged codex hooks into ${codexHooksJsonPath}`);
+
+  // config.toml: providers (regenerated wholesale each run, preserving the opencode-go
+  // `x-opencode-session` UUID across re-installs — codex-spec.md §6: the gateway 400s without
+  // it, and codex itself never sends one), the default provider/model, the model-catalog
+  // pointer, and pre-trusted [hooks.state] entries for the three hooks just written above.
+  let codexBlocks = parseTomlBlocks(readText(codexConfigPath));
+
+  const existingOpencodeGoBlock = findBlock(codexBlocks, "model_providers.opencode-go");
+  const existingSessionUuid = existingOpencodeGoBlock
+    ? extractOpencodeSessionUuid(existingOpencodeGoBlock.lines)
+    : undefined;
+  const opencodeSessionUuid = existingSessionUuid ?? randomUUID();
+  codexBlocks = upsertBlock(codexBlocks, "model_providers.deepseek", buildDeepseekProviderBlock());
+  codexBlocks = upsertBlock(
+    codexBlocks,
+    "model_providers.opencode-go",
+    buildOpencodeGoProviderBlock(opencodeSessionUuid),
+  );
+  // Default provider/model for a bare `codex`/`codex exec` invocation with no role file in play.
+  // `model` is not dictated by the brief beyond "default model" — deepseek-v4-pro is chosen to
+  // match the orchestrator role's own binding (roles.ts's CODEX_ROLE_MODEL_SEED), the strongest
+  // of the three catalog models a plain top-level session would reasonably want.
+  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString("opencode-go"));
+  codexBlocks = setRootScalar(codexBlocks, "model", tomlString("deepseek-v4-pro"));
+  codexBlocks = setRootScalar(codexBlocks, "model_catalog_json", tomlString(codexCatalogPath));
+
+  const codexTrustEntries: { key: string; hash: string }[] = [
+    {
+      key: codexHookStateKey(
+        codexHooksJsonPath,
+        "SessionStart",
+        codexStartPos.groupIndex,
+        codexStartPos.handlerIndex,
+      ),
+      hash: computeCodexHookTrustHash({ event: "SessionStart", command: codexPullCmd, timeoutSec: 30 }),
+    },
+    {
+      key: codexHookStateKey(codexHooksJsonPath, "SessionEnd", codexEndPos.groupIndex, codexEndPos.handlerIndex),
+      hash: computeCodexHookTrustHash({ event: "SessionEnd", command: codexPushCmd, timeoutSec: 3 }),
+    },
+    {
+      key: codexHookStateKey(
+        codexHooksJsonPath,
+        "PreToolUse",
+        codexGatePos.groupIndex,
+        codexGatePos.handlerIndex,
+      ),
+      hash: computeCodexHookTrustHash({
+        event: "PreToolUse",
+        matcher: "spawn_agent",
+        command: codexGateCmd,
+        timeoutSec: 15,
+      }),
+    },
+  ];
+  for (const entry of codexTrustEntries) {
+    codexBlocks = upsertBlock(codexBlocks, `hooks.state.${tomlString(entry.key)}`, buildHookStateBlock(entry.hash));
+  }
+
+  writeText(codexConfigPath, serializeTomlBlocks(codexBlocks));
+  log(
+    `[8/10] merged codex config into ${codexConfigPath} (providers deepseek+opencode-go, ` +
+      `model_provider=opencode-go, model=deepseek-v4-pro, model_catalog_json, ` +
+      `${codexTrustEntries.length} hook trust entries).`,
+  );
+
+  // petbox-model-catalog.json — fully kit-owned, regenerated whole each run (like `.mcp.json`).
+  writeJson(codexCatalogPath, buildCodexModelCatalog());
+  log(`[8/10] wrote ${codexCatalogPath}`);
+
+  // ---- Qwen Code: everything in ONE user-scope settings.json ----------------------------------
+  //
+  // Unlike codex, qwen needs no separate hooks.json and no hook-trust hashing: qwen's own hook
+  // schema nests `{matcher?, hooks:[{...}]}` groups directly under `settings.json`'s `hooks` key
+  // (qwen-spec.md §3 — the SAME shape Claude Code's settings.json hooks already use, so
+  // pruneStaleKitHooks/the ensureHook closure pattern below are reused, not reinvented), and
+  // folder trust is DISABLED by default (qwen-spec.md §1: `security.folderTrust.enabled` default
+  // false, and when disabled every folder reports trusted) — a user-scope hook is ALSO always
+  // honored regardless of trust (qwen-spec.md §1) — so there is no codex-style "untrusted hook is
+  // silently skipped" trap to defend against here.
+  //
+  // mcpServers.petbox goes here (USER scope) rather than project scope, because qwen's
+  // project-scope MCP admission is GATED and a gated-but-unapproved server is SILENTLY DROPPED,
+  // not prompted for (qwen-spec.md §2) — user scope is never gated (scope unset). See
+  // installGlobalHooks's own header comment for the "not per-project" limitation this implies.
+  //
+  // security.auth.selectedType/modelProviders/agents.modelGrades are also written here (qwen-spec.md
+  // §7/§11/§12): `modelProviders` has `mergeStrategy: REPLACE`, so the whole map is regenerated
+  // each run (same discipline as codex's provider blocks), and `agents.modelGrades` must be
+  // seeded or EVERY spawn-time `model` parameter is rejected (qwen-spec.md §6).
+  const qwenHome = qwenHomeDir();
+  const qwenSettingsPath = join(qwenHome, "settings.json");
+  const qwenSettings = readJson(qwenSettingsPath) ?? {};
+
+  const qwenPullCmd = `node "${join(STABLE, "qwen-pull-memory.ts")}"`;
+  const qwenPushCmd = `node "${join(STABLE, "qwen-push-session.ts")}"`;
+  // Reuses the SAME PreToolUse gate script Claude Code installs (modelGateCmd, above) — qwen's
+  // Agent tool params are byte-identical to Claude Code's Task/Agent tool (`subagent_type` +
+  // optional `model`, verified live in the installed clone, agent.ts:225/718), so no payload
+  // adapter is needed the way codex's `agent_type` field required one (codex-subagent-model-
+  // gate.ts). Reusing evaluateModelGate's SAME policy, not a second one, per this task's brief.
+  const qwenGateCmd = modelGateCmd;
+
+  if (!qwenSettings.hooks || typeof qwenSettings.hooks !== "object") qwenSettings.hooks = {};
+  const qwenValidCmds = new Set([qwenPullCmd, qwenPushCmd, qwenGateCmd]);
+  const prunedQwen = pruneStaleKitHooks(qwenSettings.hooks, qwenValidCmds);
+  if (prunedQwen > 0) {
+    log(`[8/10] pruned ${prunedQwen} stale qwen kit hook(s) not pointing at ${STABLE}.`);
+  }
+
+  // Qwen HookDefinition shape (qwen-spec.md §3, types.ts:215-219): {matcher?, hooks:[HookConfig]}
+  // — hooks.<Event> is CONCAT-merged across scopes, so appending a group here is safe. `timeout`
+  // is MILLISECONDS for qwen (default 60000) — deliberately NOT the codex second-based numbers
+  // (this task's brief). No hook here is ever marked `"async": true` — critical for SessionStart
+  // specifically (qwen-spec.md §3: the async path returns no `additionalContext` at all before
+  // the first model request is built) — so `async` is simply never set on any of these.
+  const ensureQwenHook = (event: string, command: string, opts: { matcher?: string; timeoutMs: number }) => {
+    const groups: any[] = Array.isArray(qwenSettings.hooks[event]) ? qwenSettings.hooks[event] : [];
+    const already = groups.some(
+      (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
+    );
+    if (already) {
+      log(`[8/10] qwen hook ${event} already present — skipped.`);
+      return;
+    }
+    const handler: any = { type: "command", command, timeout: opts.timeoutMs };
+    const group: any = { hooks: [handler] };
+    if (opts.matcher !== undefined) group.matcher = opts.matcher;
+    groups.push(group);
+    qwenSettings.hooks[event] = groups;
+    log(`[8/10] qwen hook ${event} added.`);
+  };
+
+  ensureQwenHook("SessionStart", qwenPullCmd, { timeoutMs: 10000 });
+  // Stop AND StopFailure both point at the SAME push script (qwen-push-session.ts's own header):
+  // StopFailure fires INSTEAD of Stop when a turn dies on an API error, so both must be hooked
+  // for guaranteed coverage. Stop/StopFailure have NO matcher target (qwen-spec.md §3).
+  ensureQwenHook("Stop", qwenPushCmd, { timeoutMs: 15000 });
+  ensureQwenHook("StopFailure", qwenPushCmd, { timeoutMs: 15000 });
+  // Matcher = "agent" (the tool's CANONICAL/internal name, `ToolNames.AGENT`, NOT the "Agent"
+  // display name — verified live in the installed clone: coreToolScheduler.ts's `canonicalName`
+  // is what `firePreToolUseHook` receives as `toolName`, and `tool_name` on the hook payload is
+  // that same canonical name). Same perf rationale as Claude Code's own matcher (wire.ts's
+  // MODEL_GATE_MATCHER comment): scopes the process spawn to spawn-tool calls only.
+  ensureQwenHook("PreToolUse", qwenGateCmd, { matcher: "agent", timeoutMs: 5000 });
+
+  // mcpServers.petbox — USER scope, never gated (see this block's header). httpUrl (NOT url) for
+  // streamable HTTP (qwen-spec.md §2, verified empirically against a live `qwen mcp list`).
+  if (!qwenSettings.mcpServers || typeof qwenSettings.mcpServers !== "object") {
+    qwenSettings.mcpServers = {};
+  }
+  qwenSettings.mcpServers.petbox = {
+    httpUrl: `${DEFAULT_BASE_URL}/mcp`,
+    headers: { "X-Api-Key": `\${${envVar}}` },
+    timeout: 30000,
+    trust: true,
+  };
+
+  // security.auth.selectedType — the owner's live ~/.qwen/settings.json was found with
+  // `selectedType: "qwen-oauth"` alongside an unrelated apiKey/baseUrl pair (qwen-spec.md §7's
+  // own "inconsistent state" note) — qwen-oauth ignores both, so nothing resolved. Switching to
+  // "openai" is what makes the modelProviders block below actually take effect.
+  if (!qwenSettings.security || typeof qwenSettings.security !== "object") qwenSettings.security = {};
+  if (!qwenSettings.security.auth || typeof qwenSettings.security.auth !== "object") {
+    qwenSettings.security.auth = {};
+  }
+  qwenSettings.security.auth.selectedType = "openai";
+
+  // modelProviders — mergeStrategy REPLACE (qwen-spec.md §7), so the whole map is written each
+  // run, never merged piecemeal. One provider key, "openai" (an AUTH TYPE, not a provider slug —
+  // qwen-spec.md §5: a role file's `model:` takes the `authType:model-id` form, and role files
+  // this kit renders use `openai:<id>`, so the modelProviders KEY these ids resolve against must
+  // be exactly "openai"). Three ModelConfig entries, one per distinct model QWEN_ROLE_MODEL_SEED
+  // (roles.ts) binds a role to, all through the same opencode-go gateway. `customHeaders` is
+  // RESOLVED (qwen-spec.md §11): `modelProviders.<id>[].generationConfig.customHeaders`, verified
+  // via OpenAIContentGeneratorProvider.buildHeaders() in the installed clone.
+  //
+  // The `x-opencode-session` UUID is the SAME one codex's own opencode-go provider block just
+  // computed above in this function (opencodeSessionUuid) — reused, not re-minted, per this
+  // task's brief ("reuse the same one rather than minting a second"). The gateway 400s without
+  // this header on every request, and it must survive re-installs.
+  const qwenOpencodeGoModels = [
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro (opencode-go)" },
+    { id: "glm-5.3-flash", name: "GLM 5.3 Flash (opencode-go)" },
+    { id: "qwen3.8-max", name: "Qwen3.8 Max (opencode-go)" },
+  ];
+  qwenSettings.modelProviders = {
+    openai: qwenOpencodeGoModels.map((m) => ({
+      id: m.id,
+      name: m.name,
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      envKey: "OPENCODE_GO_API_KEY",
+      generationConfig: { customHeaders: { "x-opencode-session": opencodeSessionUuid } },
+    })),
+  };
+
+  // agents.modelGrades (qwen-spec.md §6) — gates the Agent tool's spawn-time `model` PARAMETER
+  // (a DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated).
+  // There is no built-in default: an unseeded machine rejects EVERY explicit spawn-time `model`
+  // with an empty `Available:` list. Self-keyed (grade name == the value it resolves to) so a
+  // caller passing exactly one of the three `openai:<id>` pairs this kit binds roles to at spawn
+  // time resolves, without inventing a second naming scheme (e.g. "fast"/"deep" grade labels)
+  // nothing else in this kit's role/model machinery references.
+  if (!qwenSettings.agents || typeof qwenSettings.agents !== "object") qwenSettings.agents = {};
+  const qwenModelGrades: Record<string, string> = {};
+  for (const m of qwenOpencodeGoModels) qwenModelGrades[`openai:${m.id}`] = `openai:${m.id}`;
+  qwenSettings.agents.modelGrades = qwenModelGrades;
+
+  writeJson(qwenSettingsPath, qwenSettings);
+  log(
+    `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
+      `security.auth.selectedType=openai, modelProviders.openai x${qwenOpencodeGoModels.length}, ` +
+      `agents.modelGrades x${qwenOpencodeGoModels.length}).`,
+  );
 }
 
 // ---- step 9: cleanup legacy ------------------------------------------------
@@ -2994,20 +3393,44 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
   for (const [role, model] of Object.entries(DEFAULT_ROLE_MODEL_SEED)) ccRoles[role] = { model };
   const droidRoles: Record<string, RoleBinding> = {};
   for (const role of Object.keys(DEFAULT_ROLE_MODEL_SEED)) droidRoles[role] = { model: "inherit" };
+  // codex, unlike droid, has no universal "just inherit" keyword (its model policy is OPEN —
+  // harness-models.ts — and codex has no documented frontmatter default the way Factory's
+  // `inherit` is): CODEX_ROLE_MODEL_SEED (roles.ts) instead seeds real, live-probe-verified
+  // provider slugs (codex-spec.md §6), the same way this seed step gives claude-code real
+  // aliases rather than leaving it unbound.
+  const codexRoles: Record<string, RoleBinding> = {};
+  for (const [role, model] of Object.entries(CODEX_ROLE_MODEL_SEED)) codexRoles[role] = { model };
+  // qwen, same reasoning as codex directly above: no universal inherit keyword (open model
+  // space — harness-models.ts), so QWEN_ROLE_MODEL_SEED (roles.ts) seeds real, live-probe-
+  // verified `authType:model-id` pairs (qwen-spec.md §12) rather than leaving it unbound.
+  const qwenRoles: Record<string, RoleBinding> = {};
+  for (const [role, model] of Object.entries(QWEN_ROLE_MODEL_SEED)) qwenRoles[role] = { model };
   const data: RolesFile = {
     activeProfile: "default",
     profiles: {
-      default: { agents: { "claude-code": { roles: ccRoles }, droid: { roles: droidRoles } } },
+      default: {
+        agents: {
+          "claude-code": { roles: ccRoles },
+          droid: { roles: droidRoles },
+          codex: { roles: codexRoles },
+          qwen: { roles: qwenRoles },
+        },
+      },
     },
   };
   saveRoles(data);
   log(
     `${label} roles: seeded ${rolesPath()} — profile "default": claude-code aliases ` +
       `(orchestrator=opus, worker=sonnet, worker-highstakes=opus, explore=haiku, ` +
-      `reserve=fable), droid=inherit ` +
-      `for every role. opencode is intentionally left unbound (its model space is open/unknowable ` +
-      `from the kit) — apply will warn about it, not fail; bind it yourself with ` +
-      `\`petbox-wire model set <role> <model> --agent opencode\` when you know what to bind it to.`,
+      `reserve=fable), droid=inherit for every role, codex provider slugs ` +
+      `(orchestrator=deepseek-v4-pro, worker=deepseek-v4-flash, worker-highstakes=deepseek-v4-pro, ` +
+      `explore=deepseek-v4-flash, reserve=grok-4.6), qwen authType:model-id pairs ` +
+      `(orchestrator=openai:deepseek-v4-pro, worker=openai:glm-5.3-flash, ` +
+      `worker-highstakes=openai:deepseek-v4-pro, explore=openai:glm-5.3-flash, ` +
+      `reserve=openai:qwen3.8-max). opencode is intentionally left unbound (its ` +
+      `model space is open/unknowable from the kit) — apply will warn about it, not fail; bind it ` +
+      `yourself with \`petbox-wire model set <role> <model> --agent opencode\` when you know what ` +
+      `to bind it to.`,
   );
 }
 
@@ -3169,7 +3592,7 @@ async function main(): Promise<void> {
 
   // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
   // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
-  installGlobalHooks();
+  installGlobalHooks(envVar);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);

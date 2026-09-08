@@ -355,9 +355,11 @@ Not documented here on purpose: a static name list in this file would cover only
 flag the moment one side changed without the other (this used to be exactly that kind of list;
 work `user-invocable-skills-invisible-to-model`). The fix lives where kit-delivered text already
 reaches an agent in any wired project — `skill-files.ts`'s `buildOwnerOnlySkillsBlock`, computed
-live from each skill's own frontmatter and injected by all three SessionStart paths
-(`pull-memory.ts`, `droid-pull-memory.ts`, `opencode-plugin.ts`) — so it can never go stale and
-never needs a second, hand-maintained copy here.
+live from each skill's own frontmatter and injected by every SessionStart path
+(`pull-memory.ts`, `droid-pull-memory.ts`, `opencode-plugin.ts`, `codex-pull-memory.ts`,
+`qwen-pull-memory.ts` — the last two always render `null` today, since neither codex nor qwen
+has a wired skill surface yet) — so it can never go stale and never needs a second,
+hand-maintained copy here.
 
 ## Tasks / Memory / Session — what goes where
 

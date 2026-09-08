@@ -71,6 +71,8 @@ function writeHome(homeDir: string): void {
               "claude-code": { roles: ccRoles },
               opencode: { roles: openRoles },
               droid: { roles: openRoles },
+              codex: { roles: openRoles },
+              qwen: { roles: openRoles },
             },
           },
         },
@@ -100,8 +102,10 @@ function runApply(cwd: string, homeDir: string, args: string[] = []): { out: str
   return { out: (res.stdout ?? "") + (res.stderr ?? ""), status: res.status };
 }
 
+// `base` is the petbox-<slug> stem, WITHOUT extension — every harness but codex emits `.md`,
+// codex emits `.toml` (apply-artifacts.ts's renderCodexAgentToml).
 function artifactPaths(projectDir: string, base: string): string[] {
-  return HARNESS_IDS.map((h) => join(projectDir, agentFilesDir(h), base));
+  return HARNESS_IDS.map((h) => join(projectDir, agentFilesDir(h), `${base}.${h === "codex" ? "toml" : "md"}`));
 }
 
 test("a layer ADDS a role, then stops declaring it: the artifact appears and is then swept — every harness, marker-gated", async () => {
@@ -118,7 +122,7 @@ test("a layer ADDS a role, then stops declaring it: the artifact appears and is 
     });
     const first = runApply(projectDir, homeDir);
     assert.equal(first.status, WIRE_EXIT.ok, `setup apply must write every role. Output:\n${first.out}`);
-    for (const p of [...artifactPaths(projectDir, "petbox-worker.md"), ...artifactPaths(projectDir, "petbox-review.md")]) {
+    for (const p of [...artifactPaths(projectDir, "petbox-worker"), ...artifactPaths(projectDir, "petbox-review")]) {
       assert.ok(existsSync(p), `setup: ${p} was not written. Output:\n${first.out}`);
     }
 
@@ -133,13 +137,13 @@ test("a layer ADDS a role, then stops declaring it: the artifact appears and is 
     const second = runApply(projectDir, homeDir);
     assert.equal(second.status, WIRE_EXIT.ok, `Output:\n${second.out}`);
 
-    for (const p of artifactPaths(projectDir, "petbox-review.md")) {
+    for (const p of artifactPaths(projectDir, "petbox-review")) {
       assert.ok(
         !existsSync(p),
         `${p} survived — removing a role from the definition is still physically impossible. Output:\n${second.out}`,
       );
     }
-    for (const p of artifactPaths(projectDir, "petbox-worker.md")) {
+    for (const p of artifactPaths(projectDir, "petbox-worker")) {
       assert.ok(existsSync(p), `${p}: a live role's artifact was destroyed. Output:\n${second.out}`);
     }
     assert.match(second.out, /removed .*petbox-review\.md — its role is no longer in definition/);

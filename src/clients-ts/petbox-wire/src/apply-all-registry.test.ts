@@ -79,12 +79,12 @@ test("apply --all --offline --dry-run: writes NOTHING, reports every project inc
     // normalize-all-environments-to-default item 4) and is asserted separately below.
     assert.match(out, /written=1/);
     // The preview's own file counts, from the same ledger the "would write" lines came from.
-    // 15 role files + the project's managed `.gitignore` block = 16. The .gitignore entry appeared
-    // here when the fixture became a real checkout (test-git-tree.ts, card
-    // wire-apply-guard-registered-dir): the managed-path block is written for a git working tree,
-    // which every registered project is and this fixture previously was not. The ROLE count — the
-    // number this test is actually about — is unchanged at 15.
-    assert.match(out, /writes=16 \(roles=15 skills=0\)/);
+    // 25 role files (5 roles x 5 harnesses: claude-code, opencode, droid, codex, qwen) + the
+    // project's managed `.gitignore` block = 26. The .gitignore entry appeared here when the
+    // fixture became a real checkout (test-git-tree.ts, card wire-apply-guard-registered-dir):
+    // the managed-path block is written for a git working tree, which every registered project
+    // is and this fixture previously was not.
+    assert.match(out, /writes=26 \(roles=25 skills=0\)/);
     assert.match(out, /missing=1/);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });

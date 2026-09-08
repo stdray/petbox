@@ -405,7 +405,7 @@ test("buildProtocol without harness omits spawn prescriptions (safe default)", (
 // source of truth that could drift from the actual .claude/agents/petbox-worker.md apply emits). ---
 
 test("buildProtocol's orchestrator self-intro tells it to spawn the NAMESPACED worker name, not a bare `worker` constant", () => {
-  for (const harness of ["claude-code", "opencode", "droid"] as const) {
+  for (const harness of ["claude-code", "opencode", "droid", "codex", "qwen"] as const) {
     const text = buildProtocol(project, mcpPetboxTool, { harness });
     assert.match(text, /Spawn as `petbox-worker`/, `${harness}: must render the computed emitted name`);
     assert.ok(!text.includes("Spawn as `worker`"), `${harness}: must not hardcode the bare slug`);
@@ -444,7 +444,7 @@ test("buildProtocol falls back to petbox-worker when the supplied definition has
 // a "worker preamble" that doesn't exist anywhere else in the kit. ---
 
 test("buildProtocol's orchestrator self-intro no longer tells the orchestrator to dictate a subagent's self-intro", () => {
-  for (const harness of ["claude-code", "opencode", "droid"] as const) {
+  for (const harness of ["claude-code", "opencode", "droid", "codex", "qwen"] as const) {
     const text = buildProtocol(project, mcpPetboxTool, { harness });
     assert.ok(
       !text.includes("write their self-intro into the brief"),
@@ -454,7 +454,7 @@ test("buildProtocol's orchestrator self-intro no longer tells the orchestrator t
 });
 
 test("buildProtocol does not reference a nonexistent 'worker preamble'", () => {
-  for (const harness of ["claude-code", "opencode", "droid"] as const) {
+  for (const harness of ["claude-code", "opencode", "droid", "codex", "qwen"] as const) {
     const text = buildProtocol(project, mcpPetboxTool, { harness });
     assert.ok(
       !/worker preamble/i.test(text),

@@ -22,7 +22,9 @@ import { PROJECT_SKILLS, SKILL_SURFACES } from "./skill-files.ts";
 /** A generated role artifact's basename, in either harness spelling. Same shape apply-orphans.ts
  * trusts for deletion — kept identical on purpose, so "what we ignore" and "what we may delete"
  * describe the same set of files. */
-const ROLE_FILE_RE = /^petbox-[a-z0-9_-]+\.md$/;
+// `.toml` covers codex role files (apply-artifacts.ts's renderCodexAgentToml); every other
+// harness still emits `.md`.
+const ROLE_FILE_RE = /^petbox-[a-z0-9_-]+\.(?:md|toml)$/;
 
 /** Skill directories, project-relative, POSIX-spelled: one per (skill x surface). */
 export function managedSkillDirs(): string[] {

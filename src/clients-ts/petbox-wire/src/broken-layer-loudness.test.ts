@@ -141,7 +141,7 @@ test("apply --roles=user: when the USER pass already wrote and the PROJECT pass 
     assert.doesNotMatch(out, /Nothing was written\. /, `Full output:\n${out}`);
     // …and the run reconciles the two passes out loud.
     assert.match(stderr, /PARTIAL RUN/, `Full output:\n${out}`);
-    assert.match(stderr, /user-scope step already changed 15 file\(s\)/, `Full output:\n${out}`);
+    assert.match(stderr, /user-scope step already changed 25 file\(s\)/, `Full output:\n${out}`);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(projectDir, { recursive: true, force: true });

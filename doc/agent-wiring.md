@@ -58,7 +58,7 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   asks a server for one; `definition-source.test.ts` carries a structural ratchet against the
   retired `/agent-defs/` path reappearing in non-test source.
 - `harness-capabilities.ts` — kit data: which capabilities each harness declares
-  (`HARNESS_IDS = claude-code, opencode, droid`). Every cell is a factual claim from that harness's docs.
+  (`HARNESS_IDS = claude-code, opencode, droid, codex, qwen`). Every cell is a factual claim from that harness's docs.
 - `truthfulness.ts` — the gate: list every `(role, capability)` a role requires that the target
   harness does not declare. Non-empty ⇒ the caller must fail loud.
 - `apply-artifacts.ts` — pure `planApply(definition, harness, roleModels)` → the per-harness role
@@ -403,14 +403,44 @@ for cwd (falling back to cwd), builds the definition from the **file cascade bas
 | `claude-code` | `.claude/agents/<role>.md` |
 | `opencode` | `.opencode/agent/<role>.md` |
 | `droid` | `.factory/droids/<name>.md` |
+| `codex` | `.codex/agents/<role>.toml` (whole TOML document, not frontmatter — auto-discovered per codex-spec.md §4) |
+| `qwen` | `.qwen/agents/<role>.md` (Claude Code subagent frontmatter schema, byte-identical renderer — qwen-spec.md §5) |
 
 These files are **overwritten** — they are generated. A role is written only when the target harness
 declares every capability the role requires; a dirty role is skipped WHOLE and reported, and clean
-roles in the same run are still written (⇒ exit 3, partial write). `model:` frontmatter appears only
-when `roles.json` binds that role (droid unbound → `model: inherit`); a concrete model id is never
-invented. Three sources, three owners: the definition is **file**-authoritative (kit base + the
-layers on this disk), `roles.json` is **machine**-authoritative, the capability matrix is **kit**
-data.
+roles in the same run are still written (⇒ exit 3, partial write). `model:`/`model =` appears only
+when `roles.json` binds that role (droid unbound → `model: inherit`; codex/qwen have no such
+universal default, so an unbound role is a hard refusal there too, same as claude-code — see
+apply-artifacts.ts / harness-models.ts); a concrete model id is never invented. Three sources,
+three owners: the definition is **file**-authoritative (kit base + the layers on this disk),
+`roles.json` is **machine**-authoritative, the capability matrix is **kit** data.
+
+codex additionally needs USER-scope config (`model_providers`/`model_provider`/`model`/
+`model_catalog_json` are denylisted at PROJECT scope — codex-spec.md §1) and pre-trusted hooks:
+`wire`'s global-install step (`installGlobalHooks` in wire.ts) writes `$CODEX_HOME/hooks.json`,
+merges `model_providers.deepseek` + `model_providers.opencode-go` (regenerated each run,
+preserving the `opencode-go` session UUID across re-installs) plus `[hooks.state."<key>"]` trust
+entries into `$CODEX_HOME/config.toml` (codex-hook-trust.ts reproduces codex's own SHA-256 trust
+hash — see that file's header), and writes `$CODEX_HOME/petbox-model-catalog.json`. The project
+layer only ever carries `[mcp_servers.petbox]` (not denylisted).
+
+qwen additionally needs USER-scope `$QWEN_HOME/settings.json` (qwen-paths.ts; default `~/.qwen`,
+overridable by `QWEN_HOME`), all written by the same `installGlobalHooks` step: `hooks.<Event>`
+(Stop **and** StopFailure both point at `qwen-push-session.ts` — Qwen's `SessionStart`/`Stop`
+have the SAME `{matcher?, hooks:[...]}` shape Claude Code uses, no separate hooks file and no
+trust-hash mechanism the way codex needs one, because qwen's folder-trust default is disabled and
+a user-scope hook is always honored regardless — qwen-spec.md §1/§3), `mcpServers.petbox`
+(**user** scope only — qwen's *project*-scope MCP admission is silently gated on an unapproved
+server, qwen-spec.md §2, so the kit never writes a project-scope `.qwen/settings.json` at all),
+`security.auth.selectedType = "openai"`, a wholesale-replaced `modelProviders.openai` (three
+`ModelConfig` entries through the same opencode-go gateway codex uses, reusing codex's OWN
+just-minted `x-opencode-session` UUID rather than minting a second — qwen-spec.md §11/§12), and
+`agents.modelGrades` (self-keyed to those same three `openai:<id>` pairs — without this, every
+spawn-time `model` parameter on the Agent tool is rejected outright, qwen-spec.md §6). Because the
+petbox MCP entry is user-scope and therefore machine-global, it can only reference ONE project's
+`${ENV_VAR}` at a time — the last project a `wire` ran for; other projects need `qwen
+--approval-mode yolo` (which bypasses the project-scope gate entirely) to use their own
+`.qwen/settings.json` correctly (installGlobalHooks's own header comment in wire.ts).
 
 A layer directory that is absent is a layer with no opinion. A layer that is PRESENT and cannot be
 read, parsed or validated **refuses the whole run**: exit 1, the absolute path and the parser's own
