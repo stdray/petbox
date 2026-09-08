@@ -42,6 +42,7 @@ import {
   PETBOX_MARKER_LINE,
   readArtifactState,
   readDigestMode,
+  readPetboxProvenanceFromComment,
   type ArtifactState,
   type SkillDigestMode,
   type SkillInvocationMode,
@@ -94,6 +95,18 @@ export type SkillTemplateSpec = {
   // a foreign or declared-manual file at an old name is reported and kept, never deleted.
   // Empty/absent for a skill that has never moved.
   legacyDirs?: readonly string[];
+  // Additional files rendered and written NEXT TO SKILL.md, under the same skill directory, on
+  // every surface (spec: bash-quoting-collapses-backslashes-not-just-echo). Filenames only —
+  // resolved against `<templatesRoot>/<dir>/<filename>` for the source and
+  // `<surface>/<dir>/<filename>` for every target. Rendered through the same
+  // {{PROJECT}}/{{WORKSPACE}} substitution as SKILL.md (a no-op for a template with neither
+  // placeholder). Unlike SKILL.md these are typically NOT markdown (e.g. `validate-body.mjs`) so
+  // they cannot carry YAML frontmatter; provenance is a leading `// petbox: managed` comment line
+  // instead (origin-marker.ts's *FromComment functions) — same three-state clobber contract
+  // (managed/manual/foreign), no frontmatter-migration carve-out (there is no pre-marker history
+  // for a file that never existed before this mechanism). Empty/absent for a skill with no
+  // sibling assets.
+  extraFiles?: readonly string[];
 };
 
 // Every skill wire.ts renders into a freshly-wired project (see writeSkillFiles / wire.ts step 7).
@@ -102,7 +115,16 @@ export const PROJECT_SKILLS: SkillTemplateSpec[] = [
   { dir: "petbox-agent-factory", needsWorkspace: false, digestMode: "manual", invocation: "user" },
   { dir: "petbox-methodology", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
   { dir: "petbox-write-economy", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
-  { dir: "petbox-node-authoring", needsWorkspace: false, digestMode: "auto", invocation: "agent" },
+  {
+    dir: "petbox-node-authoring",
+    needsWorkspace: false,
+    digestMode: "auto",
+    invocation: "agent",
+    // The zero-dependency validator ships as a REAL FILE, not a fenced code block SKILL.md asks
+    // the reader to retype (spec: bash-quoting-collapses-backslashes-not-just-echo) — a retyped
+    // copy is exactly what a backslash-collapsing write pipeline corrupts.
+    extraFiles: ["validate-body.mjs"],
+  },
   {
     dir: "petbox-analysis-workspace",
     needsWorkspace: false,
@@ -195,6 +217,43 @@ function writeSkillArtifact(
     : { kind: "written", path: absPath, reason: outcome.reason };
 }
 
+/**
+ * Write one rendered skill ASSET (a `spec.extraFiles` sibling, e.g. `validate-body.mjs`) to
+ * `absPath`. Same three-outcome clobber contract as writeSkillArtifact/writeArtifact — new path
+ * writes, an existing `// petbox: managed` file is refreshed (byte-identical is "unchanged"), an
+ * existing `// petbox: manual` file is left alone and reported as such, anything else undeclared
+ * is refused — but keyed off the leading-COMMENT marker (origin-marker.ts's *FromComment), not
+ * YAML frontmatter: an asset is typically source code (e.g. `.mjs`) that cannot open with a bare
+ * `---` line. No migration carve-out: unlike SKILL.md, there is no pre-marker history for a file
+ * this mechanism is the first thing to ever write.
+ */
+function writeSkillAssetFile(
+  absPath: string,
+  rendered: string,
+  opts: { readonly dryRun?: boolean } = {},
+): SkillWriteOutcome {
+  if (existsSync(absPath)) {
+    let existing: string | undefined;
+    try {
+      existing = readFileSync(absPath, "utf8");
+    } catch {
+      existing = undefined; // unreadable — treat as foreign, never overwrite what we can't inspect
+    }
+    if (existing === undefined) return { kind: "blocked", path: absPath };
+    const provenance = readPetboxProvenanceFromComment(existing);
+    if (provenance === "manual") return { kind: "declared-manual", path: absPath };
+    if (provenance !== "managed") return { kind: "blocked", path: absPath };
+    if (existing === rendered) return { kind: "written", path: absPath, reason: "unchanged" };
+    if (!opts.dryRun) writeFileSync(absPath, rendered, "utf8");
+    return { kind: "written", path: absPath, reason: "own" };
+  }
+  if (!opts.dryRun) {
+    mkdirSync(dirname(absPath), { recursive: true });
+    writeFileSync(absPath, rendered, "utf8");
+  }
+  return { kind: "written", path: absPath, reason: "new" };
+}
+
 /** One swept pre-rename path. `outcome` is cleanupLegacyArtifact's own verdict, unchanged. */
 export type SkillCleanupOutcome = {
   readonly path: string;
@@ -241,10 +300,12 @@ function cleanupLegacySkillDir(
 }
 
 // Render every `specs` entry from templatesRoot and write it into every SKILL_SURFACES root
-// under dir. Returns one write outcome per (skill × surface), in write order, for the caller's
-// log lines — a "blocked" outcome means a real, non-PetBox file already sat at that path and was
-// left byte-for-byte untouched, and "declared-manual" means the project owns that path (see
-// writeSkillArtifact above) — plus one cleanup outcome per swept pre-rename path.
+// under dir. Returns one write outcome per (skill × surface) for SKILL.md, PLUS one more per
+// (skill × surface × extraFiles entry) for any sibling assets that spec declares, in write
+// order, for the caller's log lines — a "blocked" outcome means a real, non-PetBox file already
+// sat at that path and was left byte-for-byte untouched, and "declared-manual" means the project
+// owns that path (see writeSkillArtifact/writeSkillAssetFile above) — plus one cleanup outcome
+// per swept pre-rename path.
 //
 // `specs` defaults to PROJECT_SKILLS and exists so the rename/cleanup behaviour can be exercised
 // against a fixture registry: the delivered set has no legacy names of its own yet (the renames
@@ -277,6 +338,21 @@ export function writeSkillFiles(
         ...(opts.adopt !== undefined ? { adopt: opts.adopt(skillPath) } : {}),
       });
       writes.push(outcome);
+      // Sibling assets (spec.extraFiles, e.g. petbox-node-authoring's validate-body.mjs) land in
+      // the SAME skill directory as SKILL.md on this surface, independent of whether SKILL.md
+      // itself changed — a stale asset next to a freshly-migrated SKILL.md would be exactly the
+      // kind of half-applied state this mechanism exists to prevent. Rendered through the same
+      // {{PROJECT}}/{{WORKSPACE}} substitution as SKILL.md (a no-op for a template with neither).
+      for (const assetName of spec.extraFiles ?? []) {
+        const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
+        const assetRendered = renderSkillTemplate(assetTpl, project, workspace);
+        const assetPath = join(dir, ...surface, spec.dir, assetName);
+        writes.push(
+          writeSkillAssetFile(assetPath, assetRendered, {
+            ...(opts.dryRun !== undefined ? { dryRun: opts.dryRun } : {}),
+          }),
+        );
+      }
       // Sweep the pre-rename copies ONLY after the replacement actually landed — never orphan a
       // skill by deleting the old file when the new one could not be written (identical rule to
       // the agent-role rename cleanup in wire.ts, which this pipeline had no equivalent of).

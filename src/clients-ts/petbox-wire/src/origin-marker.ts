@@ -163,3 +163,40 @@ export function readArtifactState(absPath: string): ArtifactState {
   if (provenance === "manual") return "manual";
   return "foreign";
 }
+
+// ---- comment-marker provenance (skill asset siblings, e.g. petbox-node-authoring's
+// validate-body.mjs) --------------------------------------------------------------------------
+//
+// A generated file that is NOT markdown (a `.mjs` sibling shipped next to SKILL.md — spec:
+// bash-quoting-collapses-backslashes-not-just-echo, item "ship the validator as a real file, not
+// a fenced block to retype") cannot open with a bare `---` YAML delimiter and still parse as
+// valid source. Same three-state contract as the frontmatter marker above (managed/manual/
+// undeclared), read from the file's FIRST LINE as a line comment instead of a frontmatter block.
+// Kept as separate functions rather than parametrizing readPetboxProvenance: the two delimiter
+// shapes (`---` blocks vs. a single `//` line) have nothing in common to share past the two
+// literal values they compare against.
+export const PETBOX_MARKER_COMMENT_LINE = `// ${PETBOX_MARKER_LINE}`;
+export const PETBOX_MANUAL_COMMENT_LINE = `// ${PETBOX_MARKER_KEY}: ${PETBOX_MANUAL_VALUE}`;
+
+/** Provenance read from a leading `// petbox: managed|manual` comment (first line only, exact
+ * match) — the non-frontmatter counterpart to readPetboxProvenance, for generated files that
+ * cannot carry YAML frontmatter. */
+export function readPetboxProvenanceFromComment(content: string): PetboxProvenance | null {
+  const firstLine = content.split(/\r?\n/, 1)[0] ?? "";
+  if (firstLine === PETBOX_MARKER_COMMENT_LINE) return "managed";
+  if (firstLine === PETBOX_MANUAL_COMMENT_LINE) return "manual";
+  return null;
+}
+
+/** True ONLY for a leading `// petbox: managed` comment line — the comment-marker counterpart to
+ * hasPetboxMarker, same narrow contract (an unrecognized or absent marker is never "close
+ * enough"). */
+export function hasPetboxMarkerComment(content: string): boolean {
+  return readPetboxProvenanceFromComment(content) === "managed";
+}
+
+/** True for a leading `// petbox: manual` comment line — the project declared this asset its own;
+ * never written, never deleted (comment-marker counterpart to isDeclaredManual). */
+export function isDeclaredManualComment(content: string): boolean {
+  return readPetboxProvenanceFromComment(content) === "manual";
+}
