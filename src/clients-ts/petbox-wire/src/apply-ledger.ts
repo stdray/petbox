@@ -22,7 +22,7 @@
 // Plain TS for native node type-stripping: zero deps.
 
 /** What kind of thing an action touched — only for the wording of the rendered line. */
-export type ApplySubject = "role" | "skill" | "legacy" | "orphan" | "gitignore";
+export type ApplySubject = "role" | "skill" | "legacy" | "orphan" | "gitignore" | "qwen";
 
 export type ApplyActionKind =
   /** A file was (or would be) written: created, updated in place, migrated, or adopted. */
@@ -105,6 +105,7 @@ const SUBJECT_WORD: Readonly<Record<ApplySubject, string>> = {
   legacy: "legacy ",
   orphan: "",
   gitignore: "",
+  qwen: "",
 };
 
 /**
