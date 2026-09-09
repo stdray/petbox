@@ -3404,17 +3404,19 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // The kit's role in this now stops at PRINTING a ready-to-paste fragment (qwen-config-
   // fragment.ts, built from qwen-model-catalog.ts's known ids + this machine's roles.json role→
   // model bindings, so `petbox-wire model set <role> <id> --agent qwen` changes the printed
-  // `agents.modelGrades`) and WARNING when the live config's own modelProviders/providerProtocol/
-  // modelGrades/outboundCorrelation diverge from what that roster expects — never auto-fixing
-  // (task brief: "если фрагмент уже присутствует — кит говорит, что присутствует, и не трогает").
-  // See the wiki page `qwen-three-provider-legs-howto` for the full manual howto this compiles.
+  // `agents.modelGrades`/`model.name`) and WARNING when the live config's own modelProviders/
+  // providerProtocol/modelGrades/outboundCorrelation/model.name diverge from what that roster
+  // expects — never auto-fixing (task brief: "если фрагмент уже присутствует — кит говорит, что
+  // присутствует, и не трогает"; `model.name` specifically is the owner's own `/model`-picker
+  // choice — task qwen-model-name-into-fragment). See the wiki page `qwen-three-provider-legs-
+  // howto` for the full manual howto this compiles.
   {
     const qwenRolesData = loadRoles(homedir());
     const divergence = findQwenConfigDivergence(qwenSettings, qwenRolesData);
     if (divergence.warnings.length === 0) {
       log(
-        `[8/10] qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation at ` +
-          `${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
+        `[8/10] qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation/` +
+          `model.name at ${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
       );
     } else {
       console.error(
@@ -3428,40 +3430,19 @@ export { PetboxPlugin, default } from "${pluginUrl}";
     for (const n of divergence.notes) log(`[8/10] qwen config note: ${n}`);
   }
 
-  // model.name — defect qwen-dead-default-model (live smoke, wire-support-codex-qwen): the
-  // owner's live ~/.qwen/settings.json had this left at a stale value ("coder-model") that
-  // matches no `modelProviders.<key>[].id` above, paired with `security.auth.apiKey`/`baseUrl`
-  // pointing at a local llama endpoint that was not running. A bare `qwen` run (no `-m` flag)
-  // resolves the model from `settings.model.name` (packages/cli's resolveCliGenerationConfig:
-  // `argv.model || settings.model.name`), then matches it against `modelProviders.<id>` — a
-  // miss falls through to `security.auth`'s own apiKey/baseUrl instead of the routing this kit
-  // just wired, silently hitting the dead endpoint.
-  // Set to the orchestrator tier's bare id (matches QWEN_ROLE_MODEL_SEED.orchestrator, roles.ts
-  // — "openai:ds-deepseek-v4-pro" stripped of its `authType:` prefix, since `model.name` is
-  // matched against the BARE `modelProviders.<key>[].id`, not the `authType:id` form a role
-  // file's own `model:` frontmatter uses) so a plain `qwen` invocation resolves through
-  // modelProviders like every role file this kit renders. NOTE: `-m`/`--model` does NOT accept
-  // this `authType:model` grammar (it silently falls back to the first registered model) — never
-  // tell anyone to pass `-m openai:...`; the bare id form here, or `model.name`, is the only
-  // supported default-model surface.
-  // NEVER touches security.auth.apiKey/baseUrl: they are the owner's own values, read only as a
-  // FALLBACK once model.name fails to resolve through modelProviders (qwen's own
-  // modelConfigResolver) — discarding a credential silently would be worse than leaving a stale
-  // one, so this only ever replaces `model.name`.
-  if (!qwenSettings.model || typeof qwenSettings.model !== "object") qwenSettings.model = {};
-  const qwenDefaultModelName = "ds-deepseek-v4-pro";
-  const previousQwenModelName = qwenSettings.model.name;
-  if (previousQwenModelName !== qwenDefaultModelName) {
-    qwenSettings.model.name = qwenDefaultModelName;
-    log(
-      previousQwenModelName === undefined
-        ? `[8/10] qwen model.name: set to '${qwenDefaultModelName}' (was unset).`
-        : `[8/10] qwen model.name: replaced '${previousQwenModelName}' with ` +
-            `'${qwenDefaultModelName}' (the old value matched no modelProviders entry, so a bare ` +
-            `'qwen' run fell through to security.auth's own apiKey/baseUrl instead of the ` +
-            `wired providers; security.auth itself is left untouched).`,
-    );
-  }
+  // model.name — task qwen-model-name-into-fragment, owner decision 09.09.2026: the kit STOPPED
+  // writing this key too (previously set unconditionally to fix defect qwen-dead-default-model —
+  // live smoke, wire-support-codex-qwen — a stale value like "coder-model" matching no
+  // `modelProviders.<key>[].id`, which made a bare `qwen` run fall through to `security.auth`'s
+  // own apiKey/baseUrl instead of the routing this kit wires). That fix over-corrected: qwen
+  // itself treats `model.name` as a USER-CHOICE key, persisted as a pair with `model.baseUrl`
+  // every time the owner picks a model via `/model` — the kit's write replaced only the `name`
+  // half of that pair, so every `wire` run silently reverted the owner's own `/model` pick
+  // (measured: the now-stale `baseUrl` then matches no provider, and qwen falls back to a
+  // hardcoded default leg — a warning at startup, and the wrong model in use). `model.name` is
+  // now PRINTED ONLY, as part of the same fragment as agents.modelGrades (qwen-config-fragment.ts,
+  // findQwenConfigDivergence above already covers the "live value resolves to nothing" case with a
+  // warning, never a rewrite) — never written here.
 
   // agents.modelGrades — NOT written (see the modelProviders block above): printed only, as part
   // of the same fragment, since it gates the Agent tool's spawn-time `model` PARAMETER (a
@@ -3471,8 +3452,8 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   writeJson(qwenSettingsPath, qwenSettings);
   log(
     `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
-      `security.auth.selectedType=openai, model.name=${qwenDefaultModelName} — modelProviders/` +
-      `providerProtocol/agents.modelGrades/outboundCorrelation are printed only, never written).`,
+      `security.auth.selectedType=openai — modelProviders/providerProtocol/agents.modelGrades/` +
+      `outboundCorrelation/model.name are printed only, never written).`,
   );
 }
 
@@ -3809,6 +3790,22 @@ async function main(): Promise<void> {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
   }
 
+  // 7c. seed a default role→model binding (fresh machine only) — MUST run BEFORE step 8's qwen
+  // config-fragment print (task wire-fragment-first-run-empty-grades, found by independent review
+  // of wire-print-config-fragment): step 8's installGlobalHooks reads roles.json via loadRoles()
+  // to build the printed `agents.modelGrades` fragment. On a brand-new machine roles.json does not
+  // exist yet — printing before this seed step ran gave the very first `wire` run on any machine
+  // an empty `agents.modelGrades: {}` fragment, silently correct on the SECOND run only. That is
+  // exactly the one run a fresh owner is expected to paste (this fragment is meant to be pasted
+  // once, not diffed run over run) — so the bug was invisible to the one person who could not
+  // afford it. NEVER ABORTS THE RUN (see this function's own header comment): the key is already
+  // validated by this point, so a compile hiccup here must not throw away the rest of an otherwise
+  // successful wire run; re-running `petbox-wire apply` retries just this step. Idempotent by
+  // construction (seedMissingRoleBindings is purely additive — see its own doc comment) — moving
+  // this call earlier does not create a second write: step 11 below no longer calls it a second
+  // time, it only applies/compiles against whatever this call already settled.
+  seedDefaultRoleBindingsIfMissing("[7c/10]");
+
   // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
   // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
   installGlobalHooks(envVar, dir);
@@ -3820,12 +3817,14 @@ async function main(): Promise<void> {
   // 10. self-smoke
   const smokeOk = await selfSmoke(baseUrl, project, key);
 
-  // 11. seed a default role→model binding (fresh machine only) + apply — compile per-harness
-  // startup artifacts NOW, so the freshly-wired roster is actually usable. NEVER ABORTS THE RUN:
-  // the key is already validated and every other file is already written by this point, so a
-  // compile hiccup here (e.g. a transient workspace-probe failure, which only downgrades the
-  // skill refresh) must not throw away work that already succeeded;
-  // re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
+  // 11. apply — compile per-harness startup artifacts NOW, so the freshly-wired roster is actually
+  // usable. The default-binding SEED itself already ran at step 7c (task
+  // wire-fragment-first-run-empty-grades) — moved there so step 8's printed qwen fragment sees a
+  // seeded roster on the very first run; this step only compiles/applies against whatever roles.json
+  // already holds by now. NEVER ABORTS THE RUN: the key is already validated and every other file
+  // is already written by this point, so a compile hiccup here (e.g. a transient workspace-probe
+  // failure, which only downgrades the skill refresh) must not throw away work that already
+  // succeeded; re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
   //
   // "Does not abort" is NOT "does not count" (full-wire-exit-ignores-step-11). Those two were
   // fused in this comment and the code only implemented the first: step 11 could return 1
@@ -3833,7 +3832,6 @@ async function main(): Promise<void> {
   // "0 — every requested step ran" false for the full-wire path and re-opened the very bug this
   // step exists to close — a machine whose agent artifacts were never written is then
   // indistinguishable, to a script, from a fully wired one.
-  seedDefaultRoleBindingsIfMissing("[11/10]");
   // The machine's remembered role-scope policy (~/.petbox/wire.json) applies here too — a full
   // `wire` re-run on a machine that moved its roles into the harness profiles must not silently
   // re-create the project copies it just deleted (card: normalize-all-environments-to-default).

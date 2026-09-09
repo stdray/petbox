@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildQwenModelGradesFragment,
+  buildQwenModelNameFragment,
   buildQwenModelProvidersFragment,
   buildQwenProviderProtocolFragment,
   findQwenConfigDivergence,
@@ -76,9 +77,28 @@ test("buildQwenModelGradesFragment: a bound id outside the kit's catalog is stil
   assert.deepEqual(unrecognizedIds, ["totally-bogus-model"]);
 });
 
+// ---- model.name reacts to the orchestrator's own binding (task qwen-model-name-into-fragment) --
+
+test("buildQwenModelNameFragment: bare id of the active profile's qwen orchestrator binding", () => {
+  const data = rolesWith({ orchestrator: "openai:ds-deepseek-v4-flash" });
+  assert.equal(buildQwenModelNameFragment(data), "ds-deepseek-v4-flash");
+});
+
+test("buildQwenModelNameFragment: rebinding the orchestrator role (petbox-wire model set) changes the printed value", () => {
+  const before = buildQwenModelNameFragment(rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" }));
+  const after = buildQwenModelNameFragment(rolesWith({ orchestrator: "openai:go-qwen3.8-max" }));
+  assert.notEqual(before, after);
+  assert.equal(after, "go-qwen3.8-max");
+});
+
+test("buildQwenModelNameFragment: falls back to the kit's default seed when the active profile has no orchestrator binding", () => {
+  const data = rolesWith({ worker: "openai:ds-deepseek-v4-flash" }); // no orchestrator role at all
+  assert.equal(buildQwenModelNameFragment(data), "ds-deepseek-v4-pro");
+});
+
 // ---- rendered text --------------------------------------------------------------------
 
-test("renderQwenConfigFragmentText: valid JSON containing modelProviders/providerProtocol/security/agents", () => {
+test("renderQwenConfigFragmentText: valid JSON containing modelProviders/providerProtocol/security/agents/model", () => {
   const text = renderQwenConfigFragmentText(rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" }));
   const jsonStart = text.indexOf("{");
   const parsed = JSON.parse(text.slice(jsonStart));
@@ -87,6 +107,7 @@ test("renderQwenConfigFragmentText: valid JSON containing modelProviders/provide
   assert.deepEqual(parsed.providerProtocol, { deepseek: "openai", "opencode-go": "openai" });
   assert.equal(parsed.security.outboundCorrelation.allowDynamicHeaderValues, true);
   assert.deepEqual(parsed.agents.modelGrades, { "openai:ds-deepseek-v4-pro": "openai:ds-deepseek-v4-pro" });
+  assert.deepEqual(parsed.model, { name: "ds-deepseek-v4-pro" });
 });
 
 // ---- divergence detection (acceptance #5) ------------------------------------------------
@@ -134,4 +155,32 @@ test("findQwenConfigDivergence: an extra hand-added modelGrade is informational,
   const { warnings, notes } = findQwenConfigDivergence(live, data);
   assert.deepEqual(warnings, []);
   assert.ok(notes.some((n) => n.includes("openai:some-extra-model")));
+});
+
+// ---- model.name drift (task qwen-model-name-into-fragment, acceptance #4) ----------------
+
+test("findQwenConfigDivergence: model.name UNSET is not a mismatch (fresh machine — qwen falls back to the first registered model, same as with it set)", () => {
+  const data = rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" });
+  const live = expectedLiveSettings(data);
+  delete live.model; // simulate a live settings.json that never had model.name at all
+  const { warnings } = findQwenConfigDivergence(live, data);
+  assert.deepEqual(warnings, []);
+});
+
+test("findQwenConfigDivergence: model.name matching a registered id (e.g. the owner's own /model pick) has zero warnings", () => {
+  const data = rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" });
+  const live = expectedLiveSettings(data);
+  live.model.name = "go-qwen3.8-max"; // owner picked a DIFFERENT registered model via /model
+  const { warnings } = findQwenConfigDivergence(live, data);
+  assert.deepEqual(warnings, []);
+});
+
+test("findQwenConfigDivergence: model.name set to a stale/unregistered value warns, and the fragment is not mutated to fix it", () => {
+  const data = rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" });
+  const live = expectedLiveSettings(data);
+  live.model.name = "coder-model"; // defect qwen-dead-default-model's exact stale value
+  const before = JSON.stringify(live);
+  const { warnings } = findQwenConfigDivergence(live, data);
+  assert.ok(warnings.some((w) => w.includes('model.name: live="coder-model"') && w.includes("does NOT fix this")));
+  assert.equal(JSON.stringify(live), before); // never mutated
 });
