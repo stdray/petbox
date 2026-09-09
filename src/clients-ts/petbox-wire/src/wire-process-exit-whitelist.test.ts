@@ -89,9 +89,26 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
   // synchronous and local-file-only". Stage B2 of role-model-bindings-review-refactor made that
   // false: runModelSet now awaits checkModelValidity, which for `--agent codex` performs a live
   // `GET <provider>/models` round trip BEFORE the refusal branch is reached. That is exactly the
-  // libuv socket-teardown race this guard exists to prevent, so both of that function's refusal
-  // paths were converted to `exitWith(WIRE_EXIT.truthfulness); return;` and the entry is gone.
-  // This guard caught the regression by construction — do not re-add the entry.
+  // libuv socket-teardown race this guard exists to prevent, so both of that function's
+  // single-cell refusal paths were converted to `exitWith(WIRE_EXIT.truthfulness); return;` and
+  // the entry is gone. Stage D's SLICE refusal path (`model set (slice): REFUSED`) sits behind the
+  // exact same awaited live-gate loop (one checkModelValidity call per distinct agent, always run
+  // before either write branch) — it was written directly against `exitWith` from the start, so
+  // it never needed an entry here either. This guard caught the single-cell regression by
+  // construction — do not re-add either entry.
+  {
+    file: "wire.ts",
+    anchor: "model reset: REFUSED",
+    verdict: "safe",
+    reason:
+      "runModelReset (`model reset` subcommand, single-cell path, task " +
+      "role-model-bindings-review-refactor stage D): resetRoleModelToKitDefault only reads " +
+      "HARNESS_ROLE_MODEL_SEEDS (an in-memory constant) and the already-loaded roles.json data — " +
+      "unlike `model set`, `reset` writes the kit's OWN known-good default rather than a " +
+      "user-supplied id, so it never runs the live checkModelValidity gate at all; no fetch " +
+      "anywhere before this exit, and the function's `await` (the post-write refresh) only runs " +
+      "on the success path below this refusal.",
+  },
   {
     file: "wire.ts",
     anchor: "failed to persist ${envVar} to user-scope env",

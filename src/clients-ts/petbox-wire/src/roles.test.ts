@@ -9,12 +9,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   CODEX_ROLE_MODEL_SEED,
+  DEFAULT_ROLE_MODEL_SEED,
   formatResolvedBinding,
   HARNESS_ROLE_MODEL_SEEDS,
   isEmptyRoles,
   loadRoles,
   makeRoleBinding,
   QWEN_ROLE_MODEL_SEED,
+  resetRoleModelSlice,
+  resetRoleModelToKitDefault,
   resolveAgentRoles,
   resolveObservedBinding,
   ROLES_FORMAT_VERSION,
@@ -23,7 +26,9 @@ import {
   saveRoles,
   seedMissingRoleBindings,
   setRoleModel,
+  setRoleModelSlice,
   unsetRoleModel,
+  unsetRoleModelSlice,
   useProfile,
   exportRolesBootstrap,
 } from "./roles.ts";
@@ -387,6 +392,170 @@ test("setRoleModel: rejects a blank role or model", () => {
   assert.equal(blankModel.ok, false);
   if (blankModel.ok) return;
   assert.match(blankModel.reason, /model unset/);
+});
+
+// ---- slice operations (task role-model-bindings-review-refactor, stage D, defect #5) -----------
+
+const CANONICAL_ROLES = Object.keys(DEFAULT_ROLE_MODEL_SEED);
+
+test("setRoleModelSlice: --all-roles on one agent writes the whole canonical roster to one command, does not touch another agent", () => {
+  const data: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: {
+      default: {
+        agents: {
+          opencode: { roles: { worker: makeRoleBinding("opencode", "deepseek/deepseek-v4-pro") } },
+        },
+      },
+    },
+  };
+  const result = setRoleModelSlice(data, {
+    profiles: ["default"],
+    agents: ["droid"],
+    roles: "all",
+    model: "custom:DeepSeek-V4-Pro-0",
+    allowUnknownModel: true,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // Every canonical role got the same model, for droid only.
+  assert.deepEqual(resolveAgentRoles(result.data, "droid"), Object.fromEntries(CANONICAL_ROLES.map((r) => [r, "custom:DeepSeek-V4-Pro-0"])));
+  // opencode's own pre-existing binding is byte-for-byte untouched — outside the slice.
+  assert.deepEqual(resolveAgentRoles(result.data, "opencode"), { worker: "deepseek/deepseek-v4-pro" });
+  assert.equal(result.changes.length, CANONICAL_ROLES.length);
+});
+
+test("setRoleModelSlice: one role across --all-agents touches only that role on every canonical agent", () => {
+  const result = setRoleModelSlice(EMPTY_ROLES, {
+    profiles: ["default"],
+    agents: "all",
+    roles: ["reserve"],
+    model: "fable",
+    allowUnknownModel: true,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  for (const agent of ["claude-code", "opencode", "droid", "codex", "qwen"]) {
+    assert.deepEqual(resolveAgentRoles(result.data, agent), { reserve: "fable" });
+  }
+});
+
+test("setRoleModelSlice: --all-profiles applies to every EXISTING profile only, never invents one", () => {
+  const data: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: {
+      default: { agents: {} },
+      alt: { agents: {} },
+    },
+  };
+  const result = setRoleModelSlice(data, {
+    profiles: "all",
+    agents: ["droid"],
+    roles: ["worker"],
+    model: "inherit",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.data.profiles["default"]?.agents["droid"]?.roles["worker"]?.model, "inherit");
+  assert.equal(result.data.profiles["alt"]?.agents["droid"]?.roles["worker"]?.model, "inherit");
+  assert.equal(Object.keys(result.data.profiles).length, 2, "no profile was invented");
+});
+
+test("setRoleModelSlice: ALL-OR-NOTHING — one refused cell refuses the whole slice, nothing is written", () => {
+  const before = EMPTY_ROLES;
+  const result = setRoleModelSlice(before, {
+    profiles: ["default"],
+    agents: "all",
+    roles: ["worker"],
+    model: "custom:DeepSeek-V4-Pro-0", // foreign shape for claude-code, refused there
+  });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /refused/);
+  // The one bad cell is named...
+  assert.ok(result.outcomes.some((o) => !o.ok && o.cell.agent === "claude-code"));
+  // ...and even the cells that WOULD have succeeded (droid, open policy) were not applied: the
+  // function never returns a `data` to save on refusal, so there is nothing to assert on disk —
+  // the caller (wire.ts) only ever calls saveRoles on the ok:true branch.
+});
+
+test("unsetRoleModelSlice: --all-roles removes every canonical role for one agent, no-op-safe per absent cell", () => {
+  const data: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: {
+      default: {
+        agents: {
+          droid: { roles: { worker: makeRoleBinding("droid", "inherit") } },
+        },
+      },
+    },
+  };
+  const result = unsetRoleModelSlice(data, { profiles: ["default"], agents: ["droid"], roles: "all" });
+  assert.deepEqual(resolveAgentRoles(result.data, "droid"), {});
+  const removed = result.changes.filter((c) => c.removed);
+  assert.equal(removed.length, 1, "only the one cell that actually had a binding reports removed:true");
+  assert.equal(result.changes.length, CANONICAL_ROLES.length);
+});
+
+test("resetRoleModelToKitDefault: overwrites an OWNER binding back to the kit's current default, origin flips to kit", () => {
+  const owner = setRoleModel(EMPTY_ROLES, { agent: "claude-code", role: "worker", model: "opus" });
+  assert.equal(owner.ok, true);
+  if (!owner.ok) return;
+  assert.equal(owner.data.profiles["default"]?.agents["claude-code"]?.roles["worker"]?.origin, "owner");
+  const reset = resetRoleModelToKitDefault(owner.data, { agent: "claude-code", role: "worker" });
+  assert.equal(reset.ok, true);
+  if (!reset.ok) return;
+  assert.equal(reset.modelBefore, "opus");
+  assert.equal(reset.modelAfter, DEFAULT_ROLE_MODEL_SEED["worker"]);
+  const cell = reset.data.profiles["default"]?.agents["claude-code"]?.roles["worker"];
+  assert.equal(cell?.origin, "kit");
+  assert.equal(cell?.model, DEFAULT_ROLE_MODEL_SEED["worker"]);
+});
+
+test("resetRoleModelToKitDefault: refuses a cell the kit has never seeded (opencode) — never invents a value", () => {
+  const result = resetRoleModelToKitDefault(EMPTY_ROLES, { agent: "opencode", role: "worker" });
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /no kit default/);
+});
+
+test("resetRoleModelSlice: --all-roles resets every seeded role and reports (not errors on) cells with no kit default", () => {
+  const data: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: {
+      default: {
+        agents: {
+          opencode: { roles: { worker: makeRoleBinding("opencode", "deepseek/deepseek-v4-pro") } },
+        },
+      },
+    },
+  };
+  const result = resetRoleModelSlice(data, { profiles: ["default"], agents: ["opencode"], roles: "all" });
+  // opencode has NO kit seed at all — matrixRolesFor still walks the canonical roster (plus the
+  // one role opencode already has bound), and every one of those cells is skipped, not written.
+  const ok = result.changes.filter((c) => c.ok);
+  const skipped = result.changes.filter((c) => !c.ok);
+  assert.equal(ok.length, 0);
+  assert.ok(skipped.length >= CANONICAL_ROLES.length);
+  // opencode's own pre-existing binding is completely untouched.
+  assert.deepEqual(resolveAgentRoles(result.data, "opencode"), { worker: "deepseek/deepseek-v4-pro" });
+});
+
+test("resetRoleModelSlice: --all-roles on a harness the kit DOES seed (droid) resets every canonical role to 'inherit', origin kit", () => {
+  const owner = setRoleModel(EMPTY_ROLES, { agent: "droid", role: "reserve", model: "custom:Something-Else-0" });
+  assert.equal(owner.ok, true);
+  if (!owner.ok) return;
+  const result = resetRoleModelSlice(owner.data, { profiles: ["default"], agents: ["droid"], roles: "all" });
+  const ok = result.changes.filter((c) => c.ok);
+  assert.equal(ok.length, CANONICAL_ROLES.length);
+  assert.deepEqual(resolveAgentRoles(result.data, "droid"), Object.fromEntries(CANONICAL_ROLES.map((r) => [r, "inherit"])));
+  for (const role of CANONICAL_ROLES) {
+    assert.equal(result.data.profiles["default"]?.agents["droid"]?.roles[role]?.origin, "kit");
+  }
 });
 
 test("unsetRoleModel: removes an existing binding, no-ops when absent", () => {

@@ -15,24 +15,28 @@ import {
   renderQwenConfigFragmentText,
   QWEN_OUTBOUND_CORRELATION_FRAGMENT,
 } from "./qwen-config-fragment.ts";
-import { makeRoleBinding, ROLES_FORMAT_VERSION, type RolesFile } from "./roles.ts";
+import { makeRoleBinding, type Profile, ROLES_FORMAT_VERSION, type RolesFile } from "./roles.ts";
 
-function rolesWith(qwenRoles: Record<string, string>): RolesFile {
-  return {
-    formatVersion: ROLES_FORMAT_VERSION,
-    activeProfile: "default",
-    profiles: {
-      default: {
-        agents: {
-          qwen: {
-            roles: Object.fromEntries(
-              Object.entries(qwenRoles).map(([r, m]) => [r, makeRoleBinding("qwen", m)]),
-            ),
-          },
+function rolesWith(qwenRoles: Record<string, string>, opts: { other?: Record<string, string> } = {}): RolesFile {
+  const profiles: Record<string, Profile> = {
+    default: {
+      agents: {
+        qwen: {
+          roles: Object.fromEntries(Object.entries(qwenRoles).map(([r, m]) => [r, makeRoleBinding("qwen", m)])),
         },
       },
     },
   };
+  if (opts.other) {
+    profiles["alt"] = {
+      agents: {
+        qwen: {
+          roles: Object.fromEntries(Object.entries(opts.other).map(([r, m]) => [r, makeRoleBinding("qwen", m)])),
+        },
+      },
+    };
+  }
+  return { formatVersion: ROLES_FORMAT_VERSION, activeProfile: "default", profiles };
 }
 
 // ---- fragment content --------------------------------------------------------------------
@@ -84,6 +88,28 @@ test("buildQwenModelGradesFragment: a bound id outside the kit's catalog is stil
   const { grades, unrecognizedIds } = buildQwenModelGradesFragment(rolesWith({ worker: "openai:totally-bogus-model" }));
   assert.ok("openai:totally-bogus-model" in grades);
   assert.deepEqual(unrecognizedIds, ["totally-bogus-model"]);
+});
+
+// role-model-bindings-review-refactor, remainder E: mirrors codex-config-fragment.test.ts's
+// "acceptance #6 on the check side" — a binding that lives only in a NON-active profile must never
+// leak into the printed fragment or its divergence check (the same defect #6 shape codex's own
+// catalog already had fixed; this file's grades builder still had it until this change).
+test("acceptance #6 on the check side (qwen): a stale binding in a NON-active profile produces no grade and no warning", () => {
+  const data = rolesWith({ orchestrator: "openai:ds-deepseek-v4-pro" }, { other: { reserve: "openai:go-qwen3.8-max" } });
+  const { grades, unrecognizedIds } = buildQwenModelGradesFragment(data);
+  assert.deepEqual(grades, { "openai:ds-deepseek-v4-pro": "openai:ds-deepseek-v4-pro" });
+  assert.deepEqual(unrecognizedIds, []);
+  const { warnings } = findQwenConfigDivergence(
+    {
+      modelProviders: buildQwenModelProvidersFragment(),
+      providerProtocol: buildQwenProviderProtocolFragment(),
+      security: { outboundCorrelation: QWEN_OUTBOUND_CORRELATION_FRAGMENT },
+      agents: { modelGrades: grades },
+      model: { name: "ds-deepseek-v4-pro" },
+    },
+    data,
+  );
+  assert.deepEqual(warnings, []);
 });
 
 // ---- model.name reacts to the orchestrator's own binding (task qwen-model-name-into-fragment) --
