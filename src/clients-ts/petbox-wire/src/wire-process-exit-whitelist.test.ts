@@ -85,15 +85,13 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
       "--help) fires during CLI argv parsing, strictly before any network call in that " +
       "subcommand's flow — nothing pending to race against.",
   },
-  {
-    file: "wire.ts",
-    anchor: "model set: REFUSED",
-    verdict: "safe",
-    reason:
-      "runModelSet (`model set` subcommand): fully synchronous (`function runModelSet(argv): " +
-      "void`) and local-file-only (loadRoles/setRoleModel) — no fetch anywhere in this function, " +
-      "so no pending socket can exist to race against.",
-  },
+  // NOTE — `model set: REFUSED` used to be listed here, justified by runModelSet being "fully
+  // synchronous and local-file-only". Stage B2 of role-model-bindings-review-refactor made that
+  // false: runModelSet now awaits checkModelValidity, which for `--agent codex` performs a live
+  // `GET <provider>/models` round trip BEFORE the refusal branch is reached. That is exactly the
+  // libuv socket-teardown race this guard exists to prevent, so both of that function's refusal
+  // paths were converted to `exitWith(WIRE_EXIT.truthfulness); return;` and the entry is gone.
+  // This guard caught the regression by construction — do not re-add the entry.
   {
     file: "wire.ts",
     anchor: "failed to persist ${envVar} to user-scope env",
