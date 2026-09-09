@@ -76,8 +76,13 @@ export function findQwenModelEntry(id: string): QwenModelEntry | undefined {
  * binding-provider.ts's deriveQwenProvider reads that LIVE file first (via
  * qwen-live-providers.ts) and only calls this function when the live file cannot be read at all.
  * Kept for that fallback case (an unconfigured machine still gets a provider for the ids the kit
- * itself seeds) and because model-registration-check.ts still wants an offline id list. See the
- * provider-key doc comment above for why the provider cannot be read off the binding value itself.
+ * itself seeds) and because qwen-config-fragment.ts's PRINTED fragment still needs an offline id
+ * list to render. NOT used by model-registration-check.ts any more (task
+ * qwen-model-registration-check-live-source, 09.09.2026): that check now reads the LIVE
+ * settings.json via qwen-live-providers.ts, the same source this file's own header explains
+ * binding-provider.ts prefers, for the identical reason — this static map cannot see an
+ * operator-registered id. See the provider-key doc comment above for why the provider cannot be
+ * read off the binding value itself.
  */
 export function qwenProviderKeyFor(id: string): string | undefined {
   if (QWEN_DEEPSEEK_MODELS.some((m) => m.id === id)) return QWEN_PROVIDER_KEY_DEEPSEEK;
