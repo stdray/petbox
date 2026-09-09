@@ -219,6 +219,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      # This job also runs on the `deploy` tag push (checked out DETACHED), which is exactly
+      # the case npm-wire-publish's own step below documents: GitVersion falls back to a
+      # synthetic "no-branch" branch/label instead of "main"/"ci", stamping the built image's
+      # APP_VERSION (Docker task below, via GitVersion) with the broken label — observed live
+      # 2026-09-09, `/version` returned `0.1.0--no-branch-.1+2371` right after a deploy tag
+      # move. `deploy` only ever tags the current tip of `main` (doc/guides/deploy.md Step 5:
+      # `git tag -f deploy` from a local main checkout), so this is safe by the same
+      # construction npm-wire-publish relies on. Also safe on this job's OTHER trigger (a push
+      # to `main` itself): `git checkout -B main` while already on `main` just resets the
+      # branch to the same commit, a no-op.
+      - name: Give GitVersion a branch to resolve (tag checkout is otherwise detached HEAD)
+        run: git checkout -B main
+
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
@@ -402,6 +415,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Same detached-HEAD GitVersion fix as npm-wire-publish/publish below — this job only
+      # ever runs on the `nuget` tag push, checked out DETACHED, so without this GitVersion
+      # falls back to a synthetic "no-branch" branch/label instead of "main"/"ci" and stamps
+      # the pushed NuGet package with the broken version. See npm-wire-publish's own step for
+      # the full rationale.
+      - name: Give GitVersion a branch to resolve (tag checkout is otherwise detached HEAD)
+        run: git checkout -B main
+
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
@@ -435,6 +456,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      # Same detached-HEAD GitVersion fix as npm-wire-publish/publish below — this job only
+      # ever runs on the `npm` tag push, checked out DETACHED, so without this GitVersion
+      # falls back to a synthetic "no-branch" branch/label instead of "main"/"ci" and stamps
+      # the published TS SDK with the broken version. See npm-wire-publish's own step for the
+      # full rationale.
+      - name: Give GitVersion a branch to resolve (tag checkout is otherwise detached HEAD)
+        run: git checkout -B main
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -532,6 +561,14 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      # Same detached-HEAD GitVersion fix as npm-wire-publish/publish below — this job only
+      # ever runs on the `pypi` tag push, checked out DETACHED, so without this GitVersion
+      # falls back to a synthetic "no-branch" branch/label instead of "main"/"ci" and stamps
+      # the published Python SDK with the broken version. See npm-wire-publish's own step for
+      # the full rationale.
+      - name: Give GitVersion a branch to resolve (tag checkout is otherwise detached HEAD)
+        run: git checkout -B main
 
       - uses: actions/setup-dotnet@v5
         with:
