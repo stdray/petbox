@@ -475,6 +475,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # A tag push checks out `refs/tags/npm-wire` DETACHED — no branch context. GitVersion
+      # (build.cs's TsWirePack) needs a branch matching GitVersion.yml's `main:` regex to apply
+      # the `ci` label; without one it silently falls back to a synthetic "no-branch" branch
+      # name, producing an invalid-looking, semver-LOWER version (observed 2026-09-09: tag moved
+      # to fbade48c, published as `0.1.0--no-branch-.1-2350` instead of `0.1.0-ci.2350`, and that
+      # broken string outranked nothing — it landed BELOW the previous `0.1.0-ci.2323` in semver
+      # precedence, "-no-branch-" < "ci" lexically — while still getting the `latest` dist-tag).
+      # This is NOT specific to a stale tag: it reproduced even though the tag pointed at the
+      # exact commit the operator intended, because further commits had already landed on `main`
+      # by the time this job's checkout ran (a 38-minute gap here) — so detecting "am I still
+      # exactly the tip of origin/main" is not race-free. `npx dotnet-gitversion` 6.4.0's local
+      # /overrideconfig only supports `tag-prefix`, not a branch override, so the fix is at the
+      # git level: force a local branch named `main` onto the checked-out commit BEFORE any Cake
+      # target runs. This is exactly true by construction — `npm-wire` only ever tags a commit
+      # reachable from `main` (doc/agent-wiring.md §4) — and is independent of whether
+      # origin/main has since moved further; verified locally (dotnet-gitversion 6.4.0) that this
+      # flips BranchName from "(no branch)" to "main" and the label from "no-branch" to "ci" with
+      # no other change.
+      - name: Give GitVersion a branch to resolve (tag checkout is otherwise detached HEAD)
+        run: git checkout -B main
+
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
