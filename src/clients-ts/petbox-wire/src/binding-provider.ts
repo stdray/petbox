@@ -29,10 +29,12 @@
 import { qwenProviderKeyFor } from "./qwen-model-registry.ts";
 
 /**
- * `model_provider` the kit pins into `$CODEX_HOME/config.toml` (wire.ts's codex config step,
- * owner decision 2026-09-08: codex runs entirely on the direct DeepSeek subscription until a
- * routing proxy exists). Exported so wire.ts and this module share ONE literal — a second copy
- * is exactly the drift this refactor is closing.
+ * The `model_provider` this kit declares for codex — one per PROCESS, in the config fragment the
+ * kit prints for `$CODEX_HOME/config.toml` (owner decision 2026-09-08: codex runs entirely on the
+ * direct DeepSeek subscription until a routing proxy exists; since wire-codex-config-print-fragment
+ * the kit prints that config rather than writing it, which changes who applies the value, not what
+ * it is). codex-config-fragment.ts's CODEX_DEFAULT_PROVIDER aliases this one literal — a second
+ * copy is exactly the drift this refactor is closing.
  */
 export const CODEX_MODEL_PROVIDER = "deepseek";
 
@@ -157,7 +159,8 @@ function deriveCodexProvider(model: string): ProviderDerivation {
   return {
     provider: CODEX_MODEL_PROVIDER,
     reason:
-      `codex pins ONE model_provider per process ('${CODEX_MODEL_PROVIDER}', written by this kit) — ` +
+      `codex pins ONE model_provider per process ('${CODEX_MODEL_PROVIDER}', the value this kit ` +
+      `declares in the config fragment it prints) — ` +
       `the binding value '${model.trim()}' is a bare slug that cannot express a provider`,
   };
 }

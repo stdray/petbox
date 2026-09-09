@@ -18,9 +18,11 @@
 // the next run from home killed them again — a stable, invisible flip-flop.
 //
 // GUARD 2 — the scatter. Under roleScope=project the same cwd fallback means "render 5 roles x 3
-// harness layouts into whatever directory this shell was sitting in". That is the friend's-machine
-// case (no ~/.petbox/wire.json, so the scope defaults to project): 15 files land somewhere nothing
-// maintains, one of the three trees (`~/.opencode/agent`) is not even a path any harness reads.
+// harness layouts into whatever directory this shell was sitting in" — e.g. a machine that has
+// explicitly opted back into project scope (`--roles=project`/`~/.petbox/wire.json`; a FRESH
+// machine now defaults to "user" instead, since 2026-09-09, so it no longer reaches this guard by
+// default): 15 files land somewhere nothing maintains, one of the three trees (`~/.opencode/agent`)
+// is not even a path any harness reads.
 //
 // What these tests deliberately do NOT do is touch the real profile. Every run below gets its own
 // temp HOME via env (USERPROFILE/HOME, with HOMEDRIVE/HOMEPATH cleared so Windows' homedir() can
@@ -251,7 +253,7 @@ test("apply (project scope) from a NON-GIT directory: REFUSED, exit 1, nothing w
   const homeDir = freshDir("petbox-scatter-home-");
   const looseDir = freshDir("petbox-scatter-loose-"); // deliberately NOT a repository
   try {
-    const { out, status } = runWire(["apply"], homeDir, looseDir);
+    const { out, status } = runWire(["apply", "--roles=project"], homeDir, looseDir);
 
     assert.equal(status, WIRE_EXIT.hard, `a refusal must be visible in the exit code. Full output:\n${out}`);
     assert.match(out, /REFUSED/, `Full output:\n${out}`);
@@ -289,7 +291,7 @@ test("BOUNDARY: a FRESH CLONE (a git tree, not in the registry) still applies ex
   const homeDir = freshDir("petbox-freshclone-home-");
   const cloneDir = makeGitWorkingTree(freshDir("petbox-freshclone-proj-"));
   try {
-    const { out, status } = runWire(["apply"], homeDir, cloneDir);
+    const { out, status } = runWire(["apply", "--roles=project"], homeDir, cloneDir);
 
     assert.equal(status, WIRE_EXIT.ok, `a fresh clone must keep working. Full output:\n${out}`);
     assert.doesNotMatch(out, /REFUSED/, `the scatter guard must not fire on a real checkout. Full output:\n${out}`);
@@ -319,7 +321,7 @@ test("BOUNDARY: a SUBDIRECTORY of a checkout is not a fallback — root climbs t
     const deep = join(cloneDir, "src", "nested");
     mkdirSync(deep, { recursive: true });
 
-    const { out, status } = runWire(["apply"], homeDir, deep);
+    const { out, status } = runWire(["apply", "--roles=project"], homeDir, deep);
 
     assert.equal(status, WIRE_EXIT.ok, `Full output:\n${out}`);
     assert.doesNotMatch(out, /REFUSED/, `Full output:\n${out}`);
