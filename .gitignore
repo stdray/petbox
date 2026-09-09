@@ -113,9 +113,12 @@ secrets.local.env
 !.claude/skills/
 .claude/skills/*
 
-# opencode (personal)
+# opencode / codex / qwen (personal — workspace-scope config petbox-wire writes per
+# machine: absolute STABLE-mirror paths, resolved provider/model bindings; not shared)
 .opencode/
 .agents/
+.codex/
+.qwen/
 
 # Playwright MCP artifacts
 .playwright-mcp/
