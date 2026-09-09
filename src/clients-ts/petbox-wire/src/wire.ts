@@ -3230,20 +3230,58 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // (this task's brief). No hook here is ever marked `"async": true` — critical for SessionStart
   // specifically (qwen-spec.md §3: the async path returns no `additionalContext` at all before
   // the first model request is built) — so `async` is simply never set on any of these.
+  //
+  // `shell: "powershell"` on win32 (task qwen-stop-hook-path): measured live against the
+  // installed 0.23.0 clone's own getShellConfigForHook (chunk-4F7GQGXB.js:151533-151551) — with
+  // no `shell` set, a hook falls through to getShellConfiguration(), which on a plain Windows
+  // shell (no MSYSTEM/git-bash markers — the owner's actual interactive terminal) resolves to
+  // cmd.exe (argsPrefix ["/d","/s","/c"]). Reproduced the EXACT node spawn(executable,
+  // [...argsPrefix, command], {shell:false}) call qwen's hookRunner makes with our real
+  // `node "<STABLE path>"` command string: node's own Windows argv auto-quoting (triggered by the
+  // command string's embedded space+quotes) double-escapes the inner `"` as `\"`, which cmd.exe's
+  // OWN command-line parser does NOT unescape (cmd has no backslash-quote convention) — the
+  // literal `\"` survives into the parsed token, landing INSIDE the path passed to node, which
+  // then resolves it relative to cwd because the corrupted string no longer starts with a bare
+  // drive letter. That is the reported symptom byte-for-byte: `Cannot find module
+  // 'C:\"C:\...\qwen-push-session.ts"'`. Forcing `shell: "powershell"` picks
+  // getShellConfigForHook's OTHER branch (executable "powershell", argsPrefix
+  // ["-Command"]) — powershell.exe's own argv parsing DOES follow the standard
+  // CommandLineToArgvW/MSVCRT convention that node's escaping targets, so it correctly recovers
+  // the original string and hands node the clean, unquoted path. Measured working end-to-end with
+  // the identical spawn call (exit 0, target script's process.argv came back byte-exact, no cwd-
+  // relative corruption). Non-Windows is untouched: getShellConfigForHook maps any non-"powershell"
+  // `shell` value to bash, and the default (no `shell` key) is already bash's own argsPrefix
+  // ["-c"], which does not exhibit this corruption — the mis-escape is a cmd.exe-specific gap in
+  // node's Windows quoting, not a general shell one.
   const ensureQwenHook = (event: string, command: string, opts: { matcher?: string; timeoutMs: number }) => {
+    const wantShell = process.platform === "win32" ? "powershell" : undefined;
     const groups: any[] = Array.isArray(qwenSettings.hooks[event]) ? qwenSettings.hooks[event] : [];
-    const already = groups.some(
-      (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
+    // Match on command AND shell, not command alone: an existing group installed before this
+    // fix (no `shell` field, quietly broken on win32 — see this closure's header comment) must
+    // NOT be treated as "already present" on a re-run, or the owner's already-installed, already-
+    // corrupt hook survives every future `wire` forever. Stale-shell groups for this exact
+    // command are dropped so the corrected handler below replaces them (this is idempotent
+    // upgrade repair, not routine pruning — pruneStaleKitHooks above only drops commands whose
+    // PATH no longer matches STABLE, so it never touches this case).
+    for (const g of groups) {
+      if (!Array.isArray(g?.hooks)) continue;
+      g.hooks = g.hooks.filter((h: any) => !(h?.command === command && h?.shell !== wantShell));
+    }
+    qwenSettings.hooks[event] = groups.filter(
+      (g) => !(g && Array.isArray(g.hooks) && g.hooks.length === 0),
+    );
+    const already = qwenSettings.hooks[event].some(
+      (g: any) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command && h?.shell === wantShell),
     );
     if (already) {
       log(`[8/10] qwen hook ${event} already present — skipped.`);
       return;
     }
     const handler: any = { type: "command", command, timeout: opts.timeoutMs };
+    if (wantShell !== undefined) handler.shell = wantShell;
     const group: any = { hooks: [handler] };
     if (opts.matcher !== undefined) group.matcher = opts.matcher;
-    groups.push(group);
-    qwenSettings.hooks[event] = groups;
+    qwenSettings.hooks[event].push(group);
     log(`[8/10] qwen hook ${event} added.`);
   };
 
