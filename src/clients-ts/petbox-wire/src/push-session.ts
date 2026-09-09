@@ -15,7 +15,7 @@
 import { pushTranscript } from "./append.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { resolveProject } from "./registry.ts";
-import { buildMessages, collectSubagentRuns, type Msg } from "./transcript.ts";
+import { buildMessages, collectMainRun, collectSubagentRuns, type MainRun, type Msg } from "./transcript.ts";
 // Observed role binding is stamped inside pushTranscript (X-PetBox-Session-Meta via
 // resolveObservedBinding) — server stores observation only; local roles.json is SoT.
 // subagentRuns (the FACT of who ran on what, vs. roleBinding's INTENTION) is collected here
@@ -74,8 +74,21 @@ async function main(): Promise<void> {
     } catch {
       subagentRuns = [];
     }
-    // No spawns this turn → omit the key entirely (never an empty array on the wire).
-    const extraMeta = subagentRuns.length > 0 ? { subagentRuns } : undefined;
+    // The main loop's OWN model, from the harness's assistant records (transcript.ts's
+    // collectMainRun) — the fact behind roleBinding's intention, and the thing the self-intro
+    // line was until now the only record of. Best-effort, exactly like subagentRuns.
+    let mainRun: MainRun | undefined;
+    try {
+      mainRun = await collectMainRun(tp);
+    } catch {
+      mainRun = undefined;
+    }
+    // No spawns this turn → omit the key entirely (never an empty array on the wire); same for
+    // an unrecoverable main model (omitted, never guessed).
+    const extraMeta =
+      subagentRuns.length > 0 || mainRun
+        ? { ...(subagentRuns.length > 0 ? { subagentRuns } : {}), ...(mainRun ? { mainRun } : {}) }
+        : undefined;
 
     // Fresh process each turn → no remembered cursor (null): pushTranscript guesses an
     // idempotent overlap window and self-heals off the server's structured gap reject.
