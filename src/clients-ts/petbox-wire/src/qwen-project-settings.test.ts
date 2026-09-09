@@ -290,10 +290,17 @@ test("a full `wire` writes skills.directories into the PROJECT settings and neve
         `USER level, so this project's skills would appear in every other project on the machine. ` +
         `Got: ${JSON.stringify(userSettings["skills"])}. Full output:\n${out}`,
     );
-    // The user-scope MCP entry is a separate, deliberate thing and must be untouched by this.
-    assert.ok(
-      asObject(asObject(userSettings["mcpServers"], "mcpServers")["petbox"], "petbox")["httpUrl"],
-      "the user-scope mcpServers.petbox entry must still be written",
+    // This assertion used to be its exact opposite ("the user-scope mcpServers.petbox entry must
+    // still be written"). Owner decision 09.09.2026, «Нет — убрать глобальную запись»: the kit
+    // writes NO petbox MCP entry at user scope any more — it was machine-global while the env var
+    // it named was per-project, so a bare `qwen` outside any wired root silently talked to
+    // whichever project was wired last. Kept here rather than deleted so this test still states
+    // what the user-scope file must NOT contain; the full case (including that a pre-existing
+    // entry is left alone rather than repointed) is wire-qwen-user-scope-no-mcp.test.ts.
+    assert.equal(
+      "mcpServers" in userSettings,
+      false,
+      `${userSettingsPath} must have NO "mcpServers" key. Got: ${JSON.stringify(userSettings["mcpServers"])}. Full output:\n${out}`,
     );
   } finally {
     await fake.close();

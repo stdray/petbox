@@ -1,6 +1,9 @@
-// Unit tests for qwen-mcp-entry.ts — the shared `mcpServers.petbox` entry shape wire.ts writes
-// at BOTH user scope ($QWEN_HOME/settings.json, installGlobalHooks) and workspace scope
-// (<project>/.qwen/settings.json, writeProjectFiles). Regression coverage for two live-smoke
+// Unit tests for qwen-mcp-entry.ts — the `mcpServers.petbox` entry shape wire.ts writes at
+// WORKSPACE scope (<project>/.qwen/settings.json, writeProjectFiles). It is no longer written at
+// user scope at all (owner decision 09.09.2026 — see qwen-mcp-entry.ts's header and
+// wire-qwen-user-scope-no-mcp.test.ts, which pins that absence end-to-end). The
+// "user-scope and workspace-scope callers" case below is kept as a pure determinism check on the
+// builder, not as a claim that two callers still exist. Regression coverage for two live-smoke
 // defects (task wire-support-codex-qwen):
 //   - qwen-dead-default-model's sibling — qwen-mcp-json-shadows-workspace-entry: the entry must
 //     carry an UNRESOLVED `${VAR}` placeholder (never a literal key), because a literal key here

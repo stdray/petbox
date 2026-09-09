@@ -473,9 +473,23 @@ overridable by `QWEN_HOME`), all written by the same `installGlobalHooks` step: 
 (Stop **and** StopFailure both point at `qwen-push-session.ts` — Qwen's `SessionStart`/`Stop`
 have the SAME `{matcher?, hooks:[...]}` shape Claude Code uses, no separate hooks file and no
 trust-hash mechanism the way codex needs one, because qwen's folder-trust default is disabled and
-a user-scope hook is always honored regardless — qwen-spec.md §1/§3), a `mcpServers.petbox` entry
-for the owner's interactive use OUTSIDE any wired directory, `security.auth.selectedType =
-"openai"`, and `agents.modelGrades`.
+a user-scope hook is always honored regardless — qwen-spec.md §1/§3) and
+`security.auth.selectedType = "openai"`.
+
+**No `mcpServers.petbox` entry is written at user scope** (owner decision 09.09.2026, verbatim
+«Нет — убрать глобальную запись»). It used to be, "for the owner's interactive use outside any
+wired directory", and that was a cross-project leak: the file is machine-global while the
+`${ENV_VAR}` it names is per-project, so the entry could only ever point at ONE project and every
+later `wire` run silently repointed it. Measured on the owner's own box, it held
+`${PETBOX_SMOKE_API_KEY}` — the last `wire` had run from a throwaway smoke directory — and that
+variable was set and VALID (`whoami` → project `smoke`, scopes including `tasks:write`,
+`memory:write`, `data:write`), so a bare `qwen` started outside a wired root was reading and
+WRITING a foreign project's boards and memory with nothing warning about it. **Accepted cost,
+decided deliberately: qwen launched outside a wired project has no PetBox boards and no memory at
+all.** The kit only stopped *writing* — it does not prune an entry already present (a user-scope
+entry may be the owner's own); the one stale entry an older kit had left behind was removed by
+hand, once, with a dated backup. Pinned by `wire-qwen-user-scope-no-mcp.test.ts`, which fails on
+both halves: a new entry appearing, and an existing one being repointed.
 
 Model routing goes through a provider-keyed mechanism built for TWO distinguishable providers
 (task wire-support-codex-qwen, live smoke on 0.23.0 with two local listeners), but as of the
@@ -510,15 +524,15 @@ subscription serves only `deepseek-v4-pro`, `deepseek-v4-flash` and `deepseek-v4
 so there is no third family available for it. This is a known, accepted cost until the routing
 proxy lands.
 
-**Inside a wired project**, that user-scope `mcpServers.petbox` entry is NOT what governs — a
-second, WORKSPACE-scope entry is (defect qwen-mcp-json-shadows-workspace-entry, live smoke
-wire-support-codex-qwen, root-caused against the qwen-code source under
-`packages/cli/src/config/`): the project's own `.mcp.json` (written for claude-code, above) has
-no `${ENV_VAR}` resolution at all (`mcpJson.ts`'s loader never calls `resolveEnvVarsInObject`) and
-would send the API-key header out **literally**, so PetBox 401s — and `.mcp.json` OUTRANKS the
-user-scope entry by name (`assembleMcpServers`'s precedence: user/default < project `.mcp.json` <
-workspace/system < `--mcp-config`), so on a wired project the correct user-scope entry never even
-gets a chance to run. Both `wire` (`writeProjectFiles`) and `apply` therefore merge a THIRD
+**Inside a wired project**, the entry that governs is the WORKSPACE-scope one (defect
+qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen, root-caused against the
+qwen-code source under `packages/cli/src/config/`): the project's own `.mcp.json` (written for
+claude-code, above) has no `${ENV_VAR}` resolution at all (`mcpJson.ts`'s loader never calls
+`resolveEnvVarsInObject`) and would send the API-key header out **literally**, so PetBox 401s —
+and `.mcp.json` OUTRANKS anything at user scope by name (`assembleMcpServers`'s precedence:
+user/default < project `.mcp.json` < workspace/system < `--mcp-config`), which is the second
+reason a user-scope entry was never the one doing the work here even back when the kit wrote one.
+Both `wire` (`writeProjectFiles`) and `apply` therefore merge the
 `mcpServers.petbox` entry into the project's own `<root>/.qwen/settings.json`
 (`SettingScope.Workspace` — the file `Storage.getWorkspaceSettingsPath()` resolves to), which both
 outranks `.mcp.json` and IS env-var-resolved. One writer for both commands
@@ -529,13 +543,11 @@ approval hash bakes in the *resolved*, i.e. literal-key, config, so a later key 
 silently invalidate a baked-in approval): headless callers pass `qwen --approval-mode yolo`
 (bypasses the gate outright, already the default for this kit's own headless wrappers) and an
 interactive user gets a one-time approval prompt on first launch (the closing NOTE `wire` prints
-names this explicitly). Because the USER-scope entry is machine-global, it can only reference ONE
-project's `${ENV_VAR}` at a time — the last project a `wire` ran for — but that only matters for a
-`qwen` session run OUTSIDE any wired project directory; inside one, the project's own
-workspace-scope entry always resolves its own correct `${ENV_VAR}` regardless of what the
-user-scope entry currently points at.
+names this explicitly). Each project's workspace-scope entry resolves its own correct
+`${ENV_VAR}`, so wiring a second project never disturbs the first — the machine-global
+cross-project hazard the user-scope entry carried does not exist at this scope.
 
-Both the user- and workspace-scope `mcpServers.petbox` entries set `alwaysLoadTools: true`: qwen
+The workspace-scope `mcpServers.petbox` entry sets `alwaysLoadTools: true`: qwen
 defers MCP tools to `tool_search` by default, declaring them to the model eagerly only when the
 active model's id matches `/deepseek-(v3|v4|chat)/i` (`cli/src/config/config.ts`). Every role binds
 a `ds-deepseek-v4-*` id today, which in fact matches that regex — but the flag is set

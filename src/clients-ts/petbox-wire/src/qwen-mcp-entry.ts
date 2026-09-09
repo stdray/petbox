@@ -1,8 +1,13 @@
-// Qwen Code's `mcpServers.petbox` entry shape — the ONE place both of wire.ts's writers build it
-// (installGlobalHooks's user-scope `$QWEN_HOME/settings.json` entry, and writeProjectFiles's
-// workspace-scope `<project>/.qwen/settings.json` entry — defect
-// qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen), so the two can
-// never drift apart the way a duplicated object literal risks. wire.ts runs main() at module top
+// Qwen Code's `mcpServers.petbox` entry shape — built in exactly ONE place, and now consumed by
+// exactly one writer: writeProjectFiles's WORKSPACE-scope `<project>/.qwen/settings.json` entry
+// (defect qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen). The second
+// consumer — installGlobalHooks's USER-scope `$QWEN_HOME/settings.json` entry — is GONE (owner
+// decision 09.09.2026, «Нет — убрать глобальную запись»: that entry was machine-global while the
+// env var it named was per-project, so it silently pointed a bare `qwen` at whatever project was
+// wired last; see installGlobalHooks's own header and wire-qwen-user-scope-no-mcp.test.ts). The
+// module stays because workspace scope still needs the shape stated once, in one place, and
+// because the field notes below are the root-caused record of WHY each field is what it is.
+// wire.ts runs main() at module top
 // level and must never be imported by a side module (see its own file header), so this lives
 // here — a plain module a test file can import directly, same reason codex-toml.ts exists.
 //
