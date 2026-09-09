@@ -85,28 +85,17 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
       "--help) fires during CLI argv parsing, strictly before any network call in that " +
       "subcommand's flow — nothing pending to race against.",
   },
-  {
-    file: "wire.ts",
-    anchor: "model set: REFUSED",
-    verdict: "safe",
-    reason:
-      "runModelSet (`model set` subcommand, single-cell path): the function is `async` (it awaits " +
-      "refreshDerivedArtifactsAfterRolesWrite on the SUCCESS path, task " +
-      "role-model-bindings-review-refactor remainder E), but this refusal branch returns before " +
-      "that first `await` — loadRoles/setRoleModel are local-file-only, no fetch has run yet, so " +
-      "no pending socket can exist to race against at this exit.",
-  },
-  {
-    file: "wire.ts",
-    anchor: "model set (slice): REFUSED",
-    verdict: "safe",
-    reason:
-      "runModelSet (`model set` subcommand, --all-roles/--all-agents/--all-profiles slice path, " +
-      "task role-model-bindings-review-refactor stage D): same reasoning as the single-cell " +
-      "anchor above — setRoleModelSlice validates every cell against loadRoles's in-memory data, " +
-      "purely local, before this branch's `process.exit`; the function's later `await` only runs " +
-      "on the success path, after saveRoles, never here.",
-  },
+  // NOTE — `model set: REFUSED` used to be listed here, justified by runModelSet being "fully
+  // synchronous and local-file-only". Stage B2 of role-model-bindings-review-refactor made that
+  // false: runModelSet now awaits checkModelValidity, which for `--agent codex` performs a live
+  // `GET <provider>/models` round trip BEFORE the refusal branch is reached. That is exactly the
+  // libuv socket-teardown race this guard exists to prevent, so both of that function's
+  // single-cell refusal paths were converted to `exitWith(WIRE_EXIT.truthfulness); return;` and
+  // the entry is gone. Stage D's SLICE refusal path (`model set (slice): REFUSED`) sits behind the
+  // exact same awaited live-gate loop (one checkModelValidity call per distinct agent, always run
+  // before either write branch) — it was written directly against `exitWith` from the start, so
+  // it never needed an entry here either. This guard caught the single-cell regression by
+  // construction — do not re-add either entry.
   {
     file: "wire.ts",
     anchor: "model reset: REFUSED",
@@ -115,8 +104,10 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
       "runModelReset (`model reset` subcommand, single-cell path, task " +
       "role-model-bindings-review-refactor stage D): resetRoleModelToKitDefault only reads " +
       "HARNESS_ROLE_MODEL_SEEDS (an in-memory constant) and the already-loaded roles.json data — " +
-      "no fetch anywhere before this exit, and the function's `await` (the same post-write " +
-      "refresh) only runs on the success path below this refusal.",
+      "unlike `model set`, `reset` writes the kit's OWN known-good default rather than a " +
+      "user-supplied id, so it never runs the live checkModelValidity gate at all; no fetch " +
+      "anywhere before this exit, and the function's `await` (the post-write refresh) only runs " +
+      "on the success path below this refusal.",
   },
   {
     file: "wire.ts",

@@ -182,6 +182,7 @@ import {
 } from "./registry.ts";
 import {
   agentLookupKeys,
+  CANONICAL_AGENT_IDS,
   canonicalAgentId,
   exportRolesBootstrap,
   findBindingProviderInconsistencies,
@@ -209,6 +210,13 @@ import {
   type RolesFile,
   type SliceCell,
 } from "./roles.ts";
+import {
+  checkModelValidity,
+  checkRolesModelValidity,
+  createModelSourceCache,
+  formatModelValidity,
+  type ModelValidity,
+} from "./model-validity.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
@@ -316,6 +324,7 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire doctor [--offline]\n" +
     "       npx petbox-wire layers [dir...]\n" +
     "       npx petbox-wire roles\n" +
+    "       npx petbox-wire roles --check-models\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
     "       npx petbox-wire model set <role|--all-roles> <model> [--agent <id>|--all-agents]\n" +
@@ -453,6 +462,11 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             explicit directories in explicit mode) — never confused with 0 or 1.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
+    "roles --check-models\n" +
+    "             Check EVERY binding in roles.json against its harness's LIVE model source and\n" +
+    "             print the three-way tally. READ-ONLY: writes nothing, gates nothing, always exits\n" +
+    "             0. Costs one network round trip (codex) and one `opencode models` spawn, once for\n" +
+    "             the whole sweep — which is why it is opt-in rather than part of plain `roles`.\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
     "             new machine). Offline.\n" +
     "profile use  Set activeProfile in ~/.petbox/roles.json (creates an empty profile shell if missing).\n" +
@@ -463,26 +477,36 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             harness id (e.g. a droid custom:* id in a claude-code binding — the 2026-07-12\n" +
     "             incident shape) is refused unless --allow-unknown-model forces it through. For\n" +
     "             claude-code, name a TIER ALIAS (sonnet|opus|haiku|fable|inherit) — the Task tool's\n" +
-    "             model parameter is a closed enum of exactly those. --all-roles/--all-agents/\n" +
-    "             --all-profiles write the SAME model across a SLICE of the matrix instead of one\n" +
-    "             cell — all-or-nothing (any refused cell refuses the whole slice, nothing partial\n" +
-    "             is ever written) and printed cell by cell so it is visible what changed. Right\n" +
-    "             after writing, refreshes the codex/qwen printed fragments and (when this\n" +
-    "             machine's roleScope is `user`) the per-harness role files themselves — no separate\n" +
-    "             `wire`/`apply` needed for that; a `project`-scope machine still needs `apply`.\n" +
-    "             Offline. Prints `next: petbox-wire apply` as a safety net either way.\n" +
+    "             model parameter is a closed enum of exactly those. A SECOND gate then asks the\n" +
+    "             harness's LIVE source whether the identifier is known at all (qwen: settings.json\n" +
+    "             modelProviders; droid: built-in catalog + customModels; codex: /models of the\n" +
+    "             active model_provider; opencode: `opencode models`), with THREE outcomes: valid;\n" +
+    "             invalid (warns and writes — that source describes THIS machine, not the model's\n" +
+    "             existence); and COULD NOT VERIFY (source unreachable: no key, not on PATH, no\n" +
+    "             config yet), which never masquerades as invalid and never blocks. Not offline for\n" +
+    "             codex/opencode. --all-roles/--all-agents/--all-profiles write the SAME model across\n" +
+    "             a SLICE of the matrix instead of one cell — the live gate runs ONCE per distinct\n" +
+    "             agent in the slice (shared cache), and the write is all-or-nothing: any agent the\n" +
+    "             live gate blocks refuses the WHOLE slice, nothing partial is ever written; a\n" +
+    "             non-blocking outcome (invalid-but-warn, unverified) never blocks any of it. Printed\n" +
+    "             cell by cell so it is visible what changed. Right after writing, refreshes the\n" +
+    "             codex/qwen printed fragments and (when this machine's roleScope is `user`) the\n" +
+    "             per-harness role files themselves — no separate `wire`/`apply` needed for that; a\n" +
+    "             `project`-scope machine still needs `apply`. Prints `next: petbox-wire apply` as a\n" +
+    "             safety net either way.\n" +
     "model unset  Clear one role's binding for --agent (default: claude-code), or a whole slice with\n" +
     "             --all-roles/--all-agents/--all-profiles. A fair-empty binding a role can hold on\n" +
     "             purpose (e.g. reserve, when the machine lacks access to the tier it would\n" +
     "             otherwise be bound to) — the role then inherits the session model, and apply warns\n" +
-    "             about that honestly. Same post-write refresh as `model set`. Offline. Prints\n" +
-    "             `next: petbox-wire apply`.\n" +
+    "             about that honestly. No live gate (nothing is being validated). Same post-write\n" +
+    "             refresh as `model set`. Offline. Prints `next: petbox-wire apply`.\n" +
     "model reset  Give one role's binding (or a whole slice) back to the kit's own current default —\n" +
     "             stamps origin `kit`, UNCONDITIONALLY overwriting even an `owner` binding (unlike\n" +
     "             the passive reseed on `apply`/`wire`, which only ever refreshes a cell already\n" +
     "             labelled `kit`). A cell the kit has never seeded (e.g. opencode) is reported, never\n" +
-    "             invented. Same post-write refresh as `model set`. Offline. Prints `next: petbox-\n" +
-    "             wire apply`.";
+    "             invented. No live gate (the value is the kit's own known-good default, not\n" +
+    "             user-supplied). Same post-write refresh as `model set`. Offline. Prints `next:\n" +
+    "             petbox-wire apply`.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -1864,10 +1888,21 @@ async function applyToRegistryEntry(
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
-function runRoles(argv: string[]): void {
-  // roles | roles export  (+ optional --help)
+async function runRoles(argv: string[]): Promise<void> {
+  // roles | roles export | roles --check-models  (+ optional --help)
   const sub = argv[1];
   if (sub === "--help" || sub === "-h") usage(0);
+  if (sub === "--check-models") {
+    for (let i = 2; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+      if (a === "--help" || a === "-h") usage(0);
+      console.error(`roles --check-models: unexpected argument: ${a}`);
+      usage();
+    }
+    await runRolesCheckModels();
+    return;
+  }
   if (sub === "export") {
     for (let i = 2; i < argv.length; i++) {
       const a = argv[i];
@@ -1894,6 +1929,42 @@ function runRoles(argv: string[]): void {
     return;
   }
   log(formatResolvedBinding(data));
+}
+
+/**
+ * `roles --check-models` — run the stage-B2 live gate over EVERY binding in roles.json and print
+ * the three-way tally. READ-ONLY by construction: it loads the file, consults each harness's
+ * source, and writes nothing anywhere.
+ *
+ * Opt-in rather than folded into plain `roles` because the sweep costs one network round trip and
+ * one `opencode models` spawn (~2s total, once, thanks to the shared ModelSourceCache) — a price
+ * a plain listing should not silently pay.
+ *
+ * Exit code is deliberately 0 even with INVALID rows: this verb REPORTS, it does not gate. The
+ * gate lives on the write path (`model set`), which is where a mistake can still be prevented.
+ */
+async function runRolesCheckModels(): Promise<void> {
+  const data = loadRoles();
+  const rows = await checkRolesModelValidity(data, { cache: createModelSourceCache() });
+  if (rows.length === 0) {
+    log(`roles: no bindings in ${rolesPath()} — nothing to check.`);
+    return;
+  }
+  const counts = { valid: 0, invalid: 0, unverified: 0 };
+  for (const row of rows) {
+    counts[row.validity.verdict]++;
+    if (row.validity.verdict === "valid") continue;
+    log(`${row.profile} / ${row.agent} / ${row.role} = ${row.validity.model}`);
+    log(`  ${formatModelValidity(row.validity).split("\n").join("\n  ")}`);
+  }
+  log(
+    `roles --check-models: ${rows.length} bindings — ${counts.valid} valid, ${counts.invalid} invalid, ` +
+      `${counts.unverified} could not be verified.`,
+  );
+  log(
+    `  "valid" means the catalog knows the identifier. It is NOT proof the model works: reach ` +
+      `through the active provider and a working credential are separate questions.`,
+  );
 }
 
 // profile use <name> — set activeProfile; create empty shell if missing.
@@ -1981,18 +2052,51 @@ function parseModelSliceFlags(
   return { agent, allAgents, profile, allProfiles, allowUnknownModel };
 }
 
+// Print the SAME three-outcome wording runModelSet has used since stage B2, once per agent this
+// gate ran against — the wording itself is unchanged; stage D only adds the loop and the
+// optional agent prefix for the slice form ("written unverified" must never read as approval,
+// and "does not know this id" must never read as an unreachable source).
+function logModelValidity(validity: ModelValidity, agentPrefix?: string): void {
+  const p = agentPrefix ? `${agentPrefix}: ` : "";
+  if (validity.verdict === "invalid") {
+    log(`model: ${p}WARN — the live source says this id is not valid: ${validity.detail}`);
+    log(`  source: ${validity.source}`);
+    log(`  Written anyway (this harness's source describes THIS machine, not the model's existence).`);
+  } else if (validity.verdict === "unverified") {
+    log(`model: ${p}COULD NOT VERIFY — ${validity.detail}`);
+    log(`  source: ${validity.source}`);
+    log(`  This is NOT a claim that the model is wrong; the source could not be consulted.`);
+  } else {
+    log(`model: ${p}verified — ${validity.detail}`);
+    log(`  source: ${validity.source}`);
+    log(`  Known to that catalog. That is NOT proof the model works: reachability through the`);
+    log(`  active provider and a working credential are separate questions.`);
+  }
+}
+
 // model set/unset/reset — the tool verbs for a role→model binding (spec binding-set-by-tool):
 // before `model set` existed at all, ~/.petbox/roles.json could ONLY be written by hand-editing
 // an undocumented JSON format, and hand-editing it wrong is exactly how the 2026-07-12 incident (a
-// droid id in the claude-code block) happened. Validation reuses harness-models.ts's
-// classifyModel via roles.ts's setRoleModel — this file does not re-derive the policy.
+// droid id in the claude-code block) happened.
+//
+// TWO gates run for `model set`, and they answer DIFFERENT questions — do not merge them:
+//   1. setRoleModel's shape gate (harness-models.ts's classifyModel) — "is this even the right
+//      harness's kind of id?", offline, and the only thing that existed before stage B2.
+//   2. checkModelValidity's LIVE gate (model-validity.ts, stage B2) — "does the catalog that
+//      would have to resolve this id actually know it?", against this machine's real
+//      qwen/droid/codex/opencode sources. Three outcomes; `unverified` (source unreachable) never
+//      becomes `invalid` and never blocks, because a missing key is not evidence about a model.
 //
 // `--all-roles`/`--all-agents`/`--all-profiles` (task role-model-bindings-review-refactor, stage
 // D, defect #5) turn a single-cell edit into a SLICE edit — a whole harness across every role, one
 // role across every harness, or every profile at once — reusing the exact same single-cell
 // primitives per cell (roles.ts's setRoleModelSlice/unsetRoleModelSlice/resetRoleModelSlice), so
-// there is no second validation path and no second CLI grammar: the same --agent/--profile flags
-// this file already had just grow all-of-them counterparts.
+// there is no second offline validation path and no second CLI grammar. The live gate (2) runs
+// ONCE per DISTINCT canonical agent the slice touches, sharing one ModelSourceCache — the model
+// value is the SAME literal string across the whole slice, so per-cell repeats would just be the
+// same network round trip N times over for no new information. `unset`/`reset` need no live gate
+// at all: `unset` validates nothing, and `reset` writes the kit's OWN known-good default, never a
+// user-supplied id.
 async function runModel(argv: string[]): Promise<void> {
   const sub = argv[1];
   if (sub === "--help" || sub === "-h") usage(0);
@@ -2030,6 +2134,34 @@ async function runModelSet(argv: string[]): Promise<void> {
   }
   const flags = parseModelSliceFlags(argv, 4, "model set", { allowUnknownModelFlag: true });
 
+  // Every distinct canonical agent this invocation touches — one entry for the single-cell path,
+  // up to CANONICAL_AGENT_IDS.length for --all-agents. The live gate runs once per entry, sharing
+  // one cache, BEFORE anything is loaded or written: a binding refused here never reaches the file
+  // at all.
+  const agents = flags.allAgents ? [...CANONICAL_AGENT_IDS] : [canonicalAgentId(flags.agent)];
+  const validityCache = createModelSourceCache();
+  const validityByAgent = new Map<string, ModelValidity>();
+  for (const agent of agents) {
+    validityByAgent.set(agent, await checkModelValidity(agent, model, { cache: validityCache }));
+  }
+  const blocked = agents.filter((a) => {
+    const v = validityByAgent.get(a);
+    return v !== undefined && v.verdict === "invalid" && v.blocking && !flags.allowUnknownModel;
+  });
+  if (blocked.length > 0) {
+    for (const a of blocked) {
+      const v = validityByAgent.get(a);
+      if (v) console.error(`  - ${a}: ${v.detail}\n    source: ${v.source}`);
+    }
+    console.error(
+      `model set: REFUSED — the live source says '${model}' is not valid for ${blocked.length} of ` +
+        `${agents.length} agent(s) in this request. Pass --allow-unknown-model to write it anyway ` +
+        `if you are certain.`,
+    );
+    exitWith(WIRE_EXIT.truthfulness);
+    return;
+  }
+
   const before = loadRoles();
 
   if (!allRoles && !flags.allAgents) {
@@ -2045,18 +2177,22 @@ async function runModelSet(argv: string[]): Promise<void> {
     const profileName = (flags.profile ?? "").trim() || before.activeProfile;
     if (!result.ok) {
       console.error(`model set: REFUSED — ${result.reason}`);
-      process.exit(WIRE_EXIT.truthfulness);
+      exitWith(WIRE_EXIT.truthfulness);
+      return;
     }
     saveRoles(result.data);
     log(`model: set ${canon}/${roleArg} = ${model} (profile "${profileName}")`);
     if (result.warning) log(`model: warn — ${result.warning}`);
+    const v = validityByAgent.get(canon);
+    if (v) logModelValidity(v);
     log(`  wrote ${rolesPath()}`);
     await refreshDerivedArtifactsAfterRolesWrite("model set");
     log(`next: petbox-wire apply`);
     return;
   }
 
-  // Slice form: same model, every cell the selector expands to.
+  // Slice form: same model, every cell the selector expands to. The live gate already ran above
+  // (once per distinct agent) — this only re-runs the OFFLINE shape gate per cell, same as ever.
   const sel = {
     profiles: flags.allProfiles ? ("all" as const) : [flags.profile?.trim() || before.activeProfile],
     agents: flags.allAgents ? ("all" as const) : [flags.agent],
@@ -2067,12 +2203,16 @@ async function runModelSet(argv: string[]): Promise<void> {
   const result = setRoleModelSlice(before, sel);
   if (!result.ok) {
     // Per-cell detail first, the anchored summary line immediately before the exit (kept within
-    // wire-process-exit-whitelist.test.ts's 3-line lookback window on purpose).
+    // wire-process-exit-whitelist.test.ts's 3-line lookback window on purpose). This exit can be
+    // preceded by the live-gate's network round trip above, so it ends the run through exitWith,
+    // never a raw process.exit — the same libuv socket-teardown reasoning stage B2 applied to the
+    // single-cell path.
     for (const o of result.outcomes) {
       if (!o.ok) console.error(`  - ${cellLabel(o.cell)}: ${o.reason}`);
     }
     console.error(`model set (slice): REFUSED — ${result.reason}`);
-    process.exit(WIRE_EXIT.truthfulness);
+    exitWith(WIRE_EXIT.truthfulness);
+    return;
   }
   saveRoles(result.data);
   log(`model set (slice): ${result.changes.length} cell(s) set to "${model}":`);
@@ -2081,6 +2221,10 @@ async function runModelSet(argv: string[]): Promise<void> {
   }
   for (const c of result.changes) {
     if (c.warning) log(`model: warn — ${cellLabel(c.cell)}: ${c.warning}`);
+  }
+  for (const agent of agents) {
+    const v = validityByAgent.get(agent);
+    if (v) logModelValidity(v, agents.length > 1 ? agent : undefined);
   }
   log(`  wrote ${rolesPath()}`);
   await refreshDerivedArtifactsAfterRolesWrite("model set");
@@ -4092,7 +4236,7 @@ async function main(): Promise<void> {
     return;
   }
   if (isRolesCommand(argv)) {
-    runRoles(argv);
+    await runRoles(argv);
     return;
   }
   if (isProfileCommand(argv)) {

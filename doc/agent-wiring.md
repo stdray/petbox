@@ -274,9 +274,10 @@ none at all. They are dispatched **before** arg parsing, so they never require a
 | `petbox-wire status [--offline]` | Print FACT, not a verdict, per role × harness: materialized artifact path, bound model, and where that model came from (roster / seed / none). Plus a four-pillar summary: definition layers (which are present, and which supplied each field), roster completeness, memory canon size, and skill-file drift. Reads the same resolvers `apply`/`doctor` use; never gates, never writes. `--offline` skips the canon/skill-template network calls (the definition resolve has none). A broken layer is REPORTED here — named, by absolute path — rather than thrown: `status` always exits **0** unless it itself crashes. |
 | `petbox-wire doctor [--offline]` | Gate (exit code is significant): resolves the agent definition from the file cascade (base < user < project), then runs `checkTruthfulness(resolvedDefinition, harness, resolveAgentRoles(roles, harness))` for every id in `HARNESS_IDS` and prints OK or each violation. It gates the **resolved** definition — the one `apply` would compile — not the bare base layer, and it prints the layers plus their per-field provenance so you can see which is which. A **broken layer is a hard failure here** (exit 1, the file named by absolute path), for the same reason it is in `apply`: doctor exists to gate what apply would build. Also reports skill-file drift (materialized vs. kit templates: in sync / behind / foreign-BLOCKED), the session-banner budget margin, and a tail of `~/.petbox/wire.log`. Network checks are skipped with an explicit reason when the server is unreachable. `--offline` skips them up front instead: the skill-file-drift and banner-budget checks — both of which need a live workspace probe — are not attempted. The definition resolve and the truthfulness gate are unaffected, because neither touches a network. The local binding is not *required* — but where one exists it is fed into the gate, so a binding this harness cannot resolve is caught here. (The built-in-vs-server definition drift check that used to live here is gone: there is no second document to drift from.) |
 | `petbox-wire roles` | Print `activeProfile`, the file's format version, and the resolved role→model tree from `~/.petbox/roles.json` — each row as `<role>: <model>  [<provider>, set by <kit\|owner>]`. Offline. An empty store exits **0** with a message — it never invents a model. |
+| `petbox-wire roles --check-models` | Run the live model-identifier gate (§2h) over **every** binding in `roles.json` and print the three-way tally, listing each non-`valid` row. Strictly read-only: writes nothing, gates nothing, always exits **0** — reporting is its whole job; the gate that can still prevent a mistake lives on the write path. Costs one provider round trip (codex) and one `opencode models` spawn for the WHOLE sweep, not per binding, which is why it is opt-in rather than folded into plain `roles`. |
 | `petbox-wire roles export` | Write a bootstrap copy of `roles.json` to **stdout** (no secrets); pipe it to a file on a new machine. Offline. |
 | `petbox-wire profile use <name>` | Set `activeProfile` in `~/.petbox/roles.json`, creating an empty profile shell if the name is new. Offline; compiles nothing — re-run `apply` afterwards. |
-| `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding into `~/.petbox/roles.json`. Validated against `harness-models.ts`'s three-tier policy (known/unknown write, unknown warns; a recognizably foreign harness id is refused unless `--allow-unknown-model`). Stamps `origin: "owner"` and derives `provider` — from then on the kit never rewrites that cell (§2g). Offline; compiles nothing — prints `next: petbox-wire apply`. |
+| `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding into `~/.petbox/roles.json`. Validated against `harness-models.ts`'s three-tier policy (known/unknown write, unknown warns; a recognizably foreign harness id is refused unless `--allow-unknown-model`). Stamps `origin: "owner"` and derives `provider` — from then on the kit never rewrites that cell (§2g). A **second, live** gate then asks the harness's own machine-local or network source whether the identifier is known at all, with three outcomes (§2h). **Not offline** for `--agent codex` (a provider round trip) or `--agent opencode` (an `opencode models` spawn); offline for the other three. Compiles nothing — prints `next: petbox-wire apply`. |
 | `petbox-wire model unset <role> [--agent <id>] [--profile <name>]` | Remove a role→model binding for the given agent/profile from `~/.petbox/roles.json`. Offline; compiles nothing — re-run `apply` afterwards. |
 
 ## 2b. Exit codes
@@ -717,9 +718,64 @@ an edit is never silently reverted on the next run.
 | claude-code | `anthropic` | tier aliases and `claude-*` ids are one namespace; the grammar has no provider segment at all |
 
 The label is checked against the value it describes on every `wire`/`apply`
-(`findBindingProviderInconsistencies`) — internal consistency only. Checking either against LIVE
-machine config (qwen's `modelProviders`, codex's `/models`, `opencode models`, droid's
-`customModels`) is a separate, later stage and is deliberately absent here.
+(`findBindingProviderInconsistencies`) — internal consistency only, value vs. label. Checking the
+identifier itself against LIVE machine config is the separate gate in §2h.
+
+## 2h. The live model-identifier gate — three outcomes, never two
+
+`model-validity.ts`. Four of the five harnesses have an `open` model policy in `harness-models.ts`,
+so before this gate `model set --agent qwen worker ds-deepsek-v4-pro` (one letter short) was
+accepted in silence — and qwen does not fail on an unresolvable id either, it quietly falls back to
+the FIRST registered model of the protocol. A typo therefore moved a role to a different model with
+no error anywhere, which is the acceptance this closes.
+
+**The verdicts, and the line between them:**
+
+| verdict | meaning |
+|---|---|
+| `valid` | the source was consulted and it knows this identifier |
+| `invalid` | the source was consulted, it is complete for its own id space, and this identifier is not in it |
+| `unverified` | the source could **not** be consulted at all — no key, no binary on `PATH`, no config file yet, timeout, unparseable answer. It says **nothing** about the model. |
+
+`unverified` is a first-class third outcome and must never be folded into either neighbour.
+Collapsing it into `invalid` is the defect recorded as
+`apply-reports-missing-key-as-unregistered-project-and-exits-0` (a missing credential reported as a
+fact about the subject), and for codex it is unavoidable at the transport level: a **missing** key
+and a **wrong** key both answer `401` in ~0.4s, so the status code cannot tell them apart.
+Collapsing it into a warning nobody reads is the original defect this gate exists to close.
+
+**Sources, cost and who blocks** (each measured on the owner's machine, 2026-09-09):
+
+| harness | source | cost | on `invalid` |
+|---|---|---|---|
+| claude-code | the kit's own alias list (`harness-models.ts`) | ~0, offline | **REFUSES the write** |
+| qwen | `$QWEN_HOME/settings.json` → `modelProviders[].id` | ~0, local file | warns and writes |
+| droid | droid's compiled-in catalog (a snapshot of CLI 0.170.0) + `~/.factory/settings.json` → `customModels[].id` | ~0, local file | warns and writes |
+| codex | `GET <base_url>/models` of the **active** `model_provider` from `$CODEX_HOME/config.toml` | ~0.6-0.7s, network + provider key | warns and writes |
+| opencode | `opencode models` | ~1.1s, subprocess | warns and writes |
+
+claude-code is the only blocking harness because it is the only one where the kit holds positive,
+free, offline knowledge. Its concrete-`claude-*`-id tier stays **non-blocking** — that is the
+deliberate 2026-07-13 decision (a closed catalog of concrete ids false-blocked genuinely new
+models), and in this module's vocabulary that tier is exactly `unverified`. For the other four the
+source describes THIS machine, and an absent or empty one is a legitimate "not configured yet": the
+owner's normal order is bind roles first, configure providers second.
+
+> [!IMPORTANT]
+> No source here proves the model **works** — only that some catalog knows the identifier. The
+> live counter-example is a codex role bound to `grok-4.6`: real and served by `opencode-go`, while
+> the active `model_provider` is `deepseek`, which has never heard of it (observation
+> `codex-reserve-bound-to-unreachable-grok`). Existence and reach are different questions, and
+> every message the gate emits says which one it answered.
+
+Cost is paid once per process, not once per binding: a `ModelSourceCache` memoizes codex's round
+trip and opencode's spawn, so `roles --check-models` over 75 bindings costs one of each (~2s
+measured). It is deliberately **not** persisted to disk — a stale cached catalog reported as a live
+fact is the same confusion in a new place.
+
+Reading `~/.factory/settings.json` is done for `customModels[].id` and nothing else: every entry in
+that array also carries the owner's provider credential in plaintext, and no other field is ever
+copied into a return value, a message or a log line (asserted in `model-validity.test.ts`).
 
 ## 3. Migrating a legacy (per-project copy) repo
 
