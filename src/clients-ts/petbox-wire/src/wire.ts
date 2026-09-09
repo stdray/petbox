@@ -172,7 +172,14 @@ import {
 } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
-import { readRegistry, registryPath, resolveProject, type RegistryEntry } from "./registry.ts";
+import {
+  detectKeysStoreDrift,
+  formatKeyDrift,
+  readRegistry,
+  registryPath,
+  resolveProject,
+  type RegistryEntry,
+} from "./registry.ts";
 import {
   agentLookupKeys,
   canonicalAgentId,
@@ -718,6 +725,25 @@ async function runDoctor(argv: string[]): Promise<void> {
   } else {
     log(`doctor: wire.log — ${wireLogTail.length} most recent trace line(s) (${wireLogPath()}):`);
     for (const line of wireLogTail) log(`  ${line}`);
+  }
+
+  // keys.json vs environment drift (card keys-json-doctor-drift-check): local-only, no network —
+  // runs unconditionally, --offline included. Bypasses resolveProject's env-first fallback (see
+  // registry.ts's comment on detectKeysStoreDrift) so a healthy `doctor` actually proves the FILE
+  // is in sync — not just that THIS process's env resolved fine, which is all the old truthfulness
+  // loop below ever checked. Silent when nothing has drifted: a positive "in sync" line would be
+  // noise on every wired machine on every run, whether or not any project's key ever changed —
+  // never gates the exit code, same taxonomy as every other doctor drift check above. Auto-syncs
+  // whatever it found stale (requirement: apply AND doctor refresh the file now, not only `wire`),
+  // so the same key does not keep re-warning on every later run.
+  const keyDrifts = detectKeysStoreDrift();
+  if (keyDrifts.length > 0) {
+    console.error(
+      `doctor: keys.json — ${keyDrifts.length} key(s) were out of sync with the environment ` +
+        `(values never printed; comparison is by hash only; now auto-synced from the environment):`,
+    );
+    for (const d of keyDrifts) console.error(`  - ${formatKeyDrift(d)}`);
+    syncKeysStoreFromEnv();
   }
 
   let hadTruthfulnessBlock = false;
@@ -1315,6 +1341,26 @@ async function runApply(argv: string[]): Promise<void> {
       "apply --all: WRITING to every registered project directory (no --dry-run). " +
         "Re-run with --dry-run first if you have not already previewed this.",
     );
+  }
+
+  // keys.json auto-sync (card keys-json-doctor-drift-check): before this, only a full `wire` run
+  // ever wrote the file, so a plain env-var rotation left it stale until the next full wire. A
+  // --dry-run must leave the machine exactly as it found it (same rule the roleScope persistence
+  // below follows) — skip the write there, but still say what WOULD have synced so a preview is
+  // not silently different from the real run that follows it.
+  if (dryRun) {
+    const wouldSync = detectKeysStoreDrift();
+    if (wouldSync.length > 0) {
+      log(
+        `apply: --dry-run — keys.json has ${wouldSync.length} key(s) out of sync with the ` +
+          `environment (values never printed); a real run would sync them now.`,
+      );
+    }
+  } else {
+    const synced = syncKeysStoreFromEnv();
+    if (synced.length > 0) {
+      log(`apply: keys.json — synced ${synced.length} key(s) from the environment (values never printed).`);
+    }
   }
 
   // Seed a fresh machine's roster BEFORE compiling — apply now refuses any declared role with
@@ -2162,6 +2208,33 @@ function writeKeyToStore(name: string, value: string): void {
       /* best-effort */
     }
   }
+}
+
+// Auto-sync ~/.petbox/keys.json from the environment (card keys-json-doctor-drift-check): before
+// this, the file was written ONLY by a full `wire` run (writeKeyToStore above), so a plain env-var
+// rotation left it stale until the next full wire — sometimes indefinitely. Runs on `apply` and
+// `doctor` too now, not only full `wire`. Copies env → file ONLY (matches registry.ts's env-first
+// precedence, registry.ts:152); never touches an envVar unset in this process, so it can never
+// clobber a good file value with nothing. Never logs or returns key material — only the envVar
+// names it touched, for the caller to name in its own log line.
+function syncKeysStoreFromEnv(): string[] {
+  const drifts = detectKeysStoreDrift();
+  if (drifts.length === 0) return [];
+  const path = keysStorePath();
+  const store = readJson(path) ?? {};
+  for (const d of drifts) {
+    const v = process.env[d.envVar];
+    if (v) store[d.envVar] = v;
+  }
+  writeJson(path, store);
+  if (process.platform !== "win32") {
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return drifts.map((d) => d.envVar);
 }
 
 // The agent MCP configs (.mcp.json `${VAR}`, opencode `{env:VAR}`, droid `${VAR}`) resolve the

@@ -9,6 +9,7 @@
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, type-only
 // imports, zero deps.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -54,7 +55,7 @@ export function registryPath(homeDir: string = homedir()): string {
 // (so a machine wired via `npx petbox-wire` works without a user-scope env var). Never throws.
 // `homeDir` is injectable (tests only; every real caller uses the default) so the Class A/Б
 // split above is unit-testable without touching the real ~/.petbox.
-function readKeyStore(envVar: string, homeDir: string = homedir()): string {
+export function readKeyStore(envVar: string, homeDir: string = homedir()): string {
   const path = petboxKeysJsonPath(homeDir);
   let raw: string;
   try {
@@ -163,4 +164,55 @@ export function resolveProject(dir: string, homeDir: string = homedir()): Resolv
     wireLog("registry", `resolveProject(dir=${dir}) unexpected failure — ${e instanceof Error ? e.message : String(e)}`, homeDir);
     return null;
   }
+}
+
+// --- keys.json drift detection (card keys-json-doctor-drift-check) -----------------------------
+//
+// Measured 2026-09-09 (see work/keys-env-refresh-path's comment): ~/.petbox/keys.json is written
+// ONLY by a full `wire` run; a plain env-var rotation never reaches it, so the file can go stale
+// indefinitely. That alone is mostly harmless because resolveProject above is env-first (line 152)
+// — but `doctor` resolves a key the SAME env-first way, so a healthy `doctor` run proves nothing
+// about whether the FILE (what a process with no env var, e.g. a fresh sandboxed child, actually
+// gets) is in sync. This section exists to compare the two paths directly, bypassing the env-first
+// fallback, so drift is caught instead of surfacing later as a silent 401 in some other process.
+//
+// Hard rule: never read, log, or return key material — only per-envVar hash equality. A 12-hex-char
+// SHA-256 prefix is enough to prove/disprove equality without ever reconstructing the value.
+
+export type KeyDrift = {
+  readonly envVar: string;
+  readonly kind: "missing-in-file" | "differs";
+};
+
+function shortHash(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 12);
+}
+
+// Only envVars actually SET in this process are checked: when the env var is unset, the file is
+// the only source there is (that's the fallback working as designed), so there is nothing to
+// diff. The failure mode this exists to catch — a process where the env var is missing gets a
+// stale file value — can only be OBSERVED from a different process that does have the env var,
+// which is exactly the case `doctor` runs in.
+export function detectKeysStoreDrift(homeDir: string = homedir()): KeyDrift[] {
+  const entries = readRegistry(homeDir);
+  const envVars = [...new Set(entries.map((e) => e.envVar))];
+  const drifts: KeyDrift[] = [];
+  for (const envVar of envVars) {
+    const envValue = process.env[envVar];
+    if (!envValue || envValue.trim().length === 0) continue;
+    const fileValue = readKeyStore(envVar, homeDir);
+    if (!fileValue) {
+      drifts.push({ envVar, kind: "missing-in-file" });
+    } else if (shortHash(envValue) !== shortHash(fileValue)) {
+      drifts.push({ envVar, kind: "differs" });
+    }
+  }
+  return drifts;
+}
+
+// Names the variable and the kind of divergence — never the value or any part of it.
+export function formatKeyDrift(d: KeyDrift): string {
+  return d.kind === "missing-in-file"
+    ? `${d.envVar} — set in the environment but never written to keys.json`
+    : `${d.envVar} — environment value differs from keys.json (file is stale)`;
 }
