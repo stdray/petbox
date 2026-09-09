@@ -351,7 +351,7 @@ public partial class Program
 		// never reached at all, or an expensive-and-off-target "noise boar" (>= MinDeliveredChars
 		// of body delivered at a mean fit below MaxAvgKRel over the trailing UsageWindowDays).
 		// Report-only by default (structured log of candidates); enforce is opt-in via config.
-		// MinAge default 30d. Rides the enrichment tick, self-throttled via a singleton clock
+		// MinAge default 90d. Rides the enrichment tick, self-throttled via a singleton clock
 		// (the job itself is scoped — a fresh instance per tick).
 		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
