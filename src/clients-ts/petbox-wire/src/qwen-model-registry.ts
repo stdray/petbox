@@ -68,9 +68,16 @@ export function findQwenModelEntry(id: string): QwenModelEntry | undefined {
 
 /**
  * The `modelProviders` key a bare qwen model id is registered under, or undefined when the kit
- * does not register that id at all (an operator-registered model this kit cannot see — honest
- * "unknown", never a guess). See the provider-key doc comment above for why this cannot be read
- * off the binding value itself.
+ * does not register that id at all.
+ *
+ * FALLBACK ONLY since defect `qwen-binding-provider-null-for-live-registered-id`: this static map
+ * cannot see an id an operator registers themselves (e.g. `ds-deepseek-v4-pro-max`), which is
+ * exactly the id space `$QWEN_HOME/settings.json` → `modelProviders` exists to describe.
+ * binding-provider.ts's deriveQwenProvider reads that LIVE file first (via
+ * qwen-live-providers.ts) and only calls this function when the live file cannot be read at all.
+ * Kept for that fallback case (an unconfigured machine still gets a provider for the ids the kit
+ * itself seeds) and because model-registration-check.ts still wants an offline id list. See the
+ * provider-key doc comment above for why the provider cannot be read off the binding value itself.
  */
 export function qwenProviderKeyFor(id: string): string | undefined {
   if (QWEN_DEEPSEEK_MODELS.some((m) => m.id === id)) return QWEN_PROVIDER_KEY_DEEPSEEK;
