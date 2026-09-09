@@ -58,11 +58,14 @@ function bareQwenModelId(model: string): string {
 /**
  * Union of every qwen role→model binding across every profile in an in-memory RolesFile — bare
  * ids, sorted, de-duplicated, `inherit`/empty skipped. Mirrors codex-model-catalog.ts's
- * `collectCodexRoleModelSlugsFromData` (same "why a pure, data-in function" reasoning: callers
- * already holding a RolesFile, e.g. the config-fragment renderer, reuse this without a redundant
- * disk read). This is what makes the printed `agents.modelGrades` fragment react to
- * `petbox-wire model set <role> <id> --agent qwen` — the fragment lists exactly the ids currently
- * bound, not a fixed catalog (task wire-print-config-fragment, acceptance #4).
+ * `collectCodexRoleModelSlugsFromData` (same "why a pure, data-in function" reasoning).
+ *
+ * KEPT UNION-WIDE ON PURPOSE, same reasoning as that codex counterpart's own doc comment: the
+ * PRINTED `agents.modelGrades` fragment moved to the active profile only
+ * (collectActiveQwenRoleModelIdsFromData below, task role-model-bindings-review-refactor,
+ * remainder E — the same defect #6 shape codex already had fixed). This union stays exported as
+ * the general-purpose "every qwen id the kit currently binds anywhere" query; narrowing it here
+ * would silently change the meaning of any other caller without anyone choosing that.
  */
 export function collectQwenRoleModelIdsFromData(data: RolesFile): string[] {
   const ids = new Set<string>();
@@ -83,4 +86,28 @@ export function collectQwenRoleModelIdsFromData(data: RolesFile): string[] {
  * (homeDir injectable for tests) and unions its qwen bindings. */
 export function collectQwenRoleModelIds(homeDir?: string): string[] {
   return collectQwenRoleModelIdsFromData(loadRoles(homeDir));
+}
+
+/**
+ * The qwen bare ids bound by the ACTIVE profile only — sorted, de-duplicated, `inherit`/empty
+ * skipped. This, NOT collectQwenRoleModelIdsFromData's all-profiles union above, is what the
+ * printed `agents.modelGrades` fragment is built from (task role-model-bindings-review-refactor,
+ * remainder E: the SAME defect #6 shape codex-model-catalog.ts's
+ * collectActiveCodexRoleModelSlugsFromData already fixed for codex was still live here — qwen
+ * reads exactly one settings.json, so a binding that lives in a profile nobody has selected has
+ * no business shaping the fragment it prints). An unknown/missing active profile yields `[]` —
+ * the caller's fallback then applies, exactly as for a roles.json with no qwen bindings at all.
+ */
+export function collectActiveQwenRoleModelIdsFromData(data: RolesFile): string[] {
+  const profile = data.profiles[data.activeProfile];
+  if (!profile) return [];
+  const key = agentLookupKeys("qwen").find((k) => k in profile.agents);
+  if (!key) return [];
+  const ids = new Set<string>();
+  for (const binding of Object.values(profile.agents[key]?.roles ?? {})) {
+    const model = binding.model?.trim();
+    if (!model || model === "inherit") continue;
+    ids.add(bareQwenModelId(model));
+  }
+  return [...ids].sort();
 }

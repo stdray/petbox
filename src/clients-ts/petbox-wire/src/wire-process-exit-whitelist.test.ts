@@ -90,9 +90,33 @@ const KNOWN_EXIT_SITES: readonly ExitSite[] = [
     anchor: "model set: REFUSED",
     verdict: "safe",
     reason:
-      "runModelSet (`model set` subcommand): fully synchronous (`function runModelSet(argv): " +
-      "void`) and local-file-only (loadRoles/setRoleModel) — no fetch anywhere in this function, " +
-      "so no pending socket can exist to race against.",
+      "runModelSet (`model set` subcommand, single-cell path): the function is `async` (it awaits " +
+      "refreshDerivedArtifactsAfterRolesWrite on the SUCCESS path, task " +
+      "role-model-bindings-review-refactor remainder E), but this refusal branch returns before " +
+      "that first `await` — loadRoles/setRoleModel are local-file-only, no fetch has run yet, so " +
+      "no pending socket can exist to race against at this exit.",
+  },
+  {
+    file: "wire.ts",
+    anchor: "model set (slice): REFUSED",
+    verdict: "safe",
+    reason:
+      "runModelSet (`model set` subcommand, --all-roles/--all-agents/--all-profiles slice path, " +
+      "task role-model-bindings-review-refactor stage D): same reasoning as the single-cell " +
+      "anchor above — setRoleModelSlice validates every cell against loadRoles's in-memory data, " +
+      "purely local, before this branch's `process.exit`; the function's later `await` only runs " +
+      "on the success path, after saveRoles, never here.",
+  },
+  {
+    file: "wire.ts",
+    anchor: "model reset: REFUSED",
+    verdict: "safe",
+    reason:
+      "runModelReset (`model reset` subcommand, single-cell path, task " +
+      "role-model-bindings-review-refactor stage D): resetRoleModelToKitDefault only reads " +
+      "HARNESS_ROLE_MODEL_SEEDS (an in-memory constant) and the already-loaded roles.json data — " +
+      "no fetch anywhere before this exit, and the function's `await` (the same post-write " +
+      "refresh) only runs on the success path below this refusal.",
   },
   {
     file: "wire.ts",

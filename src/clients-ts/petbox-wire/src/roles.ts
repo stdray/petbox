@@ -693,6 +693,251 @@ function kitBinding(harness: string, model: string): RoleBinding {
   return makeRoleBinding(harness, model, "kit");
 }
 
+// ---- slice operations: whole harness, one role across every harness, all profiles --------------
+// (task role-model-bindings-review-refactor, stage D, defect #5: the matrix was only editable one
+// CELL at a time — rebinding two harnesses across five roles cost ten `model set` calls). Every
+// slice op below is built from the SAME single-cell primitives above (setRoleModel/unsetRoleModel)
+// plus one new single-cell primitive (resetRoleModelToKitDefault) — no second validation path, no
+// second CLI grammar: `model set`/`model unset` grow `--all-roles`/`--all-agents`/`--all-profiles`
+// toggles beside their existing `--agent`/`--profile`, and `model reset` is the same shape.
+
+/** The canonical role roster this kit's own seeds know about — what `--all-roles` walks by
+ * default. Derived from DEFAULT_ROLE_MODEL_SEED (defined below) so it can never drift from the
+ * actual seed; the constant itself is only usable after that seed exists, hence its placement
+ * here rather than earlier in the file — see matrixRolesFor. */
+function canonicalRoleIds(): readonly string[] {
+  return Object.keys(DEFAULT_ROLE_MODEL_SEED);
+}
+
+/** One cell address in the profile×agent×role matrix, for reporting exactly what a slice op
+ * touched (the card's "покажи, что именно изменится"). */
+export type SliceCell = { readonly profile: string; readonly agent: string; readonly role: string };
+
+/**
+ * Resolve which roles a `--all-roles` slice touches for one (profile, agent) pair: the canonical
+ * roster UNION whatever roles this agent already has bound in this profile — so a slice both
+ * seeds the whole known roster on an agent that has none yet, AND still reaches a role the
+ * operator added by hand that the canonical roster does not name. Only ever adds cells to the
+ * slice, never removes one a plain reading of "this harness's roles" would expect.
+ */
+export function matrixRolesFor(data: RolesFile, profile: string, agent: string): readonly string[] {
+  const canon = canonicalAgentId(agent);
+  const roles = new Set<string>(canonicalRoleIds());
+  const p = data.profiles[profile];
+  if (p) {
+    const key = agentLookupKeys(canon).find((k) => k in p.agents);
+    if (key) for (const r of Object.keys(p.agents[key]?.roles ?? {})) roles.add(r);
+  }
+  return [...roles];
+}
+
+export type SliceSelector = {
+  readonly profiles: "all" | readonly string[];
+  readonly agents: "all" | readonly string[];
+  readonly roles: "all" | readonly string[];
+};
+
+/** Expand a slice selector into the concrete (profile, agent, role) cells it addresses. The "all"
+ * markers are resolved against `data`'s CURRENT shape (existing profiles; the canonical agent
+ * roster; matrixRolesFor per agent) — never against a fixed guess, so a slice never reaches a
+ * cell that could not otherwise exist and never touches a profile that does not exist yet. */
+export function expandSlice(data: RolesFile, sel: SliceSelector): readonly SliceCell[] {
+  const profiles = sel.profiles === "all" ? Object.keys(data.profiles) : sel.profiles;
+  const cells: SliceCell[] = [];
+  for (const profile of profiles) {
+    const agents =
+      sel.agents === "all" ? [...CANONICAL_AGENT_IDS] : sel.agents.map((a) => canonicalAgentId(a));
+    for (const agent of agents) {
+      const roles = sel.roles === "all" ? matrixRolesFor(data, profile, agent) : sel.roles;
+      for (const role of roles) cells.push({ profile, agent, role });
+    }
+  }
+  return cells;
+}
+
+export type SliceSetOutcome =
+  | {
+      readonly cell: SliceCell;
+      readonly ok: true;
+      readonly modelBefore: string | null;
+      readonly modelAfter: string;
+      readonly warning?: string;
+    }
+  | { readonly cell: SliceCell; readonly ok: false; readonly reason: string };
+
+export type SetRoleModelSliceResult =
+  | {
+      readonly ok: true;
+      readonly data: RolesFile;
+      // Only successful outcomes ever reach this branch — the refusal check below returns
+      // ok:false, with the full mixed outcome list, before this branch is ever constructed.
+      readonly changes: readonly Extract<SliceSetOutcome, { readonly ok: true }>[];
+    }
+  | { readonly ok: false; readonly reason: string; readonly outcomes: readonly SliceSetOutcome[] };
+
+/**
+ * `model set`'s slice form: the SAME model written to every cell the selector expands to. Reuses
+ * setRoleModel per cell — no second validation path. ALL-OR-NOTHING: if any cell in the slice
+ * would be refused (a foreign id without --allow-unknown-model), the WHOLE slice is refused and
+ * `data` comes back untouched — a bulk write is exactly the place a silent partial apply would be
+ * hardest to notice, so pass 1 validates every cell against the ORIGINAL data before pass 2
+ * commits any of them.
+ */
+export function setRoleModelSlice(
+  data: RolesFile,
+  sel: SliceSelector & { readonly model: string; readonly allowUnknownModel?: boolean },
+): SetRoleModelSliceResult {
+  const cells = expandSlice(data, sel);
+  if (cells.length === 0) {
+    return {
+      ok: false,
+      reason: "slice matched no cells (empty profile/agent/role selection)",
+      outcomes: [],
+    };
+  }
+  const outcomes: SliceSetOutcome[] = [];
+  for (const cell of cells) {
+    const r = setRoleModel(data, {
+      agent: cell.agent,
+      role: cell.role,
+      model: sel.model,
+      profile: cell.profile,
+      ...(sel.allowUnknownModel !== undefined ? { allowUnknownModel: sel.allowUnknownModel } : {}),
+    });
+    if (!r.ok) {
+      outcomes.push({ cell, ok: false, reason: r.reason });
+      continue;
+    }
+    const before = data.profiles[cell.profile]?.agents[cell.agent]?.roles[cell.role]?.model ?? null;
+    outcomes.push({ cell, ok: true, modelBefore: before, modelAfter: sel.model, ...(r.warning !== undefined ? { warning: r.warning } : {}) });
+  }
+  const refused = outcomes.filter((o): o is Extract<SliceSetOutcome, { ok: false }> => !o.ok);
+  if (refused.length > 0) {
+    return {
+      ok: false,
+      reason: `${refused.length} of ${cells.length} cell(s) in this slice were refused — nothing written`,
+      outcomes,
+    };
+  }
+  let current = data;
+  for (const cell of cells) {
+    const r = setRoleModel(current, {
+      agent: cell.agent,
+      role: cell.role,
+      model: sel.model,
+      profile: cell.profile,
+      ...(sel.allowUnknownModel !== undefined ? { allowUnknownModel: sel.allowUnknownModel } : {}),
+    });
+    if (r.ok) current = r.data;
+  }
+  // Every outcome is ok:true here — refused.length was already checked above — this filter only
+  // narrows the TYPE for the caller, it changes nothing about which entries are present.
+  const applied = outcomes.filter((o): o is Extract<SliceSetOutcome, { readonly ok: true }> => o.ok);
+  return { ok: true, data: current, changes: applied };
+}
+
+export type SliceUnsetOutcome = { readonly cell: SliceCell; readonly removed: boolean };
+export type UnsetRoleModelSliceResult = {
+  readonly data: RolesFile;
+  readonly changes: readonly SliceUnsetOutcome[];
+};
+
+/** `model unset`'s slice form: removes every cell the selector expands to. No-op-safe per cell,
+ * same as the single-cell primitive — an absent cell simply reports `removed: false`. */
+export function unsetRoleModelSlice(data: RolesFile, sel: SliceSelector): UnsetRoleModelSliceResult {
+  const cells = expandSlice(data, sel);
+  let current = data;
+  const changes: SliceUnsetOutcome[] = [];
+  for (const cell of cells) {
+    const r = unsetRoleModel(current, { agent: cell.agent, role: cell.role, profile: cell.profile });
+    current = r.data;
+    changes.push({ cell, removed: r.removed });
+  }
+  return { data: current, changes };
+}
+
+export type ResetRoleModelResult =
+  | {
+      readonly ok: true;
+      readonly data: RolesFile;
+      readonly modelBefore: string | null;
+      readonly modelAfter: string;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Reset one role's binding for `agent` (alias-aware) to the kit's OWN current default — origin
+ * "kit", UNCONDITIONALLY, even overwriting an "owner" binding. That override is the entire point
+ * of an explicit reset: the operator is choosing to hand this cell back to the kit, which is a
+ * different act from seedMissingRoleBindings only ever refreshing cells already labelled "kit".
+ * Refuses (does not write) when this (harness, role) has no kit default at all — e.g. opencode,
+ * or a role name the kit's seed does not know — because resetting to nothing would invent a
+ * value, which is exactly what this file exists to never do.
+ */
+export function resetRoleModelToKitDefault(
+  data: RolesFile,
+  opts: { readonly agent: string; readonly role: string; readonly profile?: string },
+): ResetRoleModelResult {
+  const canon = canonicalAgentId(opts.agent);
+  const role = opts.role.trim();
+  const seedModel = HARNESS_ROLE_MODEL_SEEDS[canon]?.[role];
+  if (seedModel === undefined) {
+    return {
+      ok: false,
+      reason: `harness '${canon}' role '${role}' has no kit default to reset to (the kit has never seeded this cell)`,
+    };
+  }
+  const profileName = opts.profile?.trim() || data.activeProfile;
+  const profiles: Record<string, Profile> = { ...data.profiles };
+  const existingProfile = profiles[profileName] ?? { agents: {} };
+  const existingAgent = existingProfile.agents[canon] ?? { roles: {} };
+  const before = existingAgent.roles[role]?.model ?? null;
+  profiles[profileName] = {
+    agents: {
+      ...existingProfile.agents,
+      [canon]: { roles: { ...existingAgent.roles, [role]: kitBinding(canon, seedModel) } },
+    },
+  };
+  return {
+    ok: true,
+    data: { formatVersion: data.formatVersion, activeProfile: data.activeProfile, profiles },
+    modelBefore: before,
+    modelAfter: seedModel,
+  };
+}
+
+export type SliceResetOutcome =
+  | { readonly cell: SliceCell; readonly ok: true; readonly modelBefore: string | null; readonly modelAfter: string }
+  | { readonly cell: SliceCell; readonly ok: false; readonly reason: string };
+
+export type ResetRoleModelSliceResult = {
+  readonly data: RolesFile;
+  readonly changes: readonly SliceResetOutcome[];
+};
+
+/**
+ * `model reset`'s slice form: every cell the selector expands to is reset to the kit's current
+ * default, origin "kit" (resetRoleModelToKitDefault). A cell with no kit default is SKIPPED, not
+ * an error for the whole slice: `--all-roles`/`--all-agents` deliberately walk a roster wider than
+ * any one harness's seed covers (opencode has none at all), and a bulk reset must not refuse just
+ * because part of its swept area is legitimately unseedable.
+ */
+export function resetRoleModelSlice(data: RolesFile, sel: SliceSelector): ResetRoleModelSliceResult {
+  const cells = expandSlice(data, sel);
+  let current = data;
+  const changes: SliceResetOutcome[] = [];
+  for (const cell of cells) {
+    const r = resetRoleModelToKitDefault(current, { agent: cell.agent, role: cell.role, profile: cell.profile });
+    if (r.ok) {
+      current = r.data;
+      changes.push({ cell, ok: true, modelBefore: r.modelBefore, modelAfter: r.modelAfter });
+    } else {
+      changes.push({ cell, ok: false, reason: r.reason });
+    }
+  }
+  return { data: current, changes };
+}
+
 // ---- format migration: v1 (no origin/provider) -> v2 -------------------------------------------
 
 // EVERY value this kit has EVER seeded, per harness and per role, oldest first.

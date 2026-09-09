@@ -26,7 +26,7 @@
 
 import { QWEN_ROLE_MODEL_SEED, resolveAgentRoles, type RolesFile } from "./roles.ts";
 import {
-  collectQwenRoleModelIdsFromData,
+  collectActiveQwenRoleModelIdsFromData,
   findQwenModelEntry,
   qwenRegisteredModelIds,
   QWEN_DEEPSEEK_MODELS,
@@ -89,16 +89,19 @@ export function buildQwenProviderProtocolFragment(): Record<string, string> {
 }
 
 /** `agents.modelGrades`, self-keyed (grade name == the value it resolves to), listing EXACTLY the
- * ids currently bound in roles.json — not the whole catalog. This is what makes the printed
- * fragment react to `petbox-wire model set <role> <id> --agent qwen` (acceptance #4): rebind a
- * role, the next `wire` run's printed grades change. Bound ids the catalog doesn't recognize
- * still get a self-keyed grade (a role can be pointed at a model the kit doesn't know about; the
- * grade gate needs the entry either way) but are called out separately for the caller to notice. */
+ * ids currently bound in roles.json's ACTIVE PROFILE — not the whole catalog, and not the union
+ * across every profile (task role-model-bindings-review-refactor, remainder E: the same defect #6
+ * shape codex's catalog already had fixed — a stale binding in a profile nobody has selected has
+ * no business shaping the fragment qwen actually reads). This is what makes the printed fragment
+ * react to `petbox-wire model set <role> <id> --agent qwen` (acceptance #4): rebind a role in the
+ * active profile, the next fragment print changes. Bound ids the catalog doesn't recognize still
+ * get a self-keyed grade (a role can be pointed at a model the kit doesn't know about; the grade
+ * gate needs the entry either way) but are called out separately for the caller to notice. */
 export function buildQwenModelGradesFragment(data: RolesFile): {
   readonly grades: Record<string, string>;
   readonly unrecognizedIds: readonly string[];
 } {
-  const ids = collectQwenRoleModelIdsFromData(data);
+  const ids = collectActiveQwenRoleModelIdsFromData(data);
   const grades: Record<string, string> = {};
   const unrecognizedIds: string[] = [];
   for (const id of ids) {

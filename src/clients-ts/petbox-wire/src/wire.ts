@@ -190,6 +190,8 @@ import {
   isEmptyRoles,
   loadRoles,
   loadRolesMigrated,
+  resetRoleModelSlice,
+  resetRoleModelToKitDefault,
   resolveAgentRoles,
   rolesPath,
   ROLES_FORMAT_VERSION,
@@ -197,12 +199,15 @@ import {
   saveRoles,
   seedMissingRoleBindings,
   setRoleModel,
+  setRoleModelSlice,
   unsetRoleModel,
+  unsetRoleModelSlice,
   useProfile,
   type RoleBindingMigration,
   type RoleBindingReattribution,
   type RoleBindingRefresh,
   type RolesFile,
+  type SliceCell,
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
@@ -313,8 +318,12 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
-    "       npx petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]\n" +
-    "       npx petbox-wire model unset <role> [--agent <id>] [--profile <name>]\n" +
+    "       npx petbox-wire model set <role|--all-roles> <model> [--agent <id>|--all-agents]\n" +
+    "                                 [--profile <name>|--all-profiles] [--allow-unknown-model]\n" +
+    "       npx petbox-wire model unset <role|--all-roles> [--agent <id>|--all-agents]\n" +
+    "                                   [--profile <name>|--all-profiles]\n" +
+    "       npx petbox-wire model reset <role|--all-roles> [--agent <id>|--all-agents]\n" +
+    "                                   [--profile <name>|--all-profiles]\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
     "Wire a project to PetBox: global hooks, MCP configs and skills. (prompt-RAG was removed; wire and\n" +
@@ -454,12 +463,26 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             harness id (e.g. a droid custom:* id in a claude-code binding — the 2026-07-12\n" +
     "             incident shape) is refused unless --allow-unknown-model forces it through. For\n" +
     "             claude-code, name a TIER ALIAS (sonnet|opus|haiku|fable|inherit) — the Task tool's\n" +
-    "             model parameter is a closed enum of exactly those. Offline. Prints `next: petbox-\n" +
-    "             wire apply` (this command never compiles artifacts itself).\n" +
-    "model unset  Clear one role's binding for --agent (default: claude-code). A fair-empty binding\n" +
-    "             a role can hold on purpose (e.g. reserve, when the machine lacks access to the\n" +
-    "             tier it would otherwise be bound to) — the role then inherits the session model,\n" +
-    "             and apply warns about that honestly. Offline. Prints `next: petbox-wire apply`.";
+    "             model parameter is a closed enum of exactly those. --all-roles/--all-agents/\n" +
+    "             --all-profiles write the SAME model across a SLICE of the matrix instead of one\n" +
+    "             cell — all-or-nothing (any refused cell refuses the whole slice, nothing partial\n" +
+    "             is ever written) and printed cell by cell so it is visible what changed. Right\n" +
+    "             after writing, refreshes the codex/qwen printed fragments and (when this\n" +
+    "             machine's roleScope is `user`) the per-harness role files themselves — no separate\n" +
+    "             `wire`/`apply` needed for that; a `project`-scope machine still needs `apply`.\n" +
+    "             Offline. Prints `next: petbox-wire apply` as a safety net either way.\n" +
+    "model unset  Clear one role's binding for --agent (default: claude-code), or a whole slice with\n" +
+    "             --all-roles/--all-agents/--all-profiles. A fair-empty binding a role can hold on\n" +
+    "             purpose (e.g. reserve, when the machine lacks access to the tier it would\n" +
+    "             otherwise be bound to) — the role then inherits the session model, and apply warns\n" +
+    "             about that honestly. Same post-write refresh as `model set`. Offline. Prints\n" +
+    "             `next: petbox-wire apply`.\n" +
+    "model reset  Give one role's binding (or a whole slice) back to the kit's own current default —\n" +
+    "             stamps origin `kit`, UNCONDITIONALLY overwriting even an `owner` binding (unlike\n" +
+    "             the passive reseed on `apply`/`wire`, which only ever refreshes a cell already\n" +
+    "             labelled `kit`). A cell the kit has never seeded (e.g. opencode) is reported, never\n" +
+    "             invented. Same post-write refresh as `model set`. Offline. Prints `next: petbox-\n" +
+    "             wire apply`.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -1383,6 +1406,13 @@ async function runApply(argv: string[]): Promise<void> {
   // never silently re-renders 90 project copies of roles the owner just moved into the profile.
   const { scope: roleScope, source: roleScopeSource } = resolveRoleScope(roleScopeFlag, homedir());
   log(`apply: roles → ${roleScope} scope (from ${roleScopeSource})`);
+  // Same fragment refresh model set/unset/reset/profile use trigger (task
+  // role-model-bindings-review-refactor, remainder E) — a standalone `apply` used to compile role
+  // files without ever re-checking whether the machine's codex/qwen printed fragments still match
+  // the roster it just compiled against. Once per invocation regardless of --all: the fragments
+  // are machine-scoped (codex/qwen home configs), not per-project.
+  printCodexRosterFragment("apply:");
+  printQwenRosterFragment("apply:");
   if (roleScopeFlag !== undefined && !dryRun) {
     // Persist the DECISION, not the run. A --dry-run must leave the machine exactly as it found
     // it, this file included — a preview that changed the policy would make the next real run
@@ -1867,7 +1897,7 @@ function runRoles(argv: string[]): void {
 }
 
 // profile use <name> — set activeProfile; create empty shell if missing.
-function runProfile(argv: string[]): void {
+async function runProfile(argv: string[]): Promise<void> {
   const sub = argv[1];
   if (sub === "--help" || sub === "-h") usage(0);
   if (sub !== "use") {
@@ -1893,124 +1923,275 @@ function runProfile(argv: string[]): void {
   log(
     `profile: activeProfile = "${next.activeProfile}"` +
       (created ? " (created empty profile shell)" : "") +
-      `\n  wrote ${rolesPath()}` +
-      `\n  re-run apply to rebuild artifacts (profile use does not compile).`,
+      `\n  wrote ${rolesPath()}`,
   );
+  await refreshDerivedArtifactsAfterRolesWrite("profile use");
 }
 
-// model set/unset — the tool verb for a role→model binding (spec binding-set-by-tool): before
-// this, ~/.petbox/roles.json could ONLY be written by hand-editing an undocumented JSON format,
-// and hand-editing it wrong is exactly how the 2026-07-12 incident (a droid id in the claude-code
-// block) happened. Validation reuses harness-models.ts's classifyModel via roles.ts's
-// setRoleModel — this file does not re-derive the policy.
-function runModel(argv: string[]): void {
+// A (profile, agent, role) cell as a one-line address, for slice-op output ("покажи, что именно
+// изменится" — the card's own predictability requirement).
+function cellLabel(cell: SliceCell): string {
+  return `${cell.profile}/${cell.agent}/${cell.role}`;
+}
+
+// Shared --agent/--all-agents/--profile/--all-profiles[/--allow-unknown-model] flag scan for
+// model set/unset/reset (task role-model-bindings-review-refactor, stage D) — ONE parser so the
+// three verbs cannot drift into three slightly different flag grammars.
+type ModelSliceFlags = {
+  readonly agent: string;
+  readonly allAgents: boolean;
+  readonly profile: string | undefined;
+  readonly allProfiles: boolean;
+  readonly allowUnknownModel: boolean;
+};
+
+function parseModelSliceFlags(
+  argv: string[],
+  startIdx: number,
+  cmdLabel: string,
+  opts: { readonly allowUnknownModelFlag: boolean },
+): ModelSliceFlags {
+  let agent = "claude-code";
+  let allAgents = false;
+  let profile: string | undefined;
+  let allProfiles = false;
+  let allowUnknownModel = false;
+  for (let i = startIdx; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
+    if (a === "--help" || a === "-h") usage(0);
+    else if (a === "--agent") agent = argv[++i] ?? "";
+    else if (a === "--all-agents") allAgents = true;
+    else if (a === "--profile") profile = argv[++i];
+    else if (a === "--all-profiles") allProfiles = true;
+    else if (opts.allowUnknownModelFlag && a === "--allow-unknown-model") allowUnknownModel = true;
+    else {
+      console.error(`${cmdLabel}: unexpected argument: ${a}`);
+      usage();
+    }
+  }
+  if (!allAgents && !agent.trim()) {
+    console.error(`${cmdLabel}: --agent requires a non-empty value (or pass --all-agents)`);
+    usage();
+  }
+  if (profile !== undefined && allProfiles) {
+    console.error(`${cmdLabel}: --profile and --all-profiles are mutually exclusive`);
+    usage();
+  }
+  return { agent, allAgents, profile, allProfiles, allowUnknownModel };
+}
+
+// model set/unset/reset — the tool verbs for a role→model binding (spec binding-set-by-tool):
+// before `model set` existed at all, ~/.petbox/roles.json could ONLY be written by hand-editing
+// an undocumented JSON format, and hand-editing it wrong is exactly how the 2026-07-12 incident (a
+// droid id in the claude-code block) happened. Validation reuses harness-models.ts's
+// classifyModel via roles.ts's setRoleModel — this file does not re-derive the policy.
+//
+// `--all-roles`/`--all-agents`/`--all-profiles` (task role-model-bindings-review-refactor, stage
+// D, defect #5) turn a single-cell edit into a SLICE edit — a whole harness across every role, one
+// role across every harness, or every profile at once — reusing the exact same single-cell
+// primitives per cell (roles.ts's setRoleModelSlice/unsetRoleModelSlice/resetRoleModelSlice), so
+// there is no second validation path and no second CLI grammar: the same --agent/--profile flags
+// this file already had just grow all-of-them counterparts.
+async function runModel(argv: string[]): Promise<void> {
   const sub = argv[1];
   if (sub === "--help" || sub === "-h") usage(0);
   if (sub === "set") {
-    runModelSet(argv);
+    await runModelSet(argv);
     return;
   }
   if (sub === "unset") {
-    runModelUnset(argv);
+    await runModelUnset(argv);
     return;
   }
-  console.error(`model: expected "set <role> <model>" or "unset <role>"${sub ? `, got "${sub}"` : ""}`);
+  if (sub === "reset") {
+    await runModelReset(argv);
+    return;
+  }
+  console.error(
+    `model: expected "set <role> <model>", "unset <role>" or "reset <role>"${sub ? `, got "${sub}"` : ""}`,
+  );
   usage();
 }
 
-// model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]
-function runModelSet(argv: string[]): void {
-  const role = argv[2];
-  const model = argv[3];
-  if (!role || role.startsWith("-")) {
-    console.error("model set: requires a non-empty <role>");
+// model set <role|--all-roles> <model> [--agent <id>|--all-agents] [--profile <name>|--all-profiles]
+//           [--allow-unknown-model]
+async function runModelSet(argv: string[]): Promise<void> {
+  const roleArg = argv[2];
+  const allRoles = roleArg === "--all-roles";
+  if (!allRoles && (!roleArg || roleArg.startsWith("-"))) {
+    console.error("model set: requires a non-empty <role>, or --all-roles");
     usage();
   }
+  const model = argv[3];
   if (!model || model.startsWith("-")) {
     console.error("model set: requires a non-empty <model> (use `model unset <role>` to clear a binding)");
     usage();
   }
-  let agent = "claude-code";
-  let profile: string | undefined;
-  let allowUnknownModel = false;
-  for (let i = 4; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
-    if (a === "--help" || a === "-h") usage(0);
-    else if (a === "--agent") agent = argv[++i] ?? "";
-    else if (a === "--profile") profile = argv[++i];
-    else if (a === "--allow-unknown-model") allowUnknownModel = true;
-    else {
-      console.error(`model set: unexpected argument: ${a}`);
-      usage();
-    }
-  }
-  if (!agent.trim()) {
-    console.error("model set: --agent requires a non-empty value");
-    usage();
-  }
+  const flags = parseModelSliceFlags(argv, 4, "model set", { allowUnknownModelFlag: true });
 
   const before = loadRoles();
-  const result = setRoleModel(before, {
-    agent,
-    role,
+
+  if (!allRoles && !flags.allAgents) {
+    // Single cell — byte-for-byte the pre-slice behavior.
+    const result = setRoleModel(before, {
+      agent: flags.agent,
+      role: roleArg,
+      model,
+      ...(flags.profile !== undefined ? { profile: flags.profile } : {}),
+      allowUnknownModel: flags.allowUnknownModel,
+    });
+    const canon = canonicalAgentId(flags.agent);
+    const profileName = (flags.profile ?? "").trim() || before.activeProfile;
+    if (!result.ok) {
+      console.error(`model set: REFUSED — ${result.reason}`);
+      process.exit(WIRE_EXIT.truthfulness);
+    }
+    saveRoles(result.data);
+    log(`model: set ${canon}/${roleArg} = ${model} (profile "${profileName}")`);
+    if (result.warning) log(`model: warn — ${result.warning}`);
+    log(`  wrote ${rolesPath()}`);
+    await refreshDerivedArtifactsAfterRolesWrite("model set");
+    log(`next: petbox-wire apply`);
+    return;
+  }
+
+  // Slice form: same model, every cell the selector expands to.
+  const sel = {
+    profiles: flags.allProfiles ? ("all" as const) : [flags.profile?.trim() || before.activeProfile],
+    agents: flags.allAgents ? ("all" as const) : [flags.agent],
+    roles: allRoles ? ("all" as const) : [roleArg as string],
     model,
-    ...(profile !== undefined ? { profile } : {}),
-    allowUnknownModel,
-  });
-  const canon = canonicalAgentId(agent);
-  const profileName = (profile ?? "").trim() || before.activeProfile;
+    allowUnknownModel: flags.allowUnknownModel,
+  };
+  const result = setRoleModelSlice(before, sel);
   if (!result.ok) {
-    console.error(`model set: REFUSED — ${result.reason}`);
+    // Per-cell detail first, the anchored summary line immediately before the exit (kept within
+    // wire-process-exit-whitelist.test.ts's 3-line lookback window on purpose).
+    for (const o of result.outcomes) {
+      if (!o.ok) console.error(`  - ${cellLabel(o.cell)}: ${o.reason}`);
+    }
+    console.error(`model set (slice): REFUSED — ${result.reason}`);
     process.exit(WIRE_EXIT.truthfulness);
   }
   saveRoles(result.data);
-  log(`model: set ${canon}/${role} = ${model} (profile "${profileName}")`);
-  if (result.warning) log(`model: warn — ${result.warning}`);
+  log(`model set (slice): ${result.changes.length} cell(s) set to "${model}":`);
+  for (const c of result.changes) {
+    log(`  ${cellLabel(c.cell)}: ${c.modelBefore ?? "(unbound)"} -> ${c.modelAfter}`);
+  }
+  for (const c of result.changes) {
+    if (c.warning) log(`model: warn — ${cellLabel(c.cell)}: ${c.warning}`);
+  }
   log(`  wrote ${rolesPath()}`);
+  await refreshDerivedArtifactsAfterRolesWrite("model set");
   log(`next: petbox-wire apply`);
 }
 
-// model unset <role> [--agent <id>] [--profile <name>]
-function runModelUnset(argv: string[]): void {
-  const role = argv[2];
-  if (!role || role.startsWith("-")) {
-    console.error("model unset: requires a non-empty <role>");
+// model unset <role|--all-roles> [--agent <id>|--all-agents] [--profile <name>|--all-profiles]
+async function runModelUnset(argv: string[]): Promise<void> {
+  const roleArg = argv[2];
+  const allRoles = roleArg === "--all-roles";
+  if (!allRoles && (!roleArg || roleArg.startsWith("-"))) {
+    console.error("model unset: requires a non-empty <role>, or --all-roles");
     usage();
   }
-  let agent = "claude-code";
-  let profile: string | undefined;
-  for (let i = 3; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === undefined) continue; // unreachable: i < argv.length is the loop condition
-    if (a === "--help" || a === "-h") usage(0);
-    else if (a === "--agent") agent = argv[++i] ?? "";
-    else if (a === "--profile") profile = argv[++i];
-    else {
-      console.error(`model unset: unexpected argument: ${a}`);
-      usage();
-    }
-  }
-  if (!agent.trim()) {
-    console.error("model unset: --agent requires a non-empty value");
-    usage();
-  }
+  const flags = parseModelSliceFlags(argv, 3, "model unset", { allowUnknownModelFlag: false });
 
   const before = loadRoles();
-  const result = unsetRoleModel(before, {
-    agent,
-    role,
-    ...(profile !== undefined ? { profile } : {}),
-  });
+
+  if (!allRoles && !flags.allAgents) {
+    const result = unsetRoleModel(before, {
+      agent: flags.agent,
+      role: roleArg,
+      ...(flags.profile !== undefined ? { profile: flags.profile } : {}),
+    });
+    saveRoles(result.data);
+    const canon = canonicalAgentId(flags.agent);
+    const profileName = (flags.profile ?? "").trim() || before.activeProfile;
+    if (result.removed) {
+      log(`model: unset ${canon}/${roleArg} (profile "${profileName}") — binding removed.`);
+    } else {
+      log(`model: ${canon}/${roleArg} had no binding in profile "${profileName}" — nothing to remove.`);
+    }
+    log(`  wrote ${rolesPath()}`);
+    await refreshDerivedArtifactsAfterRolesWrite("model unset");
+    log(`next: petbox-wire apply`);
+    return;
+  }
+
+  const sel = {
+    profiles: flags.allProfiles ? ("all" as const) : [flags.profile?.trim() || before.activeProfile],
+    agents: flags.allAgents ? ("all" as const) : [flags.agent],
+    roles: allRoles ? ("all" as const) : [roleArg as string],
+  };
+  const result = unsetRoleModelSlice(before, sel);
   saveRoles(result.data);
-  const canon = canonicalAgentId(agent);
-  const profileName = (profile ?? "").trim() || before.activeProfile;
-  if (result.removed) {
-    log(`model: unset ${canon}/${role} (profile "${profileName}") — binding removed.`);
-  } else {
-    log(`model: ${canon}/${role} had no binding in profile "${profileName}" — nothing to remove.`);
+  const removed = result.changes.filter((c) => c.removed);
+  log(`model unset (slice): ${removed.length} of ${result.changes.length} cell(s) had a binding removed:`);
+  for (const c of removed) log(`  ${cellLabel(c.cell)}: removed`);
+  log(`  wrote ${rolesPath()}`);
+  await refreshDerivedArtifactsAfterRolesWrite("model unset");
+  log(`next: petbox-wire apply`);
+}
+
+// model reset <role|--all-roles> [--agent <id>|--all-agents] [--profile <name>|--all-profiles]
+//
+// Explicit "give this cell back to the kit" (task role-model-bindings-review-refactor, stage D):
+// unlike seedMissingRoleBindings (which only ever refreshes a cell ALREADY labelled "kit"), reset
+// overwrites unconditionally — including an "owner" binding — and stamps origin "kit", so the
+// next default change reaches this cell automatically again. A cell with no kit default at all
+// (opencode; a role name the kit's seed does not know) is reported, never invented.
+async function runModelReset(argv: string[]): Promise<void> {
+  const roleArg = argv[2];
+  const allRoles = roleArg === "--all-roles";
+  if (!allRoles && (!roleArg || roleArg.startsWith("-"))) {
+    console.error("model reset: requires a non-empty <role>, or --all-roles");
+    usage();
+  }
+  const flags = parseModelSliceFlags(argv, 3, "model reset", { allowUnknownModelFlag: false });
+
+  const before = loadRoles();
+
+  if (!allRoles && !flags.allAgents) {
+    const result = resetRoleModelToKitDefault(before, {
+      agent: flags.agent,
+      role: roleArg,
+      ...(flags.profile !== undefined ? { profile: flags.profile } : {}),
+    });
+    const canon = canonicalAgentId(flags.agent);
+    const profileName = (flags.profile ?? "").trim() || before.activeProfile;
+    if (!result.ok) {
+      console.error(`model reset: REFUSED — ${result.reason}`);
+      process.exit(WIRE_EXIT.truthfulness);
+    }
+    saveRoles(result.data);
+    log(
+      `model: reset ${canon}/${roleArg} (profile "${profileName}") — ` +
+        `${result.modelBefore ?? "(unbound)"} -> ${result.modelAfter} [origin: kit]`,
+    );
+    log(`  wrote ${rolesPath()}`);
+    await refreshDerivedArtifactsAfterRolesWrite("model reset");
+    log(`next: petbox-wire apply`);
+    return;
+  }
+
+  const sel = {
+    profiles: flags.allProfiles ? ("all" as const) : [flags.profile?.trim() || before.activeProfile],
+    agents: flags.allAgents ? ("all" as const) : [flags.agent],
+    roles: allRoles ? ("all" as const) : [roleArg as string],
+  };
+  const result = resetRoleModelSlice(before, sel);
+  saveRoles(result.data);
+  const applied = result.changes.filter((c): c is Extract<(typeof result.changes)[number], { ok: true }> => c.ok);
+  const skipped = result.changes.filter((c) => !c.ok);
+  log(`model reset (slice): ${applied.length} of ${result.changes.length} cell(s) reset to the kit default [origin: kit]:`);
+  for (const c of applied) log(`  ${cellLabel(c.cell)}: ${c.modelBefore ?? "(unbound)"} -> ${c.modelAfter}`);
+  if (skipped.length > 0) {
+    log(`model reset (slice): ${skipped.length} cell(s) skipped — no kit default to reset to:`);
+    for (const c of skipped) if (!c.ok) log(`  ${cellLabel(c.cell)}: ${c.reason}`);
   }
   log(`  wrote ${rolesPath()}`);
+  await refreshDerivedArtifactsAfterRolesWrite("model reset");
   log(`next: petbox-wire apply`);
 }
 
@@ -3139,7 +3320,8 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   const codexHome = codexHomeDir();
   const codexHooksJsonPath = join(codexHome, "hooks.json");
   const codexConfigPath = join(codexHome, "config.toml");
-  const codexCatalogPath = join(codexHome, CODEX_CATALOG_FILE_NAME);
+  // codexCatalogPath is no longer needed here — printCodexRosterFragment (below) computes its
+  // own copy, since the fragment print was extracted out of this function.
 
   const codexPullCmd = `node "${join(STABLE, "codex-pull-memory.ts")}"`;
   const codexPushCmd = `node "${join(STABLE, "codex-push-session.ts")}"`;
@@ -3287,52 +3469,11 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   );
 
   // The codex counterpart of the qwen fragment block below: compare the LIVE config.toml and the
-  // catalog it points at against the roster (roles.json's ACTIVE profile — refactor defect 6: the
-  // catalog used to be the union across every profile, so a stale binding in an unused profile
-  // leaked into the config the active one runs on, observed live on `grok-4.6`), and print the
-  // ready-to-paste fragment when they diverge.
-  //
-  // LOUDER than qwen's on purpose (task body, "Главная ловушка"): a qwen machine whose fragment
-  // is never pasted fails visibly (the gateway 400s, or a model id resolves to nothing). A codex
-  // machine whose catalog is missing keeps working — just without `apply_patch` and with a
-  // wrong-by-8x context window, at exit 0. So the header and every warning name that consequence
-  // explicitly, and the whole fragment goes to stderr, not into the ordinary log stream.
-  {
-    const codexRolesData = loadRoles(homedir());
-    const liveConfigText = readText(codexConfigPath);
-    const livePathRaw = readCodexCatalogPathFromConfig(liveConfigText);
-    const livePath = livePathRaw === undefined ? undefined : resolve(codexHome, livePathRaw);
-    let liveCatalog: unknown;
-    let catalogError: string | undefined;
-    if (livePath !== undefined) {
-      try {
-        liveCatalog = JSON.parse(readFileSync(livePath, "utf8"));
-      } catch (e) {
-        catalogError = e instanceof Error ? e.message : String(e);
-      }
-    }
-    const divergence = findCodexConfigDivergence(
-      { configText: liveConfigText, catalog: liveCatalog, catalogError },
-      codexRolesData,
-    );
-    if (divergence.warnings.length === 0) {
-      log(
-        `[8/10] codex model_providers/model_provider/model/model_catalog_json at ` +
-          `${codexConfigPath} (catalog: ${livePath}) already match the kit's roster — nothing to paste.`,
-      );
-    } else {
-      console.error(
-        `[8/10] codex config at ${codexConfigPath} diverges from the kit's roster in ` +
-          `${divergence.warnings.length} way(s). The kit does NOT write these keys (owner ` +
-          `decision 09.09.2026) — until you paste the fragment below, codex roles here can run ` +
-          `WITHOUT the apply_patch tool and on the wrong context window, at exit 0 and with no ` +
-          `warning from codex itself:`,
-      );
-      for (const w of divergence.warnings) console.error(`  - ${w}`);
-      console.error(renderCodexConfigFragmentText(codexRolesData, codexCatalogPath).text);
-    }
-    for (const n of divergence.notes) log(`[8/10] codex config note: ${n}`);
-  }
+  // catalog it points at against the roster, and print the ready-to-paste fragment when they
+  // diverge. Extracted to printCodexRosterFragment (task role-model-bindings-review-refactor,
+  // remainder E) so every roles.json write path — not only this full `wire` run's step 8 — can
+  // show the SAME up-to-date fragment right after it writes, not only on the next full wire.
+  printCodexRosterFragment("[8/10]", homedir());
 
   // ---- Qwen Code: everything in ONE user-scope settings.json ----------------------------------
   //
@@ -3494,25 +3635,14 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // присутствует, и не трогает"; `model.name` specifically is the owner's own `/model`-picker
   // choice — task qwen-model-name-into-fragment). See the wiki page `qwen-three-provider-legs-
   // howto` for the full manual howto this compiles.
-  {
-    const qwenRolesData = loadRoles(homedir());
-    const divergence = findQwenConfigDivergence(qwenSettings, qwenRolesData);
-    if (divergence.warnings.length === 0) {
-      log(
-        `[8/10] qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation/` +
-          `model.name at ${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
-      );
-    } else {
-      console.error(
-        `[8/10] qwen config at ${qwenSettingsPath} diverges from the kit's roster in ` +
-          `${divergence.warnings.length} way(s) — the kit does NOT write these keys (owner ` +
-          `decision 09.09.2026); paste the fragment below yourself:`,
-      );
-      for (const w of divergence.warnings) console.error(`  - ${w}`);
-      log(renderQwenConfigFragmentText(qwenRolesData));
-    }
-    for (const n of divergence.notes) log(`[8/10] qwen config note: ${n}`);
-  }
+  // Extracted to printQwenRosterFragment (task role-model-bindings-review-refactor, remainder E) —
+  // same reasoning as printCodexRosterFragment above: every roles.json write path calls this, not
+  // only this full `wire` run's step 8. Reads the settings file fresh from disk rather than the
+  // in-memory `qwenSettings` this function has been mutating above — the fields this check reads
+  // (modelProviders/providerProtocol/agents.modelGrades/security.outboundCorrelation) are none of
+  // the ones this function's own hooks/mcpServers/security.auth mutations touch, so a fresh read
+  // is equivalent, and it is what makes the function callable with no coupling to this one.
+  printQwenRosterFragment("[8/10]", homedir());
 
   // model.name — task qwen-model-name-into-fragment, owner decision 09.09.2026: the kit STOPPED
   // writing this key too (previously set unconditionally to fix defect qwen-dead-default-model —
@@ -3539,6 +3669,112 @@ export { PetboxPlugin, default } from "${pluginUrl}";
       `security.auth.selectedType=openai — modelProviders/providerProtocol/agents.modelGrades/` +
       `outboundCorrelation/model.name are printed only, never written).`,
   );
+}
+
+// ---- printed-fragment refresh, callable from ANY roles.json write path ------------------------
+// (task role-model-bindings-review-refactor, remainder E, defect #7: before this, the codex/qwen
+// fragment checks only ever ran inside installGlobalHooks, i.e. only on a full `wire` run's step
+// 8 — `model set`/`model unset`/`profile use`/a standalone `apply` all wrote roles.json without
+// ever re-printing whether the machine's codex config.toml / qwen settings.json still matched it.
+// Pure extraction of the two blocks installGlobalHooks used to inline (see the calls above) —
+// same divergence checks, same output, just reachable from more than one call site now.
+
+/** Compare the live codex config.toml + the catalog it points at against roles.json's ACTIVE
+ * profile, and print the ready-to-paste fragment when they diverge. `label` is the caller's own
+ * step/command tag, so the printed lines read as coming from whichever command actually ran. */
+function printCodexRosterFragment(label: string, homeDir: string = homedir()): void {
+  const codexHome = codexHomeDir(homeDir);
+  const codexConfigPath = join(codexHome, "config.toml");
+  const codexCatalogPath = join(codexHome, CODEX_CATALOG_FILE_NAME);
+  const codexRolesData = loadRoles(homeDir);
+  const liveConfigText = readText(codexConfigPath);
+  const livePathRaw = readCodexCatalogPathFromConfig(liveConfigText);
+  const livePath = livePathRaw === undefined ? undefined : resolve(codexHome, livePathRaw);
+  let liveCatalog: unknown;
+  let catalogError: string | undefined;
+  if (livePath !== undefined) {
+    try {
+      liveCatalog = JSON.parse(readFileSync(livePath, "utf8"));
+    } catch (e) {
+      catalogError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const divergence = findCodexConfigDivergence(
+    { configText: liveConfigText, catalog: liveCatalog, catalogError },
+    codexRolesData,
+  );
+  if (divergence.warnings.length === 0) {
+    log(
+      `${label} codex model_providers/model_provider/model/model_catalog_json at ` +
+        `${codexConfigPath} (catalog: ${livePath}) already match the kit's roster — nothing to paste.`,
+    );
+  } else {
+    console.error(
+      `${label} codex config at ${codexConfigPath} diverges from the kit's roster in ` +
+        `${divergence.warnings.length} way(s). The kit does NOT write these keys (owner ` +
+        `decision 09.09.2026) — until you paste the fragment below, codex roles here can run ` +
+        `WITHOUT the apply_patch tool and on the wrong context window, at exit 0 and with no ` +
+        `warning from codex itself:`,
+    );
+    for (const w of divergence.warnings) console.error(`  - ${w}`);
+    console.error(renderCodexConfigFragmentText(codexRolesData, codexCatalogPath).text);
+  }
+  for (const n of divergence.notes) log(`${label} codex config note: ${n}`);
+}
+
+/** Compare the live qwen settings.json against roles.json's ACTIVE profile, and print the
+ * ready-to-paste fragment when they diverge. Reads settings.json fresh from disk — never coupled
+ * to installGlobalHooks's own in-memory mutations (see its call site's comment). */
+function printQwenRosterFragment(label: string, homeDir: string = homedir()): void {
+  const qwenHome = qwenHomeDir(homeDir);
+  const qwenSettingsPath = join(qwenHome, "settings.json");
+  const qwenSettings = readJson(qwenSettingsPath) ?? {};
+  const qwenRolesData = loadRoles(homeDir);
+  const divergence = findQwenConfigDivergence(qwenSettings, qwenRolesData);
+  if (divergence.warnings.length === 0) {
+    log(
+      `${label} qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation/` +
+        `model.name at ${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
+    );
+  } else {
+    console.error(
+      `${label} qwen config at ${qwenSettingsPath} diverges from the kit's roster in ` +
+        `${divergence.warnings.length} way(s) — the kit does NOT write these keys (owner ` +
+        `decision 09.09.2026); paste the fragment below yourself:`,
+    );
+    for (const w of divergence.warnings) console.error(`  - ${w}`);
+    log(renderQwenConfigFragmentText(qwenRolesData));
+  }
+  for (const n of divergence.notes) log(`${label} qwen config note: ${n}`);
+}
+
+/**
+ * Everything a roles.json write path can safely refresh WITHOUT a separate `wire`/`apply` call
+ * (acceptance #4): both PRINTED fragments always (they are machine-scoped, independent of
+ * roleScope), and the WRITTEN per-harness role files (applyUserRoles) only when this machine's
+ * roleScope is "user" — applyUserRoles needs no project cwd at all (its own doc comment), so it is
+ * always safe to call from here; roleScope "project" needs a project cwd this command was never
+ * given (a bare `model set` has no idea which project to render into), so that case is left on
+ * the existing "next: petbox-wire apply" hint instead of guessing a directory.
+ */
+async function refreshDerivedArtifactsAfterRolesWrite(label: string): Promise<void> {
+  printCodexRosterFragment(`${label}:`);
+  printQwenRosterFragment(`${label}:`);
+  const { scope } = resolveRoleScope(undefined, homedir());
+  if (scope !== "user") {
+    log(
+      `${label}: roleScope=${scope} — per-harness role files NOT refreshed here (no project cwd to ` +
+        `render into); run \`petbox-wire apply\`.`,
+    );
+    return;
+  }
+  const result = await applyUserRoles({ dryRun: false, adopt: NO_ADOPT, label: `${label} [roles:user]` });
+  if (result.code !== WIRE_EXIT.ok) {
+    console.error(
+      `${label}: refreshing user-scope role files reported exit ${result.code} — run ` +
+        `\`petbox-wire apply\` to see the full detail.`,
+    );
+  }
 }
 
 // ---- step 9: cleanup legacy ------------------------------------------------
@@ -3860,11 +4096,11 @@ async function main(): Promise<void> {
     return;
   }
   if (isProfileCommand(argv)) {
-    runProfile(argv);
+    await runProfile(argv);
     return;
   }
   if (isModelCommand(argv)) {
-    runModel(argv);
+    await runModel(argv);
     return;
   }
   if (isLayersCommand(argv)) {
