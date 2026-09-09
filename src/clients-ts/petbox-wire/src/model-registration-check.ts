@@ -39,21 +39,44 @@
 //     avoids any read-after-write ordering hazard against the caller's own saveRoles). NOTE the
 //     PRINTED catalog is built from the ACTIVE profile instead (buildCodexModelCatalogFromData);
 //     these are deliberately different sets — see the codex bullet at the top of this file.
-//   - qwen: qwenRegisteredModelIds (qwen-model-catalog.ts) — the ids the kit KNOWS about for
-//     qwen's `modelProviders` (task wire-print-config-fragment, 09.09.2026: the kit no longer
-//     WRITES modelProviders itself — see qwen-config-fragment.ts — this is now the catalog a
-//     printed fragment and this check both read, not a live-config mirror).
+//   - qwen: readLiveQwenProviders (qwen-live-providers.ts), i.e. the LIVE `$QWEN_HOME/
+//     settings.json` → `modelProviders` on THIS machine — REVISED task
+//     qwen-model-registration-check-live-source (09.09.2026): this used to read the kit's own
+//     hardcoded qwenRegisteredModelIds() (qwen-model-catalog.ts), which was two sources of truth
+//     about the same fact — the validity gate (model-validity.ts) already treats the live
+//     settings.json as authoritative for "is this id registered", and disagreed with THIS check,
+//     which still trusted the hardcoded catalog. Concretely: the owner registers extra ids in
+//     `modelProviders` directly (`ds-deepseek-v4-pro-max`, `go-glm-5.3-flash-low` — duplicates of
+//     an existing model under a different `reasoning_effort`/grade), the gate correctly calls
+//     them "registered on this machine", and this check warned on every `apply` regardless,
+//     because the hardcoded catalog has never seen them and never can. Reading the same live file
+//     model-validity.ts already reads (via the shared qwen-live-providers.ts leaf, not a second
+//     copy) makes the two agree by construction. The hardcoded catalog
+//     (qwen-model-catalog.ts/qwen-model-registry.ts) stays — it still backs the PRINTED fragment
+//     (qwen-config-fragment.ts) and binding-provider.ts's fallback — just no longer THIS check.
+//
+// THREE OUTCOMES for qwen, never two — mirrors model-validity.ts's own rule (same file, "THREE
+// OUTCOMES, NEVER TWO" in its header) and for the same reason: an unreadable/missing/empty
+// settings.json is "nothing was learned", not "this id is unregistered". Collapsing the two would
+// resurrect exactly the defect model-validity.ts's header describes
+// (`apply-reports-missing-key-as-unregistered-project-and-exits-0`) one file over. So a qwen
+// binding whose live file could not be consulted gets its own "could not verify" message
+// (formatUnverified), never the "not registered" one (formatWarning) — codex has no live source
+// here at all (see the bullet above the THREE OUTCOMES note) so it only ever produces the
+// "not registered" shape, unchanged.
 //
 // Non-blocking by design (brief: "warn, do not auto-fix and do not refuse the run"): rewriting an
 // operator's binding is exactly what seedMissingRoleBindings itself refuses to do, and a hard
 // failure here would block a legitimate operator who registers extra models some other way this
 // kit cannot see.
 //
-// Plain TS for native node type-stripping: zero deps beyond roles.ts and the two catalog modules.
+// Plain TS for native node type-stripping: zero deps beyond roles.ts, node:os, and the two live
+// sources (codex's in-memory union, qwen's live-file reader).
 
+import { homedir } from "node:os";
 import { agentLookupKeys, type RolesFile } from "./roles.ts";
 import { collectCodexRoleModelSlugsFromData } from "./codex-model-catalog.ts";
-import { qwenRegisteredModelIds } from "./qwen-model-catalog.ts";
+import { readLiveQwenProviders } from "./qwen-live-providers.ts";
 
 /** Harnesses whose registered model-id set the kit can enumerate from its own generated config —
  * see this file's header for why this list stops at exactly these two. */
@@ -73,9 +96,14 @@ function bareModelId(model: string): string {
   return i === -1 ? model : model.slice(i + 1);
 }
 
-function registeredIdsFor(harness: CheckedHarness, data: RolesFile): ReadonlySet<string> {
-  if (harness === "codex") return new Set(collectCodexRoleModelSlugsFromData(data));
-  return new Set(qwenRegisteredModelIds());
+/** Result of consulting qwen's live source once for the whole sweep: either the bare ids it
+ * registers, or why it could not be consulted at all (see the THREE OUTCOMES note above). */
+type QwenSnapshot = { readonly ok: true; readonly ids: ReadonlySet<string> } | { readonly ok: false; readonly reason: string };
+
+function qwenSnapshotFor(homeDir: string): QwenSnapshot {
+  const live = readLiveQwenProviders(homeDir);
+  if (!live.ok) return { ok: false, reason: `${live.path}: ${live.reason}` };
+  return { ok: true, ids: new Set(live.idToProviderKey.keys()) };
 }
 
 function formatWarning(opts: {
@@ -104,18 +132,51 @@ function formatWarning(opts: {
 }
 
 /**
+ * qwen's THIRD outcome: the live `modelProviders` file could not be consulted at all (missing,
+ * unreadable, unparseable, or empty — readLiveQwenProviders collapses all of those uniformly, see
+ * its own doc comment). This is deliberately NOT worded as "not registered" — an unconfigured or
+ * momentarily-unreadable machine is not evidence against the id, exactly as model-validity.ts's
+ * `unverified` verdict is not.
+ */
+function formatUnverified(opts: {
+  readonly profile: string;
+  readonly role: string;
+  readonly model: string;
+  readonly reason: string;
+}): string {
+  const { profile, role, model, reason } = opts;
+  return (
+    `model registration: profile '${profile}' harness 'qwen' role '${role}' is bound to ` +
+    `'${model}', but registration could not be checked (${reason}). This is NOT a claim that ` +
+    `'${model}' is unregistered — nothing was learned about it either way.`
+  );
+}
+
+export type FindUnregisteredRoleBindingsOptions = {
+  /** Home directory to read qwen's live `settings.json` from. Injectable for tests (mirrors
+   * model-validity.ts's ModelValidityOptions); production passes nothing and gets the real one. */
+  readonly homeDir?: string;
+};
+
+/**
  * Every role binding, across every profile, whose model id is not in the set the kit currently
  * registers for that binding's harness — as a fully-formed, ready-to-print warning string per
- * mismatch. Empty when every checked binding resolves. Never throws, never mutates `data`.
+ * mismatch (or, for qwen, a "could not verify" string when the live file itself was unreadable —
+ * see the THREE OUTCOMES note above). Empty when every checked binding resolves. Never throws,
+ * never mutates `data`.
  *
  * `data` is the RolesFile already in hand (e.g. wire.ts's seedDefaultRoleBindingsIfMissing, right
  * after seeding) — this never reads roles.json itself, so it always reflects exactly what the
- * caller is about to persist/has just persisted, not a possibly-stale disk copy.
+ * caller is about to persist/has just persisted, not a possibly-stale disk copy. qwen's live
+ * `modelProviders`, by contrast, IS read fresh here every call (readLiveQwenProviders is a ~0ms
+ * local file read, per qwen-live-providers.ts/model-validity.ts's own measurement) — there is no
+ * in-memory copy of it to reuse the way there is for codex's roles.json-derived union.
  */
-export function findUnregisteredRoleBindings(data: RolesFile): string[] {
+export function findUnregisteredRoleBindings(data: RolesFile, opts: FindUnregisteredRoleBindingsOptions = {}): string[] {
   const warnings: string[] = [];
+  const codexRegistered = new Set(collectCodexRoleModelSlugsFromData(data));
+  const qwenSnapshot = qwenSnapshotFor(opts.homeDir ?? homedir());
   for (const harness of CHECKED_HARNESSES) {
-    const registered = registeredIdsFor(harness, data);
     for (const [profileName, profile] of Object.entries(data.profiles)) {
       const key = agentLookupKeys(harness).find((k) => k in profile.agents);
       if (!key) continue;
@@ -123,8 +184,18 @@ export function findUnregisteredRoleBindings(data: RolesFile): string[] {
       for (const [role, binding] of Object.entries(roles)) {
         const raw = binding.model?.trim();
         if (!raw || raw === "inherit") continue; // not a concrete id — nothing to check
-        const bare = harness === "qwen" ? bareModelId(raw) : raw;
-        if (registered.has(bare)) continue;
+        if (harness === "codex") {
+          if (codexRegistered.has(raw)) continue;
+          warnings.push(formatWarning({ profile: profileName, harness, role, model: raw }));
+          continue;
+        }
+        // qwen
+        if (!qwenSnapshot.ok) {
+          warnings.push(formatUnverified({ profile: profileName, role, model: raw, reason: qwenSnapshot.reason }));
+          continue;
+        }
+        const bare = bareModelId(raw);
+        if (qwenSnapshot.ids.has(bare)) continue;
         warnings.push(formatWarning({ profile: profileName, harness, role, model: raw }));
       }
     }

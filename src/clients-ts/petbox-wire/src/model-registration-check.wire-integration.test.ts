@@ -22,6 +22,15 @@
 // `apply`'s real argv/behavior is a subprocess with a redirected HOME — same technique
 // apply-unbound-refusal.test.ts already uses.
 //
+// REVISED (task qwen-model-registration-check-live-source, 09.09.2026): the qwen registration
+// check now reads the LIVE `$QWEN_HOME/settings.json` instead of the kit's hardcoded catalog (see
+// model-registration-check.ts's header) — so a homeDir with NO settings.json at all no longer
+// means "everything I bind resolves", it means "nothing can be verified" (the THIRD outcome).
+// Both tests below now write a `.qwen/settings.json` fixture into the temp homeDir before running
+// `apply`, registering exactly the ids the scenario needs resolved — the live-file equivalent of
+// what the hardcoded catalog used to provide implicitly. Without it every concrete qwen binding
+// would report "could not be checked" instead of either outcome this file means to exercise.
+//
 // Run: node --test src/model-registration-check.wire-integration.test.ts
 
 import assert from "node:assert/strict";
@@ -31,6 +40,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeGitWorkingTree } from "./test-git-tree.ts";
+
+/** Write a live `$QWEN_HOME/settings.json` (bare ids under the `deepseek` provider key — enough
+ * shape for readLiveQwenProviders to parse) into a temp homeDir before running `apply`. */
+function writeQwenSettings(homeDir: string, deepseekIds: readonly string[]): void {
+  const dir = join(homeDir, ".qwen");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "settings.json"),
+    JSON.stringify({ modelProviders: { deepseek: deepseekIds.map((id) => ({ id })) } }),
+    "utf8",
+  );
+}
 
 const WIRE_TS = join(import.meta.dirname, "wire.ts");
 
@@ -103,6 +124,8 @@ test("apply on the live-incident roles.json shape: the stale kit-seeded qwen bin
     },
   };
   writeFileSync(join(petboxDir, "roles.json"), JSON.stringify(rolesJson, null, 2), "utf8");
+  // Live registration for exactly the ids the migration maps every stale binding onto.
+  writeQwenSettings(homeDir, ["ds-deepseek-v4-pro", "ds-deepseek-v4-flash"]);
 
   const { out, status } = runApply(projectDir, homeDir);
 
@@ -167,6 +190,9 @@ test("apply still warns — and rewrites nothing — for an unregistered qwen id
     },
   };
   writeFileSync(join(petboxDir, "roles.json"), JSON.stringify(rolesJson, null, 2), "utf8");
+  // Live registration for the kit-migrated id only — 'some-private-model' is deliberately absent,
+  // so it is a genuine "not registered" (not a "could not be checked") for the assertion below.
+  writeQwenSettings(homeDir, ["ds-deepseek-v4-flash"]);
 
   const { out, status } = runApply(projectDir, homeDir);
 
