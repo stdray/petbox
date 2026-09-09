@@ -193,6 +193,9 @@ version, then imports `wire.ts`) plus the `src/` kit.
    - `.factory/skills/petbox/SKILL.md` — the same rendered skill for Factory Droid (its native
      skills root is `.factory/skills/`; its Claude-compat root is `.agent/skills/`, not
      `.claude/skills/`, so it needs a dedicated copy).
+     qwen gets no copy at all and is not a `SKILL_SURFACES` entry: it is wired by POINTER instead,
+     through the `skills.directories` entry in `.qwen/settings.json` (§2d's qwen section) — one
+     absolute path at the `.claude/skills` above, rather than a third set of files to keep in sync.
    - `.claude/skills/petbox-agent-factory/SKILL.md` + `.factory/skills/petbox-agent-factory/SKILL.md`
      — the on-demand **agent-factory** skill (`templates/petbox-agent-factory/SKILL.md`, no
      placeholders): the `roles` / `profile` / `doctor` / `apply` procedure. Written to both
@@ -450,6 +453,21 @@ limitation: **`apply` does not refresh this file** — only a full `wire` run do
 ... --agent codex` needs a `wire` re-run, not just `apply`, to take full effect. The project layer
 only ever carries `[mcp_servers.petbox]` (not denylisted).
 
+`apply` also writes ONE non-role project file: `<root>/.qwen/settings.json`
+(qwen-project-settings.ts), carrying `mcpServers.petbox` and `skills.directories` — see the qwen
+section below for what each is for. It is the one MCP config `apply` touches, and it is there
+because it was the one whose ABSENCE was silent: the four others are written by `wire` only, but
+a project that never gets them still has a working `.mcp.json`/`config.toml` from whenever it was
+wired, whereas a project wired before this file existed had no `.qwen` directory at all and qwen
+silently fell back to `.mcp.json`, which it cannot env-var-resolve — `needs authentication`, zero
+tools, on a perfectly healthy key (caught live in `petsonde`, card
+`wire-qwen-project-settings-mcp-and-skills`). Two preconditions, both refusals rather than
+guesses: the root must be a real git working tree (under `--roles=user` the root can legitimately
+BE the home directory, and a `skills.directories` written there would load at qwen's user level —
+see the trap below), and the directory must be in the registry (the `${ENV_VAR}` name is the
+registry's to state; `apply` never invents a project identity). `--offline` does not skip it: the
+write is pure filesystem.
+
 qwen additionally needs USER-scope `$QWEN_HOME/settings.json` (qwen-paths.ts; default `~/.qwen`,
 overridable by `QWEN_HOME`), all written by the same `installGlobalHooks` step: `hooks.<Event>`
 (Stop **and** StopFailure both point at `qwen-push-session.ts` — Qwen's `SessionStart`/`Stop`
@@ -500,10 +518,12 @@ no `${ENV_VAR}` resolution at all (`mcpJson.ts`'s loader never calls `resolveEnv
 would send the API-key header out **literally**, so PetBox 401s — and `.mcp.json` OUTRANKS the
 user-scope entry by name (`assembleMcpServers`'s precedence: user/default < project `.mcp.json` <
 workspace/system < `--mcp-config`), so on a wired project the correct user-scope entry never even
-gets a chance to run. `writeProjectFiles` (wire.ts) therefore merges a THIRD `mcpServers.petbox`
-entry into the project's own `<root>/.qwen/settings.json` (`SettingScope.Workspace` — the file
-`Storage.getWorkspaceSettingsPath()` resolves to), which both outranks `.mcp.json` and IS
-env-var-resolved. Workspace scope is held behind qwen's pending-approval gate for an interactive
+gets a chance to run. Both `wire` (`writeProjectFiles`) and `apply` therefore merge a THIRD
+`mcpServers.petbox` entry into the project's own `<root>/.qwen/settings.json`
+(`SettingScope.Workspace` — the file `Storage.getWorkspaceSettingsPath()` resolves to), which both
+outranks `.mcp.json` and IS env-var-resolved. One writer for both commands
+(`qwen-project-settings.ts`), because for a year only `wire` wrote it and a project kept current
+with `apply` alone never grew the file at all. Workspace scope is held behind qwen's pending-approval gate for an interactive
 run exactly like project scope (`isGatedMcpScope`) — deliberately left unapproved by the kit (the
 approval hash bakes in the *resolved*, i.e. literal-key, config, so a later key rotation would
 silently invalidate a baked-in approval): headless callers pass `qwen --approval-mode yolo`
@@ -522,6 +542,23 @@ a `ds-deepseek-v4-*` id today, which in fact matches that regex — but the flag
 unconditionally regardless: it is cheap, harness-portable, and keeps working unchanged the moment
 a role is rebound off DeepSeek (e.g. onto the `opencode-go` gateway once the routing proxy lands),
 which the regex match alone would not survive.
+
+The same project file carries `skills.directories` — an array of foreign skill roots, union-merged,
+holding ONE entry: the ABSOLUTE path of this project's own `.claude/skills`. qwen is deliberately
+NOT a `SKILL_SURFACES` entry (skill-files.ts): it reads foreign roots natively, the SKILL.md format
+is compatible (`name`/`description` required, `disable-model-invocation` is the same key with the
+same semantics — verified by running qwen 0.23.2's own `SkillManager`), so a pointer beats a third
+on-disk copy of every skill body. Two measured properties make the exact placement load-bearing,
+and getting either wrong fails silently:
+- **Absolute only.** A relative entry is resolved against the RUNTIME's `process.cwd()`, not
+  against the project the settings file belongs to — so it names a different directory every time
+  qwen is launched from somewhere else. `mergeQwenProjectSettings` throws on a relative path
+  rather than write one.
+- **Project scope only.** Every directory named in `skills.directories` is loaded at qwen's `user`
+  LEVEL regardless of which settings file named it — so the same key in `~/.qwen/settings.json`
+  would publish ONE project's skills into EVERY project on the machine. The user-scope file
+  therefore never gets this key; a test asserts its absence there in the same run that asserts its
+  presence in the project file.
 
 Two qwen behaviors worth knowing when debugging either of the above, verified against the
 qwen-code source rather than its own docs (which are wrong on the first one):

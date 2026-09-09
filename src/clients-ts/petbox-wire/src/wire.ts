@@ -146,6 +146,7 @@ import { petboxDir, petboxKeysJsonPath, petboxWireMirrorDir } from "./petbox-dir
 import { classifySelfSmokeResponse, finishWireRun } from "./self-smoke.ts";
 import {
   buildSkillReports,
+  claudeSkillsDir,
   describeWorkspaceProbeFailure,
   formatSkillFile,
   PROJECT_SKILLS,
@@ -230,6 +231,7 @@ import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
 import { findQwenConfigDivergence, renderQwenConfigFragmentText } from "./qwen-config-fragment.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
+import { mergeQwenProjectSettings, type QwenProjectSettingsOutcome } from "./qwen-project-settings.ts";
 import {
   applyCodexProjectTrust,
   buildHookStateBlock,
@@ -1238,6 +1240,53 @@ async function performApply(opts: {
       );
       if (reportSkillOutcomes(emit, skillOutcomes)) clobberBlocked = true;
     }
+  }
+
+  // ---- qwen project settings (card wire-qwen-project-settings-mcp-and-skills) ----------------
+  // The gap this closes: `wire` wrote `<project>/.qwen/settings.json` and `apply` did not, so a
+  // project wired by an older kit and kept current with `apply` alone never grew the file. Caught
+  // live in D:\my\prj\petsonde: no `.qwen` directory at all, qwen fell back to `.mcp.json`
+  // (claude-code's format, which qwen does not env-var-resolve) and reported `needs
+  // authentication` with zero tools, on a key that was verified healthy against the live server.
+  //
+  // Preconditions, both load-bearing:
+  //   - `via === "git"` — the SAME reason the scatter guard above exists, and it matters more
+  //     here than anywhere else in this function. Under roleScope=user apply legitimately runs
+  //     with root = the HOME directory (HOME is not a git working tree, so resolveApplyRoot falls
+  //     back to cwd); writing `.qwen/settings.json` there would create a USER-scope settings file
+  //     carrying `skills.directories`, and qwen loads every directory from that key at `user`
+  //     level — i.e. exactly the one-project's-skills-in-every-project spill this card names as
+  //     its second measured trap. `via` is the axis that tells a project from a fallback.
+  //   - a registry hit — the envVar is the registry's to state, and `apply` never invents a
+  //     project identity (same rule the skills refresh above follows).
+  // Deliberately NOT gated on `--offline`: this write is pure filesystem, unlike the workspace
+  // probe, so an offline apply is entitled to a complete one.
+  //
+  // DEFAULT_BASE_URL, not `resolvedForSkills.baseUrl`, and that is not an oversight: every one of
+  // the five project MCP configs writeProjectFiles emits is built from this same constant, so
+  // taking the registry's value here would make `wire` and `apply` write DIFFERENT urls into the
+  // same file — each run overwriting the other's, flip-flopping forever and warning about a name
+  // conflict every time. (In production the two agree by construction: upsertRegistry stores
+  // `baseUrl` only when it DIFFERS from this constant, and nothing but the test loopback seam
+  // ever makes it differ.) If per-project base urls are ever really wanted, that is one change
+  // across all five sites, not a sixth site quietly disagreeing.
+  if (via === "git" && resolvedForSkills) {
+    const qwenReport = wireQwenProjectSettings(root, resolvedForSkills.envVar, DEFAULT_BASE_URL, opts.label, {
+      dryRun,
+    });
+    emit(
+      qwenReport.outcome.reason === "unchanged"
+        ? { kind: "unchanged", subject: "qwen", path: qwenReport.path }
+        : {
+            kind: "write",
+            subject: "qwen",
+            path: qwenReport.path,
+            note:
+              qwenReport.outcome.reason === "new"
+                ? "created — petbox MCP server + skills.directories"
+                : "petbox MCP server + skills.directories merged (other keys untouched)",
+          },
+    );
   }
 
   // ---- the single git policy for managed paths (card item 5) ---------------------------------
@@ -3064,6 +3113,44 @@ function reportSkillOutcomes(emit: (action: ApplyAction) => void, result: SkillW
   return refused;
 }
 
+// The project-scope `<project>/.qwen/settings.json` write, in ONE place because it now has TWO
+// callers with two different reasons (card wire-qwen-project-settings-mcp-and-skills):
+//
+//   - writeProjectFiles, below — the full `wire` path, which has always written this file.
+//   - performApply — `apply` never touched it, which is the bug the card was filed for: a project
+//     wired by an older kit and kept current with `apply` alone never grew a `.qwen` directory,
+//     so qwen fell back to `.mcp.json` (no env-var resolution) and reported zero tools.
+//
+// Warnings, not refusals, on both anomalies: a name conflict is the same "petbox wins the name,
+// out loud" contract mergeMcpServer carries for the other four MCP sites (commit 1655231a), and a
+// malformed `skills` key costs the skills pointer but must not cost the MCP server too.
+function wireQwenProjectSettings(
+  dir: string,
+  envVar: string,
+  baseUrl: string,
+  label: string,
+  opts?: { readonly dryRun?: boolean },
+): { readonly path: string; readonly outcome: QwenProjectSettingsOutcome } {
+  const settingsPath = join(dir, ".qwen", "settings.json");
+  const outcome = mergeQwenProjectSettings({
+    settingsPath,
+    skillsDir: claudeSkillsDir(dir),
+    mcpEntry: buildQwenMcpServerEntry(baseUrl, envVar),
+    dryRun: opts?.dryRun,
+  });
+  if (outcome.mcpNameConflict) {
+    console.error(
+      `${label} WARNING: ${settingsPath} already had a "petbox" MCP server entry with different ` +
+        `content — overwriting it with petbox's own config now. If that entry belonged to ` +
+        `someone else's server, rename it before the next wire so this name is not claimed again.`,
+    );
+  }
+  if (outcome.skillsWarning) {
+    console.error(`${label} WARNING: ${settingsPath} — ${outcome.skillsWarning}`);
+  }
+  return { path: settingsPath, outcome };
+}
+
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
   // .mcp.json (Claude Code) — a project-level file a person may hand-edit to add their own MCP
   // servers, so merge (never clobber) rather than regenerate whole, same primitive as droid's
@@ -3178,9 +3265,19 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // MCP tools to `tool_search` by default UNLESS the active model's id matches
   // `/deepseek-(v3|v4|chat)/i` (config.ts) — see qwen-mcp-entry.ts's own header for why this is
   // set unconditionally regardless of which model a role currently binds.
-  const qwenWorkspaceSettingsPath = join(dir, ".qwen", "settings.json");
-  mergeMcpServer(qwenWorkspaceSettingsPath, "petbox", buildQwenMcpServerEntry(DEFAULT_BASE_URL, envVar));
-  log(`[7/10] merged petbox MCP server into ${qwenWorkspaceSettingsPath} (workspace scope)`);
+  //
+  // `skills.directories` rides in the SAME file and the same merge (card
+  // wire-qwen-project-settings-mcp-and-skills): qwen reads foreign skill roots from that key, so
+  // it gets an ABSOLUTE pointer at this project's own `.claude/skills` instead of a third copy of
+  // every skill body. Absolute because qwen resolves a relative entry against the RUNTIME's cwd,
+  // and PROJECT-scope because entries from that key always load at qwen's `user` LEVEL — putting
+  // it in `~/.qwen/settings.json` would spill one project's skills into every project on the
+  // machine. Both traps are measured; see qwen-project-settings.ts's header.
+  const qwenReport = wireQwenProjectSettings(dir, envVar, DEFAULT_BASE_URL, "[7/10]");
+  log(
+    `[7/10] merged petbox MCP server + skills.directories into ${qwenReport.path} ` +
+      `(workspace scope, ${qwenReport.outcome.reason})`,
+  );
 
   // Skill bodies: `petbox` (project-scoped), `petbox-agent-factory` (on-demand, no
   // placeholders), `petbox-methodology` (thin, project-agnostic pointer at the LIVE
