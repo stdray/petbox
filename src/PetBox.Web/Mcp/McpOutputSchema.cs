@@ -263,6 +263,88 @@ static class McpOutputSchema
 		}
 	}
 
+	// ── no tool ships with an EMPTY `properties` (work qwen-subagent-spawn-json-parse-error-go-gateway) ──
+	//
+	// LIVE INCIDENT 09.09.2026, twice in one afternoon: a qwen-code subagent on the opencode-go arm
+	// died mid-run with
+	//
+	//     400 [json_parse_error] Invalid JSON data: Failed to deserialize the JSON body into the
+	//     target type: tools[74].function: missing field `parameters`
+	//
+	// A DESERIALIZATION failure, not a syntax one — the gateway parsed the whole body and refused one
+	// tool object for a missing REQUIRED field. Measured, not inferred: a 180-byte request reproduces
+	// it, so size and truncation are not involved, and an A/B over 106 turns put it at 2/56 refusals
+	// without `parameters` against 0/50 with it. Intermittent (~4% per turn — the gateway fans out to
+	// a pool of upstreams and only some deserialize strictly), which is exactly why the same run
+	// "sometimes works": a 20-turn session survives about half the time.
+	//
+	// THE MECHANISM IS ON THE CLIENT SIDE, and our schema is valid on its own: qwen-code converts an
+	// MCP tool to its wire form with `...parameters !== void 0 ? { parameters } : {}`, and it derives
+	// `undefined` from a schema whose `properties` is EMPTY. A no-argument tool therefore leaves this
+	// server with a perfectly legal `{"type":"object","properties":{}}` and arrives at the gateway
+	// with no `parameters` member at all. We cannot patch qwen-code or the gateway; we CAN make sure
+	// the shape that triggers it never leaves here.
+	//
+	// WHY A REGISTRATION-STAGE GUARD AND NOT A HAND-ADDED PARAMETER PER TOOL. Both were on the table.
+	// A real optional C# parameter on `whoami` and `deploy_node_list` fixes exactly today's two tools
+	// and re-arms the mine the next time someone writes a no-argument verb — and the parameter would
+	// be a lie in the signature, since no tool body wants it. This is a WIRE-COMPATIBILITY workaround,
+	// the same species as the three transforms above it (strict-client `required` pruning, the
+	// date-time `format` strip, the open output schema), and it belongs where they are: applied to
+	// every registered tool, at creation, with no per-tool discipline to forget.
+	//
+	// The injected property is OPTIONAL (absent from `required`) and IGNORED: the SDK binder pulls
+	// each C# parameter out of the arguments dict by name and never reads a key that matches none, so
+	// a caller that omits it — every existing caller — is byte-for-byte unaffected, and a caller that
+	// sends it gets the same answer. It is declared in `properties` precisely so
+	// McpUnknownParameterFilter (which refuses top-level keys absent from the schema) accepts it
+	// rather than rejecting a client that echoes the schema back.
+	//
+	// `type` is a plain "string", not a `["string","null"]` union: a union is one more shape for a
+	// strict or lossy client converter to mishandle, and optionality is already carried by the
+	// absence from `required`. Pinned end-to-end by McpEmptyInputSchemaTests over a real tools/list.
+	internal const string EmptyPropertiesPlaceholder = "_unused";
+
+	internal const string EmptyPropertiesPlaceholderDescription =
+		"Ignored — this tool takes no arguments. The property exists only because some MCP clients "
+		+ "(qwen-code) drop the `parameters` field entirely when a tool's `properties` is empty, and "
+		+ "some upstream gateways then reject the whole request with "
+		+ "\"missing field `parameters`\". Pass nothing; a value is accepted and discarded.";
+
+	// Give an EMPTY (or absent) `properties` object exactly one optional, ignored member. A schema
+	// that already declares any property is returned untouched — this only ever fires on a
+	// no-argument tool. Returns true when it changed the node, so a caller can skip reserializing.
+	public static bool EnsureNonEmptyProperties(JsonObject schema)
+	{
+		if (schema["properties"] is JsonObject { Count: > 0 }) return false;
+		schema["properties"] = new JsonObject
+		{
+			[EmptyPropertiesPlaceholder] = new JsonObject
+			{
+				["type"] = "string",
+				["description"] = EmptyPropertiesPlaceholderDescription,
+			},
+		};
+		return true;
+	}
+
+	static McpServerTool WithNonEmptyInputProperties(McpServerTool tool)
+	{
+		if (JsonNode.Parse(tool.ProtocolTool.InputSchema.GetRawText()) is not JsonObject schema) return tool;
+		if (!EnsureNonEmptyProperties(schema)) return tool;
+		tool.ProtocolTool.InputSchema = JsonSerializer.SerializeToElement(schema);
+		return tool;
+	}
+
+	// EVERY post-generation shaping a registered tool gets, in one place and in ORDER: the two
+	// attribute-driven input rewrites first (they read the schema the generator produced), then the
+	// output schema is opened, then the empty-`properties` guard has the last word on the input
+	// schema — it must see the FINAL shape, or a transform above it could still hand the wire an
+	// empty object. Applied identically to static and instance tools; before this the whole chain was
+	// spelled out twice, nested four deep, which is how a transform gets added to one arm only.
+	static McpServerTool Shape(McpServerTool tool, MethodInfo method) =>
+		WithNonEmptyInputProperties(WithOpenOutputSchema(WithRequiredMembers(WithDeclaredShapes(tool, method), method)));
+
 	// Mirror of ModelContextProtocol's WithToolsFromAssembly, plus SchemaCreateOptions.
 	public static IMcpServerBuilder WithSchemaHonestToolsFromAssembly(
 		this IMcpServerBuilder builder,
@@ -282,20 +364,20 @@ static class McpOutputSchema
 				var mi = method;
 				var tt = toolType;
 				builder.Services.AddSingleton((Func<IServiceProvider, McpServerTool>)(mi.IsStatic
-					? services => WithOpenOutputSchema(WithRequiredMembers(WithDeclaredShapes(McpServerTool.Create(mi, options: new()
+					? services => Shape(McpServerTool.Create(mi, options: new()
 					{
 						Services = services,
 						SerializerOptions = serializerOptions,
 						SchemaCreateOptions = schemaOptions,
-					}), mi), mi))
-					: services => WithOpenOutputSchema(WithRequiredMembers(WithDeclaredShapes(McpServerTool.Create(mi, r => r.Services is { } sp
+					}), mi)
+					: services => Shape(McpServerTool.Create(mi, r => r.Services is { } sp
 						? ActivatorUtilities.CreateInstance(sp, tt)
 						: Activator.CreateInstance(tt)!, new()
 						{
 							Services = services,
 							SerializerOptions = serializerOptions,
 							SchemaCreateOptions = schemaOptions,
-						}), mi), mi))));
+						}), mi)));
 			}
 		}
 
