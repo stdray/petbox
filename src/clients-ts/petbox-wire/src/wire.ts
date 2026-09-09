@@ -2624,11 +2624,42 @@ function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl
 
 // Merge one MCP server into a possibly-shared JSON config (Droid's .factory/mcp.json can hold
 // team servers), preserving every other server and top-level key. Idempotent: re-running with
-// the same inputs yields byte-identical output. Only the `petbox` entry is (re)generated.
-function mergeMcpServer(path: string, name: string, server: unknown): void {
+// the same inputs yields byte-identical output. Only the `name` entry is (re)generated.
+//
+// `serversKey` defaults to "mcpServers" (claude-code's .mcp.json, droid's .factory/mcp.json,
+// qwen's .qwen/settings.json all use that key); opencode's own config nests servers under `mcp`
+// instead, so callers pass `serversKey: "mcp"` there. `defaults` seeds top-level keys ONLY when
+// they are still absent (opencode's `$schema`) — never overwrites a value the project already
+// set (bug wire-mcp-wipes-foreign-servers: opencode's `theme` and any other top-level setting
+// must survive untouched).
+//
+// Name-conflict warning (same bug, second half): if `name` was already claimed by SOMETHING ELSE
+// — a foreign server of that name, or petbox's own entry from a prior run with different content
+// (an env-var/URL rotation) — say so before overwriting it. A byte-identical re-run never prints
+// this (existing === server), which is what keeps a plain idempotent re-wire quiet.
+function mergeMcpServer(
+  path: string,
+  name: string,
+  server: unknown,
+  opts?: { readonly serversKey?: string; readonly defaults?: Readonly<Record<string, unknown>> },
+): void {
+  const serversKey = opts?.serversKey ?? "mcpServers";
   const data = readJson(path) ?? {};
-  if (!data.mcpServers || typeof data.mcpServers !== "object") data.mcpServers = {};
-  data.mcpServers[name] = server;
+  if (opts?.defaults) {
+    for (const [k, v] of Object.entries(opts.defaults)) {
+      if (!(k in data)) data[k] = v;
+    }
+  }
+  if (!data[serversKey] || typeof data[serversKey] !== "object") data[serversKey] = {};
+  const existing = data[serversKey][name];
+  if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(server)) {
+    console.error(
+      `[7/10] WARNING: ${path} already had a "${name}" MCP server entry with different ` +
+        `content — overwriting it with petbox's own config now. If that entry belonged to ` +
+        `someone else's server, rename it before the next wire so this name is not claimed again.`,
+    );
+  }
+  data[serversKey][name] = server;
   writeJson(path, data);
 }
 
@@ -2700,33 +2731,36 @@ function reportSkillOutcomes(emit: (action: ApplyAction) => void, result: SkillW
 }
 
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
-  // .mcp.json (Claude Code) — petbox-only file owned by wire.ts, regenerated whole.
-  const mcp = {
-    mcpServers: {
-      petbox: {
-        type: "http",
-        url: `${DEFAULT_BASE_URL}/mcp`,
-        headers: { "X-Api-Key": `\${${envVar}}` },
-      },
-    },
-  };
-  writeJson(join(dir, ".mcp.json"), mcp);
-  log(`[7/10] wrote ${join(dir, ".mcp.json")}`);
+  // .mcp.json (Claude Code) — a project-level file a person may hand-edit to add their own MCP
+  // servers, so merge (never clobber) rather than regenerate whole, same primitive as droid's
+  // .factory/mcp.json below (bug wire-mcp-wipes-foreign-servers: this used to be a whole-file
+  // writeJson that silently destroyed every foreign server and any other top-level key on each
+  // full `wire`).
+  const mcpJsonPath = join(dir, ".mcp.json");
+  mergeMcpServer(mcpJsonPath, "petbox", {
+    type: "http",
+    url: `${DEFAULT_BASE_URL}/mcp`,
+    headers: { "X-Api-Key": `\${${envVar}}` },
+  });
+  log(`[7/10] merged petbox MCP server into ${mcpJsonPath}`);
 
-  // .opencode/opencode.json (opencode) — petbox-only file owned by wire.ts, regenerated whole.
-  const oc = {
-    $schema: "https://opencode.ai/config.json",
-    mcp: {
-      petbox: {
-        type: "remote",
-        url: `${DEFAULT_BASE_URL}/mcp`,
-        enabled: true,
-        headers: { "X-Api-Key": `{env:${envVar}}` },
-      },
+  // .opencode/opencode.json (opencode) — same fix, same primitive, but opencode nests its server
+  // map under `mcp` (not `mcpServers`) and the file commonly carries unrelated top-level settings
+  // (e.g. `theme`) that must survive untouched. `$schema` is seeded only when the project hasn't
+  // already set one of its own.
+  const opencodeJsonPath = join(dir, ".opencode", "opencode.json");
+  mergeMcpServer(
+    opencodeJsonPath,
+    "petbox",
+    {
+      type: "remote",
+      url: `${DEFAULT_BASE_URL}/mcp`,
+      enabled: true,
+      headers: { "X-Api-Key": `{env:${envVar}}` },
     },
-  };
-  writeJson(join(dir, ".opencode", "opencode.json"), oc);
-  log(`[7/10] wrote ${join(dir, ".opencode", "opencode.json")}`);
+    { serversKey: "mcp", defaults: { $schema: "https://opencode.ai/config.json" } },
+  );
+  log(`[7/10] merged petbox MCP server into ${opencodeJsonPath}`);
 
   // .factory/mcp.json (Factory Droid) — a project-level MCP config that may be shared with team
   // servers, so merge (never clobber) rather than regenerate whole. Droid supports `${VAR}`
@@ -2746,12 +2780,35 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // is the one codex config key legitimately written per-project. Section-preserving merge
   // (codex-toml.ts), never a whole-file regenerate — a project's own config.toml (sandbox
   // policy, `instructions`, etc.) must survive untouched.
+  // Name-conflict warning (bug wire-mcp-wipes-foreign-servers, second half): upsertBlock replaces
+  // a `[mcp_servers.petbox]` section wholesale, silently, whether it was ours from a prior run or
+  // someone else's block that happens to carry this name. Say so before overwriting, same as
+  // mergeMcpServer does for the JSON configs above — quiet on a byte-identical idempotent re-run.
   const codexProjectConfigPath = join(dir, ".codex", "config.toml");
-  const codexProjectBlocks = upsertBlock(
-    parseTomlBlocks(readText(codexProjectConfigPath)),
-    "mcp_servers.petbox",
-    buildMcpServerBlock(DEFAULT_BASE_URL, envVar),
-  );
+  const codexProjectBlocksBefore = parseTomlBlocks(readText(codexProjectConfigPath));
+  const codexMcpBodyLines = buildMcpServerBlock(DEFAULT_BASE_URL, envVar);
+  const existingCodexMcpBlock = findBlock(codexProjectBlocksBefore, "mcp_servers.petbox");
+  // Trailing blank lines are a round-trip artifact when this is the FILE'S LAST block (the final
+  // "\n" splits into a trailing "" element) — serializeTomlBlocks itself discards them on write,
+  // so they must not count as a content difference here either, or every idempotent re-run would
+  // misreport itself as a name conflict.
+  const trimTrailingBlankLines = (lines: readonly string[]): string[] => {
+    const out = [...lines];
+    while (out.length > 0 && out[out.length - 1] === "") out.pop();
+    return out;
+  };
+  if (
+    existingCodexMcpBlock !== undefined &&
+    trimTrailingBlankLines(existingCodexMcpBlock.lines).join("\n") !== codexMcpBodyLines.join("\n")
+  ) {
+    console.error(
+      `[7/10] WARNING: ${codexProjectConfigPath} already had a [mcp_servers.petbox] section ` +
+        `with different content — overwriting it with petbox's own config now. If that section ` +
+        `belonged to someone else's server, rename it before the next wire so this name is not ` +
+        `claimed again.`,
+    );
+  }
+  const codexProjectBlocks = upsertBlock(codexProjectBlocksBefore, "mcp_servers.petbox", codexMcpBodyLines);
   writeText(codexProjectConfigPath, serializeTomlBlocks(codexProjectBlocks));
   log(`[7/10] merged petbox MCP server into ${codexProjectConfigPath}`);
 
