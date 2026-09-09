@@ -34,8 +34,10 @@
 //     that builds model_catalog_json, run against the in-memory RolesFile already in hand (never
 //     a fresh disk read — avoids any read-after-write ordering hazard against the caller's own
 //     saveRoles).
-//   - qwen: qwenRegisteredModelIds (qwen-model-catalog.ts) — the SAME two arrays
-//     installGlobalHooks (wire.ts) writes into modelProviders.
+//   - qwen: qwenRegisteredModelIds (qwen-model-catalog.ts) — the ids the kit KNOWS about for
+//     qwen's `modelProviders` (task wire-print-config-fragment, 09.09.2026: the kit no longer
+//     WRITES modelProviders itself — see qwen-config-fragment.ts — this is now the catalog a
+//     printed fragment and this check both read, not a live-config mirror).
 //
 // Non-blocking by design (brief: "warn, do not auto-fix and do not refuse the run"): rewriting an
 // operator's binding is exactly what seedMissingRoleBindings itself refuses to do, and a hard

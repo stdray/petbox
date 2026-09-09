@@ -201,8 +201,8 @@ import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
 import { buildCodexModelCatalog } from "./codex-model-catalog.ts";
-import { QWEN_DEEPSEEK_MODELS, QWEN_OPENCODE_GO_MODELS } from "./qwen-model-catalog.ts";
 import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
+import { findQwenConfigDivergence, renderQwenConfigFragmentText } from "./qwen-config-fragment.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
 import {
@@ -3391,87 +3391,42 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   }
   qwenSettings.security.auth.selectedType = "openai";
 
-  // modelProviders / providerProtocol — TWO DISTINGUISHABLE PROVIDERS, not one gateway for
-  // everything (task wire-support-codex-qwen, REVISED after live smoke on 0.23.0 with two local
-  // listeners falsified the original single-gateway design). The owner runs two subscriptions
-  // and deliberately splits roles between them (mirrors their own `opencode` bindings:
-  // orchestrator/worker-highstakes on DIRECT deepseek, worker/explore/reserve on the
-  // opencode-go gateway).
+  // modelProviders / providerProtocol / agents.modelGrades / security.outboundCorrelation —
+  // OWNER DECISION 09.09.2026 (task wire-print-config-fragment): the kit STOPPED writing these.
+  // They used to be regenerated whole every run (`modelProviders`/`providerProtocol` merge as
+  // REPLACE, packages/cli settingsSchema.ts) — on this hand-configured machine that silently
+  // destroyed a working three-leg layout: `${session_id}` (qwen's own per-request template,
+  // QwenLM/qwen-code#11282) collapsed to a static uuid, `contextWindowSize` vanished (~1M context
+  // fell back to a ~200k default), and `modelGrades` shrank to two ids. Provider entries are
+  // hermetic — a top-level `model.generationConfig` does not fill a missing provider field — so
+  // there was no way to merge around this short of not writing the map at all.
   //
-  // Measured, load-bearing facts (do not re-derive):
-  //   - A provider name can NEVER appear in the `model:` selector. qwen matches the pre-colon
-  //     segment against a STATIC auth-type enum (packages/core/src/utils/modelId.ts:42,
-  //     auth-type.ts:8-14 — exactly openai | qwen-oauth | gemini | vertex-ai | anthropic); an
-  //     unknown prefix does NOT error, the whole string just becomes a bare model id
-  //     (modelId.ts:101-103). Measured: `opencode-go:glm-5.3-flash` silently hit the DIRECT
-  //     provider with a garbage wire model name — exit 0, no warning. So every role file's
-  //     `model:` stays `openai:<id>`, same auth type as before; the actual provider routing
-  //     lives entirely in `providerProtocol` + the `modelProviders` KEY below.
-  //   - Two providers ARE separately routable via `providerProtocol` (provider-key →
-  //     "openai"-shaped wire protocol) paired with a provider-keyed `modelProviders` entry: the
-  //     provider becomes visible through a decorated, GLOBALLY-UNIQUE id (`ds-*` direct,
-  //     `go-*` gateway), with the TRUE wire model name in
-  //     `generationConfig.extra_body.model` — never in the id, which is qwen's own bookkeeping
-  //     key, not a wire value. Measured: id `go-glm-5.3-flash` reached the gateway listener and
-  //     sent wire `model=glm-5.3-flash`.
-  //   - `providerProtocol` is MANDATORY for a non-auth-type key: omit it and the whole key's
-  //     models are silently dropped, exit 1 (packages/cli/src/utils/modelConfigUtils.ts:107-127).
-  //   - Both `modelProviders` and `providerProtocol` merge as REPLACE (settingsSchema.ts:369,
-  //     :382) — the complete set is written every run, never a partial patch. `providerProtocol`
-  //     is `requiresRestart: true`; `modelProviders` hot-reloads — an operator changing nothing
-  //     but role bindings still needs a qwen restart to pick up a NEW provider key (not just a
-  //     new model under an existing one).
-  //   - Duplicate ids resolve by JSON key declaration order, silently (modelRegistry.ts:204 logs
-  //     at debug only) — ids are kept globally unique across both provider keys, and the two
-  //     keys are always written in the SAME order (deepseek, then opencode-go) so this object's
-  //     shape never depends on iteration order of anything upstream.
-  //
-  // `customHeaders` (RESOLVED — qwen-spec.md §11, verified via
-  // OpenAIContentGeneratorProvider.buildHeaders() in the installed clone) is set ONLY on the
-  // opencode-go entries: the gateway 400s without `x-opencode-session` on every request; the
-  // direct DeepSeek provider needs no such header. The UUID is the SAME one codex's own
-  // opencode-go provider block just computed above in this function (opencodeSessionUuid) —
-  // reused, not re-minted — and must survive re-installs.
-  qwenSettings.providerProtocol = {
-    deepseek: "openai",
-    "opencode-go": "openai",
-  };
-  // Owner decision 2026-09-08: both codex and qwen run entirely on the DIRECT DeepSeek
-  // subscription until a routing proxy exists (see roles.ts's CODEX_ROLE_MODEL_SEED comment for
-  // the full "why" — codex pins one provider per process, so a per-role split across two
-  // subscriptions is impossible on that harness today; the owner would rather have both
-  // harnesses consistently direct than have codex silently bill everything to the gateway). Two
-  // entries here, mirroring CODEX_ROLE_MODEL_SEED's pro/flash split.
-  //
-  // Both arrays live in qwen-model-catalog.ts, not as literals here — that module is the single
-  // source of truth for "which qwen model ids does the kit register", shared with
-  // model-registration-check.ts's stale-binding warning (see that file's header: a second,
-  // hand-maintained copy of this exact list is the class of bug this whole task closes).
-  const qwenDeepseekModels = QWEN_DEEPSEEK_MODELS;
-  // opencode-go stays registered — same "second subscription, single future rebinding" reasoning
-  // as codex's `[model_providers.opencode-go]` block above — but no role binds through it today
-  // (QWEN_ROLE_MODEL_SEED, roles.ts), so its ids are deliberately excluded from
-  // agents.modelGrades below.
-  const qwenOpencodeGoModels = QWEN_OPENCODE_GO_MODELS;
-  qwenSettings.modelProviders = {
-    deepseek: qwenDeepseekModels.map((m) => ({
-      id: m.id,
-      name: m.name,
-      baseUrl: "https://api.deepseek.com/v1",
-      envKey: "DEEPSEEK_API_KEY",
-      generationConfig: { extra_body: { model: m.wireModel } },
-    })),
-    "opencode-go": qwenOpencodeGoModels.map((m) => ({
-      id: m.id,
-      name: m.name,
-      baseUrl: "https://opencode.ai/zen/go/v1",
-      envKey: "OPENCODE_GO_API_KEY",
-      generationConfig: {
-        extra_body: { model: m.wireModel },
-        customHeaders: { "x-opencode-session": opencodeSessionUuid },
-      },
-    })),
-  };
+  // The kit's role in this now stops at PRINTING a ready-to-paste fragment (qwen-config-
+  // fragment.ts, built from qwen-model-catalog.ts's known ids + this machine's roles.json role→
+  // model bindings, so `petbox-wire model set <role> <id> --agent qwen` changes the printed
+  // `agents.modelGrades`) and WARNING when the live config's own modelProviders/providerProtocol/
+  // modelGrades/outboundCorrelation diverge from what that roster expects — never auto-fixing
+  // (task brief: "если фрагмент уже присутствует — кит говорит, что присутствует, и не трогает").
+  // See the wiki page `qwen-three-provider-legs-howto` for the full manual howto this compiles.
+  {
+    const qwenRolesData = loadRoles(homedir());
+    const divergence = findQwenConfigDivergence(qwenSettings, qwenRolesData);
+    if (divergence.warnings.length === 0) {
+      log(
+        `[8/10] qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation at ` +
+          `${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
+      );
+    } else {
+      console.error(
+        `[8/10] qwen config at ${qwenSettingsPath} diverges from the kit's roster in ` +
+          `${divergence.warnings.length} way(s) — the kit does NOT write these keys (owner ` +
+          `decision 09.09.2026); paste the fragment below yourself:`,
+      );
+      for (const w of divergence.warnings) console.error(`  - ${w}`);
+      log(renderQwenConfigFragmentText(qwenRolesData));
+    }
+    for (const n of divergence.notes) log(`[8/10] qwen config note: ${n}`);
+  }
 
   // model.name — defect qwen-dead-default-model (live smoke, wire-support-codex-qwen): the
   // owner's live ~/.qwen/settings.json had this left at a stale value ("coder-model") that
@@ -3508,28 +3463,16 @@ export { PetboxPlugin, default } from "${pluginUrl}";
     );
   }
 
-  // agents.modelGrades (qwen-spec.md §6) — gates the Agent tool's spawn-time `model` PARAMETER
-  // (a DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated).
-  // There is no built-in default: an unseeded machine rejects EVERY explicit spawn-time `model`
-  // with an empty `Available:` list. Self-keyed (grade name == the value it resolves to) so a
-  // caller passing exactly one of the `openai:<id>` pairs this kit binds roles to at spawn time
-  // resolves, without inventing a second naming scheme (e.g. "fast"/"deep" grade labels) nothing
-  // else in this kit's role/model machinery references. Lists EXACTLY the ids QWEN_ROLE_MODEL_SEED
-  // uses today — the deepseek pair — never the opencode-go ids: those stay registered in
-  // modelProviders (future rebinding) but no role spawns through them, so grading them would
-  // silently accept a spawn-time `model` value nothing in this kit's own bindings ever produces.
-  if (!qwenSettings.agents || typeof qwenSettings.agents !== "object") qwenSettings.agents = {};
-  const qwenModelGrades: Record<string, string> = {};
-  for (const m of qwenDeepseekModels) qwenModelGrades[`openai:${m.id}`] = `openai:${m.id}`;
-  qwenSettings.agents.modelGrades = qwenModelGrades;
+  // agents.modelGrades — NOT written (see the modelProviders block above): printed only, as part
+  // of the same fragment, since it gates the Agent tool's spawn-time `model` PARAMETER (a
+  // DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated) and
+  // an unseeded machine rejects EVERY explicit spawn-time `model` with an empty `Available:` list.
 
   writeJson(qwenSettingsPath, qwenSettings);
   log(
     `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
-      `security.auth.selectedType=openai, providerProtocol.{deepseek,opencode-go}=openai, ` +
-      `modelProviders.deepseek x${qwenDeepseekModels.length} + modelProviders.opencode-go ` +
-      `x${qwenOpencodeGoModels.length}, model.name=${qwenDefaultModelName}, ` +
-      `agents.modelGrades x${qwenDeepseekModels.length}).`,
+      `security.auth.selectedType=openai, model.name=${qwenDefaultModelName} — modelProviders/` +
+      `providerProtocol/agents.modelGrades/outboundCorrelation are printed only, never written).`,
   );
 }
 
