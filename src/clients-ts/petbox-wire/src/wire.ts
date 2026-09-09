@@ -172,7 +172,14 @@ import {
 } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
-import { readRegistry, registryPath, resolveProject, type RegistryEntry } from "./registry.ts";
+import {
+  detectKeysStoreDrift,
+  formatKeyDrift,
+  readRegistry,
+  registryPath,
+  resolveProject,
+  type RegistryEntry,
+} from "./registry.ts";
 import {
   agentLookupKeys,
   canonicalAgentId,
@@ -194,8 +201,8 @@ import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
 import { buildCodexModelCatalog } from "./codex-model-catalog.ts";
-import { QWEN_DEEPSEEK_MODELS, QWEN_OPENCODE_GO_MODELS } from "./qwen-model-catalog.ts";
 import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
+import { findQwenConfigDivergence, renderQwenConfigFragmentText } from "./qwen-config-fragment.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
 import {
@@ -718,6 +725,25 @@ async function runDoctor(argv: string[]): Promise<void> {
   } else {
     log(`doctor: wire.log — ${wireLogTail.length} most recent trace line(s) (${wireLogPath()}):`);
     for (const line of wireLogTail) log(`  ${line}`);
+  }
+
+  // keys.json vs environment drift (card keys-json-doctor-drift-check): local-only, no network —
+  // runs unconditionally, --offline included. Bypasses resolveProject's env-first fallback (see
+  // registry.ts's comment on detectKeysStoreDrift) so a healthy `doctor` actually proves the FILE
+  // is in sync — not just that THIS process's env resolved fine, which is all the old truthfulness
+  // loop below ever checked. Silent when nothing has drifted: a positive "in sync" line would be
+  // noise on every wired machine on every run, whether or not any project's key ever changed —
+  // never gates the exit code, same taxonomy as every other doctor drift check above. Auto-syncs
+  // whatever it found stale (requirement: apply AND doctor refresh the file now, not only `wire`),
+  // so the same key does not keep re-warning on every later run.
+  const keyDrifts = detectKeysStoreDrift();
+  if (keyDrifts.length > 0) {
+    console.error(
+      `doctor: keys.json — ${keyDrifts.length} key(s) were out of sync with the environment ` +
+        `(values never printed; comparison is by hash only; now auto-synced from the environment):`,
+    );
+    for (const d of keyDrifts) console.error(`  - ${formatKeyDrift(d)}`);
+    syncKeysStoreFromEnv();
   }
 
   let hadTruthfulnessBlock = false;
@@ -1315,6 +1341,26 @@ async function runApply(argv: string[]): Promise<void> {
       "apply --all: WRITING to every registered project directory (no --dry-run). " +
         "Re-run with --dry-run first if you have not already previewed this.",
     );
+  }
+
+  // keys.json auto-sync (card keys-json-doctor-drift-check): before this, only a full `wire` run
+  // ever wrote the file, so a plain env-var rotation left it stale until the next full wire. A
+  // --dry-run must leave the machine exactly as it found it (same rule the roleScope persistence
+  // below follows) — skip the write there, but still say what WOULD have synced so a preview is
+  // not silently different from the real run that follows it.
+  if (dryRun) {
+    const wouldSync = detectKeysStoreDrift();
+    if (wouldSync.length > 0) {
+      log(
+        `apply: --dry-run — keys.json has ${wouldSync.length} key(s) out of sync with the ` +
+          `environment (values never printed); a real run would sync them now.`,
+      );
+    }
+  } else {
+    const synced = syncKeysStoreFromEnv();
+    if (synced.length > 0) {
+      log(`apply: keys.json — synced ${synced.length} key(s) from the environment (values never printed).`);
+    }
   }
 
   // Seed a fresh machine's roster BEFORE compiling — apply now refuses any declared role with
@@ -2162,6 +2208,33 @@ function writeKeyToStore(name: string, value: string): void {
       /* best-effort */
     }
   }
+}
+
+// Auto-sync ~/.petbox/keys.json from the environment (card keys-json-doctor-drift-check): before
+// this, the file was written ONLY by a full `wire` run (writeKeyToStore above), so a plain env-var
+// rotation left it stale until the next full wire — sometimes indefinitely. Runs on `apply` and
+// `doctor` too now, not only full `wire`. Copies env → file ONLY (matches registry.ts's env-first
+// precedence, registry.ts:152); never touches an envVar unset in this process, so it can never
+// clobber a good file value with nothing. Never logs or returns key material — only the envVar
+// names it touched, for the caller to name in its own log line.
+function syncKeysStoreFromEnv(): string[] {
+  const drifts = detectKeysStoreDrift();
+  if (drifts.length === 0) return [];
+  const path = keysStorePath();
+  const store = readJson(path) ?? {};
+  for (const d of drifts) {
+    const v = process.env[d.envVar];
+    if (v) store[d.envVar] = v;
+  }
+  writeJson(path, store);
+  if (process.platform !== "win32") {
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return drifts.map((d) => d.envVar);
 }
 
 // The agent MCP configs (.mcp.json `${VAR}`, opencode `{env:VAR}`, droid `${VAR}`) resolve the
@@ -3318,145 +3391,69 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   }
   qwenSettings.security.auth.selectedType = "openai";
 
-  // modelProviders / providerProtocol — TWO DISTINGUISHABLE PROVIDERS, not one gateway for
-  // everything (task wire-support-codex-qwen, REVISED after live smoke on 0.23.0 with two local
-  // listeners falsified the original single-gateway design). The owner runs two subscriptions
-  // and deliberately splits roles between them (mirrors their own `opencode` bindings:
-  // orchestrator/worker-highstakes on DIRECT deepseek, worker/explore/reserve on the
-  // opencode-go gateway).
+  // modelProviders / providerProtocol / agents.modelGrades / security.outboundCorrelation —
+  // OWNER DECISION 09.09.2026 (task wire-print-config-fragment): the kit STOPPED writing these.
+  // They used to be regenerated whole every run (`modelProviders`/`providerProtocol` merge as
+  // REPLACE, packages/cli settingsSchema.ts) — on this hand-configured machine that silently
+  // destroyed a working three-leg layout: `${session_id}` (qwen's own per-request template,
+  // QwenLM/qwen-code#11282) collapsed to a static uuid, `contextWindowSize` vanished (~1M context
+  // fell back to a ~200k default), and `modelGrades` shrank to two ids. Provider entries are
+  // hermetic — a top-level `model.generationConfig` does not fill a missing provider field — so
+  // there was no way to merge around this short of not writing the map at all.
   //
-  // Measured, load-bearing facts (do not re-derive):
-  //   - A provider name can NEVER appear in the `model:` selector. qwen matches the pre-colon
-  //     segment against a STATIC auth-type enum (packages/core/src/utils/modelId.ts:42,
-  //     auth-type.ts:8-14 — exactly openai | qwen-oauth | gemini | vertex-ai | anthropic); an
-  //     unknown prefix does NOT error, the whole string just becomes a bare model id
-  //     (modelId.ts:101-103). Measured: `opencode-go:glm-5.3-flash` silently hit the DIRECT
-  //     provider with a garbage wire model name — exit 0, no warning. So every role file's
-  //     `model:` stays `openai:<id>`, same auth type as before; the actual provider routing
-  //     lives entirely in `providerProtocol` + the `modelProviders` KEY below.
-  //   - Two providers ARE separately routable via `providerProtocol` (provider-key →
-  //     "openai"-shaped wire protocol) paired with a provider-keyed `modelProviders` entry: the
-  //     provider becomes visible through a decorated, GLOBALLY-UNIQUE id (`ds-*` direct,
-  //     `go-*` gateway), with the TRUE wire model name in
-  //     `generationConfig.extra_body.model` — never in the id, which is qwen's own bookkeeping
-  //     key, not a wire value. Measured: id `go-glm-5.3-flash` reached the gateway listener and
-  //     sent wire `model=glm-5.3-flash`.
-  //   - `providerProtocol` is MANDATORY for a non-auth-type key: omit it and the whole key's
-  //     models are silently dropped, exit 1 (packages/cli/src/utils/modelConfigUtils.ts:107-127).
-  //   - Both `modelProviders` and `providerProtocol` merge as REPLACE (settingsSchema.ts:369,
-  //     :382) — the complete set is written every run, never a partial patch. `providerProtocol`
-  //     is `requiresRestart: true`; `modelProviders` hot-reloads — an operator changing nothing
-  //     but role bindings still needs a qwen restart to pick up a NEW provider key (not just a
-  //     new model under an existing one).
-  //   - Duplicate ids resolve by JSON key declaration order, silently (modelRegistry.ts:204 logs
-  //     at debug only) — ids are kept globally unique across both provider keys, and the two
-  //     keys are always written in the SAME order (deepseek, then opencode-go) so this object's
-  //     shape never depends on iteration order of anything upstream.
-  //
-  // `customHeaders` (RESOLVED — qwen-spec.md §11, verified via
-  // OpenAIContentGeneratorProvider.buildHeaders() in the installed clone) is set ONLY on the
-  // opencode-go entries: the gateway 400s without `x-opencode-session` on every request; the
-  // direct DeepSeek provider needs no such header. The UUID is the SAME one codex's own
-  // opencode-go provider block just computed above in this function (opencodeSessionUuid) —
-  // reused, not re-minted — and must survive re-installs.
-  qwenSettings.providerProtocol = {
-    deepseek: "openai",
-    "opencode-go": "openai",
-  };
-  // Owner decision 2026-09-08: both codex and qwen run entirely on the DIRECT DeepSeek
-  // subscription until a routing proxy exists (see roles.ts's CODEX_ROLE_MODEL_SEED comment for
-  // the full "why" — codex pins one provider per process, so a per-role split across two
-  // subscriptions is impossible on that harness today; the owner would rather have both
-  // harnesses consistently direct than have codex silently bill everything to the gateway). Two
-  // entries here, mirroring CODEX_ROLE_MODEL_SEED's pro/flash split.
-  //
-  // Both arrays live in qwen-model-catalog.ts, not as literals here — that module is the single
-  // source of truth for "which qwen model ids does the kit register", shared with
-  // model-registration-check.ts's stale-binding warning (see that file's header: a second,
-  // hand-maintained copy of this exact list is the class of bug this whole task closes).
-  const qwenDeepseekModels = QWEN_DEEPSEEK_MODELS;
-  // opencode-go stays registered — same "second subscription, single future rebinding" reasoning
-  // as codex's `[model_providers.opencode-go]` block above — but no role binds through it today
-  // (QWEN_ROLE_MODEL_SEED, roles.ts), so its ids are deliberately excluded from
-  // agents.modelGrades below.
-  const qwenOpencodeGoModels = QWEN_OPENCODE_GO_MODELS;
-  qwenSettings.modelProviders = {
-    deepseek: qwenDeepseekModels.map((m) => ({
-      id: m.id,
-      name: m.name,
-      baseUrl: "https://api.deepseek.com/v1",
-      envKey: "DEEPSEEK_API_KEY",
-      generationConfig: { extra_body: { model: m.wireModel } },
-    })),
-    "opencode-go": qwenOpencodeGoModels.map((m) => ({
-      id: m.id,
-      name: m.name,
-      baseUrl: "https://opencode.ai/zen/go/v1",
-      envKey: "OPENCODE_GO_API_KEY",
-      generationConfig: {
-        extra_body: { model: m.wireModel },
-        customHeaders: { "x-opencode-session": opencodeSessionUuid },
-      },
-    })),
-  };
-
-  // model.name — defect qwen-dead-default-model (live smoke, wire-support-codex-qwen): the
-  // owner's live ~/.qwen/settings.json had this left at a stale value ("coder-model") that
-  // matches no `modelProviders.<key>[].id` above, paired with `security.auth.apiKey`/`baseUrl`
-  // pointing at a local llama endpoint that was not running. A bare `qwen` run (no `-m` flag)
-  // resolves the model from `settings.model.name` (packages/cli's resolveCliGenerationConfig:
-  // `argv.model || settings.model.name`), then matches it against `modelProviders.<id>` — a
-  // miss falls through to `security.auth`'s own apiKey/baseUrl instead of the routing this kit
-  // just wired, silently hitting the dead endpoint.
-  // Set to the orchestrator tier's bare id (matches QWEN_ROLE_MODEL_SEED.orchestrator, roles.ts
-  // — "openai:ds-deepseek-v4-pro" stripped of its `authType:` prefix, since `model.name` is
-  // matched against the BARE `modelProviders.<key>[].id`, not the `authType:id` form a role
-  // file's own `model:` frontmatter uses) so a plain `qwen` invocation resolves through
-  // modelProviders like every role file this kit renders. NOTE: `-m`/`--model` does NOT accept
-  // this `authType:model` grammar (it silently falls back to the first registered model) — never
-  // tell anyone to pass `-m openai:...`; the bare id form here, or `model.name`, is the only
-  // supported default-model surface.
-  // NEVER touches security.auth.apiKey/baseUrl: they are the owner's own values, read only as a
-  // FALLBACK once model.name fails to resolve through modelProviders (qwen's own
-  // modelConfigResolver) — discarding a credential silently would be worse than leaving a stale
-  // one, so this only ever replaces `model.name`.
-  if (!qwenSettings.model || typeof qwenSettings.model !== "object") qwenSettings.model = {};
-  const qwenDefaultModelName = "ds-deepseek-v4-pro";
-  const previousQwenModelName = qwenSettings.model.name;
-  if (previousQwenModelName !== qwenDefaultModelName) {
-    qwenSettings.model.name = qwenDefaultModelName;
-    log(
-      previousQwenModelName === undefined
-        ? `[8/10] qwen model.name: set to '${qwenDefaultModelName}' (was unset).`
-        : `[8/10] qwen model.name: replaced '${previousQwenModelName}' with ` +
-            `'${qwenDefaultModelName}' (the old value matched no modelProviders entry, so a bare ` +
-            `'qwen' run fell through to security.auth's own apiKey/baseUrl instead of the ` +
-            `wired providers; security.auth itself is left untouched).`,
-    );
+  // The kit's role in this now stops at PRINTING a ready-to-paste fragment (qwen-config-
+  // fragment.ts, built from qwen-model-catalog.ts's known ids + this machine's roles.json role→
+  // model bindings, so `petbox-wire model set <role> <id> --agent qwen` changes the printed
+  // `agents.modelGrades`/`model.name`) and WARNING when the live config's own modelProviders/
+  // providerProtocol/modelGrades/outboundCorrelation/model.name diverge from what that roster
+  // expects — never auto-fixing (task brief: "если фрагмент уже присутствует — кит говорит, что
+  // присутствует, и не трогает"; `model.name` specifically is the owner's own `/model`-picker
+  // choice — task qwen-model-name-into-fragment). See the wiki page `qwen-three-provider-legs-
+  // howto` for the full manual howto this compiles.
+  {
+    const qwenRolesData = loadRoles(homedir());
+    const divergence = findQwenConfigDivergence(qwenSettings, qwenRolesData);
+    if (divergence.warnings.length === 0) {
+      log(
+        `[8/10] qwen modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation/` +
+          `model.name at ${qwenSettingsPath} already match the kit's roster — nothing to paste.`,
+      );
+    } else {
+      console.error(
+        `[8/10] qwen config at ${qwenSettingsPath} diverges from the kit's roster in ` +
+          `${divergence.warnings.length} way(s) — the kit does NOT write these keys (owner ` +
+          `decision 09.09.2026); paste the fragment below yourself:`,
+      );
+      for (const w of divergence.warnings) console.error(`  - ${w}`);
+      log(renderQwenConfigFragmentText(qwenRolesData));
+    }
+    for (const n of divergence.notes) log(`[8/10] qwen config note: ${n}`);
   }
 
-  // agents.modelGrades (qwen-spec.md §6) — gates the Agent tool's spawn-time `model` PARAMETER
-  // (a DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated).
-  // There is no built-in default: an unseeded machine rejects EVERY explicit spawn-time `model`
-  // with an empty `Available:` list. Self-keyed (grade name == the value it resolves to) so a
-  // caller passing exactly one of the `openai:<id>` pairs this kit binds roles to at spawn time
-  // resolves, without inventing a second naming scheme (e.g. "fast"/"deep" grade labels) nothing
-  // else in this kit's role/model machinery references. Lists EXACTLY the ids QWEN_ROLE_MODEL_SEED
-  // uses today — the deepseek pair — never the opencode-go ids: those stay registered in
-  // modelProviders (future rebinding) but no role spawns through them, so grading them would
-  // silently accept a spawn-time `model` value nothing in this kit's own bindings ever produces.
-  if (!qwenSettings.agents || typeof qwenSettings.agents !== "object") qwenSettings.agents = {};
-  const qwenModelGrades: Record<string, string> = {};
-  for (const m of qwenDeepseekModels) qwenModelGrades[`openai:${m.id}`] = `openai:${m.id}`;
-  qwenSettings.agents.modelGrades = qwenModelGrades;
+  // model.name — task qwen-model-name-into-fragment, owner decision 09.09.2026: the kit STOPPED
+  // writing this key too (previously set unconditionally to fix defect qwen-dead-default-model —
+  // live smoke, wire-support-codex-qwen — a stale value like "coder-model" matching no
+  // `modelProviders.<key>[].id`, which made a bare `qwen` run fall through to `security.auth`'s
+  // own apiKey/baseUrl instead of the routing this kit wires). That fix over-corrected: qwen
+  // itself treats `model.name` as a USER-CHOICE key, persisted as a pair with `model.baseUrl`
+  // every time the owner picks a model via `/model` — the kit's write replaced only the `name`
+  // half of that pair, so every `wire` run silently reverted the owner's own `/model` pick
+  // (measured: the now-stale `baseUrl` then matches no provider, and qwen falls back to a
+  // hardcoded default leg — a warning at startup, and the wrong model in use). `model.name` is
+  // now PRINTED ONLY, as part of the same fragment as agents.modelGrades (qwen-config-fragment.ts,
+  // findQwenConfigDivergence above already covers the "live value resolves to nothing" case with a
+  // warning, never a rewrite) — never written here.
+
+  // agents.modelGrades — NOT written (see the modelProviders block above): printed only, as part
+  // of the same fragment, since it gates the Agent tool's spawn-time `model` PARAMETER (a
+  // DIFFERENT thing from a role file's own `model:` frontmatter field, which is never gated) and
+  // an unseeded machine rejects EVERY explicit spawn-time `model` with an empty `Available:` list.
 
   writeJson(qwenSettingsPath, qwenSettings);
   log(
     `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
-      `security.auth.selectedType=openai, providerProtocol.{deepseek,opencode-go}=openai, ` +
-      `modelProviders.deepseek x${qwenDeepseekModels.length} + modelProviders.opencode-go ` +
-      `x${qwenOpencodeGoModels.length}, model.name=${qwenDefaultModelName}, ` +
-      `agents.modelGrades x${qwenDeepseekModels.length}).`,
+      `security.auth.selectedType=openai — modelProviders/providerProtocol/agents.modelGrades/` +
+      `outboundCorrelation/model.name are printed only, never written).`,
   );
 }
 
@@ -3793,6 +3790,22 @@ async function main(): Promise<void> {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
   }
 
+  // 7c. seed a default role→model binding (fresh machine only) — MUST run BEFORE step 8's qwen
+  // config-fragment print (task wire-fragment-first-run-empty-grades, found by independent review
+  // of wire-print-config-fragment): step 8's installGlobalHooks reads roles.json via loadRoles()
+  // to build the printed `agents.modelGrades` fragment. On a brand-new machine roles.json does not
+  // exist yet — printing before this seed step ran gave the very first `wire` run on any machine
+  // an empty `agents.modelGrades: {}` fragment, silently correct on the SECOND run only. That is
+  // exactly the one run a fresh owner is expected to paste (this fragment is meant to be pasted
+  // once, not diffed run over run) — so the bug was invisible to the one person who could not
+  // afford it. NEVER ABORTS THE RUN (see this function's own header comment): the key is already
+  // validated by this point, so a compile hiccup here must not throw away the rest of an otherwise
+  // successful wire run; re-running `petbox-wire apply` retries just this step. Idempotent by
+  // construction (seedMissingRoleBindings is purely additive — see its own doc comment) — moving
+  // this call earlier does not create a second write: step 11 below no longer calls it a second
+  // time, it only applies/compiles against whatever this call already settled.
+  seedDefaultRoleBindingsIfMissing("[7c/10]");
+
   // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
   // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
   installGlobalHooks(envVar, dir);
@@ -3804,12 +3817,14 @@ async function main(): Promise<void> {
   // 10. self-smoke
   const smokeOk = await selfSmoke(baseUrl, project, key);
 
-  // 11. seed a default role→model binding (fresh machine only) + apply — compile per-harness
-  // startup artifacts NOW, so the freshly-wired roster is actually usable. NEVER ABORTS THE RUN:
-  // the key is already validated and every other file is already written by this point, so a
-  // compile hiccup here (e.g. a transient workspace-probe failure, which only downgrades the
-  // skill refresh) must not throw away work that already succeeded;
-  // re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
+  // 11. apply — compile per-harness startup artifacts NOW, so the freshly-wired roster is actually
+  // usable. The default-binding SEED itself already ran at step 7c (task
+  // wire-fragment-first-run-empty-grades) — moved there so step 8's printed qwen fragment sees a
+  // seeded roster on the very first run; this step only compiles/applies against whatever roles.json
+  // already holds by now. NEVER ABORTS THE RUN: the key is already validated and every other file
+  // is already written by this point, so a compile hiccup here (e.g. a transient workspace-probe
+  // failure, which only downgrades the skill refresh) must not throw away work that already
+  // succeeded; re-running `petbox-wire apply` retries just this step (fresh-wire-roster-unusable).
   //
   // "Does not abort" is NOT "does not count" (full-wire-exit-ignores-step-11). Those two were
   // fused in this comment and the code only implemented the first: step 11 could return 1
@@ -3817,7 +3832,6 @@ async function main(): Promise<void> {
   // "0 — every requested step ran" false for the full-wire path and re-opened the very bug this
   // step exists to close — a machine whose agent artifacts were never written is then
   // indistinguishable, to a script, from a fully wired one.
-  seedDefaultRoleBindingsIfMissing("[11/10]");
   // The machine's remembered role-scope policy (~/.petbox/wire.json) applies here too — a full
   // `wire` re-run on a machine that moved its roles into the harness profiles must not silently
   // re-create the project copies it just deleted (card: normalize-all-environments-to-default).
