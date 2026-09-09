@@ -54,10 +54,24 @@ import {
 // same-name copy under `.opencode/skills/` would be a duplicate whose resolution opencode does
 // not document. Droid reads its own `.factory/skills/` root (its compat path is
 // `.agent/skills/`, NOT `.claude/skills/`), so it needs a dedicated copy.
+// qwen is absent for a THIRD reason, distinct from opencode's and droid's: it reads foreign skill
+// roots through its own `skills.directories` setting, so it is wired by a POINTER at the
+// `.claude` surface below (qwen-project-settings.ts) rather than by a third copy of every skill
+// body on disk. `claudeSkillsDir` is that pointer's single source of truth — same segments, one
+// definition, so the two can never drift into naming different directories.
+const CLAUDE_SKILLS_SURFACE = [".claude", "skills"] as const;
+
 export const SKILL_SURFACES: string[][] = [
-  [".claude", "skills"], // Claude Code (native) + opencode (Claude-compatible discovery)
+  [...CLAUDE_SKILLS_SURFACE], // Claude Code (native) + opencode (Claude-compatible discovery)
   [".factory", "skills"], // Factory Droid (native)
 ];
+
+/** The `.claude/skills` root inside `projectDir`. Absolute iff `projectDir` is — and every caller
+ * passes an absolute project root, because qwen resolves a relative `skills.directories` entry
+ * against the runtime's cwd (see qwen-project-settings.ts's header). */
+export function claudeSkillsDir(projectDir: string): string {
+  return join(projectDir, ...CLAUDE_SKILLS_SURFACE);
+}
 
 export type SkillTemplateSpec = {
   // Directory name — used BOTH as the template's subdir under templatesRoot AND as the target
