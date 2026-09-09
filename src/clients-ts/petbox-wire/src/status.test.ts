@@ -47,7 +47,7 @@ import {
 import { PETBOX_MARKER_LINE } from "./origin-marker.ts";
 import { PROJECT_SKILLS, renderSkillTemplate } from "./skill-files.ts";
 import { readArtifactState } from "./origin-marker.ts";
-import type { RolesFile } from "./roles.ts";
+import { makeRoleBinding, ROLES_FORMAT_VERSION, type RolesFile } from "./roles.ts";
 import { WIRE_EXIT } from "./wire-exit.ts";
 
 const FAKE_PROJECT: ResolvedProject = {
@@ -142,22 +142,27 @@ test("formatRoleModelSource: 'roster' and 'seed' are non-problems and name their
 });
 
 test("computeRosterState: absent / empty-shell / partial / complete", () => {
-  const empty: RolesFile = { activeProfile: "default", profiles: {} };
+  const empty: RolesFile = { formatVersion: ROLES_FORMAT_VERSION, activeProfile: "default", profiles: {} };
   assert.deepEqual(computeRosterState(DEFAULT_AGENT_DEFINITION, empty, false), { kind: "absent" });
 
-  const shell: RolesFile = { activeProfile: "default", profiles: { default: { agents: {} } } };
+  const shell: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: { default: { agents: {} } },
+  };
   assert.deepEqual(computeRosterState(DEFAULT_AGENT_DEFINITION, shell, true), {
     kind: "empty-shell",
     activeProfile: "default",
   });
 
   const partial: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
     activeProfile: "default",
     profiles: {
       default: {
         agents: {
           "claude-code": {
-            roles: { orchestrator: { model: "opus" }, worker: { model: "sonnet" } },
+            roles: { orchestrator: makeRoleBinding("claude-code", "opus"), worker: makeRoleBinding("claude-code", "sonnet") },
           },
         },
       },
@@ -170,17 +175,18 @@ test("computeRosterState: absent / empty-shell / partial / complete", () => {
   }
 
   const complete: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
     activeProfile: "default",
     profiles: {
       default: {
         agents: {
           "claude-code": {
             roles: {
-              orchestrator: { model: "opus" },
-              worker: { model: "sonnet" },
-              "worker-highstakes": { model: "opus" },
-              explore: { model: "haiku" },
-              reserve: { model: "fable" },
+              orchestrator: makeRoleBinding("claude-code", "opus"),
+              worker: makeRoleBinding("claude-code", "sonnet"),
+              "worker-highstakes": makeRoleBinding("claude-code", "opus"),
+              explore: makeRoleBinding("claude-code", "haiku"),
+              reserve: makeRoleBinding("claude-code", "fable"),
             },
           },
         },
@@ -482,7 +488,7 @@ test("CLI: HOME with an explicit roles.json binding -> 'roster', not 'seed'", ()
           profiles: {
             default: {
               agents: {
-                "claude-code": { roles: { worker: { model: "opus" } } },
+                "claude-code": { roles: { worker: makeRoleBinding("claude-code", "opus") } },
               },
             },
           },
@@ -523,10 +529,10 @@ test("CLI: roles.json missing exactly one role's binding -> that role prints 'no
               agents: {
                 "claude-code": {
                   roles: {
-                    orchestrator: { model: "opus" },
-                    worker: { model: "sonnet" },
-                    "worker-highstakes": { model: "opus" },
-                    reserve: { model: "fable" },
+                    orchestrator: makeRoleBinding("claude-code", "opus"),
+                    worker: makeRoleBinding("claude-code", "sonnet"),
+                    "worker-highstakes": makeRoleBinding("claude-code", "opus"),
+                    reserve: makeRoleBinding("claude-code", "fable"),
                     // "explore" deliberately absent.
                   },
                 },

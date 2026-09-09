@@ -15,13 +15,22 @@ import {
   renderQwenConfigFragmentText,
   QWEN_OUTBOUND_CORRELATION_FRAGMENT,
 } from "./qwen-config-fragment.ts";
-import type { RolesFile } from "./roles.ts";
+import { makeRoleBinding, ROLES_FORMAT_VERSION, type RolesFile } from "./roles.ts";
 
 function rolesWith(qwenRoles: Record<string, string>): RolesFile {
   return {
+    formatVersion: ROLES_FORMAT_VERSION,
     activeProfile: "default",
     profiles: {
-      default: { agents: { qwen: { roles: Object.fromEntries(Object.entries(qwenRoles).map(([r, m]) => [r, { model: m }])) } } },
+      default: {
+        agents: {
+          qwen: {
+            roles: Object.fromEntries(
+              Object.entries(qwenRoles).map(([r, m]) => [r, makeRoleBinding("qwen", m)]),
+            ),
+          },
+        },
+      },
     },
   };
 }

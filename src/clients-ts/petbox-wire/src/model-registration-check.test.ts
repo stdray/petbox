@@ -9,15 +9,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
 import { qwenRegisteredModelIds } from "./qwen-model-catalog.ts";
-import type { RolesFile } from "./roles.ts";
+import { makeRoleBinding, ROLES_FORMAT_VERSION, type RoleBinding, type RolesFile } from "./roles.ts";
 
 function rolesFile(profiles: RolesFile["profiles"], activeProfile = "default"): RolesFile {
-  return { activeProfile, profiles };
+  return { formatVersion: ROLES_FORMAT_VERSION, activeProfile, profiles };
 }
 
 test("qwen: a binding on a currently-registered id (authType:id form) produces no warning", () => {
   const data = rolesFile({
-    p1: { agents: { qwen: { roles: { orchestrator: { model: "openai:ds-deepseek-v4-pro" } } } } },
+    p1: { agents: { qwen: { roles: { orchestrator: makeRoleBinding("qwen", "openai:ds-deepseek-v4-pro") } } } },
   });
   assert.deepEqual(findUnregisteredRoleBindings(data), []);
 });
@@ -28,7 +28,7 @@ test("qwen: a binding on an id the kit no longer registers (live-incident shape 
       agents: {
         qwen: {
           roles: {
-            orchestrator: { model: "openai:deepseek-v4-pro" }, // pre-revision bare id, not ds-*
+            orchestrator: makeRoleBinding("qwen", "openai:deepseek-v4-pro"), // pre-revision bare id, not ds-*
           },
         },
       },
@@ -54,15 +54,15 @@ test("qwen: the live-incident scenario — three stale bindings across two non-a
   const data = rolesFile(
     {
       default: {
-        agents: { qwen: { roles: { orchestrator: { model: "openai:ds-deepseek-v4-pro" } } } },
+        agents: { qwen: { roles: { orchestrator: makeRoleBinding("qwen", "openai:ds-deepseek-v4-pro") } } },
       },
       "opencode-go-max": {
         agents: {
           qwen: {
             roles: {
-              orchestrator: { model: "openai:deepseek-v4-pro" },
-              worker: { model: "openai:glm-5.3-flash" },
-              reserve: { model: "openai:qwen3.8-max" },
+              orchestrator: makeRoleBinding("qwen", "openai:deepseek-v4-pro"),
+              worker: makeRoleBinding("qwen", "openai:glm-5.3-flash"),
+              reserve: makeRoleBinding("qwen", "openai:qwen3.8-max"),
             },
           },
         },
@@ -71,9 +71,9 @@ test("qwen: the live-incident scenario — three stale bindings across two non-a
         agents: {
           qwen: {
             roles: {
-              orchestrator: { model: "openai:deepseek-v4-pro" },
-              worker: { model: "openai:glm-5.3-flash" },
-              reserve: { model: "openai:qwen3.8-max" },
+              orchestrator: makeRoleBinding("qwen", "openai:deepseek-v4-pro"),
+              worker: makeRoleBinding("qwen", "openai:glm-5.3-flash"),
+              reserve: makeRoleBinding("qwen", "openai:qwen3.8-max"),
             },
           },
         },
@@ -89,9 +89,9 @@ test("qwen: the live-incident scenario — three stale bindings across two non-a
 test("qwen: registered ids come from qwenRegisteredModelIds() — a binding on every id that function returns never warns", () => {
   const ids = qwenRegisteredModelIds();
   assert.ok(ids.length > 0);
-  const roles: Record<string, { model: string }> = {};
+  const roles: Record<string, RoleBinding> = {};
   ids.forEach((id, i) => {
-    roles[`role-${i}`] = { model: `openai:${id}` };
+    roles[`role-${i}`] = makeRoleBinding("qwen", `openai:${id}`);
   });
   const data = rolesFile({ p: { agents: { qwen: { roles } } } });
   assert.deepEqual(findUnregisteredRoleBindings(data), []);
@@ -103,8 +103,8 @@ test("qwen: blank and 'inherit' bindings are not concrete ids — never checked,
       agents: {
         qwen: {
           roles: {
-            orchestrator: { model: "inherit" },
-            worker: { model: "   " },
+            orchestrator: makeRoleBinding("qwen", "inherit"),
+            worker: makeRoleBinding("qwen", "   "),
           },
         },
       },
@@ -115,7 +115,7 @@ test("qwen: blank and 'inherit' bindings are not concrete ids — never checked,
 
 test("codex: a binding on a currently-registered slug produces no warning", () => {
   const data = rolesFile({
-    p1: { agents: { codex: { roles: { orchestrator: { model: "deepseek-v4-pro" } } } } },
+    p1: { agents: { codex: { roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro") } } } },
   });
   assert.deepEqual(findUnregisteredRoleBindings(data), []);
 });
@@ -123,10 +123,10 @@ test("codex: a binding on a currently-registered slug produces no warning", () =
 test("codex: the catalog is the union of EVERY profile's bindings, so a slug that looks stale (grok-4.6, the live-incident id) still resolves and never warns — this is the documented 'milder' case, not a bug in this check", () => {
   const data = rolesFile({
     default: {
-      agents: { codex: { roles: { orchestrator: { model: "deepseek-v4-pro" } } } },
+      agents: { codex: { roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro") } } },
     },
     "opencode-go-max": {
-      agents: { codex: { roles: { reserve: { model: "grok-4.6" } } } },
+      agents: { codex: { roles: { reserve: makeRoleBinding("codex", "grok-4.6") } } },
     },
   });
   // Sanity: grok-4.6 really is absent from the *current* seed (roles.ts) — this is the exact
@@ -138,9 +138,9 @@ test("harnesses outside the checked set (claude-code, droid, opencode) never pro
   const data = rolesFile({
     p: {
       agents: {
-        "claude-code": { roles: { orchestrator: { model: "totally-not-a-real-model" } } },
-        droid: { roles: { orchestrator: { model: "custom:DeepSeek-V4-Pro-0" } } },
-        opencode: { roles: { orchestrator: { model: "anthropic/claude-opus-4-8" } } },
+        "claude-code": { roles: { orchestrator: makeRoleBinding("claude-code", "totally-not-a-real-model") } },
+        droid: { roles: { orchestrator: makeRoleBinding("droid", "custom:DeepSeek-V4-Pro-0") } },
+        opencode: { roles: { orchestrator: makeRoleBinding("opencode", "anthropic/claude-opus-4-8") } },
       },
     },
   });
@@ -153,8 +153,8 @@ test("mixed profile: only the harness/role actually mismatched is warned about, 
       agents: {
         qwen: {
           roles: {
-            orchestrator: { model: "openai:ds-deepseek-v4-pro" }, // valid
-            reserve: { model: "openai:qwen3.9-max" }, // typo'd / stale, invalid
+            orchestrator: makeRoleBinding("qwen", "openai:ds-deepseek-v4-pro"), // valid
+            reserve: makeRoleBinding("qwen", "openai:qwen3.9-max"), // typo'd / stale, invalid
           },
         },
       },

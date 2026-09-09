@@ -184,17 +184,24 @@ import {
   agentLookupKeys,
   canonicalAgentId,
   exportRolesBootstrap,
+  findBindingProviderInconsistencies,
   formatResolvedBinding,
   HARNESS_ROLE_MODEL_SEEDS,
   isEmptyRoles,
   loadRoles,
+  loadRolesMigrated,
   resolveAgentRoles,
   rolesPath,
+  ROLES_FORMAT_VERSION,
+  rewrittenByMigration,
   saveRoles,
   seedMissingRoleBindings,
   setRoleModel,
   unsetRoleModel,
   useProfile,
+  type RoleBindingMigration,
+  type RoleBindingReattribution,
+  type RoleBindingRefresh,
   type RolesFile,
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
@@ -202,6 +209,7 @@ import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
 import { buildCodexModelCatalog } from "./codex-model-catalog.ts";
 import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
+import { CODEX_MODEL_PROVIDER } from "./binding-provider.ts";
 import { findQwenConfigDivergence, renderQwenConfigFragmentText } from "./qwen-config-fragment.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
@@ -3225,7 +3233,9 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // `[model_providers.opencode-go]` stays registered above (unused by this default and by every
   // role) — it documents the owner's second subscription so a future switch is a single
   // rebinding, not a config rewrite.
-  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString("deepseek"));
+  // The literal lives in binding-provider.ts (CODEX_MODEL_PROVIDER) because a codex role
+  // binding's `provider` label is derived from exactly this value — two copies would drift.
+  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString(CODEX_MODEL_PROVIDER));
   codexBlocks = setRootScalar(codexBlocks, "model", tomlString("deepseek-v4-pro"));
   codexBlocks = setRootScalar(codexBlocks, "model_catalog_json", tomlString(codexCatalogPath));
 
@@ -3632,16 +3642,42 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 // warns about it instead of failing (newcomer-equivalent-experience's happy path: exit 0).
 function seedDefaultRoleBindingsIfMissing(label: string): void {
   const fresh = !existsSync(rolesPath());
-  const before: RolesFile = fresh
-    ? { activeProfile: "default", profiles: { default: { agents: {} } } }
-    : loadRoles();
-  const { data: after, changed } = seedMissingRoleBindings(before);
-  if (!changed) {
+  const loaded = fresh
+    ? {
+        data: {
+          formatVersion: ROLES_FORMAT_VERSION,
+          activeProfile: "default",
+          profiles: { default: { agents: {} } },
+        } satisfies RolesFile,
+        migrations: [],
+      }
+    : loadRolesMigrated();
+  const before: RolesFile = loaded.data;
+  logRolesMigration(label, loaded.migrations);
+  const { data: after, changed, refreshed, reattributed } = seedMissingRoleBindings(before);
+  logKitBindingRefresh(label, refreshed);
+  logKitBindingReattribution(label, reattributed);
+  // The format migration is a REASON TO WRITE in its own right: on a machine whose roles.json
+  // already has every harness, the seeder changes nothing, and without this the migrated file
+  // (origin/provider stamped, kit bindings brought up to the current defaults) would be recomputed
+  // in memory on every run and never persisted.
+  const migrated = loaded.migrations.length > 0;
+  if (!changed && !migrated) {
     log(`${label} roles: ${rolesPath()} already exists — left as-is (existing bindings kept).`);
     logUnregisteredModelWarnings(label, after);
+    logProviderInconsistencies(label, after);
     return;
   }
   saveRoles(after);
+  if (!changed) {
+    log(
+      `${label} roles: ${rolesPath()} rewritten at format v${ROLES_FORMAT_VERSION} ` +
+        `(origin + provider recorded per binding); no seed binding was missing.`,
+    );
+    logUnregisteredModelWarnings(label, after);
+    logProviderInconsistencies(label, after);
+    return;
+  }
   const seededHarnesses = Object.keys(HARNESS_ROLE_MODEL_SEEDS).filter((harness) =>
     Object.entries(after.profiles).some(([profileName, afterProfile]) => {
       const beforeProfile = before.profiles[profileName];
@@ -3664,10 +3700,82 @@ function seedDefaultRoleBindingsIfMissing(label: string): void {
           `yourself with \`petbox-wire model set <role> <model> --agent opencode\` when you know what ` +
           `to bind it to.`
       : `${label} roles: ${rolesPath()} already existed — filled in missing default seed ` +
-          `bindings for: ${seededHarnesses.join(", ")} (every existing binding, any harness, ` +
-          `left byte-for-byte as the operator set it).`,
+          `bindings for: ${seededHarnesses.join(", ")} (every OWNER-set binding, any harness, ` +
+          `left byte-for-byte; kit-set ones are refreshed to the current defaults and reported ` +
+          `above).`,
   );
   logUnregisteredModelWarnings(label, after);
+  logProviderInconsistencies(label, after);
+}
+
+// The roles.json format migration (v1 -> v2) rewrites model VALUES — every binding it attributes
+// to a past version of this kit is brought up to the kit's current default. That is the entire
+// point (a changed default never used to reach a machine that already had a roles.json), and it is
+// also exactly the kind of change that must never happen quietly: the operator sees each cell, its
+// old value, its new value, and the origin the migration decided.
+function logRolesMigration(label: string, migrations: readonly RoleBindingMigration[]): void {
+  if (migrations.length === 0) return;
+  const rewritten = rewrittenByMigration(migrations);
+  const owned = migrations.filter((m) => m.origin === "owner").length;
+  log(
+    `${label} roles: migrated ${rolesPath()} to format v${ROLES_FORMAT_VERSION} — ` +
+      `${migrations.length} binding(s) labelled with origin + provider, ${owned} attributed to ` +
+      `you and left byte-for-byte, ${rewritten.length} kit-seeded one(s) updated to this kit's ` +
+      `current defaults.`,
+  );
+  for (const m of rewritten) {
+    log(
+      `  - profile '${m.profile}' ${m.agent}/${m.role}: ${m.modelBefore} -> ${m.modelAfter} ` +
+        `(provider ${m.provider ?? "unknown"}; matched a seed this kit shipped previously, so it ` +
+        `was this kit's own past choice, not yours)`,
+    );
+  }
+}
+
+// A kit-origin binding moving because the kit's defaults moved — the steady-state version of the
+// migration report above, on a file already at the current format.
+function logKitBindingRefresh(label: string, refreshed: readonly RoleBindingRefresh[]): void {
+  if (refreshed.length === 0) return;
+  log(
+    `${label} roles: ${refreshed.length} kit-set binding(s) updated to this kit's current ` +
+      `defaults (bindings you set yourself are never touched):`,
+  );
+  for (const r of refreshed) {
+    log(`  - profile '${r.profile}' ${r.agent}/${r.role}: ${r.modelBefore} -> ${r.modelAfter}`);
+  }
+}
+
+// A binding still LABELLED kit whose value this kit has never shipped — i.e. edited straight in
+// the file rather than through `model set`, which stamps the origin itself. The value is kept and
+// the label corrected, so the next run does not silently revert a deliberate edit; saying so out
+// loud is what keeps the origin field honest rather than magic.
+function logKitBindingReattribution(
+  label: string,
+  reattributed: readonly RoleBindingReattribution[],
+): void {
+  if (reattributed.length === 0) return;
+  log(
+    `${label} roles: ${reattributed.length} binding(s) marked as set by this kit no longer hold a ` +
+      `value this kit ships — treating them as yours from now on (value kept as-is):`,
+  );
+  for (const r of reattributed) {
+    log(`  - profile '${r.profile}' ${r.agent}/${r.role}: ${r.model}`);
+  }
+}
+
+// The `provider` label on a binding is only worth reading if something checks it against the value
+// it claims to describe. The kit derives it on every write, so this can only fire on a hand-edited
+// file — which is precisely the case where a reader would otherwise trust a label that lies.
+// Internal consistency ONLY (value vs label); checking either against live machine config is
+// stage B2.
+function logProviderInconsistencies(label: string, data: RolesFile): void {
+  const issues = findBindingProviderInconsistencies(data);
+  if (issues.length === 0) return;
+  console.error(
+    `${label} roles: ${issues.length} binding(s) carry a provider label that contradicts their ` +
+      `own model value. Warning only: nothing was rewritten or blocked.`,
+  );
+  for (const i of issues) console.error(`  - ${i}`);
 }
 
 // Runs on EVERY seedDefaultRoleBindingsIfMissing call — both the freshly-seeded/newly-changed

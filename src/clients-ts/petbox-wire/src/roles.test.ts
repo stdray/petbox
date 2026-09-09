@@ -9,21 +9,23 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   CODEX_ROLE_MODEL_SEED,
-  exportRolesBootstrap,
   formatResolvedBinding,
   HARNESS_ROLE_MODEL_SEEDS,
   isEmptyRoles,
   loadRoles,
+  makeRoleBinding,
   QWEN_ROLE_MODEL_SEED,
   resolveAgentRoles,
   resolveObservedBinding,
+  ROLES_FORMAT_VERSION,
+  type RolesFile,
   rolesPath,
   saveRoles,
   seedMissingRoleBindings,
   setRoleModel,
   unsetRoleModel,
   useProfile,
-  type RolesFile,
+  exportRolesBootstrap,
 } from "./roles.ts";
 import { readWireLogTail } from "./wire-log.ts";
 
@@ -32,20 +34,21 @@ function freshHome(): string {
 }
 
 const SAMPLE: RolesFile = {
+  formatVersion: ROLES_FORMAT_VERSION,
   activeProfile: "default",
   profiles: {
     default: {
       agents: {
         "claude-code": {
           roles: {
-            orchestrator: { model: "claude-opus-4" },
-            worker: { model: "claude-sonnet-4" },
+            orchestrator: makeRoleBinding("claude-code", "claude-opus-4"),
+            worker: makeRoleBinding("claude-code", "claude-sonnet-4"),
           },
         },
         opencode: {
           roles: {
-            orchestrator: { model: "deepseek-chat" },
-            worker: { model: "deepseek-coder" },
+            orchestrator: makeRoleBinding("opencode", "deepseek-chat"),
+            worker: makeRoleBinding("opencode", "deepseek-coder"),
           },
         },
       },
@@ -190,7 +193,7 @@ test("export shape is bootstrap-safe RolesFile (no secrets field)", () => {
   );
   // no accidental secret-looking top-level keys
   const keys = Object.keys(exported).sort();
-  assert.deepEqual(keys, ["activeProfile", "profiles"]);
+  assert.deepEqual(keys, ["activeProfile", "formatVersion", "profiles"]);
 });
 
 test("resolveAgentRoles / resolveObservedBinding do not invent defaults", () => {
@@ -222,6 +225,7 @@ test("factory-droid alias resolves to canonical droid (session agent id)", () =>
   try {
     saveRoles(
       {
+        formatVersion: ROLES_FORMAT_VERSION,
         activeProfile: "default",
         profiles: {
           default: {
@@ -229,8 +233,8 @@ test("factory-droid alias resolves to canonical droid (session agent id)", () =>
               // legacy / display name in roles.json
               "factory-droid": {
                 roles: {
-                  orchestrator: { model: "deepseek-v4-pro" },
-                  worker: { model: "deepseek-v4-pro" },
+                  orchestrator: makeRoleBinding("factory-droid", "deepseek-v4-pro"),
+                  worker: makeRoleBinding("factory-droid", "deepseek-v4-pro"),
                 },
               },
             },
@@ -294,7 +298,11 @@ test("setRoleModel: known alias writes clean, no warning", () => {
 
 // In-memory empty store for setRoleModel/unsetRoleModel cases that never touch disk (no
 // freshHome() needed — these are pure-function tests, not load/save round trips).
-const EMPTY_ROLES: RolesFile = { activeProfile: "default", profiles: {} };
+const EMPTY_ROLES: RolesFile = {
+  formatVersion: ROLES_FORMAT_VERSION,
+  activeProfile: "default",
+  profiles: {},
+};
 
 test("setRoleModel: shape-valid-but-unlisted claude id writes with a warning (unknown tier)", () => {
   const data = EMPTY_ROLES;
@@ -419,9 +427,9 @@ test("light validation drops junk role entries without model", () => {
             agents: {
               "claude-code": {
                 roles: {
-                  orchestrator: { model: "ok-model" },
+                  orchestrator: makeRoleBinding("claude-code", "ok-model"),
                   broken: { notModel: true },
-                  empty: { model: "  " },
+                  empty: makeRoleBinding("claude-code", "  "),
                 },
               },
             },
@@ -445,19 +453,20 @@ test("light validation drops junk role entries without model", () => {
 
 test("seedMissingRoleBindings: pre-existing profile with only the three old harnesses gains codex+qwen with the right models, in every profile, and a user's own binding is untouched", () => {
   const before: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
     activeProfile: "opencode-main",
     profiles: {
       "opencode-main": {
         agents: {
-          "claude-code": { roles: { orchestrator: { model: "MY-CUSTOM-MODEL" } } },
-          opencode: { roles: { orchestrator: { model: "deepseek-chat" } } },
-          droid: { roles: { orchestrator: { model: "inherit" } } },
+          "claude-code": { roles: { orchestrator: makeRoleBinding("claude-code", "MY-CUSTOM-MODEL") } },
+          opencode: { roles: { orchestrator: makeRoleBinding("opencode", "deepseek-chat") } },
+          droid: { roles: { orchestrator: makeRoleBinding("droid", "inherit") } },
         },
       },
       // A second profile — seeding must reach every profile in the file, not just active.
       "opencode-go-max": {
         agents: {
-          droid: { roles: { worker: { model: "inherit" } } },
+          droid: { roles: { worker: makeRoleBinding("droid", "inherit") } },
         },
       },
     },
@@ -507,12 +516,13 @@ test("seedMissingRoleBindings: pre-existing profile with only the three old harn
 
 test("seedMissingRoleBindings: a harness already present but bound for only SOME roles is left completely alone (roles too) — that gap is apply's unbound-role refusal to catch, not this seeder's to paper over", () => {
   const before: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
     activeProfile: "default",
     profiles: {
       default: {
         agents: {
           // codex present, but only "orchestrator" bound — deliberately partial.
-          codex: { roles: { orchestrator: { model: "operator-chosen" } } },
+          codex: { roles: { orchestrator: makeRoleBinding("codex", "operator-chosen") } },
         },
       },
     },
@@ -532,7 +542,11 @@ test("seedMissingRoleBindings: a harness already present but bound for only SOME
 });
 
 test("seedMissingRoleBindings: HARNESS_ROLE_MODEL_SEEDS excludes opencode (its model space is open/unknowable) — a file with no harnesses at all never gets an opencode entry invented", () => {
-  const before: RolesFile = { activeProfile: "default", profiles: { default: { agents: {} } } };
+  const before: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: { default: { agents: {} } },
+  };
   const { data: after } = seedMissingRoleBindings(before);
   assert.equal("opencode" in after.profiles["default"]!.agents, false);
   assert.equal(Object.keys(HARNESS_ROLE_MODEL_SEEDS).includes("opencode"), false);

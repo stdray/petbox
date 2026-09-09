@@ -15,7 +15,14 @@ import {
   collectCodexRoleModelSlugs,
   deriveCodexDisplayName,
 } from "./codex-model-catalog.ts";
-import { CODEX_ROLE_MODEL_SEED, saveRoles, seedMissingRoleBindings, type RolesFile } from "./roles.ts";
+import {
+  CODEX_ROLE_MODEL_SEED,
+  makeRoleBinding,
+  ROLES_FORMAT_VERSION,
+  saveRoles,
+  seedMissingRoleBindings,
+  type RolesFile,
+} from "./roles.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-codex-catalog-"));
@@ -43,15 +50,16 @@ test("buildCodexModelCatalog: a codex rebinding to a model ABSENT from the 3 lit
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
           agents: {
             codex: {
               roles: {
-                orchestrator: { model: "deepseek-v4-pro" },
+                orchestrator: makeRoleBinding("codex", "deepseek-v4-pro"),
                 // Not one of the three historical literals — the whole point of this test.
-                worker: { model: "glm-5.3-flash" },
+                worker: makeRoleBinding("codex", "glm-5.3-flash"),
               },
             },
           },
@@ -82,13 +90,14 @@ test("buildCodexModelCatalog: union spans ALL profiles, not just the active one"
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
-          agents: { codex: { roles: { orchestrator: { model: "deepseek-v4-pro" } } } },
+          agents: { codex: { roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro") } } },
         },
         alt: {
-          agents: { codex: { roles: { reserve: { model: "grok-4.6" } } } },
+          agents: { codex: { roles: { reserve: makeRoleBinding("codex", "grok-4.6") } } },
         },
       },
     };
@@ -106,19 +115,20 @@ test("collectCodexRoleModelSlugs: de-duplicates across roles/profiles and skips 
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
           agents: {
             codex: {
               roles: {
-                orchestrator: { model: "deepseek-v4-pro" },
-                "worker-highstakes": { model: "deepseek-v4-pro" }, // duplicate, collapses
-                worker: { model: "inherit" }, // not a concrete model — skipped
+                orchestrator: makeRoleBinding("codex", "deepseek-v4-pro"),
+                "worker-highstakes": makeRoleBinding("codex", "deepseek-v4-pro"), // duplicate, collapses
+                worker: makeRoleBinding("codex", "inherit"), // not a concrete model — skipped
               },
             },
             // A non-codex harness binding must never leak into the codex catalog.
-            "claude-code": { roles: { orchestrator: { model: "opus" } } },
+            "claude-code": { roles: { orchestrator: makeRoleBinding("claude-code", "opus") } },
           },
         },
       },
@@ -135,7 +145,7 @@ test("collectCodexRoleModelSlugs: de-duplicates across roles/profiles and skips 
 test("buildCodexModelCatalog: a freshly-seeded roles.json (CODEX_ROLE_MODEL_SEED, owner decision 2026-09-08: both new harnesses run entirely on the direct DeepSeek subscription) derives a catalog of exactly the two DeepSeek slugs — grok-4.6 does not appear, and both entries keep apply_patch_tool_type=freeform", () => {
   const home = freshHome();
   try {
-    const fresh: RolesFile = { activeProfile: "default", profiles: { default: { agents: {} } } };
+    const fresh: RolesFile = { formatVersion: ROLES_FORMAT_VERSION, activeProfile: "default", profiles: { default: { agents: {} } } };
     const { data: seeded } = seedMissingRoleBindings(fresh);
     saveRoles(seeded, home);
 

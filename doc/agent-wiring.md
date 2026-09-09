@@ -64,9 +64,14 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `apply-artifacts.ts` — pure `planApply(definition, harness, roleModels)` → the per-harness role
   files. Clean roles are emitted; a dirty role is skipped WHOLE and reported (never written with the
   offending line silently dropped).
-- `roles.ts` — the local role→model binding store `~/.petbox/roles.json` (`activeProfile` +
-  `profiles.<name>.agents.<harness>.roles.<role>.model`). Machine-authoritative, offline, never
-  uploaded, never invents a model.
+- `roles.ts` — the local role→model binding store `~/.petbox/roles.json` (`formatVersion` +
+  `activeProfile` + `profiles.<name>.agents.<harness>.roles.<role>`). Machine-authoritative,
+  offline, never uploaded, never invents a model. A binding is `{ model, origin, provider }`
+  (format **v2**, see §2g).
+- `binding-provider.ts` — which provider serves a binding, parsed out of the harness's own model
+  grammar (one sourced rule per harness; an unparseable value derives `null`, never a guess).
+  Pure and offline: it reads no config file and makes no network call — validating a binding
+  against LIVE machine config is a separate, later stage.
 - `wire-exit.ts` — the exit taxonomy (`WIRE_EXIT`, `classifyApplyExit`) **and** the two sanctioned
   ways a run may end (`exitWith`, `abortRun`); see §2b and §2b-2.
 - `templates/petbox/SKILL.md` — per-project petbox skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
@@ -248,9 +253,11 @@ version, then imports `wire.ts`) plus the `src/` kit.
      stable copy's `file:///` URL (single source of truth; overwritten each run).
 9. `--cleanup-legacy` (see §3).
 10. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
-11. Seed `~/.petbox/roles.json` with the default profile **only when that file does not exist yet**
-    (an operator's own bindings are never touched), then run `apply` in-process (§2d) so the roster
-    this run just wired is actually usable (`fresh-wire-roster-unusable`). Logged as `[11/10]` — it
+11. Seed / refresh `~/.petbox/roles.json` (§2g): fill in any harness that has no entry at all,
+    migrate a v1 file to v2, and bring bindings whose `origin` is `kit` up to this kit's current
+    defaults. **A binding whose `origin` is `owner` is never touched**, in any of those passes.
+    Then run `apply` in-process (§2d) so the roster this run just wired is actually usable
+    (`fresh-wire-roster-unusable`). Logged as `[11/10]` — it
     is deliberately outside the "of 10" count because it compiles artifacts rather than wiring the
     machine. It never aborts the run; its exit code nonetheless counts toward the run's own (§2b).
 
@@ -266,10 +273,10 @@ none at all. They are dispatched **before** arg parsing, so they never require a
 | `petbox-wire layers [dir...]` | Diagnose the cascade: which layers exist, what each did to the roster, and which layer supplied every field. With no arguments it checks exactly what `apply` would; explicit directories compare an arbitrary set instead (no base added). Read-only. Exit **0** clean / **1** a cascade ERROR / **2** usage / **3** could not check (nothing to compare, or a present layer's source is broken) — the three are never confused. |
 | `petbox-wire status [--offline]` | Print FACT, not a verdict, per role × harness: materialized artifact path, bound model, and where that model came from (roster / seed / none). Plus a four-pillar summary: definition layers (which are present, and which supplied each field), roster completeness, memory canon size, and skill-file drift. Reads the same resolvers `apply`/`doctor` use; never gates, never writes. `--offline` skips the canon/skill-template network calls (the definition resolve has none). A broken layer is REPORTED here — named, by absolute path — rather than thrown: `status` always exits **0** unless it itself crashes. |
 | `petbox-wire doctor [--offline]` | Gate (exit code is significant): resolves the agent definition from the file cascade (base < user < project), then runs `checkTruthfulness(resolvedDefinition, harness, resolveAgentRoles(roles, harness))` for every id in `HARNESS_IDS` and prints OK or each violation. It gates the **resolved** definition — the one `apply` would compile — not the bare base layer, and it prints the layers plus their per-field provenance so you can see which is which. A **broken layer is a hard failure here** (exit 1, the file named by absolute path), for the same reason it is in `apply`: doctor exists to gate what apply would build. Also reports skill-file drift (materialized vs. kit templates: in sync / behind / foreign-BLOCKED), the session-banner budget margin, and a tail of `~/.petbox/wire.log`. Network checks are skipped with an explicit reason when the server is unreachable. `--offline` skips them up front instead: the skill-file-drift and banner-budget checks — both of which need a live workspace probe — are not attempted. The definition resolve and the truthfulness gate are unaffected, because neither touches a network. The local binding is not *required* — but where one exists it is fed into the gate, so a binding this harness cannot resolve is caught here. (The built-in-vs-server definition drift check that used to live here is gone: there is no second document to drift from.) |
-| `petbox-wire roles` | Print `activeProfile` + the resolved role→model tree from `~/.petbox/roles.json`. Offline. An empty store exits **0** with a message — it never invents a model. |
+| `petbox-wire roles` | Print `activeProfile`, the file's format version, and the resolved role→model tree from `~/.petbox/roles.json` — each row as `<role>: <model>  [<provider>, set by <kit\|owner>]`. Offline. An empty store exits **0** with a message — it never invents a model. |
 | `petbox-wire roles export` | Write a bootstrap copy of `roles.json` to **stdout** (no secrets); pipe it to a file on a new machine. Offline. |
 | `petbox-wire profile use <name>` | Set `activeProfile` in `~/.petbox/roles.json`, creating an empty profile shell if the name is new. Offline; compiles nothing — re-run `apply` afterwards. |
-| `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding into `~/.petbox/roles.json`. Validated against `harness-models.ts`'s three-tier policy (known/unknown write, unknown warns; a recognizably foreign harness id is refused unless `--allow-unknown-model`). Offline; compiles nothing — prints `next: petbox-wire apply`. |
+| `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding into `~/.petbox/roles.json`. Validated against `harness-models.ts`'s three-tier policy (known/unknown write, unknown warns; a recognizably foreign harness id is refused unless `--allow-unknown-model`). Stamps `origin: "owner"` and derives `provider` — from then on the kit never rewrites that cell (§2g). Offline; compiles nothing — prints `next: petbox-wire apply`. |
 | `petbox-wire model unset <role> [--agent <id>] [--profile <name>]` | Remove a role→model binding for the given agent/profile from `~/.petbox/roles.json`. Offline; compiles nothing — re-run `apply` afterwards. |
 
 ## 2b. Exit codes
@@ -547,7 +554,7 @@ or refuses, so that state no longer exists.
 | `projects.json` | Registry: `{prefix, project, envVar, baseUrl?}` per entry. Resolved by longest prefix against cwd. |
 | `keys.json` | Flat `{ "<ENV_VAR>": "<key>" }` the kit hooks read directly (no env var needed). POSIX `0600`. Ground truth for "what is my env-var actually called". |
 | `env.sh` | POSIX only — regenerated from the whole key store, sourced (marker-guarded) from the login profiles. |
-| `roles.json` | Local role→model bindings + `activeProfile`. Machine-authoritative; never uploaded. |
+| `roles.json` | Local role→model bindings (`model` + `origin` + `provider`, format v2 — §2g) + `activeProfile`. Machine-authoritative; never uploaded. |
 | `agents/` | OPTIONAL machine-wide definition layer (`layer.json` + `petbox-<slug>.{json,md,append.md}`). Absent = no opinion. Applied over the kit base, under a project's own `<root>/.petbox/agents`. |
 | `cache/<project>.canon.md` | LKG copy of the memory canon (§6). The definition has no cache of its own — its layers ARE local files. |
 
@@ -668,6 +675,51 @@ it throws `ENOTEMPTY` and the folder survives whole.
 Currently declared: `petbox-analysis-workspace` sweeps `analysis-workspace/`, `petbox-factory-run`
 sweeps `factory-run/`, `petbox-second-reading` sweeps `petbox-card-check/` (the skill it
 replaces). Every other entry has none.
+
+## 2g. `roles.json` format v2 — binding origin and provider
+
+A binding is `{ model, origin, provider }`, and the file carries `formatVersion: 2`.
+
+| field | what it is |
+|---|---|
+| `model` | The harness's OWN dialect, byte for byte. There is no name valid in all five harnesses, so nothing is translated at render time — this file IS the correspondence table. |
+| `origin` | `kit` (this kit seeded it) or `owner` (a human chose it, via `model set` or a hand edit). |
+| `provider` | Which subscription/registry serves `model`, derived from the harness's grammar; `null` when the value genuinely cannot name one. |
+
+**Why `origin` exists.** Without it the kit could not tell its own past seed from the operator's
+choice, so the only safe seeding strategy was "never overwrite anything" — and a changed default
+therefore never reached a machine that already had a `roles.json`. Two profiles on the owner's
+machine sat on retired ids for a month that way, and one of them was a qwen id that harness
+resolves by *silently* falling back to the first registered model. With `origin`, the kit updates
+its own cells and leaves the owner's alone.
+
+**How a legacy (v1) file is attributed** — one pass, on the next `wire`/`apply`, reported line by
+line: a binding whose value matches **byte for byte** a value this kit has ever seeded *for that
+exact harness and role* (`HISTORICAL_ROLE_MODEL_SEEDS`, append-only) is the kit's, and is brought
+up to the current default; everything else is the owner's and is kept byte for byte. Matching is
+per harness AND role because the same string can be a kit seed for one role and a deliberate
+choice for another. The pass is idempotent, and it runs on read, so no writer can persist a file
+whose bindings have not been attributed yet.
+
+`origin` is a cached label, not a claim taken on trust: a cell still marked `kit` whose value this
+kit has never shipped was edited by hand, so it is re-attributed to the owner and its value kept —
+an edit is never silently reverted on the next run.
+
+**Provider per harness** (each rule is a measured fact about that harness's grammar, in
+`binding-provider.ts`):
+
+| harness | provider | how |
+|---|---|---|
+| opencode | `deepseek`, `opencode-go`, … | the segment before the FIRST `/`; further slashes belong to the id |
+| qwen | `deepseek`, `opencode-go` | the `modelProviders` key, recovered from the id's own `ds-`/`go-` decoration — the `authType:` prefix is an auth TYPE and can never name a provider |
+| codex | `deepseek` | the process-level `model_provider` this kit pins; the value is a bare slug that cannot express one |
+| droid | `custom`, `factory` | which REGISTRY resolves the id — `custom:` is the BYOK registry (`customModels`), a bare slug is Factory's built-in catalog. The vendor behind a `custom:` entry is not expressible here. |
+| claude-code | `anthropic` | tier aliases and `claude-*` ids are one namespace; the grammar has no provider segment at all |
+
+The label is checked against the value it describes on every `wire`/`apply`
+(`findBindingProviderInconsistencies`) — internal consistency only. Checking either against LIVE
+machine config (qwen's `modelProviders`, codex's `/models`, `opencode models`, droid's
+`customModels`) is a separate, later stage and is deliberately absent here.
 
 ## 3. Migrating a legacy (per-project copy) repo
 

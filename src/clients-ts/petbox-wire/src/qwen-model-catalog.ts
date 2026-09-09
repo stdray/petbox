@@ -19,46 +19,31 @@
 // Plain TS for native node type-stripping: zero deps beyond roles.ts.
 
 import { agentLookupKeys, loadRoles, type RolesFile } from "./roles.ts";
+import {
+  findQwenModelEntry,
+  QWEN_DEEPSEEK_MODELS,
+  QWEN_OPENCODE_GO_MODELS,
+  QWEN_PROVIDER_KEY_DEEPSEEK,
+  QWEN_PROVIDER_KEY_OPENCODE_GO,
+  type QwenModelEntry,
+  qwenProviderKeyFor,
+  qwenRegisteredModelIds,
+} from "./qwen-model-registry.ts";
 
-export type QwenModelEntry = {
-  readonly id: string;
-  readonly name: string;
-  readonly wireModel: string;
-  /** `modelProviders[].generationConfig.contextWindowSize` — MEASURED, not a vendor nameplate
-   * number (wiki `qwen-three-provider-legs-howto`, 09.09.2026): each endpoint was hit with an
-   * oversized prompt and the 400 response's own stated limit recorded. Provider entries are
-   * hermetic (a top-level `model.generationConfig` does NOT fill a missing provider field per
-   * qwen's own settings doc), so this must be rendered INSIDE each entry, never once globally. */
-  readonly contextWindowSize: number;
+// The catalog DATA (the two provider groups, their ids, and the id -> provider-key lookup) moved
+// to the dependency-free leaf qwen-model-registry.ts so binding-provider.ts can read it without
+// closing an import cycle back through roles.ts — see that file's header. Re-exported here so
+// every existing importer of this module keeps working unchanged.
+export {
+  findQwenModelEntry,
+  QWEN_DEEPSEEK_MODELS,
+  QWEN_OPENCODE_GO_MODELS,
+  QWEN_PROVIDER_KEY_DEEPSEEK,
+  QWEN_PROVIDER_KEY_OPENCODE_GO,
+  type QwenModelEntry,
+  qwenProviderKeyFor,
+  qwenRegisteredModelIds,
 };
-
-/** Direct-DeepSeek-subscription models, registered under `modelProviders.deepseek`. */
-export const QWEN_DEEPSEEK_MODELS: readonly QwenModelEntry[] = [
-  { id: "ds-deepseek-v4-pro", name: "DeepSeek V4 Pro (direct)", wireModel: "deepseek-v4-pro", contextWindowSize: 1048576 },
-  { id: "ds-deepseek-v4-flash", name: "DeepSeek V4 Flash (direct)", wireModel: "deepseek-v4-flash", contextWindowSize: 1048576 },
-];
-
-/** opencode-go-gateway models, registered under `modelProviders.opencode-go`. Stays registered
- * even though no role binds through it today (roles.ts's QWEN_ROLE_MODEL_SEED comment) — a
- * second subscription the kit documents for a future rebinding, not dead weight. */
-export const QWEN_OPENCODE_GO_MODELS: readonly QwenModelEntry[] = [
-  { id: "go-glm-5.3-flash", name: "GLM 5.3 Flash (opencode-go)", wireModel: "glm-5.3-flash", contextWindowSize: 1048576 },
-  { id: "go-qwen3.8-max", name: "Qwen3.8 Max (opencode-go)", wireModel: "qwen3.8-max", contextWindowSize: 983616 },
-];
-
-/** Every bare model id the kit registers for qwen on this machine (both provider keys). Bare —
- * never the `authType:id` form a role .md file's `model:` frontmatter uses (qwen-spec.md §5) —
- * matching how qwen itself keys `modelProviders.<key>[].id` and `model.name` (wire.ts's
- * installGlobalHooks comment on qwenDefaultModelName). */
-export function qwenRegisteredModelIds(): string[] {
-  return [...QWEN_DEEPSEEK_MODELS, ...QWEN_OPENCODE_GO_MODELS].map((m) => m.id);
-}
-
-/** Look up a registered entry by its bare id (either provider key), or undefined if the kit does
- * not know this id (e.g. a role was hand-bound to a model outside this catalog). */
-export function findQwenModelEntry(id: string): QwenModelEntry | undefined {
-  return [...QWEN_DEEPSEEK_MODELS, ...QWEN_OPENCODE_GO_MODELS].find((m) => m.id === id);
-}
 
 /** Strip a qwen role binding's `authType:` prefix (always literal `openai`, an auth TYPE not a
  * provider slug — roles.ts's QWEN_ROLE_MODEL_SEED comment) down to the bare id qwen's own
