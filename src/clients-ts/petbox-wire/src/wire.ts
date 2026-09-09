@@ -3233,18 +3233,20 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   writeText(codexProjectConfigPath, serializeTomlBlocks(codexProjectBlocks));
   log(`[7/10] merged petbox MCP server into ${codexProjectConfigPath}`);
 
-  // .qwen/settings.json mcpServers.petbox (Qwen Code) — WORKSPACE scope, not project .mcp.json,
-  // and NOT the user-scope entry installGlobalHooks also writes (defect
+  // .qwen/settings.json mcpServers.petbox (Qwen Code) — WORKSPACE scope, not project .mcp.json.
+  // This is now the ONLY petbox MCP entry the kit writes for qwen: installGlobalHooks no longer
+  // writes a user-scope one (owner decision 09.09.2026 — see its header). Defect
   // qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen; verified against
-  // the qwen-code source, packages/cli/src/config):
+  // the qwen-code source, packages/cli/src/config:
   //   - `.mcp.json` (written above, for claude-code) has NO env-var resolution
   //     (mcpJson.ts's loadProjectMcpServers never calls resolveEnvVarsInObject) — its `petbox`
   //     entry, read by qwen too (assembleMcpServers reads every settings source, .mcp.json
   //     included), would send the header literally as `${envVar}` text, and PetBox 401s.
-  //   - `.mcp.json` also OUTRANKS the user-scope entry by name (mcpServers.ts:27-55's precedence:
-  //     user/default < project .mcp.json < workspace/system < --mcp-config) — so on a wired
-  //     project the user-scope entry never even gets a chance to run; the broken .mcp.json one
-  //     wins and the model gets zero mcp__petbox__* tools ("MCP server(s) failed to start").
+  //   - `.mcp.json` also OUTRANKS anything at USER scope by name (mcpServers.ts:27-55's
+  //     precedence: user/default < project .mcp.json < workspace/system < --mcp-config) — so back
+  //     when a user-scope entry existed it never even got a chance to run inside a wired root; the
+  //     broken .mcp.json one won and the model got zero mcp__petbox__* tools ("MCP server(s)
+  //     failed to start"). Workspace scope is what actually clears it.
   //   - A `.qwen/settings.json` (`SettingScope.Workspace`) entry OUTRANKS `.mcp.json`
   //     (mcpServers.ts, same precedence list) AND is env-var-resolved (settings.ts's
   //     workspaceSettings = resolveEnvVarsInObject(...)) — this is the one file that both wins
@@ -3261,7 +3263,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // security.auth/agents.modelGrades stay user-scope-only too, unchanged by this block. Merge via
   // mergeMcpServer (same primitive as droid's `.factory/mcp.json` above): touches ONLY
   // mcpServers.petbox, never a project's own pre-existing `.qwen/settings.json` content.
-  // `alwaysLoadTools: true` (also set on the user-scope entry, installGlobalHooks): qwen defers
+  // `alwaysLoadTools: true`: qwen defers
   // MCP tools to `tool_search` by default UNLESS the active model's id matches
   // `/deepseek-(v3|v4|chat)/i` (config.ts) — see qwen-mcp-entry.ts's own header for why this is
   // set unconditionally regardless of which model a role currently binds.
@@ -3414,20 +3416,29 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
 // PreToolUse model-pin gate — see modelGateCmd below) and, on the way through, run the
 // retired-prompt-RAG migration on each settings object before it is written back — one read, one
 // write per file, so the prune costs nothing extra and cannot be skipped.
-// `envVar` is THIS wire run's project env-var name (deriveEnvVar/registryEnvVar) — needed for
-// qwen's user-scope `mcpServers.petbox` entry, written here for the owner's interactive use
-// OUTSIDE any wired directory (a bare `qwen` run with no project-scope entry to outrank it).
-// Inside a wired project, writeProjectFiles's WORKSPACE-scope `.qwen/settings.json` entry is the
-// one that actually governs (defect qwen-mcp-json-shadows-workspace-entry, live smoke
-// wire-support-codex-qwen — see that function's own comment): it outranks BOTH this user-scope
-// entry AND the project's `.mcp.json` (whose petbox entry, unlike this one, is never env-var
-// resolved and would silently 401). This user-scope entry is machine-global, so — unlike every
-// per-project MCP config — it can reference only ONE project's env var at a time; re-running
-// `wire` for a second project overwrites it. That no longer strands the first project's qwen
-// sessions the way it once did: their own `.qwen/settings.json` (written by writeProjectFiles)
-// resolves their own correct envVar regardless of what this user-scope entry currently points
-// at. See doc/agent-wiring.md.
-function installGlobalHooks(envVar: string, dir: string): void {
+//
+// NO MCP SERVER ENTRY IS WRITTEN AT USER SCOPE — OWNER DECISION 09.09.2026, verbatim «Нет —
+// убрать глобальную запись», answering "does qwen launched OUTSIDE any project need PetBox
+// tools?". This function used to write `mcpServers.petbox` into $QWEN_HOME/settings.json with
+// THIS run's project env-var name, and that write took a `envVar: string` parameter which is why
+// the parameter is gone now. Why it was removed, concretely: the entry is machine-global while
+// the env var it names is per-project, so it could only ever point at ONE project at a time and
+// every subsequent `wire` run silently repointed it. Measured on the owner's own box: the file
+// held `${PETBOX_SMOKE_API_KEY}` because the last `wire` had run from a throwaway smoke
+// directory, that variable was set and VALID (`whoami` → project "smoke", scopes including
+// tasks:write/memory:write/data:write), so a qwen session started outside any wired root was
+// quietly reading and WRITING another project's boards and memory. Nothing warned.
+// ACCEPTED COST, stated so nobody "fixes" it back: qwen launched outside a wired directory now
+// has no PetBox boards and no memory at all. That is the decision, not an oversight.
+// Inside a wired project nothing changes: writeProjectFiles's WORKSPACE-scope
+// `.qwen/settings.json` entry is the one that has always actually governed (defect
+// qwen-mcp-json-shadows-workspace-entry, live smoke wire-support-codex-qwen — see that
+// function's own comment): it outranks the project's `.mcp.json` (whose petbox entry is never
+// env-var resolved and would silently 401), and it resolves each project's OWN env var.
+// Regression cover: wire-qwen-user-scope-no-mcp.test.ts (a real `wire` run against a fresh
+// $HOME must leave $QWEN_HOME/settings.json with no `mcpServers` key at all).
+// See doc/agent-wiring.md.
+function installGlobalHooks(dir: string): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
@@ -3727,11 +3738,11 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // honored regardless of trust (qwen-spec.md §1) — so there is no codex-style "untrusted hook is
   // silently skipped" trap to defend against here.
   //
-  // mcpServers.petbox ALSO goes here (USER scope) — for the owner's interactive use OUTSIDE any
-  // wired directory. Inside a wired project, writeProjectFiles's WORKSPACE-scope
-  // `.qwen/settings.json` entry is the one that actually governs (defect
-  // qwen-mcp-json-shadows-workspace-entry — see that entry's own comment): it outranks both this
-  // user-scope entry and the project's `.mcp.json` in qwen's own precedence order, and unlike
+  // mcpServers.petbox is NOT written here (owner decision 09.09.2026 — see this function's own
+  // header for the measured cross-project leak that motivated it and the accepted cost). The ONLY
+  // petbox MCP entry the kit writes for qwen is writeProjectFiles's WORKSPACE-scope
+  // `.qwen/settings.json` one (defect qwen-mcp-json-shadows-workspace-entry — see that entry's own
+  // comment): it outranks the project's `.mcp.json` in qwen's own precedence order, and unlike
   // `.mcp.json` it is env-var-resolved. Workspace scope IS gated for an interactive run
   // (mcp-server-config.ts's isGatedMcpScope), same as project scope; this kit deliberately does
   // NOT pre-approve it (an approval hash bakes in the RESOLVED — i.e. literal-key — config, so a
@@ -3837,15 +3848,12 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // MODEL_GATE_MATCHER comment): scopes the process spawn to spawn-tool calls only.
   ensureQwenHook("PreToolUse", qwenGateCmd, { matcher: "agent", timeoutMs: 5000 });
 
-  // mcpServers.petbox — USER scope, never gated (see this block's header). httpUrl (NOT url) for
-  // streamable HTTP (qwen-spec.md §2, verified empirically against a live `qwen mcp list`).
-  if (!qwenSettings.mcpServers || typeof qwenSettings.mcpServers !== "object") {
-    qwenSettings.mcpServers = {};
-  }
-  // Same shape as writeProjectFiles's workspace-scope `.qwen/settings.json` entry (single source
-  // of truth: buildQwenMcpServerEntry, qwen-mcp-entry.ts) — including `alwaysLoadTools: true`,
-  // see that module's own header comment for why.
-  qwenSettings.mcpServers.petbox = buildQwenMcpServerEntry(DEFAULT_BASE_URL, envVar);
+  // mcpServers.petbox — DELIBERATELY ABSENT (owner decision 09.09.2026; see this function's
+  // header). Nothing is written under `mcpServers` at user scope, and nothing pre-existing there
+  // is pruned either: a hand-added entry of the owner's own is not this kit's to delete, and the
+  // one stale entry the kit itself had left behind was removed by hand, once, with a backup.
+  // buildQwenMcpServerEntry still has exactly one caller — writeProjectFiles's workspace-scope
+  // write (qwen-mcp-entry.ts is still the single source of truth for that shape).
 
   // security.auth.selectedType — the owner's live ~/.qwen/settings.json was found with
   // `selectedType: "qwen-oauth"` alongside an unrelated apiKey/baseUrl pair (qwen-spec.md §7's
@@ -3881,7 +3889,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // only this full `wire` run's step 8. Reads the settings file fresh from disk rather than the
   // in-memory `qwenSettings` this function has been mutating above — the fields this check reads
   // (modelProviders/providerProtocol/agents.modelGrades/security.outboundCorrelation) are none of
-  // the ones this function's own hooks/mcpServers/security.auth mutations touch, so a fresh read
+  // the ones this function's own hooks/security.auth mutations touch, so a fresh read
   // is equivalent, and it is what makes the function callable with no coupling to this one.
   printQwenRosterFragment("[8/10]", homedir());
 
@@ -3906,9 +3914,11 @@ export { PetboxPlugin, default } from "${pluginUrl}";
 
   writeJson(qwenSettingsPath, qwenSettings);
   log(
-    `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, mcpServers.petbox, ` +
-      `security.auth.selectedType=openai — modelProviders/providerProtocol/agents.modelGrades/` +
-      `outboundCorrelation/model.name are printed only, never written).`,
+    `[8/10] merged qwen settings into ${qwenSettingsPath} (hooks, ` +
+      `security.auth.selectedType=openai — mcpServers.petbox is NOT written at user scope ` +
+      `(owner decision 09.09.2026: qwen outside a wired project gets no petbox tools); ` +
+      `modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation/model.name ` +
+      `are printed only, never written).`,
   );
 }
 
@@ -4467,7 +4477,7 @@ async function main(): Promise<void> {
 
   // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
   // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
-  installGlobalHooks(envVar, dir);
+  installGlobalHooks(dir);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);
