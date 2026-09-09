@@ -91,9 +91,16 @@ export const CAPABILITIES: readonly Capability[] = [
  *   spawn_subagents — `spawn_agent` tool, `SpawnAgentArgs` (multi_agents_v2/spawn.rs:280-288).
  *   mcp_main_session — `[mcp_servers.<name>]`, verified round-trip via `codex mcp list --json`
  *     (config_toml.rs:276; mcp_types.rs:323-382).
- *   dynamic_model_at_spawn — `SpawnAgentArgs.model: Option<String>`
- *     (multi_agents_v2/spawn.rs:284; hook_runtime.rs:203 confirms it reaches PreToolUse's
- *     `tool_input.model`, not the payload's top-level `model`).
+ *   NOT dynamic_model_at_spawn — WITHDRAWN 2026-09-09 (live measurement, Codex CLI 0.153.4):
+ *     `SpawnAgentArgs.model: Option<String>` exists (multi_agents_v2/spawn.rs:284;
+ *     hook_runtime.rs:203 confirms it reaches PreToolUse's `tool_input.model`, not the payload's
+ *     top-level `model`), but a live probe shows `spawn_agent` rejects the configured provider's
+ *     model against a CLOSED internal list in `codex_core::tools::router`, evaluated BEFORE
+ *     `model_providers`/`base_url` are ever consulted — the field being wired does not mean the
+ *     value it carries is honored. See observations/codex-spawn-agent-model-ignores-configured-
+ *     provider and intake/codex-subagent-byok-model-blocked (deferred to upstream fix; task
+ *     work/codex-drop-dynamic-model-capability). Do not re-add this cell without a fresh
+ *     post-release remeasurement.
  *   mcp_subagent — a spawned subagent's Config is a full clone of the parent turn's Config
  *     (`build_agent_shared_config`, multi_agents_common.rs:195-197: `let mut config =
  *     (*base_config).clone();`), which carries `mcp_servers` — no separate per-subagent MCP
@@ -160,7 +167,14 @@ const MATRIX: Readonly<Record<HarnessId, readonly Capability[]>> = {
     "role_files", // [agents.<name>] + agent_role_config.rs; auto-discovered agents/**/*.toml
     "spawn_subagents", // spawn_agent tool — multi_agents_v2/spawn.rs
     "mcp_main_session", // [mcp_servers.<name>] — config_toml.rs:276
-    "dynamic_model_at_spawn", // SpawnAgentArgs.model: Option<String> — spawn.rs:284
+    // NOT dynamic_model_at_spawn — WITHDRAWN 2026-09-09 (live measurement, Codex CLI 0.153.4):
+    // spawn_agent validates its `model` arg against a CLOSED internal list
+    // (codex_core::tools::router) BEFORE resolving a provider — model_providers/base_url are
+    // never read at spawn time. SpawnAgentArgs.model existing (spawn.rs:284) is necessary but
+    // not sufficient; the live probe is what falsifies the claim. See
+    // observations/codex-spawn-agent-model-ignores-configured-provider and
+    // intake/codex-subagent-byok-model-blocked (deferred to upstream; do not re-add without a
+    // fresh post-release remeasurement).
     "mcp_subagent", // subagent Config clones the parent's (incl. mcp_servers) — multi_agents_common.rs:196-197
     // no builtin_explore_inherits_model — no built-in "explore" role found in source; omitted
   ],

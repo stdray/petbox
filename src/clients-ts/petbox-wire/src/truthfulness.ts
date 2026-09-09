@@ -198,7 +198,21 @@ export function formatViolations(violations: readonly TruthfulnessViolation[]): 
       // the remaining branch to `never`. The `in` check on a specific literal key narrows
       // correctly instead.
       if ("capability" in v) {
-        return `  role '${v.role}' requires capability '${v.capability}' which harness '${v.harness}' does not declare`;
+        const base = `  role '${v.role}' requires capability '${v.capability}' which harness '${v.harness}' does not declare`;
+        // codex/dynamic_model_at_spawn is a KNOWN, tracked withdrawal (2026-09-09), not a generic
+        // capability gap — point at the intake node instead of leaving a human to guess why a
+        // field that visibly exists in Codex's own spawn args (SpawnAgentArgs.model) is refused
+        // here. See harness-capabilities.ts's codex row and
+        // intake/codex-subagent-byok-model-blocked.
+        if (v.harness === "codex" && v.capability === "dynamic_model_at_spawn") {
+          return (
+            `${base} — Codex's spawn_agent validates 'model' against a closed internal list ` +
+            `BEFORE resolving model_providers/base_url, so a role needing a dynamic model at ` +
+            `spawn cannot get one from Codex today. Tracked at intake/codex-subagent-byok-model-` +
+            `blocked (upstream fix pending; do not work around this locally).`
+          );
+        }
+        return base;
       }
       return (
         `  role '${v.role}' has NO local model binding for harness '${v.harness}' — apply ` +
