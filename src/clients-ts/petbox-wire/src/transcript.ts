@@ -28,6 +28,36 @@ export type SubagentRun = {
   readonly actualModel?: string;
 };
 
+// Provenance of the MAIN session itself — the harness's own telemetry answer to "which model
+// actually ran this session", the counterpart of SubagentRun.actualModel for the top-level loop
+// (work: agents-ignore-session-start-self-intro).
+//
+// Why this exists at all: until now the ONLY record of a main session's model was the model's own
+// SessionStart self-intro line, i.e. prose the model chooses to emit. Measured 2026-09-09 across
+// all five harnesses' archives, that prose is unreliable in BOTH directions — a qwen main session
+// read the banner and declined to emit the line ("the session-start-context is marked
+// hidden=\"true\""), and a `petbox-reserve` run on qwen3.8-max introduced itself as
+// `claude-opus-4-6`. `roleBinding` on the same meta header is the machine's INTENTION; this is
+// the FACT, read out of the harness's own API-response records, which the model cannot author.
+//
+// `actualModel` is the model of the session's LAST recorded assistant turn — what it is running
+// on now. When more than one distinct model was recorded (a mid-session model switch), every one
+// is listed in `modelsSeen`, in first-seen order, so a switch is visible instead of averaged away.
+// Never guessed and never backfilled from roleBinding: unrecoverable stays absent.
+export type MainRun = {
+  readonly actualModel: string;
+  readonly modelsSeen?: readonly string[];
+};
+
+/** Shared assembly for the per-harness main-run collectors: ordered distinct models → MainRun. */
+export function mainRunFromModels(models: readonly string[]): MainRun | undefined {
+  const distinct: string[] = [];
+  for (const m of models) if (m && !distinct.includes(m)) distinct.push(m);
+  const last = models.length > 0 ? models[models.length - 1] : undefined;
+  if (!last) return undefined;
+  return distinct.length > 1 ? { actualModel: last, modelsSeen: distinct } : { actualModel: last };
+}
+
 // Claude Code's subagent-spawn tool has been named "Task" (older CLI versions) and "Agent"
 // (current); accept both so this doesn't silently go blind across a CLI upgrade.
 const SPAWN_TOOL_NAMES = new Set(["Agent", "Task"]);
@@ -168,6 +198,33 @@ export async function collectSubagentRuns(transcriptPath: string): Promise<Subag
     runs.push(run);
   }
   return runs;
+}
+
+// Main-session run provenance for Claude Code: every top-level assistant turn's `message.model`,
+// in order. Sidechain turns are a SUBAGENT's model, not this session's, so they are excluded —
+// that half is already covered by collectSubagentRuns' actualModel. Unreadable/modelless
+// transcript → undefined (omit the key; never an invented value).
+export async function collectMainRun(transcriptPath: string): Promise<MainRun | undefined> {
+  if (!existsSync(transcriptPath)) return undefined;
+  const rl = createInterface({
+    input: createReadStream(transcriptPath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  const models: string[] = [];
+  for await (const line of rl) {
+    if (!line || line.trim().length === 0) continue;
+    let e: any;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (e.isSidechain) continue; // a subagent's own turn — not this session's model
+    if (e.type !== "assistant" || !e.message) continue;
+    const model = nonEmptyString(e.message.model);
+    if (model) models.push(model);
+  }
+  return mainRunFromModels(models);
 }
 
 export function extractText(message: unknown): string {

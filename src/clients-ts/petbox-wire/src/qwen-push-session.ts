@@ -40,10 +40,10 @@
 // hook must survive that configuration too.
 
 import { pushTranscript } from "./append.ts";
-import { collectQwenSubagentRuns, buildQwenMessages } from "./qwen-transcript.ts";
+import { collectQwenMainRun, collectQwenSubagentRuns, buildQwenMessages } from "./qwen-transcript.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { resolveProject } from "./registry.ts";
-import type { Msg } from "./transcript.ts";
+import type { MainRun, Msg } from "./transcript.ts";
 
 const FETCH_TIMEOUT_MS = 12000;
 
@@ -97,7 +97,20 @@ async function main(): Promise<void> {
     } catch {
       subagentRuns = [];
     }
-    const extraMeta = subagentRuns.length > 0 ? { subagentRuns } : undefined;
+    // The main loop's OWN model, recovered from qwen's `ui_telemetry` api_response records
+    // (qwen-transcript.ts's collectQwenMainRun). qwen is the harness measured to read the
+    // SessionStart banner and decline the self-intro line, so prose is exactly what cannot be
+    // trusted here. Best-effort, same as subagentRuns.
+    let mainRun: MainRun | undefined;
+    try {
+      mainRun = await collectQwenMainRun(tp);
+    } catch {
+      mainRun = undefined;
+    }
+    const extraMeta =
+      subagentRuns.length > 0 || mainRun
+        ? { ...(subagentRuns.length > 0 ? { subagentRuns } : {}), ...(mainRun ? { mainRun } : {}) }
+        : undefined;
 
     // Fresh process each turn → no remembered cursor (null): pushTranscript guesses an
     // idempotent overlap window and self-heals off the server's structured gap reject — the

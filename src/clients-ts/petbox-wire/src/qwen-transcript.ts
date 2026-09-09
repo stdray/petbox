@@ -35,7 +35,14 @@
 
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { extractText, isExcluded, type Msg, type SubagentRun } from "./transcript.ts";
+import {
+  extractText,
+  isExcluded,
+  mainRunFromModels,
+  type MainRun,
+  type Msg,
+  type SubagentRun,
+} from "./transcript.ts";
 
 // Qwen's built-in subagent-spawn tool (qwen-spec.md §6, verified live in the installed clone,
 // packages/core/src/tools/agent/agent.ts:679-680: `static readonly Name: string =
@@ -120,6 +127,40 @@ export async function collectQwenSubagentRuns(transcriptPath: string): Promise<S
     }
   }
   return runs;
+}
+
+// The `system` records this parser otherwise filters out carry the ONE thing a qwen chat record
+// never puts on a message: the model the turn actually ran on. `subtype: "ui_telemetry"` with
+// `systemPayload.uiEvent["event.name"] === "qwen-code.api_response"` is qwen's own log of an API
+// response, and its `model` field is that response's model — verified live 2026-09-09 against
+// `~/.qwen/projects/d--my-prj-petsonde/chats/*.jsonl` (values `deepseek-v4-pro`, `glm-5.3-flash`,
+// `qwen3.8-max`, matching the roles.json binding each session was launched under).
+//
+// This is why qwen needs a main-run collector even though it has no per-subagent actual model
+// (see collectQwenSubagentRuns): the MAIN loop's model IS recoverable here, and qwen is the one
+// harness measured to drop the self-intro line while reading the banner — the exact case where
+// prose cannot be the evidence of what ran.
+//
+// A ui_telemetry line can be ~50KB, so the substring prefilter below decides whether a line is
+// worth JSON.parse at all; every other record shape is skipped without allocation.
+const QWEN_API_RESPONSE_EVENT = "qwen-code.api_response";
+
+export async function collectQwenMainRun(transcriptPath: string): Promise<MainRun | undefined> {
+  const rl = createInterface({
+    input: createReadStream(transcriptPath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  const models: string[] = [];
+  for await (const line of rl) {
+    if (!line.includes(QWEN_API_RESPONSE_EVENT)) continue;
+    const e = parseLine(line);
+    if (!e || e.type !== "system") continue;
+    const ev = e.systemPayload?.uiEvent;
+    if (!ev || ev["event.name"] !== QWEN_API_RESPONSE_EVENT) continue;
+    const model = nonEmptyString(ev.model);
+    if (model) models.push(model);
+  }
+  return mainRunFromModels(models);
 }
 
 // Collect the user/assistant text messages in chat-recording order. No rendering and no cap:
