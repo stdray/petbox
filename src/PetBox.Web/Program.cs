@@ -487,8 +487,14 @@ public partial class Program
 		// X-Api-Key just like the REST endpoints.
 		// Copy the SDK's default tool-serialization options (camelCase, null-ignore, MCP
 		// converters) and only relax the text encoder: the default escapes every non-ASCII
-		// char (Cyrillic -> \uXXXX), making tool-result JSON unreadable. Allow common ranges
-		// (not UnsafeRelaxed) so output is human-readable while HTML-sensitive chars stay escaped.
+		// char (Cyrillic -> \uXXXX), making tool-result JSON unreadable. This is the INNER of the
+		// two serializations a tool result goes through; the outer one — the JSON-RPC envelope the
+		// SDK writes — is relaxed at the top of this file (Mcp/McpWireEncoding.cs), and until it
+		// was, this line changed nothing a client could see: the envelope re-escaped everything.
+		// The encoder here is the MCP-wire one, not PetBoxJsonEncoder.Relaxed, so that a quote or a
+		// backtick inside a node body costs `\"` rather than " (which the envelope then spells
+		// \\u0022 — seven bytes for one character). Nothing this serializer produces is ever
+		// rendered as HTML; McpWireEncoding.cs carries the full consumer audit.
 		// UnmappedMemberHandling.Disallow: an argument member the target type does not declare is a
 		// REFUSAL, at EVERY depth — not a silent drop. These options are the ones the SDK binds tool
 		// ARGUMENTS with (McpOutputSchema passes them as SerializerOptions to McpServerTool.Create),
@@ -504,7 +510,7 @@ public partial class Program
 		// nodes, so a strict client catches the same mistake before the call leaves.
 		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
 		{
-			Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
+			Encoder = McpWireEncoding.Encoder,
 			UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
 		};
 		builder.Services.AddMcpServer()
@@ -1341,6 +1347,15 @@ public partial class Program
 		// Content-Length is precisely the part-vs-whole bug this replaces — it warned on pure-ASCII
 		// calls in prod. Path- and method-guarded inside, so every other route just passes through.
 		app.UseMiddleware<PetBox.Web.Mcp.McpWireBodyMeasurementMiddleware>();
+
+		// The mirror image of the line above, on the way OUT: respell the \uXXXX escapes the MCP
+		// SDK's response writer emits. It has to live here, in middleware, for the same reason the
+		// SDK could not simply be configured — ModelContextProtocol constructs its Utf8JsonWriter
+		// with default JsonWriterOptions and caches it per thread, so the strict encoder is welded
+		// in and no JsonSerializerOptions we own can reach it (checked in 2.0.0, 2.1.0 and 2.2.0).
+		// Mcp/McpWireEncoding.cs carries the evidence, the guarantee the rewrite makes, and why
+		// relaxing HTML-sensitive characters HERE is not an XSS hole.
+		app.UseMiddleware<PetBox.Web.Mcp.McpResponseEscapeRelaxingMiddleware>();
 
 		// spec authz-tenant-default-deny — PEP #1 of 2: the endpoint plane (REST *and* Razor; they are
 		// the same endpoints by now). Reads HttpContext.GetEndpoint()?.Metadata, so it covers every
