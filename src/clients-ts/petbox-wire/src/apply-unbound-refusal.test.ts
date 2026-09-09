@@ -46,7 +46,7 @@ function runApply(
   cwd: string,
   homeDir: string,
 ): { stdout: string; stderr: string; status: number | null } {
-  const res = spawnSync(process.execPath, [WIRE_TS, "apply", "--offline"], {
+  const res = spawnSync(process.execPath, [WIRE_TS, "apply", "--offline", "--roles=project"], {
     cwd,
     encoding: "utf8",
     env: {

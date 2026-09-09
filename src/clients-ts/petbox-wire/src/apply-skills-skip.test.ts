@@ -105,7 +105,7 @@ function writeOnlineRegistry(homeDir: string, projectDir: string, project: strin
 
 function runApplyOnline(cwd: string, homeDir: string): Promise<{ stdout: string; stderr: string; status: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [WIRE_TS, "apply"], {
+    const child = spawn(process.execPath, [WIRE_TS, "apply", "--roles=project"], {
       cwd,
       env: {
         ...process.env,

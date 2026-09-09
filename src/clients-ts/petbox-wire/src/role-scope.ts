@@ -91,11 +91,17 @@ export function userAgentFilesRoot(harness: HarnessId, homeDir: string = homedir
 // absence of a flag READS it.
 
 export type WireConfig = {
-  /** Missing file / missing field reads as "project" — the pre-card behavior, unchanged. */
+  /**
+   * Missing file / missing field reads as "user" (owner decision 2026-09-09,
+   * work/wire-rolescope-default-user): a fresh machine gets the harness-profile layout with no
+   * project role files, matching the direction this module already declared at the top
+   * ("other consumers end up in this same state"). A machine with an explicit `roleScope` in
+   * `~/.petbox/wire.json` is unaffected — the file always wins over this default.
+   */
   readonly roleScope: RoleScope;
 };
 
-const DEFAULT_WIRE_CONFIG: WireConfig = { roleScope: "project" };
+const DEFAULT_WIRE_CONFIG: WireConfig = { roleScope: "user" };
 
 export function wireConfigPath(homeDir: string = homedir()): string {
   return join(petboxDir(homeDir), "wire.json");
@@ -144,8 +150,9 @@ export function saveWireConfig(cfg: WireConfig, homeDir: string = homedir()): vo
 
 /**
  * The scope THIS run uses: an explicit `--roles=<scope>` wins; otherwise the persisted machine
- * policy; otherwise "project". Returned alongside where it came from, because a run that silently
- * changed where it writes 15 files must be able to say why.
+ * policy; otherwise "user" (DEFAULT_WIRE_CONFIG — a fresh machine with no ~/.petbox/wire.json).
+ * Returned alongside where it came from, because a run that silently changed where it writes
+ * 15 files must be able to say why.
  */
 export function resolveRoleScope(
   flag: RoleScope | undefined,

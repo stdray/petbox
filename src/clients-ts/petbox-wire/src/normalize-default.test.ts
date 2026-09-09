@@ -264,7 +264,7 @@ test("apply --dry-run: the number of 'would write' LINES equals the summary's ow
   try {
     writeRegistry(homeDir, [{ prefix: proj, project: "count-a", envVar: "PETBOX_COUNT_A_API_KEY" }]);
 
-    const run = runWire(["apply", "--offline", "--dry-run"], homeDir, proj);
+    const run = runWire(["apply", "--offline", "--roles=project", "--dry-run"], homeDir, proj);
     assert.equal(run.status, WIRE_EXIT.ok, `output:\n${run.out}`);
 
     const lines = run.out.split("\n");
@@ -328,14 +328,14 @@ test("--adopt: an unmarked file at the NAMED path is overwritten; a second one i
     );
 
     // Without --adopt both are refused and the run is a hard failure.
-    const bare = runWire(["apply", "--offline"], homeDir, proj);
+    const bare = runWire(["apply", "--offline", "--roles=project"], homeDir, proj);
     assert.equal(bare.status, WIRE_EXIT.hard, `output:\n${bare.out}`);
     assert.deepEqual(readFileSync(named.path), named.bytes);
     assert.deepEqual(readFileSync(notNamed.path), notNamed.bytes);
 
     // With --adopt on exactly one path: that one is written, the other is STILL refused, and the
     // run still exits 1. There is no bulk mode and no --force.
-    const adopted = runWire(["apply", "--offline", "--adopt", named.path], homeDir, proj);
+    const adopted = runWire(["apply", "--offline", "--roles=project", "--adopt", named.path], homeDir, proj);
     assert.equal(adopted.status, WIRE_EXIT.hard, `the un-named refusal must still fail the run:\n${adopted.out}`);
     assert.match(adopted.out, /ADOPTED/);
     assert.notDeepEqual(readFileSync(named.path), named.bytes, "the named path should have been overwritten");
