@@ -47,6 +47,23 @@ public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelp
 	// test on the SAME board, including the default-rendering assertions above. This second,
 	// otherwise-untouched project (same pattern BoardViewCrossDeviceTests uses: its own board) is
 	// where the field-toggle tests below write, so they can never leak into `_recurredId`'s board.
+	//
+	// The SAME hazard, one preference over: `?view=` is not just a shareable override, it is also
+	// the thing that WRITES BoardPreferences.ViewPreferences["{project}/{board}"] for that user
+	// (TaskBoard.cshtml.cs, board-view-cross-device — see its "the thing that writes the DB
+	// preference for next time" comment). The kanban/outline/table tests below all drive THIS
+	// project's `observations` board with an explicit `?view=`, so after any one of them the saved
+	// mode for `obs-ui-proj/observations` is no longer the builtin Tree default. A sibling that
+	// navigated with NO `?view=` therefore rendered in whatever mode ran before it. xUnit guarantees
+	// no order within a class, and the order really does differ: measured 2026-09-09 on ONE commit
+	// (2ad3fde7) in two checkouts on the same machine, one ran the tree test FIRST (8/8 green, 3/3
+	// runs) and the other ran it LAST, after outline and kanban (1 failed, 6/6 runs) — stable inside
+	// each checkout, opposite between them. In the tree-last order the page came back rendered as
+	// KANBAN (confirmed in the failure's own aria snapshot: "Seen 2"/"Promoted 1" columns), and
+	// _BoardViewKanban/_BoardViewOutline render _ObservationRecurrenceBadge but NOT
+	// _ObservationRegressionBanner (see observation regression-banner-absent-from-kanban-and-outline)
+	// — so the ×2 asserts passed and only the regression-banner assert failed. Every board test in
+	// this class therefore states its view mode explicitly; none relies on the resolved default.
 	const string FieldsProj = "obs-ui-fields-proj";
 
 	IBrowserContext? _ctx;
@@ -197,7 +214,9 @@ public sealed class ObservationUiSignalsTests(WebAppFixture app, ITestOutputHelp
 	[Fact]
 	public async Task BoardTree_ShowsRecurrenceBadge_RegressionBanner_AndObligationLink_OnTheRightCards()
 	{
-		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{SystemBoards.Observations}");
+		// Explicit `?view=tree`, not the resolved default — see FieldsProj's header comment: the
+		// kanban/outline siblings persist their own mode for this exact (project, board) key.
+		await _page!.GotoAsync($"/ui/{Ws}/{Proj}/tasks/{SystemBoards.Observations}?view=tree");
 
 		var recurredCard = _page.Locator($"[data-node-id='{_recurredId}']");
 		// Exact text, not ContainText: the live defect was the count and the date fusing into one
