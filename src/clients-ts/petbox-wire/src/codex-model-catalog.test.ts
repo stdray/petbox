@@ -12,10 +12,21 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   buildCodexModelCatalog,
+  CODEX_UNCATALOGUED_CONTEXT_WINDOW,
+  codexContextWindowFor,
+  collectActiveCodexRoleModelSlugsFromData,
   collectCodexRoleModelSlugs,
+  collectCodexRoleModelSlugsFromData,
   deriveCodexDisplayName,
 } from "./codex-model-catalog.ts";
-import { CODEX_ROLE_MODEL_SEED, saveRoles, seedMissingRoleBindings, type RolesFile } from "./roles.ts";
+import {
+  CODEX_ROLE_MODEL_SEED,
+  makeRoleBinding,
+  ROLES_FORMAT_VERSION,
+  saveRoles,
+  seedMissingRoleBindings,
+  type RolesFile,
+} from "./roles.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-codex-catalog-"));
@@ -43,15 +54,16 @@ test("buildCodexModelCatalog: a codex rebinding to a model ABSENT from the 3 lit
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
           agents: {
             codex: {
               roles: {
-                orchestrator: { model: "deepseek-v4-pro" },
+                orchestrator: makeRoleBinding("codex", "deepseek-v4-pro"),
                 // Not one of the three historical literals — the whole point of this test.
-                worker: { model: "glm-5.3-flash" },
+                worker: makeRoleBinding("codex", "glm-5.3-flash"),
               },
             },
           },
@@ -70,7 +82,9 @@ test("buildCodexModelCatalog: a codex rebinding to a model ABSENT from the 3 lit
     assert.ok(entry, "expected a catalog entry for the rebound model 'glm-5.3-flash'");
     assert.equal(entry!["apply_patch_tool_type"], "freeform");
     assert.equal(entry!["display_name"], "Glm 5.3 Flash");
-    assert.equal(entry!["context_window"], 128000);
+    // MEASURED endpoint limit (qwen-model-catalog.ts's glm-5.3-flash entry), not the kit's old
+    // invented 128000 — task wire-codex-config-print-fragment, acceptance #3.
+    assert.equal(entry!["context_window"], 1048576);
     // experimental_supported_tools deliberately untouched — see codex-model-catalog.ts header.
     assert.deepEqual(entry!["experimental_supported_tools"], []);
   } finally {
@@ -78,17 +92,22 @@ test("buildCodexModelCatalog: a codex rebinding to a model ABSENT from the 3 lit
   }
 });
 
-test("buildCodexModelCatalog: union spans ALL profiles, not just the active one", () => {
+test("buildCodexModelCatalog: the catalog is the ACTIVE profile only — a binding in an unused profile never leaks into it (refactor defect 6)", () => {
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
-          agents: { codex: { roles: { orchestrator: { model: "deepseek-v4-pro" } } } },
+          agents: { codex: { roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro") } } },
         },
+        // The live shape of observations/codex-reserve-bound-to-unreachable-grok: a stale binding
+        // in a profile nobody has selected. The union-based builder published it into the ACTIVE
+        // machine's catalog, inventing a context_window for a model neither configured provider
+        // serves.
         alt: {
-          agents: { codex: { roles: { reserve: { model: "grok-4.6" } } } },
+          agents: { codex: { roles: { reserve: makeRoleBinding("codex", "grok-4.6") } } },
         },
       },
     };
@@ -96,7 +115,62 @@ test("buildCodexModelCatalog: union spans ALL profiles, not just the active one"
 
     const result = buildCodexModelCatalog(home);
     assert.equal(result.source, "roles");
-    assert.deepEqual(result.slugs, ["deepseek-v4-pro", "grok-4.6"]);
+    assert.deepEqual(result.slugs, ["deepseek-v4-pro"]);
+
+    // Switching the active profile switches the catalog — the same data, the other answer.
+    saveRoles({ ...data, activeProfile: "alt" }, home);
+    assert.deepEqual(buildCodexModelCatalog(home).slugs, ["grok-4.6"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("collectCodexRoleModelSlugsFromData stays UNION-wide: model-registration-check.ts's codex branch depends on it (do not narrow)", () => {
+  const data: RolesFile = {
+    formatVersion: ROLES_FORMAT_VERSION,
+    activeProfile: "default",
+    profiles: {
+      default: { agents: { codex: { roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro") } } } },
+      alt: { agents: { codex: { roles: { reserve: makeRoleBinding("codex", "grok-4.6") } } } },
+    },
+  };
+  assert.deepEqual(collectCodexRoleModelSlugsFromData(data), ["deepseek-v4-pro", "grok-4.6"]);
+  assert.deepEqual(collectActiveCodexRoleModelSlugsFromData(data), ["deepseek-v4-pro"]);
+});
+
+test("codexContextWindowFor: measured slugs carry the endpoint measurement; an unknown slug falls back to codex's own uncatalogued window and is flagged unmeasured", () => {
+  assert.deepEqual(codexContextWindowFor("deepseek-v4-pro"), { contextWindow: 1048576, measured: true });
+  assert.deepEqual(codexContextWindowFor("deepseek-v4-flash"), { contextWindow: 1048576, measured: true });
+  assert.deepEqual(codexContextWindowFor("qwen3.8-max"), { contextWindow: 983616, measured: true });
+  assert.deepEqual(codexContextWindowFor("grok-4.6"), {
+    contextWindow: CODEX_UNCATALOGUED_CONTEXT_WINDOW,
+    measured: false,
+  });
+  // Never worse than not being catalogued at all — the entry still buys apply_patch.
+  assert.equal(CODEX_UNCATALOGUED_CONTEXT_WINDOW, 272000);
+});
+
+test("buildCodexModelCatalog: a slug with no measurement is reported in unmeasuredSlugs, never shipped as a silent guess", () => {
+  const home = freshHome();
+  try {
+    saveRoles(
+      {
+        formatVersion: ROLES_FORMAT_VERSION,
+        activeProfile: "default",
+        profiles: {
+          default: {
+            agents: {
+              codex: {
+                roles: { orchestrator: makeRoleBinding("codex", "deepseek-v4-pro"), reserve: makeRoleBinding("codex", "grok-4.6") },
+              },
+            },
+          },
+        },
+      },
+      home,
+    );
+    const result = buildCodexModelCatalog(home);
+    assert.deepEqual(result.unmeasuredSlugs, ["grok-4.6"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -106,19 +180,20 @@ test("collectCodexRoleModelSlugs: de-duplicates across roles/profiles and skips 
   const home = freshHome();
   try {
     const data: RolesFile = {
+      formatVersion: ROLES_FORMAT_VERSION,
       activeProfile: "default",
       profiles: {
         default: {
           agents: {
             codex: {
               roles: {
-                orchestrator: { model: "deepseek-v4-pro" },
-                "worker-highstakes": { model: "deepseek-v4-pro" }, // duplicate, collapses
-                worker: { model: "inherit" }, // not a concrete model — skipped
+                orchestrator: makeRoleBinding("codex", "deepseek-v4-pro"),
+                "worker-highstakes": makeRoleBinding("codex", "deepseek-v4-pro"), // duplicate, collapses
+                worker: makeRoleBinding("codex", "inherit"), // not a concrete model — skipped
               },
             },
             // A non-codex harness binding must never leak into the codex catalog.
-            "claude-code": { roles: { orchestrator: { model: "opus" } } },
+            "claude-code": { roles: { orchestrator: makeRoleBinding("claude-code", "opus") } },
           },
         },
       },
@@ -135,7 +210,7 @@ test("collectCodexRoleModelSlugs: de-duplicates across roles/profiles and skips 
 test("buildCodexModelCatalog: a freshly-seeded roles.json (CODEX_ROLE_MODEL_SEED, owner decision 2026-09-08: both new harnesses run entirely on the direct DeepSeek subscription) derives a catalog of exactly the two DeepSeek slugs — grok-4.6 does not appear, and both entries keep apply_patch_tool_type=freeform", () => {
   const home = freshHome();
   try {
-    const fresh: RolesFile = { activeProfile: "default", profiles: { default: { agents: {} } } };
+    const fresh: RolesFile = { formatVersion: ROLES_FORMAT_VERSION, activeProfile: "default", profiles: { default: { agents: {} } } };
     const { data: seeded } = seedMissingRoleBindings(fresh);
     saveRoles(seeded, home);
 

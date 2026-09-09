@@ -17,7 +17,7 @@ hooks, protocol, or memory canon.
 | What | Where |
 | --- | --- |
 | Portable definition | Files, laid over each other lowest first: `base` (the kit's own `default-agents.json`, always present) < `user` (`~/.petbox/agents/`) < `project` (`<root>/.petbox/agents/`) — roles/capabilities, **no models**. Never fetched from a server. |
-| Local binding | `~/.petbox/roles.json` (owner = `$HOME`) — profile → role → **model** only |
+| Local binding | `~/.petbox/roles.json` (owner = `$HOME`) — profile → role → **model**, plus who set it (`origin`) and which provider serves it |
 | Compiled artifacts | Per-harness agent files written by `apply` |
 
 Never invent a model id. If a role has no binding, leave model unset and report it.
@@ -75,4 +75,5 @@ skill template, re-run a **full wire** to reinstall skill files into the project
 - Factory procedure stays in this skill — not in `protocol.ts`, SessionStart canon, or AGENTS.md.
 - Portable defs ship without models; local `roles.json` is the only model source.
 - Prefer reporting missing bindings over inventing them.
+- Bind with `model set`, never by editing `roles.json` by hand: the command records the binding as YOURS, and the kit then never rewrites it when its own defaults change.
 - Not canon; on-demand only.

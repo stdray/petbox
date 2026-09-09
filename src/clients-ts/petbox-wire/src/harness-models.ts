@@ -83,9 +83,10 @@ const MODEL_POLICIES: Readonly<Record<HarnessId, HarnessModelPolicy>> = {
     reason: "droid resolves ids against the workspace model registry (incl. custom:* BYOK)",
   },
   // Codex model ids are provider slugs resolved against whatever `model_providers` +
-  // `model_catalog_json` this machine's $CODEX_HOME/config.toml declares (codex-spec.md §6) —
-  // the kit writes petbox-model-catalog.json itself, but a user can add/replace providers and
-  // catalog entries the kit knows nothing about, so the id space is not enumerable from here.
+  // `model_catalog_json` this machine's $CODEX_HOME/config.toml declares (codex-spec.md §6).
+  // The kit no longer writes either (task wire-codex-config-print-fragment, owner decision
+  // 09.09.2026 — it PRINTS them, codex-config-fragment.ts), and a user can add or replace
+  // providers and catalog entries freely, so the id space is not enumerable from here at all.
   codex: {
     kind: "open",
     reason: "codex resolves ids against this machine's model_providers + model_catalog_json",

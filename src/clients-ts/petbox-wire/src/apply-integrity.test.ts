@@ -120,7 +120,7 @@ test("a layer ADDS a role, then stops declaring it: the artifact appears and is 
       "petbox-review.json": JSON.stringify({ slug: "review", tier: "worker", requiredCapabilities: [] }),
       "petbox-review.md": "the project's own reviewer role",
     });
-    const first = runApply(projectDir, homeDir);
+    const first = runApply(projectDir, homeDir, ["--roles=project"]);
     assert.equal(first.status, WIRE_EXIT.ok, `setup apply must write every role. Output:\n${first.out}`);
     for (const p of [...artifactPaths(projectDir, "petbox-worker"), ...artifactPaths(projectDir, "petbox-review")]) {
       assert.ok(existsSync(p), `setup: ${p} was not written. Output:\n${first.out}`);
@@ -134,7 +134,7 @@ test("a layer ADDS a role, then stops declaring it: the artifact appears and is 
     // 3. The layer stops declaring it. The roster shrinks; the artifacts must follow it down.
     rmSync(join(layerDir, "petbox-review.json"));
     rmSync(join(layerDir, "petbox-review.md"));
-    const second = runApply(projectDir, homeDir);
+    const second = runApply(projectDir, homeDir, ["--roles=project"]);
     assert.equal(second.status, WIRE_EXIT.ok, `Output:\n${second.out}`);
 
     for (const p of artifactPaths(projectDir, "petbox-review")) {
@@ -200,7 +200,7 @@ test("the orphan sweep runs UNCONDITIONALLY — there is no 'degraded resolve' l
     const ours = join(dir, "petbox-review.md");
     writeFileSync(ours, `---\nname: petbox-review\n${PETBOX_MARKER_LINE}\n---\n\nours\n`, "utf8");
 
-    const { out, status } = runApply(projectDir, homeDir, ["--offline"]);
+    const { out, status } = runApply(projectDir, homeDir, ["--offline", "--roles=project"]);
     assert.equal(status, WIRE_EXIT.ok, `Output:\n${out}`);
     assert.ok(
       !existsSync(ours),

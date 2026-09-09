@@ -11,12 +11,37 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { deriveBindingProvider } from "./binding-provider.ts";
 import { classifyModel } from "./harness-models.ts";
 import { petboxDir } from "./petbox-dir.ts";
 import { wireLog } from "./wire-log.ts";
 
+/**
+ * WHO put this binding here (task role-model-bindings-review-refactor, defects #1/#2).
+ *
+ * - `kit`  — this kit seeded it from its own defaults. The kit MAY update it when its defaults
+ *            change (seedMissingRoleBindings does exactly that), because it is only overwriting
+ *            its own past decision.
+ * - `owner` — a human chose it (`model set`, or a hand-edit the migration could not attribute to
+ *            any historical kit seed). NEVER rewritten by the kit, ever.
+ *
+ * Before this field existed the kit could not tell the two apart, so the only safe strategy was
+ * "touch nothing" — and a changed default therefore never reached a machine that already had a
+ * roles.json (defect #1, observed live: two profiles out of three stayed on retired models).
+ */
+export type BindingOrigin = "kit" | "owner";
+
 export type RoleBinding = {
+  /** The harness's OWN dialect, byte for byte — never a canonical cross-harness name. There is no
+   * name valid in all five harnesses (wiki `imena-modeley-i-perenosimost-profilya-po-pyati-
+   * harnessam`), and this file already is the correspondence table. */
   readonly model: string;
+  readonly origin: BindingOrigin;
+  /** Which subscription/registry serves `model`, derived from the harness's grammar by
+   * binding-provider.ts — null when this harness's value genuinely cannot name one. Stored, not
+   * recomputed on every read, so a hand-edit that contradicts the value is VISIBLE
+   * (findBindingProviderInconsistencies) instead of silently normalized away. */
+  readonly provider: string | null;
 };
 
 export type AgentRoles = {
@@ -27,7 +52,20 @@ export type Profile = {
   readonly agents: Readonly<Record<string, AgentRoles>>;
 };
 
+/**
+ * Current on-disk format of ~/.petbox/roles.json.
+ *
+ * 1 — the original shape: no `formatVersion` key at all, a binding is `{ model }` alone.
+ * 2 — a binding is `{ model, origin, provider }` (see RoleBinding). Both new fields landed in ONE
+ *     bump on purpose: they are two fields of the same type behind one parser, and two bumps with
+ *     two migrations would cost more than one for no gain (handoff `handoff-new-session`,
+ *     "Разбивка этапов").
+ */
+export const ROLES_FORMAT_VERSION = 2;
+
 export type RolesFile = {
+  /** Absent on disk ⇒ 1 (the pre-origin shape) — see ROLES_FORMAT_VERSION. */
+  readonly formatVersion: number;
   readonly activeProfile: string;
   readonly profiles: Readonly<Record<string, Profile>>;
 };
@@ -39,7 +77,7 @@ export type ObservedBinding = {
   readonly roles: Readonly<Record<string, string>>;
 };
 
-const EMPTY: RolesFile = { activeProfile: "default", profiles: {} };
+const EMPTY: RolesFile = { formatVersion: ROLES_FORMAT_VERSION, activeProfile: "default", profiles: {} };
 
 /**
  * Canonical agent ids used by session push / harness matrix (`droid-push-session` stamps
@@ -81,11 +119,21 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function asBindingOrigin(v: unknown): BindingOrigin {
+  // Anything else — including a v1 file, where the key does not exist — reads as `owner`, the
+  // conservative value: the kit never rewrites an owner binding, so a wrong guess here can only
+  // ever fail SAFE (a stale binding survives) and never destroy a real choice. Reclassifying a
+  // v1 file's bindings is migrateRolesFile's job, and it is evidence-based, not a default.
+  return v === "kit" ? "kit" : "owner";
+}
+
 function asModelBinding(v: unknown): RoleBinding | null {
   if (!isPlainObject(v)) return null;
   const model = v["model"];
   if (typeof model !== "string" || !model.trim()) return null;
-  return { model: model.trim() };
+  const providerRaw = v["provider"];
+  const provider = typeof providerRaw === "string" && providerRaw.trim() ? providerRaw.trim() : null;
+  return { model: model.trim(), origin: asBindingOrigin(v["origin"]), provider };
 }
 
 function asAgentRoles(v: unknown): AgentRoles | null {
@@ -115,18 +163,23 @@ function asProfile(v: unknown): Profile {
 /** Light validation: coerce unknown JSON into a RolesFile; drop junk fields. */
 export function normalizeRoles(raw: unknown): RolesFile {
   if (!isPlainObject(raw)) return { ...EMPTY };
+  // A missing/garbage `formatVersion` is version 1 — the shape that predates it. Never defaulted
+  // to the CURRENT version: that would claim a legacy file had already been migrated and skip the
+  // one pass that can still tell a kit seed from an owner's choice.
+  const rawVersion = raw["formatVersion"];
+  const formatVersion = typeof rawVersion === "number" && Number.isFinite(rawVersion) ? rawVersion : 1;
   const activeProfile =
     typeof raw["activeProfile"] === "string" && raw["activeProfile"].trim()
       ? raw["activeProfile"].trim()
       : "default";
   const profilesRaw = raw["profiles"];
-  if (!isPlainObject(profilesRaw)) return { activeProfile, profiles: {} };
+  if (!isPlainObject(profilesRaw)) return { formatVersion, activeProfile, profiles: {} };
   const profiles: Record<string, Profile> = {};
   for (const [name, p] of Object.entries(profilesRaw)) {
     if (!name.trim()) continue;
     profiles[name] = asProfile(p);
   }
-  return { activeProfile, profiles };
+  return { formatVersion, activeProfile, profiles };
 }
 
 export type LoadRolesOptions = {
@@ -151,11 +204,32 @@ export type LoadRolesOptions = {
  *   silently compiling roles as if unbound.
  */
 export function loadRoles(homeDir: string = homedir(), opts?: LoadRolesOptions): RolesFile {
+  return loadRolesMigrated(homeDir, opts).data;
+}
+
+/**
+ * `loadRoles` plus the format migration's REPORT — for the one caller that must print what the
+ * migration did (wire.ts's seedDefaultRoleBindingsIfMissing). Everyone else uses `loadRoles`.
+ *
+ * The migration runs HERE, on every read, and not at some single explicit call site, for one
+ * reason: any writer that saved a v1 file's contents back out before it was migrated would stamp
+ * `origin: "owner"` on every binding (asBindingOrigin's conservative default) and permanently
+ * destroy the evidence the migration needs — `profile use` alone would have been enough. Reading
+ * through the migration makes that unexpressible: no code path can observe an un-migrated
+ * RolesFile, so no code path can persist one. Idempotent by construction (a file already at
+ * ROLES_FORMAT_VERSION is returned untouched, `migrations` empty), and the in-memory result is
+ * identical whether or not the file on disk has been rewritten yet.
+ */
+export function loadRolesMigrated(
+  homeDir: string = homedir(),
+  opts?: LoadRolesOptions,
+): { readonly data: RolesFile; readonly migrations: readonly RoleBindingMigration[] } {
   const path = rolesPath(homeDir);
-  if (!existsSync(path)) return { ...EMPTY, profiles: {} };
+  if (!existsSync(path)) return { data: { ...EMPTY, profiles: {} }, migrations: [] };
   try {
     const raw = JSON.parse(readFileSync(path, "utf8"));
-    return normalizeRoles(raw);
+    const migrated = migrateRolesFile(normalizeRoles(raw));
+    return { data: migrated.data, migrations: migrated.migrations };
   } catch (e) {
     const detail = `roles.json at ${path} exists but failed to parse — ${e instanceof Error ? e.message : String(e)}`;
     if (opts?.strict) {
@@ -167,7 +241,7 @@ export function loadRoles(homeDir: string = homedir(), opts?: LoadRolesOptions):
       );
     }
     wireLog("roles", detail, homeDir);
-    return { ...EMPTY, profiles: {} };
+    return { data: { ...EMPTY, profiles: {} }, migrations: [] };
   }
 }
 
@@ -202,7 +276,7 @@ export function useProfile(data: RolesFile, name: string): RolesFile {
   if (!n) throw new Error("profile name must be non-empty");
   const profiles: Record<string, Profile> = { ...data.profiles };
   if (!profiles[n]) profiles[n] = { agents: {} };
-  return { activeProfile: n, profiles };
+  return { formatVersion: data.formatVersion, activeProfile: n, profiles };
 }
 
 /** Role→model map for one agent under the active profile (missing → {}). Alias-aware. */
@@ -300,13 +374,26 @@ export function setRoleModel(
   const profiles: Record<string, Profile> = { ...data.profiles };
   const existingProfile = profiles[profileName] ?? { agents: {} };
   const existingAgent = existingProfile.agents[canon] ?? { roles: {} };
+  // origin: "owner" — this verb IS the owner deciding. From here the kit never rewrites this cell
+  // again, no matter how its own defaults move (seedMissingRoleBindings only refreshes "kit"
+  // bindings). That is the whole contract the origin field buys, and it is why `model set` needs
+  // no separate "pin this" flag.
+  const binding: RoleBinding = {
+    model,
+    origin: "owner",
+    provider: deriveBindingProvider(canon, model).provider,
+  };
   profiles[profileName] = {
     agents: {
       ...existingProfile.agents,
-      [canon]: { roles: { ...existingAgent.roles, [role]: { model } } },
+      [canon]: { roles: { ...existingAgent.roles, [role]: binding } },
     },
   };
-  const next: RolesFile = { activeProfile: data.activeProfile, profiles };
+  const next: RolesFile = {
+    formatVersion: data.formatVersion,
+    activeProfile: data.activeProfile,
+    profiles,
+  };
 
   if (cls === "foreign") {
     return {
@@ -366,7 +453,10 @@ export function unsetRoleModel(
       agents: { ...existingProfile.agents, [canon]: { roles: restRoles } },
     },
   };
-  return { data: { activeProfile: data.activeProfile, profiles }, removed: true };
+  return {
+    data: { formatVersion: data.formatVersion, activeProfile: data.activeProfile, profiles },
+    removed: true,
+  };
 }
 
 // Default claude-code role→model seed for a BRAND-NEW machine (fresh-wire-roster-unusable):
@@ -489,31 +579,309 @@ export const HARNESS_ROLE_MODEL_SEEDS: Readonly<Record<string, Readonly<Record<s
  * has an entry for every seeded harness — callers should skip the write entirely in that case, so
  * an already-fully-seeded roles.json is never even re-serialized.
  */
-export function seedMissingRoleBindings(data: RolesFile): { data: RolesFile; changed: boolean } {
+export function seedMissingRoleBindings(data: RolesFile): {
+  data: RolesFile;
+  changed: boolean;
+  refreshed: readonly RoleBindingRefresh[];
+  reattributed: readonly RoleBindingReattribution[];
+} {
   let fileChanged = false;
+  const refreshed: RoleBindingRefresh[] = [];
+  const reattributed: RoleBindingReattribution[] = [];
   const profiles: Record<string, Profile> = {};
   for (const [profileName, profile] of Object.entries(data.profiles)) {
     const agents: Record<string, AgentRoles> = { ...profile.agents };
     let profileChanged = false;
     for (const [harness, seed] of Object.entries(HARNESS_ROLE_MODEL_SEEDS)) {
-      const alreadyPresent = agentLookupKeys(harness).some((k) => k in agents);
-      if (alreadyPresent) continue;
-      const roles: Record<string, RoleBinding> = {};
-      for (const [role, model] of Object.entries(seed)) roles[role] = { model };
-      agents[harness] = { roles };
-      profileChanged = true;
+      const presentKey = agentLookupKeys(harness).find((k) => k in agents);
+      if (presentKey === undefined) {
+        const roles: Record<string, RoleBinding> = {};
+        for (const [role, model] of Object.entries(seed)) roles[role] = kitBinding(harness, model);
+        agents[harness] = { roles };
+        profileChanged = true;
+        continue;
+      }
+      // The harness IS present — refresh only the cells this kit itself seeded (origin "kit").
+      // This is defect #1's actual fix: before the origin field the only safe move was to skip the
+      // whole harness, so a changed default never reached a machine that already had a roles.json.
+      // An "owner" cell is still skipped here, byte for byte, and a role the current seed no longer
+      // knows is left alone rather than deleted (removing a binding is destructive and is not this
+      // function's business).
+      const existing = agents[presentKey];
+      if (!existing) continue;
+      const nextRoles: Record<string, RoleBinding> = { ...existing.roles };
+      let agentChanged = false;
+      for (const [role, binding] of Object.entries(existing.roles)) {
+        if (binding.origin !== "kit") continue;
+        // A cell LABELLED kit whose value is not one this kit has ever shipped was edited by hand
+        // (a text editor, not `model set`, which stamps origin "owner" itself). Re-attribute it
+        // and keep the value: the alternative is reverting an edit the operator made on purpose,
+        // silently, on the next run — the exact failure mode this whole card exists to remove.
+        // `origin` is therefore a cached label re-verified against the historical table on every
+        // pass, never a claim taken on trust.
+        if (!isHistoricalKitSeed(harness, role, binding.model)) {
+          nextRoles[role] = makeRoleBinding(harness, binding.model, "owner");
+          reattributed.push({ profile: profileName, agent: presentKey, role, model: binding.model });
+          agentChanged = true;
+          continue;
+        }
+        const current = seed[role];
+        if (current === undefined || current === binding.model) continue;
+        nextRoles[role] = kitBinding(harness, current);
+        refreshed.push({
+          profile: profileName,
+          agent: presentKey,
+          role,
+          modelBefore: binding.model,
+          modelAfter: current,
+        });
+        agentChanged = true;
+      }
+      if (agentChanged) {
+        agents[presentKey] = { roles: nextRoles };
+        profileChanged = true;
+      }
     }
     profiles[profileName] = profileChanged ? { agents } : profile;
     if (profileChanged) fileChanged = true;
   }
-  if (!fileChanged) return { data, changed: false };
-  return { data: { activeProfile: data.activeProfile, profiles }, changed: true };
+  if (!fileChanged) return { data, changed: false, refreshed: [], reattributed: [] };
+  return {
+    data: { formatVersion: data.formatVersion, activeProfile: data.activeProfile, profiles },
+    changed: true,
+    refreshed,
+    reattributed,
+  };
+}
+
+/** A binding labelled `kit` whose value this kit never shipped — hand-edited, so it is the
+ * owner's now and the label is corrected to say so. */
+export type RoleBindingReattribution = {
+  readonly profile: string;
+  readonly agent: string;
+  readonly role: string;
+  readonly model: string;
+};
+
+/** One kit-origin binding the kit updated to its current default (seedMissingRoleBindings). */
+export type RoleBindingRefresh = {
+  readonly profile: string;
+  readonly agent: string;
+  readonly role: string;
+  readonly modelBefore: string;
+  readonly modelAfter: string;
+};
+
+/**
+ * A complete RoleBinding for `model` on `harness`, with the provider DERIVED from the value by
+ * binding-provider.ts — the exact shape every writer in this file produces.
+ *
+ * Exported so no caller can hand-build a binding that forgets a field or, worse, invents a
+ * provider the value does not actually support: the whole point of the v2 format is that the
+ * label beside a model is derived from that model, not typed in beside it.
+ */
+export function makeRoleBinding(
+  harness: string,
+  model: string,
+  origin: BindingOrigin = "owner",
+): RoleBinding {
+  return { model, origin, provider: deriveBindingProvider(harness, model).provider };
+}
+
+/** A binding the kit is putting there itself: origin "kit", provider derived from the value. */
+function kitBinding(harness: string, model: string): RoleBinding {
+  return makeRoleBinding(harness, model, "kit");
+}
+
+// ---- format migration: v1 (no origin/provider) -> v2 -------------------------------------------
+
+// EVERY value this kit has EVER seeded, per harness and per role, oldest first.
+//
+// This is the migration's only evidence. A v1 binding whose value matches one of these BYTE FOR
+// BYTE was put there by a past version of this kit and is therefore safe for the kit to update;
+// anything else is the owner's and is never touched (handoff `handoff-new-session`, accepted
+// migration heuristic). Matching is per (harness, ROLE) rather than per harness on purpose: the
+// same string is a kit seed for one role and a deliberate owner choice for another
+// (`deepseek-v4-pro` seeds codex/orchestrator but never codex/worker), and a per-harness match
+// would rewrite the second.
+//
+// Sources — read out of git, not remembered (`git show <sha>:src/clients-ts/petbox-wire/src/roles.ts`,
+// plus wire.ts for the era when the seed lived inline there):
+//   claude-code  every commit since the seed existed: opus/sonnet/haiku/fable, unchanged. The
+//                ROLE set moved (`utility` existed until the roster dropped it, `worker-highstakes`
+//                arrived in 1373e225) — the values never did.
+//   droid        the literal `inherit` for every seeded role, always (Factory's own documented
+//                frontmatter default).
+//   codex        introduced in c76b2be0 with reserve -> `grok-4.6`; 1ab01619 replaced it with
+//                `deepseek-v4-pro` when both new harnesses collapsed onto the direct subscription.
+//   qwen         introduced in c76b2be0 as undecorated `openai:<vendor-id>`; 1ab01619 replaced all
+//                five with the kit-decorated `openai:ds-*` ids that its modelProviders entries
+//                actually register.
+//
+// > Changing a seed above WITHOUT appending its old value here silently converts every machine
+// > still holding it into "owner chose this", freezing it forever. HISTORY IS APPEND-ONLY.
+// > `roles.test.ts` ratchets the half a test can check — every CURRENT seed value must appear
+// > here — so a new value cannot be added without touching this table.
+export const HISTORICAL_ROLE_MODEL_SEEDS: Readonly<
+  Record<string, Readonly<Record<string, readonly string[]>>>
+> = {
+  "claude-code": {
+    orchestrator: ["opus"],
+    worker: ["sonnet"],
+    "worker-highstakes": ["opus"],
+    utility: ["haiku"],
+    explore: ["haiku"],
+    reserve: ["fable"],
+  },
+  droid: Object.fromEntries(
+    ["orchestrator", "worker", "worker-highstakes", "utility", "explore", "reserve"].map((role) => [
+      role,
+      ["inherit"],
+    ]),
+  ),
+  codex: {
+    orchestrator: ["deepseek-v4-pro"],
+    worker: ["deepseek-v4-flash"],
+    "worker-highstakes": ["deepseek-v4-pro"],
+    explore: ["deepseek-v4-flash"],
+    reserve: ["grok-4.6", "deepseek-v4-pro"],
+  },
+  qwen: {
+    orchestrator: ["openai:deepseek-v4-pro", "openai:ds-deepseek-v4-pro"],
+    worker: ["openai:glm-5.3-flash", "openai:ds-deepseek-v4-flash"],
+    "worker-highstakes": ["openai:deepseek-v4-pro", "openai:ds-deepseek-v4-pro"],
+    explore: ["openai:glm-5.3-flash", "openai:ds-deepseek-v4-flash"],
+    reserve: ["openai:qwen3.8-max", "openai:ds-deepseek-v4-pro"],
+  },
+  // `opencode` is absent because the kit has NEVER seeded it (its `provider/model` space has no
+  // safe placeholder — see HARNESS_ROLE_MODEL_SEEDS). Absent here means every opencode binding on
+  // every machine is, correctly, the owner's.
+};
+
+/** One cell the migration attributed and possibly rewrote. */
+export type RoleBindingMigration = {
+  readonly profile: string;
+  readonly agent: string;
+  readonly role: string;
+  readonly origin: BindingOrigin;
+  readonly modelBefore: string;
+  readonly modelAfter: string;
+  readonly provider: string | null;
+};
+
+/** True when `model` is byte-for-byte a value this kit has ever seeded for exactly this cell. */
+export function isHistoricalKitSeed(harness: string, role: string, model: string): boolean {
+  return (HISTORICAL_ROLE_MODEL_SEEDS[canonicalAgentId(harness)]?.[role] ?? []).includes(model);
+}
+
+/**
+ * Bring a parsed roles.json up to ROLES_FORMAT_VERSION. Pure; never touches disk.
+ *
+ * For a v1 file, per binding:
+ *   - value matches a historical kit seed for THIS harness+role  -> origin `kit`, and the value is
+ *     updated to the kit's CURRENT default for that cell (this is what finally delivers a changed
+ *     default to a machine that already had a roles.json — defect #1);
+ *   - anything else -> origin `owner`, value untouched, byte for byte;
+ *   - `provider` is derived from the (possibly updated) value by binding-provider.ts.
+ *
+ * A `kit` cell the current seed no longer covers keeps its value: the kit stopped seeding that
+ * role, which is not a reason to unbind a role that is still declared.
+ *
+ * IDEMPOTENT: a file already at ROLES_FORMAT_VERSION is returned as-is, same reference, with an
+ * empty report — so a second run changes nothing, and the report is never a lie about a no-op.
+ */
+export function migrateRolesFile(data: RolesFile): {
+  readonly data: RolesFile;
+  readonly changed: boolean;
+  readonly migrations: readonly RoleBindingMigration[];
+} {
+  if (data.formatVersion >= ROLES_FORMAT_VERSION) {
+    return { data, changed: false, migrations: [] };
+  }
+  const migrations: RoleBindingMigration[] = [];
+  const profiles: Record<string, Profile> = {};
+  for (const [profileName, profile] of Object.entries(data.profiles)) {
+    const agents: Record<string, AgentRoles> = {};
+    for (const [agentKey, agentRoles] of Object.entries(profile.agents)) {
+      const canon = canonicalAgentId(agentKey);
+      const roles: Record<string, RoleBinding> = {};
+      for (const [role, binding] of Object.entries(agentRoles.roles)) {
+        const fromKit = isHistoricalKitSeed(canon, role, binding.model);
+        const origin: BindingOrigin = fromKit ? "kit" : "owner";
+        const current = HARNESS_ROLE_MODEL_SEEDS[canon]?.[role];
+        const model = fromKit && current !== undefined ? current : binding.model;
+        const provider = deriveBindingProvider(canon, model).provider;
+        roles[role] = { model, origin, provider };
+        migrations.push({
+          profile: profileName,
+          agent: agentKey,
+          role,
+          origin,
+          modelBefore: binding.model,
+          modelAfter: model,
+          provider,
+        });
+      }
+      agents[agentKey] = { roles };
+    }
+    profiles[profileName] = { agents };
+  }
+  return {
+    data: { formatVersion: ROLES_FORMAT_VERSION, activeProfile: data.activeProfile, profiles },
+    changed: true,
+    migrations,
+  };
+}
+
+/** The subset of a migration report that actually changed a model value — what a human needs to
+ * see, as opposed to the cells that were merely labelled. */
+export function rewrittenByMigration(
+  migrations: readonly RoleBindingMigration[],
+): readonly RoleBindingMigration[] {
+  return migrations.filter((m) => m.modelBefore !== m.modelAfter);
+}
+
+// ---- internal consistency: does the stored provider still match the value? --------------------
+
+/**
+ * Every binding whose STORED `provider` contradicts what its own `model` value parses to under its
+ * harness's grammar, as ready-to-print lines. Empty on any file this kit wrote — the kit derives
+ * the label from the value on every write — so a hit means the file was hand-edited into a state
+ * where the label lies about the value.
+ *
+ * A derived `null` (this harness's value genuinely cannot name a provider) never contradicts a
+ * stored label: that is the opencode/qwen "unknown id" case, where a label the operator added by
+ * hand carries information the value does not.
+ *
+ * Deliberately NOT a check against live machine config (qwen's modelProviders, codex's /models) —
+ * that is stage B2. This one is internal: value vs label, nothing else.
+ */
+export function findBindingProviderInconsistencies(data: RolesFile): string[] {
+  const issues: string[] = [];
+  for (const [profileName, profile] of Object.entries(data.profiles)) {
+    for (const [agentKey, agentRoles] of Object.entries(profile.agents)) {
+      const canon = canonicalAgentId(agentKey);
+      for (const [role, binding] of Object.entries(agentRoles.roles)) {
+        const derived = deriveBindingProvider(canon, binding.model);
+        if (derived.provider === null) continue;
+        if (binding.provider === derived.provider) continue;
+        issues.push(
+          `binding provider: profile '${profileName}' harness '${agentKey}' role '${role}' is ` +
+            `labelled provider '${binding.provider ?? "(none)"}' but its model '${binding.model}' ` +
+            `parses to '${derived.provider}' (${derived.reason}). The label is what a reader trusts ` +
+            `to see which subscription serves this role; re-derive it with ` +
+            `\`petbox-wire model set ${role} ${binding.model} --agent ${canon} --profile ${profileName}\`.`,
+        );
+      }
+    }
+  }
+  return issues;
 }
 
 /** Human-readable dump of the active profile's agent/role/model tree. */
 export function formatResolvedBinding(data: RolesFile): string {
   const lines: string[] = [];
-  lines.push(`activeProfile: ${data.activeProfile}`);
+  lines.push(`activeProfile: ${data.activeProfile}  (roles.json format v${data.formatVersion})`);
   const profile = data.profiles[data.activeProfile];
   if (!profile || Object.keys(profile.agents).length === 0) {
     lines.push("(no agent role bindings for this profile)");
@@ -527,7 +895,11 @@ export function formatResolvedBinding(data: RolesFile): string {
       continue;
     }
     for (const [role, binding] of roleEntries) {
-      lines.push(`    ${role}: ${binding.model}`);
+      // origin and provider are the two things this file could NOT answer before (defects #2/#4):
+      // who bound it, and which subscription pays for it. Printed on every line so `roles` answers
+      // both without reading roles.json, let alone the kit's sources.
+      const provider = binding.provider ?? "provider unknown";
+      lines.push(`    ${role}: ${binding.model}  [${provider}, set by ${binding.origin}]`);
     }
   }
   return lines.join("\n");

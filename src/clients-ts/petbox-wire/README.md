@@ -24,7 +24,7 @@ Full documentation: <https://petbox.3po.su/doc/wire>.
 | `petbox-wire layers [dir...]` | Show the definition cascade: which layers exist, what each did to the roster, and which layer supplied every field. Read-only. |
 | `petbox-wire status [--offline]` | Print fact, not a verdict: per role × harness, the materialized artifact path, its bound model and where that model came from, plus a layers/roster/canon/skills summary. Read-only, never gates; `--offline` skips network lookups (the definition never needed one). Always exits 0 unless `status` itself crashes. |
 | `petbox-wire doctor [--offline]` | Gate (exit code is significant): resolves the agent definition from the file cascade (base < user < project) and checks it against every known harness, printing OK or each violation, plus the layers and their per-field provenance. A broken layer is a hard failure here, same as in `apply`. Also reports skill-file drift against the kit templates, the session-banner budget margin, and a tail of `~/.petbox/wire.log`. Network checks are skipped with an explicit reason when the server is unreachable; `--offline` skips them itself up front (skill-file drift and banner-budget checks) — the definition resolve and the truthfulness gate still run, because neither touches a network. |
-| `petbox-wire roles` | Print the active profile and its role→model bindings (`~/.petbox/roles.json`). Offline; an empty store exits 0 — no model is ever invented. |
+| `petbox-wire roles` | Print the active profile and its role→model bindings (`~/.petbox/roles.json`), each with the provider serving it and whether the kit or you set it. Offline; an empty store exits 0 — no model is ever invented. |
 | `petbox-wire roles export` | Write a bootstrap copy of `roles.json` to stdout (no secrets). Pipe it to a file on a new machine. |
 | `petbox-wire profile use <name>` | Set `activeProfile` in `~/.petbox/roles.json`. Compiles nothing — re-run `apply`. |
 | `petbox-wire model set <role> <model> [--agent <id>] [--profile <name>] [--allow-unknown-model]` | The only sanctioned way to write a role→model binding to `~/.petbox/roles.json`. Compiles nothing — prints `next: petbox-wire apply`. |
@@ -225,7 +225,7 @@ The skipped step is never lost: it stays in the `summary` JSON those failures pr
 | `~/.petbox/projects.json` | Registry: directory prefix → project, env-var name, base URL. |
 | `~/.petbox/keys.json` | `{ "<ENV_VAR>": "<key>" }` (POSIX: `chmod 0600`). The kit hooks read `process.env[<ENV_VAR>]` first, then this file. |
 | `~/.petbox/env.sh` | POSIX only — generated from the key store, sourced from your login profiles. |
-| `~/.petbox/roles.json` | Local role→model bindings + `activeProfile`. Never uploaded. |
+| `~/.petbox/roles.json` | Local role→model bindings + `activeProfile`. A binding is `{ model, origin, provider }`: `origin` is `kit` or `owner`, and the kit updates only its own — a binding you set with `model set` is never rewritten. Never uploaded. |
 | `~/.petbox/agents/` | Optional machine-wide definition layer. Absent = no opinion. |
 | `~/.petbox/cache/` | LKG memory canon per project. The definition has no cache — its layers are local files. |
 
