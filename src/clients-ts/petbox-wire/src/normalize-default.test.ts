@@ -141,6 +141,53 @@ test("apply --roles=user: renders roles ONCE into the three harness profiles and
   }
 });
 
+// ---------------------------------------------------------------------------------------------
+// The REAL machine-upgrade path (card work/wire-rolescope-default-user, acceptance item 3):
+// an existing machine that ran apply long ago under the OLD default (bare apply, no --roles
+// flag, no ~/.petbox/wire.json — that combination used to resolve to "project") has project
+// role copies sitting in its git tree. The kit is upgraded; DEFAULT_WIRE_CONFIG now reads
+// "user". The machine's wire.json is STILL ABSENT — nothing ever wrote one, because the old
+// code had no policy file at all — so the very next plain `apply` (no flag) must resolve
+// "user scope (from default)" and sweep those pre-existing project copies, exactly like the
+// explicit --roles=user path already covered above. This must not require the flag: a bare
+// `apply` from a hook or a bare `wire` run is what actually executes on an upgraded machine.
+// ---------------------------------------------------------------------------------------------
+
+test("apply with NO --roles flag and NO wire.json (real upgrade path): the new user-scope default sweeps pre-existing project role copies", () => {
+  const homeDir = freshDir("petbox-norm-upgrade-home-");
+  const proj = makeGitWorkingTree(freshDir("petbox-norm-upgrade-proj-"));
+  try {
+    writeRegistry(homeDir, [{ prefix: proj, project: "upgrade-a", envVar: "PETBOX_UPGRADE_A_API_KEY" }]);
+    // The project's pre-upgrade state: role copies in every per-project harness layout, as a bare
+    // `apply` under the OLD default would have left them. No wire.json anywhere in homeDir.
+    const owned = [
+      plantOwnedRole(proj, [".claude", "agents"], "petbox-worker.md"),
+      plantOwnedRole(proj, [".opencode", "agent"], "petbox-worker.md"),
+      plantOwnedRole(proj, [".factory", "droids"], "petbox-worker.md"),
+      plantOwnedRole(proj, [".codex", "agents"], "petbox-worker.toml"),
+      plantOwnedRole(proj, [".qwen", "agents"], "petbox-worker.md"),
+    ];
+    assert.equal(existsSync(join(homeDir, ".petbox", "wire.json")), false, "precondition: no policy file yet");
+
+    // The exact command an upgraded machine actually runs: bare `apply`, no --roles, no config.
+    const run = runWire(["apply", "--offline"], homeDir, proj);
+    assert.equal(run.status, WIRE_EXIT.ok, `expected exit 0; output:\n${run.out}`);
+    assert.match(run.out, /roles → user scope \(from default\)/, `output:\n${run.out}`);
+
+    for (const p of owned) {
+      assert.equal(existsSync(p), false, `${p} was left orphaned by the sweep; output:\n${run.out}`);
+    }
+    assert.deepEqual(projectRoleFiles(proj), [], `output:\n${run.out}`);
+    assert.equal(existsSync(join(proj, ".opencode", "agent")), false, "legacy .opencode/agent should be pruned");
+    // The roles are not lost — they now live in the user profile (same destination the explicit
+    // --roles=user path renders into).
+    assert.equal(userRoleFileCount(homeDir), 15, `expected 15 user-scope role files; output:\n${run.out}`);
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(proj, { recursive: true, force: true });
+  }
+});
+
 test("apply --roles=user: foreign files in the harness profile and in the project are left byte-for-byte alone", () => {
   const homeDir = freshDir("petbox-norm-foreign-home-");
   const proj = makeGitWorkingTree(freshDir("petbox-norm-foreign-proj-"));
