@@ -153,6 +153,18 @@ async function wireAgainst(
   };
 }
 
+// Full `wire` has no `--roles=` flag (that switch is `apply`-only — see runApply's own arg
+// parsing) — step 11 always reads the machine's persisted policy (loadWireConfig). These
+// scenarios are about the PROJECT-tree render path specifically (a clobber sitting in the
+// project's own `.claude/agents/`, artifacts expected under `projectDir`), which since
+// 2026-09-09 is no longer what a fresh machine (no ~/.petbox/wire.json) gets by default — so
+// pin the machine to the scope these tests are actually exercising, the same way an existing
+// machine with an explicit `roleScope` would be.
+function pinProjectScope(homeDir: string): void {
+  mkdirSync(join(homeDir, ".petbox"), { recursive: true });
+  writeFileSync(join(homeDir, ".petbox", "wire.json"), JSON.stringify({ roleScope: "project" }, null, 2) + "\n", "utf8");
+}
+
 // A real file of someone else's, sitting exactly where apply wants to write one role's artifact.
 // writeArtifact refuses to clobber it (no `petbox: managed` marker) ⇒ step 11 exits 1 (hard).
 function plantForeignArtifact(projectDir: string): void {
@@ -241,7 +253,7 @@ test("step 11 INCOMPLETE (4): full `wire` exits 4, not 0", async () => {
   // Step 3's validate succeeds; apply's workspace probe (validate call #2) gets HTTP 500, so the
   // skills refresh is skipped for a reason the user never asked for — WIRE_EXIT.incomplete.
   const fake = await startFakeServer({ smokeOk: true, failProbeAfter: 1 });
-  const w = await wireAgainst(fake);
+  const w = await wireAgainst(fake, ({ homeDir }) => pinProjectScope(homeDir));
   try {
     assertExit(w.run, WIRE_EXIT.incomplete, w.out, "step 11 incomplete");
     assert.match(w.out, /\[11\/10\]: done, but INCOMPLETE/, `Full output:\n${w.out}`);
@@ -258,7 +270,10 @@ test("step 11 INCOMPLETE (4): full `wire` exits 4, not 0", async () => {
 
 test("step 11 TRUTHFULNESS (3): full `wire` exits 3, not 0", async () => {
   const fake = await startFakeServer({ smokeOk: true });
-  const w = await wireAgainst(fake, ({ homeDir }) => plantUnresolvableBinding(homeDir));
+  const w = await wireAgainst(fake, ({ homeDir }) => {
+    plantUnresolvableBinding(homeDir);
+    pinProjectScope(homeDir);
+  });
   try {
     assertExit(w.run, WIRE_EXIT.truthfulness, w.out, "step 11 truthfulness block");
     assert.match(w.out, /\[11\/10\]: truthfulness partial/, `Full output:\n${w.out}`);
@@ -273,7 +288,10 @@ test("step 11 HARD (1): a refused clobbering write makes full `wire` exit 1, not
   // The loudest case of the bug: apply REFUSED to overwrite a real file, said so, and the run
   // still reported complete success to whatever script invoked it.
   const fake = await startFakeServer({ smokeOk: true });
-  const w = await wireAgainst(fake, ({ projectDir }) => plantForeignArtifact(projectDir));
+  const w = await wireAgainst(fake, ({ homeDir, projectDir }) => {
+    plantForeignArtifact(projectDir);
+    pinProjectScope(homeDir);
+  });
   try {
     assertExit(w.run, WIRE_EXIT.hard, w.out, "step 11 clobber refusal");
     assert.match(w.out, /\[11\/10\]: REFUSED to overwrite/, `Full output:\n${w.out}`);
@@ -317,7 +335,10 @@ test("a FAILING step 11 still does not abort the run: apply keeps writing past t
   //   - the skills refresh, which runs after ALL harnesses,
   //   - and main()'s terminal message block after that.
   const fake = await startFakeServer({ smokeOk: true });
-  const w = await wireAgainst(fake, ({ projectDir }) => plantForeignArtifact(projectDir));
+  const w = await wireAgainst(fake, ({ homeDir, projectDir }) => {
+    plantForeignArtifact(projectDir);
+    pinProjectScope(homeDir);
+  });
   try {
     assertExit(w.run, WIRE_EXIT.hard, w.out, "step 11 clobber refusal");
 

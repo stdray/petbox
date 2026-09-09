@@ -88,14 +88,14 @@ test("apply: a broken layer discovered on a SECOND run leaves the artifacts from
   const projectDir = makeGitWorkingTree(freshDir("petbox-broken-proj-"));
   try {
     const env = { ...process.env, USERPROFILE: homeDir, HOME: homeDir, HOMEDRIVE: undefined, HOMEPATH: undefined };
-    const first = spawnSync(process.execPath, [WIRE_TS, "apply"], { cwd: projectDir, encoding: "utf8", env });
+    const first = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=project"], { cwd: projectDir, encoding: "utf8", env });
     assert.equal(first.status, WIRE_EXIT.ok, `setup:\n${(first.stdout ?? "") + (first.stderr ?? "")}`);
     const artifact = join(projectDir, agentFilesDir("claude-code"), "petbox-worker.md");
     const before = readFileSync(artifact, "utf8");
     assert.ok(before.includes(PETBOX_MARKER_LINE), "setup: the artifact must be one of ours");
 
     writeBrokenProjectLayer(projectDir);
-    const second = spawnSync(process.execPath, [WIRE_TS, "apply"], { cwd: projectDir, encoding: "utf8", env });
+    const second = spawnSync(process.execPath, [WIRE_TS, "apply", "--roles=project"], { cwd: projectDir, encoding: "utf8", env });
     assert.equal(second.status, WIRE_EXIT.hard, `${(second.stdout ?? "") + (second.stderr ?? "")}`);
     assert.equal(readFileSync(artifact, "utf8"), before, "a refused run modified an existing artifact");
   } finally {

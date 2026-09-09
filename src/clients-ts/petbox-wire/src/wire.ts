@@ -371,8 +371,9 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             lines and its summary come from ONE ledger, so the preview's counts are the counts\n" +
     "             of the run that would execute (skill writes used to be invisible to the old\n" +
     "             role-only counter, printing a 12-write project as 'unchanged').\n" +
-    "             --roles=project|user picks WHERE role artifacts are rendered. project (default,\n" +
-    "             historical): into each project tree. user: ONCE into the three harness profiles —\n" +
+    "             --roles=project|user picks WHERE role artifacts are rendered. project (historical):\n" +
+    "             into each project tree. user (default on a fresh machine — no ~/.petbox/wire.json\n" +
+    "             yet, since 2026-09-09): ONCE into the three harness profiles —\n" +
     "             ~/.claude/agents, ~/.config/opencode/agents (plural; the singular `agent` is\n" +
     "             opencode legacy), ~/.factory/droids — 15 files instead of 90, and each project's own\n" +
     "             role copies are then swept (marker-gated: a file without `petbox: managed` is\n" +

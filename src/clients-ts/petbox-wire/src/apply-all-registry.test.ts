@@ -63,7 +63,7 @@ test("apply --all --offline --dry-run: writes NOTHING, reports every project inc
       { prefix: missingDir, project: "proj-missing", envVar: "PETBOX_PROJ_MISSING_API_KEY" },
     ]);
 
-    const { out, status } = runWire(["apply", "--all", "--offline", "--dry-run"], homeDir, projA);
+    const { out, status } = runWire(["apply", "--all", "--offline", "--roles=project", "--dry-run"], homeDir, projA);
 
     assert.equal(status, WIRE_EXIT.ok, `expected exit 0; output:\n${out}`);
     // Nothing was actually written — the whole point of --dry-run.
@@ -98,14 +98,14 @@ test("apply --all --offline: actually writes into the registered project directo
   try {
     writeRegistry(homeDir, [{ prefix: projA, project: "proj-a2", envVar: "PETBOX_PROJ_A2_API_KEY" }]);
 
-    const first = runWire(["apply", "--all", "--offline"], homeDir, projA);
+    const first = runWire(["apply", "--all", "--offline", "--roles=project"], homeDir, projA);
     assert.equal(first.status, WIRE_EXIT.ok, `expected exit 0; output:\n${first.out}`);
     assert.equal(existsSync(agentFileFor(projA)), true, "a real (non-dry-run) apply --all must write the artifact");
     assert.match(first.out, /wrote/i);
     assert.match(first.out, /written=1/);
 
     // Re-run in --dry-run: everything already matches, so nothing is (or would be) written again.
-    const second = runWire(["apply", "--all", "--offline", "--dry-run"], homeDir, projA);
+    const second = runWire(["apply", "--all", "--offline", "--roles=project", "--dry-run"], homeDir, projA);
     assert.equal(second.status, WIRE_EXIT.ok, `expected exit 0; output:\n${second.out}`);
     assert.match(second.out, /unchanged=1/);
   } finally {
@@ -127,7 +127,7 @@ test("apply --all --offline: a foreign (non-PetBox) file at an artifact path is 
     mkdirSync(join(projA, ".claude", "agents"), { recursive: true });
     writeFileSync(agentFileFor(projA), "# not ours, no origin marker\n", "utf8");
 
-    const { out, status } = runWire(["apply", "--all", "--offline"], homeDir, projA);
+    const { out, status } = runWire(["apply", "--all", "--offline", "--roles=project"], homeDir, projA);
 
     // The refusal for proj-a3 is the strongest outcome across the sweep -> exit 1 (hard).
     assert.equal(status, WIRE_EXIT.hard, `expected exit 1; output:\n${out}`);
