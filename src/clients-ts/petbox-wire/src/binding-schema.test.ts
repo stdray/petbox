@@ -11,6 +11,9 @@
 // Run: node --test src/binding-schema.test.ts
 
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { CODEX_MODEL_PROVIDER, deriveBindingProvider } from "./binding-provider.ts";
 import {
@@ -33,6 +36,25 @@ import {
 
 // ---- provider derivation, one case per harness grammar ----------------------------------------
 
+/** An isolated home directory with no `.qwen/settings.json` at all — forces deriveQwenProvider
+ * onto its offline fallback registry, so a test using this is making a claim about that fallback,
+ * not about whatever happens to be registered on the machine actually running the suite. */
+function tempHomeNoQwenFile(): string {
+  return mkdtempSync(join(tmpdir(), "petbox-binding-provider-"));
+}
+
+/** An isolated home directory whose `.qwen/settings.json` declares exactly the given
+ * `modelProviders` map (key -> bare ids). */
+function tempHomeWithQwenProviders(modelProviders: Record<string, string[]>): string {
+  const home = mkdtempSync(join(tmpdir(), "petbox-binding-provider-"));
+  const dir = join(home, ".qwen");
+  mkdirSync(dir, { recursive: true });
+  const providers: Record<string, Array<{ id: string }>> = {};
+  for (const [key, ids] of Object.entries(modelProviders)) providers[key] = ids.map((id) => ({ id }));
+  writeFileSync(join(dir, "settings.json"), JSON.stringify({ modelProviders: providers }, null, 2), "utf8");
+  return home;
+}
+
 test("provider: opencode reads the segment before the first '/', and a value with no prefix derives nothing rather than a guess", () => {
   assert.equal(deriveBindingProvider("opencode", "deepseek/deepseek-v4-pro").provider, "deepseek");
   assert.equal(deriveBindingProvider("opencode", "opencode-go/glm-5.3-flash").provider, "opencode-go");
@@ -43,13 +65,38 @@ test("provider: opencode reads the segment before the first '/', and a value wit
   assert.match(bare.reason, /no '<provider>\/' prefix/);
 });
 
-test("provider: qwen recovers the modelProviders key from the id itself — the authType prefix is never a provider", () => {
-  // Both of the kit's provider keys speak protocol `openai`, so the prefix cannot tell them apart;
-  // only the id decoration can.
-  assert.equal(deriveBindingProvider("qwen", "openai:ds-deepseek-v4-pro").provider, "deepseek");
-  assert.equal(deriveBindingProvider("qwen", "openai:go-glm-5.3-flash").provider, "opencode-go");
-  // An id the kit does not register is honest "unknown", never a default.
-  assert.equal(deriveBindingProvider("qwen", "openai:deepseek-v4-pro").provider, null);
+test("provider: qwen, no live settings.json — falls back to the kit's own offline registry", () => {
+  const home = tempHomeNoQwenFile();
+  // Both of the kit's provider keys speak protocol `openai`, so the auth-type prefix cannot tell
+  // them apart; only the id decoration (from the offline fallback registry) can.
+  assert.equal(deriveBindingProvider("qwen", "openai:ds-deepseek-v4-pro", home).provider, "deepseek");
+  assert.equal(deriveBindingProvider("qwen", "openai:go-glm-5.3-flash", home).provider, "opencode-go");
+  // An id the offline registry does not know either is honest "unknown", never a default.
+  const unknown = deriveBindingProvider("qwen", "openai:deepseek-v4-pro", home);
+  assert.equal(unknown.provider, null);
+  assert.match(unknown.reason, /unavailable/);
+});
+
+test("provider: qwen, live settings.json present — an OPERATOR-REGISTERED id the kit's offline registry has never seen still resolves (the qwen-binding-provider-null-for-live-registered-id fix)", () => {
+  const home = tempHomeWithQwenProviders({
+    deepseek: ["ds-deepseek-v4-pro", "ds-deepseek-v4-pro-max"],
+    "opencode-go": ["go-glm-5.3-flash", "go-glm-5.3-flash-low"],
+  });
+  // The two ids seeded by the kit still resolve...
+  assert.equal(deriveBindingProvider("qwen", "openai:ds-deepseek-v4-pro", home).provider, "deepseek");
+  assert.equal(deriveBindingProvider("qwen", "openai:go-glm-5.3-flash", home).provider, "opencode-go");
+  // ...and so do the owner's own duplicate registrations, which the offline registry
+  // (qwen-model-registry.ts) has no entry for at all.
+  assert.equal(deriveBindingProvider("qwen", "openai:ds-deepseek-v4-pro-max", home).provider, "deepseek");
+  assert.equal(deriveBindingProvider("qwen", "openai:go-glm-5.3-flash-low", home).provider, "opencode-go");
+});
+
+test("provider: qwen, live settings.json present but silent about an id — the live file is authoritative, so the offline registry is NOT consulted as a second opinion", () => {
+  // This file is live and readable, but registers neither of the kit's own two hardcoded ids.
+  const home = tempHomeWithQwenProviders({ deepseek: ["some-other-model"] });
+  const d = deriveBindingProvider("qwen", "openai:ds-deepseek-v4-pro", home);
+  assert.equal(d.provider, null);
+  assert.match(d.reason, /authoritative/);
 });
 
 test("provider: codex is the process-level model_provider the kit pins — the value itself can never express it", () => {

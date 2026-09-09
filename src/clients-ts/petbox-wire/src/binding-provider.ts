@@ -14,19 +14,36 @@
 // stays the harness's own dialect, byte for byte; the provider is a SEPARATE, derived, validatable
 // label beside it.
 //
-// SCOPE (stage boundary): this module only PARSES the stored value by the harness's own grammar.
-// Checking the derived provider against LIVE machine config (qwen's `modelProviders`, codex's
-// `/models`, `opencode models`, droid's `customModels`) is stages B1/B2 and deliberately absent
-// here — nothing in this file reads a config file or the network.
+// SCOPE (stage boundary): this module PARSES the stored value by the harness's own grammar for
+// four of the five harnesses — codex, claude-code, opencode, droid — and reads NO config file or
+// network for any of them. checkModelValidity in model-validity.ts (stages B1/B2) remains the
+// only place that checks a derived provider against codex's `/models` or `opencode models`.
+//
+// qwen is the deliberate EXCEPTION, fixed same day as this field shipped (defect
+// `qwen-binding-provider-null-for-live-registered-id`): the gate in model-validity.ts already
+// reads `$QWEN_HOME/settings.json` → `modelProviders` LIVE to answer "is this id known"; deriving
+// `provider` from a separate, hardcoded id list (qwen-model-registry.ts) meant a role the gate had
+// just verified as "registered on this machine" could still get `provider: null`, because the two
+// questions — "is this id known" and "which subscription serves it" — were answered from two
+// different sources about the exact same file. deriveQwenProvider below now reads that SAME live
+// file (via qwen-live-providers.ts, ~0ms, a sync local read — not the network/spawn cost the stage
+// boundary above is about) and treats it as authoritative when available. The hardcoded list
+// survives only as the fallback for when the live file cannot be read at all, so an unconfigured
+// machine still gets a `provider` for the ids the kit itself seeds — never a null pretending to be
+// certain, and never a guess pretending to be live.
 //
 // EVERY per-harness rule below is a factual claim, sourced in its own comment (wiki
 // `imena-modeley-i-perenosimost-profilya-po-pyati-harnessam` §1 measured 09.09.2026, or the kit's
 // own code). Do not invent a rule; an unparseable value derives `null` (honest unknown), never a
 // guess.
 //
-// Plain TS for native node type-stripping: zero deps beyond the qwen id registry leaf.
+// Plain TS for native node type-stripping: zero deps beyond node's own stdlib (qwen's live read)
+// plus the qwen id registry leaf (qwen's offline fallback).
+
+import { homedir } from "node:os";
 
 import { qwenProviderKeyFor } from "./qwen-model-registry.ts";
+import { readLiveQwenProviders } from "./qwen-live-providers.ts";
 
 /**
  * The `model_provider` this kit declares for codex — one per PROCESS, in the config fragment the
@@ -166,33 +183,67 @@ function deriveCodexProvider(model: string): ProviderDerivation {
 }
 
 /**
- * qwen — the `modelProviders` key the bare id is registered under, via the kit's own registry.
+ * qwen — the `modelProviders` key the bare id is registered under, read LIVE off this machine's
+ * `$QWEN_HOME/settings.json` when that file is available, falling back to the kit's own hardcoded
+ * registry only when it is not.
  *
  * Fact (wiki §1, pinned to chunk-565U2ANU.js:47-75): qwen's value is `<authType>:<id>`, where the
  * pre-colon segment is a CLOSED auth-type enum (`openai|qwen-oauth|gemini|vertex-ai|anthropic`) —
  * an auth TYPE, never a provider — and an unrecognized prefix is silently folded into the id. Both
  * of the kit's provider keys map to protocol `openai`, so the selector collapses them; the provider
- * is recoverable only from the id itself, through the registry that assigned it
- * (qwen-model-registry.ts's `ds-`/`go-` decoration).
+ * is recoverable only from the id itself, through whatever registered it.
  *
- * An id the kit does not register derives null — honest unknown. It is exactly the shape
- * model-registration-check.ts already warns about, and it is what the whole stale-binding class of
- * this refactor looks like from here.
+ * Live-first, and AUTHORITATIVE once read (defect `qwen-binding-provider-null-for-live-registered-
+ * id`): an id an operator registered themselves — e.g. `ds-deepseek-v4-pro-max` — is invisible to
+ * the kit's own hardcoded list (qwen-model-registry.ts) by construction, but IS in
+ * `modelProviders`, and the validity gate in model-validity.ts already treats that file as ground
+ * truth for "is this id known". Deriving `provider` from a second, stale source produced exactly
+ * the contradiction this fix closes: a binding the gate calls "verified" labelled `provider: null`.
+ * So when the live file is available, it is the ONLY source consulted — an id missing from it
+ * derives null even if the hardcoded list would have recognized it, because the live file is
+ * telling the truth about this machine right now and a stale catalog does not get a vote.
+ *
+ * The hardcoded registry is consulted ONLY when the live file cannot be read at all (missing,
+ * unparseable, no `modelProviders` key, or empty) — the "not configured yet" case
+ * model-validity.ts's gate treats as `unverified` rather than `invalid`. There, and only there, an
+ * id outside BOTH sources derives null — honest unknown, never invented.
  */
-function deriveQwenProvider(model: string): ProviderDerivation {
+function deriveQwenProvider(model: string, homeDir: string): ProviderDerivation {
   const m = model.trim();
   const i = m.indexOf(":");
   const bare = i === -1 ? m : m.slice(i + 1);
+
+  const live = readLiveQwenProviders(homeDir);
+  if (live.ok) {
+    const key = live.idToProviderKey.get(bare);
+    if (key !== undefined) {
+      return {
+        provider: key,
+        reason: `${live.path} → modelProviders key registering the bare id '${bare}' (live, this machine)`,
+      };
+    }
+    return {
+      provider: null,
+      reason:
+        `${live.path} is readable and registers ${live.idToProviderKey.size} id(s), but not '${bare}' ` +
+        `— the live file is authoritative once available, so the kit's offline fallback registry is ` +
+        `not consulted`,
+    };
+  }
+
   const key = qwenProviderKeyFor(bare);
   if (key === undefined) {
     return {
       provider: null,
       reason:
-        `qwen id '${bare}' is not registered by this kit, and qwen's '<authType>:' prefix is an ` +
-        `auth type rather than a provider — no provider can be recovered from this value`,
+        `${live.path} is unavailable (${live.reason}); qwen id '${bare}' is also not in the kit's ` +
+        `own offline fallback registry — no provider can be recovered from this value`,
     };
   }
-  return { provider: key, reason: `qwen modelProviders key registering the bare id '${bare}'` };
+  return {
+    provider: key,
+    reason: `${live.path} is unavailable (${live.reason}); falling back to the kit's own offline registry, which registers the bare id '${bare}' under '${key}'`,
+  };
 }
 
 /**
@@ -200,9 +251,16 @@ function deriveQwenProvider(model: string): ProviderDerivation {
  * helper for the sourced rule). `inherit`/blank → null (nothing is bound). An unknown harness →
  * null: making a claim about a harness this kit knows nothing about would be an invention.
  *
- * Pure and offline: never reads a config file, never fetches.
+ * Offline for four of the five harnesses. `qwen` is the exception: it reads
+ * `$QWEN_HOME/settings.json` (a sync local file, ~0ms) LIVE — see deriveQwenProvider's doc comment
+ * for why. `homeDir` is injectable for tests and defaults to this machine's real home directory,
+ * matching every production call site (roles.ts), none of which pass it explicitly.
  */
-export function deriveBindingProvider(harness: string, model: string): ProviderDerivation {
+export function deriveBindingProvider(
+  harness: string,
+  model: string,
+  homeDir: string = homedir(),
+): ProviderDerivation {
   if (isUnboundValue(model)) {
     return { provider: null, reason: `'${model.trim() || "(blank)"}' binds no concrete model, so it names no provider` };
   }
@@ -216,7 +274,7 @@ export function deriveBindingProvider(harness: string, model: string): ProviderD
     case "codex":
       return deriveCodexProvider(model);
     case "qwen":
-      return deriveQwenProvider(model);
+      return deriveQwenProvider(model, homeDir);
     default:
       return { provider: null, reason: `unknown harness '${harness}' — this kit makes no provider claim about it` };
   }

@@ -66,7 +66,7 @@ import { join } from "node:path";
 import { codexHomeDir } from "./codex-paths.ts";
 import { getBlockScalar, getRootScalar, parseTomlBlocks } from "./codex-toml.ts";
 import { classifyModel } from "./harness-models.ts";
-import { qwenHomeDir } from "./qwen-paths.ts";
+import { readLiveQwenProviders } from "./qwen-live-providers.ts";
 import { canonicalAgentId, type RolesFile } from "./roles.ts";
 
 export type ModelValidityVerdict = "valid" | "invalid" | "unverified";
@@ -215,40 +215,18 @@ function checkClaudeCodeModel(model: string): ModelValidity {
 
 // ---- qwen: $QWEN_HOME/settings.json → modelProviders (local file, warn) -----------------------
 
-/** Every bare id registered in `modelProviders`, with the provider key that registers it. */
+/** Every bare id registered in `modelProviders`, with the provider key that registers it. Reads
+ * through qwen-live-providers.ts — the SAME live reader binding-provider.ts's `provider` field
+ * now derives from, so this gate and that field can never again disagree about what this
+ * machine's `modelProviders` says (defect `qwen-binding-provider-null-for-live-registered-id`). */
 function readQwenRegisteredIds(homeDir: string): SourceSnapshot {
-  const path = join(qwenHomeDir(homeDir), "settings.json");
-  const source = `${path} → modelProviders`;
-  const file = readTextFile(path);
-  if (!file.ok) {
-    return { ok: false, source, reason: `${file.reason} — qwen has no providers configured on this machine yet` };
+  const live = readLiveQwenProviders(homeDir);
+  const source = `${live.path} → modelProviders`;
+  if (!live.ok) {
+    return { ok: false, source, reason: `${live.reason} — qwen has no providers configured on this machine yet` };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(file.text);
-  } catch (e) {
-    return { ok: false, source, reason: `it is not valid JSON (${e instanceof Error ? e.message : String(e)})` };
-  }
-  const providers = (parsed as { modelProviders?: unknown } | null)?.modelProviders;
-  if (providers === undefined || providers === null || typeof providers !== "object") {
-    return { ok: false, source, reason: "it declares no `modelProviders` key at all — not configured yet" };
-  }
-  const ids: string[] = [];
-  const labels: string[] = [];
-  for (const [key, entries] of Object.entries(providers as Record<string, unknown>)) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      const id = (entry as { id?: unknown } | null)?.id;
-      if (typeof id === "string" && id.trim()) {
-        ids.push(id.trim());
-        labels.push(`${id.trim()} (modelProviders.${key})`);
-      }
-    }
-  }
-  if (ids.length === 0) {
-    return { ok: false, source, reason: "`modelProviders` registers no model ids yet — not configured yet" };
-  }
-  return { ok: true, ids, source, note: sampleIds(labels) };
+  const labels = [...live.idToProviderKey.entries()].map(([id, key]) => `${id} (modelProviders.${key})`);
+  return { ok: true, ids: [...live.idToProviderKey.keys()], source, note: sampleIds(labels) };
 }
 
 /**
