@@ -10,17 +10,21 @@
 //   - qwen does NOT error on an unresolvable `modelProviders` id — it silently falls back to the
 //     FIRST registered model. A stale binding is not cosmetic: switching to that profile silently
 //     reroutes every role through it to the wrong model, with no warning from qwen itself.
-//   - codex's model_catalog_json is instead built as the UNION of every codex role→model binding
-//     across every profile (codex-model-catalog.ts) — so a stale codex binding still gets a real
-//     catalog entry and still works if that profile is selected. Structurally this check can
-//     never fire for codex today (see this file's own test for why) — it is kept for the same
-//     scope the brief asked for (codex is a harness whose registered id set the kit "actually
-//     knows"), and because a future change to how the codex catalog is built (e.g. narrowing it
-//     off the live union) would make it start doing real work with zero code change here.
+//   - codex: this check compares every binding against collectCodexRoleModelSlugsFromData — the
+//     UNION of every codex role→model binding across every profile — i.e. against ITSELF, so the
+//     codex branch is structurally incapable of firing (see this file's own test for why). That
+//     was already true when the kit still WROTE model_catalog_json from that same union; it is
+//     doubly true now that the kit writes no codex catalog at all (task
+//     wire-codex-config-print-fragment) — the union is no longer even a claim about this machine.
+//     The branch is kept, unchanged and inert, because giving codex a check that MEANS something
+//     has to compare against the LIVE catalog or the provider's `/models`, which is subtask
+//     B1/B2 of the bindings refactor and not a tweak here. Do not "revive" it by narrowing the
+//     union: see collectCodexRoleModelSlugsFromData's own comment.
 //
-// Scope is deliberately narrow: ONLY codex and qwen, the two harnesses where the kit itself
-// writes the provider/catalog config (model_catalog_json / modelProviders) and can therefore
-// enumerate "what ids exist" without guessing. This is NOT the same claim harness-models.ts makes
+// Scope is deliberately narrow: ONLY codex and qwen, the two harnesses whose provider/catalog id
+// space the kit can enumerate from its own tables (it used to WRITE that config for both; as of
+// 09.09.2026 it prints it instead, which is exactly why the codex half of this file is inert —
+// see above). This is NOT the same claim harness-models.ts makes
 // (that file's classifyModel is about id SHAPE validity — "does this look like a foreign
 // harness's id" — and deliberately calls both codex and qwen's id space "open" because a USER can
 // add providers/models the kit knows nothing about). This check is narrower and more concrete:
@@ -30,10 +34,11 @@
 //
 // Both id-set sources are imported, never re-derived here (the class of bug this task closes was
 // exactly a second, drifted copy of a seed/registration list):
-//   - codex: collectCodexRoleModelSlugsFromData (codex-model-catalog.ts) — the SAME union logic
-//     that builds model_catalog_json, run against the in-memory RolesFile already in hand (never
-//     a fresh disk read — avoids any read-after-write ordering hazard against the caller's own
-//     saveRoles).
+//   - codex: collectCodexRoleModelSlugsFromData (codex-model-catalog.ts) — the all-profiles
+//     union, run against the in-memory RolesFile already in hand (never a fresh disk read —
+//     avoids any read-after-write ordering hazard against the caller's own saveRoles). NOTE the
+//     PRINTED catalog is built from the ACTIVE profile instead (buildCodexModelCatalogFromData);
+//     these are deliberately different sets — see the codex bullet at the top of this file.
 //   - qwen: qwenRegisteredModelIds (qwen-model-catalog.ts) — the ids the kit KNOWS about for
 //     qwen's `modelProviders` (task wire-print-config-fragment, 09.09.2026: the kit no longer
 //     WRITES modelProviders itself — see qwen-config-fragment.ts — this is now the catalog a

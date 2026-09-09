@@ -68,7 +68,7 @@
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -200,22 +200,23 @@ import {
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 import { codexHomeDir } from "./codex-paths.ts";
-import { buildCodexModelCatalog } from "./codex-model-catalog.ts";
+import {
+  CODEX_CATALOG_FILE_NAME,
+  findCodexConfigDivergence,
+  readCodexCatalogPathFromConfig,
+  renderCodexConfigFragmentText,
+} from "./codex-config-fragment.ts";
 import { findUnregisteredRoleBindings } from "./model-registration-check.ts";
 import { findQwenConfigDivergence, renderQwenConfigFragmentText } from "./qwen-config-fragment.ts";
 import { buildQwenMcpServerEntry } from "./qwen-mcp-entry.ts";
 import { qwenHomeDir } from "./qwen-paths.ts";
 import {
   applyCodexProjectTrust,
-  buildDeepseekProviderBlock,
   buildHookStateBlock,
   buildMcpServerBlock,
-  buildOpencodeGoProviderBlock,
-  extractOpencodeSessionUuid,
   findBlock,
   parseTomlBlocks,
   serializeTomlBlocks,
-  setRootScalar,
   tomlString,
   type TomlBlock,
   upsertBlock,
@@ -3131,7 +3132,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   const codexHome = codexHomeDir();
   const codexHooksJsonPath = join(codexHome, "hooks.json");
   const codexConfigPath = join(codexHome, "config.toml");
-  const codexCatalogPath = join(codexHome, "petbox-model-catalog.json");
+  const codexCatalogPath = join(codexHome, CODEX_CATALOG_FILE_NAME);
 
   const codexPullCmd = `node "${join(STABLE, "codex-pull-memory.ts")}"`;
   const codexPushCmd = `node "${join(STABLE, "codex-push-session.ts")}"`;
@@ -3198,37 +3199,24 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   writeJson(codexHooksJsonPath, codexHooksDoc);
   log(`[8/10] merged codex hooks into ${codexHooksJsonPath}`);
 
-  // config.toml: providers (regenerated wholesale each run, preserving the opencode-go
-  // `x-opencode-session` UUID across re-installs — codex-spec.md §6: the gateway 400s without
-  // it, and codex itself never sends one), the default provider/model, the model-catalog
-  // pointer, and pre-trusted [hooks.state] entries for the three hooks just written above.
+  // config.toml: pre-trusted [hooks.state] entries for the three hooks just written above, plus
+  // the wired project's trust entry. NOTHING ELSE.
+  //
+  // OWNER DECISION 09.09.2026, verbatim «и назад тоже. все унифицировать» (task
+  // wire-codex-config-print-fragment): the kit STOPPED writing `model_providers.*`,
+  // `model_provider`, `model`, `http_headers` and `model_catalog_json` here, and stopped writing
+  // the `petbox-model-catalog.json` those keys point at — the same scope boundary already applied
+  // to qwen (see the qwen block below), applied backwards to codex. Two concrete harms went with
+  // the old behaviour: a SINGLE static `x-opencode-session` uuid minted per install collapsed
+  // every conversation on this machine into one prompt-cache bucket, and `context_window` was the
+  // kit's own unverified 128000 against a measured 1048576.
+  //
+  // What replaced it is NOT silence. Dropping the catalog quietly would have cost every codex
+  // role the `apply_patch` tool (9 tools instead of 10, measured) and swapped its window for
+  // codex's 272000 fallback — exit 0, no warning anywhere. So the print is LOUD and the
+  // divergence check names that consequence: see the block after the trust entries below, and
+  // codex-config-fragment.ts's own header.
   let codexBlocks: readonly TomlBlock[] = parseTomlBlocks(readText(codexConfigPath));
-
-  const existingOpencodeGoBlock = findBlock(codexBlocks, "model_providers.opencode-go");
-  const existingSessionUuid = existingOpencodeGoBlock
-    ? extractOpencodeSessionUuid(existingOpencodeGoBlock.lines)
-    : undefined;
-  const opencodeSessionUuid = existingSessionUuid ?? randomUUID();
-  codexBlocks = upsertBlock(codexBlocks, "model_providers.deepseek", buildDeepseekProviderBlock());
-  codexBlocks = upsertBlock(
-    codexBlocks,
-    "model_providers.opencode-go",
-    buildOpencodeGoProviderBlock(opencodeSessionUuid),
-  );
-  // Default provider/model for a bare `codex`/`codex exec` invocation with no role file in play.
-  // `model_provider` = "deepseek" (owner decision 2026-09-08: both new harnesses run entirely on
-  // the DIRECT DeepSeek subscription until a routing proxy exists — codex pins one
-  // `model_provider` per process, measured: a role file's `model_provider` field is accepted and
-  // silently DROPPED, so a per-role split across two subscriptions is impossible here today).
-  // `model` is not dictated by the brief beyond "default model" — deepseek-v4-pro is chosen to
-  // match the orchestrator role's own binding (roles.ts's CODEX_ROLE_MODEL_SEED), the strongest
-  // model direct DeepSeek serves that a plain top-level session would reasonably want.
-  // `[model_providers.opencode-go]` stays registered above (unused by this default and by every
-  // role) — it documents the owner's second subscription so a future switch is a single
-  // rebinding, not a config rewrite.
-  codexBlocks = setRootScalar(codexBlocks, "model_provider", tomlString("deepseek"));
-  codexBlocks = setRootScalar(codexBlocks, "model", tomlString("deepseek-v4-pro"));
-  codexBlocks = setRootScalar(codexBlocks, "model_catalog_json", tomlString(codexCatalogPath));
 
   const codexTrustEntries: { key: string; hash: string }[] = [
     {
@@ -3286,27 +3274,58 @@ export { PetboxPlugin, default } from "${pluginUrl}";
 
   writeText(codexConfigPath, serializeTomlBlocks(codexBlocks));
   log(
-    `[8/10] merged codex config into ${codexConfigPath} (providers deepseek+opencode-go, ` +
-      `model_provider=deepseek, model=deepseek-v4-pro, model_catalog_json, ` +
-      `${codexTrustEntries.length} hook trust entries).`,
+    `[8/10] merged codex config into ${codexConfigPath} (${codexTrustEntries.length} hook trust ` +
+      `entries + project trust only — model_providers/model_provider/model/http_headers/` +
+      `model_catalog_json are printed, never written).`,
   );
 
-  // petbox-model-catalog.json — fully kit-owned, regenerated whole each run this step runs
-  // (like `.mcp.json`), derived from the UNION of every codex role→model binding across every
-  // roles.json profile (codex-model-catalog.ts) — never the three hardcoded literals alone. A
-  // `model set ... --agent codex` rebinding lands in the catalog on the next FULL `wire` run
-  // (this step, [8/10]) — NOT on a bare `apply`, which never calls installGlobalHooks and so
-  // never touches this file; re-run `wire` (or `wire`'s step 8 equivalent) to refresh it.
-  const codexCatalogResult = buildCodexModelCatalog(homedir());
-  writeJson(codexCatalogPath, codexCatalogResult.catalog);
-  log(
-    codexCatalogResult.source === "roles"
-      ? `[8/10] wrote ${codexCatalogPath} (${codexCatalogResult.slugs.length} model(s) from ` +
-          `roles.json: ${codexCatalogResult.slugs.join(", ")}).`
-      : `[8/10] wrote ${codexCatalogPath} (no codex role→model bindings found in any ` +
-          `roles.json profile — fell back to the kit's default 3-model catalog: ` +
-          `${codexCatalogResult.slugs.join(", ")}).`,
-  );
+  // The codex counterpart of the qwen fragment block below: compare the LIVE config.toml and the
+  // catalog it points at against the roster (roles.json's ACTIVE profile — refactor defect 6: the
+  // catalog used to be the union across every profile, so a stale binding in an unused profile
+  // leaked into the config the active one runs on, observed live on `grok-4.6`), and print the
+  // ready-to-paste fragment when they diverge.
+  //
+  // LOUDER than qwen's on purpose (task body, "Главная ловушка"): a qwen machine whose fragment
+  // is never pasted fails visibly (the gateway 400s, or a model id resolves to nothing). A codex
+  // machine whose catalog is missing keeps working — just without `apply_patch` and with a
+  // wrong-by-8x context window, at exit 0. So the header and every warning name that consequence
+  // explicitly, and the whole fragment goes to stderr, not into the ordinary log stream.
+  {
+    const codexRolesData = loadRoles(homedir());
+    const liveConfigText = readText(codexConfigPath);
+    const livePathRaw = readCodexCatalogPathFromConfig(liveConfigText);
+    const livePath = livePathRaw === undefined ? undefined : resolve(codexHome, livePathRaw);
+    let liveCatalog: unknown;
+    let catalogError: string | undefined;
+    if (livePath !== undefined) {
+      try {
+        liveCatalog = JSON.parse(readFileSync(livePath, "utf8"));
+      } catch (e) {
+        catalogError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    const divergence = findCodexConfigDivergence(
+      { configText: liveConfigText, catalog: liveCatalog, catalogError },
+      codexRolesData,
+    );
+    if (divergence.warnings.length === 0) {
+      log(
+        `[8/10] codex model_providers/model_provider/model/model_catalog_json at ` +
+          `${codexConfigPath} (catalog: ${livePath}) already match the kit's roster — nothing to paste.`,
+      );
+    } else {
+      console.error(
+        `[8/10] codex config at ${codexConfigPath} diverges from the kit's roster in ` +
+          `${divergence.warnings.length} way(s). The kit does NOT write these keys (owner ` +
+          `decision 09.09.2026) — until you paste the fragment below, codex roles here can run ` +
+          `WITHOUT the apply_patch tool and on the wrong context window, at exit 0 and with no ` +
+          `warning from codex itself:`,
+      );
+      for (const w of divergence.warnings) console.error(`  - ${w}`);
+      console.error(renderCodexConfigFragmentText(codexRolesData, codexCatalogPath).text);
+    }
+    for (const n of divergence.notes) log(`[8/10] codex config note: ${n}`);
+  }
 
   // ---- Qwen Code: everything in ONE user-scope settings.json ----------------------------------
   //
