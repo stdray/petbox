@@ -83,6 +83,58 @@ test("droid matrix from Factory docs: role_files+spawn+mcp+dynamic+hooks; no exp
   );
 });
 
+test("codex: dynamic_model_at_spawn WITHDRAWN 2026-09-09 (spawn_agent ignores model_providers/base_url — observations/codex-spawn-agent-model-ignores-configured-provider), other codex caps + other harnesses untouched", () => {
+  const codex = harnessCapabilities("codex");
+  assert.equal(
+    codex.has("dynamic_model_at_spawn"),
+    false,
+    "codex must NOT claim dynamic_model_at_spawn — spawn_agent validates against a closed " +
+      "internal list before resolving a provider (see harness-capabilities.ts codex row)",
+  );
+  for (const c of ["hooks", "role_files", "spawn_subagents", "mcp_main_session", "mcp_subagent"] as const) {
+    assert.equal(codex.has(c), true, `codex must still declare ${c} — unrelated to the withdrawal`);
+  }
+  // The other four harnesses are untouched by the codex-only withdrawal.
+  assert.equal(harnessCapabilities("claude-code").has("dynamic_model_at_spawn"), true);
+  assert.equal(harnessCapabilities("droid").has("dynamic_model_at_spawn"), true);
+  assert.equal(harnessCapabilities("qwen").has("dynamic_model_at_spawn"), true);
+  assert.equal(harnessCapabilities("opencode").has("dynamic_model_at_spawn"), false);
+});
+
+test("codex refusal for dynamic_model_at_spawn names the capability AND points at intake/codex-subagent-byok-model-blocked", () => {
+  const def: AgentDefinition = {
+    name: "t",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: ["dynamic_model_at_spawn"],
+      },
+    ],
+  };
+  const v = checkTruthfulness(def, "codex");
+  assert.equal(v.length, 1);
+  assert.deepEqual(v[0], { role: "worker", capability: "dynamic_model_at_spawn", harness: "codex" });
+  const msg = formatViolations(v);
+  assert.match(msg, /worker/);
+  assert.match(msg, /dynamic_model_at_spawn/);
+  assert.match(msg, /codex/);
+  assert.match(
+    msg,
+    /intake\/codex-subagent-byok-model-blocked/,
+    "the refusal must name the intake node so a human knows where to go instead of guessing",
+  );
+});
+
+test("codex: a role NOT needing dynamic_model_at_spawn still renders cleanly (no regression)", () => {
+  const def: AgentDefinition = {
+    name: "t",
+    roles: [{ slug: "worker", tier: "worker", requiredCapabilities: ["hooks", "mcp_main_session"] }],
+  };
+  const v = checkTruthfulness(def, "codex");
+  assert.deepEqual(v, [], formatViolations(v));
+});
+
 test("constructed def requiring missing cap fails with role+capability+harness in message", () => {
   const def: AgentDefinition = {
     name: "t",
