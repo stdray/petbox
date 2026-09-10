@@ -183,6 +183,7 @@ import {
   toEnvRef,
   UnresolvedEnvRefError,
   type RegistryEntry,
+  type ResolvedProject,
 } from "./registry.ts";
 import {
   agentLookupKeys,
@@ -680,9 +681,29 @@ async function runDoctor(argv: string[]): Promise<void> {
   // comparison `status` pillar 4 already had (skill-files.ts's buildSkillReports/formatSkillFile)
   // — never a second diff (see that module's header on this consolidation).
   const { root: skillCheckRoot } = resolveApplyRoot(process.cwd());
-  const resolvedForSkillCheck = resolveProject(skillCheckRoot);
+  // Third keys.json state (card keys-json-supports-env-var-references item 5): resolveProject's
+  // own contract (registry.ts) is "never throws, ONE deliberate exception: UnresolvedEnvRefError"
+  // — a reference whose target var is unset right now. For `wire`/hooks that must stay a loud
+  // crash on the network path (owner's decision, unchanged). For `doctor` it is a DIAGNOSIS to
+  // report and keep going on (registry.ts's inspectKeyStoreEntry header: "must always finish and
+  // report rather than crash") — doctor exists to explain a broken state, and dying on it before
+  // printing even the per-key section or the wire.log tail is the one thing it must never do
+  // (observation doctor-crashes-on-unresolved-envref-before-any-key-report). So this is the ONE
+  // call site in doctor allowed to catch it, never letting it reach the top-level .catch.
+  let resolvedForSkillCheck: ResolvedProject | null;
+  let unresolvedEnvRefIncomplete = false;
+  try {
+    resolvedForSkillCheck = resolveProject(skillCheckRoot);
+  } catch (e) {
+    if (!(e instanceof UnresolvedEnvRefError)) throw e;
+    console.error(`doctor: keys.json — ${e.message}`);
+    resolvedForSkillCheck = null;
+    unresolvedEnvRefIncomplete = true;
+  }
   if (offline) {
     log("doctor: skill check skipped (--offline).");
+  } else if (unresolvedEnvRefIncomplete) {
+    log("doctor: skill check skipped (keys.json reference unresolved — see diagnostic above).");
   } else if (!resolvedForSkillCheck) {
     log(`doctor: skill check skipped (${skillCheckRoot} is not a registered project; run \`wire\` here first).`);
   } else {
@@ -747,6 +768,8 @@ async function runDoctor(argv: string[]): Promise<void> {
   // that module's doc comment on why one measurably rejects healthy canon on a bad protocol day).
   if (offline) {
     log("doctor: banner-budget check skipped (--offline).");
+  } else if (unresolvedEnvRefIncomplete) {
+    log("doctor: banner-budget check skipped (keys.json reference unresolved — see diagnostic above).");
   } else if (!resolvedForSkillCheck) {
     log(
       `doctor: banner-budget check skipped (${skillCheckRoot} is not a registered project; run \`wire\` here first).`,
@@ -825,7 +848,13 @@ async function runDoctor(argv: string[]): Promise<void> {
     }
   }
 
-  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  // unintendedIncomplete: an unresolved keys.json reference is neither `--offline` nor an
+  // unregistered project (the two skips the wire-exit.ts taxonomy names as staying 0) — it
+  // stopped the skill/banner-budget checks from running for a reason outside anything the user
+  // asked doctor to skip, which is exactly what WIRE_EXIT.incomplete (4) is for. It still ranks
+  // below a truthfulness block in classifyApplyExit's priority (hard > truthfulness > incomplete
+  // > ok), so a harness violation is never masked by this.
+  const code = classifyApplyExit({ hadTruthfulnessBlock, unintendedIncomplete: unresolvedEnvRefIncomplete });
   if (code === WIRE_EXIT.ok) {
     log("doctor: all known harnesses OK.");
     // Exit cleanly instead of tearing the process down mid-close (bug surfaced by this task's
@@ -839,11 +868,20 @@ async function runDoctor(argv: string[]): Promise<void> {
     exitWith(WIRE_EXIT.ok);
     return;
   }
+  if (code === WIRE_EXIT.truthfulness) {
+    console.error(
+      `doctor: FAILED — a role requires a capability a harness does not declare, or is bound to a ` +
+        `model a harness cannot resolve (exit ${WIRE_EXIT.truthfulness}).`,
+    );
+    exitWith(WIRE_EXIT.truthfulness);
+    return;
+  }
   console.error(
-    `doctor: FAILED — a role requires a capability a harness does not declare, or is bound to a ` +
-      `model a harness cannot resolve (exit ${WIRE_EXIT.truthfulness}).`,
+    `doctor: INCOMPLETE — keys.json holds an unresolved env-var reference, so the skill and ` +
+      `banner-budget checks above did not run (exit ${WIRE_EXIT.incomplete}); every other section ` +
+      `still finished. Set the missing environment variable named above and rerun.`,
   );
-  exitWith(WIRE_EXIT.truthfulness);
+  exitWith(WIRE_EXIT.incomplete);
 }
 
 // Result of one apply compile pass — a plain data record so a caller can decide what to do

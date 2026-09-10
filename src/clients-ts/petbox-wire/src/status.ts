@@ -63,7 +63,13 @@ import { unrefLingeringHandles } from "./hook-drain.ts";
 import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
 import { readArtifactState, type ArtifactState } from "./origin-marker.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
-import { readRegistry, resolveProject, type RegistryEntry, type ResolvedProject } from "./registry.ts";
+import {
+  readRegistry,
+  resolveProject,
+  UnresolvedEnvRefError,
+  type RegistryEntry,
+  type ResolvedProject,
+} from "./registry.ts";
 import {
   CODEX_ROLE_MODEL_SEED,
   DEFAULT_ROLE_MODEL_SEED,
@@ -592,7 +598,23 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   const { root, via } = resolveApplyRoot(opts.cwd);
   log(`status: root=${root} (via ${via})`);
 
-  const resolvedProject: ResolvedProject | null = resolveProject(root);
+  // Same third keys.json state doctor must handle (card keys-json-supports-env-var-references
+  // item 5, wire.ts's runDoctor): resolveProject's only throw is UnresolvedEnvRefError, for a
+  // reference whose target var is unset right now. status's own contract (this file's header)
+  // is "always exit 0 unless it itself throws (an actual bug)" — letting this propagate WAS that
+  // bug (raw stack trace, exit 1, nothing printed). Caught here, once, and treated like "no
+  // resolved project" for the pillars below, but named distinctly so status never claims an
+  // actually-registered project "is not a registered project".
+  let resolvedProject: ResolvedProject | null;
+  let unresolvedEnvRefIncomplete = false;
+  try {
+    resolvedProject = resolveProject(root);
+  } catch (e) {
+    if (!(e instanceof UnresolvedEnvRefError)) throw e;
+    log(`status: keys.json — ${e.message}`);
+    resolvedProject = null;
+    unresolvedEnvRefIncomplete = true;
+  }
 
   // npm-wire tag drift (task kit-version-lands-everywhere-and-sweeps item 3): best-effort/skip
   // outside a git checkout with a local `main` ref — see npm-wire-drift.ts's header. Printed
@@ -685,6 +707,8 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   log("");
   if (opts.offline) {
     log("status: pillar 3/4 — canon: skipped (--offline)");
+  } else if (unresolvedEnvRefIncomplete) {
+    log("status: pillar 3/4 — canon: n/a — keys.json reference unresolved (see diagnostic above)");
   } else if (!resolvedProject) {
     log(`status: pillar 3/4 — canon: n/a — ${root} is not a registered project (run \`wire\` here first)`);
   } else {
@@ -704,6 +728,9 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   if (opts.offline) {
     log("status: pillar 4/4 — skills: template-match check skipped (--offline); materialization only:");
     printSkillsMaterializationOnly(root);
+  } else if (unresolvedEnvRefIncomplete) {
+    log("status: pillar 4/4 — skills: workspace unknown — keys.json reference unresolved (see diagnostic above); materialization only:");
+    printSkillsMaterializationOnly(root);
   } else if (!resolvedProject) {
     log(`status: pillar 4/4 — skills: workspace unknown — ${root} is not a registered project; materialization only:`);
     printSkillsMaterializationOnly(root);
@@ -720,6 +747,8 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
   log("");
   if (opts.offline) {
     log("status: session banner budget: skipped (--offline).");
+  } else if (unresolvedEnvRefIncomplete) {
+    log("status: session banner budget: n/a — keys.json reference unresolved (see diagnostic above)");
   } else if (!resolvedProject) {
     log(`status: session banner budget: n/a — ${root} is not a registered project (run \`wire\` here first)`);
   } else {
