@@ -42,7 +42,7 @@ Three frontmatter keys ride along on every skill the kit writes, and they are th
 - **`petbox-digest: auto | manual`** — whether the skill enters the salience index the kit's opencode plugin injects into **opencode's** system prompt. `auto` for `petbox`, `petbox-methodology`, `petbox-write-economy` and `petbox-node-authoring`; `manual` for the other four. It changes nothing on Claude Code or Droid.
 - **`disable-model-invocation: true`** — the key Claude Code and Droid honour to refuse a *model-initiated* call, so the skill only runs when a human asks for it by name. Carried by `petbox-agent-factory`, `petbox-analysis-workspace` and `petbox-factory-run`. `petbox-second-reading` deliberately does **not** carry it: it stays out of the digest yet remains callable by an agent that decides it applies.
 
-> **Note:** on a fresh machine the environment variable only exists in **new** terminals (Windows user-scope env; POSIX `~/.petbox/env.sh` sourced from your login profiles). The kit's own hooks work immediately, because they read `~/.petbox/keys.json` directly.
+> **Note:** on a fresh machine the environment variable only exists in **new** terminals (Windows user-scope env; POSIX `~/.petbox/env.sh` sourced from your login profiles). The kit's own hooks read `~/.petbox/keys.json` directly, but that file does not always hold a copy of the key: when the wire obtained the key from a live environment variable, it writes a `${VAR}` reference there instead — never a copy of the secret (see §9 below). A hook whose own process inherits that variable resolves the reference and works immediately; one that doesn't fails **loudly** at session start, naming the missing variable, rather than silently starting without a key.
 
 ## 2. The env-var name
 
@@ -146,7 +146,7 @@ The CLI does not read definitions from the server at all any more, so no `agents
 | --- | --- |
 | `wire/` | The stable kit copy (hooks and scripts point here, so wiring survives npx cache eviction). Refresh with `update`. |
 | `projects.json` | Registry: directory prefix → project, env-var name, base URL. Resolved by longest prefix against cwd. |
-| `keys.json` | Flat `{ "<ENV_VAR>": "<key>" }` map the kit hooks read directly. Tightened to `0600` on POSIX. |
+| `keys.json` | Flat `{ "<ENV_VAR>": "<key-or-reference>" }` map the kit hooks read directly. Each value is either the API key itself, or a `${VAR}` / `$VAR` reference to another environment variable — the wire writes a reference automatically whenever it obtained the key from a live env var, so the secret itself is never copied into the file. A reference the current process's environment cannot resolve fails **loudly** at the point of resolution, before any network request, naming the missing variable — never a silent empty key. Tightened to `0600` on POSIX. |
 | `env.sh` | POSIX only — regenerated from the key store, sourced from your login profiles. |
 | `roles.json` | Local role→model bindings + `activeProfile`. Machine-owned; never uploaded. |
 | `agents/` | Optional machine-wide definition layer (`layer.json` + `petbox-<slug>.{json,md,append.md}`). Absent = no opinion. |
