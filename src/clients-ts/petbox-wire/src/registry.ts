@@ -50,12 +50,63 @@ export function registryPath(homeDir: string = homedir()): string {
   return join(petboxDir(homeDir), "projects.json");
 }
 
-// Cross-platform key store written by wire.ts: ~/.petbox/keys.json is a flat JSON map
-// { "<ENV_VAR>": "<key>" }. Read as a fallback when the env var is not set in the process
-// (so a machine wired via `npx petbox-wire` works without a user-scope env var). Never throws.
-// `homeDir` is injectable (tests only; every real caller uses the default) so the Class A/Б
-// split above is unit-testable without touching the real ~/.petbox.
-export function readKeyStore(envVar: string, homeDir: string = homedir()): string {
+// keys-json-supports-env-var-references: a stored value may be a LITERAL key (old behavior,
+// unchanged byte-for-byte) or a reference to another environment variable, written as $VAR or
+// ${VAR}. The reference form means "read VAR from the environment right now" — it carries no
+// key material of its own, so a keys.json file full of references is nothing worth stealing
+// (obs probe-agent-reads-owner-keys-json-bypassing-env-strip), and there is no second copy of
+// the secret left to go stale (the whole point: env-var rotation now reaches every consumer with
+// zero edits to this file). Anchored on the WHOLE value — "prefix$VARsuffix" is a literal, not a
+// partial reference; that keeps a key that legitimately starts with "$" (unlikely, but not this
+// module's business to forbid) from being misparsed.
+const ENV_REF_RE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$|^\$([A-Za-z_][A-Za-z0-9_]*)$/;
+
+/** `$VAR` / `${VAR}` → `VAR`; anything else (including "") → null (a literal). */
+export function parseEnvRef(raw: string): string | null {
+  const m = ENV_REF_RE.exec(raw);
+  if (!m) return null;
+  return m[1] ?? m[2] ?? null;
+}
+
+/** The reference form bootstrap writes for a key it obtained from a live env var. */
+export function toEnvRef(envVar: string): string {
+  return "${" + envVar + "}";
+}
+
+// Thrown by readKeyStore (never by inspectKeyStoreEntry) when a keys.json value is a reference
+// and the referenced variable is NOT set in this process's environment. Deliberately loud and
+// synchronous, on the resolution path itself, so a caller cannot forward "" or the literal
+// "${VAR}" text into a request — that literal-string-in-a-header shape is exactly the qwen-code
+// issue #11499 defect (a placeholder reached the network and came back as an unexplained 401).
+// Decision (card keys-json-supports-env-var-references, item 4): resolution is NEVER lazy —
+// this must surface before the first network call of the run that needs the key, not at the
+// moment some provider call finally touches it.
+export class UnresolvedEnvRefError extends Error {
+  readonly envVar: string;
+  readonly refVar: string;
+  readonly project: string;
+
+  constructor(envVar: string, refVar: string, project: string) {
+    super(
+      `~/.petbox/keys.json: "${envVar}" (project "${project}") is a reference to ${refVar}, but ` +
+        `${refVar} is not set in this process's environment. Set ${refVar} and retry — no ` +
+        `request was sent.`,
+    );
+    this.name = "UnresolvedEnvRefError";
+    this.envVar = envVar;
+    this.refVar = refVar;
+    this.project = project;
+  }
+}
+
+export type KeyStoreEntry =
+  | { kind: "absent" }
+  | { kind: "literal"; value: string }
+  | { kind: "reference"; refVar: string; resolved: string | null }; // resolved: null = unresolved right now
+
+// Shared file-read/parse step behind both inspectKeyStoreEntry and readKeyStore — same Class A
+// (ENOENT, silent) vs Class Б (corrupt JSON, traced) split as readRegistry below.
+function readKeysJsonFile(homeDir: string): Record<string, unknown> | null {
   const path = petboxKeysJsonPath(homeDir);
   let raw: string;
   try {
@@ -64,17 +115,47 @@ export function readKeyStore(envVar: string, homeDir: string = homedir()): strin
     if (!isEnoent(e)) {
       wireLog("registry", `keys.json at ${path} unreadable — ${e instanceof Error ? e.message : String(e)}`, homeDir);
     }
-    return "";
+    return null;
   }
   try {
     const parsed = JSON.parse(raw);
-    const v = parsed && typeof parsed === "object" ? parsed[envVar] : undefined;
-    return typeof v === "string" ? v : "";
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch (e) {
     // File exists but is not valid JSON — corruption, not "no keys written yet" (Class Б).
     wireLog("registry", `keys.json at ${path} is not valid JSON — ${e instanceof Error ? e.message : String(e)}`, homeDir);
-    return "";
+    return null;
   }
+}
+
+// Classifies envVar's keys.json entry WITHOUT throwing — used by doctor/drift, which must
+// always finish and report rather than crash on a reference that happens not to resolve in
+// doctor's own process. `resolved: null` on a "reference" row means "not resolvable right now",
+// which is a fact to REPORT, not a reason to abort.
+export function inspectKeyStoreEntry(envVar: string, homeDir: string = homedir()): KeyStoreEntry {
+  const store = readKeysJsonFile(homeDir);
+  const v = store ? store[envVar] : undefined;
+  if (typeof v !== "string" || v === "") return { kind: "absent" };
+  const refVar = parseEnvRef(v);
+  if (refVar === null) return { kind: "literal", value: v };
+  const envValue = process.env[refVar];
+  return { kind: "reference", refVar, resolved: envValue && envValue.trim() ? envValue : null };
+}
+
+// Cross-platform key store written by wire.ts: ~/.petbox/keys.json is a flat JSON map
+// { "<ENV_VAR>": "<key-or-reference>" }. Read as a fallback when the env var is not set in the
+// process (so a machine wired via `npx petbox-wire` works without a user-scope env var).
+// `homeDir` is injectable (tests only; every real caller uses the default) so the Class A/Б
+// split above is unit-testable without touching the real ~/.petbox.
+// Throws UnresolvedEnvRefError — and ONLY that — when the entry is a reference the current
+// environment cannot satisfy; `project` is cosmetic (goes in that message only, default is a
+// placeholder for call sites that don't have one handy). Every other outcome (absent, literal,
+// resolved reference) returns a plain string and never throws.
+export function readKeyStore(envVar: string, homeDir: string = homedir(), project = "(unknown project)"): string {
+  const entry = inspectKeyStoreEntry(envVar, homeDir);
+  if (entry.kind === "absent") return "";
+  if (entry.kind === "literal") return entry.value;
+  if (entry.resolved === null) throw new UnresolvedEnvRefError(envVar, entry.refVar, project);
+  return entry.resolved;
 }
 
 // Normalize a path for prefix comparison: unify separators to "/", drop a trailing
@@ -130,6 +211,15 @@ export function readRegistry(homeDir: string = homedir()): RegistryEntry[] {
 // readRegistry/readKeyStore already classify their own failures (Class A silent vs Class Б
 // traced); this outer catch only guards against a genuinely unexpected bug in the match logic
 // below (e.g. a malformed dir argument) — if that ever fires, it is unambiguously Class Б.
+//
+// ONE deliberate exception to "never throws": UnresolvedEnvRefError (keys.json holds a
+// $VAR/${VAR} reference this process's environment cannot satisfy). That is NOT the same
+// silence as "project not registered" — it means the project IS wired and a key SHOULD exist,
+// so folding it into `null` would send a caller straight at the provider with no key at all
+// (silent) or let a stale/placeholder value slip through. It is logged here (so it always
+// shows up in `doctor`'s wire.log trace tail even if a caller swallows the throw) and then
+// rethrown — every caller on a network path is expected to let it propagate and fail before
+// that call, per the card's "resolution is never lazy" decision.
 // `homeDir` is injectable (tests only; every real caller uses the default homedir()).
 export function resolveProject(dir: string, homeDir: string = homedir()): ResolvedProject | null {
   try {
@@ -149,8 +239,9 @@ export function resolveProject(dir: string, homeDir: string = homedir()): Resolv
     }
     if (!best) return null;
 
-    // env var wins; fall back to ~/.petbox/keys.json (the wire.ts key store).
-    const apiKey = process.env[best.envVar] || readKeyStore(best.envVar, homeDir);
+    // env var wins; fall back to ~/.petbox/keys.json (the wire.ts key store — literal or
+    // reference; readKeyStore throws UnresolvedEnvRefError for an unresolvable reference).
+    const apiKey = process.env[best.envVar] || readKeyStore(best.envVar, homeDir, best.project);
     if (!apiKey || apiKey.trim().length === 0) return null;
 
     const baseUrl = (best.baseUrl && best.baseUrl.trim()) || DEFAULT_BASE_URL;
@@ -161,6 +252,10 @@ export function resolveProject(dir: string, homeDir: string = homedir()): Resolv
       envVar: best.envVar,
     };
   } catch (e) {
+    if (e instanceof UnresolvedEnvRefError) {
+      wireLog("registry", `resolveProject(dir=${dir}) — ${e.message}`, homeDir);
+      throw e;
+    }
     wireLog("registry", `resolveProject(dir=${dir}) unexpected failure — ${e instanceof Error ? e.message : String(e)}`, homeDir);
     return null;
   }
@@ -193,6 +288,14 @@ function shortHash(value: string): string {
 // diff. The failure mode this exists to catch — a process where the env var is missing gets a
 // stale file value — can only be OBSERVED from a different process that does have the env var,
 // which is exactly the case `doctor` runs in.
+//
+// Three states now, not two (card keys-json-supports-env-var-references, item 5): a reference
+// entry is skipped here on purpose, not compared by hash — a reference has no copy to go stale,
+// so "drift" does not apply to it BY CONSTRUCTION, and hashing the literal text "${VAR}" against
+// the live env value (the pre-fix behavior) would have manufactured a permanent false "differs"
+// on every reference-based entry, on every run. That was the concrete bug this fixes: `doctor`
+// must not lie on references. Uses inspectKeyStoreEntry (never throws) rather than readKeyStore,
+// since a stray unresolved reference elsewhere in the file must never abort this scan.
 export function detectKeysStoreDrift(homeDir: string = homedir()): KeyDrift[] {
   const entries = readRegistry(homeDir);
   const envVars = [...new Set(entries.map((e) => e.envVar))];
@@ -200,10 +303,11 @@ export function detectKeysStoreDrift(homeDir: string = homedir()): KeyDrift[] {
   for (const envVar of envVars) {
     const envValue = process.env[envVar];
     if (!envValue || envValue.trim().length === 0) continue;
-    const fileValue = readKeyStore(envVar, homeDir);
-    if (!fileValue) {
+    const entry = inspectKeyStoreEntry(envVar, homeDir);
+    if (entry.kind === "reference") continue; // no second copy → no drift possible
+    if (entry.kind === "absent") {
       drifts.push({ envVar, kind: "missing-in-file" });
-    } else if (shortHash(envValue) !== shortHash(fileValue)) {
+    } else if (shortHash(envValue) !== shortHash(entry.value)) {
       drifts.push({ envVar, kind: "differs" });
     }
   }
