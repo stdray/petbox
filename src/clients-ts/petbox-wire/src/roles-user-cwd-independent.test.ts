@@ -181,10 +181,9 @@ test("status --all --offline: names the MACHINE-WIDE layers (never a project lay
       /user-scope role source: source: layers=1: base\[kit v\S+\][^\n]*, kit v\S+ — machine-wide, independent of cwd/,
       `output:\n${run.out}`,
     );
-    // Two SHAPE-anchored negatives, one per way a project layer could reach this resolve: named as
-    // a LAYER token (present), or listed in the absent note as `project=<dir>` (a candidate whose
-    // directory does not exist). Both are immune to the checkout's own path.
-    assert.doesNotMatch(sourceLine, /project\[/, `output:\n${run.out}`);
+    // Only the ABSENT shape needs its own negative: a project candidate whose directory does not
+    // exist lands in the `no opinion:` note as `project=<dir>`, and nothing else covers it. A
+    // PRESENT leak needs none — it breaks the `layers=1` match above, which is evaluated first.
     assert.doesNotMatch(sourceLine, /no opinion:[^)]*project=/, `output:\n${run.out}`);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
