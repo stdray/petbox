@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { UnresolvedEnvRefError } from "./registry.ts";
 
 const MARKER = "# petbox-wire";
 
@@ -94,6 +95,50 @@ test("writes ~/.petbox/env.sh from the key store", () => {
     const envSh = readFileSync(join(home, ".petbox", "env.sh"), "utf8");
     assert.match(envSh, /export MY_PROJECT_API_KEY="secret"/);
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("keys-json-supports-env-var-references: a $VAR reference in keys.json resolves to the REAL value in env.sh — never the raw '${VAR}' text", () => {
+  const home = freshHome();
+  const envVar = "MY_REF_PROJECT_API_KEY";
+  const prevEnv = process.env[envVar];
+  try {
+    mkdirSync(join(home, ".petbox"), { recursive: true });
+    writeFileSync(join(home, ".petbox", "keys.json"), JSON.stringify({ [envVar]: "${" + envVar + "}" }), "utf8");
+    process.env[envVar] = "the-real-secret-value";
+
+    persistKeyForAgentsPosix(home);
+
+    const envSh = readFileSync(join(home, ".petbox", "env.sh"), "utf8");
+    assert.match(envSh, new RegExp(`export ${envVar}="the-real-secret-value"`));
+    assert.doesNotMatch(envSh, /\$\{/, "must never write the raw reference syntax into env.sh");
+  } finally {
+    if (prevEnv === undefined) delete process.env[envVar];
+    else process.env[envVar] = prevEnv;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("keys-json-supports-env-var-references: an UNRESOLVABLE reference throws instead of writing an empty/placeholder export", () => {
+  const home = freshHome();
+  const envVar = "MY_UNRESOLVED_PROJECT_API_KEY";
+  const prevEnv = process.env[envVar];
+  try {
+    delete process.env[envVar];
+    mkdirSync(join(home, ".petbox"), { recursive: true });
+    writeFileSync(join(home, ".petbox", "keys.json"), JSON.stringify({ [envVar]: "${" + envVar + "}" }), "utf8");
+
+    assert.throws(() => persistKeyForAgentsPosix(home, "my-project"), (e: unknown) => {
+      assert.ok(e instanceof UnresolvedEnvRefError);
+      assert.match(e.message, new RegExp(envVar));
+      assert.match(e.message, /my-project/);
+      return true;
+    });
+    assert.equal(existsSync(join(home, ".petbox", "env.sh")), false, "must not write a half-formed env.sh");
+  } finally {
+    if (prevEnv === undefined) delete process.env[envVar];
+    else process.env[envVar] = prevEnv;
     rmSync(home, { recursive: true, force: true });
   }
 });

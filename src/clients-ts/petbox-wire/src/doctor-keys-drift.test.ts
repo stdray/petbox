@@ -108,6 +108,32 @@ test("doctor --offline on a machine WITHOUT drift: stays silent about keys.json,
   }
 });
 
+test("acceptance #5: doctor --offline does NOT lie on a REFERENCE entry — no false drift even though the literal reference text differs from the env value, and the file is left untouched (no bogus auto-sync)", () => {
+  const homeDir = freshDir("petbox-doctor-keysdrift-home-");
+  const projectDir = freshDir("petbox-doctor-keysdrift-proj-");
+  const envVar = "PETBOX_DOCTOR_REFCASE_API_KEY";
+  try {
+    writeRegistry(homeDir, [{ prefix: projectDir, project: "ref-case", envVar }]);
+    // The pre-fix bug: hashing this literal reference TEXT against the live env value would
+    // always mismatch, manufacturing a permanent false "differs" on every reference-based entry.
+    writeKeysJson(homeDir, { [envVar]: "${" + envVar + "}" });
+
+    const before = readFileSync(join(homeDir, ".petbox", "keys.json"), "utf8");
+    const { stdout, stderr, status } = runDoctorOffline(projectDir, homeDir, { [envVar]: "fresh-env-value-for-ref-case" });
+    const out = stdout + stderr;
+
+    assert.doesNotMatch(out, /keys\.json.*out of sync/i, `A reference entry must never be reported as drifted. Full output:\n${out}`);
+    assert.doesNotMatch(out, new RegExp(envVar), `Full output:\n${out}`);
+    assert.equal(status, 0);
+
+    const after = readFileSync(join(homeDir, ".petbox", "keys.json"), "utf8");
+    assert.equal(after, before, "a reference entry must never be auto-synced/rewritten by doctor — there is nothing to sync");
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("doctor --offline: envVar set in env but NEVER written to keys.json at all still warns by name", () => {
   const homeDir = freshDir("petbox-doctor-keysdrift-home-");
   const projectDir = freshDir("petbox-doctor-keysdrift-proj-");

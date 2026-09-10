@@ -6,6 +6,7 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { petboxDir, petboxKeysJsonPath } from "./petbox-dir.ts";
+import { inspectKeyStoreEntry, UnresolvedEnvRefError } from "./registry.ts";
 
 function readJson(path: string): any {
   try {
@@ -19,11 +20,31 @@ function readJson(path: string): any {
 // source it. Parameterized on homeDir (instead of reading os.homedir() directly) so tests can
 // point it at a throwaway tmp dir rather than touching the real $HOME. Returns the path written,
 // for the caller's log message.
-export function persistKeyForAgentsPosix(homeDir: string): string {
+//
+// keys-json-supports-env-var-references: env.sh must always end up with the REAL literal value,
+// never the reference text. A keys.json entry can now be a $VAR/${VAR} reference — resolve each
+// one via inspectKeyStoreEntry (same logic as registry.ts's live read path) before writing it
+// out. Writing "${VAR}" itself into this file would be silently self-correcting only by luck
+// (bash/zsh both variable-expand "${VAR}" inside a double-quoted string at SOURCE time, so it
+// would happen to work whenever the sourcing shell's own environment already has VAR set — and
+// silently export an EMPTY string otherwise). That accidental behavior is exactly the kind of
+// silent placeholder-reaches-a-consumer failure this card exists to rule out, so this throws
+// UnresolvedEnvRefError instead of ever writing the raw reference text.
+export function persistKeyForAgentsPosix(homeDir: string, project = "(unknown project)"): string {
   const store = readJson(petboxKeysJsonPath(homeDir)) ?? {};
-  const lines = Object.entries(store)
-    .filter(([, v]) => typeof v === "string")
-    .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`);
+  const lines: string[] = [];
+  for (const k of Object.keys(store)) {
+    if (typeof store[k] !== "string") continue;
+    const entry = inspectKeyStoreEntry(k, homeDir);
+    if (entry.kind === "absent") continue; // can't happen for a key just read from this same store, but harmless
+    if (entry.kind === "literal") {
+      lines.push(`export ${k}=${JSON.stringify(entry.value)}`);
+    } else if (entry.resolved !== null) {
+      lines.push(`export ${k}=${JSON.stringify(entry.resolved)}`);
+    } else {
+      throw new UnresolvedEnvRefError(k, entry.refVar, project);
+    }
+  }
   const envShPath = join(petboxDir(homeDir), "env.sh");
   // In production ~/.petbox/ already exists by this point (writeKeyToStore runs first in
   // main()'s step 4), but mkdirSync recursive is a harmless no-op then — and it makes this

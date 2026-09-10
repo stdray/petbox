@@ -176,9 +176,12 @@ import { checkNpmWireDrift, formatNpmWireDrift } from "./npm-wire-drift.ts";
 import {
   detectKeysStoreDrift,
   formatKeyDrift,
+  inspectKeyStoreEntry,
   readRegistry,
   registryPath,
   resolveProject,
+  toEnvRef,
+  UnresolvedEnvRefError,
   type RegistryEntry,
 } from "./registry.ts";
 import {
@@ -2562,7 +2565,7 @@ const log = (msg: string) => console.log(msg);
 // deriveEnvVar / resolveWorkspace live in wire-identity.ts (importable by unit tests; wire.ts
 // itself runs main() on import and cannot be imported).
 
-// Cross-platform key store (~/.petbox/keys.json): a flat JSON map { "<ENV_VAR>": "<key>" }.
+// Cross-platform key store (~/.petbox/keys.json): a flat JSON map { "<ENV_VAR>": "<key-or-$VAR-reference>" }.
 // The kit's own hooks read it (via registry.ts) with no env var required. The per-project MCP
 // configs still reference ${ENV_VAR}, so persistKeyForAgents() additionally materializes a real
 // environment variable per platform.
@@ -2570,15 +2573,26 @@ function keysStorePath(): string {
   return petboxKeysJsonPath();
 }
 
-// Read a key from the store. Returns "" if the file/entry is missing.
-function readKeyFromStore(name: string): string {
-  const store = readJson(keysStorePath());
-  const v = store && typeof store === "object" ? store[name] : undefined;
-  return typeof v === "string" ? v : "";
+// Read a key from the store, resolving a $VAR/${VAR} reference the same way registry.ts's
+// readKeyStore does (that module is the single source of truth for the format — this just
+// reuses inspectKeyStoreEntry rather than re-implementing the parse). Returns "" only when the
+// entry is genuinely absent or a literal empty string. Throws UnresolvedEnvRefError — same as
+// registry.ts — when the entry is a reference this process's environment cannot satisfy;
+// callers on the CLI's bootstrap path are expected to catch it and fail with a clear message
+// before doing anything else (never silently fall through to "no key found").
+function readKeyFromStore(name: string, project = "(unknown project)"): string {
+  const entry = inspectKeyStoreEntry(name);
+  if (entry.kind === "absent") return "";
+  if (entry.kind === "literal") return entry.value;
+  if (entry.resolved === null) throw new UnresolvedEnvRefError(name, entry.refVar, project);
+  return entry.resolved;
 }
 
 // Merge (never clobber) a key into the store. On POSIX tighten the file to 0600 (best-effort;
-// skipped on Windows, where chmod is a no-op / can throw).
+// skipped on Windows, where chmod is a no-op / can throw). `value` is written AS GIVEN — literal
+// or a $VAR/${VAR} reference; callers decide which (see step 4 of main(), which writes a
+// reference whenever the key it just resolved came from a live env var — card decision: bootstrap
+// writes references itself, not only as a manual option).
 function writeKeyToStore(name: string, value: string): void {
   const path = keysStorePath();
   const store = readJson(path) ?? {};
@@ -2625,7 +2639,7 @@ function syncKeysStoreFromEnv(): string[] {
 //  - Windows: user-scope env via PowerShell (visible to NEW terminals);
 //  - POSIX: regenerate ~/.petbox/env.sh from the whole key store and make sure the login
 //    profiles source it (marker-guarded, idempotent).
-function persistKeyForAgents(envVar: string): void {
+function persistKeyForAgents(envVar: string, project = "(unknown project)"): void {
   if (SANDBOX_BASE_URL !== undefined) {
     // Loopback sandbox: this is the only step on the full-wire path that writes MACHINE-GLOBAL
     // state (HKCU Environment via PowerShell). Everything else lands under HOME, which the suite
@@ -2635,7 +2649,19 @@ function persistKeyForAgents(envVar: string): void {
     return;
   }
   if (process.platform === "win32") {
-    const value = readKeyFromStore(envVar);
+    // readKeyFromStore resolves a reference the same as everywhere else. This is called
+    // immediately after step 4 just wrote the store (possibly as a reference — see there), so
+    // the env var it points at is, by construction, the one this very process just observed
+    // set; an UnresolvedEnvRefError here would mean something changed the environment out from
+    // under this run mid-flight — genuinely exceptional, so it gets the same clean abort as
+    // step 2 rather than a bare stack trace.
+    let value: string;
+    try {
+      value = readKeyFromStore(envVar, project);
+    } catch (e) {
+      if (e instanceof UnresolvedEnvRefError) abortRun(WIRE_EXIT.usage, `[4/10] ${e.message}`);
+      throw e;
+    }
     try {
       execFileSync(
         "powershell",
@@ -2656,8 +2682,16 @@ function persistKeyForAgents(envVar: string): void {
   }
 
   // The actual file-writing logic lives in posix-env.ts — a side-effect-free module (no
-  // top-level main()) so it stays importable by tests, unlike wire.ts itself.
-  const envShPath = persistKeyForAgentsPosix(homedir());
+  // top-level main()) so it stays importable by tests, unlike wire.ts itself. Same clean-abort
+  // treatment as the Windows branch above: an unresolved reference here is exceptional (see
+  // persistKeyForAgentsPosix's comment) and gets a one-line message, not a bare stack trace.
+  let envShPath: string;
+  try {
+    envShPath = persistKeyForAgentsPosix(homedir(), project);
+  } catch (e) {
+    if (e instanceof UnresolvedEnvRefError) abortRun(WIRE_EXIT.usage, `[4/10] ${e.message}`);
+    throw e;
+  }
   log(`[4/10] wrote ${envShPath} and ensured login profiles source it (MCP configs read ${envVar}; new login shells see it).`);
 }
 
@@ -4380,6 +4414,9 @@ async function main(): Promise<void> {
   // 2. key — --key wins, else process env (owner's inherited user-scope var still works),
   // else the cross-platform key store (~/.petbox/keys.json).
   let key = args.key;
+  // Set only in the env-fallback branch below (never for --key): tells step 4 whether to
+  // persist a $VAR reference instead of a literal (card decision — see there).
+  let keyFromEnv = false;
   if (key) {
     log(`[2/10] using --key from the command line.`);
     // key-in-argv-npm-log-leak: npm writes the FULL argv (this key included) to its own debug
@@ -4395,7 +4432,25 @@ async function main(): Promise<void> {
         `  and remove or scrub the matching file(s).`,
     );
   } else {
-    key = process.env[envVar] || readKeyFromStore(envVar) || "";
+    // keyFromEnv tracks provenance for step 4 below (card decision: bootstrap writes a $VAR
+    // reference into keys.json whenever the key it used came straight from a live env var,
+    // not only as a manual option for the owner). A key found via the file fallback is, by
+    // definition, already whatever the file said (literal or reference) — nothing new to write.
+    keyFromEnv = !!process.env[envVar];
+    if (keyFromEnv) {
+      key = process.env[envVar]!;
+    } else {
+      // readKeyFromStore throws UnresolvedEnvRefError — not silence, not "" — when keys.json
+      // holds a reference this environment can't satisfy. That is a DIFFERENT, more specific
+      // failure than "nothing wired yet" (the plain-absent case below), so it gets its own
+      // clean operator-facing abort instead of falling through to the generic message.
+      try {
+        key = readKeyFromStore(envVar, project) || "";
+      } catch (e) {
+        if (e instanceof UnresolvedEnvRefError) abortRun(WIRE_EXIT.usage, `[2/10] ${e.message}`);
+        throw e;
+      }
+    }
     if (!key) {
       console.error(
         `[2/10] no API key found.\n` +
@@ -4435,9 +4490,19 @@ async function main(): Promise<void> {
   // 4. persist everywhere agents look: keys.json (kit hooks read it immediately) + a real
   // env var per platform (the per-project MCP configs reference ${envVar}). Idempotent, so
   // re-runs self-heal a machine where only one of the two exists.
-  writeKeyToStore(envVar, key);
-  log(`[4/10] persisted ${envVar} to ${keysStorePath()}.`);
-  persistKeyForAgents(envVar);
+  //
+  // keys-json-supports-env-var-references, decision 1: whenever the key came straight from a
+  // live env var, keys.json gets a $VAR reference, not a copy of the secret — not only as a
+  // manual option for the owner, bootstrap does this itself by default. A key from --key or
+  // from the file fallback is written as-is (there is no live env value to point at, or the
+  // file already dictated the form — see readKeyFromStore/writeKeyToStore's comments).
+  const storeValue = keyFromEnv ? toEnvRef(envVar) : key;
+  writeKeyToStore(envVar, storeValue);
+  log(
+    `[4/10] persisted ${envVar} to ${keysStorePath()} ` +
+      `(${keyFromEnv ? "as a $VAR reference — no key material copied into the file" : "as a literal value"}).`,
+  );
+  persistKeyForAgents(envVar, project);
 
   // 5. stable kit copy
   copyKitToStable();
