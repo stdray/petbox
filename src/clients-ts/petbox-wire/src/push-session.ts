@@ -14,7 +14,7 @@
 
 import { pushTranscript } from "./append.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
-import { resolveProject } from "./registry.ts";
+import { resolveProject, UnresolvedEnvRefError } from "./registry.ts";
 import { buildMessages, collectMainRun, collectSubagentRuns, type MainRun, type Msg } from "./transcript.ts";
 // Observed role binding is stamped inside pushTranscript (X-PetBox-Session-Meta via
 // resolveObservedBinding) — server stores observation only; local roles.json is SoT.
@@ -52,7 +52,20 @@ async function main(): Promise<void> {
     if (j.stop_hook_active) return;
 
     // FIRST guard: not a registered project → silent no-op.
-    const resolved = resolveProject(j.cwd ?? "");
+    let resolved: ReturnType<typeof resolveProject>;
+    try {
+      resolved = resolveProject(j.cwd ?? "");
+    } catch (e) {
+      // UnresolvedEnvRefError (registry.ts) is NOT the ordinary best-effort case this hook's
+      // outer catch swallows — see pull-memory.ts's identical catch for the full rationale
+      // (decision 2, card keys-json-supports-env-var-references). A Stop hook has no
+      // additionalContext-style channel back into the session it just ended, so stderr — the
+      // channel wire-log.ts's own contract permits an interactive caller to ALSO use — plus
+      // registry.ts's own wire.log trace is the loudest this hook can be. Every other exception
+      // still falls through to the outer best-effort catch untouched.
+      if (e instanceof UnresolvedEnvRefError) console.error(e.message);
+      return;
+    }
     if (!resolved) return;
 
     const sid = (j.session_id ?? "").trim();

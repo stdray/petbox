@@ -42,7 +42,7 @@
 import { pushTranscript } from "./append.ts";
 import { collectQwenMainRun, collectQwenSubagentRuns, buildQwenMessages } from "./qwen-transcript.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
-import { resolveProject } from "./registry.ts";
+import { resolveProject, UnresolvedEnvRefError } from "./registry.ts";
 import type { MainRun, Msg } from "./transcript.ts";
 
 const FETCH_TIMEOUT_MS = 12000;
@@ -74,7 +74,17 @@ async function main(): Promise<void> {
     }
 
     // FIRST guard: not a registered project → silent no-op (before any file/network work).
-    const resolved = resolveProject(j.cwd ?? "");
+    let resolved: ReturnType<typeof resolveProject>;
+    try {
+      resolved = resolveProject(j.cwd ?? "");
+    } catch (e) {
+      // UnresolvedEnvRefError (registry.ts) is NOT the ordinary best-effort case this hook's
+      // outer catch swallows — see push-session.ts's identical catch for the full rationale.
+      // A Stop hook has no additionalContext-style channel back into the session it just ended,
+      // so stderr plus registry.ts's own wire.log trace is the loudest this hook can be.
+      if (e instanceof UnresolvedEnvRefError) console.error(e.message);
+      return;
+    }
     if (!resolved) return;
 
     const sid = (j.session_id ?? "").trim();
