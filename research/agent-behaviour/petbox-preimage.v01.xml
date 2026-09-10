@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PetBox: прообраз поведения. НАБРОСОК для экспериментов, 2026-09-10.
+
+  Допущение этой версии: слой ОДИН - пользовательский.
+  Разложение на base(кит) / user / project отложено сознательно.
+
+  Всё остальное - файлы агентов харнессов, agents.modelGrades, каталог codex,
+  customModels droid, баннер сессии - считается ПРОЕКЦИЕЙ этого файла.
+-->
+<petbox schema="0.1">
+
+  <!-- ============ КАНОН ============
+       Проза, которую владелец решил закрепить. Пишет агент по решению владельца.
+       core   - обязано быть в контексте всегда, считается против бюджета.
+       detail - подтягивается по требованию, в бюджет не входит.
+  -->
+  <canon scope="project" key="index">
+    <core><![CDATA[
+Чейн: идея -> владелец принимает -> спека -> работа -> код.
+Код не предшествует карточке. Подтверждённые проблемы -> доска work.
+Worktree перед правкой любого отслеживаемого файла.
+Деплой: сначала push main, потом двигать тег deploy.
+    ]]></core>
+    <detail id="cyrillic-escapes"><![CDATA[
+Кириллица в JSON инструментов - сырой UTF-8, не escape-последовательности:
+шесть символов на букву, вызов режется до отправки. Обход - блоб плюс ref-параметр.
+    ]]></detail>
+    <detail id="observations-routing"><![CDATA[
+Найденное сломанное или неожиданное -> доска observations, не в память.
+Повторная встреча - рекуррентность существующего узла, не дубль.
+    ]]></detail>
+  </canon>
+
+  <canon scope="workspace" key="index">
+    <core><![CDATA[
+Единственный пользователь. Несогласие - деливерабл,
+молчание о трении - недоделка.
+    ]]></core>
+  </canon>
+
+  <!-- ============ НАБОРЫ РОЛЕЙ ============
+       Набор ролей - то, что раньше ошибочно называлось профилем.
+       Переключается целиком; проза неактивных наборов не теряется.
+  -->
+  <roleset id="utilitarian" active="true" title="Утилитарные роли PetBox">
+
+    <role slug="orchestrator" tier="main">
+      <spawn allow="worker explore reserve worker-highstakes"/>
+      <escalation to="reserve"/>
+      <notes>
+        <core><![CDATA[
+Главный цикл: план, декомпозиция, делегирование, ревью, триаж.
+Делегируй по умолчанию - твой контекст тот, который кончается.
+Вывод-заключение (найти, составить карту, свести) -> explore.
+Второй файл к правке или ИЗМЕНЕНИЕ, хоть на строку -> worker.
+Спрашивай ВЕРДИКТ, не материал.
+Никогда не принимай проверку, которой не видел.
+        ]]></core>
+        <append when-harness="qwen"><![CDATA[
+Не отдавай свой worktree: спавни с isolation, без working_dir -
+иначе субагент уходит в foreground и ты нем до его возврата.
+        ]]></append>
+        <append when-harness="opencode"><![CDATA[
+Фоновые субагенты требуют OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+и живут только пока жив процесс родителя. Отмены нет.
+        ]]></append>
+        <detail id="delegation-economics"><![CDATA[
+Почему короткий бриф: он же определяет частоту, с которой владелец
+может вмешаться - субагент возвращает управление только по завершении.
+        ]]></detail>
+      </notes>
+      <models>
+        <bind harness="claude-code" model="opus"/>
+        <bind harness="qwen"        model="ds-flash" effort="high"/>
+        <bind harness="opencode"    model="ds-flash-legacy"/>
+        <bind harness="codex"       model="ds-flash" effort="high"/>
+        <bind harness="droid"       model="ds-flash-anthropic"/>
+      </models>
+    </role>
+
+    <role slug="worker" tier="work">
+      <notes>
+        <core><![CDATA[Делает изменение. Возвращает вердикт, не материал.]]></core>
+      </notes>
+      <models>
+        <bind harness="claude-code" model="sonnet"/>
+        <bind harness="qwen"        model="go-ds-flash" effort="high"/>
+        <bind harness="opencode"    model="go-glm-flash"/>
+      </models>
+    </role>
+
+    <role slug="worker-highstakes" tier="work">
+      <notes>
+        <core><![CDATA[
+Тот же воркер на более дорогой модели. НЕ второе мнение - это работа reserve.
+Триггер: неверный результат дорог ИЛИ пройдёт незамеченным.
+        ]]></core>
+      </notes>
+      <models>
+        <bind harness="claude-code" model="opus"/>
+        <bind harness="qwen"        model="ds-flash" effort="max"/>
+      </models>
+    </role>
+
+    <role slug="explore" tier="read-only" writes="false">
+      <notes>
+        <core><![CDATA[Только чтение. Отдаёт заключение, не изменение.]]></core>
+      </notes>
+      <models>
+        <bind harness="claude-code" model="haiku"/>
+        <bind harness="qwen"        model="go-ds-flash" effort="low"/>
+        <bind harness="opencode"    model="go-glm-flash" variant="low"/>
+      </models>
+    </role>
+
+    <role slug="reserve" tier="second-opinion">
+      <spawn allow="explore"/>
+      <notes>
+        <core><![CDATA[
+Второе мнение. Другое семейство моделей - иначе это самопроверка.
+Триггер - СОБЫТИЕ: факты убили гипотезу; повтор неудачного подхода;
+два защитимых дизайна с дорогим откатом.
+        ]]></core>
+      </notes>
+      <models>
+        <bind harness="claude-code" model="fable"/>
+        <bind harness="qwen"        model="go-qwen-max" effort="xhigh"/>
+      </models>
+    </role>
+  </roleset>
+
+  <!-- Пример второго набора: сценарные роли.
+       Проза живёт здесь и не теряется, пока набор неактивен.
+       Переключение - одна операция. -->
+  <roleset id="scenario" active="false" title="Сценарные роли">
+    <role slug="analyst"   tier="main"><notes><core><![CDATA[...]]></core></notes></role>
+    <role slug="architect" tier="work"><notes><core><![CDATA[...]]></core></notes></role>
+    <role slug="tester"    tier="work"><notes><core><![CDATA[...]]></core></notes></role>
+    <role slug="designer"  tier="work"><notes><core><![CDATA[...]]></core></notes></role>
+  </roleset>
+
+  <!-- ============ ПРИВЯЗКИ-ПЕРЕКРЫТИЯ ============
+       Именованный ПАТЧ поверх набора, не копия ростера.
+       Хранит только отличающиеся ячейки, поэтому не может тихо устареть.
+       Ссылка на роль, которой нет в roleset - ошибка валидации.
+  -->
+  <bindings id="go-max" roleset="utilitarian" title="Всё, что можно, на квоту">
+    <bind role="orchestrator"      harness="opencode" model="go-ds-pro"/>
+    <bind role="worker-highstakes" harness="opencode" model="go-ds-pro"/>
+  </bindings>
+
+  <!-- ============ КАТАЛОГ МОДЕЛЕЙ ============
+       Харнесс-специфика - свойство пары модель-харнесс, а не роли.
+  -->
+  <models>
+    <model id="ds-flash" provider="deepseek" wallet="money" slug="deepseek-flash">
+      <effort kind="enum" values="none minimal low medium high xhigh max"/>
+      <price in="0.15" cached-in="0.003" out="0.60" unit="usd-per-1m" peak-multiplier="2"/>
+      <projection harness="qwen"  provider-id="ds-deepseek-v4-flash" grade="openai:ds-deepseek-v4-flash"/>
+      <projection harness="codex" context-window="1048576" apply-patch="freeform"/>
+    </model>
+
+    <model id="ds-flash-anthropic" provider="deepseek" wallet="money" slug="deepseek-flash"
+           endpoint="https://api.deepseek.com/anthropic" wire="anthropic">
+      <!-- reasoning_effort здесь ПРИНИМАЕТСЯ И ИГНОРИРУЕТСЯ; рычаг - thinking budget -->
+      <effort kind="thinking-budget" default="16000"/>
+      <projection harness="droid" custom-id="custom:DeepSeek-Flash-0" provider="anthropic"/>
+    </model>
+
+    <model id="ds-flash-legacy" provider="deepseek" wallet="money" slug="deepseek-v4-flash"
+           note="retired-but-accepted алиас, биллится по цене Flash; нужен реестрам, не знающим deepseek-flash">
+      <projection harness="opencode" registry-id="deepseek/deepseek-v4-flash"/>
+    </model>
+
+    <model id="go-ds-flash" provider="opencode-go" wallet="quota" slug="deepseek-flash" quota-multiplier="1">
+      <effort kind="enum" values="none minimal low medium high xhigh max"/>
+      <projection harness="qwen" provider-id="go-deepseek-flash" grade="openai:go-deepseek-flash"/>
+    </model>
+
+    <model id="go-glm-flash" provider="opencode-go" wallet="quota" slug="glm-5.3-flash" quota-multiplier="2">
+      <effort kind="variant" values="low high"/>
+      <projection harness="opencode" registry-id="opencode-go/glm-5.3-flash"/>
+    </model>
+
+    <model id="go-qwen-max" provider="opencode-go" wallet="quota" slug="qwen3.8-max" quota-multiplier="1">
+      <projection harness="qwen" provider-id="go-qwen3.8-max" endpoint-family="messages"/>
+    </model>
+
+    <model id="opus"   provider="anthropic" wallet="subscription"/>
+    <model id="sonnet" provider="anthropic" wallet="subscription"/>
+    <model id="haiku"  provider="anthropic" wallet="subscription"/>
+    <model id="fable"  provider="anthropic" wallet="subscription"/>
+  </models>
+
+  <!-- ============ БЮДЖЕТ И ВАЛИДАЦИЯ ============ -->
+  <budget>
+    <target harness="claude-code" core-bytes="5450"/>
+    <target harness="qwen"        core-bytes="unbounded"/>
+    <target harness="opencode"    core-bytes="unbounded"/>
+    <policy on-overflow="fail-build"
+            on-unmatched-condition="fail-build"
+            on-binding-role-missing="fail-build"/>
+  </budget>
+
+  <!-- ============ НЕ РАЗМЕЩЕНО ============
+       Осознанно не решено, куда это класть. Три отдельных решения:
+
+       1. Процессные правила (идея-спека-работа, гейты) - сейчас в AGENTS.md и в каноне.
+       2. Триггеры и шаблоны скилов - пятое место прозы.
+       3. AGENTS.md - резерв настаивает держать ВНЕ прообраза: как проекция он
+          либо попадает в .gitignore (и репозиторий теряет свои инструкции
+          для всех, у кого нет кита), либо коммитится и даёт диф на каждый apply.
+  -->
+  <unplaced/>
+
+</petbox>
