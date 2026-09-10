@@ -329,6 +329,37 @@ test("mergeQwenProjectSettings refuses a relative skills directory", () => {
   }
 });
 
+// Defect wire-mcp-configs-silently-replace-unparseable-json-whole: a PRESENT but unparseable
+// settings.json used to be treated exactly like a MISSING one (readSettings's catch returned
+// `{data:{}, before:<raw text>}`), so the merge below proceeded on `{}` and wrote that back —
+// replacing whatever the owner actually had with a two-key file, at exit code 0. Caught live on a
+// settings.json holding an invalid `\s` JSON escape sequence (`"C:\their\skills"`).
+test("mergeQwenProjectSettings refuses a present-but-unparseable settings.json — file left untouched, byte for byte", () => {
+  const dir = freshDir("petbox-qwen-ps-corrupt-");
+  const settingsPath = join(dir, "settings.json");
+  // `\s` is not a valid JSON escape — SyntaxError, not "file absent".
+  const corrupt = '{\n  "mcpServers": { "theirs": { "command": "C:\\their\\skills" } }\n}\n';
+  writeFileSync(settingsPath, corrupt, "utf8");
+  try {
+    assert.throws(
+      () =>
+        mergeQwenProjectSettings({
+          settingsPath,
+          skillsDir: join(dir, ".claude", "skills"),
+          mcpEntry: { httpUrl: "https://example/mcp" },
+        }),
+      /not valid JSON/,
+    );
+    assert.equal(
+      readFileSync(settingsPath, "utf8"),
+      corrupt,
+      "a refused merge must leave the existing file byte-for-byte untouched",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("mergeQwenProjectSettings leaves a malformed `skills` key alone and still writes the MCP entry", () => {
   const dir = freshDir("petbox-qwen-ps-malformed-");
   const settingsPath = join(dir, "settings.json");

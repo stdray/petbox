@@ -2669,6 +2669,36 @@ function readJson(path: string): any {
   }
 }
 
+/**
+ * Read an existing JSON config a caller is about to MERGE into and write back (never a whole-file
+ * replace) — used by mergeMcpServer only. A MISSING file is legitimate ({} lets the caller seed
+ * one fresh), but a PRESENT file that fails to parse must never be folded into the same "no file"
+ * case: readJson's null-on-any-error contract erases that distinction, and every merge caller's
+ * `readJson(path) ?? {}` then happily writes petbox's own config over whatever unreadable content
+ * the owner actually had on disk — exit code 0, file gone (defect
+ * wire-mcp-configs-silently-replace-unparseable-json-whole, caught live on a settings.json with an
+ * invalid `\s` JSON escape sequence). Aborts the whole run instead, WIRE_EXIT.hard: the file is
+ * left completely untouched, and the message names the path and the parser's own complaint.
+ */
+function readJsonForMerge(path: string): any {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return abortRun(
+      WIRE_EXIT.hard,
+      `refusing to merge petbox's MCP server into ${path}: existing content is not valid JSON ` +
+        `(${e instanceof Error ? e.message : String(e)}). The file was left UNTOUCHED — fix or ` +
+        `remove it by hand, then re-run.`,
+    );
+  }
+}
+
 function writeJson(path: string, obj: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(obj, null, 2) + "\n", "utf8");
@@ -3027,7 +3057,7 @@ function mergeMcpServer(
   opts?: { readonly serversKey?: string; readonly defaults?: Readonly<Record<string, unknown>> },
 ): void {
   const serversKey = opts?.serversKey ?? "mcpServers";
-  const data = readJson(path) ?? {};
+  const data = readJsonForMerge(path);
   if (opts?.defaults) {
     for (const [k, v] of Object.entries(opts.defaults)) {
       if (!(k in data)) data[k] = v;
@@ -3132,12 +3162,22 @@ function wireQwenProjectSettings(
   opts?: { readonly dryRun?: boolean },
 ): { readonly path: string; readonly outcome: QwenProjectSettingsOutcome } {
   const settingsPath = join(dir, ".qwen", "settings.json");
-  const outcome = mergeQwenProjectSettings({
-    settingsPath,
-    skillsDir: claudeSkillsDir(dir),
-    mcpEntry: buildQwenMcpServerEntry(baseUrl, envVar),
-    dryRun: opts?.dryRun,
-  });
+  let outcome: QwenProjectSettingsOutcome;
+  try {
+    outcome = mergeQwenProjectSettings({
+      settingsPath,
+      skillsDir: claudeSkillsDir(dir),
+      mcpEntry: buildQwenMcpServerEntry(baseUrl, envVar),
+      dryRun: opts?.dryRun,
+    });
+  } catch (e) {
+    // mergeQwenProjectSettings throws on a present-but-unparseable settingsPath (defect
+    // wire-mcp-configs-silently-replace-unparseable-json-whole) or a non-absolute skillsDir —
+    // converted to abortRun here (both writeProjectFiles's full-wire path and performApply reach
+    // this call) so the operator gets the actionable message alone, not a raw stack trace, same as
+    // every other refused-write abort in this file.
+    return abortRun(WIRE_EXIT.hard, `${label} ${e instanceof Error ? e.message : String(e)}`);
+  }
   if (outcome.mcpNameConflict) {
     console.error(
       `${label} WARNING: ${settingsPath} already had a "petbox" MCP server entry with different ` +
@@ -3865,7 +3905,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   }
   qwenSettings.security.auth.selectedType = "openai";
 
-  // modelProviders / providerProtocol / agents.modelGrades / security.outboundCorrelation —
+  // modelProviders / providerProtocol / agents.modelGrades / outboundCorrelation —
   // OWNER DECISION 09.09.2026 (task wire-print-config-fragment): the kit STOPPED writing these.
   // They used to be regenerated whole every run (`modelProviders`/`providerProtocol` merge as
   // REPLACE, packages/cli settingsSchema.ts) — on this hand-configured machine that silently
@@ -3888,7 +3928,7 @@ export { PetboxPlugin, default } from "${pluginUrl}";
   // same reasoning as printCodexRosterFragment above: every roles.json write path calls this, not
   // only this full `wire` run's step 8. Reads the settings file fresh from disk rather than the
   // in-memory `qwenSettings` this function has been mutating above — the fields this check reads
-  // (modelProviders/providerProtocol/agents.modelGrades/security.outboundCorrelation) are none of
+  // (modelProviders/providerProtocol/agents.modelGrades/outboundCorrelation) are none of
   // the ones this function's own hooks/security.auth mutations touch, so a fresh read
   // is equivalent, and it is what makes the function callable with no coupling to this one.
   printQwenRosterFragment("[8/10]", homedir());
@@ -3994,7 +4034,7 @@ function printQwenRosterFragment(label: string, homeDir: string = homedir()): vo
         `decision 09.09.2026); paste the fragment below yourself:`,
     );
     for (const w of divergence.warnings) console.error(`  - ${w}`);
-    log(renderQwenConfigFragmentText(qwenRolesData));
+    log(renderQwenConfigFragmentText(qwenRolesData, qwenSettings));
   }
   for (const n of divergence.notes) log(`${label} qwen config note: ${n}`);
 }

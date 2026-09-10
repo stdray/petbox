@@ -65,8 +65,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Same tolerant read wire.ts uses for every other MCP config: an absent or unreadable file is an
- * empty object. Kept deliberately identical so this file is not the one site with its own rules. */
+/** Same tolerant read wire.ts's mergeMcpServer/readJsonForMerge uses for the other three MCP-config
+ * write sites: an absent file is legitimately an empty object, but a PRESENT file that fails to
+ * parse must never be folded into that same case — doing so is exactly defect
+ * wire-mcp-configs-silently-replace-unparseable-json-whole (caught live on a settings.json with an
+ * invalid `\s` JSON escape): the caller below would go on to merge into `{}` and write it back,
+ * silently discarding whatever unreadable content the owner actually had, at exit code 0. Throws
+ * instead — mergeQwenProjectSettings already documents "throws on a relative skillsDir" as part of
+ * its own contract; this is the same refusal shape for the same reason (never proceed on a bad
+ * read), and it propagates the file completely untouched. */
 function readSettings(path: string): { readonly data: Record<string, unknown>; readonly before: string | null } {
   let before: string | null;
   try {
@@ -77,8 +84,12 @@ function readSettings(path: string): { readonly data: Record<string, unknown>; r
   try {
     const parsed: unknown = JSON.parse(before);
     return { data: isPlainObject(parsed) ? parsed : {}, before };
-  } catch {
-    return { data: {}, before };
+  } catch (e) {
+    throw new Error(
+      `refusing to merge petbox's MCP server into ${path}: existing content is not valid JSON ` +
+        `(${e instanceof Error ? e.message : String(e)}). The file was left UNTOUCHED — fix or ` +
+        `remove it by hand, then re-run.`,
+    );
   }
 }
 
@@ -102,6 +113,10 @@ function sameDirectory(a: string, b: string): boolean {
  *
  * Throws when `skillsDir` is not absolute: a relative pointer is not a weaker version of this
  * feature, it is a different (and silently wrong) one — see the header.
+ *
+ * Also throws when `settingsPath` EXISTS but is not valid JSON: proceeding would merge into an
+ * empty `{}` and write that back, discarding whatever the owner actually had on disk (defect
+ * wire-mcp-configs-silently-replace-unparseable-json-whole). The file is left untouched either way.
  */
 export function mergeQwenProjectSettings(input: QwenProjectSettingsInput): QwenProjectSettingsOutcome {
   if (!isAbsolute(input.skillsDir)) {

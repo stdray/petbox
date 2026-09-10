@@ -302,3 +302,47 @@ test("a foreign 'petbox'-named entry in any of the five configs warns, naming th
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
+
+// Defect wire-mcp-configs-silently-replace-unparseable-json-whole: readJson used to return `null`
+// on ANY parse failure, indistinguishable from "file does not exist" — so mergeMcpServer's
+// `readJson(path) ?? {}` merged into an empty object and wrote it back, silently discarding an
+// existing-but-unreadable file at exit code 0. Caught live on a settings.json carrying an invalid
+// `\s` JSON escape (`"C:\their\skills"`). One test per wire.ts write site (mergeMcpServer's three
+// JSON callers) — the qwen project-settings site has its own unit coverage in
+// qwen-project-settings.test.ts (a different module, a different readSettings).
+for (const site of [
+  { name: ".mcp.json", relPath: [".mcp.json"] },
+  { name: "opencode.json", relPath: [".opencode", "opencode.json"] },
+  { name: "droid .factory/mcp.json", relPath: [".factory", "mcp.json"] },
+] as const) {
+  test(`full \`wire\` refuses to touch a present-but-unparseable ${site.name} — hard exit, file left byte-for-byte untouched`, async () => {
+    const fake = await startFakeServer();
+    const homeDir = freshDir("petbox-mcp-corrupt-home-");
+    const projectDir = makeGitWorkingTree(freshDir("petbox-mcp-corrupt-proj-"));
+    const targetPath = join(projectDir, ...site.relPath);
+    mkdirSync(join(projectDir, ...site.relPath.slice(0, -1)), { recursive: true });
+    // `\s` is not a valid JSON escape sequence — SyntaxError, not "file absent".
+    const corrupt = '{\n  "mcpServers": { "theirs": { "command": "C:\\their\\skills" } }\n}\n';
+    writeFileSync(targetPath, corrupt, "utf8");
+
+    try {
+      const run = await runWireOnce(fake, homeDir, projectDir);
+      const out = run.stdout + run.stderr;
+      assert.notEqual(run.status, 0, `a corrupt ${site.name} must hard-fail the run, not exit 0. Full output:\n${out}`);
+      assert.match(
+        run.stderr,
+        /not valid JSON/,
+        `stderr must carry the parser's own complaint naming ${site.name}. Full stderr:\n${run.stderr}`,
+      );
+      assert.equal(
+        readFileSync(targetPath, "utf8"),
+        corrupt,
+        `${site.name} must be left byte-for-byte untouched by a refused merge`,
+      );
+    } finally {
+      await fake.close();
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+}

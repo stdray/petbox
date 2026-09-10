@@ -22,6 +22,14 @@
 // own provider/model/header/context layout (see wiki `qwen-three-provider-legs-howto` for the
 // full manual howto this fragment is the compiled, roles.json-driven form of).
 //
+// findQwenConfigFragmentLossage (defect qwen-printed-fragment-silently-reverts-effort-and-maxtokens)
+// is the THIRD thing this file does, alongside rendering and divergence-checking: the divergence
+// check above only compares fields it knows about (wireModel/contextWindowSize/customHeaders per
+// CATALOG id) and stays silent about an owner-registered extra entry or an extra per-entry setting
+// (`reasoning_effort`, `samplingParams`) the fragment does not carry — silent right up until the
+// fragment gets pasted as a REPLACE-merge whole, at which point both vanish. This function names
+// them before that paste, not after.
+//
 // Plain TS for native node type-stripping: zero deps beyond roles.ts and qwen-model-catalog.ts.
 
 import { QWEN_ROLE_MODEL_SEED, resolveAgentRoles, type RolesFile } from "./roles.ts";
@@ -42,10 +50,12 @@ import {
 // bucket (this task's whole motivating harm #1).
 const SESSION_HEADER_TEMPLATE = "${session_id}";
 
-/** `security.outboundCorrelation.allowDynamicHeaderValues` — the consent flag `${session_id}`
- * expansion is gated behind (no host allowlist exists upstream, so qwen requires an explicit
- * opt-in). Measured live 09.09.2026 (wiki `qwen-three-provider-legs-howto` §2): without it qwen
- * prints a startup warning and drops the header entirely, and the gateway then 400s. */
+/** `outboundCorrelation.allowDynamicHeaderValues` — a TOP-LEVEL key in qwen's settingsSchema.ts
+ * (never nested under `security`, despite this constant living in that neighborhood — see its
+ * two call sites below), the consent flag `${session_id}` expansion is gated behind (no host
+ * allowlist exists upstream, so qwen requires an explicit opt-in). Measured live 09.09.2026 (wiki
+ * `qwen-three-provider-legs-howto` §2): without it qwen prints a startup warning and drops the
+ * header entirely, and the gateway then 400s. */
 export const QWEN_OUTBOUND_CORRELATION_FRAGMENT = { allowDynamicHeaderValues: true } as const;
 
 function providerBaseUrl(providerKey: "deepseek" | "opencode-go"): string {
@@ -138,19 +148,119 @@ export function buildQwenModelNameFragment(data: RolesFile): string {
   return i === -1 ? bound : bound.slice(i + 1);
 }
 
+/** One live `modelProviders.<key>[]` entry the fragment would silently destroy on paste, or whose
+ * settings it would silently strip — see `findQwenConfigFragmentLossage`. */
+export type QwenConfigFragmentLossEntry = {
+  readonly providerKey: "deepseek" | "opencode-go";
+  readonly id: string;
+  /** true when the ENTIRE entry disappears (its id is not one the kit's catalog registers) —
+   * false when the id survives but loses specific fields below. */
+  readonly entryDropped: boolean;
+  /** `generationConfig.<path>` labels for fields the live entry carries that
+   * `buildProviderModelObject` does not reproduce (empty when `entryDropped`, since the whole
+   * entry — not just some fields — is what's lost). */
+  readonly lostFields: readonly string[];
+};
+
+/**
+ * Defect qwen-printed-fragment-silently-reverts-effort-and-maxtokens: `modelProviders` merges as
+ * REPLACE in qwen, and the fragment's own printed comment says so ("REPLACE whatever those same
+ * keys currently hold") — but `findQwenConfigDivergence` only ever compares `wireModel`/
+ * `contextWindowSize`/`customHeaders` per CATALOG id, so it reports zero divergence on a live file
+ * that has EXTRA entries (an owner-registered effort variant, e.g. `ds-deepseek-v4-pro-max`) or
+ * EXTRA per-entry settings (`extra_body.reasoning_effort`, `samplingParams.max_tokens`) the fragment
+ * does not carry. A "diverges, paste this" prompt fired by an UNRELATED field (say
+ * `agents.modelGrades`) then hands the owner the whole fragment as one paste-this-whole-thing
+ * block, silently destroying both — at exit code 0, with the divergence check itself staying
+ * silent throughout. This function is what makes that loss visible BEFORE the paste, not after.
+ * Never mutates `liveSettings`. */
+export function findQwenConfigFragmentLossage(liveSettings: unknown): readonly QwenConfigFragmentLossEntry[] {
+  const live = (liveSettings && typeof liveSettings === "object" ? liveSettings : {}) as Record<string, unknown>;
+  const liveProviders = (live["modelProviders"] && typeof live["modelProviders"] === "object"
+    ? (live["modelProviders"] as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+
+  const out: QwenConfigFragmentLossEntry[] = [];
+  const providerKeys = [
+    ["deepseek", QWEN_DEEPSEEK_MODELS] as const,
+    ["opencode-go", QWEN_OPENCODE_GO_MODELS] as const,
+  ];
+  for (const [providerKey, catalog] of providerKeys) {
+    const liveArr = Array.isArray(liveProviders[providerKey]) ? (liveProviders[providerKey] as any[]) : [];
+    const catalogIds = new Set(catalog.map((m) => m.id));
+    for (const entry of liveArr) {
+      const id = typeof entry?.id === "string" ? entry.id : undefined;
+      if (id === undefined) continue;
+      if (!catalogIds.has(id)) {
+        out.push({ providerKey, id, entryDropped: true, lostFields: [] });
+        continue;
+      }
+      const gc = entry.generationConfig ?? {};
+      const lostFields: string[] = [];
+      const effort = gc.extra_body?.reasoning_effort;
+      if (effort !== undefined) {
+        lostFields.push(`generationConfig.extra_body.reasoning_effort=${JSON.stringify(effort)}`);
+      }
+      if (gc.samplingParams !== undefined) {
+        lostFields.push(`generationConfig.samplingParams=${JSON.stringify(gc.samplingParams)}`);
+      }
+      if (lostFields.length > 0) out.push({ providerKey, id, entryDropped: false, lostFields });
+    }
+  }
+  return out;
+}
+
+function renderQwenConfigFragmentLossWarning(lossage: readonly QwenConfigFragmentLossEntry[]): string | undefined {
+  if (lossage.length === 0) return undefined;
+  const dropped = lossage.filter((l) => l.entryDropped);
+  const shrunk = lossage.filter((l) => !l.entryDropped);
+  const lines = [
+    "!!! LOSS WARNING: modelProviders merges as REPLACE in qwen — pasting the fragment below AS A",
+    "WHOLE will DESTROY live settings this fragment does not carry:",
+  ];
+  if (dropped.length > 0) {
+    lines.push(
+      `  - ${dropped.length} entire entr${dropped.length === 1 ? "y" : "ies"} the kit's catalog does not ` +
+        `register, gone outright: ${dropped.map((l) => `${l.providerKey}[id="${l.id}"]`).join(", ")}`,
+    );
+  }
+  for (const l of shrunk) {
+    lines.push(`  - ${l.providerKey}[id="${l.id}"] loses: ${l.lostFields.join(", ")}`);
+  }
+  lines.push(
+    "Copy the settings named above into the fragment by hand before pasting, or you will lose them.",
+  );
+  return lines.join("\n");
+}
+
 /** Render the complete, ready-to-paste JSON fragment text (acceptance #3). Not a diff, not a
  * merge instruction — the literal keys/values the owner drops into `$QWEN_HOME/settings.json`
- * top level, replacing whatever those same keys currently hold. */
-export function renderQwenConfigFragmentText(data: RolesFile): string {
+ * top level, replacing whatever those same keys currently hold.
+ *
+ * `liveSettings`, when passed, is compared against the fragment for LOSSAGE (defect
+ * qwen-printed-fragment-silently-reverts-effort-and-maxtokens) — an extra entry or extra
+ * per-entry setting the fragment does not carry — and a loud warning naming exactly what would be
+ * destroyed is prepended. Omit it only when there is no live file to compare against yet (a fresh
+ * machine); every caller that already has the parsed live settings on hand should pass them. */
+export function renderQwenConfigFragmentText(data: RolesFile, liveSettings?: unknown): string {
   const { grades, unrecognizedIds } = buildQwenModelGradesFragment(data);
   const fragment = {
     modelProviders: buildQwenModelProvidersFragment(),
     providerProtocol: buildQwenProviderProtocolFragment(),
-    security: { outboundCorrelation: QWEN_OUTBOUND_CORRELATION_FRAGMENT },
+    // `outboundCorrelation` is its OWN top-level key in qwen's settingsSchema.ts, never nested
+    // under `security` (verified against the schema source, not just a live file — a prior
+    // version of this fragment printed `security: { outboundCorrelation: ... } }`, which qwen's
+    // schema does not recognize at all: pasting it would leave the REAL top-level key unset and
+    // qwen would keep dropping the ${session_id} header, exactly the failure this fragment exists
+    // to prevent. Defect qwen-outbound-correlation-warning-checks-wrong-nesting-level.
+    outboundCorrelation: QWEN_OUTBOUND_CORRELATION_FRAGMENT,
     agents: { modelGrades: grades },
     model: { name: buildQwenModelNameFragment(data) },
   };
+  const lossWarning =
+    liveSettings === undefined ? undefined : renderQwenConfigFragmentLossWarning(findQwenConfigFragmentLossage(liveSettings));
   const lines = [
+    ...(lossWarning !== undefined ? [lossWarning, ""] : []),
     "Paste these top-level keys into $QWEN_HOME/settings.json (they REPLACE whatever those same",
     "keys currently hold — this is not a patch):",
     "",
@@ -245,10 +355,16 @@ export function findQwenConfigDivergence(liveSettings: unknown, data: RolesFile)
     }
   }
 
-  const liveFlag = (live["security"] as any)?.outboundCorrelation?.allowDynamicHeaderValues;
+  // `outboundCorrelation` is a TOP-LEVEL key in qwen's own settingsSchema.ts — `security` has no
+  // nested key of that name at all. Reading `live.security?.outboundCorrelation` (the bug this
+  // fixes, defect qwen-outbound-correlation-warning-checks-wrong-nesting-level) always reads
+  // undefined on a live file that has the flag set correctly at top level, so the kit warned
+  // "every request 400s" about a setting that was actually fine — a false alarm live opencode-go
+  // traffic never corroborated.
+  const liveFlag = (live["outboundCorrelation"] as any)?.allowDynamicHeaderValues;
   if (liveFlag !== QWEN_OUTBOUND_CORRELATION_FRAGMENT.allowDynamicHeaderValues) {
     warnings.push(
-      `security.outboundCorrelation.allowDynamicHeaderValues: live=${JSON.stringify(liveFlag)} expected=true ` +
+      `outboundCorrelation.allowDynamicHeaderValues: live=${JSON.stringify(liveFlag)} expected=true ` +
         `(without it every opencode-go request 400s: the header is dropped at startup)`,
     );
   }
