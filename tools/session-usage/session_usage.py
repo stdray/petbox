@@ -10,14 +10,16 @@ transcripts under `<session>/subagents/agent-*.jsonl`) is the ONLY source that l
 you look back further than a week or add anything up programmatically. This tool
 reads that archive.
 
-TWO SOURCES, TWO SETS OF SUBCOMMANDS: `summary`/`roles`/`money` read only the Claude
-Code transcript format under `~/.claude/projects/**/*.jsonl`. `oc-roles`/`oc-money`/
-`oc-tree`/`reconcile` read opencode's own SQLite session store (default
+THREE SOURCES, THREE SETS OF SUBCOMMANDS: `summary`/`roles`/`money` read only the
+Claude Code transcript format under `~/.claude/projects/**/*.jsonl`. `oc-roles`/
+`oc-money`/`oc-tree`/`reconcile` read opencode's own SQLite session store (default
 `~/.local/share/opencode/opencode.db`, override with --db) via opencode_store.py.
-The two formats have different shapes (subagent-call-transcript-tree vs a flat
-session-with-parent_id table) and are NOT merged into one set of flags - each set
-of subcommands is the one way to read its own source. See README.md, "opencode
-sessions" section.
+`q-roles`/`q-money` read Qwen Code's own session archive (default
+`~/.qwen/projects`, override with --qwen-dir) via qwen_store.py. The three formats
+have different shapes (subagent-call-transcript-tree, a flat session-with-parent_id
+table, and a subagent-call-transcript-tree with a different token schema) and are
+NOT merged into one set of flags - each set of subcommands is the one way to read
+its own source. See README.md, "opencode sessions" / "qwen sessions" sections.
 
 Subcommands (Claude Code archive):
   summary   Per-project and per-ACTUAL-model token totals over the last N days
@@ -44,6 +46,18 @@ Subcommands (opencode session database):
             dashboard) - per model: our cost, actual, delta, ratio; per wallet
             totals. The day boundary is local-timezone by default (--tz).
 
+Subcommands (Qwen Code session archive):
+  q-roles   Per-subagent-role usage stats (sum/median/p90 per bucket, call
+            count) over the last N days, plus root/orchestrator session
+            totals, plus aggregate API latency (duration_ms/ttft_ms/
+            status_code) read from ui_telemetry lines - see README "qwen
+            sessions" gotchas.
+  q-money   Recomputed cost (from prices.json) per model, grouped by WALLET
+            (the ds-/go- prefix baked into the model id) - never summed
+            together - plus the same totals grouped by role. Cache-subset and
+            thoughts-subset handling is NOT the same formula as the Claude or
+            opencode legs; see qwen_store.py module docstring.
+
 Read the README in this directory before trusting a dollar figure out of this tool -
 sections "Gotchas" cover mistakes that have already cost real miscalculations once
 each.
@@ -60,6 +74,7 @@ from datetime import timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import archive as ar
 import opencode_store as ocs
+import qwen_store as qs
 
 DEFAULT_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -626,6 +641,267 @@ def cmd_reconcile(args):
         print()
 
 
+# ------------------------------------------------------------------------ qwen (q-*)
+
+def _collect_qwen_subagent_calls(qwen_dir, cutoff):
+    """Returns (role_calls: dict[role] -> list of {"sums","turns","ts","file",
+    "model"}, other_roles, meta_missing, parse_err, outside_window, no_timestamp).
+    Windowed by CALL-FILE start time, same convention as archive.py's
+    `roles` (not opencode's turn-level windowing) - qwen organizes usage as one
+    file per call, same shape as the Claude Code leg."""
+    role_calls = {}
+    other_roles = {}
+    meta_missing = 0
+    parse_err = 0
+    outside_window = 0
+    no_timestamp = 0
+
+    for jf, meta_path, _parent in qs.iter_subagent_calls(qwen_dir):
+        if meta_path is None:
+            meta_missing += 1
+            continue
+        try:
+            with open(meta_path, encoding="utf-8") as mf:
+                meta = json.load(mf)
+        except Exception:
+            parse_err += 1
+            continue
+        role = meta.get("agentType") or meta.get("subagentName") or "unknown"
+        meta_model = (meta.get("persistedCliFlags") or {}).get("model")
+        start_dt, turns, _telemetry, n_err = qs.parse_session(jf)
+        parse_err += n_err
+        if not turns:
+            continue
+        if start_dt is None:
+            no_timestamp += 1
+            continue
+        if start_dt < cutoff:
+            outside_window += 1
+            continue
+        sums = qs.zero_tokens()
+        for t in turns:
+            qs.add_tokens(sums, t["tokens"])
+        role_calls.setdefault(role, []).append({
+            "sums": sums, "turns": len(turns), "ts": start_dt, "file": jf,
+            "model": meta_model, "description": meta.get("description"),
+        })
+        if role not in KNOWN_ROLES:
+            other_roles[role] = other_roles.get(role, 0) + 1
+
+    return role_calls, other_roles, meta_missing, parse_err, outside_window, no_timestamp
+
+
+def _collect_qwen_root_totals(qwen_dir, cutoff):
+    """(all_time, windowed, files_total, files_windowed, latency_windowed) for
+    root sessions. `latency_windowed` is the flat list of ui_telemetry
+    api_response samples from in-window root sessions ONLY - subagent call
+    files carry no ui_telemetry lines at all (module docstring point 6)."""
+    all_time = qs.zero_tokens()
+    windowed = qs.zero_tokens()
+    files_total = 0
+    files_windowed = 0
+    latency_windowed = []
+    for _pname, _sid, path in qs.iter_root_sessions(qwen_dir):
+        start_dt, turns, telemetry, _n_err = qs.parse_session(path)
+        if not turns:
+            continue
+        sums = qs.zero_tokens()
+        for t in turns:
+            qs.add_tokens(sums, t["tokens"])
+        if sum(sums.values()) == 0:
+            continue
+        files_total += 1
+        for b in qs.TOKEN_BUCKETS:
+            all_time[b] += sums[b]
+        if start_dt is not None and start_dt >= cutoff:
+            files_windowed += 1
+            for b in qs.TOKEN_BUCKETS:
+                windowed[b] += sums[b]
+            latency_windowed.extend(telemetry)
+    return all_time, windowed, files_total, files_windowed, latency_windowed
+
+
+def _latency_stats(samples):
+    durations = [s["duration_ms"] for s in samples if s.get("duration_ms") is not None]
+    ttfts = [s["ttft_ms"] for s in samples if s.get("ttft_ms") is not None]
+    non200 = [s for s in samples if s.get("status_code") not in (None, 200)]
+    return durations, ttfts, non200
+
+
+def cmd_q_roles(args):
+    cutoff = qs.cutoff_dt(args.days)
+    role_calls, other_roles, meta_missing, parse_err, outside_window, no_timestamp = (
+        _collect_qwen_subagent_calls(args.qwen_dir, cutoff)
+    )
+    root_all_time, root_windowed, root_files_total, root_files_windowed, latency = (
+        _collect_qwen_root_totals(args.qwen_dir, cutoff)
+    )
+
+    print("=" * 78)
+    print(f"session-usage q-roles - qwen subagent calls, last {args.days} days (by call start time)")
+    print("=" * 78)
+    print(f"Qwen projects dir       : {args.qwen_dir}")
+    print(f".meta.json missing      : {meta_missing}")
+    print(f"Malformed JSON lines    : {parse_err}")
+    print(f"Calls with no timestamp : {no_timestamp} (excluded)")
+    print(f"Calls outside window    : {outside_window}")
+    if other_roles:
+        print(f"Other agentType values seen (not in KNOWN_ROLES): {other_roles}")
+    print()
+
+    roles_in_order = list(KNOWN_ROLES) + [r for r in role_calls if r not in KNOWN_ROLES]
+    hdr = f"  {'role':28s} {'n_calls':>8s} " + " ".join(f"{qs.BUCKET_LABEL[b]+' sum':>14s}" for b in qs.TOKEN_BUCKETS)
+    print("-- Per role: sum / median / p90 per bucket --")
+    print(hdr)
+    for role in roles_in_order:
+        calls = role_calls.get(role, [])
+        n = len(calls)
+        if n == 0:
+            print(f"  {role:28s} {0:8d}")
+            continue
+        print(f"  {role:28s} {n:8d} " + " ".join(
+            f"{qs.fmt_int(sum(c['sums'][b] for c in calls)):>14s}" for b in qs.TOKEN_BUCKETS))
+        for b in qs.TOKEN_BUCKETS:
+            vals = [c["sums"][b] for c in calls]
+            med = statistics.median(vals)
+            p90 = statistics.quantiles(vals, n=10)[8] if n >= 2 else vals[0]
+            print(f"    {qs.BUCKET_LABEL[b]:12s} median={qs.fmt_int(int(med)):>12s}  p90={qs.fmt_int(int(p90)):>12s}")
+        models_seen = sorted({c["model"] for c in calls if c["model"]})
+        if models_seen:
+            print(f"    models: {', '.join(models_seen)}")
+    print()
+
+    print("-- Root / orchestrator sessions --")
+    print(f"Root session files (usable): {root_files_total} all-time, {root_files_windowed} in window")
+    print(f"  all-time : " + "  ".join(f"{qs.BUCKET_LABEL[b]}={qs.fmt_int(root_all_time[b])}" for b in qs.TOKEN_BUCKETS))
+    print(f"  windowed : " + "  ".join(f"{qs.BUCKET_LABEL[b]}={qs.fmt_int(root_windowed[b])}" for b in qs.TOKEN_BUCKETS))
+    print()
+
+    durations, ttfts, non200 = _latency_stats(latency)
+    print("-- API latency (ui_telemetry, root sessions only - see qwen_store.py docstring #6) --")
+    print(f"  samples: {len(latency)} (NOT the same count as assistant turns above - retries/")
+    print(f"           tool-call rounds fire their own api_response event; never used for tokens)")
+    if durations:
+        print(f"  duration_ms  median={statistics.median(durations):8.0f}  "
+              f"p90={statistics.quantiles(durations, n=10)[8] if len(durations) >= 2 else durations[0]:8.0f}")
+    if ttfts:
+        print(f"  ttft_ms      median={statistics.median(ttfts):8.0f}  "
+              f"p90={statistics.quantiles(ttfts, n=10)[8] if len(ttfts) >= 2 else ttfts[0]:8.0f}")
+    print(f"  non-200 status_code: {len(non200)} / {len(latency)}")
+    print()
+    _print_footer()
+
+
+def _qwen_collect_all_turns(qwen_dir, cutoff):
+    """Every turn (root + subagent), tagged with role ('root/orchestrator' for
+    root sessions) and model id, windowed by call/session-file start time (same
+    convention as q-roles - see _collect_qwen_subagent_calls)."""
+    out = []
+    for _pname, _sid, path in qs.iter_root_sessions(qwen_dir):
+        start_dt, turns, _telemetry, _n = qs.parse_session(path)
+        if not turns or start_dt is None or start_dt < cutoff:
+            continue
+        for t in turns:
+            out.append({"role": "root/orchestrator", "model": t["model"]})
+            out[-1]["tokens"] = t["tokens"]
+    for jf, meta_path, _parent in qs.iter_subagent_calls(qwen_dir):
+        if meta_path is None:
+            continue
+        try:
+            with open(meta_path, encoding="utf-8") as mf:
+                meta = json.load(mf)
+        except Exception:
+            continue
+        role = meta.get("agentType") or meta.get("subagentName") or "unknown"
+        meta_model = (meta.get("persistedCliFlags") or {}).get("model")
+        start_dt, turns, _telemetry, _n = qs.parse_session(jf)
+        if not turns or start_dt is None or start_dt < cutoff:
+            continue
+        for t in turns:
+            out.append({"role": role, "model": t["model"] or meta_model, "tokens": t["tokens"]})
+    return out
+
+
+def cmd_q_money(args):
+    prices = _load_json_data(args.prices)
+    cutoff = qs.cutoff_dt(args.days)
+    turns = _qwen_collect_all_turns(args.qwen_dir, cutoff)
+
+    by_wallet_model = {}  # wallet -> price_key -> {"tokens","n","efforts"}
+    by_role = {}          # role -> {"tokens","n","cost","unpriced_n"}
+
+    for t in turns:
+        wallet, slug = qs.parse_model_id(t["model"])
+        price_key, price_entry, effort = qs.resolve_price(prices, wallet, slug)
+
+        wm = by_wallet_model.setdefault(wallet, {}).setdefault(
+            price_key, {"tokens": qs.zero_tokens(), "n": 0, "efforts": set()})
+        qs.add_tokens(wm["tokens"], t["tokens"])
+        wm["n"] += 1
+        if effort:
+            wm["efforts"].add(effort)
+
+        rd = by_role.setdefault(t["role"], {"tokens": qs.zero_tokens(), "n": 0, "cost": 0.0, "unpriced_n": 0})
+        qs.add_tokens(rd["tokens"], t["tokens"])
+        rd["n"] += 1
+        turn_cost = qs.bucket_cost(t["tokens"], price_entry)
+        if turn_cost is None:
+            rd["unpriced_n"] += 1
+        else:
+            rd["cost"] += turn_cost
+
+    print("=" * 78)
+    print(f"session-usage q-money - qwen sessions, last {args.days} days, priced from {args.prices}")
+    print("NOTE: qwen bakes the wallet into the model id itself (ds- = DeepSeek direct API,")
+    print("real invoice; go- = opencode-go subscription quota, NOT a dollar charge). The two")
+    print("are never summed. 'thoughts' tokens are already inside 'output' for this leg (NOT")
+    print("added separately, unlike opencode's reasoning bucket) - see qwen_store.py docstring.")
+    print("=" * 78)
+
+    def wallet_total_cost(wallet):
+        total = 0.0
+        for price_key, d in by_wallet_model[wallet].items():
+            c = qs.bucket_cost(d["tokens"], prices.get(price_key))
+            if c is not None:
+                total += c
+        return total
+
+    for wallet in sorted(by_wallet_model, key=lambda w: -wallet_total_cost(w)):
+        print(f"-- Wallet: {wallet} --")
+        wallet_cost = 0.0
+        wallet_quota = 0.0
+        has_quota = False
+        for price_key, d in sorted(by_wallet_model[wallet].items(), key=lambda x: -(qs.bucket_cost(x[1]["tokens"], prices.get(x[0])) or 0)):
+            price_entry = prices.get(price_key)
+            cost = qs.bucket_cost(d["tokens"], price_entry)
+            mult = qs.quota_multiplier(price_entry)
+            bstr = "  ".join(f"{qs.BUCKET_LABEL[b]}={qs.fmt_int(d['tokens'][b])}" for b in qs.TOKEN_BUCKETS)
+            line = f"  {price_key:32s} n={d['n']:4d}  {bstr}  cost={qs.fmt_usd(cost)}"
+            if wallet == "opencode-go" and cost is not None:
+                has_quota = True
+                quota_cost = cost * mult
+                wallet_quota += quota_cost
+                line += f"  x{mult} quota={quota_cost:.4f}"
+            if d["efforts"]:
+                line += f"  efforts={sorted(d['efforts'])}"
+            print(line)
+            if cost is not None:
+                wallet_cost += cost
+        print(f"  wallet recomputed total : ${wallet_cost:.4f}")
+        if has_quota:
+            print(f"  wallet quota total      : ${wallet_quota:.4f}  "
+                  f"(Qwen's share of opencode-go ONLY - opencode itself also draws on this")
+            print(f"                             same subscription; see qwen_store.py docstring #5")
+            print(f"                             and card session-usage-quota-window-and-price-dating)")
+        print()
+
+    print("-- By role (recomputed cost, all wallets combined - never summed with wallet $ above) --")
+    for role, d in sorted(by_role.items(), key=lambda x: -x[1]["cost"]):
+        note = f"  ({d['unpriced_n']} turns unpriced)" if d["unpriced_n"] else ""
+        print(f"  {role:28s} n={d['n']:5d}  cost=${d['cost']:.4f}{note}")
+    print()
+
+
 # ------------------------------------------------------------------------------- main
 
 def build_parser():
@@ -702,6 +978,22 @@ def build_parser():
                                    "materially changes which calls land in a given day's bucket). "
                                    "Overridden by a 'tz' key in --actual if present.")
     p_reconcile.set_defaults(func=cmd_reconcile)
+
+    q_common = argparse.ArgumentParser(add_help=False)
+    q_common.add_argument("--days", type=int, default=30, help="Lookback window in days (default 30)")
+    q_common.add_argument("--qwen-dir", default=qs.DEFAULT_QWEN_DIR,
+                           help="Root of the Qwen Code per-project session folders "
+                                "(default ~/.qwen/projects). Read-only.")
+
+    p_q_roles = sub.add_parser("q-roles", parents=[q_common],
+                                help="Per-subagent-role usage stats from the Qwen Code session archive")
+    p_q_roles.set_defaults(func=cmd_q_roles)
+
+    p_q_money = sub.add_parser("q-money", parents=[q_common],
+                                help="Recomputed cost per model (by wallet) and per role, Qwen Code archive")
+    p_q_money.add_argument("--prices", default=os.path.join(HERE, "prices.json"),
+                            help="Price list JSON (default prices.json next to this script).")
+    p_q_money.set_defaults(func=cmd_q_money)
 
     return ap
 
