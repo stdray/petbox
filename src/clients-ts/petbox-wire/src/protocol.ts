@@ -39,6 +39,15 @@ export type ProtocolOpts = {
    * → DEFAULT_AGENT_DEFINITION (never crash, never an empty banner).
    */
   definition?: AgentDefinition;
+  /**
+   * Override for the `kit v${KIT_VERSION}` label. Omitted → the real KIT_VERSION (agent-definition.ts's
+   * loadKitVersion(), sourced from package.json — "0.0.0" in a checkout, the CI-stamped GitVersion
+   * string in a published tarball). Exists ONLY so protocol.test.ts can measure the block's byte
+   * ceiling against the worst-case (longest) version string actually shipped, instead of the
+   * checkout's short placeholder — see PROTOCOL_BLOCK_CEILING_BYTES's comment for why (card
+   * protocol-ceiling-gate-blind-to-published-kit-version-length). No production caller sets this.
+   */
+  kitVersion?: string;
 };
 
 /** True when protocol may prescribe SPAWN workers / fan-out / orchestrator mandate. */
@@ -113,7 +122,7 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   // second unaccounted line that could itself help push canon out.
   let out = `## PetBox memory
 
-This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP — kit v${KIT_VERSION}.
+This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP — kit v${opts?.kitVersion ?? KIT_VERSION}.
 
 ${intro}
 

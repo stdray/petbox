@@ -62,18 +62,51 @@ test("buildProtocol's canon-fallback memory_get instruction MANDATES usageSource
 // rejects a canon write — this assert is the ceiling's teeth. It is measured on BOTH source legs
 // because `resume`/`compact` append a suffix and are therefore the worst case (that ~94 B is
 // exactly what pushed the live 2026-07-26 resume banner 4 B over budget). ---
+//
+// card protocol-ceiling-gate-blind-to-published-kit-version-length (owner decisions, 2026-09-10) —
+// this SUPERSEDES the number above, it does not just add to it:
+//
+//   1. Ceiling raised 5_400 -> 5_450. The `kit v${KIT_VERSION}` label's length is legitimate part
+//      of the block's cost — the owner ruled it counts, not a bug to hide — and the extra 50 B is
+//      headroom for the build-number component of that version string growing over time.
+//   2. The gate had been measuring against the CHECKOUT's KIT_VERSION ("0.0.0", 5 chars), never
+//      against what actually ships: CI's TsWirePack task stamps package.json with GitVersion's
+//      real semver (e.g. "0.1.0-ci.2386", 13 chars, growing) before `npm publish`, and
+//      agent-definition.ts's loadKitVersion() reads that same package.json field — so the
+//      published kit's banner is ~8 B+ longer than anything this test ever measured, and the gate
+//      was structurally blind to it (measured live: repo 5397/5398 B vs published 5405/5406 B on
+//      resume/compact, both over the OLD 5_400 ceiling). Fixed by measuring against a worst-case
+//      version string (`kitVersion` override in ProtocolOpts, production code path untouched) so
+//      the gate now catches this on the commit that grows the block, not after a publish already
+//      shipped it.
+//
+// Net: PROTOCOL_BLOCK_CEILING_BYTES is a decided, current number (5_450) with headroom of ~43 B
+// against the worst-case measurement below — still do NOT raise it again without a fresh owner
+// decision.
 
-export const PROTOCOL_BLOCK_CEILING_BYTES = 5_400;
+export const PROTOCOL_BLOCK_CEILING_BYTES = 5_450;
 
-test("the protocol block stays under its diagnostic ceiling on every source leg", () => {
+// Worst-case KIT_VERSION for the ceiling measurement (NOT the checkout's "0.0.0" placeholder) —
+// see the comment on PROTOCOL_BLOCK_CEILING_BYTES above for why. Longer than any version CI has
+// stamped so far (14 chars vs. the observed "0.1.0-ci.2386"'s 13), so the gate has margin against
+// the build counter growing before anyone revisits this.
+const WORST_CASE_KIT_VERSION = "0.1.0-ci.99999";
+
+test("the protocol block stays under its diagnostic ceiling on every source leg, measured on the worst-case (longest) published version string", () => {
   for (const source of ["startup", "resume", "compact"] as const) {
-    const text = buildProtocol(project, mcpPetboxTool, { harness: "claude-code", source });
+    const text = buildProtocol(project, mcpPetboxTool, {
+      harness: "claude-code",
+      source,
+      kitVersion: WORST_CASE_KIT_VERSION,
+    });
     const bytes = Buffer.byteLength(text, "utf8");
     assert.ok(
       bytes <= PROTOCOL_BLOCK_CEILING_BYTES,
-      `protocol block for source=${source} is ${bytes} B, over the ${PROTOCOL_BLOCK_CEILING_BYTES} B ceiling — ` +
-        "it is crowding the canon out of the banner. Trim the block or the orchestrator notes; " +
-        "do NOT raise this number without an owner decision (intake canon-trim-budget-decision).",
+      `protocol block for source=${source} (kitVersion=${WORST_CASE_KIT_VERSION}) is ${bytes} B, over the ` +
+        `${PROTOCOL_BLOCK_CEILING_BYTES} B ceiling — it is crowding the canon out of the banner. Trim the block ` +
+        "or the orchestrator notes; do NOT raise this number without an owner decision " +
+        "(card protocol-ceiling-gate-blind-to-published-kit-version-length supersedes the earlier " +
+        "intake canon-trim-budget-decision).",
     );
   }
 });
