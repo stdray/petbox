@@ -1,8 +1,10 @@
 # session-usage
 
-Local token usage reporting for Claude Code AND opencode. Claude Code numbers come
-from the transcript archive under `~/.claude/projects/`; opencode numbers come from
-its own SQLite session store at `~/.local/share/opencode/opencode.db`.
+Local token usage reporting for Claude Code, opencode, AND Qwen Code. Claude Code
+numbers come from the transcript archive under `~/.claude/projects/`; opencode
+numbers come from its own SQLite session store at
+`~/.local/share/opencode/opencode.db`; Qwen Code numbers come from its own session
+archive under `~/.qwen/projects/`.
 
 ## Why this exists
 
@@ -21,7 +23,8 @@ programmatically. This tool reads that archive.
 |---|---|
 | `archive.py` | shared Claude Code archive-walking + usage-aggregation code (dedup, windowing, per-model grouping) — `summary`/`roles`/`money` import this |
 | `opencode_store.py` | shared opencode SQLite reader + usage-aggregation code (read-only, message-level attribution) — `oc-roles`/`oc-money`/`oc-tree`/`reconcile` import this |
-| `session_usage.py` | CLI entry point, seven subcommands (below) |
+| `qwen_store.py` | shared Qwen Code session-archive reader + usage-aggregation code (read-only, native archive, no telemetry opt-in) — `q-roles`/`q-money` import this |
+| `session_usage.py` | CLI entry point, nine subcommands (below) |
 | `prices.json` | price list data for `money`/`oc-money`/`reconcile` (see "Price list" below — **not** hardcoded, and not vendored-forever) |
 | `profiles.example.json` | example role→model routing profiles for `money` — copy and edit, not authoritative |
 | `actuals.example.json` | example ACTUAL dashboard numbers for `reconcile` — copy and edit, not authoritative |
@@ -65,8 +68,25 @@ python3 tools/session-usage/session_usage.py reconcile  --actual actuals.example
   supply in a JSON file (gotcha #12) — per model: ours, actual, delta, ratio; per-wallet
   totals. Day boundary is local-timezone by default (gotcha #8).
 
+Qwen Code session archive (`~/.qwen/projects/**`, read-only):
+
+```bash
+python3 tools/session-usage/session_usage.py q-roles [--days 30] [--qwen-dir PATH]
+python3 tools/session-usage/session_usage.py q-money [--days 30] [--qwen-dir PATH] [--prices prices.json]
+```
+
+- `q-roles` — per-subagent-role usage (sum/median/p90 per bucket, call count), plus
+  root/orchestrator session totals, plus aggregate API latency
+  (`duration_ms`/`ttft_ms`/`status_code`) read from `ui_telemetry` lines — see gotcha
+  #18.
+- `q-money` — recomputed cost (from `prices.json`) per model, grouped by **wallet**
+  (the `ds-`/`go-` prefix baked into the model id) — never summed together — plus the
+  same totals grouped by role. Cache-subset and thoughts-subset handling use a
+  *different* formula from the Claude/opencode legs — see gotchas #13-14.
+
 Only Python stdlib. No dependencies. Default `--projects-dir` is `~/.claude/projects`;
-default `--db` is `~/.local/share/opencode/opencode.db`.
+default `--db` is `~/.local/share/opencode/opencode.db`; default `--qwen-dir` is
+`~/.qwen/projects`.
 
 ## Gotchas — each of these already produced a wrong number once
 
@@ -221,6 +241,82 @@ observation `opencode-deepseek-direct-cost-vs-recompute-diverges` on the PetBox
 
 See gotchas #7-12 above for the specific mistakes already paid for.
 
+**qwen-specific gotchas (13-18) — `q-roles`/`q-money`:**
+
+13. **`cachedContentTokenCount` is a SUBSET of `promptTokenCount`, not a disjoint
+    bucket — unlike the Claude Code leg, where input and cache-read are separate
+    numbers that get summed.** Verified on 24 real assistant turns from one real
+    session: `promptTokenCount` and `cachedContentTokenCount` trail a few hundred
+    tokens apart on every turn (e.g. prompt=71,435 / cached=71,040 -> derived
+    `fresh_input`=395), never behaving like an independent pair. The correct
+    input-rate bucket is `fresh_input = promptTokenCount - cachedContentTokenCount`.
+    There is no cache-WRITE bucket at all in this format — `qwen_store.py` always
+    reports `cache_write=0`, never invents one. Porting the Claude-leg cost formula
+    unchanged would double-count cache on every priced turn.
+14. **`thoughtsTokenCount` is ALSO a subset, of `candidatesTokenCount` this time —
+    not disjoint like opencode's `reasoning` bucket.** Verified on the same 24 real
+    turns: `totalTokenCount == promptTokenCount + candidatesTokenCount` EXACTLY,
+    every time, regardless of `thoughtsTokenCount`'s own value (ranged 42..18,578
+    across those turns) — so it never gets its own slice of the total. Unlike the
+    opencode leg, where `(output+reasoning)*price.output` is the correct cost
+    formula because `reasoning` is genuinely separate from `output`, here `output`
+    (`candidatesTokenCount`) must be priced ALONE — adding `thoughts` on top would
+    double-count exactly like adding `cache_read` to `input` would. `thoughts` is
+    still its own report column, just never added into a costed bucket.
+15. **Subagent call lines carry no `model` field at all — join it from the paired
+    `.meta.json`'s `persistedCliFlags.model`.** Verified across all 23 real
+    subagent call files in one archive: 0 had `model` on any assistant line; every
+    one had a `.meta.json` sibling with `persistedCliFlags.model` set. Root-session
+    assistant lines DO carry `model` inline. The role comes literally from
+    `.meta.json`'s `agentType`/`subagentName` (and inline `agentName`) — no
+    inference needed, same discipline as everywhere else in this tool: read what
+    the archive actually says, don't derive it.
+16. **Model ids bake in a wallet prefix and SOMETIMES an effort suffix — and you
+    cannot tell which by pattern-matching alone.** `ds-deepseek-v4-pro` ->
+    `deepseek/deepseek-v4-pro` (real-money DeepSeek direct API);
+    `go-glm-5.3-flash` -> `opencode-go/glm-5.3-flash` (quota). An effort suffix can
+    trail the model slug (`go-glm-5.3-flash-low`, `ds-deepseek-v4-pro-max`, both
+    observed on real turns in this archive) — but a suffix that LOOKS like an
+    effort tag can also be part of the base model's own name:
+    `go-qwen3.8-max` is a WHOLE model id (also observed on real turns), not
+    `qwen3.8` + effort `max` — `opencode-go/qwen3.8-max` is a real `prices.json`
+    entry. `qwen_store.resolve_price()` tries the full remainder against
+    `prices.json` FIRST and only strips one trailing known effort suffix
+    (low/high/max/xhigh/thinking) as a FALLBACK on a miss — stripping first would
+    have silently mispriced every `qwen3.8-max` turn as plain `qwen3.8`. An
+    unrecognized wallet prefix (`or-deepseek-v4-flash` was observed once in this
+    archive; meaning unclear) or no prefix at all (`coder-model`, bare
+    `deepseek-v4-pro` — both observed on real turns, predating the `ds-`/`go-`
+    convention or from a probe/test run) is reported as an unknown wallet, NEVER
+    folded into `deepseek` or `opencode-go` by guesswork — `q-money` prints these
+    as their own `unknown-wallet(...)` groups with `cost=no price`.
+17. **The opencode-go quota is shared across harnesses — Qwen's `go-*` totals are
+    only ONE contributor to it, not the whole subscription's draw.** Every `go-*`
+    model id here draws on the SAME opencode-go subscription quota
+    (`opencode_store.py`'s wallet `opencode-go`) that opencode itself draws on.
+    `q-money` prices `go-*` turns against the same `prices.json` entries
+    (including their `quota_multiplier`) for that reason, but it does NOT merge
+    Qwen's quota consumption with opencode's into one window figure — a true
+    shared-quota-window forecast needs both this leg's `go-*` totals and
+    `oc-money`'s `opencode-go` wallet totals combined by timestamp, which is the
+    scope of the linked card `session-usage-quota-window-and-price-dating`, not
+    implemented here. `q-money`'s output labels the `opencode-go` wallet total
+    accordingly.
+18. **`ui_telemetry` lines are a near-duplicate token source that must NOT be
+    summed alongside the assistant-line totals — but they DO carry latency data
+    neither other leg has.** Verified on one real 24-assistant-turn session: it
+    also contains 129 `qwen-code.api_response` `ui_telemetry` events (plus 188
+    `qwen-code.tool_call` events) — 5.4x the assistant-turn count, not a 1:1
+    shadow copy (every LLM inference round of an agentic loop appears to fire its
+    own `api_response` event, including ones that end in a tool call rather than a
+    persisted `assistant` message). `qwen_store.py` reads token buckets ONLY from
+    `type:"assistant"` lines' `usageMetadata`; `ui_telemetry` lines are read ONLY
+    for `duration_ms`/`ttft_ms`/`status_code`, reported as their own aggregate in
+    `q-roles`, never merged into a token or turn count. `ui_telemetry` lines were
+    also only observed in ROOT session files in a real archive (0 in any of 23
+    real subagent call files) — so `q-roles`' latency section has no
+    subagent-level breakdown.
+
 ## Live-archive check: Claude Code (2026-08-29)
 
 Run against the real `~/.claude/projects/` archive (14 project folders, 66 root session
@@ -333,3 +429,116 @@ distinct from `opencode-go` — and unpriced models correctly shown as `no price
 See the `opencode_store.py` module docstring and gotchas #7-12 for what those runs
 turned up, including the one open, unexplained discrepancy (filed as an observation,
 not fixed here).
+
+## qwen sessions
+
+Qwen Code writes its own session archive by default under `~/.qwen/projects/` — no
+telemetry opt-in needed, history observed back to 2025-12-12 with no truncation.
+
+**Schema (what matters here):**
+
+- Root sessions: `~/.qwen/projects/<cwd-slug>/chats/<session-uuid>.jsonl`, one file
+  per session. `qwen_store.iter_root_sessions()` walks the whole `~/.qwen/projects/`
+  tree rather than deriving `<cwd-slug>` itself — slug casing is not normalized
+  across a real archive (`D--my-tmp-yobapub` sits next to `d--my-prj-petbox`), so a
+  computed match would be unreliable; globbing every project directory is not.
+- Subagent calls: `~/.qwen/projects/<cwd-slug>/subagents/<parent-session>/
+  agent-<role>-call_<id>.jsonl` + a paired `.meta.json` — one pair per call.
+  `qwen_store.iter_subagent_calls()` reads them.
+- A root `type:"assistant"` line carries `model` (e.g. `ds-deepseek-v4-pro`) and
+  `usageMetadata: {promptTokenCount, candidatesTokenCount, thoughtsTokenCount,
+  cachedContentTokenCount, totalTokenCount}` directly. A subagent
+  `agent-*.jsonl` `type:"assistant"` line carries `usageMetadata` and
+  `agentId`/`agentName`/`agentRound` but **no `model`** — join it from the sibling
+  `.meta.json`'s `persistedCliFlags.model` (gotcha #15).
+- `type:"system", subtype:"ui_telemetry"` lines (root sessions only) carry a
+  near-duplicate token count under `systemPayload.uiEvent` PLUS `duration_ms`,
+  `ttft_ms`, `status_code` — read for latency only, never for tokens (gotcha #18).
+
+**Token buckets are DERIVED, not raw fields — see gotchas #13-14.** `qwen_store.py`
+reports five buckets (`input`, `output`, `thoughts`, `cache_read`, `cache_write`):
+`input = promptTokenCount - cachedContentTokenCount`, `output = candidatesTokenCount`
+(as-is — already includes `thoughts`), `thoughts = thoughtsTokenCount` (a diagnostic
+subset of `output`, never added on top of it), `cache_read = cachedContentTokenCount`,
+`cache_write` is always `0` (no such bucket exists in this format).
+
+**Model ids bake in the wallet AND sometimes an effort suffix — see gotcha #16.**
+`qwen_store.parse_model_id()` splits a `ds-`/`go-` prefix off into a wallet
+(`deepseek` / `opencode-go`); anything else is an `unknown-wallet(...)` label, never
+guessed into one of the two real wallets. `qwen_store.resolve_price()` then tries the
+remainder against `prices.json` UNCHANGED first, only stripping a trailing known
+effort suffix (low/high/max/xhigh/thinking) as a fallback on a miss — direct-match-
+first is load-bearing: `go-qwen3.8-max` is a whole model id in `prices.json`, not an
+effort-suffixed `qwen3.8`.
+
+**Windowing** follows the same file-start-time convention as the Claude Code leg's
+`roles` (see "Windowing semantics" above), not opencode's turn-level windowing — qwen
+organizes usage as one file per root session / subagent call, the same shape as the
+Claude Code archive.
+
+## Live-archive check: qwen (2026-09-10)
+
+Run against the real `~/.qwen/projects/` archive (86 root session files usable,
+23 real subagent call files). Hand-reconciled one real root session
+(`f96c4480-20a0-4894-91f3-545e9a6af3c2.jsonl`, 24 assistant turns) by summing its raw
+`usageMetadata` fields independently of `qwen_store.py`, then comparing against
+`qwen_store.parse_session()`'s own output for the same file:
+
+```
+independent hand-sum : SUM promptTokenCount=3,893,860  SUM cachedContentTokenCount=3,808,384
+                        derived fresh_input=85,476       SUM candidatesTokenCount=75,612
+                        SUM thoughtsTokenCount=62,711
+qwen_store.py output  : input=85,476  output=75,612  thoughts=62,711  cache_read=3,808,384  cache_write=0
+```
+
+**All five figures match exactly.** A concrete cache-subset turn from that same
+session (the first turn): `promptTokenCount=71,435`, `cachedContentTokenCount=71,040`
+(a SUBSET, not a disjoint number) -> `qwen_store.py` derives `input=395`
+(`71,435 - 71,040`), `output=591`, `thoughts=369` (a subset of `output`, not added to
+it), `cache_read=71,040` — this is gotcha #13/#14 in concrete numbers.
+
+That same root session has one real subagent call
+(`agent-petbox-worker-call_01_oOPZwj7AjUUE7UXlvRCs7423.jsonl`, role `petbox-worker`,
+model `go-glm-5.3-flash`, 105 assistant turns) living in a completely separate file
+under `subagents/`. Its own tool-computed sums (`cache_read=17,412,352`) are **not**
+included in the root session's 24-turn total above — `iter_root_sessions()` only
+globs `<project>/chats/*.jsonl`, `iter_subagent_calls()` only globs
+`<project>/subagents/**/agent-*.jsonl`, and `q-roles` reports them in two disjoint
+sections (root/orchestrator totals vs. per-role call sums) for exactly this reason —
+the same double-counting trap gotcha #3 already covers for the Claude Code leg.
+
+`q-roles --days 30` over the real archive:
+
+```
+Other agentType values seen (not in KNOWN_ROLES): {'general-purpose': 1}
+
+-- Per role: sum / median / p90 per bucket --
+  role                          n_calls      input sum     output sum   thoughts sum cache_read sum cache_write sum
+  petbox-worker                      10      1,255,810         95,053         58,212     19,056,704              0
+  petbox-worker-highstakes            1         57,775              7              0              0              0
+  petbox-explore                      4        126,722            481            424         64,576              0
+  petbox-reserve                      5        188,587          2,470          2,032         87,424              0
+  petbox-utility                      0
+  petbox-orchestrator                 1         57,233              7              0            512              0
+  general-purpose                     1         61,499          7,931          6,861              0              0
+
+-- Root / orchestrator sessions --
+Root session files (usable): 86 all-time, 79 in window
+  windowed : input=2,826,848  output=152,223  thoughts=115,111  cache_read=10,191,232  cache_write=0
+
+-- API latency (ui_telemetry, root sessions only) --
+  samples: 378
+  duration_ms  median=    5904  p90=   24074
+  ttft_ms      median=    2052  p90=    8358
+  non-200 status_code: 0 / 378
+```
+
+`q-money --days 30` over the same window (`prices.json` unchanged, no new entries
+needed): both real wallets (`deepseek` $1.1202, `opencode-go` $1.1368 recomputed /
+$1.5786 quota with the `glm-5.3-flash` x2 multiplier correctly applied) plus three
+`unknown-wallet(...)` groups (`deepseek-v4-pro` unprefixed, `probe-ds-effort`,
+`or-deepseek-v4-flash`) reported honestly as `cost=no price` rather than folded into
+a real wallet — confirming gotcha #16's direct-match-first resolver and the
+never-guess-a-wallet discipline both hold on real, not synthetic, data. A
+`coder-model` id (from before the `ds-`/`go-` convention existed, dated 2026-03-25)
+was seen in the full archive but correctly fell outside the 30-day window.
