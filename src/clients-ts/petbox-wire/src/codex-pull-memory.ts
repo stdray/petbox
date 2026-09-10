@@ -26,7 +26,7 @@ import { fetchCanonBlock } from "./canon.ts";
 import { resolveDefinitionForSession } from "./definition-source.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, codexPetboxTool } from "./protocol.ts";
-import { resolveProject } from "./registry.ts";
+import { resolveProject, UnresolvedEnvRefError } from "./registry.ts";
 import { buildOwnerOnlySkillsBlock } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
@@ -70,10 +70,29 @@ async function main(): Promise<void> {
     // fall through with defaults; cwd stays empty → resolves to null below
   }
 
+  let resolved: ReturnType<typeof resolveProject>;
   try {
-    const resolved = resolveProject(cwd);
-    if (!resolved) return; // not a registered project → no output
+    resolved = resolveProject(cwd);
+  } catch (e) {
+    // UnresolvedEnvRefError (registry.ts) is NOT the ordinary best-effort case below — see
+    // pull-memory.ts's identical catch for the full rationale (decision 2, card
+    // keys-json-supports-env-var-references). registry.ts already traced this to wire.log; this
+    // ALSO surfaces it in-session, via the SAME additionalContext channel this hook's normal
+    // output uses, plus stderr. Every other exception here still falls through to the ordinary
+    // best-effort catch below untouched.
+    if (e instanceof UnresolvedEnvRefError) {
+      console.error(e.message);
+      await writeStdout(
+        JSON.stringify({
+          hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `⚠ ${e.message}` },
+        }),
+      );
+    }
+    return;
+  }
+  if (!resolved) return; // not a registered project → no output
 
+  try {
     // Started concurrently, NOT awaited yet — same pattern as pull-memory.ts / droid-pull-
     // memory.ts: the guard's git-only latency hides behind the fetch sequence below instead of
     // stacking in front of it, and it stays out of SESSION_FETCH_BUDGET_MS entirely.

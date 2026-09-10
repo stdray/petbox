@@ -24,7 +24,7 @@ import { fetchCanonBlock } from "./canon.ts";
 import { resolveDefinitionForSession } from "./definition-source.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
-import { resolveProject } from "./registry.ts";
+import { resolveProject, UnresolvedEnvRefError } from "./registry.ts";
 import {
   assembleSessionBanner,
   describeCanonDegradation,
@@ -84,10 +84,26 @@ async function main(): Promise<void> {
     // fall through with defaults; cwd stays empty → resolves to null below
   }
 
+  let resolved: ReturnType<typeof resolveProject>;
   try {
-    const resolved = resolveProject(cwd);
-    if (!resolved) return; // not a registered project → no output
+    resolved = resolveProject(cwd);
+  } catch (e) {
+    // UnresolvedEnvRefError (registry.ts) is NOT the ordinary best-effort case below: the
+    // project IS wired and a key SHOULD exist, so staying quiet here would be indistinguishable
+    // from "never wired" (decision 2, card keys-json-supports-env-var-references). registry.ts
+    // already traced this to wire.log (Class-Б); this ALSO surfaces it in-session, on both the
+    // channel the agent's context is built from and stderr — wire-log.ts's own contract permits
+    // an interactive caller to add exactly this. Every other exception here still falls through
+    // to the ordinary best-effort catch below untouched.
+    if (e instanceof UnresolvedEnvRefError) {
+      console.error(e.message);
+      await writeStdout(`⚠ ${e.message}\n`);
+    }
+    return;
+  }
+  if (!resolved) return; // not a registered project → no output
 
+  try {
     // Started concurrently, NOT awaited yet — its git-only latency hides behind the
     // agent-def/canon fetch sequence below rather than stacking in front of it. It is
     // git-only and independent of SESSION_FETCH_BUDGET_MS, so it is deliberately not folded

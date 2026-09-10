@@ -30,13 +30,31 @@ import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { resolveDefinitionForSession } from "./definition-source.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
-import { resolveProject } from "./registry.ts";
+import { resolveProject, UnresolvedEnvRefError } from "./registry.ts";
 import { buildAutoSkillsIndex, buildOwnerOnlySkillsBlock } from "./skill-files.ts";
 import { buildStaleBaseWarning } from "./worktree-base-guard.ts";
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // Resolve the active project once at load. null → both hooks no-op.
-  const resolved = resolveProject(directory ?? "");
+  //
+  // UnresolvedEnvRefError (registry.ts) is NOT the ordinary "not a registered project" case:
+  // the project IS wired and a key SHOULD exist, so leaving `resolved` null the same silent way
+  // would be indistinguishable from never having wired it (decision 2, card
+  // keys-json-supports-env-var-references — see pull-memory.ts's identical catch for the fuller
+  // rationale). registry.ts already traced this to wire.log; this ALSO surfaces it on stderr and,
+  // once the transform handler below runs, in the system prompt itself — the one channel this
+  // plugin has that reaches the owner in-session. Both hooks still no-op exactly as before
+  // (`resolved` stays null) — only the silence is replaced with a note.
+  let resolved: ReturnType<typeof resolveProject> = null;
+  let envRefNote = "";
+  try {
+    resolved = resolveProject(directory ?? "");
+  } catch (e) {
+    if (e instanceof UnresolvedEnvRefError) {
+      console.error(e.message);
+      envRefNote = `⚠ ${e.message}`;
+    }
+  }
 
   // Resolve the banner's orchestrator notes ONCE at plugin load, from the FILE cascade
   // base < user < project (definition-source.ts) — the same resolve `apply` compiles from, and
@@ -122,6 +140,7 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   return {
     // Port of pull-memory — make the memory protocol part of the system prompt.
     "experimental.chat.system.transform": async (_input, output) => {
+      if (envRefNote) output.system.push(envRefNote);
       if (!resolved) return;
       // Stale-base warning first, so it stays prominent — see worktree-base-guard.ts. This
       // handler can fire on EVERY turn (opencode is long-lived), so the module throttles its
