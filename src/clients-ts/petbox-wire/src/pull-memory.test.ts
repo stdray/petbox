@@ -38,7 +38,28 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // (lingering-socket) waits this kit's exit path was built to avoid.
 const WALL_CLOCK_BUDGET_MS = 2000;
 
-type SpawnResult = { code: number | null; stdout: string; stderr: string; wallMs: number };
+// The budget that replaced a whole-process wall clock on the pull-memory path (see the test
+// below). NOT a latency measurement: it is the gap between the FAKE SERVER ANSWERING and the
+// child's process ending — "did the hook let go of the event loop once its work was done" —
+// and a healthy hook spends a few milliseconds there, whatever the box is doing. It is
+// deliberately generous, because what it must catch is not slowness but a WAIT: an uncleared
+// fetch-timeout timer (SESSION_FETCH_BUDGET_MS = 2000ms — a timer is NOT in
+// process._getActiveHandles(), so hook-drain.ts's unref pass does not rescue it, measured) or a
+// socket still referenced after an abort (~10-18s). Timing the whole process instead measured
+// the machine's boot path: under the full gate this same assertion failed at 4253ms while the
+// hook was perfectly healthy (observation
+// pull-memory-wall-clock-budget-test-flaky-under-load).
+const POST_RESPONSE_LINGER_BUDGET_MS = 1500;
+
+type SpawnResult = {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  wallMs: number;
+  // When the child process actually ended (the 'exit' event), not when its stdio finished
+  // closing — the pair with the fake server's own response timestamp is the assertion below.
+  exitedAt: number;
+};
 
 function runHook(
   scriptPath: string,
@@ -51,11 +72,13 @@ function runHook(
     const child = spawn(process.execPath, [scriptPath], { env, cwd });
     let stdout = "";
     let stderr = "";
+    let exitedAt = 0;
     child.stdout.on("data", (c) => (stdout += c));
     child.stderr.on("data", (c) => (stderr += c));
     child.on("error", reject);
+    child.on("exit", () => (exitedAt = Date.now()));
     child.on("close", (code) => {
-      resolve({ code, stdout, stderr, wallMs: Date.now() - t0 });
+      resolve({ code, stdout, stderr, wallMs: Date.now() - t0, exitedAt: exitedAt || Date.now() });
     });
     child.stdin.write(input);
     child.stdin.end();
@@ -64,14 +87,23 @@ function runHook(
 
 // A throwaway local server that answers the one hook-called endpoint immediately: 200 with an
 // empty canon, so no canon block is appended. Content is deliberately uninteresting — this test
-// is about wall clock.
-function startFastFakeServer(): Promise<{ port: number; close: () => Promise<void> }> {
+// is about wall clock. It also reports WHEN it answered, which is the anchor the exit assertion
+// below measures from: the hook's own work after the server is done is a few ms, and it is
+// independent of how long Node took to boot on a loaded box.
+function startFastFakeServer(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+  answeredAt: () => number;
+}> {
   return new Promise((resolve) => {
+    let answeredAt = 0;
     const server = http.createServer((req, res) => {
       if (req.url?.includes("/memory/") && req.url?.includes("/canon")) {
         res
           .writeHead(200, { "Content-Type": "application/json" })
-          .end(JSON.stringify({ project: null, workspace: null }));
+          .end(JSON.stringify({ project: null, workspace: null }), () => {
+            answeredAt = Date.now();
+          });
         return;
       }
       res.writeHead(404).end();
@@ -81,6 +113,7 @@ function startFastFakeServer(): Promise<{ port: number; close: () => Promise<voi
       resolve({
         port,
         close: () => new Promise((r) => server.close(() => r())),
+        answeredAt: () => answeredAt,
       });
     });
   });
@@ -156,8 +189,9 @@ function setUpIsolatedRegistry(baseUrl: string): { home: string; projectDir: str
   return { home, projectDir };
 }
 
-test("pull-memory.ts as a real process: wall clock stays well under budget against a fast server", async () => {
-  const { close, port } = await startFastFakeServer();
+test("pull-memory.ts as a real process: the process is gone shortly after the server answers, and nothing holds the loop open", async () => {
+  const server = await startFastFakeServer();
+  const { close, port } = server;
   const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
   try {
     const env: NodeJS.ProcessEnv = {
@@ -178,10 +212,27 @@ test("pull-memory.ts as a real process: wall clock stays well under budget again
     assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
     assert.equal(result.stderr, "", "hook must never write to stderr on the happy path");
     assert.ok(result.stdout.length > 0, "hook must print the banner");
+
+    // The measured quantity is the hook's OWN tail — from the fake server's answer to the end of
+    // the process — NOT the whole process lifetime. The whole lifetime is dominated by Node
+    // booting and type-stripping this kit's modules, which is a property of the machine (under
+    // the full gate it measured 4253ms on a perfectly healthy hook), so asserting on it made
+    // this test a load detector. Everything that can prolong the TAIL is the hook's own doing: a
+    // timer left pending (a setTimeout is NOT in process._getActiveHandles(), so hook-drain.ts's
+    // unref pass does not release it — measured on node 24) or a fetch handle still referenced.
+    //
+    // THIS IS NOT A PERFORMANCE MEASUREMENT. The budget below is not a latency target and a
+    // number anywhere near it is not a finding about speed; it is a hang detector with an order
+    // of magnitude of slack over what a healthy hook spends here (a few ms).
+    assert.ok(server.answeredAt() > 0, "the fake server must have answered — nothing else in this test means anything");
+    const lingerMs = result.exitedAt - server.answeredAt();
     assert.ok(
-      result.wallMs < WALL_CLOCK_BUDGET_MS,
-      `wall clock ${result.wallMs}ms exceeded the ${WALL_CLOCK_BUDGET_MS}ms budget against a server that never stalls — ` +
-        `this is the regression this test exists to catch (an uncleared timer / late-unreffed handle holding the loop open)`,
+      lingerMs < POST_RESPONSE_LINGER_BUDGET_MS,
+      `the hook outlived the server's answer by ${lingerMs}ms (> ${POST_RESPONSE_LINGER_BUDGET_MS}ms), ` +
+        `i.e. it could not let go of the event loop after its work was done — the regression this test exists to ` +
+        `catch (an uncleared fetch-timeout timer, ~${2000}ms here, or a socket left referenced past an abort, ~10-18s). ` +
+        `NOT a performance measurement: this is a hang detector, and the few ms a healthy hook spends here do not ` +
+        `measure how fast this machine is.`,
     );
   } finally {
     await close();

@@ -228,9 +228,11 @@ public sealed class SessionSearchMemoTests : IDisposable
 	[Fact]
 	public async Task PastTheTtl_TheStaleAnswerIsNotServed()
 	{
-		var memo = Memo(ttl: TimeSpan.FromMilliseconds(500));
+		var ttl = TimeSpan.FromMilliseconds(500);
+		var memo = Memo(ttl: ttl);
 		var calls = new StrongBox<int>();
 
+		var before = DateTimeOffset.UtcNow;
 		var first = await memo.GetOrComputeAsync(Key(), Counting(calls));
 		first.Outcome.DataVersion.Should().Be("dv-1");
 
@@ -238,13 +240,59 @@ public sealed class SessionSearchMemoTests : IDisposable
 		(await memo.GetOrComputeAsync(Key(), Counting(calls))).Outcome.DataVersion.Should().Be("dv-1");
 		calls.Value.Should().Be(1);
 
-		await Task.Delay(TimeSpan.FromMilliseconds(1500));
+		var after = DateTimeOffset.UtcNow;
+
+		// Half of the claim is that the stored answer is WRITTEN to expire, and on THIS memo's Ttl
+		// rather than on some default: with no `Expiration` the disk cache stores its "never" sentinel
+		// and every memoized answer is served forever, which no other test here would notice (they all
+		// read inside the window). Asserted against the write's own bounds, so no clock comparison is
+		// load-sensitive: the row is written during the two calls above, hence its expiry is
+		// (whenever that was) + Ttl, i.e. between `before + ttl` and `after + ttl`.
+		var expiry = StoredExpiry();
+		expiry.Should().BeOnOrAfter(before + ttl, "the stored entry must expire on this memo's Ttl, not later");
+		expiry.Should().BeOnOrBefore(after + ttl, "…and it is written when the entry is, so it cannot expire earlier");
+
+		// The other half is that the entry is NOT SERVED past it. That used to be reached by sleeping
+		// 1.5s against a 500ms window — which asserted the scheduler's mood as much as the memo's: under
+		// the full gate's parallel load the two calls could straddle the window on their own, and the
+		// failure read exactly like a broken TTL (observation
+		// session-search-memo-ttl-test-flaky-under-load). The post-TTL STATE is reached here the way
+		// SqliteDistributedCache itself decides it — every read compares ExpiresAtTicks with now — by
+		// putting the stored rows on the far side of that comparison. Deterministic, and it still fails
+		// if the memo stops honouring expiry: an entry that was never written to expire has nothing to
+		// move, and the call below would then be a HIT.
+		ExpireStoredEntries();
 
 		var afterTtl = await memo.GetOrComputeAsync(Key(), Counting(calls));
 
 		calls.Value.Should().Be(2, "TTL is the ONLY freshness mechanism here — if it does not expire, nothing does");
 		afterTtl.FromCache.Should().BeFalse();
 		afterTtl.Outcome.DataVersion.Should().Be("dv-2", "a session written after the search must become visible once the window closes");
+	}
+
+	// The absolute expiry SqliteDistributedCache will enforce for the memo's entry — read straight
+	// from the row HybridCache wrote, so this needs no knowledge of the memo's private key format.
+	DateTimeOffset StoredExpiry()
+	{
+		using var db = new CacheDbFactory(CacheSchema.ConnectionString(_harness.DbPath)).Open();
+		var rows = db.Entries.Where(e => e.ExpiresAtTicks != long.MaxValue).ToList();
+		rows.Should().ContainSingle("the memo stores exactly one entry for this key, and it must be one that expires");
+		return new DateTimeOffset(rows[0].ExpiresAtTicks, TimeSpan.Zero);
+	}
+
+	// Move whatever the memo stored (exactly one row, per the assertion above) past the compare line
+	// SqliteDistributedCache reads: ExpiresAtTicks < now. Test-only, and deliberately phrased as a
+	// bulk move rather than as "expire key X", so it cannot silently depend on the key format.
+	void ExpireStoredEntries()
+	{
+		using var db = new CacheDbFactory(CacheSchema.ConnectionString(_harness.DbPath)).Open();
+		var entries = db.Entries.Where(e => e.ExpiresAtTicks != long.MaxValue).ToList();
+		entries.Should().ContainSingle("an entry that was never written to expire cannot be aged out — the memo would serve it forever");
+		foreach (var entry in entries)
+		{
+			entry.ExpiresAtTicks = DateTimeOffset.UtcNow.AddMinutes(-1).Ticks;
+			db.Update(entry);
+		}
 	}
 
 	[Fact]
