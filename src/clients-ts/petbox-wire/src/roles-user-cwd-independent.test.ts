@@ -169,12 +169,22 @@ test("status --all --offline: names the MACHINE-WIDE layers (never a project lay
     writeProjectLayer(proj, "must-not-appear");
     const run = runWire(proj, homeDir, ["status", "--all", "--offline"]);
     assert.equal(run.status, WIRE_EXIT.ok, `output:\n${run.out}`);
+    // Assert on the ONE line that is about the user-scope source, never on the whole output: that
+    // line is what the property is about, and every other line carries absolute paths of its own
+    // (the kit dir, the temp home). A bare `/project/` negative over `run.out` matched a CHECKOUT
+    // whose own path happened to contain the word — the regex was matching the working directory,
+    // not the resolve (card roles-user-cwd-test-path-substring-fix).
+    const sourceLine = run.out.split("\n").find((l) => l.includes("user-scope role source:"));
+    assert.ok(sourceLine, `no "user-scope role source:" line in output:\n${run.out}`);
     assert.match(
-      run.out,
+      sourceLine,
       /user-scope role source: source: layers=1: base\[kit v\S+\][^\n]*, kit v\S+ — machine-wide, independent of cwd/,
       `output:\n${run.out}`,
     );
-    assert.doesNotMatch(run.out, /user-scope role source:.*project/, `output:\n${run.out}`);
+    // Only the ABSENT shape needs its own negative: a project candidate whose directory does not
+    // exist lands in the `no opinion:` note as `project=<dir>`, and nothing else covers it. A
+    // PRESENT leak needs none — it breaks the `layers=1` match above, which is evaluated first.
+    assert.doesNotMatch(sourceLine, /no opinion:[^)]*project=/, `output:\n${run.out}`);
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
     rmSync(proj, { recursive: true, force: true });
