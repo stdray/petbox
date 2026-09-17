@@ -126,17 +126,13 @@ This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP
 
 ${intro}
 
-**Rule — search before rework:** before re-deriving, re-investigating or re-deciding anything about this project's past, run \`${memorySearch}\` / \`${tasksSearch}\` FIRST. Before storing a fact, search for an existing entry and edit it — duplicates poison recall.
+**Rule — search before rework:** before re-deriving or re-deciding anything about this project's past, run \`${memorySearch}\` / \`${tasksSearch}\` FIRST; before storing a fact, find and edit the existing entry — duplicates poison recall.
 
-**Entry points:**
+**Entry points:** facts — \`${memorySearch}\` (no \`scope\` cascades project⊕workspace), full body \`${memoryGet}\`; HOW it was decided, error text, detail a fact won't carry — \`${sessionSearch}\` → \`${sessionGet}\`. Canon (curated rules, gotchas, open threads) is inlined below as \`## PetBox memory canon\` when it fits. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`) — you MUST pass \`usageSource:"machine"\`.
 
-- **Facts — \`${memorySearch}\`** (no \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\`); full body: \`${memoryGet}\`.
-- **Conversations — \`${sessionSearch}\`**: HOW something was decided, error text, detail a fact wouldn't carry; each hit carries the message ordinal → \`${sessionGet}\`.
-- **Canon** (curated project rules, hot gotchas, open threads): inlined below as \`## PetBox memory canon\` when the banner budget allows. No canon section below? Pull it yourself, first thing: \`${memoryGet}\` (store \`canon\`, key \`index\`) — you MUST pass \`usageSource:"machine"\`.
+**Capture-as-you-go:** a decision, fix, pattern or preference → \`${memoryRemember}\` (\`scope:workspace\` for cross-project/user facts); curated edits → \`${memoryUpsert}\`. Don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
 
-**Capture-as-you-go** — after a decision, fix, pattern or preference: \`${memoryRemember}\` (\`scope\` = workspace for cross-project/user facts); curated/temporal edits: \`${memoryUpsert}\`. Don't re-store autocaptured entries; before stopping, store 1-3 must-not-wait learnings.
-
-**Findings are filed, not worked around:** something broken, unexpected, or contradicting docs — a process/doc defect included — belongs on the built-in \`observations\` board (\`${tasksSearch}\`/\`${tasksUpsert}\`), never a memory entry. That board is outside the decision queue, so a full one is not backlog pressure; promote a real one via \`${tasksObservationPromote}\`, or file a card via \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (never invent board/type/status).`;
+**Findings are filed, not worked around:** broken, unexpected, or contradicting docs — process/doc defects included — goes on the built-in \`observations\` board (\`${tasksUpsert}\`), never a memory entry; a repeat sighting bumps the existing node. Promote via \`${tasksObservationPromote}\`; a new card goes \`${tasksMethodologyGuide}\` → \`${tasksWorkflow}\` → \`${tasksUpsert}\` (never invent board/type/status).`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {

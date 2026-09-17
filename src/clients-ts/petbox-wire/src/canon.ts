@@ -116,7 +116,7 @@ function buildBlock(project: string, resp: CanonResponse | null): { text: string
 
   let out = `## PetBox memory canon`;
   if (hasContent) {
-    out += `\n\nThe curated memory index (canon) for this project — pointers to durable facts; pull full bodies via memory_get/memory_search.`;
+    out += `\n\nCurated pointers to durable facts — full bodies via memory_get/memory_search.`;
   }
   if (projectLeg.kind === "content") {
     out += `${CANON_PROJECT_SECTION_MARKER}${project})\n\n${projectLeg.body}`;
