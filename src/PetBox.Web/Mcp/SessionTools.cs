@@ -243,6 +243,9 @@ public static class SessionTools
 		output budget. Each hit's snippet follows the uniform `bodyLen` knob (omitted = a
 		query-centered ~240-char preview; 0 = no snippet; N>0 = a wider/narrower preview; -1 =
 		the full raw message).
+		No `limit` parameter here, unlike tasks_search/memory_search: page width is `sessions`
+		(how many discovered sessions to hydrate) plus `hitsPerSession` (hits per session) —
+		passing `limit` is rejected as unknown.
 
 		Cost — your context pays it. Hits carry verbatim transcript text, so widening how many
 		sessions are hydrated and how many hits each returns multiplies the response fast —

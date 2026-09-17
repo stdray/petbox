@@ -85,7 +85,11 @@ public sealed class ToolDescriptionEconomyMechanismTests
 		new object[] { "tasks_search",     new[] { "bodyLen", "part_of", "budget", "tasks:read" }, "matchedIn" },
 		new object[] { "memory_search",    new[] { "bodyLen", "CASCADE", "version", "memory:read" }, "includeUsage" },
 		new object[] { "memory_remember",  new[] { "memory_upsert", "workspace", "task board" }, "low-ceremony" },
-		new object[] { "session_search",   new[] { "two-stage", "fullScan", "memory:read" }, "hitsPerSession" },
+		// card session-search-page-width-param-name: the head now names `sessions`/`hitsPerSession`
+		// explicitly (no `limit` here, unlike tasks_search/memory_search), so `hitsPerSession` moved
+		// out of the below-the-fold marker — "lazily hydrated" (stage-2 hydration detail) stays a
+		// deep-only phrase instead.
+		new object[] { "session_search",   new[] { "two-stage", "fullScan", "memory:read", "hitsPerSession" }, "lazily hydrated" },
 		new object[] { "comments_upsert",  new[] { "CREATE", "PATCH", "WATERMARK", "headings", "==headings==", "applied" }, "artifact" },
 		// petbox_report_issue's HEAD carries the whole call decision — the SYSTEMIC-vs-one-off water line, the
 		// memory_remember routing for own-project friction, and the batch-at-end-of-turn rule. Nothing
