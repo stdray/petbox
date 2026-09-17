@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Замысел, правила разрешения, что удалено и открытые развилки: petbox-preimage-notes.md -->
+<petbox schema="0.4">
+
+  <canon scope="project" key="index">
+    <core>
+Чейн: идея -> владелец принимает -> спека -> работа -> код.
+Код не предшествует карточке. Подтверждённые проблемы -> доска work.
+Worktree перед правкой любого отслеживаемого файла.
+Деплой: сначала push main, потом двигать тег deploy.
+    </core>
+    <detail id="cyrillic-escapes">
+Кириллица в JSON инструментов - сырой UTF-8, не escape-последовательности:
+шесть символов на букву, вызов режется до отправки. Обход - блоб плюс ref-параметр.
+    </detail>
+    <detail id="observations-routing">
+Найденное сломанное или неожиданное -> доска observations, не в память.
+Повторная встреча - рекуррентность существующего узла, не дубль.
+    </detail>
+  </canon>
+
+  <canon scope="workspace" key="index">
+    <core>
+Единственный пользователь. Несогласие - деливерабл,
+молчание о трении - недоделка.
+    </core>
+  </canon>
+
+  <harnesses>
+    <harness id="claude-code" inject-bytes="5450"/>
+    <harness id="qwen"        inject-bytes="unmeasured"/>
+    <harness id="opencode"    inject-bytes="unmeasured"/>
+  </harnesses>
+
+  <models>
+
+    <model slug="deepseek/deepseek-flash"
+           context-window="1048576" max-output="65536" efforts="high max">
+      <bind harness="qwen" fixed-effort="high" id="openai:ds-deepseek-flash"/>
+      <bind harness="qwen" fixed-effort="max"  id="openai:ds-deepseek-flash-max"/>
+      <bind harness="opencode"                 id="deepseek/deepseek-flash"/>
+    </model>
+
+    <model slug="opencode-go/deepseek-flash"
+           context-window="1048576" max-output="131072" efforts="low high">
+      <bind harness="qwen" fixed-effort="low"  id="openai:go-deepseek-flash-low"/>
+      <bind harness="qwen" fixed-effort="high" id="openai:go-deepseek-flash"/>
+    </model>
+
+    <model slug="opencode-go/glm-5.3-flash"
+           context-window="1048576" max-output="131072" efforts="low high">
+      <bind harness="qwen" fixed-effort="low"  id="openai:go-glm-5.3-flash-low"/>
+      <bind harness="qwen" fixed-effort="high" id="openai:go-glm-5.3-flash"/>
+      <bind harness="opencode"                 id="opencode-go/glm-5.3-flash"/>
+    </model>
+
+    <model slug="opencode-go/qwen3.8-max"
+           context-window="983616" max-output="131072" efforts="xhigh">
+      <bind harness="qwen" fixed-effort="xhigh" id="openai:go-qwen3.8-max"/>
+      <bind harness="opencode"                  id="opencode-go/qwen3.8-max"/>
+    </model>
+
+    <model slug="anthropic/opus"   efforts="low medium high xhigh max"/>
+    <model slug="anthropic/sonnet" efforts="low medium high xhigh max"/>
+    <model slug="anthropic/haiku"  efforts="low medium high"/>
+    <model slug="anthropic/fable"  efforts="low medium high xhigh max"/>
+
+  </models>
+
+  <roleset id="utilitarian" title="Утилитарные роли PetBox">
+
+    <role slug="orchestrator" tier="main">
+      <spawn allow="worker explore reserve worker-highstakes"/>
+      <escalation to="reserve"/>
+      <notes>
+        <core><![CDATA[
+Главный цикл: план, декомпозиция, делегирование, ревью, триаж.
+Делегируй по умолчанию - твой контекст тот, который кончается.
+Вывод-заключение (найти, составить карту, свести) -> explore.
+Второй файл к правке или ИЗМЕНЕНИЕ, хоть на строку -> worker.
+Спрашивай ВЕРДИКТ, не материал.
+Никогда не принимай проверку, которой не видел.
+Модель при спавне не передаётся: другой уровень - другая РОЛЬ.
+Смена модели - petbox-wire model set <role> <model> && apply.
+        ]]></core>
+        <append when-harness="qwen">
+Не отдавай свой worktree: спавни с isolation, без working_dir -
+иначе субагент уходит в foreground и ты нем до его возврата.
+        </append>
+        <append when-harness="opencode">
+Фоновые субагенты требуют OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+и живут только пока жив процесс родителя. Отмены нет.
+        </append>
+        <detail id="delegation-economics">
+Почему короткий бриф: он же определяет частоту, с которой владелец
+может вмешаться - субагент возвращает управление только по завершении.
+        </detail>
+      </notes>
+    </role>
+
+    <role slug="worker" tier="work">
+      <notes>
+        <core>Делает изменение. Возвращает вердикт, не материал.</core>
+      </notes>
+    </role>
+
+    <role slug="worker-highstakes" tier="work">
+      <notes>
+        <core>
+Тот же воркер на более дорогой модели. НЕ второе мнение - это работа reserve.
+Триггер: неверный результат дорог ИЛИ пройдёт незамеченным.
+        </core>
+      </notes>
+    </role>
+
+    <role slug="explore" tier="read-only" writes="false">
+      <notes>
+        <core>Только чтение. Отдаёт заключение, не изменение.</core>
+      </notes>
+    </role>
+
+    <role slug="reserve" tier="second-opinion">
+      <spawn allow="explore"/>
+      <notes>
+        <core>
+Второе мнение. Другое семейство моделей - иначе это самопроверка.
+Триггер - СОБЫТИЕ: факты убили гипотезу; повтор неудачного подхода;
+два защитимых дизайна с дорогим откатом.
+        </core>
+      </notes>
+    </role>
+  </roleset>
+
+  <roleset id="scenario" title="Сценарные роли">
+    <role slug="analyst"   tier="main"><notes><core>...</core></notes></role>
+    <role slug="architect" tier="work"><notes><core>...</core></notes></role>
+    <role slug="tester"    tier="work"><notes><core>...</core></notes></role>
+    <role slug="designer"  tier="work"><notes><core>...</core></notes></role>
+  </roleset>
+
+  <model-profiles active="utilitarian-main">
+
+    <profile slug="utilitarian-base" roleset="utilitarian" abstract="true"
+             title="Нога закрытого каталога: модель не выбирается, усилие выбирается">
+      <bind role="orchestrator"      harness="claude-code" model="anthropic/opus"   effort="high"/>
+      <bind role="worker"            harness="claude-code" model="anthropic/sonnet" effort="high"/>
+      <bind role="worker-highstakes" harness="claude-code" model="anthropic/opus"   effort="max"/>
+      <bind role="explore"           harness="claude-code" model="anthropic/haiku"  effort="low"/>
+      <bind role="reserve"           harness="claude-code" model="anthropic/fable"  effort="xhigh"/>
+    </profile>
+
+    <profile slug="utilitarian-main" inherit="utilitarian-base"
+             title="Оркестратор за деньги, работяги на квоте">
+      <bind role="orchestrator"      model="deepseek/deepseek-flash"     effort="high"/>
+      <bind role="worker"            model="opencode-go/deepseek-flash"  effort="high"  harness="qwen"/>
+      <bind role="worker"            model="opencode-go/glm-5.3-flash"   effort="high"  harness="opencode"/>
+      <bind role="worker-highstakes" model="deepseek/deepseek-flash"     effort="max"/>
+      <bind role="explore"           model="opencode-go/deepseek-flash"  effort="low"   harness="qwen"/>
+      <bind role="explore"           model="opencode-go/glm-5.3-flash"   effort="low"   harness="opencode"/>
+      <bind role="reserve"           model="opencode-go/qwen3.8-max"     effort="xhigh"/>
+    </profile>
+
+    <profile slug="utilitarian-full-deepseek" inherit="utilitarian-base"
+             title="Всё на живые деньги">
+      <bind role="orchestrator"      model="deepseek/deepseek-flash" effort="high"/>
+      <bind role="worker"            model="deepseek/deepseek-flash" effort="high"/>
+      <bind role="worker-highstakes" model="deepseek/deepseek-flash" effort="max"/>
+      <bind role="explore"           model="deepseek/deepseek-flash" effort="low"/>
+      <bind role="reserve"           model="deepseek/deepseek-flash" effort="max"/>
+    </profile>
+
+  </model-profiles>
+
+</petbox>
