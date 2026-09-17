@@ -33,16 +33,11 @@ import { HARNESS_INLINE_HARD_LIMIT_BYTES } from "./session-budget.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-// Generous enough to never flake on a loaded CI box, tight enough to fail hard if a
-// regression reintroduces anything resembling the old ~8s (timeout-budget) or ~18s
-// (lingering-socket) waits this kit's exit path was built to avoid.
-const WALL_CLOCK_BUDGET_MS = 2000;
-
-// The budget that replaced a whole-process wall clock on the pull-memory path (see the test
-// below). NOT a latency measurement: it is the gap between the FAKE SERVER ANSWERING and the
-// child's process ending — "did the hook let go of the event loop once its work was done" —
-// and a healthy hook spends a few milliseconds there, whatever the box is doing. It is
-// deliberately generous, because what it must catch is not slowness but a WAIT: an uncleared
+// The budget that replaced a whole-process wall clock on the pull-memory and droid-pull-memory
+// paths (see the tests below). NOT a latency measurement: it is the gap between the FAKE SERVER
+// ANSWERING and the child's process ending — "did the hook let go of the event loop once its
+// work was done" — and a healthy hook spends a few milliseconds there, whatever the box is
+// doing. It is deliberately generous, because what it must catch is not slowness but a WAIT: an uncleared
 // fetch-timeout timer (SESSION_FETCH_BUDGET_MS = 2000ms — a timer is NOT in
 // process._getActiveHandles(), so hook-drain.ts's unref pass does not rescue it, measured) or a
 // socket still referenced after an abort (~10-18s). Timing the whole process instead measured
@@ -447,8 +442,9 @@ test("droid-pull-memory.ts as a real process: a materialized owner-only skill re
   }
 });
 
-test("droid-pull-memory.ts as a real process: wall clock stays well under budget against a fast server", async () => {
-  const { close, port } = await startFastFakeServer();
+test("droid-pull-memory.ts as a real process: the process is gone shortly after the server answers, and nothing holds the loop open", async () => {
+  const server = await startFastFakeServer();
+  const { close, port } = server;
   const { home, projectDir } = setUpIsolatedRegistry(`http://127.0.0.1:${port}`);
   try {
     const env: NodeJS.ProcessEnv = {
@@ -469,9 +465,28 @@ test("droid-pull-memory.ts as a real process: wall clock stays well under budget
     assert.equal(result.code, 0, `expected exit 0, got ${result.code}. stderr: ${result.stderr}`);
     assert.equal(result.stderr, "", "hook must never write to stderr on the happy path");
     assert.ok(result.stdout.length > 0, "hook must print the banner");
+
+    // Same rationale as the pull-memory.ts sibling test above: the measured quantity is the
+    // hook's OWN tail — from the fake server's answer to the end of the process — NOT the whole
+    // process lifetime, which is dominated by Node booting and type-stripping this kit's
+    // modules (a property of the machine; under the full gate the whole-process wall clock
+    // measured 4148ms on a perfectly healthy droid hook — same class as observation
+    // pull-memory-wall-clock-budget-test-flaky-under-load, filed for this test as
+    // droid-pull-memory-wall-clock-budget-same-class). Everything that can prolong the TAIL is
+    // the hook's own doing: a timer left pending or a fetch handle still referenced.
+    //
+    // THIS IS NOT A PERFORMANCE MEASUREMENT. The budget below is not a latency target and a
+    // number anywhere near it is not a finding about speed; it is a hang detector with an order
+    // of magnitude of slack over what a healthy hook spends here (a few ms).
+    assert.ok(server.answeredAt() > 0, "the fake server must have answered — nothing else in this test means anything");
+    const lingerMs = result.exitedAt - server.answeredAt();
     assert.ok(
-      result.wallMs < WALL_CLOCK_BUDGET_MS,
-      `wall clock ${result.wallMs}ms exceeded the ${WALL_CLOCK_BUDGET_MS}ms budget against a server that never stalls`,
+      lingerMs < POST_RESPONSE_LINGER_BUDGET_MS,
+      `the hook outlived the server's answer by ${lingerMs}ms (> ${POST_RESPONSE_LINGER_BUDGET_MS}ms), ` +
+        `i.e. it could not let go of the event loop after its work was done — the regression this test exists to ` +
+        `catch (an uncleared fetch-timeout timer, ~${2000}ms here, or a socket left referenced past an abort, ~10-18s). ` +
+        `NOT a performance measurement: this is a hang detector, and the few ms a healthy hook spends here do not ` +
+        `measure how fast this machine is.`,
     );
   } finally {
     await close();
