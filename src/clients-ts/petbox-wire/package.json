@@ -17,7 +17,8 @@
 		"typecheck": "node scripts/sync-default-agents.mjs && tsc --noEmit"
 	},
 	"devDependencies": {
-		"@opencode-ai/plugin": "^1.17.20",
+		"@opencode-ai/plugin": "^1.18.29",
+		"@opencode/plugin": "^2.0.12",
 		"@types/node": "^22.10.2",
 		"typescript": "5.7.3"
 	},
