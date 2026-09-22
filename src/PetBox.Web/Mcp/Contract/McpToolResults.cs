@@ -354,7 +354,12 @@ public sealed record MemoryStoreDeletedResult(bool Deleted);
 // one `key` or a batch of `keys` — one shape for both, so a client never branches on arity.
 // Rows come back in the requested key order; a key that resolved to nothing is simply absent
 // (the batch is a soft filter, exactly like tasks_search `nodes[]`).
-public sealed record MemoryGetResultView(IReadOnlyList<PetBox.Memory.Contract.MemoryEntryView> Entries);
+// `Warning` (card memory-get-unknown-store-reads-as-missing-key): set ONLY in BATCH mode, and
+// ONLY when `store` itself does not exist in any authorized cascade leg — distinguishes "the
+// STORE was wrong" (an address bug, silently returning [] would look identical to "these keys
+// happen to be missing") from the ordinary soft-filtered batch miss, which stays silent by
+// design. A single `key` read gets the same distinction as a thrown error instead (see GetAsync).
+public sealed record MemoryGetResultView(IReadOnlyList<PetBox.Memory.Contract.MemoryEntryView> Entries, string? Warning = null);
 
 // Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
 // slice-controlled (null -> omitted). `Tags` is an array (the memory surface speaks

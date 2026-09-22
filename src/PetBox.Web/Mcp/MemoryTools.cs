@@ -146,15 +146,24 @@ public static class MemoryTools
 		need at once, not one round-trip each). Always returns { entries: [...] }, in the asked
 		order. The body is COMPLETE by default (this is the pointed full read — the uniform
 		bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full).
-		In a BATCH a key that matches nothing is silently dropped (soft filter, like tasks_search
-		`keys`) and an empty result is not an error; with a single `key` a miss stays a not-found
-		ERROR (never a bare null — strict MCP clients reject a null structured result; the error
-		rides the isError channel).
+		In a BATCH a key that matches nothing — in a `store` that DOES exist — is silently dropped
+		(soft filter, like tasks_search `keys`) and an empty result is not an error; with a
+		single `key` that same case stays a not-found ERROR (never a bare null — strict MCP
+		clients reject a null structured result; the error rides the isError channel).
+		`store` ITSELF not existing in any authorized cascade leg is a DIFFERENT case, always
+		distinguished from an ordinary key/entry miss (card
+		memory-get-unknown-store-reads-as-missing-key — the two used to read identically): with
+		a single `key` it throws its own error ("memory store 'X' does not exist…", with a
+		did-you-mean and the list of known stores); in a BATCH it returns the normal empty
+		`entries: []` PLUS a non-null `warning` carrying that same text — check `warning` before
+		reading an empty batch as "these keys just don't exist".
 		`scope`: project (default) | workspace. Omit to CASCADE project first, then workspace —
 		the same cascade contract as memory_search. A container you may not read answers
 		exactly like one that holds nothing (the memory-family read contract): batch keys are
 		dropped, a single `key` gets the SAME not-found error a missing entry gets — a refusal
-		is never distinguishable from absence. Requires memory:read.
+		is never distinguishable from absence. This non-disclosure rule still governs the
+		store-missing distinction above: it fires only when NO authorized leg has the store,
+		so it can never reveal whether an unauthorized container holds one. Requires memory:read.
 		`usageSource`: same telemetry-source split as memory_search — "deliberate" (default — a
 		human/agent intentionally read this entry) or "machine" (an automatic hook/context pull —
 		e.g. a canon-fallback read). Automated wiring-kit pulls should pass "machine". Case-
@@ -191,11 +200,17 @@ public static class MemoryTools
 		// caller's own workspace container (never a hardcoded global). Unauthorized
 		// cascade legs are skipped so a foreign container never surfaces. A key found in the
 		// nearer container is NOT re-read from the farther one (project precedence).
+		var containers = await SearchContainersAsync(http, wsmem, projectKey, scope, ct);
 		var found = new Dictionary<string, MemoryEntryView>(StringComparer.Ordinal);
 		// Where each entry was read from — a cascade answer may mix containers, and a delivery
 		// event belongs in the file of the container that served it.
 		var origin = new Dictionary<string, (string Container, string Scope)>(StringComparer.Ordinal);
-		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
+		// card memory-get-unknown-store-reads-as-missing-key: tracked SEPARATELY from `found` so a
+		// genuine key miss (the store exists, these keys don't) stays distinguishable from a
+		// wrong/typo'd store address (no authorized leg has ever heard of it) — the two used to
+		// collapse into the identical "entry not found in store" text.
+		var storeExistsSomewhere = false;
+		foreach (var (scopeName, container) in containers)
 		{
 			ct.ThrowIfCancellationRequested();
 			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
@@ -207,6 +222,7 @@ public static class MemoryTools
 			// filter could not exist: an unresolved key walks to the far leg, and a store-not-found
 			// there would throw the whole call.
 			if (!await memory.StoreExistsAsync(container, store, ct)) continue;
+			storeExistsSomewhere = true;
 			foreach (var entry in await memory.GetManyAsync(container, store, missing, ct))
 			{
 				found[entry.Key] = entry;
@@ -217,7 +233,29 @@ public static class MemoryTools
 			}
 		}
 
-		if (found.Count == 0 && !batch)
+		// The store itself was never seen in ANY authorized leg — a wrong ADDRESS, not a key miss.
+		// Built only from authorized legs (AssertMemoryProjectAsync above already filtered them),
+		// so an unauthorized container's store names never leak (same non-disclosure posture as
+		// every other memory-family read refusal).
+		string? storeMissingWarning = null;
+		if (!storeExistsSomewhere)
+		{
+			var known = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (var (_, container) in containers)
+			{
+				try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
+				catch (UnauthorizedAccessException) { continue; }
+				foreach (var s in await memory.ListStoresAsync(container, ct)) known.Add(s.Name);
+			}
+			var near = NamespaceSuggest.Nearest(store, known.Concat(ReservedStores));
+			var hint = near.Count == 0 ? "" : $" Did you mean {string.Join(" / ", near.Select(n => $"'{n}'"))}?";
+			var knownText = known.Count == 0 ? "" : $" Known stores: {string.Join(", ", known)}.";
+			storeMissingWarning =
+				$"memory store '{store}' does not exist (scope: {(scope ?? "cascade project+workspace")})."
+				+ hint + knownText;
+			if (!batch) throw new InvalidOperationException(storeMissingWarning);
+		}
+		else if (found.Count == 0 && !batch)
 			throw new InvalidOperationException($"memory entry '{wanted[0]}' not found in store '{store}' (scope: {(scope ?? "cascade project+workspace")})");
 
 		var entries = wanted.Where(found.ContainsKey).Select(k => found[k]).ToList();
@@ -244,7 +282,7 @@ public static class MemoryTools
 				Rank: x.Rank, ScoreRaw: null, KRel: 1, TransportSessionId: McpSessionId(http),
 				UsageSource: resolvedUsageSource))]);
 
-		return new MemoryGetResultView(wireEntries);
+		return new MemoryGetResultView(wireEntries, storeMissingWarning);
 	}
 
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
@@ -810,7 +848,7 @@ public static class MemoryTools
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[LogArg][Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		string? projectKey = null,
-		[LogArg][Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
+		[LogArg][Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones). Unlike memory_get/memory_delta, `store` here is a FILTER over a multi-store sweep, not a single target's address — a typo'd or nonexistent name is not an error, it just matches nothing, exactly like a `type`/`q` that matches nothing (card memory-get-unknown-store-reads-as-missing-key looked at this surface too and left it as-is: a search with no matches and a search of an unknown store are the same shape of \"nothing here\", and this verb already reports why a walk stopped via `stop`/`poolBoundaryHint` rather than distinguishing filter causes). Check `memory_store_list` if you need to know which store names actually exist.")] string? store = null,
 		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
 		[LogArg][Description("Max rows returned — one PAGE (default 20; 0 = no cap — the output budget still applies). With `q` it no longer widens the semantic candidate depth: a paged read uses a fixed depth (60), so `limit` can be varied freely between pages without changing the pool. A single deep query (limit > 16, where 3×limit used to exceed 60) therefore sees slightly less vector recall than it did when depth followed `limit`.")] int? limit = null,
