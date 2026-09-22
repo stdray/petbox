@@ -24,12 +24,12 @@ Upload text once, then pass a short reference instead of retyping the text into 
 ```
 curl -sS -X POST "https://petbox.3po.su/api/blobs/{{PROJECT}}" \
   --data-binary @report.md \
-  -H "X-Api-Key: $PETBOX_API_KEY"
+  -H "X-Api-Key: ${{ENV_VAR}}"
 ```
 ```
 # PowerShell
 Invoke-RestMethod -Method Post -Uri "https://petbox.3po.su/api/blobs/{{PROJECT}}" `
-  -InFile report.md -Headers @{ "X-Api-Key" = $env:PETBOX_API_KEY }
+  -InFile report.md -Headers @{ "X-Api-Key" = $env:{{ENV_VAR}} }
 ```
 
 The RAW file bytes are the request body — no JSON envelope, no multipart. The response is

@@ -738,7 +738,7 @@ export async function runStatus(opts: { readonly offline: boolean; readonly cwd:
     const probe = await probeWorkspace(resolvedProject.baseUrl, resolvedProject.apiKey);
     const workspace = probe.ok ? probe.workspace : undefined;
     log(`status: pillar 4/4 — skills (project=${resolvedProject.project}, workspace=${workspace ?? "unknown"}):`);
-    for (const report of buildSkillReports(root, TEMPLATES_ROOT, resolvedProject.project, workspace)) {
+    for (const report of buildSkillReports(root, TEMPLATES_ROOT, resolvedProject.project, workspace, resolvedProject.envVar)) {
       log(`status:   ${formatSkillFile(report)}`);
     }
   }
@@ -851,7 +851,7 @@ export function computeRegistryStatusRow(
     if (!spec.needsWorkspace) {
       try {
         const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
-        rendered = renderSkillTemplate(tpl, entry.project, "");
+        rendered = renderSkillTemplate(tpl, entry.project, "", entry.envVar);
       } catch {
         rendered = undefined; // this kit build no longer ships this template — treat as unknown
       }
@@ -866,7 +866,7 @@ export function computeRegistryStatusRow(
       for (const assetName of spec.extraFiles ?? []) {
         try {
           const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
-          assetRendered.set(assetName, renderSkillTemplate(assetTpl, entry.project, ""));
+          assetRendered.set(assetName, renderSkillTemplate(assetTpl, entry.project, "", entry.envVar));
         } catch {
           assetRendered.set(assetName, undefined);
         }
