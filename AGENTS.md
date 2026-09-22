@@ -52,8 +52,14 @@ any methodology instance, so it never reaches the owner's decision queue or dige
 defect-like findings (something broken, unexpected, or contradicting docs) as ordinary task
 nodes on the ordinary task surface (`tasks_search`/`tasks_node_get`/`tasks_upsert`/
 `tasks_delta`/`comments_*`); status is a plain value, not an FSM: `seen`/`promoted` (open),
-`fixed` (terminal ok), `declined` (terminal cancel). A write that resembles an existing
-observation dedupes onto it and bumps its recurrence count instead of creating a duplicate.
+`fixed` (terminal ok), `declined` (terminal cancel). A create-time write is checked against
+every open+fixed+declined observation on the board in two passes — an exact match on
+normalized text (case/punctuation/whitespace folded), then, only if that misses, cosine
+similarity over on-the-fly embeddings of title+body (`ObservationDedupOptions.SemanticThreshold`,
+default 0.75 — separate from memory-fact dedup's 0.92, calibrated for free-form incident
+narratives rather than atomic facts; degrades to the text-only pass when no embedder is
+available) — and a hit dedupes onto the existing node, bumping its recurrence count instead of
+creating a duplicate.
 The one new MCP tool, `tasks_observation_promote`, turns a `seen` observation into a real
 `work` or `ideas` node via an `observation_obligation` relation, without deleting the
 observation. When the promoted obligation reaches a terminal-ok status the observation

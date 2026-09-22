@@ -1,11 +1,14 @@
 using LinqToDB;
+using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Tasks.Workflow;
+using PetBox.Tests.Sessions;
 using PetBox.Web.Mcp.Contract;
 using PetBox.Web.Tasks;
 
@@ -250,5 +253,118 @@ public sealed class ObservationKindAndDedupTests : IDisposable
 		outcome.Hits.Should().ContainSingle().Which.RecurrenceCount.Should().Be(3, "recurrence still counts every sighting");
 		(await Read("obs-1")).OriginSessions.Should().BeEquivalentTo(["sess-birth"]);
 		OriginRows(nodeId).Should().ContainSingle("(NodeId, SessionId) is the primary key — the same session recurring cannot become a second row");
+	}
+
+	// work observation-dedup-semantic-leg: the cheap normalized-text pass (exercised by every
+	// test above via `llm: null`) only ever catches a near-VERBATIM repeat. These three cover
+	// the semantic leg itself, using the SAME deterministic bag-of-words embedder
+	// (HashedBagOfWords, PetBox.Tests.Sessions) SessionFactsJobTests already uses to exercise
+	// AutocaptureDedup's semantic pass — real cosine over real (hashed) token overlap, not a
+	// scripted verdict.
+	//
+	// The two texts below are the fixture for "paraphrase": same finding, reworded and
+	// reordered (so the cheap textual pass sees two DIFFERENT strings), sharing most but not
+	// all content tokens. Verified once, offline, against HashedBagOfWords' own hashing: cosine
+	// ≈ 0.89 — below AutocaptureDedupOptions' 0.92 memory-dedup default (so a test asserting
+	// this pair merges under 0.92 would be RED — matching the live 0.882/0.776 misses recorded
+	// on the card) and above ObservationDedupOptions' 0.75 default (so it merges here).
+	const string OriginalTitle = "Background timer drift causes duplicate sends";
+	const string OriginalBody = "Timer regression background retry timer drifts forward every cycle causing duplicate sends duplicate sends observed in production logs core scheduler.";
+	const string ParaphraseTitle = "Duplicate sends: scheduler timer keeps drifting";
+	const string ParaphraseBody = "Background scheduler timer drifts forward every cycle causing duplicate sends duplicate sends seen in prod logs core retry timer issue.";
+	// Same component words as the original (scheduler/core/logs/retry/timer) but a genuinely
+	// different defect (queue backlog, not duplicate sends) — cosine ≈ 0.29 against the
+	// original, comfortably below both thresholds. This is the mandatory negative case: sharing
+	// a component must never be enough to merge two distinct findings.
+	const string DifferentDefectTitle = "Retry queue backlog growing on the core scheduler";
+	const string DifferentDefectBody = "Scheduler core logs show retry queue backlog growing, unrelated to timer drift — entirely different defect about queue depth alerts.";
+
+	static ObservationDedupService SemanticDedup(ITasksService tasks, double threshold = 0.75) =>
+		new(tasks, new HashedBagOfWordsLlmClient(), Options.Create(new ObservationDedupOptions { SemanticThreshold = threshold }));
+
+	[Fact]
+	public async Task DedupService_SemanticLeg_ParaphraseOfTheSameFinding_Bumps()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		// The cheap textual pass must NOT be what catches this — prove it first with llm:null.
+		var textOnly = new ObservationDedupService(_tasks, llm: null);
+		var textOnlyOutcome = await textOnly.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody }]);
+		textOnlyOutcome.Hits.Should().BeEmpty("a reworded paraphrase must not satisfy the cheap normalized-text pass — this proves the fixture actually exercises the semantic leg");
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody }]);
+
+		var hit = outcome.Hits.Should().ContainSingle().Subject;
+		hit.ExistingKey.Should().Be("obs-1");
+		hit.RecurrenceCount.Should().Be(2);
+		outcome.RemainingNodes.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task DedupService_SemanticLeg_SameComponentDifferentDefect_DoesNotMerge()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		await _tasks.RecordObservationFirstSeenAsync(Proj, created.Result.Added.Should().ContainSingle().Subject.NodeId);
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = DifferentDefectTitle, Body = DifferentDefectBody }]);
+
+		outcome.Hits.Should().BeEmpty("same component (scheduler/core/retry), different defect — must go through as its own node");
+		outcome.RemainingNodes.Should().ContainSingle().Which.Key.Should().Be("obs-2");
+	}
+
+	[Fact]
+	public async Task DedupService_SemanticLeg_ParaphraseAfterFix_ReopensAndFlagsTheFixingTask()
+	{
+		await _tasks.CreateBoardAsync(Proj, SystemBoards.Observations, SystemBoards.ObservationKind, "obs", null,
+			methodologyInstance: TaskBoardMeta.UtilityWorld);
+
+		var created = await _tasks.UpsertAsync(Proj, SystemBoards.Observations,
+			[new NodePatch { Key = "obs-1", Version = 0, Title = OriginalTitle, Body = OriginalBody }]);
+		var nodeId = created.Result.Added.Should().ContainSingle().Subject.NodeId;
+		await _tasks.RecordObservationFirstSeenAsync(Proj, nodeId);
+
+		await _tasks.UpsertAsync(Proj, SystemBoards.Observations, [new NodePatch { Key = "obs-1", Version = 1, Status = "promoted" }]);
+		var fixCommit = await _tasks.UpsertAsync(Proj, SystemBoards.Observations, [new NodePatch { Key = "obs-1", Version = 2, Status = "fixed" }]);
+		fixCommit.Result.Applied.Should().BeTrue();
+
+		var dedup = SemanticDedup(_tasks);
+		var outcome = await dedup.PreProcessCreatesAsync(Proj, SystemBoards.Observations,
+			[new TaskNodeInput { Key = "obs-2", Version = 0, Title = ParaphraseTitle, Body = ParaphraseBody }]);
+
+		outcome.Hits.Should().ContainSingle().Which.ExistingKey.Should().Be("obs-1");
+		var reopened = await Read("obs-1");
+		reopened.Status.Should().Be("seen", "a paraphrased recurrence after `fixed` must reopen the observation exactly like a verbatim one does");
+		var signal = await _signals.GetAsync(Proj, nodeId);
+		signal!.RecurredAfterFixAt.Should().NotBeNull();
+	}
+
+	// Deterministic bag-of-words embedder (same shape as SessionFactsJobTests.EmbeddingChat):
+	// real cosine over hashed token overlap, so the merge/no-merge boundary in the tests above
+	// is a property of the TEXT, not of a scripted verdict.
+	sealed class HashedBagOfWordsLlmClient : ILlmClient
+	{
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			Task.FromResult(HashedBagOfWords.Embed(request.Inputs));
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
 	}
 }

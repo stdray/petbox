@@ -1,9 +1,29 @@
+using Microsoft.Extensions.Options;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Web.Mcp.Contract;
 using PetBox.Web.Search;
 
 namespace PetBox.Web.Tasks;
+
+// Tunables for the observation-dedup guard's semantic leg (work
+// observation-dedup-semantic-leg). A SEPARATE threshold from AutocaptureDedupOptions
+// (memory-fact dedup, default 0.92): an observation is a free-form incident narrative
+// (headers, code blocks, version strings), not an atomic extracted fact, and a genuine
+// paraphrase of the SAME finding scores markedly lower on cosine than a paraphrase of a
+// one-line memory fact does. Measured live 2026-09-22 (qwen3-embed-4b via the LLM router,
+// project $system, `DedupText` shape — title + body) on the two most recent real observation
+// twins: a genuine paraphrase pair scored 0.882 and 0.776 cosine — both BELOW the 0.92
+// default, which is exactly why they missed and forked into twin nodes. Two genuinely
+// different observations scored 0.50-0.54 cosine even sharing a component ("codex",
+// "agent-wiring"). 0.75 sits below both measured paraphrase scores and >0.20 above the
+// measured negative ceiling — that margin is the false-positive guard, not a heuristic.
+// Bound from configuration section "ObservationDedup" (mirrors AutocaptureDedupOptions'
+// own "AutocaptureDedup" section).
+public sealed class ObservationDedupOptions
+{
+	public double SemanticThreshold { get; set; } = 0.75;
+}
 
 // One node the caller asked to CREATE that instead landed on an existing observation
 // (work observation-kind-and-dedup): `RequestedKey` is the slug the caller sent (never
@@ -42,8 +62,10 @@ public interface IObservationDedupService
 	Task<ObservationDedupOutcome> PreProcessCreatesAsync(string projectKey, string board, TaskNodeInput[] nodes, string? sessionId = null, CancellationToken ct = default);
 }
 
-public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm = null) : IObservationDedupService
+public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm = null, IOptions<ObservationDedupOptions>? options = null) : IObservationDedupService
 {
+	readonly double _semanticThreshold = options?.Value.SemanticThreshold ?? new ObservationDedupOptions().SemanticThreshold;
+
 	// `sessionId` (work observation-recurrence-session-provenance): the caller's own session,
 	// forwarded onto a HIT (RecordObservationRecurrenceAsync unions it into the existing
 	// node's originSessions) — a genuinely NEW node still gets it the normal way, through
@@ -60,7 +82,7 @@ public sealed class ObservationDedupService(ITasksService tasks, ILlmClient? llm
 		foreach (var n in nodes)
 		{
 			var text = DedupText(n);
-			var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(projectKey, text, pool, llm, ct);
+			var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(projectKey, text, pool, llm, ct, _semanticThreshold);
 			if (dupKey is null)
 			{
 				remaining.Add(n);

@@ -904,6 +904,10 @@ public partial class Program
 		// `observations` board (work observation-kind-and-dedup) — see ObservationDedupService's
 		// header comment for why the DECISION has to live in PetBox.Web (AutocaptureDedup is
 		// internal to this assembly) while the pool/counter it touches stay behind ITasksService.
+		// Its semantic-leg threshold (work observation-dedup-semantic-leg) is its OWN tunable,
+		// separate from AutocaptureDedupOptions' memory-fact default — see ObservationDedupOptions.
+		builder.Services.Configure<PetBox.Web.Tasks.ObservationDedupOptions>(
+			builder.Configuration.GetSection("ObservationDedup"));
 		builder.Services.AddScoped<PetBox.Web.Tasks.IObservationDedupService, PetBox.Web.Tasks.ObservationDedupService>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.

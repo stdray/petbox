@@ -150,13 +150,19 @@ record.
 **Status is a value, not an engine.** `seen` (open) → `promoted` (open) → `fixed` (terminal
 ok); `declined` (terminal cancel).
 
-**Dedup with accumulating recurrence.** A write that resembles an existing observation —
-automatic (the session-facts extractor's judge, on a fourth verdict `observe`: defect-like
-material is routed here instead of into memory) or manual (a plain `tasks_upsert` to the
-board) — does not create a duplicate. It bumps the existing node's `recurrenceCount` and
-`lastSeenAt` instead, reported back as `deduped:[{requestedKey, existingKey, existingNodeId,
-recurrenceCount}]`. This only fires on a purely-creating batch (every node at `version:0`,
-no deletes) — don't mix creates with edits in the same call.
+**Dedup with accumulating recurrence.** A create-time write — automatic (the session-facts
+extractor's judge, on a fourth verdict `observe`: defect-like material is routed here instead
+of into memory) or manual (a plain `tasks_upsert` to the board) — is checked against every
+open+fixed+declined observation on the board in two passes: an exact match on normalized text
+(case/punctuation/whitespace folded) first, then, only if that misses, cosine similarity over
+on-the-fly embeddings of title+body (`ObservationDedupOptions.SemanticThreshold`, default
+0.75 — a separate, lower tunable than memory-fact dedup's 0.92, because a free-form incident
+narrative scores lower on cosine for a genuine paraphrase than an atomic extracted fact does;
+degrades to the text-only pass when no embedder is available). Either pass hitting does not
+create a duplicate: it bumps the existing node's `recurrenceCount` and `lastSeenAt` instead,
+reported back as `deduped:[{requestedKey, existingKey, existingNodeId, recurrenceCount}]`.
+This only fires on a purely-creating batch (every node at `version:0`, no deletes) — don't
+mix creates with edits in the same call.
 
 **Promotion has exactly two exits**, via the one new tool, `tasks_observation_promote`: a
 `seen` observation becomes a `work` task (`type` required: `feature|bug|chore`) or an
