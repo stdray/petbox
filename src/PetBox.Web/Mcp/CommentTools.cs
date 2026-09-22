@@ -34,10 +34,15 @@ public static class CommentTools
 	[McpServerTool(Name = "comments_upsert", Title = "Upsert node comments", UseStructuredContent = true, OutputSchemaType = typeof(CommentsUpsertResult))]
 	[Description("""
 		Batch declarative upsert of node comments (uniform-entity-verbs). Each item: {id?, node?,
-		parentId?, author?, body, tags?, version?}. `id` ABSENT ⇒ CREATE (needs node + author;
-		parentId = a COMMENT id, NOT a node ref, makes it a reply); `id` PRESENT ⇒ PATCH body and, when `tags` is given, the WHOLE tag set — `tags:[]`
-		CLEARS it, omit `tags` to leave it as-is — under a `version` WATERMARK (a stale baseline ⇒ conflict, never clobber; version:0 = new,
-		exactly like tasks_upsert). `body` is GFM markdown — `##` headings and REAL newlines, NOT
+		parentId?, author?, body?, tags?, version?}. `id` ABSENT ⇒ CREATE (needs node + author +
+		body; parentId = a COMMENT id, NOT a node ref, makes it a reply); `id` PRESENT ⇒ PATCH —
+		`body` follows the same omitted-stays-unchanged contract as `tags`/`slug`: omit it to leave
+		the text as-is (e.g. a slug-only or tags-only patch), send it to replace the whole body.
+		When `tags` is given it replaces the WHOLE tag set — `tags:[]` CLEARS it, omit `tags` to leave it as-is
+		— under a `version` WATERMARK (a stale baseline ⇒ conflict, never clobber;
+		version:0 = new, exactly like tasks_upsert). A PATCH that changes NOTHING at all (no
+		body/fragment/bodyRef/tags/slug) is refused with a clear message rather than a silent no-op.
+		`body` is GFM markdown — `##` headings and REAL newlines, NOT
 		literal `\n`, NOT `==headings==`. `applied` is the SINGLE source of truth — false = nothing
 		written, see conflicts[]. Requires tasks:write.
 		`slug` is an OPTIONAL human-readable address for the comment, unique WITHIN ITS OWNING NODE
@@ -62,8 +67,12 @@ public static class CommentTools
 		    its slug key on `board` or its 32-hex NodeId, both accepted) and `author`. `parentId`
 		    is a COMMENT id, NOT a node reference: it makes the item a
 		    REPLY — it must be an active comment under the SAME node, else the batch is rejected.
-		  • PATCH — `id` present (an existing comment id). Updates `body` and, when `tags` is given,
-		    replaces the tag set (omitted `tags` leaves it as-is). You cannot re-parent in v1.
+		  • PATCH — `id` present (an existing comment id). `body` is OPTIONAL here (unlike on
+		    CREATE): omit it to leave the text unchanged (a slug-only or tags-only patch), send it
+		    to replace the whole body — a blank/whitespace string is refused, never treated as a
+		    clear. When `tags` is given, replaces the tag set (omitted `tags` leaves it as-is). A
+		    patch carrying none of body/fragment/bodyRef/tags/slug is refused outright rather than
+		    silently landing as a no-op. You cannot re-parent in v1.
 		`version` is the WATERMARK baseline for a PATCH: pass the board's comment `currentVersion`
 		from your last read OR the comment's own version — both valid; 0 = a new comment. A stale
 		baseline (the comment moved on) returns a conflict instead of clobbering.
@@ -91,7 +100,7 @@ public static class CommentTools
 	public static async Task<CommentsUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body, bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; for a body already on disk as a file, OR for body text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above); mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new), slug? (the comment's human-readable address within its owning node — unique there, shaped [a-z][a-z0-9_-]{0,99}, WRITE-ONCE once set; omit to leave a create without one and a patch as it is) , idempotencyKey? (CREATE only — a caller-chosen retry token; see the full description) }. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
+		[Description("Array of comment items: { id? (omit to CREATE), node? (the owner node — a node reference: its slug key or its 32-hex NodeId, both accepted; required to create), parentId? (a COMMENT id = reply, NOT a node reference), author? (required to create), body? (required on CREATE; on a PATCH, omit it to leave the current text unchanged — e.g. a slug-only or tags-only patch — a blank/whitespace string is refused, never treated as a clear), bodyRef? (a blob reference from POST /api/blobs/{projectKey} — its text BECOMES this comment's body; for a body already on disk as a file, OR for body text you are composing right now: write it to a file first, then POST it and pass the ref here (the required path for long or non-ASCII text — see the sizing guidance above); mutually exclusive with body and fragment, sending two is a refusal in conflicts[]), tags? (array of strings), version? (watermark for a PATCH; 0 = new), slug? (the comment's human-readable address within its owning node — unique there, shaped [a-z][a-z0-9_-]{0,99}, WRITE-ONCE once set; omit to leave a create without one and a patch as it is) , idempotencyKey? (CREATE only — a caller-chosen retry token; see the full description) }. A PATCH carrying none of body/fragment/bodyRef/tags/slug is refused rather than landing as a silent no-op. A response row's `nodeId` is a valid `node` on a later call — reading and writing address the same owner node, just under the response-only `NodeId` suffix convention.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
