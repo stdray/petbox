@@ -171,3 +171,8 @@ public sealed class MethodologySetDescriptionFixture : TasksMcpFixture
 {
 	public MethodologySetDescriptionFixture() : base("mdsc", "SetDescription") { }
 }
+
+public sealed class ObservationPromoteBodyFixture : TasksMcpFixture
+{
+	public ObservationPromoteBodyFixture() : base("opbe", "ObservationPromoteBody") { }
+}
