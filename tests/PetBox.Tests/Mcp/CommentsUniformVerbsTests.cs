@@ -138,6 +138,86 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		got.Tags.Should().Equal("artifact:plan");                       // survived the tags-omitted patch
 	}
 
+	// card comment-slug-only-patch-requires-body: a PATCH that only carries `slug` (or only
+	// `tags`) used to fail with "comment body is required" even though the tool promises
+	// PATCH semantics (an omitted field stays unchanged). `body` must follow the same
+	// omitted-stays-unchanged contract as `tags`/`slug` on a PATCH.
+	[Fact]
+	public async Task Upsert_Patch_SlugOnly_LeavesBodyAndTagsUnchanged()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body", ["artifact:plan"]));
+		var id = created.Added.Single().Id;
+
+		var patched = await Upsert(http, new CommentItemInput { Id = id, Slug = "part-one", Version = created.CurrentVersion });
+		patched.Applied.Should().BeTrue();
+		patched.Updated.Should().ContainSingle(c => c.Id == id && c.Slug == "part-one");
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Body.Should().Be("original body");   // untouched by the slug-only patch
+		got.Tags.Should().Equal("artifact:plan"); // untouched too
+		got.Slug.Should().Be("part-one");
+	}
+
+	[Fact]
+	public async Task Upsert_Patch_TagsOnly_LeavesBodyUnchanged()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body", ["old-tag"]));
+		var id = created.Added.Single().Id;
+
+		var patched = await Upsert(http, new CommentItemInput { Id = id, Tags = ["new-tag"], Version = created.CurrentVersion });
+		patched.Applied.Should().BeTrue();
+		patched.Updated.Should().ContainSingle(c => c.Id == id);
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Body.Should().Be("original body"); // untouched by the tags-only patch
+		got.Tags.Should().Equal("new-tag");
+	}
+
+	[Fact]
+	public async Task Upsert_Patch_CarryingNoChangedField_IsRefused()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body"));
+		var id = created.Added.Single().Id;
+
+		// No body, no tags, no slug (fragment/bodyRef untouched) — nothing for this patch to do.
+		var act = () => Upsert(http, new CommentItemInput { Id = id, Version = created.CurrentVersion });
+		var ex = await act.Should().ThrowAsync<ArgumentException>();
+		ex.Which.Message.Should().Contain("no changes");
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Body.Should().Be("original body"); // refused, not silently applied
+	}
+
+	[Fact]
+	public async Task Upsert_Patch_ExplicitBlankBody_IsRefused_NotTreatedAsAClear()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body"));
+		var id = created.Added.Single().Id;
+
+		var act = () => Upsert(http, new CommentItemInput { Id = id, Body = "   ", Version = created.CurrentVersion });
+		var ex = await act.Should().ThrowAsync<ArgumentException>();
+		ex.Which.Message.Should().Contain("blank");
+	}
+
+	[Fact]
+	public async Task Upsert_Create_WithoutBody_IsStillRefused()
+	{
+		var http = Http();
+		var node = NewNode();
+
+		var act = () => Upsert(http, new CommentItemInput { Node = node, Author = "alice", Body = null });
+		var ex = await act.Should().ThrowAsync<ArgumentException>();
+		ex.Which.Message.Should().Contain("body is required");
+	}
+
 	[Fact]
 	public async Task Upsert_StaleVersion_Conflicts_NothingWritten()
 	{

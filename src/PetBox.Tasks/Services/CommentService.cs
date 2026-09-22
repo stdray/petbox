@@ -218,10 +218,10 @@ public sealed class CommentService : ICommentService
 
 			try
 			{
-				if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
 				if (string.IsNullOrEmpty(it.Id))
 				{
-					// CREATE
+					// CREATE — body is mandatory content (there is no prior text to fall back to).
+					if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
 					if (string.IsNullOrWhiteSpace(it.NodeId)) throw new ArgumentException("nodeId is required to create a comment");
 					if (string.IsNullOrWhiteSpace(it.Author)) throw new ArgumentException("author is required to create a comment");
 					if (!string.IsNullOrEmpty(it.ParentId))
@@ -273,7 +273,24 @@ public sealed class CommentService : ICommentService
 					// PATCH
 					if (!currentById.TryGetValue(it.Id!, out var cur))
 						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
-					desired.Add(cur with { Version = it.Version, Body = it.Body!, Slug = ResolveSlug(it.Slug, cur.Slug, cur.NodeId, it.Id!) });
+					// `Body` follows the same omitted-stays-unchanged contract as `Tags`/`Slug`: null =
+					// omitted, keep the current text; an explicit blank/whitespace string is invalid
+					// content, not a clear (a comment can never legally be bodyless — that is what
+					// CREATE above already enforces, so PATCH holds it to the same bar).
+					if (it.Body is not null && string.IsNullOrWhiteSpace(it.Body))
+						throw new ArgumentException("comment body cannot be blank");
+					// A patch that changes NOTHING (no body/fragment/bodyRef/tags/slug — fragment and
+					// bodyRef are already excluded by this point, see the branches above) is a caller
+					// bug, not a silent no-op: name it instead of writing an identical revision.
+					if (it.Body is null && it.Tags is null && it.Slug is null)
+						throw new ArgumentException(
+							$"comment '{it.Id}' patch carries no changes: provide body, fragment, bodyRef, tags, or slug");
+					desired.Add(cur with
+					{
+						Version = it.Version,
+						Body = it.Body ?? cur.Body,
+						Slug = ResolveSlug(it.Slug, cur.Slug, cur.NodeId, it.Id!),
+					});
 					itemByKey[it.Id!] = it;
 					patchedKeys.Add(it.Id!);
 				}
