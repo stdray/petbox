@@ -72,3 +72,52 @@ static class ParamNameSuggest
 		return prefix.Concat(distance).Distinct(StringComparer.OrdinalIgnoreCase).Take(take).ToList();
 	}
 }
+
+// Card work/unknown-param-curated-hints. Two frequent misses where SIMILARITY (above) gives no
+// useful hint, or the WRONG one, because the domain knowledge isn't in the schema at all — it is in
+// a decision the schema can't express:
+//   - `limit` on session_search: session-search-page-width-param-name deliberately did NOT add
+//     `limit` — the tool has TWO independent page-size knobs (`sessions`, `hitsPerSession`), and a
+//     single `limit` would have to pick one. Nearest() finds nothing close (no shared prefix, and
+//     the edit distance to every real name is well past budget), so without a curated entry the
+//     caller gets only the bare "Accepted parameters" list and has to guess which one plays
+//     `limit`'s role.
+//   - `usageSource` on a WRITE verb: the parameter is real, just not on THIS tool — it exists only
+//     on read verbs (`tasks_node_get`, `memory_search`, …), where it tags who triggered the read
+//     (deliberate vs. machine) for usage accounting. A write records no impressions, so it was never
+//     given the parameter. That asymmetry is invisible from "unknown parameter" alone.
+//
+// Deliberately still a REJECTION, exactly like every other offender here: a curated entry only
+// changes the MESSAGE, never accepts the call or silently maps the name onto something else.
+//
+// A curated hint REPLACES that one offender's similarity computation rather than sitting next to
+// it (see McpUnknownParameterFilter.Unknown) — `query` prefix-matches `q` closely enough that
+// Nearest() would offer "Did you mean 'q'?" on its own, and printing both would just repeat the
+// same fix twice.
+static class CuratedParamHint
+{
+	// (does this offender's leaf name match?, does it fire in this tool/scope?) -> the hint text.
+	// Scoped by CONTENT where possible (does this scope declare `q`?) rather than a hardcoded tool
+	// list, so the `query` entry tracks memory_search/tasks_search/session_search/comments_search/
+	// config_binding_search — every *_search verb with a free-text query — without naming them, and
+	// never fires on health_search, which has no `q` at all. `limit`/session_search has no schema
+	// signal to key off (the absence of a knob can't be read from a knob), so that one entry is
+	// named explicitly by tool.
+	static readonly (Func<string, bool> Leaf, Func<string, List<string>, bool> Fires, string Text)[] Table =
+	[
+		(Leaf: static l => l == "limit", Fires: static (tool, _) => tool == "session_search",
+			Text: "session_search has no 'limit' — its two page-size knobs are 'sessions' (how many " +
+				"sessions to hydrate and search inside) and 'hitsPerSession' (hits returned per session)."),
+
+		(Leaf: static l => l == "usageSource", Fires: static (_, _) => true,
+			Text: "'usageSource' exists only on read verbs — it tags who triggered the read " +
+				"(deliberate vs. machine) for usage accounting. A write records no impressions, so " +
+				"it does not accept the parameter at all; drop it."),
+
+		(Leaf: static l => l == "query", Fires: static (_, scope) => scope.Contains("q"),
+			Text: "the search text parameter is 'q' on every *_search tool, not 'query'."),
+	];
+
+	public static string? Lookup(string tool, string leaf, List<string> scope) =>
+		Table.Where(e => e.Leaf(leaf) && e.Fires(tool, scope)).Select(e => e.Text).FirstOrDefault();
+}
