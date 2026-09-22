@@ -31,7 +31,22 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `canon.ts` — memory-canon fetch + LKG cache (`~/.petbox/cache/<project>.canon.md`); see §6.
 - `push-session.ts` — Claude Code **Stop** hook (mirrors the transcript into the Session module).
 - `pull-memory.ts` — Claude Code **SessionStart** hook (injects the memory protocol + canon).
-- `opencode-plugin.ts` — global opencode plugin (system-prompt memory protocol + `session.idle` push).
+- `opencode-plugin.ts` — global opencode plugin (system-prompt memory protocol + turn-completion
+  transcript push). **Dual entrypoint, supports both opencode majors from one file** (work:
+  opencode-v2-plugin-api-port): the default export is simultaneously a V1 `PluginModule`
+  (`{id?, server}`, the object-entrypoint shape opencode 1.18.29+ recognizes) and a V2 `Plugin`
+  (`{id, setup}`, `@opencode/plugin`'s `Plugin.define` shape) — each loader reads the field it
+  understands and ignores the other. Check which major is installed with `opencode --version`
+  (v1: `1.x`, package `opencode-ai`; v2: `2.x`, package `@opencode/cli`, a SEPARATE npm package —
+  the two are not installed side by side by default, the v2 installer replaces the v1 binary).
+  **Upgrade order: kit first, then the binary.** Run `petbox-wire update` (or a fresh
+  `petbox-wire` wire) to land this dual-entrypoint plugin BEFORE upgrading `opencode` itself to
+  v2 — a pre-port plugin (V1-only shape) silently fails to load under v2 and the session runs
+  bare, with no error surfaced anywhere in the TUI. The push trigger's event NAME differs by
+  major: V1 fires on `session.idle`; V2 does NOT (that type still exists in v2's event schema but
+  was measured live to never fire on turn completion) — V2's actual signal is
+  `session.execution.succeeded`/`failed`/`interrupted`, all pushed the same way so a failed turn's
+  partial transcript is not dropped.
 - `droid-pull-memory.ts` — Factory Droid **SessionStart** hook (injects the memory protocol + canon).
 - `droid-push-session.ts` — Factory Droid **Stop** hook (mirrors the transcript into the Session module).
 - `droid-transcript.ts` — droid JSONL adapter (thin wrapper over `transcript.ts`'s shared extract/exclude rules).

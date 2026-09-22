@@ -57,7 +57,15 @@ export const CAPABILITIES: readonly Capability[] = [
  *   role_files — .opencode/agent/*.md.
  *   builtin_explore_inherits_model — built-in explore inherits parent model.
  *   hooks — not a first-class CC-hook surface; leave undeclared.
- *   spawn_subagents — can spawn subagents (agent types / Task-equivalent).
+ *   spawn_subagents — can spawn subagents (agent types / Task-equivalent). On opencode 2
+ *     (work: opencode-v2-plugin-api-port) this became BACKGROUND by default — the v1→v2
+ *     migration guide (opencode.ai/v2/docs/migrate-v1/, "Commands" section): "delegated
+ *     commands now run automatically in the background and report their results to the
+ *     parent session." This makes the v1 env flag `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS`
+ *     obsolete on v2 (native, not opt-in) — the kit never rendered that flag itself, so there
+ *     is nothing here to remove; it only lived on the owner's machine environment. No new
+ *     capability id was added for this: `spawn_subagents` was already true for opencode and
+ *     stays true — backgrounding is a behavior change under the same capability, not a new one.
  *
  * droid (Factory official docs — do not reintroduce enableHooks-MCP assumptions):
  *   role_files — custom droids in .factory/droids/*.md (project) and ~/.factory/droids/
