@@ -205,10 +205,24 @@ static class McpUnknownParameterFilter
 		if (unknown.Count > 0)
 		{
 			sb.Append($" Unrecognized: {string.Join(", ", unknown.Select(o => $"'{o.Display}'"))}.");
+
+			// CuratedParamHint takes an offender OUT of the similarity search below rather than sitting
+			// alongside it — see that class's header for why (the `query`->`q` case would otherwise
+			// print BOTH a curated sentence and a redundant "Did you mean 'q'?", since `query`
+			// prefix-matches `q` closely enough that Nearest() finds it unaided).
+			var curated = unknown
+				.Select(o => (o.Display, Hint: CuratedParamHint.Lookup(tool, o.Leaf, o.Scope)))
+				.Where(h => h.Hint is not null)
+				.ToList();
+			foreach (var (display, hint) in curated)
+				sb.Append($" '{display}': {hint}");
+
 			// The nearest-match hint is scored against the LEAF so an item field is compared with item
 			// fields, not with its `nodes[].` prefix. With a single offender the name was just printed
 			// one clause ago, so the hint drops the redundant "'boad':" prefix and reads as it always did.
+			var curatedDisplays = curated.Select(c => c.Display).ToHashSet(StringComparer.Ordinal);
 			var hints = unknown
+				.Where(o => !curatedDisplays.Contains(o.Display))
 				.Select(o => (o.Display, Near: ParamNameSuggest.Nearest(o.Leaf, o.Scope)))
 				.Where(h => h.Near.Count > 0)
 				.ToList();

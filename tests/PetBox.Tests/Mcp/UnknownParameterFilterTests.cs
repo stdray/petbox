@@ -15,7 +15,12 @@ namespace PetBox.Tests.Mcp;
 // McpUnknownParameterFilter closes that gap. These tests drive it through the real MCP wire (the
 // McpClient sends whatever dictionary it is given — like the raw-HTTP smoke, nothing strips an
 // unknown key before the server sees it).
-public sealed class UnknownParameterFilterFixture() : TasksMcpFixture("unkp", "UnknownParam");
+// Memory + Config on top of the base Tasks/Sessions/Comments surface: work
+// unknown-param-curated-hints needs memory_search and config_binding_search reachable over the
+// real MCP wire to pin the `query`->`q` curated hint across every *_search tool, not just the
+// tasks-module ones.
+public sealed class UnknownParameterFilterFixture()
+	: TasksMcpFixture("unkp", "UnknownParam", extraFeatures: ["Memory", "Config"], extraScopes: "memory:read,config:read");
 
 public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameterFilterFixture>, IAsyncLifetime
 {
@@ -648,5 +653,78 @@ public sealed class UnknownParameterFilterTests : IClassFixture<UnknownParameter
 
 		fields.Should().NotContain("includeClosed");
 		fields.Should().Contain("statusKind");
+	}
+
+	// ── work/unknown-param-curated-hints: hints where SIMILARITY alone finds nothing useful ──────
+	//
+	// `limit` on session_search: session-search-page-width-param-name deliberately did NOT add
+	// `limit` (two independent page-size knobs, not one), so Nearest() has nothing close to offer —
+	// without the curated entry the caller only sees the bare accepted-parameter dump.
+	[Fact]
+	public async Task SessionSearch_Limit_IsRejected_AndPointsAtSessionsAndHitsPerSession()
+	{
+		var result = await (await Tool(_fx.Mcp, "session_search")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["limit"] = 10,
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("'limit'");
+		text.Should().Contain("'sessions'").And.Contain("'hitsPerSession'");
+	}
+
+	// `usageSource` is a real parameter — just not on a WRITE verb, which records no impressions.
+	// The curated entry has to say so rather than leave the asymmetry unexplained.
+	[Fact]
+	public async Task TasksUpsert_UsageSource_IsRejected_AndExplainsItIsReadOnlyVerbOnly()
+	{
+		var result = await (await Tool(_fx.Mcp, "tasks_upsert")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = _fx.ProjectKey,
+			["board"] = "work",
+			["usageSource"] = "deliberate",
+			["nodes"] = Array.Empty<Dictionary<string, object?>>(),
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("'usageSource'");
+		text.Should().Contain("only on read verbs").And.Contain("drop it");
+	}
+
+	// `query` reads like the obvious spelling of the free-text search parameter, and it prefix-
+	// matches `q` closely enough that the ordinary similarity search would ALSO offer "Did you mean
+	// 'q'?" on its own — the curated hint has to replace that, not duplicate it, so this pins BOTH
+	// the explicit sentence and the absence of a second, redundant "Did you mean" for the same name.
+	// Covers every *_search tool with a `q` parameter (health_search has none and is out of scope).
+	//
+	// config_binding_search is addressed by `workspaceKey`, not `projectKey` (Config lives at the
+	// Workspace layer — AGENTS.md) — TasksMcpFixture always names its one workspace "test", regardless
+	// of the project key, so that is the identity argument this one row needs.
+	[Theory]
+	[InlineData("tasks_search", "projectKey")]
+	[InlineData("memory_search", "projectKey")]
+	[InlineData("session_search", "projectKey")]
+	[InlineData("comments_search", "projectKey")]
+	[InlineData("config_binding_search", "workspaceKey")]
+	public async Task SearchTool_Query_IsRejected_AndNamesQAsTheSearchParameter(string tool, string identityParam)
+	{
+		var identityValue = identityParam == "workspaceKey" ? "test" : _fx.ProjectKey;
+		var result = await (await Tool(_fx.Mcp, tool)).CallAsync(new Dictionary<string, object?>
+		{
+			[identityParam] = identityValue,
+			["query"] = "something",
+		});
+
+		result.IsError.Should().Be(true);
+		var text = Text(result);
+		text.Should().Contain("'query'");
+		text.Should().Contain("the search text parameter is 'q' on every *_search tool");
+		// Exactly one mention of 'q' as a hint target — the curated sentence must have replaced the
+		// ordinary near-match "Did you mean 'q'?" rather than printing alongside it.
+		System.Text.RegularExpressions.Regex.Count(text, "Did you mean").Should().Be(0,
+			"the curated hint replaces the similarity search for this offender, not sit beside it");
 	}
 }
