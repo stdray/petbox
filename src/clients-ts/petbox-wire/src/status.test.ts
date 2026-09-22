@@ -633,14 +633,14 @@ test("computeRegistryStatusRow: every skill materialized and byte-identical to i
       // compares them (rendered stays undefined for those), so any marker-bearing content there
       // that isn't foreign is enough for "present"; using the real render keeps this fixture
       // honest either way.
-      const rendered = renderSkillTemplate(tpl, project, "");
+      const rendered = renderSkillTemplate(tpl, project, "", "X");
       writeFixtureSkill(dir, spec.dir, rendered);
       // extraFiles siblings (e.g. petbox-node-authoring's validate-body.mjs) materialized
       // untouched too — regression guard for registry-status-row-skips-extra-files: adding the
       // asset check must not make an already-clean row "stale".
       for (const assetName of spec.extraFiles ?? []) {
         const assetTpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, assetName), "utf8");
-        writeFixtureAsset(dir, spec.dir, assetName, renderSkillTemplate(assetTpl, project, ""));
+        writeFixtureAsset(dir, spec.dir, assetName, renderSkillTemplate(assetTpl, project, "", "X"));
       }
     }
     const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
@@ -661,10 +661,10 @@ test("computeRegistryStatusRow: an extraFiles asset drifted from its template ->
     assert.ok(specWithAsset, "expected at least one PROJECT_SKILLS entry with extraFiles to exercise this");
     for (const spec of PROJECT_SKILLS) {
       const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, "", "X"));
       for (const assetName of spec.extraFiles ?? []) {
         const assetTpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, assetName), "utf8");
-        const assetRendered = renderSkillTemplate(assetTpl, project, "");
+        const assetRendered = renderSkillTemplate(assetTpl, project, "", "X");
         // Only THIS spec's asset gets hand-edited; the marker comment line stays untouched, so
         // classification is "ours" (managed) but content no longer matches the template —
         // exactly the "hand-edited or replaced asset" case the bug report named.
@@ -686,7 +686,7 @@ test("computeRegistryStatusRow: a materialized skill that no longer matches its 
     const project = "registry-status-drift-project";
     for (const spec of PROJECT_SKILLS) {
       const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-      const rendered = renderSkillTemplate(tpl, project, "");
+      const rendered = renderSkillTemplate(tpl, project, "", "X");
       const nonWorkspace = !spec.needsWorkspace;
       writeFixtureSkill(dir, spec.dir, nonWorkspace ? rendered + "\nstale extra line\n" : rendered);
     }
@@ -707,7 +707,7 @@ test("computeRegistryStatusRow: a skill never materialized -> named in missingSk
     const specs = PROJECT_SKILLS.slice(1); // skip the first entry entirely
     for (const spec of specs) {
       const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, "", "X"));
     }
     const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
     assert.equal(row.verdict, "stale");
@@ -726,7 +726,7 @@ test("computeRegistryStatusRow: a foreign (non-PetBox) file at a skill path -> c
     writeFixtureSkill(dir, foreignSpec!.dir, "# someone else's file, no petbox marker at all\n");
     for (const spec of rest) {
       const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, "", "X"));
     }
     const row = computeRegistryStatusRow({ prefix: dir, project, envVar: "X" }, REGISTRY_STATUS_TEMPLATES_ROOT);
     assert.equal(row.verdict, "stale");
@@ -745,7 +745,7 @@ test("computeRegistryStatusRow: a legacy pre-rename skill dir still present -> n
     assert.ok(specWithLegacy, "expected at least one PROJECT_SKILLS entry with legacyDirs to exercise this");
     for (const spec of PROJECT_SKILLS) {
       const tpl = readFileSync(join(REGISTRY_STATUS_TEMPLATES_ROOT, spec.dir, "SKILL.md"), "utf8");
-      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, ""));
+      writeFixtureSkill(dir, spec.dir, renderSkillTemplate(tpl, project, "", "X"));
     }
     // Plant the pre-rename leftover the sweep is supposed to have removed but didn't.
     writeFixtureSkill(dir, specWithLegacy!.legacyDirs![0]!, `${PETBOX_MARKER_LINE}\nstale legacy copy\n`);
