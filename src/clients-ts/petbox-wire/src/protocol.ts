@@ -56,7 +56,7 @@ export function orchestrationPrescriptionsAllowed(harness: string | undefined): 
   return hasCapability(harness, "spawn_subagents");
 }
 
-function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): string {
+function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition, harness: string | undefined): string {
   if (allowSpawn) {
     const orch = definition.roles.find((r) => r.slug === "orchestrator");
     const notes =
@@ -74,12 +74,23 @@ function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): strin
     // here. Two sources of prose about the same behavior is itself a defect (bug:
     // kit-prose-contradicts-server-definition; card: orchestrator-delegate-rule-portable-and-priced);
     // this banner line stays a pointer, not a second copy, so it can never drift from the notes.
+    //
+    // opencode-only: measured live on 2.0.12 (work/opencode-v2-background-subagents-remeasure) —
+    // the `subagent` tool runs in the FOREGROUND, blocking this session for the child's whole
+    // duration, unless the call passes `background: true`; no default makes that safe, it is a
+    // per-call decision. Gated on harness (never `claude-code`/`droid`/`codex`: none has this
+    // argument, so the line would be pure noise there — card
+    // opencode-background-true-belongs-in-the-prose).
+    const backgroundNote =
+      harness === "opencode"
+        ? " On opencode, `subagent` defaults to FOREGROUND — pass `background: true` or it blocks you for the child's whole run; the result still arrives on its own as a `synthetic` message."
+        : "";
     return `Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
 Then next line, your self-intro — exactly:
 \`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates).
 
-Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 2.
+Spawn as \`${workerName}\`. Delegation rule and cost rationale: Orchestrator notes, point 2.${backgroundNote}
 
 Orchestrator notes (from definition): ${notes}`;
   }
@@ -111,7 +122,7 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
 
   const allowSpawn = orchestrationPrescriptionsAllowed(opts?.harness);
   const definition = opts?.definition ?? DEFAULT_AGENT_DEFINITION;
-  const intro = buildSelfIntro(allowSpawn, definition);
+  const intro = buildSelfIntro(allowSpawn, definition, opts?.harness);
 
   // Provenance tail on the existing "wired to PetBox" line, not a new line of its own: this is
   // the ONLY place in the mandatory SessionStart banner that names which kit generation rendered
