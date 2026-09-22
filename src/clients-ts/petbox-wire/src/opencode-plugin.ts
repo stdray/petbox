@@ -54,6 +54,12 @@
  * function every existing test drives directly), and `petboxPluginV2Setup` is new, additive code
  * sharing every content-building helper with it.
  *
+ * IMPORTANT: `Plugin.define` above is a design REFERENCE, not something this file calls. Since
+ * it is identity, the default export below is a plain `{id, setup}` object literal — calling
+ * `Plugin.define({...})` would need `@opencode/plugin` as a VALUE import, which is exactly what
+ * must never happen here (this file is loaded at runtime from a `node_modules`-less directory;
+ * see the type-only import below for the failure mode that would cause on a v1 machine).
+ *
  * V1 EXTENSION POINT → V2 API map for the two hooks this plugin actually uses (full table:
  * https://opencode.ai/v2/docs/build/plugins/migrate-v1#register-hooks-in-setup):
  *
@@ -75,7 +81,17 @@
  * this plugin depends on lacks a V2 equivalent.
  */
 import type { Hooks, Plugin as PluginV1 } from "@opencode-ai/plugin";
-import { Plugin as PluginV2 } from "@opencode/plugin";
+// Type-only — see the default export below for why this must NEVER become a value import. The
+// plugin is loaded at runtime from `~/.petbox/wire/opencode-plugin.ts` (the STABLE copy wire.ts's
+// global shim re-exports — see wire.ts's "Global opencode plugin" step), a directory that carries
+// no `node_modules` of its own. On a v1 machine `@opencode/plugin` (the v2 package) is not
+// installed ANYWHERE reachable from there — v1 installs `@opencode-ai/plugin` under opencode's
+// OWN `~/.config/opencode/node_modules`, a different package under a different directory — so a
+// runtime `import { Plugin } from "@opencode/plugin"` would fail to resolve and take the whole
+// plugin down on load, exactly the "keep v1 working" contract this port exists to satisfy.
+// `import type` is erased at compile (native TS type-stripping, no bundler in this kit's runtime
+// path — see package.json's `engines.node`), so it costs nothing at runtime on EITHER major.
+import type { Plugin as PluginV2 } from "@opencode/plugin";
 import { DEFAULT_AGENT_DEFINITION, type AgentDefinition } from "./agent-definition.ts";
 import { resolveApplyRoot } from "./apply-root.ts";
 import { pushTranscript } from "./append.ts";
@@ -393,16 +409,20 @@ export const petboxPluginV2Setup: PluginV2.Plugin["setup"] = async (ctx) => {
   return () => controller.abort();
 };
 
-const petboxPluginV2: PluginV2.Plugin = PluginV2.define({
+// A plain object literal, NOT `PluginV2.define({...})` — `define` is a real exported VALUE
+// (`@opencode/plugin`'s `dist/promise/plugin.js`: `export function define(plugin) { return
+// plugin; }`, confirmed identity), and calling it would need a runtime import of `@opencode/
+// plugin`, exactly what the type-only import above exists to avoid. `PluginV2.Plugin` above the
+// `:` is a TYPE position — legal against a type-only import — and costs nothing at runtime either.
+const petboxPluginV2: PluginV2.Plugin = {
   id: "petbox",
   setup: petboxPluginV2Setup,
-});
+};
 
-// Default export: the dual-shape object opencode's V1 and V2 loaders each recognize on their
-// own terms (see the module comment above). `Plugin.define` is an identity function (verified
-// against @opencode/plugin@2.0.12's dist/promise/plugin.js), so spreading its result costs
-// nothing beyond what a plain `{id, setup}` literal would — this is exactly the shape opencode's
-// own "Support V1 and V2 from one package" migration-guide section documents.
+// Default export: the dual-shape object opencode's V1 and V2 loaders each recognize on their own
+// terms (see the module comment above). Both `{id, setup}` (what `Plugin.define` would have
+// returned, since it is identity) and `server` are plain data/function properties — nothing here
+// touches either opencode plugin package's VALUE exports at runtime, on either major.
 export default {
   ...petboxPluginV2,
   server: PetboxPlugin,
