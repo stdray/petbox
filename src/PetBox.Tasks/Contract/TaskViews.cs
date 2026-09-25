@@ -154,6 +154,16 @@ public sealed record UpsertConflictView(
 // write; `RecurrenceCount` is the new total after this hit.
 public sealed record UpsertDedupedView(string RequestedKey, string ExistingKey, string ExistingNodeId, long RecurrenceCount);
 
+// A NON-blocking discipline-rule warning (idea discipline-rules-warn-in-tool-response, spec
+// write-response-warnings): a rule the methodology declares but does not mechanically enforce
+// fired on THIS write. The write already landed (`applied:true`) — a warning can never turn
+// that into a refusal (conflicts[] is the channel for an actual refusal). `Rule` is the stable
+// rule slug (e.g. "convention-approval-gate", "terminal-ok-without-commits",
+// "unlinked-intake-twin"), `Key` the node the warning is ABOUT, `Message` a human-readable
+// sentence naming what happened and what would clear it. Additive field, same posture as
+// Warning/Deduped above: null/omitted whenever nothing fired.
+public sealed record UpsertWarningView(string Rule, string Key, string Message);
+
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
@@ -163,12 +173,20 @@ public sealed record UpsertResultView(
 	// except `observations`, and on that board whenever no requested create matched an
 	// existing observation. Non-null only when at least one requested node was absorbed this
 	// way — same "set only when it happened" posture as Warning above.
-	IReadOnlyList<UpsertDedupedView>? Deduped = null);
+	IReadOnlyList<UpsertDedupedView>? Deduped = null,
+	// Discipline-rule warnings (see UpsertWarningView) — a SEPARATE channel from Warning (the
+	// size-inflation notice) and from Conflicts (an actual refusal): set only on an APPLIED call
+	// that tripped at least one rule; null the rest of the time, including on a refused/conflicted
+	// call, which never reaches the point these rules are judged from.
+	IReadOnlyList<UpsertWarningView>? Warnings = null);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an
 // adapter to serialize. The service owns the logic; the adapter owns the wire shape.
-public sealed record UpsertOutcome(TemporalUpsertResult<TaskNode> Result, string Kind);
+// `Warnings` (idea discipline-rules-warn-in-tool-response): non-blocking discipline-rule
+// findings judged AFTER the write already applied — empty on a DeltaAsync outcome (never
+// judged there) and on an unapplied UpsertAsync outcome.
+public sealed record UpsertOutcome(TemporalUpsertResult<TaskNode> Result, string Kind, IReadOnlyList<UpsertWarningView>? Warnings = null);
 
 // The workflow surface of one board (tasks_workflow): the resolved kind name plus one
 // block per DISTINCT state machine — preset kinds group identical FSMs (feature=bug=

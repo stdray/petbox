@@ -1063,7 +1063,11 @@ public sealed record MethodologyKindView(
 	bool? Singleton = null,
 	MethodologyBlocksGateView? BlocksGate = null,
 	string? Description = null,
-	string? BoardName = null);
+	string? BoardName = null,
+	// Mirrors MethodologyKindDef.CommitBearingTypes (idea discipline-rules-warn-in-tool-
+	// response): which of this kind's own type slugs trip the terminal-ok-without-commits
+	// write-response warning. Null/omitted = empty (no type declared commit-bearing).
+	IReadOnlyList<string>? CommitBearingTypes = null);
 
 // Mirrors MethodologyBlocksGateDef 1:1 — the output-side counterpart of MethodologyBlocksGateInput.
 public sealed record MethodologyBlocksGateView(string Status, string ReleaseTo);

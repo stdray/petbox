@@ -2147,7 +2147,116 @@ public sealed partial class TasksService : ITasksService
 				Removed = removed,
 			};
 		}
-		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor, prior), runtime.KindName(kindSlug));
+		// idea discipline-rules-warn-in-tool-response: two of the three discipline-rule warnings
+		// (convention-approval-gate, terminal-ok-without-commits) are judged HERE, from the FINAL
+		// landed+committed state, restricted to the CALLER'S OWN patches (`landed`, not a cascade
+		// side-effect a declared Effect drove — see ComputeDisciplineWarnings). Never allowed to
+		// turn `r.Applied:true` into a refusal: a judging exception is caught, logged, and simply
+		// yields no warning (same posture the spec_plan demands of the embedder-based third rule).
+		// The third rule (unlinked-intake-twin) needs an LLM embedder, which PetBox.Tasks cannot
+		// see the concrete client of the way PetBox.Web's ObservationDedupService does — it is
+		// computed by the MCP adapter (TasksTools.UpsertAsync) and merged onto this same list.
+		IReadOnlyList<UpsertWarningView>? warnings = null;
+		if (r.Applied)
+		{
+			try
+			{
+				var landedKeys = landed.Select(n => n.Key).ToHashSet(StringComparer.Ordinal);
+				var touched = r.Added.Concat(r.Updated).Where(n => landedKeys.Contains(n.Key)).ToList();
+				var computed = new List<UpsertWarningView>(ComputeDisciplineWarnings(runtime, kindSlug, touched, prior, actor));
+				computed.AddRange(await ComputeUnlinkedIntakeCloseWarningsAsync(projectKey, runtime, kindSlug, touched, prior, ct));
+				if (computed.Count > 0) warnings = computed;
+			}
+			catch (Exception ex)
+			{
+				_log?.LogWarning(ex, "discipline-rule warning computation failed: project={Project} board={Board}", projectKey, board);
+			}
+		}
+		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor, prior), runtime.KindName(kindSlug), warnings);
+	}
+
+	// The convention-approval-gate and terminal-ok-without-commits rules (idea
+	// discipline-rules-warn-in-tool-response, spec write-response-warnings): judged from the
+	// FINAL, already-persisted state of nodes THIS call directly wrote (never a cascade-only
+	// touch), against the transition the node actually made (`prior` status -> its new one).
+	// Both rules read PURELY methodology DATA — WorkflowTransition.RequiresApproval/
+	// EnforceApproval (already how the actual gate is enforced/not-enforced) and
+	// MethodologyRuntime.CommitBearingTypes (a project's own declaration of which types carry
+	// commits) — nothing here hardcodes "quartet"; a project's own definition drives the exact
+	// same two checks its methodology declares.
+	static List<UpsertWarningView> ComputeDisciplineWarnings(
+		MethodologyRuntime runtime, string? kindSlug, IEnumerable<TaskNode> touched,
+		Dictionary<string, TaskNode> prior, TasksActor actor)
+	{
+		var warnings = new List<UpsertWarningView>();
+		var commitBearing = runtime.CommitBearingTypes(kindSlug);
+		foreach (var n in touched)
+		{
+			var fromStatus = prior.GetValueOrDefault(n.Key)?.Status;
+			// Birth (no prior row) or an edit that left Status unchanged is not a TRANSITION —
+			// nothing here judges against one.
+			if (string.IsNullOrEmpty(fromStatus) || string.Equals(fromStatus, n.Status, StringComparison.OrdinalIgnoreCase))
+				continue;
+			var type = n.Type.Length == 0 ? null : n.Type;
+			var wf = runtime.For(kindSlug, type);
+			if (wf is null) continue;
+			var tr = wf.Transition(fromStatus, n.Status);
+			if (tr is null) continue;
+
+			if (tr.RequiresApproval && !tr.EnforceApproval && !actor.CanApprove)
+				warnings.Add(new UpsertWarningView("convention-approval-gate", n.Key,
+					$"'{fromStatus}' -> '{n.Status}' is an owner-only transition by convention (RequiresApproval, not mechanically enforced) — applied by an actor without approval scope."));
+
+			var toStatus = wf.Status(n.Status);
+			if (toStatus?.Kind == StatusKind.TerminalOk
+				&& commitBearing.Contains(n.Type, StringComparer.OrdinalIgnoreCase)
+				&& n.Commits.Count == 0)
+				warnings.Add(new UpsertWarningView("terminal-ok-without-commits", n.Key,
+					$"reached terminal-ok status '{n.Status}' with an empty commits[], though type '{n.Type}' is declared to carry commits."));
+		}
+		return warnings;
+	}
+
+	// The "unlinked-intake-twin" rule's SECOND branch (idea discipline-rules-warn-in-tool-
+	// response, spec unlinked-intake-twin-warns): a node closing into TerminalOk on a board
+	// whose kind is the declared SOURCE of a process link (the quartet's `issue_task`:
+	// intake -> work) with no outgoing edge of that kind — a request resolved with nothing on
+	// record showing what resolved it. Needs only `_relations` (no embedder), so it lives here;
+	// the rule's FIRST branch (a freshly created node resembling an unlinked source-board node)
+	// needs semantic comparison and is computed by PetBox.Web's UnlinkedIntakeTwinWarnService
+	// (PetBox.Tasks cannot see a concrete ILlmClient — see ObservationDedupService's header
+	// comment for the identical reasoning). Both branches share ONE rule slug: one leaf, two
+	// ways to trip it. Reads the link kind/pair from `runtime.EffectiveLinkKinds()` — nothing
+	// here hardcodes "issue_task"/"intake"/"work"; a project's own declared link plays the same
+	// role.
+	async Task<IReadOnlyList<UpsertWarningView>> ComputeUnlinkedIntakeCloseWarningsAsync(
+		string projectKey, MethodologyRuntime runtime, string? kindSlug,
+		IReadOnlyList<TaskNode> touched, Dictionary<string, TaskNode> prior, CancellationToken ct)
+	{
+		bool ClosedIntoTerminalOk(TaskNode n)
+		{
+			var fromStatus = prior.GetValueOrDefault(n.Key)?.Status;
+			if (string.IsNullOrEmpty(fromStatus) || string.Equals(fromStatus, n.Status, StringComparison.OrdinalIgnoreCase))
+				return false;
+			var wf = runtime.For(kindSlug, n.Type.Length == 0 ? null : n.Type);
+			return wf?.Status(n.Status)?.Kind == StatusKind.TerminalOk;
+		}
+		var closing = touched.Where(ClosedIntoTerminalOk).ToList();
+		if (closing.Count == 0) return [];
+
+		var thisKind = runtime.KindName(kindSlug);
+		var link = runtime.EffectiveLinkKinds().FirstOrDefault(l =>
+			l.Category == LinkCategory.Process
+			&& l.Direction?.FromKind is not null
+			&& string.Equals(l.Direction.FromKind, thisKind, StringComparison.OrdinalIgnoreCase));
+		if (link is null) return [];
+
+		var linkedFrom = (await _relations.ListByKindAsync(projectKey, link.Slug, ct))
+			.Select(rel => rel.FromNodeId).ToHashSet(StringComparer.Ordinal);
+		return closing.Where(n => !linkedFrom.Contains(n.NodeId))
+			.Select(n => new UpsertWarningView("unlinked-intake-twin", n.Key,
+				$"closed into '{n.Status}' carrying no outgoing '{link.Slug}' edge — nothing on record shows what this resolved into."))
+			.ToList();
 	}
 
 	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no

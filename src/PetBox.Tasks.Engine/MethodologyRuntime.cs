@@ -69,6 +69,17 @@ public sealed class MethodologyRuntime
 			? kind.LinkConstraints ?? []
 			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).LinkConstraints;
 
+	// Commit-bearing types of a kind (idea discipline-rules-warn-in-tool-response, spec
+	// terminal-ok-without-commits-warns): the definition's when it declares the kind, else the
+	// preset's (no builtin preset declares any today, so this falls through to empty for every
+	// preset kind — a materialized quartet `work` kind opts feature/bug in as DATA via
+	// tasks_methodology_rules_upsert, same as any other project-declared kind). Empty = no type
+	// of this kind is judged for the warning.
+	public IReadOnlyList<string> CommitBearingTypes(string? kindSlug) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
+			? kind.CommitBearingTypes ?? []
+			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).CommitBearingTypes;
+
 	// Declared transition effects of a kind (schema v2), same merge as every resolver:
 	// the definition's when it declares the kind, else the preset's (work: intake
 	// auto-close + blocks auto-unblock — as data). Executed by RunTransitionEffectsAsync.

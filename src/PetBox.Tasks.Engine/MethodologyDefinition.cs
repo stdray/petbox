@@ -131,6 +131,20 @@ public sealed record MethodologyKindDef(
 	// semantics, and no preset declares it today (every preset's board name already equals its
 	// kind slug), so the preset half of the merge is currently always null.
 	public string? BoardName { get; init; }
+	// Which of this kind's TYPE slugs are declared to CARRY commits (idea discipline-rules-
+	// warn-in-tool-response, spec terminal-ok-without-commits-warns): a type whose slug is
+	// listed here reaching a TerminalOk status with an empty commits[] trips the
+	// terminal-ok-without-commits warning. Default EMPTY — no type carries commits — so an
+	// already-stored document (this field JSON-missing) deserializes to "never warn", the same
+	// non-breaking posture as every other additive primitive on this record. A definition (or a
+	// materialized preset instance, e.g. the quartet's `work` kind) opts specific types in as
+	// DATA; nothing here is a hardcoded "quartet" special case. No preset declares this today —
+	// MethodologyPresets.KindDef never sets it — so the field-level merge in
+	// MethodologyRuntime.CommitBearingTypes falls through to an empty preset default exactly
+	// like Singleton/BlocksGate above, and an instance materialized before this field existed
+	// reads "no type carries commits" until a rules_upsert sets it (owner-visible follow-up,
+	// not a silent behavior change on old data).
+	public IReadOnlyList<string> CommitBearingTypes { get; init; } = [];
 }
 
 // The blocking-gate statuses of a kind (spec methodology-blocks-gate-data): `Status` gates
