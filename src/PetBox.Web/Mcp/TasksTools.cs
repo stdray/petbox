@@ -1620,7 +1620,10 @@ public static class TasksTools
 		textually matches an existing observation is NOT created — the existing one's
 		recurrence counter grows instead, and `deduped[]` (requestedKey, existingKey,
 		existingNodeId, recurrenceCount) names where the write went. Omitted whenever nothing
-		deduped, or on any other board.
+		deduped, or on any other board. A node carrying `corrects: <ref>` (a slug key or
+		NodeId of an existing observation on this board) is exempt from matching THAT ONE
+		observation on both dedup passes — a correction/refutation of a finding can never
+		fold onto the node it contradicts — and gets a `relates_to` edge to it instead.
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
