@@ -26,3 +26,12 @@
   хост), секреты, сравнение с аналогами, этапы и развилки владельца
 - puml/*.puml — диаграммы (01-context, 02-components, 03-endpoint-fsm, 04-request-fsm,
   05-seq-codex-subagents); проверены `plantuml -checkonly` + рендером в SVG, синтаксис валиден
+- 40-reserve.md — критика резерва и резервный путь (ЧИТАТЬ ВМЕСТЕ С 30: часть его опор опровергнута)
+
+## Порядок чтения
+20 → 30 → 40. Где 40 противоречит 30, приоритет у 40 (сверено по исходникам codex/opencode-go):
+- opencode-go — три протокола ПО МОДЕЛИ (`/responses`, `/chat/completions`, `/messages`), не «Anthropic Messages»;
+- codex — только `wire_api=responses` → трансляция Responses→chat нужна для Q2 с первого дня
+  (или Responses-нативный апстрим, напр. OpenRouter), а не «по спросу»;
+- 10-facts F10 (нет тестов fallback/breaker) и 12-facts F12 (YARP без AOT) — REFUTED.
+Ни одна карточка не заведена; решение по развилкам — за владельцем.
