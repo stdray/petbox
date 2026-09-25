@@ -66,6 +66,10 @@ codex, (C) archive. LiteLLM отброшен владельцем как тяж�
   Bifrost/agentgateway по роли + рекомендация (K2 через K3 как фаза 1) + условия + открытые
   развилки владельца
 - puml/06-target.puml — целевая архитектура рекомендованного варианта
+- 65-bench-cliproxyapi.md — практический стенд CLIProxyAPI (без Docker) vs agentgateway на роли
+  локального шлюза codex: B1/B2/B5 паритет, B3 (fallback+cooldown) у CLIProxyAPI подтверждён
+  живьём (agentgateway — нет), B4 (embed/rerank) нет вовсе (404), B7 (новое) — fallback на два
+  реальных провайдера из opencode.json + живой codex exec через реальный апстрим
 
 ## Порядок чтения (обновлено)
 40 → 60 → 61 → 62 → 63 → 64 → 70. Внутри этапа 1 порядок прежний (20 → 30 → 40, см. выше).

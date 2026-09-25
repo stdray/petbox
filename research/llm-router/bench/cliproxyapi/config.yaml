@@ -1,0 +1,36 @@
+host: "127.0.0.1"
+port: 8317
+auth-dir: "./authdir"
+api-keys:
+  - "bench-local-key"
+debug: true
+remote-management:
+  allow-remote: false
+  secret-key: "bench-mgmt-key" # hashed on startup; not a real secret
+
+openai-compatibility:
+  - name: "u1"
+    base-url: "http://127.0.0.1:9101/v1"
+    headers:
+      X-Gateway-Injected: "cliproxyapi-was-here"
+    api-key-entries:
+      - api-key: "dummy-u1-key"
+    models:
+      - name: "m1"
+        alias: "u1-chat"
+  - name: "u2"
+    base-url: "http://127.0.0.1:9102/v1"
+    api-key-entries:
+      - api-key: "dummy-u2-key"
+    models:
+      - name: "m1"
+        alias: "u2-chat"
+      - name: "m1"
+        alias: "route-fallback" # registered first in this pool -> tried first/more often
+  - name: "u1-for-fallback"
+    base-url: "http://127.0.0.1:9101/v1"
+    api-key-entries:
+      - api-key: "dummy-u1-key"
+    models:
+      - name: "m1"
+        alias: "route-fallback" # second pool member -> served every request once u2 got cooled down

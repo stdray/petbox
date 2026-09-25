@@ -1,0 +1,31 @@
+# Template used for B7 (two real API-key providers from opencode.json).
+# NOT loadable as-is: replace ${DEEPSEEK_API_KEY} / ${OPENCODE_GO_API_KEY} with real values
+# (this build of CLIProxyAPI has no env-var indirection for api-key-entries, unlike Bifrost's
+# `env.VAR` syntax -- see 65-bench-cliproxyapi.md gotcha list). Keep the materialized file
+# out of the repo; it was generated only in the scratchpad for this bench and deleted after.
+host: "127.0.0.1"
+port: 8318
+auth-dir: "./authdir2"
+api-keys:
+  - "bench-local-key"
+debug: true
+
+openai-compatibility:
+  - name: "deepseek-broken"
+    base-url: "http://127.0.0.1:19999/v1" # intentionally dead port -> forces fallback
+    api-key-entries:
+      - api-key: "${DEEPSEEK_API_KEY}"
+    models:
+      - name: "deepseek-flash"
+        alias: "real-fallback"
+  - name: "opencode-go-real"
+    base-url: "https://opencode.ai/zen/go/v1"
+    headers:
+      X-Opencode-Session: "bench-session-cliproxyapi-01" # required by this upstream, else 400 MissingSessionID
+    api-key-entries:
+      - api-key: "${OPENCODE_GO_API_KEY}"
+    models:
+      - name: "glm-5.3-flash"
+        alias: "real-fallback"
+      - name: "glm-5.3-flash"
+        alias: "og-direct"
