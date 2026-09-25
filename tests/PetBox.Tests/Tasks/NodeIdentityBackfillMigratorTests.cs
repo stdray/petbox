@@ -146,4 +146,41 @@ public sealed class NodeIdentityBackfillMigratorTests : IDisposable
 		var node = await ReadNode("ideas", "fine-idea");
 		node.Version.Should().Be(1, "an already-valid node must not mint a new revision");
 	}
+
+	// status-normalizer-misses-case-variants: Workflow.Has is case-insensitive, so a status
+	// that matches an FSM slug except for case (real prod case: "pending" on a work board
+	// whose FSM slug is "Pending") used to be classified as already-valid and left exactly as
+	// stored — an off-FSM spelling survives the backfill it exists to remove. The fix reads
+	// the CANONICAL slug via Workflow.Status(slug) instead of keeping the stored string.
+	[Fact]
+	public async Task Migrate_CaseOnlyOpenStatusVariant_RewrittenToCanonicalSlug()
+	{
+		await _boards.CreateAsync(Proj, "work", description: null, kind: "work");
+		await SeedRawNode("work", "case-variant-open", nodeId: Guid.NewGuid().ToString("N"), type: "bug", status: "pending");
+
+		var touched = Migrator().Migrate();
+		touched.Should().Be(1, "a case-only mismatch is still a repair, not a no-op");
+
+		var node = await ReadNode("work", "case-variant-open");
+		node.Status.Should().Be("Pending", "rewritten to the FSM's own canonical spelling, ordinal-exact");
+
+		Migrator().Migrate().Should().Be(0, "idempotent once canonicalized");
+	}
+
+	// Second, sharper case: the case-insensitive match also risked closing the trap the class
+	// comment calls out — an exact-string rewrite of an unrecognized status would have sent
+	// "done" to wf.Initial ("Pending"), REOPENING a closed work item. Workflow.Status must
+	// resolve the terminal slug itself so a terminal case-only variant stays terminal.
+	[Fact]
+	public async Task Migrate_CaseOnlyTerminalStatusVariant_StaysTerminal_RewrittenToCanonicalSlug()
+	{
+		await _boards.CreateAsync(Proj, "work", description: null, kind: "work");
+		await SeedRawNode("work", "case-variant-done", nodeId: Guid.NewGuid().ToString("N"), type: "bug", status: "done");
+
+		var touched = Migrator().Migrate();
+		touched.Should().Be(1);
+
+		var node = await ReadNode("work", "case-variant-done");
+		node.Status.Should().Be("Done", "must resolve to the terminal slug itself, never reopen via wf.Initial");
+	}
 }
