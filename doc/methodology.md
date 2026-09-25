@@ -287,3 +287,6 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 This is the target model. It is adopted incrementally; until a feature is built,
 the corresponding convention applies on the current Tasks primitives (e.g. separate
 `spec`/`backlog` boards, the approve gate by convention).
+Work stages are tracked by scope, not by calendar, as the `stage` tag axis of the quartet
+instance: a task joins a stage via `stage:<slug>`; the stage closes with a verdict comment
+(version + commit in prose) on a chore "close stage:<slug>", after which the tag is not set again.
