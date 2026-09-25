@@ -139,7 +139,7 @@ public sealed class NodeIdentityBackfillMigrator
 					continue;
 				}
 
-				var status = wf.Has(n.Status) ? n.Status : wf.Initial;
+				var status = wf.Status(n.Status)?.Slug ?? wf.Initial;
 				if (type == n.Type && status == n.Status)
 					continue; // already valid — nothing to repair
 
