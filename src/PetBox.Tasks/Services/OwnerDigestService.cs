@@ -132,6 +132,19 @@ public sealed class OwnerDigestService : IOwnerDigestService
 		var (approvalGated, approvalGatedTotal) = await ApprovalGatedAsync(
 			projectKey, board, statusKinds, approvalGatedKeys, approvalGatedStatuses, urlPrefix, limit, ct);
 
+		// ── (1c) woken in the period ─────────────────────────────────────────────────────────────
+		// A wake mints a node revision (TaskNode.SnoozeUntil/WokeAt are payload), so every wake of
+		// the period is already in `changed`. With a time window the wake instant itself must fall in
+		// it; with a version cursor there is no instant, and "woken after revision N" is exactly
+		// "its wake revision is in the delta" — a node woken earlier and merely edited since is the
+		// one imprecision of cursor mode, the same proxy the closure caveat names for closures.
+		var wokenAll = changed
+			.Where(n => n.WokeAt is { } woke && (windowStart is null || woke >= windowStart.Value))
+			.OrderByDescending(n => n.WokeAt)
+			.ThenBy(n => n.Key, StringComparer.Ordinal)
+			.ToList();
+		var wokenForOwner = wokenAll.Where(n => n.SnoozeWakeTo == NodeSnooze.Owner).ToList();
+
 		// ── (4) chronology, on request ───────────────────────────────────────────────────────────
 		IReadOnlyList<OwnerDigestEvent>? timeline = null;
 		int? timelineTotal = null;
@@ -175,6 +188,9 @@ public sealed class OwnerDigestService : IOwnerDigestService
 			AwaitingDecisionTotal: awaiting.Count,
 			ApprovalGated: approvalGated,
 			ApprovalGatedTotal: approvalGatedTotal,
+			WokenForOwner: wokenForOwner.Take(limit).Select(n => Item(n, statusKinds, enrichment)).ToList(),
+			WokenTotal: wokenAll.Count,
+			WokenForOwnerTotal: wokenForOwner.Count,
 			Closed: closedAll.Take(limit).Select(n => Item(n, statusKinds, enrichment)).ToList(),
 			ClosedTotal: closedAll.Count,
 			NewCohorts: cohorts,

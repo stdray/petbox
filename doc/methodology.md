@@ -194,6 +194,30 @@ explicit owner call, so reopening a task never silently distorts cycle-time metr
 `recurrenceCount` / `lastSeenAt` / `recurredAfterFixAt` / `fixedByNodeId` / `fixedAt` all ride
 the `observation` field on `tasks_search`/`tasks_node_get` hits for the node.
 
+## Snooze and recurring cards — the daily alarm
+
+"Come back to this on the 15th" and "do this every month" are not left to anyone's memory
+(spec `scheduled-wake`, idea `recurring-run-scheduler`).
+
+- **Snooze** is a field of a node, not a status: `tasks_upsert` with
+  `snooze: {until, reason?, wakeTo?}` puts an open node to sleep until a date; `snooze: {clear:true}`
+  removes it (and acknowledges a wake). A snooze without `until` is refused — the `reason` text is
+  for whoever wakes the node, the machine never evaluates it. `tasks_search` filters `snoozed` and
+  `woke`; the node's `snooze` field shows `until`/`reason`/`wakeTo`/`wokeAt`.
+- **The daily pass** (a background job, once a day plus once at start; `tasks_schedule_run` runs
+  it by hand for one project) wakes every open node whose date has come: the date is cleared,
+  `wokeAt` is stamped, the **status is not touched**. By default the wake is for the **agent** —
+  no flag, the node just returns to the work stream. Only `wakeTo: "owner"` sets
+  `decisionPending`, so automation never grows the owner's queue unasked. A node that closed
+  before its date loses the snooze without a wake.
+- **Recurring rules** (`tasks_recurring_upsert`/`_list`/`_delete`) are a card template plus a
+  period (day/week/month). When the period comes the same pass creates the card through the
+  ordinary write path, with a footer naming the rule. While the previous card is still **open**,
+  no second card is made: the missed period is counted on the rule (`missedCount`) and noted in a
+  comment on the open card. A template the board refuses shows as `lastError` on the rule.
+- The owner digest (`tasks_owner_digest`) reports how many nodes woke in the period, how many of
+  them were for the owner, and lists those.
+
 ## Process order — the fix never precedes the requirement
 
 The chain above is **temporal, not just structural**. Implementation of new behaviour does

@@ -279,6 +279,12 @@ public partial class Program
 		// composes the two scoped services above; a singleton here would capture them (see
 		// CaptiveDependencyTests).
 		builder.Services.AddScoped<PetBox.Tasks.Contract.IOwnerDigestService, PetBox.Tasks.Services.OwnerDigestService>();
+		// The daily alarm (idea recurring-run-scheduler): snooze wakes + rules of repetition, one pass
+		// behind both the hosted job and the `tasks_schedule_run` verb. Scoped for the digest's reason.
+		builder.Services.AddScoped<PetBox.Tasks.Contract.IRecurringRuleService, PetBox.Tasks.Services.Scheduling.RecurringRuleService>();
+		builder.Services.AddScoped<PetBox.Tasks.Contract.IScheduledWakeService, PetBox.Tasks.Services.Scheduling.ScheduledWakeService>();
+		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Tasks))
+			builder.Services.AddGatedHostedService<PetBox.Tasks.Services.Scheduling.ScheduledWakeJob>();
 		// Task-node usage telemetry (spec: task-usage-layer-with-declared-role) — the delivery-side
 		// twin of memory's recorder. The WRITER is a singleton queue+drain (the read path enqueues
 		// and returns; nothing waits on SQLite), called ONLY by the MCP adapters, so internal

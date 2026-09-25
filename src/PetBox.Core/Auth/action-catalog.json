@@ -354,6 +354,40 @@
 			"note": "Отдельное действие, а не поверхность nodes.read: это НЕ чтение узлов, а сборка сводки за период отсутствия владельца (очередь решений + закрытое + новые когорты + хронология по запросу) — один сервис IOwnerDigestService за обеими дверями."
 		},
 		{
+			"id": "nodes.recurring-rules",
+			"source": "idea recurring-run-scheduler / work recurring-card-rules (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "nodes",
+			"action": "завести, прочитать или удалить правило повторения (шаблон карточки + период)",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_recurring_upsert",
+				"mcp:tasks_recurring_list",
+				"mcp:tasks_recurring_delete"
+			],
+			"bg": [],
+			"internal": [],
+			"note": "Правило — не узел: своя таблица recurring_rules в файле проекта, без FSM и UI. Карточку по правилу заводит проход nodes.schedule-run через обычный tasks_upsert."
+		},
+		{
+			"id": "nodes.schedule-run",
+			"source": "idea recurring-run-scheduler / work node-snooze-and-wake-job (действия НЕ БЫЛО на дату переноса)",
+			"subdomain": "nodes",
+			"action": "прогнать ежедневный проход: разбудить узлы с наступившей датой снуза и завести карточки по созревшим правилам повторения",
+			"target": "project",
+			"targetNote": null,
+			"targetSource": null,
+			"surfaces": [
+				"mcp:tasks_schedule_run"
+			],
+			"bg": [
+				"PetBox.Tasks.Services.Scheduling.ScheduledWakeJob"
+			],
+			"internal": [],
+			"note": "Один сервис IScheduledWakeService за обеими дверями: фоновая джоба раз в сутки по всем проектам и ручной запуск по одному проекту (им пользуется живой смоук)."
+		},
+		{
 			"id": "nodes.relations-create",
 			"source": "08-summary §1 #19",
 			"subdomain": "nodes",

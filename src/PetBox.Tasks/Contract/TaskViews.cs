@@ -60,7 +60,11 @@ public sealed record TaskNodeView(
 	// OWNING board's kind is `observation`, mirroring Delivery's "gated by kind DATA" posture
 	// just above. NOT lean-cut (see TasksTools.SearchRow): recurrence-after-a-fix is exactly
 	// the signal that must survive the query-mode lean cut to be visible on a tasks_search row.
-	ObservationSignalView? Observation = null);
+	ObservationSignalView? Observation = null,
+	// node-snooze-until / snooze-wakes-without-a-human: null when the node was never snoozed (or
+	// its snooze was cleared). `until` set = asleep; `until` null + `wokeAt` set = woken by the
+	// daily job. Carried in every projection — `snoozed`/`woke` are filters on tasks_search.
+	NodeSnoozeView? Snooze = null);
 
 // A board's active task nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is
@@ -257,7 +261,12 @@ public sealed record TaskNodeFilter(
 	// pipeline's re-filter step over the already-selected pool — it narrows, never widens, and
 	// never reaches a row the statusKind facet excluded. Applies in BOTH modes (listing and
 	// query); without it the owner digest's "waiting on you" section would be a full board scan.
-	bool? DecisionPending = null);
+	bool? DecisionPending = null,
+	// node-snooze-until / snooze-wakes-without-a-human: null = no filter; true = only nodes that
+	// are asleep (a wake date is set) / only nodes the daily job has woken; false = the complement.
+	// Entity predicates like DecisionPending — applied at the re-filter step, narrowing only.
+	bool? Snoozed = null,
+	bool? Woke = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their
 // final order, the board context when the read was board-scoped (Kind/WiredBoard/

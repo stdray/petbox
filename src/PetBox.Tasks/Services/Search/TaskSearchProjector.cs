@@ -74,7 +74,10 @@ public static class TaskSearchProjector
 			// caller passed a signals map (ProjectBoardLeanOpenAsync only builds one for the
 			// `observation` kind), so a query-mode row carries the SAME recurrence signal a
 			// listing row does.
-			Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null);
+			Observation: signalsByNode is not null && signalsByNode.TryGetValue(n.NodeId, out var sig) ? ObservationSignalView.From(sig) : null,
+			// node-snooze-until: a column of the row in hand, and the axis of tasks_search's
+			// `snoozed`/`woke` filters — carried in every projection for the decisionPending reason.
+			Snooze: NodeSnooze.View(n));
 
 	// Project every node in `nodes` to a lean view, keyed by slug and NodeId for hit resolve.
 	public static (Dictionary<string, TaskNodeView> BySlug, Dictionary<string, TaskNodeView> ByNodeId)

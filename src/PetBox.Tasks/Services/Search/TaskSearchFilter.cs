@@ -54,6 +54,12 @@ public static class TaskSearchFilter
 			// true would answer it by returning everything.
 			q = q.Where(h => h.Node.DecisionPending == pending);
 		}
+		// node-snooze-until: asleep ⇔ a wake date is set; woken ⇔ the daily job stamped wokeAt.
+		// Both directions are real asks, exactly like decisionPending above.
+		if (criteria.Snoozed is { } snoozed)
+			q = q.Where(h => (h.Node.Snooze?.Until is not null) == snoozed);
+		if (criteria.Woke is { } woke)
+			q = q.Where(h => (h.Node.Snooze?.WokeAt is not null) == woke);
 		return q as List<TaskSearchHit> ?? q.ToList();
 	}
 

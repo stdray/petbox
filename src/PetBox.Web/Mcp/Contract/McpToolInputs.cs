@@ -141,6 +141,10 @@ public sealed record TaskNodeInput
 	// to `status` — a node can be InProgress AND waiting — and settable by an agent or the owner.
 	public bool? DecisionPending { get; init; }
 
+	// node-snooze-until: {until, reason?, wakeTo?} snoozes the node until a date; {clear:true}
+	// removes the snooze and the wake mark. Omitted = leave as-is.
+	public TaskSnoozeInput? Snooze { get; init; }
+
 	// Baseline version last seen (0 = new); sparse ordering int.
 	public long Version { get; init; }
 	public long? Priority { get; init; }
@@ -555,4 +559,23 @@ public sealed record FragmentEditDto
 	// refusal is the only thing standing between a second-hop typo and a silent deletion.
 	public static IReadOnlyList<FragmentEdit>? ToCore(IReadOnlyList<FragmentEditDto>? dtos) =>
 		dtos?.Select(d => new FragmentEdit(d.Old, d.New)).ToList();
+}
+
+// tasks_upsert's per-node `snooze` (spec node-snooze-until). Two shapes — see NodeSnoozeEdit:
+// SET {until, reason?, wakeTo?} or CLEAR {clear:true}. An explicit JSON null cannot be told apart
+// from an omitted property on this surface (both bind to null = omit), which is why clearing is
+// spelled `clear:true` rather than `snooze:null`.
+public sealed record TaskSnoozeInput
+{
+	// The wake date (ISO-8601; a date without an offset is taken as UTC). Required unless `clear`.
+	public DateTime? Until { get; init; }
+	// Free-text condition for whoever wakes the node. Never evaluated — only the date wakes.
+	public string? Reason { get; init; }
+	// Who the wake is for: "agent" (default) or "owner". Only an owner-addressed wake sets
+	// decisionPending.
+	public string? WakeTo { get; init; }
+	// true = remove the snooze and the wake mark (also how a woken node is acknowledged).
+	public bool Clear { get; init; }
+
+	public PetBox.Tasks.Contract.NodeSnoozeEdit ToCore() => new() { Until = Until, Reason = Reason, WakeTo = WakeTo, Clear = Clear };
 }

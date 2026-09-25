@@ -63,6 +63,10 @@ public sealed record NodePatch
 	// independent of Status, so it neither implies nor is implied by any transition.
 	public bool? DecisionPending { get; init; }
 
+	// node-snooze-until: null = OMIT (the node's snooze and wake mark stay as they are). A SET
+	// or a CLEAR — see NodeSnoozeEdit for the two shapes and what is refused.
+	public NodeSnoozeEdit? Snooze { get; init; }
+
 	// Attached commit SHAs (node-commits-impl). null = OMIT (leave the node's commits as-is);
 	// a non-null list (incl. empty) REPLACES the node's full commit set — same semantics as
 	// Tags. Values are normalized (trim, lowercase, dedupe, drop empties) and validated (hex,

@@ -281,6 +281,13 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			// timeline arm, which is the only one that reads the comment cursor.
 			("tasks_owner_digest", new { projectKey = ProjectKey, board = "work" }),
 			("tasks_owner_digest", new { projectKey = ProjectKey, board = "work", includeTimeline = true, days = 30 }),
+			// The daily alarm (idea recurring-run-scheduler): the manual pass FIRST (nothing is snoozed
+			// and no rule exists yet, so it reports an empty pass and creates nothing the reads below
+			// could trip on), then a rule's whole lifecycle — write, list, delete.
+			("tasks_schedule_run", new { projectKey = ProjectKey }),
+			("tasks_recurring_upsert", new { projectKey = ProjectKey, id = "conformance-rule", board = "work", title = "Weekly check", period = "week", type = "chore" }),
+			("tasks_recurring_list", new { projectKey = ProjectKey }),
+			("tasks_recurring_delete", new { projectKey = ProjectKey, id = "conformance-rule" }),
 			("tasks_node_get", new { projectKey = ProjectKey, board = "work", node = "a" }),
 			// batch3: nodes[] batch arm — same declared outputSchema { nodes: [...] } as the single-`node` arm.
 			("tasks_node_get", new { projectKey = ProjectKey, board = "work", nodes = new[] { "a", "no-such-node" } }),
@@ -419,6 +426,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"tasks_board_create", "tasks_upsert", "memory_upsert", "memory_store_create", "memory_remember",
 		"session_upsert", "log_create", "log_update", "comments_upsert", "comments_search", "comments_get", "comments_delta",
 		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get", "tasks_owner_digest",
+		"tasks_schedule_run", "tasks_recurring_upsert", "tasks_recurring_list", "tasks_recurring_delete",
 		"tasks_methodology_guide",
 		"tasks_methodology_template_list", "tasks_methodology_template_get",
 		"memory_search", "memory_store_list", "memory_delta", "memory_get",

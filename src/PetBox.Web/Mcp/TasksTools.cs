@@ -1070,6 +1070,9 @@ public static class TasksTools
 		[Description("Keep only nodes whose owner-decision-pending flag matches: true = ONLY nodes waiting on a decision from the owner, false = ONLY nodes that are NOT. Omit = no filter at all (the flag never narrows a read that did not ask about it). Independent of `status` and `type` — a node can be InProgress AND waiting — so this is the cheap way to ask \"what is waiting on me\" without scanning a board. Applies in BOTH modes (listing and query), and the flag is returned on every row in both modes too.")] bool? decisionPending = null,
 		[LogArg][Description("Include usage per row: the counters (surfaced/opened/deliberate/lastHitAt) AND the node's own cost/fit (deliveredChars/avgKRel) (default false). Read them against the board's declaredRole from tasks_board_list.")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this read records: \"deliberate\" (default — a human/agent intentionally searched or listed, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut). Automated wiring should pass \"machine\". Case-insensitive; an unrecognized value is REJECTED, naming both valid ones, never silently folded into \"deliberate\".")] string? usageSource = null,
+		// node-snooze-until / snooze-wakes-without-a-human. Appended last for the reason `decisionPending` was.
+		[Description("true = ONLY nodes snoozed until a date (still asleep), false = ONLY nodes that are not. Omit = no filter. The node's `snooze` field carries until/reason/wakeTo/wokeAt.")] bool? snoozed = null,
+		[Description("true = ONLY nodes the daily job has woken (`snooze.wokeAt` set), false = ONLY nodes that are not. Omit = no filter. Acknowledge a wake with tasks_upsert snooze:{clear:true}.")] bool? woke = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -1105,7 +1108,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind, decisionPending),
+			Filter = new TaskNodeFilter(board, underNode, status, nodes, commit, statusKind, decisionPending, snoozed, woke),
 			Sort = parsedSort,
 			// LISTING: ask for the whole ordered set and apply `limit` HERE (below), after the
 			// cursor skip. The service's own Limit is a plain prefix Take over that same ordered
@@ -1135,7 +1138,7 @@ public static class TasksTools
 		// its own AssertDataStamp, so a board edit mid-walk is diagnosed as a data change instead of a
 		// caller argument change that never happened.
 		var fingerprint = SearchFingerprint(projectKey, hasQuery ? q!.Trim() : null, board, underNode, status,
-			nodes, commit, statusKind, decisionPending, axis, desc);
+			nodes, commit, statusKind, decisionPending, axis, desc, snoozed, woke);
 		// Query mode only — listing keeps its long-standing, deliberately version-FREE token (see
 		// SearchFingerprint's note on the documented "row may shift across the boundary" anomaly).
 		var dataStamp = hasQuery ? res.DataVersion ?? "" : "";
@@ -1322,8 +1325,9 @@ public static class TasksTools
 	// distinguishes a query walk from a listing walk over the same board (null vs a value).
 	static string SearchFingerprint(
 		string projectKey, string? query, string? board, string? underNode, string[]? status, string[]? nodes,
-		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc) =>
-		KeysetCursor.FingerprintOf(
+		string? commit, string[]? statusKind, bool? decisionPending, TaskSortBy axis, bool desc,
+		bool? snoozed = null, bool? woke = null) =>
+		KeysetCursor.FingerprintOf([
 			"tasks_search", projectKey, query, board, underNode,
 			CursorFilterSet(status), CursorFilterSet(nodes),
 			commit, CursorFilterSet(statusKind),
@@ -1331,8 +1335,13 @@ public static class TasksTools
 			// selector: a token issued for the waiting set must not be honoured against the whole
 			// board. Three distinct states — omitted, true, false — so null must NOT collapse onto
 			// "false" (that would silently accept a cursor across a filter change).
-			decisionPending is null ? null : decisionPending.Value ? "1" : "0",
-			axis.ToString(), desc ? "1" : "0");
+			TriState(decisionPending),
+			axis.ToString(), desc ? "1" : "0",
+			// node-snooze-until: the snooze selectors, same three-state rule. Appended only when
+			// asked, so a token issued before these filters existed keeps its fingerprint.
+			.. snoozed is null && woke is null ? Array.Empty<string?>() : ["snooze", TriState(snoozed), TriState(woke)]]);
+
+	static string? TriState(bool? v) => v is null ? null : v.Value ? "1" : "0";
 
 	// A set-valued filter, canonicalized for the fingerprint: the same set in another ORDER is the
 	// same query, so it must hash the same (otherwise re-issuing the call with the args shuffled
@@ -1425,7 +1434,9 @@ public static class TasksTools
 			// a query-mode row to be a signal at all. Already null for every non-`observation`
 			// board (TasksService only loads it for that kind), so this costs every other row
 			// nothing.
-			Observation: n.Observation);
+			Observation: n.Observation,
+			// NOT lean-cut: `snoozed`/`woke` are filters on this tool (the decisionPending rule).
+			Snooze: n.Snooze);
 	}
 
 	// ---- usage telemetry helpers (spec: task-usage-layer-with-declared-role) ----
@@ -1848,7 +1859,8 @@ public static class TasksTools
 		`approvalGated` — open nodes sitting in a status whose OUTGOING transition requires your approval
 		(e.g. work Review, ideas review, intake confirmed), derived from the board's own FSM data
 		(`requiresApproval`), grouped on `area` like (3), `crowded` when a cluster exceeds 5; nodes already
-		counted in (1) are not repeated here; (2) `closed` — nodes in the period whose status is now
+		counted in (1) are not repeated here; (1c) `wokenTotal`/`wokenForOwnerTotal` — snoozed nodes the
+		daily job woke in the period, with the owner-addressed ones listed in `wokenForOwner`; (2) `closed` — nodes in the period whose status is now
 		terminal; (3) `newCohorts` — nodes born in the period, grouped on the `area` tag; (4) `timeline` —
 		chronology, only when `includeTimeline` is true.
 		PERIOD: `sinceVersion` (a `currentVersion` from an earlier digest or tasks_delta), else the last
@@ -2043,6 +2055,9 @@ public static class TasksTools
 				Priority = n.Priority,
 				// null = omit (leave as-is); true/false = an explicit set/clear.
 				DecisionPending = n.DecisionPending,
+				// node-snooze-until: null = omit. Validation (until required, wakeTo vocabulary,
+				// open nodes only) is the service's — it refuses through conflicts[].
+				Snooze = n.Snooze?.ToCore(),
 				// links:{kind:ref|ref[]} → kind -> normalized string list (the converter already
 				// flattened a bare ref to a one-element list). Empty-value kinds are dropped.
 				Links = n.Links is null ? null : n.Links
