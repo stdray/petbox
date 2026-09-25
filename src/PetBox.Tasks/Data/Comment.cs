@@ -35,10 +35,20 @@ public sealed record CommentRow : TemporalRow
 	// to say about a slug edit and the service refuses one instead (see CommentService.UpsertAsync).
 	[Column, Nullable] public string? Slug { get; init; }
 
-	// Only the content (Body/Author/ParentId/Slug) can differ between revisions; Board/NodeId
-	// are immutable identity (excluded, like TaskNode excludes Board/NodeId).
+	// comment-tags-only-patch-keeps-version (M026): a deterministic summary of the comment's
+	// ACTIVE tag set (comment_tag, a side SCD-2 association — tags are NOT columns of this row).
+	// Unlike Slug/Body it round-trips nothing user-visible; it exists ONLY so SamePayload below
+	// can see a tags-only change as the payload change it is, instead of the store treating it as
+	// an identical-content no-op (TemporalStore's classifier never looks past this row's own
+	// columns). Computed by CommentService.TagFingerprint — normalize, sort ordinal, join U+001F
+	// — mirroring SetTagsAsync's own normalization so the two can never disagree.
+	[Column, NotNull] public string TagsFingerprint { get; init; } = string.Empty;
+
+	// The content (Body/Author/ParentId/Slug/TagsFingerprint) can differ between revisions;
+	// Board/NodeId are immutable identity (excluded, like TaskNode excludes Board/NodeId).
 	public override bool SamePayload(TemporalRow other) =>
-		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId && c.Slug == Slug;
+		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId && c.Slug == Slug
+		&& c.TagsFingerprint == TagsFingerprint;
 
 	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
 	{
@@ -48,6 +58,7 @@ public sealed record CommentRow : TemporalRow
 		if (c.Author != Author) fields.Add("author");
 		if (c.ParentId != ParentId) fields.Add("parentId");
 		if (c.Slug != Slug) fields.Add("slug");
+		if (c.TagsFingerprint != TagsFingerprint) fields.Add("tags");
 		return fields;
 	}
 
