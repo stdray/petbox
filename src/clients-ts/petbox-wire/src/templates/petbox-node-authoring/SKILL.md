@@ -72,7 +72,7 @@ Every diagram is a `<figure>`, and both halves must carry the SAME claim:
 - If you cannot write that one sentence, the diagram does not have a clear point yet — fix the
   diagram's content before worrying about markup.
 
-The tag list above is enforced by the server at render time; section (e) ships a validator that
+The tag list above is enforced by the server at render time; section (f) ships a validator that
 checks a draft against it before you write.
 
 ## (d) The rule that matters most: if a phrase says it faster, write the phrase
@@ -99,7 +99,26 @@ Do NOT draw when:
 When in doubt, write the caption sentence first. If the sentence is complete and clear on its own,
 you very likely do not need the picture under it.
 
-## (e) Verify before you write
+## (e) Lead with why; define every coined term
+
+Applies once a body runs past ~10 non-empty lines — a short status update needs none of this.
+
+- **Why comes first.** The first `##` section is `## Why` (or `## Зачем` in a
+  Russian-language project — match this project's own language). 2-4 lines on what breaks
+  or stays broken if this is never done, in words a reader who saw none of the session
+  can follow. Mechanism, code, decisions — everything else — comes after it, not instead
+  of it.
+- **Every coined term is anchored.** A word this project's `doc/` or spec does not already
+  define gets a one-phrase definition, or a link to the node that defines it, at its first
+  use. A term invented mid-session either gets that anchor here or is not used — an
+  unglossed nickname ("the semantic leg", "the ratchet") reads as noise to a reader who
+  was not in the session, not as a name.
+
+`validate-body.mjs` (section (f)) flags a missing `Why`/`Зачем` lead on a long body as a
+**warning**, not a violation — it prints, exit stays 0. Coined-term coverage has no
+mechanical check: judging whether a word is jargon needs a reader, not a regex.
+
+## (f) Verify before you write
 
 Everything in (c) is enforced only at render time — on the server, after the body is already
 written — and a wired project has no PetBox sources to read. So this skill ships its own check as
@@ -111,7 +130,9 @@ allowlist, the forbidden tags, the local-only `href`/`url(#id)` reference rules,
 flags the renderer mangles (a literal backslash-n in prose, `==highlight==` / `--pseudo--`
 headings). It deliberately does NOT replicate the sanitizer's output transforms (id suffixing and
 friends) — those are not author-facing rules. Code fences and inline code are excluded from every
-check (code never reaches the sanitizer).
+check (code never reaches the sanitizer). It also prints, on stdout, a separate **warning** (see
+(e)) for a long body whose first heading is not `Why`/`Зачем` — a style nudge, not a violation:
+it never changes the exit code.
 
 > [!WARNING]
 > Do not re-type or re-save this file from a code block — there is no code block to copy from

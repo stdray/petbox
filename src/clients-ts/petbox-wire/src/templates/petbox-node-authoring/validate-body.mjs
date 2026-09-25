@@ -3,6 +3,8 @@
 //
 // Zero dependencies, no PetBox sources needed. Usage:  node validate-body.mjs <draft.md>
 // Exit: 0 = clean, 1 = violations listed below, 2 = bad usage.
+// A WARNING (missing Why/Зачем lead on a long body, SKILL.md section (e)) is a separate,
+// softer class: it prints to stdout but never changes the exit code, even alone.
 //
 // Shipped as a REAL FILE next to SKILL.md (skill-files.ts's `extraFiles`), materialized by
 // `petbox-wire apply`/`wire` on every skill surface (.claude/skills/petbox-node-authoring/,
@@ -99,6 +101,25 @@ for (const m of text.matchAll(tagRx)) {
     if (value && /url\(/i.test(value) && !/^url\(#[A-Za-z][\w:.-]*\)$/.test(value.trim()))
       flag(m.index, attr + '="' + value + '" carries a non-local url(...) — the whole attribute is stripped unless it is exactly url(#id)');
   }
+}
+
+// --- warning: a long body should lead with a Why/Зачем section (SKILL.md section (e)) ---
+// Soft norm, not a render-time rule — nothing here is enforced by the server, so this never
+// joins `problems` and never changes the exit code, even standing alone.
+const WHY_LINE_THRESHOLD = 10;
+const nonEmptyLines = raw.split("\n").filter((line) => line.trim() !== "").length;
+if (nonEmptyLines > WHY_LINE_THRESHOLD) {
+  const firstHeading = text.match(/^##[ \t]+(.*)$/m);
+  // (?=\s|$) instead of \b: \b is ASCII-\w-based and does not fire after a Cyrillic letter
+  // ("Зачем" has no trailing word boundary under plain \b), which would silently break the
+  // Russian-language spelling this check exists to accept.
+  const leadsWithWhy = firstHeading != null && /^(Why|Зачем)(?=\s|$)/i.test(firstHeading[1].trim());
+  if (!leadsWithWhy)
+    console.log(
+      "warning: " + nonEmptyLines + " non-empty lines but the body does not lead with a " +
+      "`## Why` / `## Зачем` section — a reader with no session context may not follow what " +
+      "this solves or what the terms mean (SKILL.md section (e))",
+    );
 }
 
 if (problems.length === 0) {
