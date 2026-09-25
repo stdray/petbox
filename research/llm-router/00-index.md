@@ -36,6 +36,8 @@
 - 10-facts F10 (нет тестов fallback/breaker) и 12-facts F12 (YARP без AOT) — REFUTED.
 Ни одна карточка не заведена; решение по развилкам — за владельцем.
 
+**ИТОГ: 90-summary.md** (читать первым; опоры — 80, 65, 66).
+
 ## Внешний потребитель (добавлено 2026-09-25)
 Проект archive (заметки + мемы) прислал требования к роутеру: `D:\my\prj\archive\research\36-llm-router-needs.md`.
 По убыванию ценности: (1) vision content-parts в `/v1/chat/completions` (сейчас `Content` — string);
