@@ -30,6 +30,7 @@ TABLE comments
   COL ParentId TEXT NULL
   COL PrevKey TEXT NULL
   COL Slug TEXT NULL
+  COL TagsFingerprint TEXT NOT NULL DEFAULT ''
   COL Updated TEXT NOT NULL
   COL Version INTEGER NOT NULL PK2
   INDEX ix_comments_active origin=c (ActiveTo, Board, NodeId)

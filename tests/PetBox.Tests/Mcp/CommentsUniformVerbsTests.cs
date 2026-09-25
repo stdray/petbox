@@ -177,6 +177,90 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		got.Tags.Should().Equal("new-tag");
 	}
 
+	// card comment-tags-only-patch-keeps-version: prod evidence (f1db66d, smoke/work,
+	// 2026-09-23) showed a tags-only PATCH applying (tags landed on read-back) while the
+	// comment's Version/Updated and the batch's CurrentVersion all stayed put — invisible to
+	// comments_delta's version cursor and to a concurrent writer's stale-baseline CAS check.
+	// Root cause: CommentRow.SamePayload never looked at tags (they live in comment_tag, a
+	// side association), so TemporalStore classified the row as an identical-payload no-op.
+	// The fix threads a TagsFingerprint payload field through the row (M026); this asserts the
+	// visible contract a caller actually depends on: a real version bump, and delta visibility.
+	[Fact]
+	public async Task Upsert_Patch_TagsOnly_BumpsVersion_AndIsVisibleToDelta()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body", ["old-tag"]));
+		var id = created.Added.Single().Id;
+		var baseline = created.CurrentVersion;
+
+		var patched = await Upsert(http, new CommentItemInput { Id = id, Tags = ["new-tag"], Version = baseline });
+		patched.Applied.Should().BeTrue();
+		var echoed = patched.Updated.Should().ContainSingle(c => c.Id == id).Subject;
+		echoed.Version.Should().BeGreaterThan(baseline);
+		patched.CurrentVersion.Should().BeGreaterThan(baseline);
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Version.Should().Be(echoed.Version);
+
+		// A caller who read at `baseline` and advanced its cursor there must be handed this
+		// tags-only edit on its next delta — the whole point of the version bump.
+		var delta = await CommentTools.DeltaAsync(http, Flags(), _comments, Proj, Board, baseline, bodyLen: -1);
+		delta.Updated.Should().ContainSingle(c => c.Id == id && c.Tags.SequenceEqual(new[] { "new-tag" }));
+	}
+
+	// A stale baseline on a tags-only patch must conflict like any other payload change — the
+	// CAS guarantee the version bump above exists to provide. Before the fix this patch would
+	// have applied silently (SamePayload saw no change to reject against).
+	[Fact]
+	public async Task Upsert_Patch_TagsOnly_StaleBaseline_Conflicts_NothingWritten()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body", ["old-tag"]));
+		var id = created.Added.Single().Id;
+		var baseline = created.CurrentVersion;
+
+		// A concurrent writer moves the comment's tags past the author's baseline.
+		var other = await Upsert(http, new CommentItemInput { Id = id, Tags = ["their-tag"], Version = baseline });
+		other.Applied.Should().BeTrue();
+
+		var stale = await Upsert(http, new CommentItemInput { Id = id, Tags = ["my-tag"], Version = baseline });
+		stale.Applied.Should().BeFalse();
+		var conflict = stale.Conflicts.Should().ContainSingle(c => c.Id == id).Subject;
+		conflict.Kind.Should().Be("Stale");
+		conflict.ChangedFields.Should().BeEquivalentTo(["tags"]);
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Tags.Should().Equal("their-tag"); // the stale attempt never landed
+	}
+
+	// An identical resubmit (same tags as already active) must stay the no-op it always was —
+	// retry safety, not a spurious version bump on every re-send of the same payload. The echo
+	// still names the comment in Updated (patchedKeys forces the Added/Updated split for any
+	// key that came from an active row — see CommentService.UpsertAsync's `mine` comment), so
+	// the no-op signal here is the UNCHANGED version, not absence from the echo.
+	[Fact]
+	public async Task Upsert_Patch_TagsOnly_IdenticalResend_IsNoOp()
+	{
+		var http = Http();
+		var node = NewNode();
+		var created = await Upsert(http, Create(node, "alice", "original body", ["same-tag"]));
+		var id = created.Added.Single().Id;
+		var baseline = created.CurrentVersion;
+
+		var resend = await Upsert(http, new CommentItemInput { Id = id, Tags = ["same-tag"], Version = baseline });
+		resend.Applied.Should().BeTrue();
+		resend.Added.Should().BeEmpty();
+		var echoed = resend.Updated.Should().ContainSingle(c => c.Id == id).Subject;
+		echoed.Version.Should().Be(baseline);         // no new revision minted
+		resend.CurrentVersion.Should().Be(baseline);
+
+		var got = await CommentTools.GetAsync(http, Flags(), _comments, _tasks, Proj, id, bodyLen: -1);
+		got.Version.Should().Be(baseline);
+		got.Tags.Should().Equal("same-tag");
+	}
+
 	[Fact]
 	public async Task Upsert_Patch_CarryingNoChangedField_IsRefused()
 	{

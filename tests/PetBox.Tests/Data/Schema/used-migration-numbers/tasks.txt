@@ -39,3 +39,4 @@
 23 LIVE M023_ObservationSignal
 24 LIVE M024_ObservationSignalFixedAt
 25 LIVE M025_CommentSlug
+26 LIVE M026_CommentTagsFingerprint
