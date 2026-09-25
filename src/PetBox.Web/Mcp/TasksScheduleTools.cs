@@ -15,6 +15,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class TasksScheduleTools
 {
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_recurring_upsert", Title = "Create or replace a rule of repetition", UseStructuredContent = true, OutputSchemaType = typeof(RecurringRuleView))]
 	[Description("""
 		Create or REPLACE (same `id`) a rule of repetition: a card template (board, type, title, body, tags)
@@ -42,7 +43,6 @@ public static class TasksScheduleTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return await rules.UpsertAsync(projectKey, new RecurringRuleInput
 		{
 			Id = id,
@@ -57,6 +57,7 @@ public static class TasksScheduleTools
 		}, ct);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_recurring_list", Title = "List rules of repetition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RecurringRuleListResult))]
 	[Description("List the project's rules of repetition with their firing state: nextDueAt, lastFiredAt, openNodeId (the card from the last firing), missedCount (periods skipped because that card was still open), lastError (why the last firing could not create its card). Requires tasks:read.")]
 	public static async Task<RecurringRuleListResult> RecurringListAsync(
@@ -65,10 +66,10 @@ public static class TasksScheduleTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return new RecurringRuleListResult(await rules.ListAsync(projectKey, ct));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_recurring_delete", Title = "Delete a rule of repetition", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RecurringRuleDeletedResult))]
 	[Description("Delete a rule of repetition by id. The cards it already created are NOT touched. `deleted:false` = there was no such rule. Requires tasks:write.")]
 	public static async Task<RecurringRuleDeletedResult> RecurringDeleteAsync(
@@ -78,10 +79,10 @@ public static class TasksScheduleTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new RecurringRuleDeletedResult(await rules.DeleteAsync(projectKey, id, ct), id);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_schedule_run", Title = "Run the daily alarm pass now", UseStructuredContent = true, OutputSchemaType = typeof(ScheduledPassReport))]
 	[Description("""
 		Run, for THIS project and right now, the same pass the server runs once a day: wake every open node
@@ -96,7 +97,6 @@ public static class TasksScheduleTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return await schedule.RunProjectAsync(projectKey, ct);
 	}
 }

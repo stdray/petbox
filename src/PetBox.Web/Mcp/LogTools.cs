@@ -43,6 +43,7 @@ public static class LogTools
 		"Row cap reached: results were truncated (see truncated). Narrow the query: add or tighten " +
 		"`take`/`top`, or aggregate (`summarize`) to bound the result deliberately.";
 
+	[RequiresScope(ApiKeyScopes.LogsQuery)]
 	[McpServerTool(Name = "log_query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Responses are row-capped: no explicit take/top applies a default limit (1000 rows), an explicit one is bounded by a hard max (100k); a cut result carries truncated: true plus a narrowing `hint` (add/tighten take, or aggregate, to bound the query deliberately) — omitted (null) when the result was not cut. Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
@@ -53,8 +54,6 @@ public static class LogTools
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.LogsQuery);
-
 		LogQueryResult result;
 		try
 		{
@@ -94,12 +93,5 @@ public static class LogTools
 		{
 			throw new InvalidOperationException(ex.Message);
 		}
-	}
-
-	static void AssertScope(IHttpContextAccessor accessor, string required)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		if (!ApiKeyScopes.Granted(ctx.User, required))
-			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
 }

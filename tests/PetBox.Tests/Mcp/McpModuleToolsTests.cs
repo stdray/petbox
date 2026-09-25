@@ -15,6 +15,7 @@ using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
 using PetBox.Web.Mcp.Contract;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Mcp;
 
@@ -133,8 +134,8 @@ public sealed class McpModuleToolsTests : IDisposable
 		// Tools throw on a failed assert; McpErrorEnvelopeFilter renders {error} on the wire
 		// (covered by the transport tests). Direct unit calls observe the typed throw.
 		var http = Http("tasks:read");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_create", () =>
+			TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b")));
 	}
 
 	[Fact]
@@ -417,9 +418,9 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Session_Append_MissingWriteScope_Throws()
 	{
 		var http = Http("tasks:read"); // no tasks:write
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "session_append", () =>
 			SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sa", "claude-code", 1,
-				new[] { new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = "user", Content = "x" } }));
+				new[] { new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = "user", Content = "x" } })));
 	}
 
 	// session_search against a foreign project returns an explicit, structured Unauthorized
@@ -462,9 +463,9 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Comments_MissingWriteScope_Throws()
 	{
 		var http = Http("tasks:read"); // no tasks:write
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "comments_upsert", () =>
 			CommentTools.UpsertAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas",
-				[new CommentItemInput { Node = "n", Author = "a", Body = "b" }]));
+				[new CommentItemInput { Node = "n", Author = "a", Body = "b" }])));
 	}
 
 	[Fact]
@@ -545,25 +546,25 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Methodology_RulesUpsert_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_rules_upsert", () =>
 			TasksTools.MethodologyRulesUpsertAsync(http, Flags(), _tasks, Proj, "inst",
-				MinimalDef()));
+				MinimalDef())));
 	}
 
 	[Fact]
 	public async Task Methodology_Create_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_create", () =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple")));
 	}
 
 	[Fact]
 	public async Task Methodology_BoardAdopt_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardAdoptAsync(http, Flags(), _tasks, Proj, "b", "inst"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_adopt", () =>
+			TasksTools.BoardAdoptAsync(http, Flags(), _tasks, Proj, "b", "inst")));
 	}
 
 	// The gate is a scope check, not a ban: methodology:write actually opens the door.
@@ -583,16 +584,16 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Methodology_Close_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.MethodologyCloseAsync(http, Flags(), _tasks, Proj, "inst"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_close", () =>
+			TasksTools.MethodologyCloseAsync(http, Flags(), _tasks, Proj, "inst")));
 	}
 
 	[Fact]
 	public async Task BoardClose_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardCloseAsync(http, Flags(), _tasks, Proj, "b"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_close", () =>
+			TasksTools.BoardCloseAsync(http, Flags(), _tasks, Proj, "b")));
 	}
 
 	[Fact]
@@ -600,24 +601,24 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		// The inverse of a gated act: an ungated reopen would undo a governance freeze.
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardReopenAsync(http, Flags(), _tasks, Proj, "b"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_reopen", () =>
+			TasksTools.BoardReopenAsync(http, Flags(), _tasks, Proj, "b")));
 	}
 
 	[Fact]
 	public async Task BoardDelete_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardDeleteAsync(http, Flags(), _tasks, Proj, "b"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_delete", () =>
+			TasksTools.BoardDeleteAsync(http, Flags(), _tasks, Proj, "b")));
 	}
 
 	[Fact]
 	public async Task BoardSetWire_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardSetWireAsync(http, Flags(), _tasks, Proj, "b", "s"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_board_set_wire", () =>
+			TasksTools.BoardSetWireAsync(http, Flags(), _tasks, Proj, "b", "s")));
 	}
 
 	// set_active moves the pointer tasks_methodology_guide resolves through. Board membership
@@ -628,8 +629,8 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task MethodologySetActive_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, "inst"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_set_active", () =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, "inst")));
 	}
 
 	// Clearing the pointer is the same governance act as setting it.
@@ -637,8 +638,8 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task MethodologySetActive_Clear_WithoutMethodologyWrite_Throws()
 	{
 		var http = Http(TasksOnly);
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, null));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_set_active", () =>
+			TasksTools.MethodologySetActiveAsync(http, Flags(), _tasks, Proj, null)));
 	}
 
 	// The second line I am holding: methodology_set_description writes a LIVE instance's rules
@@ -709,8 +710,8 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Methodology_Create_MethodologyWriteWithoutTasksWrite_StillThrows()
 	{
 		var http = Http("tasks:read,methodology:write");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "tasks_methodology_create", () =>
+			TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "inst", "builtin", "simple")));
 	}
 
 	[Fact]

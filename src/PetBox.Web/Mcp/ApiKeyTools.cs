@@ -26,6 +26,7 @@ namespace PetBox.Web.Mcp;
 	"hands out API keys ACROSS tenants (admin:provision); a key-minting verb cannot be confined to the tenant it mints for")]
 public static class ApiKeyTools
 {
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "apikey_create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]
 	[Description("Mints a project-scoped API key. Requires admin:provision. `scopes` is a comma-separated list; unknown scopes are rejected. `expiresInSeconds` (optional) sets a TTL. `allProjects:true` mints a CROSS-PROJECT key (project claim '*', reads+writes every project) — `projectKey` must be omitted then. `defaultProject` (cross-project keys ONLY) is the project the tools with an OPTIONAL projectKey fall back to when it is omitted; a project-scoped key already defaults to its own claim, so passing it there is an error. `sandboxOnly:true` mints a SANDBOX key (spec work/smoke-writes-into-real-projects): on top of the normal claim check, every write is also required to land in a project flagged `sandbox` (project_create sandbox:true) — this holds even for a `sandboxOnly:true, allProjects:true` key (one smoke key spanning every sandbox project, still refused on every real one). With a specific `projectKey` (not allProjects), that project must already be a sandbox project. The raw key is returned ONCE — store it now.")]
 	public static async Task<ApiKeyCreatedResult> CreateAsync(
@@ -39,7 +40,6 @@ public static class ApiKeyTools
 		[Description("Mint a SANDBOX-ONLY key: writes are additionally gated to projects flagged sandbox (see project_create). Default false.")] bool sandboxOnly = false,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		// A key's name is its only human-readable label in the admin list; blank names are
 		// the prod-data symptom we're closing off. Reject empty/whitespace here (the admin UI
 		// already does) — duplicates are still allowed (names are labels, not identifiers).
@@ -79,8 +79,8 @@ public static class ApiKeyTools
 		// Everything the DATABASE decides — the project exists, a sandboxOnly key names a sandbox
 		// project, the default project exists — lives in AgentKeyAdminService, the one door onto ApiKeys.
 		// The issuer travels to the service. On THIS surface it always clears the grant gate — the
-		// AssertScope above already proved the caller holds admin:provision, which is itself the
-		// privileged authority — so nothing that works today stops working. What it adds is
+		// scope gate ([RequiresScope(admin:provision)] on this tool) already proved the caller holds
+		// admin:provision, which is itself the privileged authority — so nothing that works today stops working. What it adds is
 		// ATTRIBUTION: the minted row records `key:<name>` of the key that made it, which is the half
 		// of spec access-attribution ApiKeys was missing (apikey_update already logged its actor).
 		var minted = await keys.MintAsync(
@@ -97,6 +97,7 @@ public static class ApiKeyTools
 		};
 	}
 
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
 	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey, lastUsedAt). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted. `lastUsedAt` is the last successful authentication with the key, null if it has never been used: it is served FRESH (the stored value merged with the in-memory stamp), so a call made seconds ago already shows — but the STORED value is coarse (persisted in ~5-minute batches), and a hard crash can lose up to that window.")]
 	public static async Task<ApiKeyListResult> ListAsync(
@@ -104,7 +105,6 @@ public static class ApiKeyTools
 		[Description("Project to list keys for.")] string projectKey,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(projectKey)) throw new ArgumentException("projectKey is required");
 
 		// The service merges the stored LastUsedAt with the live in-memory stamp (the flusher persists
@@ -115,6 +115,7 @@ public static class ApiKeyTools
 				k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey, k.SandboxOnly, k.LastUsedAt))]);
 	}
 
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "apikey_update", Title = "Update an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyUpdatedResult))]
 	[Description("PATCHes an ALREADY-ISSUED key in place — no re-mint, no manual DB edit. Requires admin:provision: exactly the right apikey_create needs, so an update can never grant what a mint could not. The secret itself never changes and is never returned; `keyValue` is the address. Editable: `name`, `scopes`, expiry, `defaultProject`. A field you OMIT is left untouched (it is NOT reset to a default). The two clearable fields have an explicit sentinel, distinct from 'omitted': `expiresInSeconds:0` makes the key NON-EXPIRING, `defaultProject:\"\"` (empty string) DROPS the default project. `scopes` replaces the whole set (it is not additive) and is validated like on create — unknown scopes are rejected, an empty set is rejected. `defaultProject` obeys the same invariants as create: cross-project ('*') keys only, and the project must exist. A change takes effect on the NEXT call with that key — nothing about a key is cached per connection or per session. A key declared in appsettings (Auth:ApiKeys) CANNOT be updated: the config file owns its lifecycle and the config lookup wins on every auth, so a stored row would never be read — such a call is REFUSED, not silently ignored.")]
 	public static async Task<ApiKeyUpdatedResult> UpdateAsync(
@@ -126,7 +127,6 @@ public static class ApiKeyTools
 		[Description("New fallback project (cross-project keys only). \"\" = drop it. Omit to leave unchanged.")] string? defaultProject = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(keyValue)) throw new ArgumentException("keyValue is required");
 
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
@@ -169,6 +169,7 @@ public static class ApiKeyTools
 	static string Tail(string? key) =>
 		string.IsNullOrEmpty(key) ? "(none)" : key.Length <= 6 ? "…" : $"…{key[^6..]}";
 
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "apikey_delete", Title = "Delete an API key", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyDeletedResult))]
 	[Description("Deletes (revokes) an API key by its raw key value. Requires admin:provision.")]
 	public static async Task<ApiKeyDeletedResult> DeleteAsync(
@@ -176,7 +177,6 @@ public static class ApiKeyTools
 		[Description("The raw key value to revoke.")] string keyValue,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(keyValue)) throw new ArgumentException("keyValue is required");
 		if (!await keys.DeleteAsync(keyValue, ct)) throw new InvalidOperationException("ApiKey not found");
 		return new ApiKeyDeletedResult(true, keyValue);

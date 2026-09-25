@@ -534,7 +534,7 @@ public partial class Program
 			.WithRequestFilters(filters =>
 			{
 				PetBox.Web.Mcp.McpErrorEnvelopeFilter.Register(filters); // exceptions -> structured {error} body
-				PetBox.Web.Mcp.McpToolScopeFilter.Register(filters);     // A7b: scope-trim tools/list
+				PetBox.Web.Mcp.McpToolScopeFilter.RegisterListFilter(filters); // tools/list: per-tool trim by the declared scope
 				PetBox.Web.Mcp.McpTracingFilter.Register(filters);       // span per tool call (self-tracing)
 																		 // LAST = INNERMOST (the SDK nests each registered filter inside the previous one), which
 																		 // is exactly where the projectKey injection must sit: inside McpTracingFilter, so the
@@ -546,6 +546,9 @@ public partial class Program
 																		  // project registry into an existence oracle for any key. It also has to be BELOW the default
 																		  // filter, which is what resolves the projectKey it authorizes.
 				PetBox.Web.Mcp.McpTenantEnforcementFilter.Register(filters); // default-deny by tenant (spec authz-tenant-default-deny)
+				PetBox.Web.Mcp.McpToolScopeFilter.RegisterCallGate(filters); // the declared scope ([RequiresScope]) — INSIDE the tenant PEP
+																			 // (its refusal keeps precedence) and ABOVE the existence check, so a key without the scope
+																			 // learns nothing about what exists (spec mcp-scope-declared-once)
 				PetBox.Web.Mcp.McpProjectExistsFilter.Register(filters);  // …and the RESOLVED project must exist (W3)
 																		  // INNERMOST OF ALL, deliberately: an unauthorized/existence-refused call must never see a
 																		  // parameter-name verdict first (same reasoning as ProjectExists sitting below the tenant

@@ -42,6 +42,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class SearchTools
 {
+	[RequiresAnyScope(ApiKeyScopes.MemoryWrite, ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "search_reindex", Title = "Rebuild a project's search index",
 		Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SearchReindexResult))]
 	[Description("""

@@ -59,6 +59,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "workspaceKey", tenant: TenantKind.Workspace)]
 public static class ConfigTools
 {
+	[RequiresScope(ApiKeyScopes.ConfigWrite)]
 	[McpServerTool(Name = "config_binding_upsert", Title = "Upsert config bindings", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsUpsertResult))]
 	[Description("""
 		Batch upsert config bindings in a workspace's config store — PUT by (path, tag SET). Each
@@ -111,7 +112,6 @@ public static class ConfigTools
 		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in, same promise as the other batch verbs): valid bindings LAND, each refused one comes back in conflicts[] with its reason. Config rows are immutable and keyed by (path, tagset) with NO version watermark, so the mode DEGENERATES here — there is no stale conflict to have, and no intra-batch references, so every item is independent. That is the point: the flag means the same thing everywhere, you never have to remember which verb is the exception.")] bool atomic = true,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigWrite);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		// An empty batch is almost always a client bug (a filter emptied the list, the call still
 		// went out) — reject it instead of silently reporting applied:true with nothing landed.
@@ -221,6 +221,7 @@ public static class ConfigTools
 		return new ConfigBindingsUpsertResult(prepared.Count > 0, currentVersion, added, updated, supersededAll, conflicts);
 	}
 
+	[RequiresScope(ApiKeyScopes.ConfigRead)]
 	[McpServerTool(Name = "config_binding_search", Title = "Read config bindings (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsSearchResult))]
 	[Description("THE config-binding read verb — one tool for LISTING (no `q`) and SEARCH (`q`). Without `q`: a deterministic list of a workspace's ACTIVE bindings (id, path, tags, kind), ordered by path, optionally narrowed by `pathPrefix`. With `q`: a case-insensitive SUBSTRING match over path/tags/plaintext-value (config has no FTS/vector index, so a query degrades to this lexical floor — `retrievers` reports semantic:false). Secret values are NEVER returned (rows carry no value), so there is no bodyLen knob; the ~30k-char output budget still applies (overflow → truncated/omitted/hint). Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused.")]
 	public static async Task<ConfigBindingsSearchResult> BindingSearchAsync(
@@ -231,7 +232,6 @@ public static class ConfigTools
 		[Description("Max rows returned (0 = no cap — the output budget still applies).")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigRead);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 
@@ -269,6 +269,7 @@ public static class ConfigTools
 			: new ConfigBindingsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
 	}
 
+	[RequiresScope(ApiKeyScopes.ConfigRead)]
 	[McpServerTool(Name = "config_binding_get", Title = "Get one config binding", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingRow))]
 	[Description("Return ONE active config binding by its id (the addressed single read; mirrors memory_get/comments_get). Carries id/path/tags/kind — never the value (secret-safety). A missing/deleted id is a not-found ERROR (never a bare null — a declared outputSchema demands structured content, so the error rides the isError channel). Requires config:read, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused BEFORE the id is looked up, so this can no longer answer an outsider whether a binding exists.")]
 	public static async Task<ConfigBindingRow> BindingGetAsync(
@@ -277,7 +278,6 @@ public static class ConfigTools
 		[Description("Binding id (from config_binding_search/_upsert).")] long id,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigRead);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var b = await configDb.Bindings
@@ -288,6 +288,7 @@ public static class ConfigTools
 		return new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString());
 	}
 
+	[RequiresScope(ApiKeyScopes.ConfigWrite)]
 	[McpServerTool(Name = "config_binding_delete", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
 	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires config:write, and `workspaceKey` must be YOUR OWN workspace (the one your key's project belongs to) — a foreign workspace is refused BEFORE the id is looked up, exactly as on DELETE /api/config/{workspaceKey}/bindings.")]
 	public static async Task<ConfigBindingDeletedResult> BindingDeleteAsync(
@@ -296,7 +297,6 @@ public static class ConfigTools
 		[Description("Binding id (from config_binding_search).")] long id,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.ConfigWrite);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;

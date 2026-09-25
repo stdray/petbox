@@ -40,6 +40,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class SessionTools
 {
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "session_upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
 	[Description("""
 		PUT (full snapshot replace): save an agent session's content as the latest snapshot —
@@ -61,7 +62,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// MCP is the degenerate single-blob writer; store it as one message. Latest-snapshot
 		// replaces any prior content for this sessionId.
@@ -72,6 +72,7 @@ public static class SessionTools
 		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount, ModuleMcp.SizeWarningOrNull(http));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "session_append", Title = "Append messages to a session", UseStructuredContent = true, OutputSchemaType = typeof(SessionAppendResult))]
 	[Description("""
 		Incrementally append transcript messages against the SERVER-authoritative cursor
@@ -102,7 +103,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// work/write-body-by-reference. session_append has no conflicts[] channel and no per-message
 		// refusal shape — its only structured reject is the ordinal `gap` — so a bad `contentRef`
@@ -141,6 +141,7 @@ public static class SessionTools
 		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap", warning);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "session_get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
 	[Description("""
 		Get the active session blob by id. `sessionId` may be the full id OR a unique PREFIX of
@@ -175,7 +176,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		// Reject 0/negative rather than leniently reading it as "the whole thing": ordinals are
 		// 1-based everywhere on this surface (session_append rejects the same way), and a caller
 		// holding a 0-based mental model must find out here, not by silently re-reading the
@@ -208,6 +208,7 @@ public static class SessionTools
 		return r.Match;
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "session_delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
 	[Description("""
 		Soft-delete a session: it disappears from session_search/session_get but the row is kept;
@@ -224,7 +225,6 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Resolve (throws on ambiguity) so a prefix can never delete the wrong session; a miss
 		// stays the idempotent { deleted: false }.
 		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
@@ -232,6 +232,7 @@ public static class SessionTools
 		return new SessionDeletedResult(deleted, resolvedId ?? sessionId);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "session_search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
 	[Description("""
 		THE session read verb — LISTING (no `q`) of the project's sessions, or a two-stage
@@ -309,7 +310,6 @@ public static class SessionTools
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		projectKey = await ModuleMcp.ResolveProject(http, projectKey, ct);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		if (string.IsNullOrWhiteSpace(q))
 		{

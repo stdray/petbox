@@ -11,7 +11,7 @@ namespace PetBox.Web.Mcp;
 // PetBox itself. Reports land in a FIXED $system board "client-issues" as Pending
 // nodes for the maintainer to triage — regardless of which project the caller's key
 // is scoped to. This is intentionally NOT project-scoped (it's report-to-maintainer,
-// not "a task on my board"), so it does not AssertProject/AssertScope; a valid key
+// not "a task on my board"), so it declares [RequiresNoScope] and no project; a valid key
 // (the /mcp endpoint already requires one) is enough. The write goes through the
 // single tasks door (ITasksService); this adapter only composes the report body.
 // Throws on a failed feature assert; McpErrorEnvelopeFilter renders the {error} body.
@@ -83,6 +83,7 @@ public static class ReportTools
 	// comparison is case-insensitive on both legs — a project key is case-insensitively unique.
 	internal const string ReporterTagPrefix = "reporter:";
 
+	[RequiresNoScope("files into the maintainer's fixed feedback board; any authenticated key may report")]
 	[McpServerTool(Name = "petbox_report_issue", Title = "Report an issue about PetBox itself", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
 	[Description("""
 		Report an issue about PetBox itself — a bug, confusing behavior, misleading docs, or a
@@ -133,6 +134,7 @@ public static class ReportTools
 			$"Read the maintainers' status and replies with petbox_report_issue_status (key: \"{key}\").");
 	}
 
+	[RequiresNoScope("reads back the caller's own reports from the feedback board; any authenticated key may ask")]
 	[McpServerTool(Name = "petbox_report_issue_status", Title = "Read back your own PetBox issue reports", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueStatusResult))]
 	[Description("""
 		Read back the reports YOUR project filed with petbox_report_issue: their current triage

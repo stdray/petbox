@@ -27,6 +27,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class DataDbTools
 {
+	[RequiresScope(ApiKeyScopes.DataSchema)]
 	[McpServerTool(Name = "db_create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
 	public static async Task<DataDbCreatedResult> CreateAsync(
@@ -36,7 +37,6 @@ public static class DataDbTools
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(dbName)) throw new ArgumentException("dbName is required");
 
 		var result = await catalog.CreateAsync(projectKey, dbName, description, maxPageCount, ct);
@@ -49,25 +49,25 @@ public static class DataDbTools
 		};
 	}
 
+	[RequiresScope(ApiKeyScopes.DataRead)]
 	[McpServerTool(Name = "db_list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
 	[Description("Lists a project's DataDbs (name, description, quota, timestamps). Requires data:read scope.")]
 	public static async Task<DataDbListResult> ListAsync(
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await catalog.ListAsync(projectKey, ct);
 		return new DataDbListResult(
 			[.. rows.Select(d => new DataDbRow(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))]);
 	}
 
+	[RequiresScope(ApiKeyScopes.DataSchema)]
 	[McpServerTool(Name = "db_delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
 	public static async Task<DataDbDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(dbName)) throw new ArgumentException("dbName is required");
 
 		var result = await catalog.DeleteAsync(projectKey, dbName, ct);
@@ -75,14 +75,13 @@ public static class DataDbTools
 		return new DataDbDeletedResult(true, dbName);
 	}
 
+	[RequiresScope(ApiKeyScopes.DataRead)]
 	[McpServerTool(Name = "db_describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
 	[Description("Returns a DataDb's tables and their columns (name, type, notNull, pk). Requires data:read scope.")]
 	public static async Task<DataDbDescribeResult> DescribeAsync(
 		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
-		AssertScope(http, ApiKeyScopes.DataRead);
-
 		var tables = await catalog.DescribeAsync(projectKey, dbName, ct)
 			?? throw new InvalidOperationException("DataDb not found");
 
@@ -90,12 +89,5 @@ public static class DataDbTools
 			[.. tables.Select(t => new DataTableView(
 				t.Name,
 				[.. t.Columns.Select(c => new DataColumnView(c.Name, c.Type, c.NotNull, c.PrimaryKey))]))]);
-	}
-
-	static void AssertScope(IHttpContextAccessor accessor, string required)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		if (!ApiKeyScopes.Granted(ctx.User, required))
-			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
 }

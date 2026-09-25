@@ -32,6 +32,7 @@ public static partial class ProjectTools
 	[GeneratedRegex("^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex KeyRegex();
 
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "project_create", Title = "Create a project", UseStructuredContent = true, OutputSchemaType = typeof(ProjectCreatedResult))]
 	[Description("""
 		Creates a project in a workspace. Requires admin:provision. `key` must match
@@ -50,7 +51,6 @@ public static partial class ProjectTools
 		[Description("Marks this a SANDBOX project — the write-gate containment target for sandbox-only API keys. Default false.")] bool sandbox = false,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		if (string.IsNullOrWhiteSpace(key) || !KeyRegex().IsMatch(key))
 			throw new ArgumentException($"key '{key}' is invalid; must match ^[a-z][a-z0-9_-]{{0,99}}$");
@@ -70,6 +70,7 @@ public static partial class ProjectTools
 		};
 	}
 
+	[RequiresScope(ApiKeyScopes.AdminProvision)]
 	[McpServerTool(Name = "project_list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
 	[Description("Lists projects, optionally scoped to one workspace. Requires admin:provision.")]
 	public static async Task<ProjectListResult> ListAsync(
@@ -77,8 +78,6 @@ public static partial class ProjectTools
 		[Description("Restrict to one workspace; omit for all projects.")] string? workspaceKey = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
-
 		// includeContainers: this is the ADMIN/provisioning view — the $ws-* memory containers are real
 		// Projects rows here, and hiding them from a provisioning agent (which the pages' default does,
 		// because a container is not a user project) would change what this tool has always answered.

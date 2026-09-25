@@ -27,8 +27,19 @@ namespace PetBox.Web.Mcp.Contract;
 // project claim, so `whoami` on one answered `project: null, scopes: […]` and read as a broken key
 // rather than as "a key that identifies a machine, not a project". Absent (omitted from the wire) on
 // every ordinary project key, which is exactly what tells the caller it is not a node.
+//
+// `Modules` is the SURFACE CATALOG (spec mcp-whoami): every module, each of its catalog scopes with
+// whether THIS key holds it, and every tool in it — including the tools tools/list hides from this
+// key. tools/list shows only what the key can call; this is how an agent still learns that, say, a
+// logs module exists and which scope it would need. Built from the same per-tool declaration the
+// invocation gate and the tools/list trim read (McpToolScopes), so the three cannot disagree.
 public sealed record WhoAmIResult(
-	string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null, string? Host = null);
+	string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null, string? Host = null,
+	IReadOnlyList<WhoAmIModule>? Modules = null);
+
+public sealed record WhoAmIScope(string Scope, bool Granted);
+
+public sealed record WhoAmIModule(string Module, IReadOnlyList<WhoAmIScope> Scopes, IReadOnlyList<string> Tools);
 
 // ---- comments_* ----------------------------------------------------------------------
 

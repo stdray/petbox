@@ -7,6 +7,7 @@ using PetBox.Core.Models;
 using PetBox.Data;
 using PetBox.Data.Services;
 using PetBox.Web.Mcp;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Mcp;
 
@@ -170,12 +171,12 @@ public sealed class McpToolServiceIsolationTests : IDisposable
 		var projects = new PetBox.Web.Auth.ProjectDirectory(_db.Factory());
 		var keys = _db.Factory().AgentKeys();
 
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ProjectTools.CreateAsync(weak, projects, Ws, "sneaky"));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ProjectTools.ListAsync(weak, projects));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ApiKeyTools.CreateAsync(weak, keys, "k", ApiKeyScopes.DataRead, projectKey: ProjA));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ApiKeyTools.ListAsync(weak, keys, ProjA));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ApiKeyTools.UpdateAsync(weak, keys, "yb_key_whatever", name: "x"));
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => ApiKeyTools.DeleteAsync(weak, keys, "yb_key_whatever"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "project_create", () => ProjectTools.CreateAsync(weak, projects, Ws, "sneaky")));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "project_list", () => ProjectTools.ListAsync(weak, projects)));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "apikey_create", () => ApiKeyTools.CreateAsync(weak, keys, "k", ApiKeyScopes.DataRead, projectKey: ProjA)));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "apikey_list", () => ApiKeyTools.ListAsync(weak, keys, ProjA)));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "apikey_update", () => ApiKeyTools.UpdateAsync(weak, keys, "yb_key_whatever", name: "x")));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(weak, "apikey_delete", () => ApiKeyTools.DeleteAsync(weak, keys, "yb_key_whatever")));
 
 		// Nothing was created by any of the refused calls. (The schema seeds its own bootstrap key, so
 		// the assertion names OURS rather than counting the table.)

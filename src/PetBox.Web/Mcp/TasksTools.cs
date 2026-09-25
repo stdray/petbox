@@ -32,6 +32,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.Argument, "projectKey")]
 public static class TasksTools
 {
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
 	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules or the project's utility layer declare; declare one with tasks_methodology_utility_upsert, project-homed and surviving a methodology switch, or tasks_methodology_rules_upsert, instance-homed). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the WORLD this board belongs to (spec methodology-utility-kinds: a board is a member of exactly one) — an instance `key` (its slug address, the same string every methodology verb takes as `key`), or the reserved sentinel \"$utility\" for the project's utility layer (always legal, independent of how many instances exist). Required once the project has any methodology instance — board_create without one is then rejected. `wiredBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
@@ -42,7 +43,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// STRICT at the boundary (the store itself normalizes leniently): a typo here would be
 		// filed as `corpus` and the board would then be measured by the wrong expectations for the
 		// rest of its life — silently, which is the exact failure this declaration exists to end.
@@ -51,6 +51,7 @@ public static class TasksTools
 		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.WiredBoard, meta.CreatedAt, meta.MethodologyInstance, meta.DeclaredRole);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance, or release it to the utility layer", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
 	[Description("Move (adopt) an existing board into a methodology instance, OR release it into the project's utility layer (spec methodology-utility-kinds) by passing the reserved sentinel \"$utility\" — a board's world changes exactly once per call, never to \"no world\". Enforces process-role singleton (≤1 open board per singleton kind) INSIDE the target (the instance, or the utility bucket). A named instance target must be open; releasing to \"$utility\" rejects a kind the utility layer does not declare and no builtin resolves — declare it first (tasks_methodology_utility_upsert). GOVERNANCE: this re-points an existing board's live nodes at another world's rules — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardAdoptResult> BoardAdoptAsync(
@@ -60,15 +61,14 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Adopting an EXISTING board re-points its EXISTING nodes at another instance's
 		// rules — the criterion "changes the rules for existing nodes" is met even though
 		// no rules document is edited here. Governance-gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var meta = await tasks.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
 		return new BoardAdoptResult(meta.Name, meta.Kind, meta.MethodologyInstance);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_board_set_wire", Title = "Set the board a work board is wired into", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetWireResult))]
 	[Description("Set (or clear, when wiredBoard is omitted) the board a work board's tasks link into (the work->spec wiring). The target must be a board of the work kind's wire target — a spec board in the quartet. Makes the work->spec link explicit. GOVERNANCE: re-targets or severs the edge that link-constraints and delivery resolve through for every node already on the board — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardSetWireResult> BoardSetWireAsync(
@@ -76,17 +76,16 @@ public static class TasksTools
 		string projectKey, string board, string? wiredBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Rewires the work->spec edge of an EXISTING board: it re-targets (or, when wiredBoard is
 		// omitted, SEVERS) the link the rules' link-constraints and delivery roll-up resolve
 		// through, for every node already on the board. This one meets even the narrow original
 		// criterion — I had excluded it before on the reading that it edits no rules document.
 		// It does not need to: it changes what the rules MEAN for existing nodes. Gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var (set, norm) = await tasks.SetWiredBoardAsync(projectKey, board, wiredBoard, ct);
 		return new BoardSetWireResult(set, norm);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
 	[Description("""
 		List task boards in a project, each with its kind, wiredBoard (work->spec link, if set),
@@ -123,7 +122,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
 		var window = usageWindowDays is { } d && d > 0 ? TimeSpan.FromDays(d) : (TimeSpan?)null;
 		var rows = new List<BoardRow>(list.Count);
@@ -157,6 +155,7 @@ public static class TasksTools
 		return new BoardListResult(rows);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
 	[Description("Delete a task board and its nodes. GOVERNANCE: removes a process role from a live methodology instance and destroys its nodes — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardDeletedResult> BoardDeleteAsync(
@@ -164,13 +163,12 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Removes a process ROLE from a live instance and destroys its nodes with it. The most
 		// irreversible governance act on the surface — gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
 	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. GOVERNANCE: retires a process role of a live methodology instance for everyone — requires tasks:write AND methodology:write.")]
 	public static async Task<BoardClosedResult> BoardCloseAsync(
@@ -178,15 +176,14 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// A board is not "just data": in a methodology instance it IS a process role (the spec
 		// board, the work board). Closing one retires that role for everyone — close the spec
 		// board and the rules' own "a work feature must link a spec node" becomes unsatisfiable,
 		// which halts the process without editing one line of rules. Governance act — gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
 	[Description("Reopen a closed board so it accepts writes again. GOVERNANCE: undoes a deliberate governance freeze — same scope as tasks_board_close, requires tasks:write AND methodology:write.")]
 	public static async Task<BoardReopenedResult> BoardReopenAsync(
@@ -194,11 +191,9 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// The inverse of a gated act must be gated too, or the gate is one-way theatre: a
 		// deliberate governance freeze could be undone by any tasks:write key. Same scope as
 		// board_close, on purpose.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
@@ -206,6 +201,7 @@ public static class TasksTools
 	// Unified dictionary: template (inert document) + methodology (instance) verbs
 	// create / list / get / close, plus rules_get / rules_upsert for live rules edit.
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_methodology_create", Title = "Create a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCreateResult))]
 	[Description("""
 		Create a NAMED methodology INSTANCE in one act from an EXPLICIT source — no silent
@@ -229,18 +225,17 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Creating an instance AUTHORS a live rules document. On its own it governs only
 		// the boards it provisions — but create+board_adopt is the composed bypass of
 		// rules_upsert (mint your own rules, then pull existing boards under them), so the
 		// criterion binds here too and both halves must be gated or neither is.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, key, source, sourceKey, ct);
 		return new MethodologyInstanceCreateResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_list", Title = "List methodology instances", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceListResult))]
 	[Description("""
 		List methodology INSTANCES in the project as a compact INDEX: key (the instance's
@@ -253,11 +248,11 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var items = await tasks.ListMethodologyInstancesAsync(projectKey, ct);
 		return new MethodologyInstanceListResult(items.Select(ProjectInstance).ToList());
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
 	[Description("""
 		Return ONE methodology INSTANCE by `key` as a compact INDEX (identity, boards,
@@ -274,13 +269,13 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceAsync(projectKey, key, ct);
 		if (view is null)
 			throw new ArgumentException($"methodology instance '{key}' not found in project '{projectKey}'");
 		return new MethodologyInstanceGetResult(Instance: ProjectInstance(view));
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_methodology_close", Title = "Close a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCloseResult))]
 	[Description("""
 		Close a NAMED methodology INSTANCE whole: marks the instance closed and closes every
@@ -295,19 +290,18 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Retires a whole live process: the instance AND every member board stop accepting
 		// writes. Changes no rules document, so the narrow "changes the rules for existing
 		// nodes" test misses it — but it is a governance act over an EXISTING process, which
 		// is the criterion. Gating rules_upsert while leaving this open would be a hole: you
 		// cannot rewrite the process, but you could retire it wholesale.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, key, ct);
 		return new MethodologyInstanceCloseResult(
 			ack.Name, ack.Changed, ack.Closed, ack.Version,
 			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList());
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_active_get", Title = "Get the project's active methodology instance pointer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveGetResult))]
 	[Description("""
 		Return the project's explicit ACTIVE methodology instance pointer (spec
@@ -326,11 +320,11 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetActiveMethodologyInstanceAsync(projectKey, ct);
 		return new MethodologyActiveGetResult(view.Name, view.Version);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_methodology_set_active", Title = "Set (or clear) the project's active methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyActiveSetResult))]
 	[Description("""
 		Set the project's explicit ACTIVE methodology instance pointer, or CLEAR it (omit/null
@@ -354,7 +348,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// GOVERNANCE (spec methodology-write-scope, owner-widened criterion). Board membership
 		// always wins, so no node's ENFORCEMENT changes — under the narrow original criterion
 		// ("changes the rules for existing nodes") this verb would walk free. It is gated under
@@ -368,7 +361,6 @@ public static class TasksTools
 		// the guide outright (MethodologyGuide derives them from the RESOLVED instance's
 		// structure). That is a complete bypass of every convention gate, by one pointer write.
 		// Gating board_close while leaving this open would be incoherent.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var ack = await tasks.SetActiveMethodologyInstanceAsync(projectKey, key, version, ct);
 		return new MethodologyActiveSetResult(ack.Name, ack.Changed, ack.Version);
 	}
@@ -378,6 +370,7 @@ public static class TasksTools
 		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.WiredBoard)).ToList(),
 		v.Counts);
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
 	[Description("""
 		Return the RULES DOCUMENT of one methodology INSTANCE by `key` — the live process
@@ -398,7 +391,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, key, ct);
 		if (view is null)
 			throw new ArgumentException($"methodology instance '{key}' not found in project '{projectKey}'");
@@ -416,6 +408,7 @@ public static class TasksTools
 			StrictMode: doc.StrictMode);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_methodology_rules_upsert", Title = "Edit a live methodology instance's rules (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesUpsertResult))]
 	[Description("""
 		Replace the RULES of a LIVE methodology INSTANCE with optimistic concurrency and
@@ -447,16 +440,15 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// The paradigm case: rewrites the rules of a LIVE instance and migrates the live
 		// nodes on its member boards. Governance-gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
 			projectKey, key, def, version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_utility_get", Title = "Get the project's utility-kind layer", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyUtilityGetResult))]
 	[Description("""
 		Return the project's UTILITY LAYER of kinds (spec methodology-utility-kinds) — kinds
@@ -477,7 +469,6 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
 			throw new ArgumentException($"project '{projectKey}' has no utility-kind layer defined; create one with tasks_methodology_utility_upsert (version: 0)");
@@ -492,6 +483,7 @@ public static class TasksTools
 			TagAxes: doc.TagAxes);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite, ApiKeyScopes.MethodologyWrite)]
 	[McpServerTool(Name = "tasks_methodology_utility_upsert", Title = "Edit the project's utility-kind layer (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyUtilityUpsertResult))]
 	[Description("""
 		Replace the project's UTILITY LAYER of kinds (spec methodology-utility-kinds) with
@@ -517,15 +509,14 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Same governance posture as rules_upsert: this rewrites the rules that already
 		// govern every live utility-homed node. Gated.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MethodologyWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.DefineMethodologyAsync(projectKey, def, version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyUtilityUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_methodology_set_description", Title = "Set one methodology primitive's description (prose only, by natural key)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologySetDescriptionResult))]
 	[Description("""
 		Set (or clear) the free-form Description of ONE primitive of a LIVE methodology
@@ -591,7 +582,6 @@ public static class TasksTools
 		// visibly in force — the same exposure any task body already has under tasks:write.
 		// Gating it would put routine process documentation behind the governance scope and rot
 		// the docs. Locked by Methodology_SetDescription_NeedsNoMethodologyWrite.
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		const int maxAttempts = 5;
 		for (var attempt = 1; ; attempt++)
@@ -619,6 +609,7 @@ public static class TasksTools
 
 	// ---- named methodology templates (inert process documents; builtins are templates) ----
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_methodology_template_upsert", Title = "Upsert a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
 	[Description("""
 		Store a NAMED METHODOLOGY TEMPLATE — a reusable process document (kinds/types/
@@ -644,12 +635,12 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var def = MethodologyWire.ParseDefinition(definition);
 		var ack = await tasks.UpsertMethodologyTemplateAsync(projectKey, key, def, version, ct);
 		return new MethodologyTemplateUpsertResult(ack.Key, ack.Version, ack.Changed);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_methodology_template_delete", Title = "Delete a named methodology template", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateDeleteResult))]
 	[Description("""
 		Delete a STORED named methodology template (temporal soft-close). Builtin keys
@@ -665,11 +656,11 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var ack = await tasks.DeleteMethodologyTemplateAsync(projectKey, key, version, ct);
 		return new MethodologyTemplateDeleteResult(ack.Key, Deleted: ack.Changed, ack.Version);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_template_get", Title = "Get a named methodology template", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateGetResult))]
 	[Description("""
 		Return ONE methodology template by `key`. Resolution order: stored template →
@@ -689,13 +680,13 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var view = await tasks.GetMethodologyTemplateAsync(projectKey, key, ct);
 		if (view is null)
 			throw new ArgumentException($"methodology template '{key}' not found in project '{projectKey}'");
 		return MethodologyWire.ProjectTemplate(view.Key, view.Source, view.Definition, view.Version, view.Created, view.Updated);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_template_list", Title = "List methodology templates", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateListResult))]
 	[Description("""
 		List methodology templates available to the project: always the builtins
@@ -710,12 +701,12 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var items = await tasks.ListMethodologyTemplatesAsync(projectKey, ct);
 		return new MethodologyTemplateListResult(
 			items.Select(i => new MethodologyTemplateListItemView(i.Key, i.Source, i.Name, i.Version, i.Updated)).ToList());
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_methodology_template_snapshot", Title = "Snapshot rules into a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
 	[Description("""
 		Snapshot process rules into a NAMED TEMPLATE without mutating the source. `from`
@@ -734,11 +725,11 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var ack = await tasks.SnapshotMethodologyTemplateAsync(projectKey, key, version, from, ct);
 		return new MethodologyTemplateUpsertResult(ack.Key, ack.Version, ack.Changed);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
@@ -777,7 +768,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return await tasks.GetMethodologyGuideAsync(projectKey, key, ct);
 	}
 
@@ -785,6 +775,7 @@ public static class TasksTools
 	// MethodologyWire — shared with the admin methodology-editor page, so the editor's JSON is
 	// shape-identical to the template/rules documents.
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_node_get", Title = "Get one or more nodes in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeGetResultView))]
 	[Description("""
 		Return one or more nodes of a board in FULL. `node` reads ONE; `nodes` reads a
@@ -830,7 +821,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		// usageSource is telemetry, not free text — resolved BEFORE any work, so a typo fails the
 		// call instead of quietly filing machine traffic as deliberate.
 		var resolvedUsageSource = ResolveUsageSource(usageSource);
@@ -890,6 +880,7 @@ public static class TasksTools
 		return result;
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_search", Title = "Read task nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
 		THE read verb for task nodes — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
@@ -1076,7 +1067,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		// Resolved BEFORE any work: an unrecognized source fails the call rather than quietly
 		// filing automated traffic as deliberate, which is the one thing this split exists to stop.
 		var resolvedUsageSource = ResolveUsageSource(usageSource);
@@ -1528,6 +1518,7 @@ public static class TasksTools
 	static string[] ParseGroupBy(string groupBy) =>
 		groupBy.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_upsert", Title = "Upsert task nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
 		Declarative temporal PATCH-upsert of task nodes. On an EDIT (version > 0) an omitted field
@@ -1647,7 +1638,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// An empty batch is almost always a client bug (a filter emptied the list, the call still
 		// went out) — reject it instead of silently no-opping. `nodes` maps 1:1 into patches (no
 		// per-item filtering happens in ParseNodePatches), so the raw array length IS the effective
@@ -1755,6 +1745,7 @@ public static class TasksTools
 		return dedupedView is null ? view : view with { Deduped = dedupedView };
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksWrite)]
 	[McpServerTool(Name = "tasks_observation_promote", Title = "Promote an observation to an obligation", UseStructuredContent = true, OutputSchemaType = typeof(ObservationPromotedResult))]
 	[Description("""
 		Promote a `seen` observation (the system `observations` board) into an obligation — a NEW
@@ -1797,7 +1788,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var board = (targetBoard ?? "").Trim().ToLowerInvariant();
 		if (board is not ("work" or "ideas"))
@@ -1854,6 +1844,7 @@ public static class TasksTools
 	static string ConflictSummary(IReadOnlyList<PetBox.Core.Data.Temporal.TemporalConflict> conflicts) =>
 		conflicts.Count > 0 ? string.Join("; ", conflicts.Select(c => $"{c.Key}: {c.Reason}")) : "the write did not apply";
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_delta", Title = "Task node delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a WHOLE board incrementally (tasks_search's `q` is a relevance slice, never an enumeration; a tasks_upsert ack echoes only its own call — pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
@@ -1864,11 +1855,11 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_owner_digest", Title = "Owner-away digest for a board", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(OwnerDigestView))]
 	[Description("""
 		"What happened while I was away" for ONE board, ordered by WHAT IT ASKS OF YOU — not chronologically.
@@ -1924,7 +1915,6 @@ public static class TasksTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return await digest.DigestAsync(projectKey, new OwnerDigestRequest
 		{
@@ -1937,6 +1927,7 @@ public static class TasksTools
 		}, urlPrefix, ct);
 	}
 
+	[RequiresScope(ApiKeyScopes.TasksRead)]
 	[McpServerTool(Name = "tasks_workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
 	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, enforceApproval [true = the server BLOCKS the transition unless the actor can approve; false = owner-only by convention], preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind a methodology instance's rules declare resolves from those rules; other kinds report the built-in template. Use this to learn the legal types/statuses before tasks_upsert. Requires tasks:read.")]
 	public static async Task<WorkflowView> WorkflowAsync(
@@ -1944,7 +1935,6 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		// Grouping (identical FSMs into one block) and catalog-vs-definition resolution
 		// happen in the service; this adapter only shapes the wire.
 		var view = await tasks.GetBoardWorkflowAsync(projectKey, board, ct);

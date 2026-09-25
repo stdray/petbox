@@ -338,8 +338,15 @@ It exposes the **full PetBox tool surface** (~95 tools, underscore-named):
 `tasks_*`, `memory_*`, `session_*`, `comments_*`, `relations_*`, `config_*`,
 `log_*` / `log_query`, `data_*` / `db_*`, `llm_*`, `deploy_*`, `apikey_*`,
 `project_*`, `health_search`, `petbox_report_issue` / `petbox_report_issue_status`, `whoami`.
-Each tool's visibility is
-gated by the calling key's scopes.
+Each tool declares its scope ONCE (`[RequiresScope]` / `[RequiresAnyScope]` / `[RequiresNoScope]`
+on the tool method, read by `McpToolScopes`); the call gate, `tools/list` and `whoami` all read
+that declaration. `tools/list` shows a key only the tools whose scope it holds — PER TOOL, so a
+`tasks:read` key does not see `tasks_upsert` (an `admin:provision` key still sees everything).
+Hiding is not the boundary: a hidden tool's call is refused on scope regardless, `tool_describe`
+still describes it by name, and `whoami` returns `modules` — every module, its scopes with
+`granted`, and ALL its tool names — so an agent can tell "not available to this key" from
+"does not exist". A new tool without a declaration is refused at call time and fails
+`McpToolScopeDeclarationTests`.
 
 Setup (one-time, per machine):
 1. Set env var `PETBOX_API_KEY` to an ApiKey with the scopes you need (a

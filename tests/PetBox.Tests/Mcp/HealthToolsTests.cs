@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Web.Mcp;
+using PetBox.Tests.Support;
 
 namespace PetBox.Tests.Mcp;
 
@@ -134,8 +135,8 @@ public sealed class HealthToolsTests : IDisposable
 	public async Task MissingScope_Throws()
 	{
 		var http = Http("health:write"); // write, not read
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => McpScopeGate.Invoke(http, "health_search", () =>
+			HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj)));
 	}
 
 	[Fact]

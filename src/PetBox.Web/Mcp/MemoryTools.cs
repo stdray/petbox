@@ -41,6 +41,7 @@ namespace PetBox.Web.Mcp;
 [TenantFrom(TenantSource.ArgumentOrContainer, "projectKey")]
 public static class MemoryTools
 {
+	[RequiresScope(ApiKeyScopes.MemoryWrite)]
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("CREATE a named memory store. `scope`: project (default) | workspace. A target you may not write is refused with an explicit authorization error — a write never fails silently (only the read verbs answer absence). Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
@@ -52,11 +53,11 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
 	[Description("""
 		List memory stores. `scope`: project (default) | workspace. Omit to CASCADE project
@@ -79,6 +80,7 @@ public static class MemoryTools
 		machineAvgKRel (an automated hook/context pull, `usageSource:"machine"` on memory_search) —
 		additive alongside the combined numbers above, never a replacement, so a store served
 		mostly by automation never reads as dead just because its deliberate cut is small.
+		Requires memory:read.
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
@@ -89,7 +91,6 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var rows = new List<MemoryStoreRow>();
 		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
@@ -124,6 +125,7 @@ public static class MemoryTools
 		return new MemoryStoreListResult(rows);
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryWrite)]
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. A target you may not write is refused with an explicit authorization error — a write never fails silently. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
@@ -135,10 +137,10 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_get", Title = "Get memory entries by key", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryGetResultView))]
 	[Description("""
 		Get the active entries by key — full bodies, addressed. `key` reads ONE; `keys` reads a
@@ -181,7 +183,6 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		// Validated up front (never a silent fold into "deliberate" on a typo) — the same
 		// posture memory_search's usageSource takes (card usage-delivery-mixes-machine-traffic).
 		var resolvedUsageSource = ResolveUsageSource(usageSource);
@@ -285,6 +286,7 @@ public static class MemoryTools
 		return new MemoryGetResultView(wireEntries, storeMissingWarning);
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryWrite)]
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
@@ -367,7 +369,6 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		// An empty batch is almost always a client bug (a filter emptied the list, the call still
 		// went out) — reject it instead of silently no-opping. `entries` maps 1:1 into upserts/deletes
 		// (ParseEntries drops nothing), so the raw array length IS the effective batch size.
@@ -431,6 +432,7 @@ public static class MemoryTools
 		return Serialize(outcome, bodyLen, warning, similar);
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface and the way to enumerate a store incrementally (memory_search's `q` is a relevance slice, never an enumeration). `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search: the first container that HAS the store answers; a leg that lacks it, or that you may not read, is skipped silently. When no readable container has the store the answer is ONE not-found error, identical in both cases (the memory-family read contract: absent and not-yours are deliberately the same answer). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
@@ -441,7 +443,6 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
 		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
@@ -599,6 +600,7 @@ public static class MemoryTools
 			throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryWrite)]
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
 		CREATE one durable fact verbatim (always a NEW entry; edits go via memory_upsert).
@@ -676,7 +678,6 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 
 		// work/write-body-by-reference. memory_remember has no conflicts[] channel — it is a
 		// single-entry CREATE whose every other refusal is an ArgumentException — so the mutual
@@ -759,6 +760,7 @@ public static class MemoryTools
 			similarEntries, similarUnavailable);
 	}
 
+	[RequiresScope(ApiKeyScopes.MemoryRead)]
 	[McpServerTool(Name = "memory_search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
 	[Description("""
 		THE memory read verb — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
@@ -859,7 +861,6 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var cap = limit ?? DefaultLimit;
 		var hasCursor = !string.IsNullOrWhiteSpace(cursor);

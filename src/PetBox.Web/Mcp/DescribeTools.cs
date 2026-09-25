@@ -19,9 +19,10 @@ namespace PetBox.Web.Mcp;
 [TenantExempt(TenantExemption.Identity, "describes the SURFACE itself (tool text + schemas); touches no tenant's data")]
 public static class DescribeTools
 {
+	[RequiresNoScope("describes the surface itself (the same text tools/list serves); must stay callable for tools hidden from the caller")]
 	[McpServerTool(Name = "tool_describe", Title = "Describe an MCP tool (full text)", ReadOnly = true,
 		UseStructuredContent = true, OutputSchemaType = typeof(ToolDescribeResult))]
-	[Description("Return the FULL description of a tool by name. tools/list serves a COMPACT head for heavy tools (purpose + critical gotchas); call this to fetch the complete prose (all sections, sentinel merged out) plus the tool's input/output JSON schema. Pass `name` exactly as it appears in tools/list (e.g. tasks_upsert).")]
+	[Description("Return the FULL description of a tool by name. tools/list serves a COMPACT head for heavy tools (purpose + critical gotchas); call this to fetch the complete prose (all sections, sentinel merged out) plus the tool's input/output JSON schema. Pass `name` exactly as it appears in tools/list or in whoami's `modules` catalog (e.g. tasks_upsert): a tool tools/list hides from your key (it lacks the scope) is described too, though calling it will be refused.")]
 	public static ToolDescribeResult Describe(
 		IOptions<McpServerOptions> options,
 		[Description("The tool name exactly as it appears in tools/list (e.g. tasks_upsert).")] string name)
