@@ -5,12 +5,13 @@ Droid — the wired triad) actually interact with PetBox, run against the **live
 `$system` project. It catches drift between the agent-facing surfaces and reality,
 stale plan state, uncommitted work, and process violations in the session archive.
 
-**Spec:** `agent-interaction-audit` (spec board). **Cadence:** weekly. **v1 runs by
-hand** — the owner opens a session on this playbook each week. It is deliberately
-manual for now: Check C scans the machine's local git worktrees/branches, which an
-unattended **cloud** routine can't see, and a local cron needs per-machine wiring.
-Unattended scheduling is tracked as idea `recurring-run-scheduler` — adopt it once a
-few manual runs have calibrated the audit's scope and noise.
+**Spec:** `agent-interaction-audit` (spec board). **Cadence:** monthly. A recurring
+rule on `$system` (`monthly-agent-interaction-audit`, board `work`, kind `chore`,
+period `month`, `wakeTo: agent`, first due 2026-10-01) puts the card on `work`
+automatically — see [doc/methodology.md](doc/methodology.md) for the snooze/recurring
+mechanism. Whoever picks up the card **must run it on a machine with a local
+checkout**: Check C scans the machine's local git worktrees/branches, which an
+unattended **cloud** routine can't see.
 
 ## What this audit is (and is not)
 
