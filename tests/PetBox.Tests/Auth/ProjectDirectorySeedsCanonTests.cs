@@ -24,9 +24,21 @@ namespace PetBox.Tests.Auth;
 // THE MAIN RISK the card calls out by name: a repeat seed must never duplicate or overwrite an
 // already-curated canon. This is closed BY CONSTRUCTION (memory_upsert's Version 0 means
 // "create — nothing to clobber"; TemporalStore.UpsertAsync rejects a second create against a
-// DIFFERENT existing payload as Stale, and no-ops against an IDENTICAL one), not by a guard
-// written in ProjectDirectory that could itself have a gap — SecondSeedNeverClobbersACuratedCanon
-// pins the outcome, not the mechanism.
+// DIFFERENT existing payload as Stale, and no-ops against an IDENTICAL one) — proven once, at
+// TemporalStore's own boundary, not re-asserted here:
+//   - clobber prevention: TemporalStoreTests.StaleEdit_BaselineZero_OnExistingKey_Conflicts_WithoutFields
+//     (baseline 0 against an existing DIFFERENT payload conflicts as Stale — the exact shape a
+//     repeat seed against a curated canon would hit).
+//   - no duplicate revision: the SamePayload branch every identical-payload resubmit test exercises
+//     (TemporalStoreTests.Resubmit_IdenticalPayload_IsNoOp et al.) — that branch has no baseline-0
+//     special case, so it already covers a repeat seed against an untouched skeleton.
+// SeedCanonAsync itself has exactly one production caller (CreateAsync, exactly once — the
+// duplicate-key guard makes a second CreateAsync call for the same key impossible), so a test that
+// called it a second time directly needed a test-only `internal` exposure with no real second-caller
+// to justify it; removed (test-audit-skill-dry-run) in favor of the TemporalStore-level proof above.
+// SeedCanonAsync is private again; this file now only proves CreateAsync's own seeding behavior
+// (what gets written, correct text, and that a seed failure never blocks project creation) — all at
+// the real CreateAsync boundary.
 public sealed class ProjectDirectorySeedsCanonTests : IDisposable
 {
 	readonly string _dir;
@@ -110,44 +122,6 @@ public sealed class ProjectDirectorySeedsCanonTests : IDisposable
 			"the old text taught a top-level `key` param that memory_upsert's schema does not accept");
 		body.Should().NotMatch("*0 only for a fresh entry*",
 			"the old text claimed version:0 is valid for this key, contradicting the seeder's own Version=0 create above it");
-	}
-
-	[Fact]
-	public async Task SecondSeedNeverClobbersACuratedCanon()
-	{
-		var svc = NewDirectory();
-		(await svc.CreateAsync("alpha", "app", "App", null)).Should().BeOfType<ProjectChangeResult.Created>();
-
-		// The owner curates: a real edit at the version the skeleton landed on.
-		var seeded = await _memory.GetAsync("app", "canon", "index");
-		seeded.Should().NotBeNull();
-		await _memory.UpsertAsync("app", "canon",
-			[new MemoryEntryInput { Key = "index", Version = seeded!.Version, Type = "Reference", Body = "OWNER CURATED — do not touch" }],
-			[]);
-
-		// A repeat run of the SAME seed logic (a retried request, a re-provisioned host, a future
-		// backfill reusing this method) must not win against the owner's edit.
-		await svc.SeedCanonAsync("app", CancellationToken.None);
-
-		var after = await _memory.GetAsync("app", "canon", "index");
-		after!.Body.Should().Be("OWNER CURATED — do not touch",
-			"memory_upsert Version 0 cannot clobber an existing DIFFERENT payload — TemporalStore " +
-			"classifies it Stale and drops it, never applies it");
-	}
-
-	[Fact]
-	public async Task SecondSeedAgainstAnUncuratedSkeleton_IsANoOp_NotADuplicate()
-	{
-		var svc = NewDirectory();
-		(await svc.CreateAsync("alpha", "app", "App", null)).Should().BeOfType<ProjectChangeResult.Created>();
-		var firstVersion = (await _memory.GetAsync("app", "canon", "index"))!.Version;
-
-		// A repeat seed against an UNTOUCHED skeleton (identical payload) — the other half of
-		// "idempotent": no second revision, no version bump, nothing to see in the delta.
-		await svc.SeedCanonAsync("app", CancellationToken.None);
-
-		var after = await _memory.GetAsync("app", "canon", "index");
-		after!.Version.Should().Be(firstVersion, "an identical re-seed is a no-op, not a new revision");
 	}
 
 	[Fact]

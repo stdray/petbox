@@ -103,13 +103,15 @@ public sealed class VectorizationSelfLogGateTests : IDisposable
 		await SeedMemoryEntryAsync(factory);
 
 		var log1 = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log1).DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, new MemoryVectorizationHeartbeatClock(), new FakeLlmClient(), log1)
+			.DrainAllAsync(CancellationToken.None);
 		var pass1 = log1.Entries.Should().ContainSingle(e => e.EventId == 410).Subject;
 		pass1.Level.Should().Be(MsLogLevel.Information, "Indexed=1 is a real signal");
 		pass1.Message.Should().Contain("indexed 1");
 
 		var log2 = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log2).DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, new MemoryVectorizationHeartbeatClock(), new FakeLlmClient(), log2)
+			.DrainAllAsync(CancellationToken.None);
 		var pass2 = log2.Entries.Should().ContainSingle(e => e.EventId == 410).Subject;
 		pass2.Level.Should().Be(MsLogLevel.Debug, "nothing happened this pass — this is the flood the card is about");
 		log2.Entries.Should().NotContain(e => e.EventId == 410 && e.Level == MsLogLevel.Information);
@@ -129,7 +131,8 @@ public sealed class VectorizationSelfLogGateTests : IDisposable
 		for (var i = 0; i < 5; i++)
 		{
 			log = new CapturingLogger<MemoryVectorizationJob>();
-			await new MemoryVectorizationJob(MemFactory(), _catalog, new ThrowingLlmClient(), log).DrainAllAsync(CancellationToken.None);
+			await new MemoryVectorizationJob(MemFactory(), _catalog, new MemoryVectorizationHeartbeatClock(), new ThrowingLlmClient(), log)
+				.DrainAllAsync(CancellationToken.None);
 		}
 
 		var last = log.Entries.Should().ContainSingle(e => e.EventId == 410).Subject;
@@ -146,12 +149,14 @@ public sealed class VectorizationSelfLogGateTests : IDisposable
 		await SeedTaskNodeAsync(factory);
 
 		var log1 = new CapturingLogger<TasksVectorizationJob>();
-		await new TasksVectorizationJob(TasksFactory(), _catalog, new FakeLlmClient(), log1).DrainAllAsync(CancellationToken.None);
+		await new TasksVectorizationJob(TasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient(), log1)
+			.DrainAllAsync(CancellationToken.None);
 		var pass1 = log1.Entries.Should().ContainSingle(e => e.EventId == 411).Subject;
 		pass1.Level.Should().Be(MsLogLevel.Information, "Indexed=1 is a real signal");
 
 		var log2 = new CapturingLogger<TasksVectorizationJob>();
-		await new TasksVectorizationJob(TasksFactory(), _catalog, new FakeLlmClient(), log2).DrainAllAsync(CancellationToken.None);
+		await new TasksVectorizationJob(TasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient(), log2)
+			.DrainAllAsync(CancellationToken.None);
 		var pass2 = log2.Entries.Should().ContainSingle(e => e.EventId == 411).Subject;
 		pass2.Level.Should().Be(MsLogLevel.Debug, "nothing happened this pass");
 		log2.Entries.Should().NotContain(e => e.EventId == 411 && e.Level == MsLogLevel.Information);
@@ -167,20 +172,24 @@ public sealed class VectorizationSelfLogGateTests : IDisposable
 	[Fact]
 	public async Task Heartbeat_FiresOnFirstPass_SuppressedWithinHour_FiresAgainAfterHour()
 	{
-		MemoryVectorizationJob.ResetHeartbeatClockForTests();
+		// A fresh clock instance per test gives isolation for free — no process-wide reset needed.
+		var heartbeat = new MemoryVectorizationHeartbeatClock();
 		var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
 
 		var log1 = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log1, time).DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, heartbeat, new FakeLlmClient(), log1, time)
+			.DrainAllAsync(CancellationToken.None);
 		log1.Entries.Should().ContainSingle(e => e.EventId == 415, "first pass ever must prove liveness immediately");
 
 		var log2 = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log2, time).DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, heartbeat, new FakeLlmClient(), log2, time)
+			.DrainAllAsync(CancellationToken.None);
 		log2.Entries.Should().NotContain(e => e.EventId == 415, "same hour — must not re-fire every 60s tick");
 
 		time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
 		var log3 = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log3, time).DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, heartbeat, new FakeLlmClient(), log3, time)
+			.DrainAllAsync(CancellationToken.None);
 		log3.Entries.Should().ContainSingle(e => e.EventId == 415, "an hour has passed — heartbeat due again");
 	}
 
@@ -190,15 +199,14 @@ public sealed class VectorizationSelfLogGateTests : IDisposable
 	[Fact]
 	public async Task Heartbeat_IsOncePerPass_NotOncePerProject()
 	{
-		MemoryVectorizationJob.ResetHeartbeatClockForTests();
 		_db.Insert(new Project { Key = Proj2, WorkspaceKey = "ws", Name = "P2", Description = "" });
 		var factory = MemFactory();
 		await SeedMemoryEntryAsync(factory, Proj);
 		await SeedMemoryEntryAsync(factory, Proj2);
 
 		var log = new CapturingLogger<MemoryVectorizationJob>();
-		await new MemoryVectorizationJob(MemFactory(), _catalog, new FakeLlmClient(), log, new FakeTimeProvider(DateTimeOffset.UtcNow))
-			.DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(MemFactory(), _catalog, new MemoryVectorizationHeartbeatClock(), new FakeLlmClient(), log,
+			new FakeTimeProvider(DateTimeOffset.UtcNow)).DrainAllAsync(CancellationToken.None);
 
 		log.Entries.Count(e => e.EventId == 410).Should().Be(2, "sanity: both projects were visited");
 		log.Entries.Should().ContainSingle(e => e.EventId == 415, "one heartbeat for the whole pass, not one per project");

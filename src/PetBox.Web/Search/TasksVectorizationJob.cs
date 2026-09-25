@@ -41,32 +41,24 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 	// multiplier. The heartbeat is per JOB PASS, not per project, for the same reason.
 	static readonly TimeSpan HeartbeatInterval = TimeSpan.FromHours(1);
 
-	// Process-lifetime state: SearchEnrichmentService opens a fresh DI scope every 60s tick, so a new
-	// TasksVectorizationJob instance is constructed each pass — only a static field survives across
-	// ticks. Resets to null on restart, which correctly heartbeats once immediately, then resumes the
-	// hourly cadence (no burst: DrainAllAsync still runs at most once per tick).
-	static DateTimeOffset? s_lastHeartbeatUtc;
-	static readonly Lock s_heartbeatLock = new();
-
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly IProjectCatalog _catalog;
+	readonly TasksVectorizationHeartbeatClock _heartbeat;
 	readonly ILlmClient? _llm;
 	readonly ILogger<TasksVectorizationJob>? _logger;
 	readonly TimeProvider _time;
 
 	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, IProjectCatalog catalog,
-		ILlmClient? llm = null, ILogger<TasksVectorizationJob>? logger = null, TimeProvider? time = null)
+		TasksVectorizationHeartbeatClock heartbeat, ILlmClient? llm = null,
+		ILogger<TasksVectorizationJob>? logger = null, TimeProvider? time = null)
 	{
 		_factory = factory;
 		_catalog = catalog;
+		_heartbeat = heartbeat;
 		_llm = llm;
 		_logger = logger;
 		_time = time ?? TimeProvider.System;
 	}
-
-	// Test-only: see MemoryVectorizationJob.ResetHeartbeatClockForTests for why this exists. Internal
-	// via PetBox.Web's InternalsVisibleTo(PetBox.Tests).
-	internal static void ResetHeartbeatClockForTests() { lock (s_heartbeatLock) s_lastHeartbeatUtc = null; }
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
@@ -159,12 +151,7 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 	void MaybeLogHeartbeat(int projects, int boards, int indexed, int deadLettered, long maxLag)
 	{
 		if (_logger is null) return;
-		var now = _time.GetUtcNow();
-		lock (s_heartbeatLock)
-		{
-			if (s_lastHeartbeatUtc is { } last && now - last < HeartbeatInterval) return;
-			s_lastHeartbeatUtc = now;
-		}
+		if (!_heartbeat.TryFire(HeartbeatInterval, _time.GetUtcNow())) return;
 		LogHeartbeat(_logger, projects, boards, indexed, deadLettered, maxLag);
 	}
 

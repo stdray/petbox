@@ -400,8 +400,10 @@ public sealed class SearchReindexTests
 		ScopedDbFactory<TasksDb> NewTasksFactory() =>
 			new(Path.Combine(_dir, "tasks"), Scope.Project, c => new TasksDb(TasksDb.CreateOptions(c)), TestSchema.Tasks);
 
-		public MemoryVectorizationJob MemoryJob(ILlmClient llm) => new(NewMemoryFactory(), _catalog, llm);
-		public TasksVectorizationJob TasksJob(ILlmClient llm) => new(NewTasksFactory(), _catalog, llm);
+		public MemoryVectorizationJob MemoryJob(ILlmClient llm) =>
+			new(NewMemoryFactory(), _catalog, new MemoryVectorizationHeartbeatClock(), llm);
+		public TasksVectorizationJob TasksJob(ILlmClient llm) =>
+			new(NewTasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), llm);
 
 		public SearchReindexService Reindex(ILlmClient llm) =>
 			new(NewMemoryFactory(), NewTasksFactory(), _catalog, llm);

@@ -78,7 +78,7 @@ public sealed class TasksVectorizationSoftEmptiedBoardTests : IDisposable
 		r.Result.Applied.Should().BeTrue();
 
 		// Pass 1: both nodes get embedded — the baseline the bug would otherwise leave stranded.
-		await new TasksVectorizationJob(TasksFactory(), _catalog, new FakeLlmClient()).DrainAllAsync(default);
+		await new TasksVectorizationJob(TasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient()).DrainAllAsync(default);
 		TasksCount("SELECT COUNT(*) FROM search_vec").Should().Be(2, "both nodes were indexed");
 
 		// Soft-delete every node on the board — the board now has ZERO rows with ActiveTo == null.
@@ -90,7 +90,7 @@ public sealed class TasksVectorizationSoftEmptiedBoardTests : IDisposable
 			"the board is now soft-emptied — this is the exact condition the bug drops from enumeration");
 
 		// Pass 2: the drain must still visit board "b" — it owes two undelivered deletes.
-		await new TasksVectorizationJob(TasksFactory(), _catalog, new FakeLlmClient()).DrainAllAsync(default);
+		await new TasksVectorizationJob(TasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient()).DrainAllAsync(default);
 
 		TasksCount("SELECT COUNT(*) FROM search_vec").Should().Be(0,
 			"RED without the fix: the board dropped out of enumeration (no ActiveTo==null rows left), " +
@@ -109,7 +109,7 @@ public sealed class TasksVectorizationSoftEmptiedBoardTests : IDisposable
 			new[] { new NodePatch { Key = "n1", Version = 0, Title = "t1", Body = "some body text" } });
 		r.Result.Applied.Should().BeTrue();
 
-		await new TasksVectorizationJob(TasksFactory(), _catalog, new FakeLlmClient()).DrainAllAsync(default);
+		await new TasksVectorizationJob(TasksFactory(), _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient()).DrainAllAsync(default);
 		TasksCount("SELECT COUNT(*) FROM search_cursor WHERE IndexName = 'b'").Should().Be(1,
 			"the drain left the board's bare-name cursor row behind, as expected");
 

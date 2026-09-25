@@ -52,36 +52,24 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 	// One line per hour, summarizing the most recent pass, is enough to prove liveness.
 	static readonly TimeSpan HeartbeatInterval = TimeSpan.FromHours(1);
 
-	// Process-lifetime state, not per-instance: SearchEnrichmentService.RunOncePassAsync opens a
-	// FRESH DI scope every tick (`using var scope = _services.CreateScope()`), so a new
-	// MemoryVectorizationJob is constructed each pass — an instance field would forget the last
-	// heartbeat before the next tick ever ran. A restart resets this to null, which is the correct
-	// behavior (not a bug to guard against): the first pass after a restart heartbeats immediately
-	// (proving the job came back up), then the hourly cadence resumes — no burst, because
-	// DrainAllAsync (and so this check) still runs at most once per 60s tick.
-	static DateTimeOffset? s_lastHeartbeatUtc;
-	static readonly Lock s_heartbeatLock = new();
-
 	readonly IScopedDbFactory<MemoryDb> _factory;
 	readonly IProjectCatalog _catalog;
+	readonly MemoryVectorizationHeartbeatClock _heartbeat;
 	readonly ILlmClient? _llm;
 	readonly ILogger<MemoryVectorizationJob>? _logger;
 	readonly TimeProvider _time;
 
 	public MemoryVectorizationJob(IScopedDbFactory<MemoryDb> factory, IProjectCatalog catalog,
-		ILlmClient? llm = null, ILogger<MemoryVectorizationJob>? logger = null, TimeProvider? time = null)
+		MemoryVectorizationHeartbeatClock heartbeat, ILlmClient? llm = null,
+		ILogger<MemoryVectorizationJob>? logger = null, TimeProvider? time = null)
 	{
 		_factory = factory;
 		_catalog = catalog;
+		_heartbeat = heartbeat;
 		_llm = llm;
 		_logger = logger;
 		_time = time ?? TimeProvider.System;
 	}
-
-	// Test-only: the heartbeat clock is process-lifetime static state (see s_lastHeartbeatUtc above),
-	// so tests that assert its behavior need to isolate themselves from whatever a previous test in
-	// the same process left behind. Internal via PetBox.Web's InternalsVisibleTo(PetBox.Tests).
-	internal static void ResetHeartbeatClockForTests() { lock (s_heartbeatLock) s_lastHeartbeatUtc = null; }
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
@@ -174,12 +162,7 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 	void MaybeLogHeartbeat(int projects, int stores, int indexed, int deadLettered, long maxLag)
 	{
 		if (_logger is null) return;
-		var now = _time.GetUtcNow();
-		lock (s_heartbeatLock)
-		{
-			if (s_lastHeartbeatUtc is { } last && now - last < HeartbeatInterval) return;
-			s_lastHeartbeatUtc = now;
-		}
+		if (!_heartbeat.TryFire(HeartbeatInterval, _time.GetUtcNow())) return;
 		LogHeartbeat(_logger, projects, stores, indexed, deadLettered, maxLag);
 	}
 

@@ -307,6 +307,11 @@ public partial class Program
 		// contributes an IBackgroundIndexJob (most materialize vectors, but not all — see
 		// SessionTermIndexJob); memory's is registered here, tasks' in the follow-up.
 		// Unconditional like the stores it serves.
+		// One heartbeat throttle per job, living as long as the process (see
+		// VectorizationHeartbeatClock.cs) — the job itself is re-scoped every tick and cannot hold
+		// this state on an instance field.
+		builder.Services.AddSingleton<PetBox.Web.Search.MemoryVectorizationHeartbeatClock>();
+		builder.Services.AddSingleton<PetBox.Web.Search.TasksVectorizationHeartbeatClock>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.MemoryVectorizationJob>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.TasksVectorizationJob>();
 		builder.Services.AddGatedHostedService<PetBox.Web.Search.SearchEnrichmentService>();
