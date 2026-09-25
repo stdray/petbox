@@ -145,12 +145,15 @@ public sealed class ProjectDirectory(
 	// uses the primary constructor and the app-wide cache).
 	public ProjectDirectory(ICoreDbFactory dbf) : this(dbf, new MemoryCache(new MemoryCacheOptions())) { }
 
-	// `internal` (+ PetBox.Web's InternalsVisibleTo PetBox.Tests) so a test can call this a SECOND
-	// time directly — CreateAsync's own duplicate-key guard makes a second CreateAsync call for the
-	// same key impossible, but the risk canon-invisible-and-unfed calls out is a repeat SEED (a
-	// retry, a future backfill), not a repeat CreateAsync. See
-	// ProjectDirectorySeedsCanonTests.SecondSeedNeverClobbersACuratedCanon.
-	internal async Task SeedCanonAsync(string projectKey, CancellationToken ct)
+	// Best-effort canon skeleton seed, called once from CreateAsync right after the project row
+	// commits. Idempotency of a hypothetical repeat seed (a retry, a future backfill) is NOT
+	// re-proven here: it is closed BY CONSTRUCTION in TemporalStore's own create-path classification
+	// (baseline 0 against an existing DIFFERENT payload conflicts as Stale —
+	// TemporalStoreTests.StaleEdit_BaselineZero_OnExistingKey_Conflicts_WithoutFields; baseline 0
+	// against an IDENTICAL payload no-ops through the same SamePayload branch every other
+	// identical-payload resubmit test exercises, e.g. TemporalStoreTests.Resubmit_IdenticalPayload_IsNoOp)
+	// — see ProjectDirectorySeedsCanonTests's header comment.
+	async Task SeedCanonAsync(string projectKey, CancellationToken ct)
 	{
 		if (scopes is null) return;
 		try
