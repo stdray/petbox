@@ -52,6 +52,13 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_ROOT = join(HERE, "templates");
 
+// Generic per-project env-var name for fixtures that don't care about the exact value — same
+// role in these tests as "hellopet"/"newpet" play for project/workspace. Deliberately NOT
+// "PETBOX_API_KEY" (bug: write-economy-skill-hardcodes-system-key-env — that literal is the
+// wrong-for-every-other-project value this fix removes; a test fixture that reused it could
+// pass even with the old hardcode still in the template).
+const ENV_VAR = "PETBOX_HELLOPET_API_KEY";
+
 function freshDir(): string {
   return mkdtempSync(join(tmpdir(), "petbox-wire-skill-test-"));
 }
@@ -60,9 +67,9 @@ function freshDir(): string {
 // `petbox-digest: <mode>` were added to the templates' frontmatter — would have produced for the
 // same project/workspace. Used to set up "already materialized by an old wire" fixtures. BOTH
 // lines come back out: a file left by a pre-fix wire carries neither.
-function legacyRender(spec: string, project: string, workspace: string): string {
+function legacyRender(spec: string, project: string, workspace: string, envVar: string = ENV_VAR): string {
   const tpl = readFileSync(join(TEMPLATES_ROOT, spec, "SKILL.md"), "utf8");
-  const rendered = renderSkillTemplate(tpl, project, workspace);
+  const rendered = renderSkillTemplate(tpl, project, workspace, envVar);
   return rendered
     .replace(new RegExp(`^${PETBOX_MARKER_LINE}\\r?\\n`, "m"), "")
     .replace(new RegExp(`^${PETBOX_DIGEST_KEY}:[ \\t]*\\S+\\r?\\n`, "m"), "");
@@ -82,7 +89,7 @@ function expectedWriteCount(specs: readonly SkillTemplateSpec[]): number {
 test("writeSkillFiles writes every PROJECT_SKILLS entry into every SKILL_SURFACES root", () => {
   const dir = freshDir();
   try {
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     assert.equal(outcomes.length, expectedWriteCount(PROJECT_SKILLS));
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
@@ -102,11 +109,12 @@ test("writeSkillFiles writes every PROJECT_SKILLS entry into every SKILL_SURFACE
 test("{{PROJECT}} is substituted everywhere; no template placeholder survives rendering", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     for (const spec of PROJECT_SKILLS) {
       const body = readFileSync(join(dir, ".claude", "skills", spec.dir, "SKILL.md"), "utf8");
       assert.ok(!body.includes("{{PROJECT}}"), `${spec.dir}: unresolved {{PROJECT}} placeholder`);
       assert.ok(!body.includes("{{WORKSPACE}}"), `${spec.dir}: unresolved {{WORKSPACE}} placeholder`);
+      assert.ok(!body.includes("{{ENV_VAR}}"), `${spec.dir}: unresolved {{ENV_VAR}} placeholder`);
     }
     const petboxBody = readFileSync(join(dir, ".claude", "skills", "petbox", "SKILL.md"), "utf8");
     assert.ok(petboxBody.includes("hellopet"), "petbox skill must carry the project key");
@@ -116,9 +124,29 @@ test("{{PROJECT}} is substituted everywhere; no template placeholder survives re
   }
 });
 
-test("renderSkillTemplate is a no-op on a template with neither placeholder", () => {
+test("renderSkillTemplate is a no-op on a template with none of the placeholders", () => {
   const tpl = "static content, no placeholders here\n";
-  assert.equal(renderSkillTemplate(tpl, "anyproject", "anyworkspace"), tpl);
+  assert.equal(renderSkillTemplate(tpl, "anyproject", "anyworkspace", "ANY_ENV_VAR"), tpl);
+});
+
+// Regression guard for the bug this fix closes (write-economy-skill-hardcodes-system-key-env):
+// the write-economy skill's blob-upload snippet used to hardcode `$PETBOX_API_KEY` /
+// `$env:PETBOX_API_KEY` — correct only for `$system`, a 403 against any other project's
+// /api/blobs endpoint (verified live against a real project). It must now carry whatever env
+// var name THIS wire call was given, not a fixed literal, and never fall back to the old name.
+test("petbox-write-economy: blob-upload snippet carries the passed-in env var, not a hardcoded one", () => {
+  const tpl = readFileSync(join(TEMPLATES_ROOT, "petbox-write-economy", "SKILL.md"), "utf8");
+  const rendered = renderSkillTemplate(tpl, "kek-devices", "unused", "PETBOX_KEK_DEVICES_API_KEY");
+  assert.ok(
+    rendered.includes("$PETBOX_KEK_DEVICES_API_KEY"),
+    "curl example must reference the project's own env var name",
+  );
+  assert.ok(
+    rendered.includes("$env:PETBOX_KEK_DEVICES_API_KEY"),
+    "PowerShell example must reference the project's own env var name",
+  );
+  assert.ok(!rendered.includes("PETBOX_API_KEY"), "must not fall back to the $system-only literal");
+  assert.ok(!rendered.includes("{{ENV_VAR}}"), "must not leave the placeholder unresolved");
 });
 
 test("petbox-methodology skill: identical across two different projects except for the substituted key", () => {
@@ -127,8 +155,8 @@ test("petbox-methodology skill: identical across two different projects except f
   // rendered body differed by more than the {{PROJECT}} substitution between two unrelated projects,
   // something project-specific (or this-repo-specific) leaked into the template.
   const tplRaw = readFileSync(join(TEMPLATES_ROOT, "petbox-methodology", "SKILL.md"), "utf8");
-  const renderedAlpha = renderSkillTemplate(tplRaw, "alpha-project", "unused");
-  const renderedBeta = renderSkillTemplate(tplRaw, "beta-project", "unused");
+  const renderedAlpha = renderSkillTemplate(tplRaw, "alpha-project", "unused", ENV_VAR);
+  const renderedBeta = renderSkillTemplate(tplRaw, "beta-project", "unused", ENV_VAR);
   const stripped = (s: string) => s.split("alpha-project").join("<P>").split("beta-project").join("<P>");
   assert.equal(stripped(renderedAlpha), stripped(renderedBeta));
 });
@@ -309,7 +337,7 @@ test("writeSkillFiles: a file declared `petbox: manual` survives apply byte-for-
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, mine, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "declared-manual", `expected a declared-manual skip, got ${JSON.stringify(outcome)}`);
     assert.notEqual(outcome.kind, "blocked", "a declared manual path is a legal state, never a conflict");
@@ -328,13 +356,13 @@ test("writeSkillFiles: a manual declaration survives a SECOND apply too (never m
   const dir = freshDir();
   const target = pathFor(dir, SKILL_SURFACES[0]!, "petbox-methodology");
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     // The owner takes this path over after the first apply: content the kit itself wrote, with
     // the provenance flipped to manual.
     const taken = readFileSync(target, "utf8").replace(PETBOX_MARKER_LINE, PETBOX_MANUAL_LINE);
     writeFileSync(target, taken, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "declared-manual");
     assert.equal(readFileSync(target, "utf8"), taken);
@@ -346,7 +374,7 @@ test("writeSkillFiles: a manual declaration survives a SECOND apply too (never m
 test("writeSkillFiles: every written skill carries the origin marker", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
         const body = readFileSync(pathFor(dir, surface, spec.dir), "utf8");
@@ -361,8 +389,8 @@ test("writeSkillFiles: every written skill carries the origin marker", () => {
 test("writeSkillFiles: an identical re-run is 'unchanged' (idempotent), a changed template is still 'own'", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     // Was "own" — a re-run reported every file as re-written even when nothing differed, which is
     // what made "run it twice, the second is a no-op" uncheckable (card:
     // normalize-all-environments-to-default item 6). Overwriting our own CHANGED file still is.
@@ -374,7 +402,7 @@ test("writeSkillFiles: an identical re-run is 'unchanged' (idempotent), a change
     assert.equal(first.kind, "written");
     // Real frontmatter — the marker is only ever read from the `---` block (origin-marker.ts).
     writeFileSync(first.path, `---\nname: x\n${PETBOX_MARKER_LINE}\n---\nan older generation\n`, "utf8");
-    const { writes: after } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: after } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const refreshed = after.find((o) => o.path === first.path)!;
     assert.equal(refreshed.kind, "written");
     assert.equal(refreshed.kind === "written" ? refreshed.reason : "", "own");
@@ -391,7 +419,7 @@ test("writeSkillFiles: a foreign file (no marker, different content) is blocked 
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, foreign, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked");
     assert.equal(readFileSync(target, "utf8"), foreign, "foreign file must be left byte-for-byte untouched");
@@ -422,7 +450,7 @@ test("writeSkillFiles: an unmarked file byte-identical to the pre-marker render 
     // pre-fix history to migrate FROM; a spec's extraFiles (petbox-node-authoring's
     // validate-body.mjs) never existed under the old delivery, so those land as ordinary "new"
     // writes on this same first run, not migrations.
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace, ENV_VAR);
     const [skillOutcomes, assetOutcomes] = [
       outcomes.filter((o) => o.path.endsWith("SKILL.md")),
       outcomes.filter((o) => !o.path.endsWith("SKILL.md")),
@@ -456,7 +484,7 @@ test("writeSkillFiles: an unmarked file that differs from the pre-marker render 
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, edited, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace);
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, project, workspace, ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked", "an owner edit on top of the legacy render must never be silently migrated");
     assert.equal(readFileSync(target, "utf8"), edited, "edited file must be left byte-for-byte untouched");
@@ -504,7 +532,7 @@ test("writeSkillFiles: a renamed skill's OWNED pre-rename copy is removed, and i
       seedLegacy(dir, s, "petbox-old-name", `---\nname: petbox-old-name\n${PETBOX_MARKER_LINE}\n---\n\n# Old\n`),
     );
 
-    const { writes, cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+    const { writes, cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
 
     assert.ok(writes.every((o) => o.kind === "written"), "the replacement must land on every surface");
     assert.equal(cleanups.length, SKILL_SURFACES.length, "one sweep per surface");
@@ -538,7 +566,7 @@ test("writeSkillFiles: a FOREIGN file at the pre-rename path survives the sweep,
     const mine = "# my own notes\n\nnever generated by wire, no frontmatter at all\n";
     const legacyPath = seedLegacy(dir, surface, "petbox-old-name", mine);
 
-    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
 
     assert.equal(existsSync(legacyPath), true, "a foreign file must NEVER be deleted by the sweep");
     assert.equal(readFileSync(legacyPath, "utf8"), mine, "and must be byte-for-byte untouched");
@@ -559,7 +587,7 @@ test("writeSkillFiles: a FOREIGN file at the pre-rename path survives the sweep,
 test("writeSkillFiles: petbox-node-authoring's validate-body.mjs materializes next to SKILL.md on every surface, carrying the comment marker", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     for (const surface of SKILL_SURFACES) {
       const assetPath = join(dir, ...surface, "petbox-node-authoring", "validate-body.mjs");
       assert.equal(existsSync(assetPath), true, `expected ${assetPath} to exist`);
@@ -581,7 +609,7 @@ test("writeSkillFiles: a foreign validate-body.mjs (no marker) is blocked, byte-
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, foreign, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "blocked");
     assert.equal(readFileSync(target, "utf8"), foreign, "foreign asset must be left byte-for-byte untouched");
@@ -598,7 +626,7 @@ test("writeSkillFiles: a `// petbox: manual` validate-body.mjs survives apply un
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, mine, "utf8");
 
-    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: outcomes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const outcome = outcomes.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(outcome.kind, "declared-manual");
     assert.equal(readFileSync(target, "utf8"), mine, "a manual asset must be left byte-for-byte untouched");
@@ -611,14 +639,14 @@ test("writeSkillFiles: a materialized validate-body.mjs re-run is 'unchanged'; a
   const dir = freshDir();
   const target = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const { writes: rerun } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
+    const { writes: rerun } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const rerunOutcome = rerun.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(rerunOutcome.kind, "written");
     assert.equal(rerunOutcome.kind === "written" ? rerunOutcome.reason : "", "unchanged");
 
     writeFileSync(target, "// petbox: managed\nconsole.log('stale');\n", "utf8");
-    const { writes: refreshed } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes: refreshed } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const refreshedOutcome = refreshed.find((o) => o.path === target) as SkillWriteOutcome;
     assert.equal(refreshedOutcome.kind, "written");
     assert.equal(refreshedOutcome.kind === "written" ? refreshedOutcome.reason : "", "own");
@@ -635,7 +663,7 @@ test("writeSkillFiles: a file declared `petbox: manual` at the pre-rename path s
     const claimed = `---\nname: petbox-old-name\n${PETBOX_MANUAL_LINE}\n---\n\n# I took this path over\n`;
     const legacyPath = seedLegacy(dir, surface, "petbox-old-name", claimed);
 
-    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
 
     assert.equal(existsSync(legacyPath), true, "a declared-manual file must NEVER be deleted by the sweep");
     assert.equal(readFileSync(legacyPath, "utf8"), claimed, "and must be byte-for-byte untouched");
@@ -656,7 +684,7 @@ test("writeSkillFiles: a legacy directory holding anything the kit did not write
     mkdirSync(dirname(companion), { recursive: true });
     writeFileSync(companion, "the owner's own reference material\n", "utf8");
 
-    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+    const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
 
     assert.equal(existsSync(legacyPath), false, "our own SKILL.md at the old name still goes");
     assert.equal(existsSync(companion), true, "but nothing else in that directory is ours to remove");
@@ -686,7 +714,7 @@ test("writeSkillFiles: no sweep at all when the replacement did not land (blocke
       mkdirSync(dirname(newPath), { recursive: true });
       writeFileSync(newPath, newBody, "utf8");
 
-      const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", specs);
+      const { cleanups } = writeSkillFiles(dir, templatesRoot, "hellopet", "newpet", ENV_VAR, specs);
 
       assert.equal(
         existsSync(legacyPath),
@@ -713,7 +741,7 @@ test("writeSkillFiles: the real specs' legacyDirs sweep the pre-rename copies (p
       );
     }
 
-    const { cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
 
     for (const legacyPath of legacyPaths) {
       assert.equal(existsSync(legacyPath), false, `orphaned ${legacyPath} must be gone`);
@@ -823,8 +851,8 @@ test("refill: an apply over a real-shaped tree touches ONLY PROJECT_SKILLS paths
     // renamed skills' own delivery has landed; the second is the one that would expose a "now
     // that I own this, clean up" sweep that only triggers once the delivery is already in place
     // — asserting on it pins that a second apply finds nothing left to re-delete.
-    const first = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const { writes, cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const first = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
+    const { writes, cleanups } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
 
     const removed = first.cleanups.filter((c) => c.outcome === "removed");
     assert.equal(removed.length, legacy.length, "the first apply must sweep every seeded legacy copy");
@@ -880,7 +908,7 @@ test("refill: a declared-manual file AT a PROJECT_SKILLS path is skipped, not re
       mine[target] = body;
     }
 
-    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
 
     for (const [target, body] of Object.entries(mine)) {
       const outcome = writes.find((o) => o.path === target) as SkillWriteOutcome;
@@ -920,7 +948,7 @@ test("refill: the owner's pre-existing hand-placed copy of a NEWLY shipped skill
       }
     }
 
-    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const { writes } = writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
 
     for (const specDir of added) {
       for (const surface of SKILL_SURFACES) {
@@ -945,7 +973,7 @@ test("refill: the owner's pre-existing hand-placed copy of a NEWLY shipped skill
 test("digest: the automatic index carries exactly the four auto skills — agent-factory is no longer in it", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const index = buildAutoSkillsIndex(dir)!;
     const auto = PROJECT_SKILLS.filter((s) => s.digestMode === "auto").map((s) => s.dir);
     assert.deepEqual(auto.sort(), ["petbox", "petbox-methodology", "petbox-node-authoring", "petbox-write-economy"]);
@@ -1110,12 +1138,12 @@ test("checkSkillAssetFile does NOT reuse frontmatter parsing: a YAML-frontmatter
 test("buildSkillReports: a hand-edited extraFiles asset (marker kept) reports DRIFTED, same as a hand-edited SKILL.md", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
     const original = readFileSync(assetPath, "utf8");
     writeFileSync(assetPath, `${original}\n// hand-edited by someone, marker still says managed\n`, "utf8");
 
-    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const report = reports.find((r) => r.path === assetPath);
     assert.ok(report, `expected a report for ${assetPath}`);
     assert.equal(report!.state, "ours");
@@ -1136,11 +1164,11 @@ test("buildSkillReports: a hand-edited extraFiles asset (marker kept) reports DR
 test("buildSkillReports: a foreign (marker-stripped) extraFiles asset reports BLOCKED, not drifted", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
     writeFileSync(assetPath, "// someone else's file entirely, no petbox marker\nconsole.log(1);\n", "utf8");
 
-    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const report = reports.find((r) => r.path === assetPath);
     assert.ok(report, `expected a report for ${assetPath}`);
     assert.equal(report!.state, "foreign");
@@ -1153,11 +1181,11 @@ test("buildSkillReports: a foreign (marker-stripped) extraFiles asset reports BL
 test("buildSkillReports: a declared-manual extraFiles asset reports 'manual', never as drift or foreign", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const assetPath = join(dir, ...SKILL_SURFACES[0]!, "petbox-node-authoring", "validate-body.mjs");
     writeFileSync(assetPath, `${PETBOX_MANUAL_COMMENT_LINE}\nconsole.log('project owns this now');\n`, "utf8");
 
-    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     const report = reports.find((r) => r.path === assetPath);
     assert.ok(report, `expected a report for ${assetPath}`);
     assert.equal(report!.state, "manual");
@@ -1170,8 +1198,8 @@ test("buildSkillReports: a declared-manual extraFiles asset reports 'manual', ne
 test("buildSkillReports: one report per (PROJECT_SKILLS x SKILL_SURFACES), PLUS one per extraFiles asset; matches a freshly written tree (clean stays clean)", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet");
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
     // expectedWriteCount is the SAME (spec x surface x [1 SKILL.md + extraFiles]) formula
     // writeSkillFiles' own outcome count uses — buildSkillReports must report on every path
     // writeSkillFiles can write, extraFiles siblings included (bug: skill-extra-files-drift-not-checked).
@@ -1198,8 +1226,8 @@ test("buildSkillReports: one report per (PROJECT_SKILLS x SKILL_SURFACES), PLUS 
 test("buildSkillReports: workspace undefined -> 'unknown' match only for the spec that needs {{WORKSPACE}}", () => {
   const dir = freshDir();
   try {
-    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet");
-    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", undefined);
+    writeSkillFiles(dir, TEMPLATES_ROOT, "hellopet", "newpet", ENV_VAR);
+    const reports = buildSkillReports(dir, TEMPLATES_ROOT, "hellopet", undefined, ENV_VAR);
     for (const spec of PROJECT_SKILLS) {
       for (const surface of SKILL_SURFACES) {
         const report = reports.find((r) => r.path === pathFor(dir, surface, spec.dir))!;

@@ -30,11 +30,22 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 	public WebApplicationFactory<Program> Factory { get; }
 	public McpClient Mcp { get; private set; } = null!;
 
-	protected TasksMcpFixture(string projectKey, string projectName)
+	readonly string _extraScopes;
+
+	// extraFeatures/extraScopes: additive-only, defaulted to nothing so the seven existing
+	// subclasses are byte-for-byte unaffected. A subclass that needs another module's tools
+	// reachable over the real MCP wire (e.g. memory_search/config_binding_search for the
+	// curated-hint tests, work unknown-param-curated-hints) turns it on here instead of standing
+	// up a second, hand-rolled WebApplicationFactory — ResolveDataDir (Program.cs) derives every
+	// module's data directory from ConnectionStrings:PetBox, which is already unique per fixture
+	// instance, so switching Memory/Config on cannot collide with another fixture's files.
+	protected TasksMcpFixture(string projectKey, string projectName,
+		IReadOnlyList<string>? extraFeatures = null, string extraScopes = "")
 	{
 		ProjectKey = projectKey;
-		AgentKey = $"yb_key_{projectKey}_agent"; // tasks:read,tasks:write
+		AgentKey = $"yb_key_{projectKey}_agent"; // tasks:read,tasks:write(+extraScopes)
 		_projectName = projectName;
+		_extraScopes = extraScopes;
 		_baseDir = Path.Combine(Path.GetTempPath(), $"petbox-{projectKey}-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
@@ -49,9 +60,11 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 				// unnecessary and was leaking into every other test in the process
 				// (chore/tests-env-leak).
 				b.UseSetting("Features:Tasks", "true");
+				foreach (var feature in extraFeatures ?? [])
+					b.UseSetting($"Features:{feature}", "true");
 				b.ConfigureAppConfiguration((_, cfg) =>
 				{
-					cfg.AddInMemoryCollection(new Dictionary<string, string?>
+					var settings = new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Tasks"] = "true",
@@ -62,7 +75,9 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 						// off-switch, not surgery on its DI container (spec:
 						// host-composition-contract).
 						["Host:BackgroundServices"] = "false",
-					});
+					};
+					foreach (var feature in extraFeatures ?? []) settings[$"Features:{feature}"] = "true";
+					cfg.AddInMemoryCollection(settings);
 				});
 				b.ConfigureServices(svc =>
 				{
@@ -91,7 +106,9 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 			// methodology:write: these suites PROVISION a methodology (and edit live rules) as
 			// fixture setup, which the spec methodology-write-scope gates separately from
 			// tasks:write. The authz boundary itself is asserted in McpModuleToolsTests, not here.
-			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,methodology:write", CreatedAt = DateTime.UtcNow });
+			var scopes = "tasks:read,tasks:write,methodology:write"
+				+ (_extraScopes.Length > 0 ? "," + _extraScopes : "");
+			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = scopes, CreatedAt = DateTime.UtcNow });
 		}
 
 		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });

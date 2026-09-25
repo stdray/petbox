@@ -95,10 +95,17 @@ function startFakeServer(definition: AgentDefinition, workspace: string | undefi
   });
 }
 
+// Shared with every writeSkillFiles() fixture call below: `doctor` re-renders the templates with
+// the env var it reads back from THIS registry entry (resolvedForSkillCheck.envVar in wire.ts), so
+// a fixture written with a different name would show as spurious drift — same failure mode the
+// bug this test suite guards against (write-economy-skill-hardcodes-system-key-env) produces for
+// real, just inverted (test fixture vs. hand-written skill body).
+const DOCTOR_SKILL_TEST_ENV_VAR = "PETBOX_DOCTOR_SKILL_TEST_API_KEY";
+
 function writeOnlineRegistry(homeDir: string, projectDir: string, project: string, baseUrl: string): void {
   const petboxDir = join(homeDir, ".petbox");
   mkdirSync(petboxDir, { recursive: true });
-  const envVar = "PETBOX_DOCTOR_SKILL_TEST_API_KEY";
+  const envVar = DOCTOR_SKILL_TEST_ENV_VAR;
   writeFileSync(
     join(petboxDir, "projects.json"),
     JSON.stringify({ entries: [{ prefix: projectDir, project, envVar, baseUrl }] }, null, 2),
@@ -161,7 +168,7 @@ test("doctor (online, workspace resolved) reports NO drift when every materializ
   const fake = await startFakeServer(DEFAULT_AGENT_DEFINITION, workspace);
   try {
     writeOnlineRegistry(homeDir, projectDir, project, fake.baseUrl);
-    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace);
+    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace, DOCTOR_SKILL_TEST_ENV_VAR);
 
     const { stdout, stderr, status } = await runDoctorOnline(projectDir, homeDir);
     const out = stdout + stderr;
@@ -188,7 +195,7 @@ test("doctor (online) names a foreign (BLOCKED) skill file distinctly from one t
   const fake = await startFakeServer(DEFAULT_AGENT_DEFINITION, workspace);
   try {
     writeOnlineRegistry(homeDir, projectDir, project, fake.baseUrl);
-    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace);
+    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace, DOCTOR_SKILL_TEST_ENV_VAR);
 
     // A real user file: no origin marker, unrelated content.
     const foreignPath = join(projectDir, ".claude", "skills", "petbox-agent-factory", "SKILL.md");
@@ -236,7 +243,7 @@ test("doctor (online) catches drift in an extraFiles sibling asset (validate-bod
   const fake = await startFakeServer(DEFAULT_AGENT_DEFINITION, workspace);
   try {
     writeOnlineRegistry(homeDir, projectDir, project, fake.baseUrl);
-    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace);
+    writeSkillFiles(projectDir, TEMPLATES_ROOT, project, workspace, DOCTOR_SKILL_TEST_ENV_VAR);
 
     // Before the fix, checkSkillFile/buildSkillReports only ever looked at SKILL.md — a
     // hand-edited validate-body.mjs sitting right next to a clean SKILL.md was invisible to

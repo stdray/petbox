@@ -210,7 +210,16 @@ public sealed class CommentService : ICommentService
 					rejected.Add(new(at, TemporalConflictKind.Rejected, it.Version, curForFragment.Version, ex.Message));
 					continue;
 				}
-				desired.Add(curForFragment with { Version = it.Version, Body = patched.Body, Slug = fragmentSlug });
+				// comment-tags-only-patch-keeps-version: tags riding along with a fragment edit
+				// feed the same payload fingerprint an ordinary PATCH computes below — omitted
+				// (null) inherits the current fingerprint, present (incl. []) overrides it.
+				desired.Add(curForFragment with
+				{
+					Version = it.Version,
+					Body = patched.Body,
+					Slug = fragmentSlug,
+					TagsFingerprint = it.Tags is { } fragTags ? TagFingerprint(fragTags) : curForFragment.TagsFingerprint,
+				});
 				itemByKey[it.Id!] = it;
 				patchedKeys.Add(it.Id!);
 				continue;
@@ -218,10 +227,10 @@ public sealed class CommentService : ICommentService
 
 			try
 			{
-				if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
 				if (string.IsNullOrEmpty(it.Id))
 				{
-					// CREATE
+					// CREATE — body is mandatory content (there is no prior text to fall back to).
+					if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
 					if (string.IsNullOrWhiteSpace(it.NodeId)) throw new ArgumentException("nodeId is required to create a comment");
 					if (string.IsNullOrWhiteSpace(it.Author)) throw new ArgumentException("author is required to create a comment");
 					if (!string.IsNullOrEmpty(it.ParentId))
@@ -261,6 +270,10 @@ public sealed class CommentService : ICommentService
 						// OMITS `slug` correctly inherits the slug already set on the prior landing,
 						// instead of reading as a spurious slug-clear and tripping a Stale conflict.
 						Slug = ResolveSlug(it.Slug, existingForIdem?.Slug, it.NodeId!, id),
+						// comment-tags-only-patch-keeps-version: same inherit-when-omitted posture as
+						// Slug above, so an idempotent replay that omits `tags` reproduces the prior
+						// landing's fingerprint instead of reading as a spurious tags-clear.
+						TagsFingerprint = it.Tags is { } createTags ? TagFingerprint(createTags) : (existingForIdem?.TagsFingerprint ?? string.Empty),
 					});
 					itemByKey[id] = it;
 					// A row already existed under this derived key (a prior call landed) — force the
@@ -273,7 +286,30 @@ public sealed class CommentService : ICommentService
 					// PATCH
 					if (!currentById.TryGetValue(it.Id!, out var cur))
 						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
-					desired.Add(cur with { Version = it.Version, Body = it.Body!, Slug = ResolveSlug(it.Slug, cur.Slug, cur.NodeId, it.Id!) });
+					// `Body` follows the same omitted-stays-unchanged contract as `Tags`/`Slug`: null =
+					// omitted, keep the current text; an explicit blank/whitespace string is invalid
+					// content, not a clear (a comment can never legally be bodyless — that is what
+					// CREATE above already enforces, so PATCH holds it to the same bar).
+					if (it.Body is not null && string.IsNullOrWhiteSpace(it.Body))
+						throw new ArgumentException("comment body cannot be blank");
+					// A patch that changes NOTHING (no body/fragment/bodyRef/tags/slug — fragment and
+					// bodyRef are already excluded by this point, see the branches above) is a caller
+					// bug, not a silent no-op: name it instead of writing an identical revision.
+					if (it.Body is null && it.Tags is null && it.Slug is null)
+						throw new ArgumentException(
+							$"comment '{it.Id}' patch carries no changes: provide body, fragment, bodyRef, tags, or slug");
+					desired.Add(cur with
+					{
+						Version = it.Version,
+						Body = it.Body ?? cur.Body,
+						Slug = ResolveSlug(it.Slug, cur.Slug, cur.NodeId, it.Id!),
+						// comment-tags-only-patch-keeps-version: omitted (null) inherits the current
+						// fingerprint (the `tags` omitted-stays-unchanged posture); present (`[]`
+						// included, a clear) overrides it — so a tags-only PATCH now differs in
+						// payload from `cur` whenever the tag SET actually changes, and TemporalStore
+						// mints a real revision instead of classifying it as an identical no-op.
+						TagsFingerprint = it.Tags is { } patchTags ? TagFingerprint(patchTags) : cur.TagsFingerprint,
+					});
 					itemByKey[it.Id!] = it;
 					patchedKeys.Add(it.Id!);
 				}
@@ -442,6 +478,10 @@ public sealed class CommentService : ICommentService
 			ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
 			Author = author ?? string.Empty,
 			Body = body,
+			// comment-tags-only-patch-keeps-version: keep TagsFingerprint in sync with what
+			// SetTagsAsync is about to write below — a mismatch here is exactly the staleness
+			// this invariant exists to prevent (see CommentRow.TagsFingerprint).
+			TagsFingerprint = TagFingerprint(tags ?? []),
 		};
 		// Class-A lexical floor: index the comment INSIDE the entity tx (onWithinTx), so a
 		// committed comment is never lexically-stale and the FTS row rolls back with it —
@@ -471,9 +511,17 @@ public sealed class CommentService : ICommentService
 			.FirstOrDefaultAsync(c => c.Key == id && c.Board == board && c.ActiveTo == null, ct);
 		if (current is null) throw new ArgumentException($"comment '{id}' not found or already deleted");
 
-		// Carry identity/parent/author; only the body changes. `version` is the caller's
-		// baseline — TemporalStore turns a stale one into a conflict, not a clobber.
-		var row = current with { Version = version, Body = body };
+		// Carry identity/parent/author; only the body (and, when given, tags) change. `version`
+		// is the caller's baseline — TemporalStore turns a stale one into a conflict, not a
+		// clobber. `tags` follows the omitted-stays-unchanged posture used everywhere else
+		// (comment-tags-only-patch-keeps-version): null inherits the current fingerprint (and
+		// SetTagsAsync below is skipped entirely, matching the existing `tags is not null` gate).
+		var row = current with
+		{
+			Version = version,
+			Body = body,
+			TagsFingerprint = tags is { } editTags ? TagFingerprint(editTags) : current.TagsFingerprint,
+		};
 		// Re-index the edited body inside the entity tx (the old text's row is overwritten by
 		// IndexAsync's delete+insert on (Scope,Type,Id), so a stale-body search stops matching).
 		var fts = new SqliteFtsIndex(() => ctx);
@@ -618,4 +666,14 @@ public sealed class CommentService : ICommentService
 		}
 		return set;
 	}
+
+	// comment-tags-only-patch-keeps-version: the CommentRow.TagsFingerprint value for a given
+	// desired tag set — normalize (NormalizeTags, the SAME normalization SetTagsAsync applies to
+	// what actually lands in comment_tag, so the two can never disagree), sort ordinal for a
+	// deterministic order independent of the caller's array order, join on U+001F (a delimiter no
+	// legal tag contains, same convention as DeriveIdempotentCommentId above). `null` (an omitted
+	// `tags`) is never passed here — every call site inherits the current fingerprint instead;
+	// an explicit `[]` (a clear) produces "".
+	private static string TagFingerprint(IReadOnlyList<string> tags) =>
+		string.Join('\u001f', NormalizeTags(tags).OrderBy(t => t, StringComparer.Ordinal));
 }

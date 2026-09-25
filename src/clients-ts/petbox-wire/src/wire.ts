@@ -720,6 +720,7 @@ async function runDoctor(argv: string[]): Promise<void> {
         join(HERE, "templates"),
         resolvedForSkillCheck.project,
         probe.workspace,
+        resolvedForSkillCheck.envVar,
       );
       // Foreign (BLOCKED) and drifted are different defects with different remedies — name them
       // separately, never fold them into one "mismatch" count (task requirement).
@@ -1276,6 +1277,7 @@ async function performApply(opts: {
         join(HERE, "templates"),
         resolvedForSkills.project,
         probe.workspace,
+        resolvedForSkills.envVar,
         PROJECT_SKILLS,
         { dryRun, adopt: (p: string) => (adopt.consider(p), adopt.has(p)) },
       );
@@ -3400,7 +3402,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   // (node/comment BODY structure). Rendered once per skill (see PROJECT_SKILLS in
   // skill-files.ts — the one place a new skill is registered), then dropped into every native
   // skill surface (writeSkillFiles / skill-files.ts).
-  reportSkillOutcomesStandalone("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace));
+  reportSkillOutcomesStandalone("[7/10]", writeSkillFiles(dir, join(HERE, "templates"), project, workspace, envVar));
 }
 
 // ---- step 7b: telemetry (opt-in, --telemetry) ------------------------------

@@ -1087,6 +1087,23 @@ public partial class Program
 			new PetBox.Tasks.Data.WorkDeferredStatusMigrator(coreDbFactory, tasksFactory, deferredLog).Migrate();
 		}
 
+		// One-time, idempotent (legacy-node-empty-nodeid-404): a handful of existing rows carry
+		// an empty NodeId, an empty type, and/or a status outside their board kind's FSM —
+		// tasks_search's raw active-row scan still lists them, but tasks_node_get and the UI
+		// detail page (both resolve through NodeRefResolver, which drops any row with an empty
+		// NodeId) 404 forever. Repairs NodeId with a direct column patch (it is not a TaskNode
+		// payload field, so an ordinary upsert of an otherwise-valid row would silently no-op —
+		// see the migrator's own comment) and normalizes type/status through
+		// MethodologyLiveMigration.RewriteAsync, the same repair engine a methodology
+		// definition/instance-rule change already uses. Needs board membership resolved
+		// (ITasksService.GetRuntimeForBoardAsync), so it runs after the instance backfill.
+		{
+			using var identityScope = app.Services.CreateScope();
+			var identityTasks = identityScope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var identityLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.NodeIdentityBackfillMigrator");
+			new PetBox.Tasks.Data.NodeIdentityBackfillMigrator(coreDbFactory, tasksFactory, identityTasks, identityLog).Migrate();
+		}
+
 		// One-time, idempotent (spec methodology-link-kinds-declared): the quartet's process link
 		// kinds (idea_spec/task_spec/issue_task) moved out of MethodologyRuntime.ProcessRelationKinds
 		// and are now DECLARED relation kinds with direction; delivery roll-up names its link kind as

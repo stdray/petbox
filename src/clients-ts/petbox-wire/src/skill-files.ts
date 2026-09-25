@@ -114,7 +114,7 @@ export type SkillTemplateSpec = {
   // every surface (spec: bash-quoting-collapses-backslashes-not-just-echo). Filenames only —
   // resolved against `<templatesRoot>/<dir>/<filename>` for the source and
   // `<surface>/<dir>/<filename>` for every target. Rendered through the same
-  // {{PROJECT}}/{{WORKSPACE}} substitution as SKILL.md (a no-op for a template with neither
+  // {{PROJECT}}/{{WORKSPACE}}/{{ENV_VAR}} substitution as SKILL.md (a no-op for a template with none
   // placeholder). Unlike SKILL.md these are typically NOT markdown (e.g. `validate-body.mjs`) so
   // they cannot carry YAML frontmatter; provenance is a leading `// petbox: managed` comment line
   // instead (origin-marker.ts's *FromComment functions) — same three-state clobber contract
@@ -170,10 +170,23 @@ export const PROJECT_SKILLS: SkillTemplateSpec[] = [
   },
 ];
 
-// Substitute {{PROJECT}} and {{WORKSPACE}}. Safe to call uniformly even for a template that has
-// no {{WORKSPACE}} placeholder — replace() on a pattern with zero matches is a no-op.
-export function renderSkillTemplate(tpl: string, project: string, workspace: string): string {
-  return tpl.replace(/\{\{PROJECT\}\}/g, project).replace(/\{\{WORKSPACE\}\}/g, workspace);
+// Substitute {{PROJECT}}, {{WORKSPACE}} and {{ENV_VAR}}. Safe to call uniformly even for a
+// template that has none of these placeholders — replace() on a pattern with zero matches is a
+// no-op.
+//
+// {{ENV_VAR}} (bug: write-economy-skill-hardcodes-system-key-env) is the name of the env var THIS
+// wire actually persisted for THIS project (wire.ts step 1's `envVar`, threaded down from
+// RegistryEntry.envVar / ResolvedProject.envVar — never recomputed from `project` here, because an
+// already-wired directory may have a CUSTOMIZED name, e.g. via `--env`, that no longer matches
+// wire-identity.ts's deriveEnvVar default). A template that hardcodes a literal var name instead
+// (e.g. `$PETBOX_API_KEY`) is silently wrong for every project except the one whose default
+// happens to render that exact name — verified live: `$PETBOX_API_KEY` against a non-`$system`
+// project's /api/blobs endpoint is a 403, the project's own `PETBOX_<SLUG>_API_KEY` is a 200.
+export function renderSkillTemplate(tpl: string, project: string, workspace: string, envVar: string): string {
+  return tpl
+    .replace(/\{\{PROJECT\}\}/g, project)
+    .replace(/\{\{WORKSPACE\}\}/g, workspace)
+    .replace(/\{\{ENV_VAR\}\}/g, envVar);
 }
 
 // What the PRE-declaration template used to render, byte-for-byte, for the migration carve-out
@@ -340,6 +353,7 @@ export function writeSkillFiles(
   templatesRoot: string,
   project: string,
   workspace: string,
+  envVar: string,
   specs: readonly SkillTemplateSpec[] = PROJECT_SKILLS,
   opts: {
     readonly dryRun?: boolean;
@@ -353,7 +367,7 @@ export function writeSkillFiles(
   const cleanups: SkillCleanupOutcome[] = [];
   for (const spec of specs) {
     const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
-    const rendered = renderSkillTemplate(tpl, project, workspace);
+    const rendered = renderSkillTemplate(tpl, project, workspace, envVar);
     const legacyRendered = stripMarkerLine(rendered);
     for (const surface of SKILL_SURFACES) {
       const skillPath = join(dir, ...surface, spec.dir, "SKILL.md");
@@ -366,10 +380,10 @@ export function writeSkillFiles(
       // the SAME skill directory as SKILL.md on this surface, independent of whether SKILL.md
       // itself changed — a stale asset next to a freshly-migrated SKILL.md would be exactly the
       // kind of half-applied state this mechanism exists to prevent. Rendered through the same
-      // {{PROJECT}}/{{WORKSPACE}} substitution as SKILL.md (a no-op for a template with neither).
+      // {{PROJECT}}/{{WORKSPACE}}/{{ENV_VAR}} substitution as SKILL.md (a no-op for a template with none).
       for (const assetName of spec.extraFiles ?? []) {
         const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
-        const assetRendered = renderSkillTemplate(assetTpl, project, workspace);
+        const assetRendered = renderSkillTemplate(assetTpl, project, workspace, envVar);
         const assetPath = join(dir, ...surface, spec.dir, assetName);
         writes.push(
           writeSkillAssetFile(assetPath, assetRendered, {
@@ -492,6 +506,7 @@ export function buildSkillReports(
   templatesRoot: string,
   project: string,
   workspace: string | undefined,
+  envVar: string,
 ): SkillFileReport[] {
   const reports: SkillFileReport[] = [];
   for (const spec of PROJECT_SKILLS) {
@@ -500,7 +515,7 @@ export function buildSkillReports(
     if (canRender) {
       try {
         const tpl = readFileSync(join(templatesRoot, spec.dir, "SKILL.md"), "utf8");
-        rendered = renderSkillTemplate(tpl, project, workspace ?? "");
+        rendered = renderSkillTemplate(tpl, project, workspace ?? "", envVar);
       } catch {
         rendered = undefined;
       }
@@ -519,7 +534,7 @@ export function buildSkillReports(
         if (canRender) {
           try {
             const assetTpl = readFileSync(join(templatesRoot, spec.dir, assetName), "utf8");
-            assetRendered = renderSkillTemplate(assetTpl, project, workspace ?? "");
+            assetRendered = renderSkillTemplate(assetTpl, project, workspace ?? "", envVar);
           } catch {
             assetRendered = undefined;
           }

@@ -693,6 +693,81 @@ public sealed class MemoryVerbsTests : IDisposable
 		rec.Items.Should().HaveCount(2);
 	}
 
+	// card memory-get-unknown-store-reads-as-missing-key: a `store` that no authorized cascade
+	// leg has ever heard of must read as a DIFFERENT problem than a genuine key miss inside an
+	// existing store — the two used to collapse into the identical "entry not found" text.
+
+	[Fact]
+	public async Task Get_SingleKey_UnknownStore_ThrowsDistinctStoreNotExistError()
+	{
+		var http = Http("memory:read,memory:write");
+		var act = async () => await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "totally-unknown-store", key: "whatever");
+
+		var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+		ex.WithMessage("*does not exist*");
+		ex.Which.Message.Should().NotContain("not found in store",
+			"the old text is indistinguishable from a real key miss — this is a different failure");
+	}
+
+	[Fact]
+	public async Task Get_SingleKey_UnknownStore_SuggestsTheNearestReservedStoreName()
+	{
+		// "note" is one insertion away from the reserved store "notes" — NamespaceSuggest must
+		// surface it even though nothing was ever written into "notes" in this test (reserved
+		// stores are always candidates, per AssertStoreCreatableOrKnownAsync's own list).
+		var http = Http("memory:read,memory:write");
+		var act = async () => await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "note", key: "whatever");
+
+		var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+		ex.WithMessage("*Did you mean*'notes'*");
+	}
+
+	[Fact]
+	public async Task Get_SingleKey_ExistingStore_MissingKey_KeepsTheOriginalNotFoundMessage()
+	{
+		// Regression control: a real key miss inside a store that DOES exist must still read as
+		// exactly the old "entry not found" text — only the wrong-store case is new.
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "seeds the store");
+
+		var act = async () => await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", key: "no-such-key-at-all");
+
+		var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+		ex.WithMessage("*entry 'no-such-key-at-all' not found in store 'notes'*");
+		ex.Which.Message.Should().NotContain("does not exist");
+	}
+
+	[Fact]
+	public async Task Get_Batch_UnknownStore_ReturnsEmptyEntriesWithAnExplicitWarning()
+	{
+		var http = Http("memory:read,memory:write");
+		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "totally-unknown-store", keys: ["a", "b"]);
+
+		got.Entries.Should().BeEmpty();
+		got.Warning.Should().NotBeNull("a batch miss caused by a WRONG STORE must not look identical " +
+			"to an ordinary soft-filtered key miss");
+		got.Warning.Should().Contain("does not exist");
+	}
+
+	[Fact]
+	public async Task Get_Batch_ExistingStore_MissingKeys_StaysSilentAsBefore()
+	{
+		// Regression control: the ordinary soft-filter batch miss (store exists, keys don't) must
+		// carry NO warning — only the wrong-store case sets one.
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory, "seeds the store");
+
+		var got = await MemoryTools.GetAsync(http, Flags(), _db.Factory().WorkspaceMemory(), _memory,
+			new NoopUsageRecorder(), Proj, "notes", keys: ["no-such-key-at-all"]);
+
+		got.Entries.Should().BeEmpty();
+		got.Warning.Should().BeNull();
+	}
+
 	IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
