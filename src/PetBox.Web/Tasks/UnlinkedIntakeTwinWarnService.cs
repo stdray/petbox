@@ -62,10 +62,17 @@ public sealed class UnlinkedIntakeTwinWarnService(
 			if (thisMeta is null) return [];
 			var thisKind = runtime.KindName(thisMeta.Kind);
 
+			// Same exclusion as TasksService.ComputeUnlinkedIntakeCloseWarningsAsync (live false
+			// positive 2026-09-25): a link the SOURCE kind's own LinkConstraints already requires
+			// at creation (e.g. work's task_spec, required for feature/bug) is a DIFFERENT
+			// obligation, not the "populated later, at promotion" edge this rule means — excluding
+			// it keeps ToKind matching unambiguous even if a future methodology declares two
+			// process links into the same target kind.
 			var link = runtime.EffectiveLinkKinds().FirstOrDefault(l =>
 				l.Category == LinkCategory.Process
 				&& l.Direction?.ToKind is not null
-				&& string.Equals(l.Direction.ToKind, thisKind, StringComparison.OrdinalIgnoreCase));
+				&& string.Equals(l.Direction.ToKind, thisKind, StringComparison.OrdinalIgnoreCase)
+				&& !runtime.LinkConstraints(l.Direction.FromKind).Any(c => string.Equals(c.Link, l.Slug, StringComparison.OrdinalIgnoreCase)));
 			if (link?.Direction?.FromKind is null) return [];
 
 			var sourceBoards = boards.Where(b =>

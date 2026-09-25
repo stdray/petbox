@@ -2267,10 +2267,25 @@ public sealed partial class TasksService : ITasksService
 		if (closing.Count == 0) return [];
 
 		var thisKind = runtime.KindName(kindSlug);
+		// live false positive (2026-09-25): a work `chore` closing Review->Done tripped this rule
+		// against `task_spec` — work IS the FromKind of task_spec too (work -> spec), and a naive
+		// "any process link whose FromKind is this kind" match picked it, checking a work node for
+		// an outgoing task_spec edge it was never obliged to carry (chores don't even have that
+		// LinkConstraint). The fix reads BOTH declarations together, as the spec_plan asks: a
+		// promotion-closing link (issue_task's role) is populated LATER, at resolution time, and is
+		// therefore NEVER one of this kind's own CREATION-time LinkConstraints — unlike task_spec,
+		// which work's LinkConstraints requires at birth for feature/bug. Excluding every
+		// constraint-required link leaves exactly the promotion link for a genuine "intake-shaped"
+		// kind (intake has no LinkConstraints at all) and leaves NONE for "work" (task_spec is its
+		// only outbound process link, and it's constraint-required) — so this branch now silently
+		// no-ops on work/spec/ideas closes instead of misfiring, with no kind/board literal anywhere.
+		var creationRequiredLinks = runtime.LinkConstraints(kindSlug)
+			.Select(c => c.Link).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var link = runtime.EffectiveLinkKinds().FirstOrDefault(l =>
 			l.Category == LinkCategory.Process
 			&& l.Direction?.FromKind is not null
-			&& string.Equals(l.Direction.FromKind, thisKind, StringComparison.OrdinalIgnoreCase));
+			&& string.Equals(l.Direction.FromKind, thisKind, StringComparison.OrdinalIgnoreCase)
+			&& !creationRequiredLinks.Contains(l.Slug));
 		if (link is null) return [];
 
 		var linkedFrom = (await _relations.ListByKindAsync(projectKey, link.Slug, ct))
