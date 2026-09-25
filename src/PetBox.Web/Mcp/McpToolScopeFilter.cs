@@ -51,8 +51,23 @@ static class McpToolScopeFilter
 	// The scope-module a tool belongs to. Returns the scope prefix the key needs ANY
 	// of ("tasks" → any tasks:* scope), or the literal "admin:provision" for tools
 	// gated on that single scope, or null for tools we don't classify (→ fail open).
+	//
+	// THIS TABLE MUST NAME EVERY TOOL FAMILY THAT CALLS ModuleMcp.AssertScope (or an equivalent local
+	// AssertScope wrapper — DataTools/DataDbTools/HealthTools each have one). A family missing here
+	// falls through to `null` — fail-open, so invocation still enforces the scope correctly, but the
+	// listing lies about it (work `mcp-tools-list-ignores-key-scopes`: apikey_*/project_*/llm_*/
+	// comments_*/relations_*/health_* all escaped this way — apikey_*/project_* by an explicit
+	// "leave unclassified" comment that stopped matching what AssertScope actually required, and
+	// llm_*/comments_*/relations_*/health_* by never being added when those families were).
+	// McpToolScopeFilterTests.EveryVisibleTool_InvokesPastTheScopeCheck guards the whole table
+	// generically — it invokes every tool tools/list shows a restricted key and fails if any of them
+	// throws ModuleMcp.AssertScope's "lacks required scope" — so a NEW family added here without a
+	// matching entry (or a wrong one) is caught in CI rather than rediscovered by a card like this one.
 	static string? ModuleOf(string tool) =>
-		tool.StartsWith("tasks_", StringComparison.Ordinal) || tool.StartsWith("session_", StringComparison.Ordinal) ? "tasks"
+		tool.StartsWith("tasks_", StringComparison.Ordinal) || tool.StartsWith("session_", StringComparison.Ordinal)
+			// comments_*/relations_* act on task nodes and are gated on tasks:read/tasks:write exactly
+			// like tasks_*/session_* — see CommentTools/RelationTools' AssertScope calls.
+			|| tool.StartsWith("comments_", StringComparison.Ordinal) || tool.StartsWith("relations_", StringComparison.Ordinal) ? "tasks"
 		: tool.StartsWith("memory_", StringComparison.Ordinal) ? "memory"
 		: tool.StartsWith("log_", StringComparison.Ordinal) ? "logs"
 		: tool.StartsWith("data_", StringComparison.Ordinal) || tool.StartsWith("db_", StringComparison.Ordinal) ? "data"
@@ -62,7 +77,21 @@ static class McpToolScopeFilter
 		// to the literal admin:provision, which matched the gate they had then — and hid them from a key
 		// holding config:read/config:write, i.e. from exactly the keys that may now call them.
 		: tool.StartsWith("config_", StringComparison.Ordinal) ? "config"
-		: null; // project_* / apikey_* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
+		// llm_config_get/_upsert (llm:admin) and llm_embed/_rerank/_chat (llm:invoke) — both scopes live
+		// under the "llm" module, same module-not-read/write looseness as every other family here.
+		: tool.StartsWith("llm_", StringComparison.Ordinal) ? "llm"
+		// health_search — health:read. HealthTools has its own local AssertScope wrapper, same catalog.
+		: tool.StartsWith("health_", StringComparison.Ordinal) ? "health"
+		// apikey_*/project_* all gate on the single literal admin:provision (ApiKeyTools/ProjectTools'
+		// AssertScope calls) — not a module of read/write scopes, so route them through the exact-match
+		// branch in Allowed() below instead of leaving them unclassified.
+		: tool.StartsWith("apikey_", StringComparison.Ordinal) || tool.StartsWith("project_", StringComparison.Ordinal)
+			? ApiKeyScopes.AdminProvision
+		// share_revoke / whoami / tool_describe / petbox_report_issue* / search_reindex genuinely require
+		// no FIXED scope (share_revoke by design — see ShareTools' header; search_reindex's requirement
+		// is computed per-call from its `tier` argument) — correctly left unclassified so every key sees
+		// them and invocation itself decides.
+		: null;
 
 	static bool Allowed(string tool, IReadOnlySet<string> granted)
 	{

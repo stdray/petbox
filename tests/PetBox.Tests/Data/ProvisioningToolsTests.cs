@@ -350,8 +350,15 @@ public sealed class ProvisioningToolsTests
 		var mcp = await McpTestClient.ConnectAsync(transport);
 		try
 		{
-			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "project_create");
-			var result = await tool.CallAsync(new Dictionary<string, object?>
+			// work `mcp-tools-list-ignores-key-scopes`: McpToolScopeFilter used to leave apikey_*/
+			// project_* unclassified and show them to every key regardless of scope — project_create
+			// now correctly does NOT appear in tools/list for a key without admin:provision.
+			(await mcp.ListToolsAsync()).Select(t => t.Name).Should().NotContain("project_create");
+
+			// The listing is NOT the security boundary (McpToolScopeFilter's own header says so) —
+			// invocation enforces the scope independently, so call it directly by name even though
+			// tools/list no longer offers it.
+			var result = await mcp.CallToolAsync("project_create", new Dictionary<string, object?>
 			{
 				["workspaceKey"] = Workspace,
 				["key"] = "shouldfail",
