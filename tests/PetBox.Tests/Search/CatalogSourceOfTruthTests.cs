@@ -154,7 +154,7 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 
 	// ---- MemoryVectorizationJob ----
 
-	MemoryVectorizationJob MemVecJob() => new(_memoryFactory, _catalog, new FakeLlmClient());
+	MemoryVectorizationJob MemVecJob() => new(_memoryFactory, _catalog, new MemoryVectorizationHeartbeatClock(), new FakeLlmClient());
 
 	[Fact]
 	public async Task MemoryVectorization_sees_a_project_whose_db_file_does_not_exist_yet()
@@ -183,7 +183,7 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 
 	// ---- TasksVectorizationJob ----
 
-	TasksVectorizationJob TaskVecJob() => new(_tasksFactory, _catalog, new FakeLlmClient());
+	TasksVectorizationJob TaskVecJob() => new(_tasksFactory, _catalog, new TasksVectorizationHeartbeatClock(), new FakeLlmClient());
 
 	[Fact]
 	public async Task TasksVectorization_sees_a_project_whose_db_file_does_not_exist_yet()

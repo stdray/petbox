@@ -135,8 +135,8 @@ public sealed class SessionFactsJobTests : IClassFixture<SessionFactsJobFixture>
 	// when the candidate repeats the neighbour's wording verbatim.
 	async Task<int> RunSemanticAsync(ILlmClient chat, ILogger<SessionFactsJob>? logger = null)
 	{
-		await new MemoryVectorizationJob(_memoryFactory, new ProjectCatalog(_db.Factory()), new BowEmbedder())
-			.DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(_memoryFactory, new ProjectCatalog(_db.Factory()),
+			new MemoryVectorizationHeartbeatClock(), new BowEmbedder()).DrainAllAsync(CancellationToken.None);
 		return await SemanticJob(chat, logger).DrainAllAsync(CancellationToken.None);
 	}
 

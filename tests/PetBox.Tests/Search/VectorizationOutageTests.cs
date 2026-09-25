@@ -205,16 +205,16 @@ public sealed class VectorizationOutageTests
 		using var fx = new JobFixture();
 		await fx.SeedMemoryAsync();
 
-		await new MemoryVectorizationJob(fx.NewMemoryFactory(), fx.Catalog, new UnavailableLlmClient())
-			.DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(fx.NewMemoryFactory(), fx.Catalog, new MemoryVectorizationHeartbeatClock(),
+			new UnavailableLlmClient()).DrainAllAsync(CancellationToken.None);
 
 		fx.MemoryCount("SELECT COUNT(*) FROM search_vec").Should().Be(0);
 		fx.MemoryCount("SELECT COUNT(*) FROM search_deadletter").Should().Be(0, "the endpoint was down, not the data");
 		fx.MemoryCount("SELECT COALESCE(MAX(Version), 0) FROM search_cursor").Should().Be(0);
 
 		// The endpoint comes back → the same untouched backlog indexes.
-		await new MemoryVectorizationJob(fx.NewMemoryFactory(), fx.Catalog, new FakeLlmClient())
-			.DrainAllAsync(CancellationToken.None);
+		await new MemoryVectorizationJob(fx.NewMemoryFactory(), fx.Catalog, new MemoryVectorizationHeartbeatClock(),
+			new FakeLlmClient()).DrainAllAsync(CancellationToken.None);
 		fx.MemoryCount("SELECT COUNT(*) FROM search_vec").Should().BeGreaterThan(0);
 	}
 
@@ -224,15 +224,15 @@ public sealed class VectorizationOutageTests
 		using var fx = new JobFixture();
 		await fx.SeedTasksAsync();
 
-		await new TasksVectorizationJob(fx.NewTasksFactory(), fx.Catalog, new UnavailableLlmClient())
-			.DrainAllAsync(CancellationToken.None);
+		await new TasksVectorizationJob(fx.NewTasksFactory(), fx.Catalog, new TasksVectorizationHeartbeatClock(),
+			new UnavailableLlmClient()).DrainAllAsync(CancellationToken.None);
 
 		fx.TasksCount("SELECT COUNT(*) FROM search_vec").Should().Be(0);
 		fx.TasksCount("SELECT COUNT(*) FROM search_deadletter").Should().Be(0);
 		fx.TasksCount("SELECT COALESCE(MAX(Version), 0) FROM search_cursor").Should().Be(0);
 
-		await new TasksVectorizationJob(fx.NewTasksFactory(), fx.Catalog, new FakeLlmClient())
-			.DrainAllAsync(CancellationToken.None);
+		await new TasksVectorizationJob(fx.NewTasksFactory(), fx.Catalog, new TasksVectorizationHeartbeatClock(),
+			new FakeLlmClient()).DrainAllAsync(CancellationToken.None);
 		fx.TasksCount("SELECT COUNT(*) FROM search_vec").Should().BeGreaterThan(0);
 	}
 
